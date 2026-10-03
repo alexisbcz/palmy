@@ -1,0 +1,54 @@
+{
+  "tag": "span",
+  "cls": "peer group/switch relative inline-flex shrink-0 items-center rounded-full border border-transparent transition-all outline-none group-has-[:focus-visible]/field-label:border-transparent group-has-[:focus-visible]/field-label:ring-0 after:absolute after:-inset-x-3 after:-inset-y-2 focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/50 aria-invalid:border-destructive aria-invalid:ring-3 aria-invalid:ring-destructive/20 data-[size=default]:h-[18.4px] data-[size=default]:w-[32px] data-[size=sm]:h-[14px] data-[size=sm]:w-[24px] dark:aria-invalid:border-destructive/50 dark:aria-invalid:ring-destructive/40 data-checked:bg-primary data-unchecked:bg-input dark:data-unchecked:bg-input/80 data-disabled:cursor-not-allowed data-disabled:opacity-50",
+  "text": "",
+  "rect": {
+    "x": 0,
+    "y": 0,
+    "w": 32,
+    "h": 18.391
+  },
+  "pageRect": {
+    "x": 624,
+    "y": 390.797,
+    "w": 32,
+    "h": 18.391
+  },
+  "cropOffset": {
+    "x": 0,
+    "y": 0.797
+  },
+  "style": {
+    "backgroundColor": "oklch(0.922 0 0)",
+    "color": "oklch(0.145 0 0)",
+    "borderWidth": [
+      1,
+      1,
+      1,
+      1
+    ],
+    "borderColor": "rgba(0, 0, 0, 0)",
+    "borderRadius": [
+      33554400,
+      33554400,
+      33554400,
+      33554400
+    ],
+    "padding": [
+      0,
+      0,
+      0,
+      0
+    ],
+    "fontSize": 16,
+    "fontWeight": 400,
+    "lineHeight": 24,
+    "letterSpacing": 0,
+    "opacity": 1,
+    "boxShadow": "none",
+    "textAlign": "start",
+    "outlineWidth": 3,
+    "outlineColor": "oklab(0.708 0 0 / 0.5)"
+  },
+  "children": []
+}

@@ -1,0 +1,1333 @@
+{
+  "tag": "div",
+  "cls": "flex w-(--sidebar-width) flex-col bg-sidebar text-sidebar-foreground h-96 border",
+  "text": "",
+  "rect": {
+    "x": 0,
+    "y": 0,
+    "w": 256,
+    "h": 384
+  },
+  "style": {
+    "backgroundColor": "rgb(250, 250, 250)",
+    "color": "rgb(10, 10, 10)",
+    "borderWidth": [
+      1,
+      1,
+      1,
+      1
+    ],
+    "borderColor": "rgb(229, 229, 229)",
+    "borderRadius": [
+      0,
+      0,
+      0,
+      0
+    ],
+    "padding": [
+      0,
+      0,
+      0,
+      0
+    ],
+    "fontSize": 16,
+    "fontWeight": 400,
+    "lineHeight": 24,
+    "letterSpacing": 0,
+    "opacity": 1,
+    "boxShadow": "none",
+    "textAlign": "start"
+  },
+  "children": [
+    {
+      "tag": "div",
+      "cls": "flex flex-col gap-2 p-2",
+      "text": "",
+      "rect": {
+        "x": 1,
+        "y": 1,
+        "w": 254,
+        "h": 64
+      },
+      "style": {
+        "backgroundColor": "rgba(0, 0, 0, 0)",
+        "color": "rgb(10, 10, 10)",
+        "borderWidth": [
+          0,
+          0,
+          0,
+          0
+        ],
+        "borderColor": "rgb(229, 229, 229)",
+        "borderRadius": [
+          0,
+          0,
+          0,
+          0
+        ],
+        "padding": [
+          8,
+          8,
+          8,
+          8
+        ],
+        "fontSize": 16,
+        "fontWeight": 400,
+        "lineHeight": 24,
+        "letterSpacing": 0,
+        "opacity": 1,
+        "boxShadow": "none",
+        "textAlign": "start"
+      },
+      "children": [
+        {
+          "tag": "ul",
+          "cls": "flex w-full min-w-0 flex-col gap-0",
+          "text": "",
+          "rect": {
+            "x": 9,
+            "y": 9,
+            "w": 238,
+            "h": 48
+          },
+          "style": {
+            "backgroundColor": "rgba(0, 0, 0, 0)",
+            "color": "rgb(10, 10, 10)",
+            "borderWidth": [
+              0,
+              0,
+              0,
+              0
+            ],
+            "borderColor": "rgb(229, 229, 229)",
+            "borderRadius": [
+              0,
+              0,
+              0,
+              0
+            ],
+            "padding": [
+              0,
+              0,
+              0,
+              0
+            ],
+            "fontSize": 16,
+            "fontWeight": 400,
+            "lineHeight": 24,
+            "letterSpacing": 0,
+            "opacity": 1,
+            "boxShadow": "none",
+            "textAlign": "start"
+          },
+          "children": [
+            {
+              "tag": "li",
+              "cls": "group/menu-item relative",
+              "text": "",
+              "rect": {
+                "x": 9,
+                "y": 9,
+                "w": 238,
+                "h": 48
+              },
+              "style": {
+                "backgroundColor": "rgba(0, 0, 0, 0)",
+                "color": "rgb(10, 10, 10)",
+                "borderWidth": [
+                  0,
+                  0,
+                  0,
+                  0
+                ],
+                "borderColor": "rgb(229, 229, 229)",
+                "borderRadius": [
+                  0,
+                  0,
+                  0,
+                  0
+                ],
+                "padding": [
+                  0,
+                  0,
+                  0,
+                  0
+                ],
+                "fontSize": 16,
+                "fontWeight": 400,
+                "lineHeight": 24,
+                "letterSpacing": 0,
+                "opacity": 1,
+                "boxShadow": "none",
+                "textAlign": "start"
+              },
+              "children": [
+                {
+                  "tag": "button",
+                  "cls": "peer/menu-button group/menu-button flex w-full items-center gap-2 overflow-hidden rounded-md p-2 text-left ring-sidebar-ring outline-hidden transition-[width,height,padding] group-has-data-[sidebar=menu-action]/menu-item:pr-8 group-data-[collapsible=icon]:size-8! focus-visible:ring-2 active:bg-sidebar-accent active:text-sidebar-accent-foreground disabled:pointer-events-none disabled:opacity-50 aria-disabled:pointer-events-none aria-disabled:opacity-50 data-open:hover:bg-sidebar-accent data-open:hover:text-sidebar-accent-foreground data-active:bg-sidebar-accent data-active:font-medium data-active:text-sidebar-accent-foreground [&_svg]:size-4 [&_svg]:shrink-0 [&>span:last-child]:truncate hover:bg-sidebar-accent hover:text-sidebar-accent-foreground h-12 text-sm group-data-[collapsible=icon]:p-0!",
+                  "text": "Acme Inc",
+                  "rect": {
+                    "x": 9,
+                    "y": 9,
+                    "w": 238,
+                    "h": 48
+                  },
+                  "style": {
+                    "backgroundColor": "rgba(0, 0, 0, 0)",
+                    "color": "rgb(10, 10, 10)",
+                    "borderWidth": [
+                      0,
+                      0,
+                      0,
+                      0
+                    ],
+                    "borderColor": "rgb(229, 229, 229)",
+                    "borderRadius": [
+                      8,
+                      8,
+                      8,
+                      8
+                    ],
+                    "padding": [
+                      8,
+                      8,
+                      8,
+                      8
+                    ],
+                    "fontSize": 14,
+                    "fontWeight": 400,
+                    "lineHeight": 20,
+                    "letterSpacing": 0,
+                    "opacity": 1,
+                    "boxShadow": "none",
+                    "textAlign": "left"
+                  },
+                  "children": [
+                    {
+                      "tag": "svg",
+                      "cls": "lucide lucide-house lucide-home",
+                      "text": "",
+                      "rect": {
+                        "x": 17,
+                        "y": 25,
+                        "w": 16,
+                        "h": 16
+                      },
+                      "style": {
+                        "backgroundColor": "rgba(0, 0, 0, 0)",
+                        "color": "rgb(10, 10, 10)",
+                        "borderWidth": [
+                          0,
+                          0,
+                          0,
+                          0
+                        ],
+                        "borderColor": "rgb(229, 229, 229)",
+                        "borderRadius": [
+                          0,
+                          0,
+                          0,
+                          0
+                        ],
+                        "padding": [
+                          0,
+                          0,
+                          0,
+                          0
+                        ],
+                        "fontSize": 14,
+                        "fontWeight": 400,
+                        "lineHeight": 20,
+                        "letterSpacing": 0,
+                        "opacity": 1,
+                        "boxShadow": "none",
+                        "textAlign": "left"
+                      },
+                      "children": [
+                        {
+                          "tag": "path",
+                          "cls": "",
+                          "text": "",
+                          "rect": {
+                            "x": 23,
+                            "y": 33,
+                            "w": 4,
+                            "h": 6
+                          },
+                          "style": {
+                            "backgroundColor": "rgba(0, 0, 0, 0)",
+                            "color": "rgb(10, 10, 10)",
+                            "borderWidth": [
+                              0,
+                              0,
+                              0,
+                              0
+                            ],
+                            "borderColor": "rgb(229, 229, 229)",
+                            "borderRadius": [
+                              0,
+                              0,
+                              0,
+                              0
+                            ],
+                            "padding": [
+                              0,
+                              0,
+                              0,
+                              0
+                            ],
+                            "fontSize": 14,
+                            "fontWeight": 400,
+                            "lineHeight": 20,
+                            "letterSpacing": 0,
+                            "opacity": 1,
+                            "boxShadow": "none",
+                            "textAlign": "left"
+                          },
+                          "children": []
+                        },
+                        {
+                          "tag": "path",
+                          "cls": "",
+                          "text": "",
+                          "rect": {
+                            "x": 19,
+                            "y": 26.333,
+                            "w": 12,
+                            "h": 12.667
+                          },
+                          "style": {
+                            "backgroundColor": "rgba(0, 0, 0, 0)",
+                            "color": "rgb(10, 10, 10)",
+                            "borderWidth": [
+                              0,
+                              0,
+                              0,
+                              0
+                            ],
+                            "borderColor": "rgb(229, 229, 229)",
+                            "borderRadius": [
+                              0,
+                              0,
+                              0,
+                              0
+                            ],
+                            "padding": [
+                              0,
+                              0,
+                              0,
+                              0
+                            ],
+                            "fontSize": 14,
+                            "fontWeight": 400,
+                            "lineHeight": 20,
+                            "letterSpacing": 0,
+                            "opacity": 1,
+                            "boxShadow": "none",
+                            "textAlign": "left"
+                          },
+                          "children": []
+                        }
+                      ]
+                    }
+                  ]
+                }
+              ]
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "tag": "div",
+      "cls": "shrink-0 data-horizontal:h-px data-horizontal:w-full data-vertical:w-px data-vertical:self-stretch mx-2 w-auto bg-sidebar-border",
+      "text": "",
+      "rect": {
+        "x": 9,
+        "y": 65,
+        "w": 254,
+        "h": 1
+      },
+      "style": {
+        "backgroundColor": "rgb(229, 229, 229)",
+        "color": "rgb(10, 10, 10)",
+        "borderWidth": [
+          0,
+          0,
+          0,
+          0
+        ],
+        "borderColor": "rgb(229, 229, 229)",
+        "borderRadius": [
+          0,
+          0,
+          0,
+          0
+        ],
+        "padding": [
+          0,
+          0,
+          0,
+          0
+        ],
+        "fontSize": 16,
+        "fontWeight": 400,
+        "lineHeight": 24,
+        "letterSpacing": 0,
+        "opacity": 1,
+        "boxShadow": "none",
+        "textAlign": "start"
+      },
+      "children": []
+    },
+    {
+      "tag": "div",
+      "cls": "no-scrollbar flex min-h-0 flex-1 flex-col gap-0 overflow-auto group-data-[collapsible=icon]:overflow-hidden",
+      "text": "",
+      "rect": {
+        "x": 1,
+        "y": 66,
+        "w": 254,
+        "h": 269
+      },
+      "style": {
+        "backgroundColor": "rgba(0, 0, 0, 0)",
+        "color": "rgb(10, 10, 10)",
+        "borderWidth": [
+          0,
+          0,
+          0,
+          0
+        ],
+        "borderColor": "rgb(229, 229, 229)",
+        "borderRadius": [
+          0,
+          0,
+          0,
+          0
+        ],
+        "padding": [
+          0,
+          0,
+          0,
+          0
+        ],
+        "fontSize": 16,
+        "fontWeight": 400,
+        "lineHeight": 24,
+        "letterSpacing": 0,
+        "opacity": 1,
+        "boxShadow": "none",
+        "textAlign": "start"
+      },
+      "children": [
+        {
+          "tag": "div",
+          "cls": "relative flex w-full min-w-0 flex-col p-2",
+          "text": "",
+          "rect": {
+            "x": 1,
+            "y": 66,
+            "w": 254,
+            "h": 112
+          },
+          "style": {
+            "backgroundColor": "rgba(0, 0, 0, 0)",
+            "color": "rgb(10, 10, 10)",
+            "borderWidth": [
+              0,
+              0,
+              0,
+              0
+            ],
+            "borderColor": "rgb(229, 229, 229)",
+            "borderRadius": [
+              0,
+              0,
+              0,
+              0
+            ],
+            "padding": [
+              8,
+              8,
+              8,
+              8
+            ],
+            "fontSize": 16,
+            "fontWeight": 400,
+            "lineHeight": 24,
+            "letterSpacing": 0,
+            "opacity": 1,
+            "boxShadow": "none",
+            "textAlign": "start"
+          },
+          "children": [
+            {
+              "tag": "div",
+              "cls": "flex h-8 shrink-0 items-center rounded-md px-2 text-xs font-medium text-sidebar-foreground/70 ring-sidebar-ring outline-hidden transition-[margin,opacity] duration-200 ease-linear group-data-[collapsible=icon]:-mt-8 group-data-[collapsible=icon]:opacity-0 focus-visible:ring-2 [&>svg]:size-4 [&>svg]:shrink-0",
+              "text": "Platform",
+              "rect": {
+                "x": 9,
+                "y": 74,
+                "w": 238,
+                "h": 32
+              },
+              "style": {
+                "backgroundColor": "rgba(0, 0, 0, 0)",
+                "color": "rgba(10, 10, 10, 0.7)",
+                "borderWidth": [
+                  0,
+                  0,
+                  0,
+                  0
+                ],
+                "borderColor": "rgb(229, 229, 229)",
+                "borderRadius": [
+                  8,
+                  8,
+                  8,
+                  8
+                ],
+                "padding": [
+                  0,
+                  8,
+                  0,
+                  8
+                ],
+                "fontSize": 12,
+                "fontWeight": 500,
+                "lineHeight": 16,
+                "letterSpacing": 0,
+                "opacity": 1,
+                "boxShadow": "none",
+                "textAlign": "start"
+              },
+              "children": []
+            },
+            {
+              "tag": "div",
+              "cls": "w-full text-sm",
+              "text": "",
+              "rect": {
+                "x": 9,
+                "y": 106,
+                "w": 238,
+                "h": 64
+              },
+              "style": {
+                "backgroundColor": "rgba(0, 0, 0, 0)",
+                "color": "rgb(10, 10, 10)",
+                "borderWidth": [
+                  0,
+                  0,
+                  0,
+                  0
+                ],
+                "borderColor": "rgb(229, 229, 229)",
+                "borderRadius": [
+                  0,
+                  0,
+                  0,
+                  0
+                ],
+                "padding": [
+                  0,
+                  0,
+                  0,
+                  0
+                ],
+                "fontSize": 14,
+                "fontWeight": 400,
+                "lineHeight": 20,
+                "letterSpacing": 0,
+                "opacity": 1,
+                "boxShadow": "none",
+                "textAlign": "start"
+              },
+              "children": [
+                {
+                  "tag": "ul",
+                  "cls": "flex w-full min-w-0 flex-col gap-0",
+                  "text": "",
+                  "rect": {
+                    "x": 9,
+                    "y": 106,
+                    "w": 238,
+                    "h": 64
+                  },
+                  "style": {
+                    "backgroundColor": "rgba(0, 0, 0, 0)",
+                    "color": "rgb(10, 10, 10)",
+                    "borderWidth": [
+                      0,
+                      0,
+                      0,
+                      0
+                    ],
+                    "borderColor": "rgb(229, 229, 229)",
+                    "borderRadius": [
+                      0,
+                      0,
+                      0,
+                      0
+                    ],
+                    "padding": [
+                      0,
+                      0,
+                      0,
+                      0
+                    ],
+                    "fontSize": 14,
+                    "fontWeight": 400,
+                    "lineHeight": 20,
+                    "letterSpacing": 0,
+                    "opacity": 1,
+                    "boxShadow": "none",
+                    "textAlign": "start"
+                  },
+                  "children": [
+                    {
+                      "tag": "li",
+                      "cls": "group/menu-item relative",
+                      "text": "",
+                      "rect": {
+                        "x": 9,
+                        "y": 106,
+                        "w": 238,
+                        "h": 32
+                      },
+                      "style": {
+                        "backgroundColor": "rgba(0, 0, 0, 0)",
+                        "color": "rgb(10, 10, 10)",
+                        "borderWidth": [
+                          0,
+                          0,
+                          0,
+                          0
+                        ],
+                        "borderColor": "rgb(229, 229, 229)",
+                        "borderRadius": [
+                          0,
+                          0,
+                          0,
+                          0
+                        ],
+                        "padding": [
+                          0,
+                          0,
+                          0,
+                          0
+                        ],
+                        "fontSize": 14,
+                        "fontWeight": 400,
+                        "lineHeight": 20,
+                        "letterSpacing": 0,
+                        "opacity": 1,
+                        "boxShadow": "none",
+                        "textAlign": "start"
+                      },
+                      "children": [
+                        {
+                          "tag": "button",
+                          "cls": "peer/menu-button group/menu-button flex w-full items-center gap-2 overflow-hidden rounded-md p-2 text-left ring-sidebar-ring outline-hidden transition-[width,height,padding] group-has-data-[sidebar=menu-action]/menu-item:pr-8 group-data-[collapsible=icon]:size-8! group-data-[collapsible=icon]:p-2! focus-visible:ring-2 active:bg-sidebar-accent active:text-sidebar-accent-foreground disabled:pointer-events-none disabled:opacity-50 aria-disabled:pointer-events-none aria-disabled:opacity-50 data-open:hover:bg-sidebar-accent data-open:hover:text-sidebar-accent-foreground data-active:bg-sidebar-accent data-active:font-medium data-active:text-sidebar-accent-foreground [&_svg]:size-4 [&_svg]:shrink-0 [&>span:last-child]:truncate hover:bg-sidebar-accent hover:text-sidebar-accent-foreground h-8 text-sm",
+                          "text": "Inbox",
+                          "rect": {
+                            "x": 9,
+                            "y": 106,
+                            "w": 238,
+                            "h": 32
+                          },
+                          "style": {
+                            "backgroundColor": "rgb(245, 245, 245)",
+                            "color": "rgb(23, 23, 23)",
+                            "borderWidth": [
+                              0,
+                              0,
+                              0,
+                              0
+                            ],
+                            "borderColor": "rgb(229, 229, 229)",
+                            "borderRadius": [
+                              8,
+                              8,
+                              8,
+                              8
+                            ],
+                            "padding": [
+                              8,
+                              8,
+                              8,
+                              8
+                            ],
+                            "fontSize": 14,
+                            "fontWeight": 500,
+                            "lineHeight": 20,
+                            "letterSpacing": 0,
+                            "opacity": 1,
+                            "boxShadow": "none",
+                            "textAlign": "left"
+                          },
+                          "children": [
+                            {
+                              "tag": "svg",
+                              "cls": "lucide lucide-inbox",
+                              "text": "",
+                              "rect": {
+                                "x": 17,
+                                "y": 114,
+                                "w": 16,
+                                "h": 16
+                              },
+                              "style": {
+                                "backgroundColor": "rgba(0, 0, 0, 0)",
+                                "color": "rgb(23, 23, 23)",
+                                "borderWidth": [
+                                  0,
+                                  0,
+                                  0,
+                                  0
+                                ],
+                                "borderColor": "rgb(229, 229, 229)",
+                                "borderRadius": [
+                                  0,
+                                  0,
+                                  0,
+                                  0
+                                ],
+                                "padding": [
+                                  0,
+                                  0,
+                                  0,
+                                  0
+                                ],
+                                "fontSize": 14,
+                                "fontWeight": 500,
+                                "lineHeight": 20,
+                                "letterSpacing": 0,
+                                "opacity": 1,
+                                "boxShadow": "none",
+                                "textAlign": "left"
+                              },
+                              "children": [
+                                {
+                                  "tag": "polyline",
+                                  "cls": "",
+                                  "text": "",
+                                  "rect": {
+                                    "x": 18.333,
+                                    "y": 122,
+                                    "w": 13.333,
+                                    "h": 2
+                                  },
+                                  "style": {
+                                    "backgroundColor": "rgba(0, 0, 0, 0)",
+                                    "color": "rgb(23, 23, 23)",
+                                    "borderWidth": [
+                                      0,
+                                      0,
+                                      0,
+                                      0
+                                    ],
+                                    "borderColor": "rgb(229, 229, 229)",
+                                    "borderRadius": [
+                                      0,
+                                      0,
+                                      0,
+                                      0
+                                    ],
+                                    "padding": [
+                                      0,
+                                      0,
+                                      0,
+                                      0
+                                    ],
+                                    "fontSize": 14,
+                                    "fontWeight": 500,
+                                    "lineHeight": 20,
+                                    "letterSpacing": 0,
+                                    "opacity": 1,
+                                    "boxShadow": "none",
+                                    "textAlign": "left"
+                                  },
+                                  "children": []
+                                },
+                                {
+                                  "tag": "path",
+                                  "cls": "",
+                                  "text": "",
+                                  "rect": {
+                                    "x": 18.333,
+                                    "y": 116.667,
+                                    "w": 13.333,
+                                    "h": 10.667
+                                  },
+                                  "style": {
+                                    "backgroundColor": "rgba(0, 0, 0, 0)",
+                                    "color": "rgb(23, 23, 23)",
+                                    "borderWidth": [
+                                      0,
+                                      0,
+                                      0,
+                                      0
+                                    ],
+                                    "borderColor": "rgb(229, 229, 229)",
+                                    "borderRadius": [
+                                      0,
+                                      0,
+                                      0,
+                                      0
+                                    ],
+                                    "padding": [
+                                      0,
+                                      0,
+                                      0,
+                                      0
+                                    ],
+                                    "fontSize": 14,
+                                    "fontWeight": 500,
+                                    "lineHeight": 20,
+                                    "letterSpacing": 0,
+                                    "opacity": 1,
+                                    "boxShadow": "none",
+                                    "textAlign": "left"
+                                  },
+                                  "children": []
+                                }
+                              ]
+                            }
+                          ]
+                        },
+                        {
+                          "tag": "div",
+                          "cls": "pointer-events-none absolute right-1 flex h-5 min-w-5 items-center justify-center rounded-md px-1 text-xs font-medium text-sidebar-foreground tabular-nums select-none group-data-[collapsible=icon]:hidden peer-hover/menu-button:text-sidebar-accent-foreground peer-data-[size=default]/menu-button:top-1.5 peer-data-[size=lg]/menu-button:top-2.5 peer-data-[size=sm]/menu-button:top-1 peer-data-active/menu-button:text-sidebar-accent-foreground",
+                          "text": "4",
+                          "rect": {
+                            "x": 223,
+                            "y": 112,
+                            "w": 20,
+                            "h": 20
+                          },
+                          "style": {
+                            "backgroundColor": "rgba(0, 0, 0, 0)",
+                            "color": "rgb(23, 23, 23)",
+                            "borderWidth": [
+                              0,
+                              0,
+                              0,
+                              0
+                            ],
+                            "borderColor": "rgb(229, 229, 229)",
+                            "borderRadius": [
+                              8,
+                              8,
+                              8,
+                              8
+                            ],
+                            "padding": [
+                              0,
+                              4,
+                              0,
+                              4
+                            ],
+                            "fontSize": 12,
+                            "fontWeight": 500,
+                            "lineHeight": 16,
+                            "letterSpacing": 0,
+                            "opacity": 1,
+                            "boxShadow": "none",
+                            "textAlign": "start"
+                          },
+                          "children": []
+                        }
+                      ]
+                    },
+                    {
+                      "tag": "li",
+                      "cls": "group/menu-item relative",
+                      "text": "",
+                      "rect": {
+                        "x": 9,
+                        "y": 138,
+                        "w": 238,
+                        "h": 32
+                      },
+                      "style": {
+                        "backgroundColor": "rgba(0, 0, 0, 0)",
+                        "color": "rgb(10, 10, 10)",
+                        "borderWidth": [
+                          0,
+                          0,
+                          0,
+                          0
+                        ],
+                        "borderColor": "rgb(229, 229, 229)",
+                        "borderRadius": [
+                          0,
+                          0,
+                          0,
+                          0
+                        ],
+                        "padding": [
+                          0,
+                          0,
+                          0,
+                          0
+                        ],
+                        "fontSize": 14,
+                        "fontWeight": 400,
+                        "lineHeight": 20,
+                        "letterSpacing": 0,
+                        "opacity": 1,
+                        "boxShadow": "none",
+                        "textAlign": "start"
+                      },
+                      "children": [
+                        {
+                          "tag": "button",
+                          "cls": "peer/menu-button group/menu-button flex w-full items-center gap-2 overflow-hidden rounded-md p-2 text-left ring-sidebar-ring outline-hidden transition-[width,height,padding] group-has-data-[sidebar=menu-action]/menu-item:pr-8 group-data-[collapsible=icon]:size-8! group-data-[collapsible=icon]:p-2! focus-visible:ring-2 active:bg-sidebar-accent active:text-sidebar-accent-foreground disabled:pointer-events-none disabled:opacity-50 aria-disabled:pointer-events-none aria-disabled:opacity-50 data-open:hover:bg-sidebar-accent data-open:hover:text-sidebar-accent-foreground data-active:bg-sidebar-accent data-active:font-medium data-active:text-sidebar-accent-foreground [&_svg]:size-4 [&_svg]:shrink-0 [&>span:last-child]:truncate hover:bg-sidebar-accent hover:text-sidebar-accent-foreground h-8 text-sm",
+                          "text": "Calendar",
+                          "rect": {
+                            "x": 9,
+                            "y": 138,
+                            "w": 238,
+                            "h": 32
+                          },
+                          "style": {
+                            "backgroundColor": "rgba(0, 0, 0, 0)",
+                            "color": "rgb(10, 10, 10)",
+                            "borderWidth": [
+                              0,
+                              0,
+                              0,
+                              0
+                            ],
+                            "borderColor": "rgb(229, 229, 229)",
+                            "borderRadius": [
+                              8,
+                              8,
+                              8,
+                              8
+                            ],
+                            "padding": [
+                              8,
+                              8,
+                              8,
+                              8
+                            ],
+                            "fontSize": 14,
+                            "fontWeight": 400,
+                            "lineHeight": 20,
+                            "letterSpacing": 0,
+                            "opacity": 1,
+                            "boxShadow": "none",
+                            "textAlign": "left"
+                          },
+                          "children": [
+                            {
+                              "tag": "svg",
+                              "cls": "lucide lucide-calendar",
+                              "text": "",
+                              "rect": {
+                                "x": 17,
+                                "y": 146,
+                                "w": 16,
+                                "h": 16
+                              },
+                              "style": {
+                                "backgroundColor": "rgba(0, 0, 0, 0)",
+                                "color": "rgb(10, 10, 10)",
+                                "borderWidth": [
+                                  0,
+                                  0,
+                                  0,
+                                  0
+                                ],
+                                "borderColor": "rgb(229, 229, 229)",
+                                "borderRadius": [
+                                  0,
+                                  0,
+                                  0,
+                                  0
+                                ],
+                                "padding": [
+                                  0,
+                                  0,
+                                  0,
+                                  0
+                                ],
+                                "fontSize": 14,
+                                "fontWeight": 400,
+                                "lineHeight": 20,
+                                "letterSpacing": 0,
+                                "opacity": 1,
+                                "boxShadow": "none",
+                                "textAlign": "left"
+                              },
+                              "children": [
+                                {
+                                  "tag": "rect",
+                                  "cls": "",
+                                  "text": "",
+                                  "rect": {
+                                    "x": 19,
+                                    "y": 148,
+                                    "w": 12,
+                                    "h": 12
+                                  },
+                                  "style": {
+                                    "backgroundColor": "rgba(0, 0, 0, 0)",
+                                    "color": "rgb(10, 10, 10)",
+                                    "borderWidth": [
+                                      0,
+                                      0,
+                                      0,
+                                      0
+                                    ],
+                                    "borderColor": "rgb(229, 229, 229)",
+                                    "borderRadius": [
+                                      0,
+                                      0,
+                                      0,
+                                      0
+                                    ],
+                                    "padding": [
+                                      0,
+                                      0,
+                                      0,
+                                      0
+                                    ],
+                                    "fontSize": 14,
+                                    "fontWeight": 400,
+                                    "lineHeight": 20,
+                                    "letterSpacing": 0,
+                                    "opacity": 1,
+                                    "boxShadow": "none",
+                                    "textAlign": "left"
+                                  },
+                                  "children": []
+                                }
+                              ]
+                            }
+                          ]
+                        }
+                      ]
+                    }
+                  ]
+                }
+              ]
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "tag": "div",
+      "cls": "flex flex-col gap-2 p-2",
+      "text": "",
+      "rect": {
+        "x": 1,
+        "y": 335,
+        "w": 254,
+        "h": 48
+      },
+      "style": {
+        "backgroundColor": "rgba(0, 0, 0, 0)",
+        "color": "rgb(10, 10, 10)",
+        "borderWidth": [
+          0,
+          0,
+          0,
+          0
+        ],
+        "borderColor": "rgb(229, 229, 229)",
+        "borderRadius": [
+          0,
+          0,
+          0,
+          0
+        ],
+        "padding": [
+          8,
+          8,
+          8,
+          8
+        ],
+        "fontSize": 16,
+        "fontWeight": 400,
+        "lineHeight": 24,
+        "letterSpacing": 0,
+        "opacity": 1,
+        "boxShadow": "none",
+        "textAlign": "start"
+      },
+      "children": [
+        {
+          "tag": "ul",
+          "cls": "flex w-full min-w-0 flex-col gap-0",
+          "text": "",
+          "rect": {
+            "x": 9,
+            "y": 343,
+            "w": 238,
+            "h": 32
+          },
+          "style": {
+            "backgroundColor": "rgba(0, 0, 0, 0)",
+            "color": "rgb(10, 10, 10)",
+            "borderWidth": [
+              0,
+              0,
+              0,
+              0
+            ],
+            "borderColor": "rgb(229, 229, 229)",
+            "borderRadius": [
+              0,
+              0,
+              0,
+              0
+            ],
+            "padding": [
+              0,
+              0,
+              0,
+              0
+            ],
+            "fontSize": 16,
+            "fontWeight": 400,
+            "lineHeight": 24,
+            "letterSpacing": 0,
+            "opacity": 1,
+            "boxShadow": "none",
+            "textAlign": "start"
+          },
+          "children": [
+            {
+              "tag": "li",
+              "cls": "group/menu-item relative",
+              "text": "",
+              "rect": {
+                "x": 9,
+                "y": 343,
+                "w": 238,
+                "h": 32
+              },
+              "style": {
+                "backgroundColor": "rgba(0, 0, 0, 0)",
+                "color": "rgb(10, 10, 10)",
+                "borderWidth": [
+                  0,
+                  0,
+                  0,
+                  0
+                ],
+                "borderColor": "rgb(229, 229, 229)",
+                "borderRadius": [
+                  0,
+                  0,
+                  0,
+                  0
+                ],
+                "padding": [
+                  0,
+                  0,
+                  0,
+                  0
+                ],
+                "fontSize": 16,
+                "fontWeight": 400,
+                "lineHeight": 24,
+                "letterSpacing": 0,
+                "opacity": 1,
+                "boxShadow": "none",
+                "textAlign": "start"
+              },
+              "children": [
+                {
+                  "tag": "button",
+                  "cls": "peer/menu-button group/menu-button flex w-full items-center gap-2 overflow-hidden rounded-md p-2 text-left ring-sidebar-ring outline-hidden transition-[width,height,padding] group-has-data-[sidebar=menu-action]/menu-item:pr-8 group-data-[collapsible=icon]:size-8! group-data-[collapsible=icon]:p-2! focus-visible:ring-2 active:bg-sidebar-accent active:text-sidebar-accent-foreground disabled:pointer-events-none disabled:opacity-50 aria-disabled:pointer-events-none aria-disabled:opacity-50 data-open:hover:bg-sidebar-accent data-open:hover:text-sidebar-accent-foreground data-active:bg-sidebar-accent data-active:font-medium data-active:text-sidebar-accent-foreground [&_svg]:size-4 [&_svg]:shrink-0 [&>span:last-child]:truncate hover:bg-sidebar-accent hover:text-sidebar-accent-foreground h-8 text-sm",
+                  "text": "Settings",
+                  "rect": {
+                    "x": 9,
+                    "y": 343,
+                    "w": 238,
+                    "h": 32
+                  },
+                  "style": {
+                    "backgroundColor": "rgba(0, 0, 0, 0)",
+                    "color": "rgb(10, 10, 10)",
+                    "borderWidth": [
+                      0,
+                      0,
+                      0,
+                      0
+                    ],
+                    "borderColor": "rgb(229, 229, 229)",
+                    "borderRadius": [
+                      8,
+                      8,
+                      8,
+                      8
+                    ],
+                    "padding": [
+                      8,
+                      8,
+                      8,
+                      8
+                    ],
+                    "fontSize": 14,
+                    "fontWeight": 400,
+                    "lineHeight": 20,
+                    "letterSpacing": 0,
+                    "opacity": 1,
+                    "boxShadow": "none",
+                    "textAlign": "left"
+                  },
+                  "children": [
+                    {
+                      "tag": "svg",
+                      "cls": "lucide lucide-settings",
+                      "text": "",
+                      "rect": {
+                        "x": 17,
+                        "y": 351,
+                        "w": 16,
+                        "h": 16
+                      },
+                      "style": {
+                        "backgroundColor": "rgba(0, 0, 0, 0)",
+                        "color": "rgb(10, 10, 10)",
+                        "borderWidth": [
+                          0,
+                          0,
+                          0,
+                          0
+                        ],
+                        "borderColor": "rgb(229, 229, 229)",
+                        "borderRadius": [
+                          0,
+                          0,
+                          0,
+                          0
+                        ],
+                        "padding": [
+                          0,
+                          0,
+                          0,
+                          0
+                        ],
+                        "fontSize": 14,
+                        "fontWeight": 400,
+                        "lineHeight": 20,
+                        "letterSpacing": 0,
+                        "opacity": 1,
+                        "boxShadow": "none",
+                        "textAlign": "left"
+                      },
+                      "children": [
+                        {
+                          "tag": "path",
+                          "cls": "",
+                          "text": "",
+                          "rect": {
+                            "x": 19.029,
+                            "y": 352.345,
+                            "w": 11.942,
+                            "h": 13.309
+                          },
+                          "style": {
+                            "backgroundColor": "rgba(0, 0, 0, 0)",
+                            "color": "rgb(10, 10, 10)",
+                            "borderWidth": [
+                              0,
+                              0,
+                              0,
+                              0
+                            ],
+                            "borderColor": "rgb(229, 229, 229)",
+                            "borderRadius": [
+                              0,
+                              0,
+                              0,
+                              0
+                            ],
+                            "padding": [
+                              0,
+                              0,
+                              0,
+                              0
+                            ],
+                            "fontSize": 14,
+                            "fontWeight": 400,
+                            "lineHeight": 20,
+                            "letterSpacing": 0,
+                            "opacity": 1,
+                            "boxShadow": "none",
+                            "textAlign": "left"
+                          },
+                          "children": []
+                        },
+                        {
+                          "tag": "circle",
+                          "cls": "",
+                          "text": "",
+                          "rect": {
+                            "x": 23,
+                            "y": 357,
+                            "w": 4,
+                            "h": 4
+                          },
+                          "style": {
+                            "backgroundColor": "rgba(0, 0, 0, 0)",
+                            "color": "rgb(10, 10, 10)",
+                            "borderWidth": [
+                              0,
+                              0,
+                              0,
+                              0
+                            ],
+                            "borderColor": "rgb(229, 229, 229)",
+                            "borderRadius": [
+                              0,
+                              0,
+                              0,
+                              0
+                            ],
+                            "padding": [
+                              0,
+                              0,
+                              0,
+                              0
+                            ],
+                            "fontSize": 14,
+                            "fontWeight": 400,
+                            "lineHeight": 20,
+                            "letterSpacing": 0,
+                            "opacity": 1,
+                            "boxShadow": "none",
+                            "textAlign": "left"
+                          },
+                          "children": []
+                        }
+                      ]
+                    }
+                  ]
+                }
+              ]
+            }
+          ]
+        }
+      ]
+    }
+  ],
+  "pageRect": {
+    "x": 32,
+    "y": 32,
+    "w": 256,
+    "h": 384
+  },
+  "cropOffset": {
+    "x": 0,
+    "y": 0
+  }
+}

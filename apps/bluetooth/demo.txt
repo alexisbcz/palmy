@@ -1,0 +1,71 @@
+# Bluetooth applet demo.
+#
+# Everything here is read-only or additive: a bounded scan, keyboard
+# navigation, and the action menu opened but cancelled. Nothing is unpaired,
+# untrusted or disconnected.
+
+wait 1.6
+# The adapter panel, and the paired headset under the pointer.
+move 330 200
+wait 2.0
+
+# A real, bounded scan: bluetoothctl --timeout 9 scan on, on a worker thread.
+key s
+wait 2.0
+move 330 330
+wait 9.0
+wait 3.0
+
+# Keyboard navigation through what the scan found.
+key Down
+wait 1.4
+key Down
+wait 1.4
+key Down
+wait 1.8
+
+# The context menu, drawn in-window as an absolutely positioned overlay.
+key Return
+wait 1.8
+key Down
+wait 1.0
+key Up
+wait 1.2
+key Escape
+wait 1.0
+
+# Back to the paired headset, and open its actions.
+key Home
+wait 1.6
+key Return
+wait 1.8
+
+# Disconnect asks first. Escape cancels it, so the headset stays connected.
+key Return
+wait 2.6
+key Escape
+wait 1.2
+
+# Live text input: filter the lists.
+key Tab
+wait 0.35
+key Tab
+wait 0.35
+key Tab
+wait 0.8
+type 5
+wait 1.6
+type 2
+wait 1.8
+key BackSpace
+wait 0.5
+key BackSpace
+wait 1.2
+key Tab
+wait 0.8
+
+# Every command this applet has run against the real adapter.
+key l
+wait 3.2
+key Escape
+wait 1.4

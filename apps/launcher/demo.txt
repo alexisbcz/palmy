@@ -1,0 +1,85 @@
+# The launcher, driven from the keyboard. Modifiers cannot be synthesised by
+# the recorder, so the context menu is opened with F2 (Ctrl+K and the Menu key
+# do the same thing in normal use).
+wait 1.2
+move 400 230
+wait 0.9
+
+# Fuzzy search: type, watch it rank and highlight what matched.
+type term
+wait 1.4
+key Down
+wait 0.7
+key Down
+wait 0.7
+key Up
+wait 1.0
+
+key BackSpace
+wait 0.25
+key BackSpace
+wait 0.25
+key BackSpace
+wait 0.25
+key BackSpace
+wait 0.7
+type code
+wait 1.4
+
+# The context menu.
+key F2
+wait 1.5
+key Down
+wait 0.6
+key Down
+wait 0.8
+
+# Into the "Open With" submenu, and back out again.
+key Right
+wait 1.6
+key Left
+wait 1.0
+
+# Down to "Sort Results By", into its radio group, pick one.
+key Down
+wait 0.35
+key Down
+wait 0.35
+key Down
+wait 0.35
+key Down
+wait 0.35
+key Down
+wait 0.35
+key Down
+wait 0.35
+key Down
+wait 0.9
+key Right
+wait 1.4
+key Down
+wait 0.8
+key Return
+wait 1.8
+key Up
+wait 0.6
+key Return
+wait 1.2
+key Escape
+wait 0.8
+key Escape
+wait 1.4
+
+# Launch something, detached, and get out of the way.
+key BackSpace
+wait 0.25
+key BackSpace
+wait 0.25
+key BackSpace
+wait 0.25
+key BackSpace
+wait 0.7
+type files
+wait 1.6
+key Return
+wait 2.2

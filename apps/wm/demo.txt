@@ -1,0 +1,90 @@
+# An empty desktop, listening on its own Wayland socket.
+wait 1.6
+
+# Two palmy applications, launched inside the nested compositor.
+key F1
+wait 2.4
+key F3
+wait 2.6
+
+# Keyboard routed to the focused client: Tab moves focus inside todo.
+key Tab
+wait 0.5
+type typed straight into a nested client
+wait 0.7
+key Return
+wait 1.4
+
+# A real third-party terminal, running on our shm and our xdg-shell.
+key F4
+wait 3.4
+type ls apps/wm
+wait 0.6
+key Return
+wait 2.0
+
+# Real pointer motion over the frame buttons we draw.
+move 827 150
+wait 1.2
+move 801 150
+wait 1.2
+move 500 300
+wait 0.8
+
+# Focus and stacking: each press raises and focuses the next window.
+key F6
+wait 1.4
+key F6
+wait 1.6
+
+# The pointer reaches the client too, in surface-local coordinates.
+move 535 236
+wait 1.4
+
+# Window mode: the arrow keys move the focused window.
+key F10
+wait 0.8
+key Right
+wait 0.22
+key Right
+wait 0.22
+key Right
+wait 0.22
+key Right
+wait 0.22
+key Down
+wait 0.22
+key Down
+wait 0.22
+key Right
+wait 0.22
+key Right
+wait 1.2
+
+# Page Up and Page Down resize it: the client is reconfigured and redraws.
+key Prior
+wait 0.45
+key Prior
+wait 0.45
+key Prior
+wait 1.4
+key Next
+wait 0.45
+key Next
+wait 1.4
+key F10
+wait 0.8
+
+# Maximise and restore.
+key F11
+wait 1.8
+key F11
+wait 1.6
+
+# Close the focused window: xdg_toplevel.close goes to the client.
+key F8
+wait 2.0
+key F6
+wait 1.2
+key F8
+wait 2.4

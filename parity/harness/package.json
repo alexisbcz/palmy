@@ -1,0 +1,14 @@
+{
+  "name": "palmy-parity-harness",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Playwright capture half of the browser-vs-Odin pixel parity harness",
+  "scripts": {
+    "capture": "node capture.mjs",
+    "selftest": "node selftest/run.mjs"
+  },
+  "devDependencies": {
+    "playwright": "^1.63.0"
+  }
+}

@@ -1,0 +1,752 @@
+<!doctype html><meta charset="utf-8"><title>shadcn parity</title>
+<style>
+ :root{color-scheme:dark}
+ body{background:#09090b;color:#e4e4e7;font:14px/1.5 ui-sans-serif,system-ui;margin:0;padding:32px}
+ h1{font-size:20px;margin:0 0 4px}
+ .sub{color:#a1a1aa;margin-bottom:24px}
+ .stats{display:flex;gap:24px;flex-wrap:wrap;margin-bottom:28px}
+ .stat{background:#18181b;border:1px solid #27272a;border-radius:12px;padding:12px 16px;min-width:140px}
+ .stat b{display:block;font-size:22px}
+ .case{background:#18181b;border:1px solid #27272a;border-radius:12px;padding:12px;margin-bottom:14px}
+ .case h3{margin:0 0 6px;font-size:13px;font-family:ui-monospace,monospace}
+ .m{color:#a1a1aa;font-size:12px;margin-bottom:8px}
+ img{max-width:100%;image-rendering:pixelated;border-radius:6px;background:#000}
+ .bad{color:#fb7185}.good{color:#4ade80}
+</style>
+<h1>shadcn/ui parity</h1>
+<div class=sub>left: Chromium &middot; middle: palmy (Odin) &middot; right: difference heat map</div>
+<div class=stats>
+ <div class=stat><b>182</b>cases captured</div>
+ <div class=stat><b>182</b>rendered by palmy</div>
+ <div class=stat><b>2.95</b>mean abs error /255</div>
+ <div class=stat><b>90.4%</b>pixels within 2/255</div>
+ <div class=stat><b>0</b>size mismatches</div>
+</div><div class=case><h3>separator-horizontal</h3>
+  <div class=m>1216&times;2 
+   &middot; mae <b class="good">0.000</b>
+   &middot; within 2/255 100.00% &middot; within 8/255 100.00%</div>
+  <img loading=lazy src="diff/separator-horizontal.png"></div><div class=case><h3>separator-vertical</h3>
+  <div class=m>2&times;64 
+   &middot; mae <b class="good">0.000</b>
+   &middot; within 2/255 100.00% &middot; within 8/255 100.00%</div>
+  <img loading=lazy src="diff/separator-vertical.png"></div><div class=case><h3>aspect-ratio-16-9</h3>
+  <div class=m>320&times;180 
+   &middot; mae <b class="good">0.002</b>
+   &middot; within 2/255 99.98% &middot; within 8/255 100.00%</div>
+  <img loading=lazy src="diff/aspect-ratio-16-9.png"></div><div class=case><h3>aspect-ratio-1-1</h3>
+  <div class=m>192&times;192 
+   &middot; mae <b class="good">0.003</b>
+   &middot; within 2/255 99.98% &middot; within 8/255 100.00%</div>
+  <img loading=lazy src="diff/aspect-ratio-1-1.png"></div><div class=case><h3>skeleton-default</h3>
+  <div class=m>256&times;16 
+   &middot; mae <b class="good">0.007</b>
+   &middot; within 2/255 100.00% &middot; within 8/255 100.00%</div>
+  <img loading=lazy src="diff/skeleton-default.png"></div><div class=case><h3>resizable-vertical</h3>
+  <div class=m>1216&times;4 
+   &middot; mae <b class="good">0.012</b>
+   &middot; within 2/255 99.75% &middot; within 8/255 100.00%</div>
+  <img loading=lazy src="diff/resizable-vertical.png"></div><div class=case><h3>slider-default</h3>
+  <div class=m>1216&times;4 
+   &middot; mae <b class="good">0.034</b>
+   &middot; within 2/255 99.63% &middot; within 8/255 99.84%</div>
+  <img loading=lazy src="diff/slider-default.png"></div><div class=case><h3>skeleton-circle</h3>
+  <div class=m>40&times;40 
+   &middot; mae <b class="good">0.046</b>
+   &middot; within 2/255 100.00% &middot; within 8/255 100.00%</div>
+  <img loading=lazy src="diff/skeleton-circle.png"></div><div class=case><h3>slider-range</h3>
+  <div class=m>1216&times;4 
+   &middot; mae <b class="good">0.060</b>
+   &middot; within 2/255 99.34% &middot; within 8/255 99.92%</div>
+  <img loading=lazy src="diff/slider-range.png"></div><div class=case><h3>chart-line</h3>
+  <div class=m>380&times;220 
+   &middot; mae <b class="good">0.130</b>
+   &middot; within 2/255 98.97% &middot; within 8/255 99.60%</div>
+  <img loading=lazy src="diff/chart-line.png"></div><div class=case><h3>direction-rtl</h3>
+  <div class=m>1216&times;4 
+   &middot; mae <b class="good">0.178</b>
+   &middot; within 2/255 99.42% &middot; within 8/255 99.42%</div>
+  <img loading=lazy src="diff/direction-rtl.png"></div><div class=case><h3>sheet-right</h3>
+  <div class=m>384&times;800 
+   &middot; mae <b class="good">0.253</b>
+   &middot; within 2/255 99.43% &middot; within 8/255 99.54%</div>
+  <img loading=lazy src="diff/sheet-right.png"></div><div class=case><h3>drawer-right</h3>
+  <div class=m>384&times;800 
+   &middot; mae <b class="good">0.266</b>
+   &middot; within 2/255 99.39% &middot; within 8/255 99.50%</div>
+  <img loading=lazy src="diff/drawer-right.png"></div><div class=case><h3>input-group-textarea</h3>
+  <div class=m>288&times;104 
+   &middot; mae <b class="good">0.279</b>
+   &middot; within 2/255 98.23% &middot; within 8/255 98.91%</div>
+  <img loading=lazy src="diff/input-group-textarea.png"></div><div class=case><h3>chart-bar</h3>
+  <div class=m>380&times;220 
+   &middot; mae <b class="good">0.303</b>
+   &middot; within 2/255 98.44% &middot; within 8/255 98.94%</div>
+  <img loading=lazy src="diff/chart-bar.png"></div><div class=case><h3>carousel-default</h3>
+  <div class=m>288&times;44 
+   &middot; mae <b class="good">0.325</b>
+   &middot; within 2/255 98.24% &middot; within 8/255 99.00%</div>
+  <img loading=lazy src="diff/carousel-default.png"></div><div class=case><h3>sidebar-submenu</h3>
+  <div class=m>256&times;288 
+   &middot; mae <b class="good">0.330</b>
+   &middot; within 2/255 98.70% &middot; within 8/255 98.97%</div>
+  <img loading=lazy src="diff/sidebar-submenu.png"></div><div class=case><h3>resizable-horizontal</h3>
+  <div class=m>1216&times;38 
+   &middot; mae <b class="good">0.345</b>
+   &middot; within 2/255 98.82% &middot; within 8/255 99.13%</div>
+  <img loading=lazy src="diff/resizable-horizontal.png"></div><div class=case><h3>sheet-bottom</h3>
+  <div class=m>1280&times;159 
+   &middot; mae <b class="good">0.379</b>
+   &middot; within 2/255 99.13% &middot; within 8/255 99.30%</div>
+  <img loading=lazy src="diff/sheet-bottom.png"></div><div class=case><h3>empty-icon</h3>
+  <div class=m>1216&times;150 
+   &middot; mae <b class="good">0.436</b>
+   &middot; within 2/255 96.64% &middot; within 8/255 97.10%</div>
+  <img loading=lazy src="diff/empty-icon.png"></div><div class=case><h3>slider-vertical</h3>
+  <div class=m>4&times;160 
+   &middot; mae <b class="good">0.461</b>
+   &middot; within 2/255 96.25% &middot; within 8/255 97.19%</div>
+  <img loading=lazy src="diff/slider-vertical.png"></div><div class=case><h3>textarea-default</h3>
+  <div class=m>288&times;64 
+   &middot; mae <b class="good">0.491</b>
+   &middot; within 2/255 97.49% &middot; within 8/255 98.40%</div>
+  <img loading=lazy src="diff/textarea-default.png"></div><div class=case><h3>textarea-disabled</h3>
+  <div class=m>288&times;64 
+   &middot; mae <b class="good">0.491</b>
+   &middot; within 2/255 97.31% &middot; within 8/255 98.35%</div>
+  <img loading=lazy src="diff/textarea-disabled.png"></div><div class=case><h3>progress-default</h3>
+  <div class=m>288&times;4 
+   &middot; mae <b class="good">0.535</b>
+   &middot; within 2/255 99.13% &middot; within 8/255 99.13%</div>
+  <img loading=lazy src="diff/progress-default.png"></div><div class=case><h3>checkbox-default@hover</h3>
+  <div class=m>16&times;16 
+   &middot; mae <b class="good">0.563</b>
+   &middot; within 2/255 87.50% &middot; within 8/255 100.00%</div>
+  <img loading=lazy src="diff/checkbox-default@hover.png"></div><div class=case><h3>checkbox-default</h3>
+  <div class=m>16&times;16 
+   &middot; mae <b class="good">0.563</b>
+   &middot; within 2/255 87.50% &middot; within 8/255 100.00%</div>
+  <img loading=lazy src="diff/checkbox-default.png"></div><div class=case><h3>pagination-default</h3>
+  <div class=m>1216&times;32 
+   &middot; mae <b class="good">0.566</b>
+   &middot; within 2/255 97.81% &middot; within 8/255 98.40%</div>
+  <img loading=lazy src="diff/pagination-default.png"></div><div class=case><h3>input-group-icon</h3>
+  <div class=m>288&times;32 
+   &middot; mae <b class="good">0.581</b>
+   &middot; within 2/255 95.76% &middot; within 8/255 97.59%</div>
+  <img loading=lazy src="diff/input-group-icon.png"></div><div class=case><h3>input-disabled</h3>
+  <div class=m>288&times;32 
+   &middot; mae <b class="good">0.601</b>
+   &middot; within 2/255 96.57% &middot; within 8/255 98.09%</div>
+  <img loading=lazy src="diff/input-disabled.png"></div><div class=case><h3>drawer-bottom</h3>
+  <div class=m>1280&times;111 
+   &middot; mae <b class="good">0.612</b>
+   &middot; within 2/255 98.62% &middot; within 8/255 98.86%</div>
+  <img loading=lazy src="diff/drawer-bottom.png"></div><div class=case><h3>sidebar-default</h3>
+  <div class=m>256&times;384 
+   &middot; mae <b class="good">0.632</b>
+   &middot; within 2/255 98.00% &middot; within 8/255 98.25%</div>
+  <img loading=lazy src="diff/sidebar-default.png"></div><div class=case><h3>questionnaire-input</h3>
+  <div class=m>384&times;118 
+   &middot; mae <b class="good">0.696</b>
+   &middot; within 2/255 97.13% &middot; within 8/255 97.85%</div>
+  <img loading=lazy src="diff/questionnaire-input.png"></div><div class=case><h3>accordion-closed</h3>
+  <div class=m>320&times;86 
+   &middot; mae <b class="good">0.733</b>
+   &middot; within 2/255 97.53% &middot; within 8/255 98.01%</div>
+  <img loading=lazy src="diff/accordion-closed.png"></div><div class=case><h3>questionnaire-choices</h3>
+  <div class=m>384&times;324 
+   &middot; mae <b class="good">0.747</b>
+   &middot; within 2/255 96.94% &middot; within 8/255 97.70%</div>
+  <img loading=lazy src="diff/questionnaire-choices.png"></div><div class=case><h3>kbd-default</h3>
+  <div class=m>20&times;20 
+   &middot; mae <b class="good">0.805</b>
+   &middot; within 2/255 93.50% &middot; within 8/255 95.00%</div>
+  <img loading=lazy src="diff/kbd-default.png"></div><div class=case><h3>toast-default</h3>
+  <div class=m>384&times;78 
+   &middot; mae <b class="good">0.824</b>
+   &middot; within 2/255 95.51% &middot; within 8/255 96.97%</div>
+  <img loading=lazy src="diff/toast-default.png"></div><div class=case><h3>input-placeholder</h3>
+  <div class=m>288&times;32 
+   &middot; mae <b class="good">0.844</b>
+   &middot; within 2/255 93.93% &middot; within 8/255 96.44%</div>
+  <img loading=lazy src="diff/input-placeholder.png"></div><div class=case><h3>empty-default</h3>
+  <div class=m>1216&times;146 
+   &middot; mae <b class="good">0.855</b>
+   &middot; within 2/255 96.14% &middot; within 8/255 96.50%</div>
+  <img loading=lazy src="diff/empty-default.png"></div><div class=case><h3>switch-off@hover</h3>
+  <div class=m>32&times;20 
+   &middot; mae <b class="good">0.863</b>
+   &middot; within 2/255 85.63% &middot; within 8/255 100.00%</div>
+  <img loading=lazy src="diff/switch-off@hover.png"></div><div class=case><h3>switch-off</h3>
+  <div class=m>32&times;20 
+   &middot; mae <b class="good">0.863</b>
+   &middot; within 2/255 85.63% &middot; within 8/255 100.00%</div>
+  <img loading=lazy src="diff/switch-off.png"></div><div class=case><h3>input-invalid</h3>
+  <div class=m>288&times;32 
+   &middot; mae <b class="good">0.894</b>
+   &middot; within 2/255 96.67% &middot; within 8/255 97.33%</div>
+  <img loading=lazy src="diff/input-invalid.png"></div><div class=case><h3>table-footer</h3>
+  <div class=m>480&times;188 
+   &middot; mae <b class="good">0.922</b>
+   &middot; within 2/255 96.74% &middot; within 8/255 97.25%</div>
+  <img loading=lazy src="diff/table-footer.png"></div><div class=case><h3>marker-border</h3>
+  <div class=m>288&times;30 
+   &middot; mae <b class="good">0.931</b>
+   &middot; within 2/255 93.65% &middot; within 8/255 95.61%</div>
+  <img loading=lazy src="diff/marker-border.png"></div><div class=case><h3>collapsible-closed</h3>
+  <div class=m>288&times;32 
+   &middot; mae <b class="good">0.961</b>
+   &middot; within 2/255 96.17% &middot; within 8/255 97.45%</div>
+  <img loading=lazy src="diff/collapsible-closed.png"></div><div class=case><h3>field-group</h3>
+  <div class=m>320&times;164 
+   &middot; mae <b class="good">0.982</b>
+   &middot; within 2/255 94.80% &middot; within 8/255 98.05%</div>
+  <img loading=lazy src="diff/field-group.png"></div><div class=case><h3>message-start</h3>
+  <div class=m>320&times;68 
+   &middot; mae <b class="good">1.002</b>
+   &middot; within 2/255 96.24% &middot; within 8/255 96.93%</div>
+  <img loading=lazy src="diff/message-start.png"></div><div class=case><h3>combobox-open</h3>
+  <div class=m>223&times;120 
+   &middot; mae <b class="good">1.013</b>
+   &middot; within 2/255 96.12% &middot; within 8/255 97.00%</div>
+  <img loading=lazy src="diff/combobox-open.png"></div><div class=case><h3>attachment-vertical</h3>
+  <div class=m>120&times;164 
+   &middot; mae <b class="good">1.017</b>
+   &middot; within 2/255 95.26% &middot; within 8/255 96.42%</div>
+  <img loading=lazy src="diff/attachment-vertical.png"></div><div class=case><h3>message-scroller-default</h3>
+  <div class=m>320&times;192 
+   &middot; mae <b class="good">1.023</b>
+   &middot; within 2/255 96.74% &middot; within 8/255 97.24%</div>
+  <img loading=lazy src="diff/message-scroller-default.png"></div><div class=case><h3>avatar-lg</h3>
+  <div class=m>40&times;40 
+   &middot; mae <b class="good">1.029</b>
+   &middot; within 2/255 93.81% &middot; within 8/255 96.44%</div>
+  <img loading=lazy src="diff/avatar-lg.png"></div><div class=case><h3>combobox-empty</h3>
+  <div class=m>223&times;36 
+   &middot; mae <b class="good">1.039</b>
+   &middot; within 2/255 94.32% &middot; within 8/255 96.34%</div>
+  <img loading=lazy src="diff/combobox-empty.png"></div><div class=case><h3>bubble-secondary</h3>
+  <div class=m>256&times;42 
+   &middot; mae <b class="good">1.053</b>
+   &middot; within 2/255 96.22% &middot; within 8/255 96.78%</div>
+  <img loading=lazy src="diff/bubble-secondary.png"></div><div class=case><h3>accordion-default</h3>
+  <div class=m>320&times;116 
+   &middot; mae <b class="good">1.068</b>
+   &middot; within 2/255 96.50% &middot; within 8/255 97.11%</div>
+  <img loading=lazy src="diff/accordion-default.png"></div><div class=case><h3>select-open</h3>
+  <div class=m>224&times;125 
+   &middot; mae <b class="good">1.140</b>
+   &middot; within 2/255 96.30% &middot; within 8/255 97.13%</div>
+  <img loading=lazy src="diff/select-open.png"></div><div class=case><h3>input-group-button</h3>
+  <div class=m>288&times;32 
+   &middot; mae <b class="good">1.169</b>
+   &middot; within 2/255 93.42% &middot; within 8/255 95.65%</div>
+  <img loading=lazy src="diff/input-group-button.png"></div><div class=case><h3>toggle-group-default</h3>
+  <div class=m>124&times;32 
+   &middot; mae <b class="good">1.172</b>
+   &middot; within 2/255 95.59% &middot; within 8/255 96.50%</div>
+  <img loading=lazy src="diff/toggle-group-default.png"></div><div class=case><h3>select-trigger-sm</h3>
+  <div class=m>224&times;28 
+   &middot; mae <b class="good">1.181</b>
+   &middot; within 2/255 93.72% &middot; within 8/255 95.76%</div>
+  <img loading=lazy src="diff/select-trigger-sm.png"></div><div class=case><h3>scroll-area-default</h3>
+  <div class=m>256&times;160 
+   &middot; mae <b class="good">1.204</b>
+   &middot; within 2/255 95.94% &middot; within 8/255 96.67%</div>
+  <img loading=lazy src="diff/scroll-area-default.png"></div><div class=case><h3>select-trigger</h3>
+  <div class=m>224&times;32 
+   &middot; mae <b class="good">1.224</b>
+   &middot; within 2/255 94.78% &middot; within 8/255 96.75%</div>
+  <img loading=lazy src="diff/select-trigger.png"></div><div class=case><h3>popover-header</h3>
+  <div class=m>288&times;104 
+   &middot; mae <b class="good">1.233</b>
+   &middot; within 2/255 94.24% &middot; within 8/255 95.82%</div>
+  <img loading=lazy src="diff/popover-header.png"></div><div class=case><h3>accordion-multiple</h3>
+  <div class=m>320&times;146 
+   &middot; mae <b class="good">1.246</b>
+   &middot; within 2/255 95.87% &middot; within 8/255 96.55%</div>
+  <img loading=lazy src="diff/accordion-multiple.png"></div><div class=case><h3>alert-default</h3>
+  <div class=m>384&times;60 
+   &middot; mae <b class="good">1.260</b>
+   &middot; within 2/255 93.97% &middot; within 8/255 95.74%</div>
+  <img loading=lazy src="diff/alert-default.png"></div><div class=case><h3>toggle-group-vertical</h3>
+  <div class=m>36&times;72 
+   &middot; mae <b class="good">1.266</b>
+   &middot; within 2/255 95.53% &middot; within 8/255 96.53%</div>
+  <img loading=lazy src="diff/toggle-group-vertical.png"></div><div class=case><h3>item-muted</h3>
+  <div class=m>320&times;68 
+   &middot; mae <b class="good">1.282</b>
+   &middot; within 2/255 96.74% &middot; within 8/255 97.19%</div>
+  <img loading=lazy src="diff/item-muted.png"></div><div class=case><h3>command-dialog</h3>
+  <div class=m>384&times;145 
+   &middot; mae <b class="good">1.310</b>
+   &middot; within 2/255 93.04% &middot; within 8/255 96.43%</div>
+  <img loading=lazy src="diff/command-dialog.png"></div><div class=case><h3>bubble-outline</h3>
+  <div class=m>256&times;42 
+   &middot; mae <b class="good">1.319</b>
+   &middot; within 2/255 94.66% &middot; within 8/255 96.31%</div>
+  <img loading=lazy src="diff/bubble-outline.png"></div><div class=case><h3>dropdown-menu-open</h3>
+  <div class=m>192&times;125 
+   &middot; mae <b class="good">1.370</b>
+   &middot; within 2/255 94.00% &middot; within 8/255 95.38%</div>
+  <img loading=lazy src="diff/dropdown-menu-open.png"></div><div class=case><h3>alert-destructive</h3>
+  <div class=m>384&times;60 
+   &middot; mae <b class="good">1.390</b>
+   &middot; within 2/255 93.59% &middot; within 8/255 94.78%</div>
+  <img loading=lazy src="diff/alert-destructive.png"></div><div class=case><h3>input-default</h3>
+  <div class=m>288&times;32 
+   &middot; mae <b class="good">1.413</b>
+   &middot; within 2/255 94.10% &middot; within 8/255 95.75%</div>
+  <img loading=lazy src="diff/input-default.png"></div><div class=case><h3>item-default</h3>
+  <div class=m>320&times;68 
+   &middot; mae <b class="good">1.462</b>
+   &middot; within 2/255 96.15% &middot; within 8/255 96.77%</div>
+  <img loading=lazy src="diff/item-default.png"></div><div class=case><h3>table-default</h3>
+  <div class=m>480&times;152 
+   &middot; mae <b class="good">1.470</b>
+   &middot; within 2/255 95.39% &middot; within 8/255 96.03%</div>
+  <img loading=lazy src="diff/table-default.png"></div><div class=case><h3>alert-with-icon</h3>
+  <div class=m>384&times;60 
+   &middot; mae <b class="good">1.499</b>
+   &middot; within 2/255 92.83% &middot; within 8/255 94.79%</div>
+  <img loading=lazy src="diff/alert-with-icon.png"></div><div class=case><h3>input-placeholder@typed</h3>
+  <div class=m>288&times;32 
+   &middot; mae <b class="good">1.508</b>
+   &middot; within 2/255 96.53% &middot; within 8/255 97.18%</div>
+  <img loading=lazy src="diff/input-placeholder@typed.png"></div><div class=case><h3>input-otp-separator</h3>
+  <div class=m>208&times;32 
+   &middot; mae <b class="good">1.522</b>
+   &middot; within 2/255 93.31% &middot; within 8/255 95.36%</div>
+  <img loading=lazy src="diff/input-otp-separator.png"></div><div class=case><h3>navigation-menu-open</h3>
+  <div class=m>225&times;80 
+   &middot; mae <b class="good">1.537</b>
+   &middot; within 2/255 94.61% &middot; within 8/255 95.51%</div>
+  <img loading=lazy src="diff/navigation-menu-open.png"></div><div class=case><h3>marker-separator</h3>
+  <div class=m>288&times;20 
+   &middot; mae <b class="good">1.539</b>
+   &middot; within 2/255 88.75% &middot; within 8/255 89.91%</div>
+  <img loading=lazy src="diff/marker-separator.png"></div><div class=case><h3>attachment-xs</h3>
+  <div class=m>160&times;38 
+   &middot; mae <b class="good">1.540</b>
+   &middot; within 2/255 92.12% &middot; within 8/255 94.89%</div>
+  <img loading=lazy src="diff/attachment-xs.png"></div><div class=case><h3>item-outline</h3>
+  <div class=m>320&times;68 
+   &middot; mae <b class="good">1.565</b>
+   &middot; within 2/255 90.45% &middot; within 8/255 96.89%</div>
+  <img loading=lazy src="diff/item-outline.png"></div><div class=case><h3>progress-label</h3>
+  <div class=m>288&times;36 
+   &middot; mae <b class="good">1.568</b>
+   &middot; within 2/255 94.23% &middot; within 8/255 95.44%</div>
+  <img loading=lazy src="diff/progress-label.png"></div><div class=case><h3>bubble-group</h3>
+  <div class=m>288&times;90 
+   &middot; mae <b class="good">1.603</b>
+   &middot; within 2/255 95.14% &middot; within 8/255 95.84%</div>
+  <img loading=lazy src="diff/bubble-group.png"></div><div class=case><h3>dropdown-menu-radio</h3>
+  <div class=m>192&times;92 
+   &middot; mae <b class="good">1.612</b>
+   &middot; within 2/255 95.39% &middot; within 8/255 96.42%</div>
+  <img loading=lazy src="diff/dropdown-menu-radio.png"></div><div class=case><h3>input-group-text</h3>
+  <div class=m>288&times;32 
+   &middot; mae <b class="good">1.644</b>
+   &middot; within 2/255 91.17% &middot; within 8/255 93.75%</div>
+  <img loading=lazy src="diff/input-group-text.png"></div><div class=case><h3>toast-action</h3>
+  <div class=m>384&times;78 
+   &middot; mae <b class="good">1.650</b>
+   &middot; within 2/255 94.09% &middot; within 8/255 95.79%</div>
+  <img loading=lazy src="diff/toast-action.png"></div><div class=case><h3>collapsible-open</h3>
+  <div class=m>288&times;60 
+   &middot; mae <b class="good">1.652</b>
+   &middot; within 2/255 94.14% &middot; within 8/255 95.34%</div>
+  <img loading=lazy src="diff/collapsible-open.png"></div><div class=case><h3>tabs-vertical</h3>
+  <div class=m>384&times;58 
+   &middot; mae <b class="good">1.690</b>
+   &middot; within 2/255 93.56% &middot; within 8/255 95.17%</div>
+  <img loading=lazy src="diff/tabs-vertical.png"></div><div class=case><h3>tabs-default</h3>
+  <div class=m>384&times;60 
+   &middot; mae <b class="good">1.725</b>
+   &middot; within 2/255 93.09% &middot; within 8/255 94.97%</div>
+  <img loading=lazy src="diff/tabs-default.png"></div><div class=case><h3>radio-group-default</h3>
+  <div class=m>288&times;48 
+   &middot; mae <b class="good">1.737</b>
+   &middot; within 2/255 96.48% &middot; within 8/255 97.04%</div>
+  <img loading=lazy src="diff/radio-group-default.png"></div><div class=case><h3>radio-group-disabled</h3>
+  <div class=m>288&times;48 
+   &middot; mae <b class="good">1.737</b>
+   &middot; within 2/255 96.48% &middot; within 8/255 97.04%</div>
+  <img loading=lazy src="diff/radio-group-disabled.png"></div><div class=case><h3>context-menu-open</h3>
+  <div class=m>144&times;125 
+   &middot; mae <b class="good">1.762</b>
+   &middot; within 2/255 91.95% &middot; within 8/255 93.79%</div>
+  <img loading=lazy src="diff/context-menu-open.png"></div><div class=case><h3>switch-off@focus</h3>
+  <div class=m>32&times;20 
+   &middot; mae <b class="good">1.766</b>
+   &middot; within 2/255 79.69% &middot; within 8/255 92.66%</div>
+  <img loading=lazy src="diff/switch-off@focus.png"></div><div class=case><h3>field-set</h3>
+  <div class=m>320&times;122 
+   &middot; mae <b class="good">1.778</b>
+   &middot; within 2/255 92.59% &middot; within 8/255 96.64%</div>
+  <img loading=lazy src="diff/field-set.png"></div><div class=case><h3>input-placeholder@focus</h3>
+  <div class=m>288&times;32 
+   &middot; mae <b class="good">1.794</b>
+   &middot; within 2/255 93.39% &middot; within 8/255 94.82%</div>
+  <img loading=lazy src="diff/input-placeholder@focus.png"></div><div class=case><h3>dropdown-menu-checkbox</h3>
+  <div class=m>192&times;116 
+   &middot; mae <b class="good">1.834</b>
+   &middot; within 2/255 95.10% &middot; within 8/255 96.14%</div>
+  <img loading=lazy src="diff/dropdown-menu-checkbox.png"></div><div class=case><h3>input-otp-default</h3>
+  <div class=m>192&times;32 
+   &middot; mae <b class="good">1.852</b>
+   &middot; within 2/255 93.13% &middot; within 8/255 94.78%</div>
+  <img loading=lazy src="diff/input-otp-default.png"></div><div class=case><h3>calendar-dropdown</h3>
+  <div class=m>212&times;260 
+   &middot; mae <b class="good">1.879</b>
+   &middot; within 2/255 93.18% &middot; within 8/255 94.41%</div>
+  <img loading=lazy src="diff/calendar-dropdown.png"></div><div class=case><h3>calendar-default</h3>
+  <div class=m>212&times;260 
+   &middot; mae <b class="good">1.908</b>
+   &middot; within 2/255 93.12% &middot; within 8/255 94.35%</div>
+  <img loading=lazy src="diff/calendar-default.png"></div><div class=case><h3>calendar-range</h3>
+  <div class=m>212&times;260 
+   &middot; mae <b class="good">1.955</b>
+   &middot; within 2/255 93.07% &middot; within 8/255 94.30%</div>
+  <img loading=lazy src="diff/calendar-range.png"></div><div class=case><h3>checkbox-default@focus</h3>
+  <div class=m>16&times;16 
+   &middot; mae <b class="good">1.984</b>
+   &middot; within 2/255 82.81% &middot; within 8/255 85.94%</div>
+  <img loading=lazy src="diff/checkbox-default@focus.png"></div><div class=case><h3>dialog-default</h3>
+  <div class=m>384&times;124 
+   &middot; mae <b class="good">1.986</b>
+   &middot; within 2/255 94.17% &middot; within 8/255 95.25%</div>
+  <img loading=lazy src="diff/dialog-default.png"></div><div class=case><h3>combobox-chips</h3>
+  <div class=m>288&times;32 
+   &middot; mae <b class="good">2.007</b>
+   &middot; within 2/255 89.45% &middot; within 8/255 94.30%</div>
+  <img loading=lazy src="diff/combobox-chips.png"></div><div class=case><h3>message-end</h3>
+  <div class=m>320&times;68 
+   &middot; mae <b class="good">2.063</b>
+   &middot; within 2/255 95.49% &middot; within 8/255 96.13%</div>
+  <img loading=lazy src="diff/message-end.png"></div><div class=case><h3>command-default</h3>
+  <div class=m>320&times;214 
+   &middot; mae <b class="good">2.077</b>
+   &middot; within 2/255 92.05% &middot; within 8/255 95.43%</div>
+  <img loading=lazy src="diff/command-default.png"></div><div class=case><h3>menubar-open</h3>
+  <div class=m>144&times;101 
+   &middot; mae <b class="good">2.091</b>
+   &middot; within 2/255 92.56% &middot; within 8/255 94.00%</div>
+  <img loading=lazy src="diff/menubar-open.png"></div><div class=case><h3>avatar-group</h3>
+  <div class=m>104&times;32 
+   &middot; mae <b class="good">2.095</b>
+   &middot; within 2/255 83.32% &middot; within 8/255 93.00%</div>
+  <img loading=lazy src="diff/avatar-group.png"></div><div class=case><h3>hover-card-open</h3>
+  <div class=m>256&times;60 
+   &middot; mae <b class="good">2.099</b>
+   &middot; within 2/255 91.24% &middot; within 8/255 93.50%</div>
+  <img loading=lazy src="diff/hover-card-open.png"></div><div class=case><h3>kbd-group</h3>
+  <div class=m>94&times;20 
+   &middot; mae <b class="good">2.155</b>
+   &middot; within 2/255 82.13% &middot; within 8/255 89.57%</div>
+  <img loading=lazy src="diff/kbd-group.png"></div><div class=case><h3>attachment-error</h3>
+  <div class=m>160&times;58 
+   &middot; mae <b class="good">2.197</b>
+   &middot; within 2/255 89.84% &middot; within 8/255 92.75%</div>
+  <img loading=lazy src="diff/attachment-error.png"></div><div class=case><h3>toggle-pressed</h3>
+  <div class=m>36&times;32 
+   &middot; mae <b class="good">2.200</b>
+   &middot; within 2/255 93.32% &middot; within 8/255 94.44%</div>
+  <img loading=lazy src="diff/toggle-pressed.png"></div><div class=case><h3>toggle-default</h3>
+  <div class=m>36&times;32 
+   &middot; mae <b class="good">2.237</b>
+   &middot; within 2/255 93.75% &middot; within 8/255 94.44%</div>
+  <img loading=lazy src="diff/toggle-default.png"></div><div class=case><h3>toggle-outline</h3>
+  <div class=m>38&times;32 
+   &middot; mae <b class="good">2.279</b>
+   &middot; within 2/255 85.69% &middot; within 8/255 93.01%</div>
+  <img loading=lazy src="diff/toggle-outline.png"></div><div class=case><h3>attachment-default</h3>
+  <div class=m>166&times;58 
+   &middot; mae <b class="good">2.288</b>
+   &middot; within 2/255 89.61% &middot; within 8/255 93.58%</div>
+  <img loading=lazy src="diff/attachment-default.png"></div><div class=case><h3>bubble-default</h3>
+  <div class=m>256&times;42 
+   &middot; mae <b class="good">2.288</b>
+   &middot; within 2/255 95.34% &middot; within 8/255 95.85%</div>
+  <img loading=lazy src="diff/bubble-default.png"></div><div class=case><h3>button-icon</h3>
+  <div class=m>32&times;32 
+   &middot; mae <b class="good">2.366</b>
+   &middot; within 2/255 87.99% &middot; within 8/255 95.31%</div>
+  <img loading=lazy src="diff/button-icon.png"></div><div class=case><h3>toggle-group-outline</h3>
+  <div class=m>68&times;32 
+   &middot; mae <b class="good">2.389</b>
+   &middot; within 2/255 84.56% &middot; within 8/255 89.38%</div>
+  <img loading=lazy src="diff/toggle-group-outline.png"></div><div class=case><h3>avatar-default</h3>
+  <div class=m>32&times;32 
+   &middot; mae <b class="good">2.453</b>
+   &middot; within 2/255 78.91% &middot; within 8/255 91.99%</div>
+  <img loading=lazy src="diff/avatar-default.png"></div><div class=case><h3>context-menu-checkbox</h3>
+  <div class=m>144&times;101 
+   &middot; mae <b class="good">2.539</b>
+   &middot; within 2/255 91.94% &middot; within 8/255 93.82%</div>
+  <img loading=lazy src="diff/context-menu-checkbox.png"></div><div class=case><h3>marker-default</h3>
+  <div class=m>288&times;20 
+   &middot; mae <b class="good">2.670</b>
+   &middot; within 2/255 85.69% &middot; within 8/255 89.29%</div>
+  <img loading=lazy src="diff/marker-default.png"></div><div class=case><h3>attachment-sm</h3>
+  <div class=m>160&times;48 
+   &middot; mae <b class="good">2.840</b>
+   &middot; within 2/255 90.74% &middot; within 8/255 93.91%</div>
+  <img loading=lazy src="diff/attachment-sm.png"></div><div class=case><h3>field-vertical</h3>
+  <div class=m>320&times;90 
+   &middot; mae <b class="good">2.849</b>
+   &middot; within 2/255 88.25% &middot; within 8/255 93.98%</div>
+  <img loading=lazy src="diff/field-vertical.png"></div><div class=case><h3>avatar-badge</h3>
+  <div class=m>32&times;32 
+   &middot; mae <b class="good">2.862</b>
+   &middot; within 2/255 77.15% &middot; within 8/255 90.23%</div>
+  <img loading=lazy src="diff/avatar-badge.png"></div><div class=case><h3>card-default</h3>
+  <div class=m>320&times;114 
+   &middot; mae <b class="good">2.930</b>
+   &middot; within 2/255 92.87% &middot; within 8/255 94.30%</div>
+  <img loading=lazy src="diff/card-default.png"></div><div class=case><h3>spinner-lg</h3>
+  <div class=m>32&times;32 
+   &middot; mae <b class="good">2.996</b>
+   &middot; within 2/255 86.82% &middot; within 8/255 89.65%</div>
+  <img loading=lazy src="diff/spinner-lg.png"></div><div class=case><h3>card-footer</h3>
+  <div class=m>320&times;176 
+   &middot; mae <b class="good">2.997</b>
+   &middot; within 2/255 94.27% &middot; within 8/255 95.23%</div>
+  <img loading=lazy src="diff/card-footer.png"></div><div class=case><h3>popover-default</h3>
+  <div class=m>288&times;40 
+   &middot; mae <b class="good">3.030</b>
+   &middot; within 2/255 89.26% &middot; within 8/255 91.25%</div>
+  <img loading=lazy src="diff/popover-default.png"></div><div class=case><h3>navigation-menu-closed</h3>
+  <div class=m>196&times;36 
+   &middot; mae <b class="good">3.135</b>
+   &middot; within 2/255 89.67% &middot; within 8/255 91.51%</div>
+  <img loading=lazy src="diff/navigation-menu-closed.png"></div><div class=case><h3>card-sm</h3>
+  <div class=m>288&times;100 
+   &middot; mae <b class="good">3.292</b>
+   &middot; within 2/255 89.59% &middot; within 8/255 93.15%</div>
+  <img loading=lazy src="diff/card-sm.png"></div><div class=case><h3>checkbox-indeterminate</h3>
+  <div class=m>16&times;16 
+   &middot; mae <b class="good">3.336</b>
+   &middot; within 2/255 74.22% &middot; within 8/255 90.63%</div>
+  <img loading=lazy src="diff/checkbox-indeterminate.png"></div><div class=case><h3>dialog-footer</h3>
+  <div class=m>384&times;142 
+   &middot; mae <b class="good">3.379</b>
+   &middot; within 2/255 90.86% &middot; within 8/255 92.46%</div>
+  <img loading=lazy src="diff/dialog-footer.png"></div><div class=case><h3>item-xs</h3>
+  <div class=m>320&times;56 
+   &middot; mae <b class="good">3.397</b>
+   &middot; within 2/255 88.80% &middot; within 8/255 89.59%</div>
+  <img loading=lazy src="diff/item-xs.png"></div><div class=case><h3>alert-dialog-default</h3>
+  <div class=m>384&times;148 
+   &middot; mae <b class="good">3.606</b>
+   &middot; within 2/255 90.56% &middot; within 8/255 92.15%</div>
+  <img loading=lazy src="diff/alert-dialog-default.png"></div><div class=case><h3>alert-dialog-sm</h3>
+  <div class=m>320&times;148 
+   &middot; mae <b class="good">3.650</b>
+   &middot; within 2/255 90.45% &middot; within 8/255 92.16%</div>
+  <img loading=lazy src="diff/alert-dialog-sm.png"></div><div class=case><h3>alert-dialog-media</h3>
+  <div class=m>384&times;148 
+   &middot; mae <b class="good">3.680</b>
+   &middot; within 2/255 90.72% &middot; within 8/255 92.23%</div>
+  <img loading=lazy src="diff/alert-dialog-media.png"></div><div class=case><h3>input-default@focus</h3>
+  <div class=m>288&times;32 
+   &middot; mae <b class="good">3.709</b>
+   &middot; within 2/255 92.99% &middot; within 8/255 93.98%</div>
+  <img loading=lazy src="diff/input-default@focus.png"></div><div class=case><h3>button-group-vertical</h3>
+  <div class=m>72&times;96 
+   &middot; mae <b class="good">3.755</b>
+   &middot; within 2/255 87.53% &middot; within 8/255 90.22%</div>
+  <img loading=lazy src="diff/button-group-vertical.png"></div><div class=case><h3>native-select-sm</h3>
+  <div class=m>108&times;28 
+   &middot; mae <b class="good">3.765</b>
+   &middot; within 2/255 86.94% &middot; within 8/255 89.29%</div>
+  <img loading=lazy src="diff/native-select-sm.png"></div><div class=case><h3>button-icon-sm</h3>
+  <div class=m>28&times;28 
+   &middot; mae <b class="good">3.799</b>
+   &middot; within 2/255 86.99% &middot; within 8/255 87.63%</div>
+  <img loading=lazy src="diff/button-icon-sm.png"></div><div class=case><h3>button-disabled</h3>
+  <div class=m>68&times;32 
+   &middot; mae <b class="good">3.877</b>
+   &middot; within 2/255 84.33% &middot; within 8/255 86.81%</div>
+  <img loading=lazy src="diff/button-disabled.png"></div><div class=case><h3>native-select-default</h3>
+  <div class=m>94&times;32 
+   &middot; mae <b class="good">3.979</b>
+   &middot; within 2/255 84.61% &middot; within 8/255 88.00%</div>
+  <img loading=lazy src="diff/native-select-default.png"></div><div class=case><h3>button-destructive</h3>
+  <div class=m>68&times;32 
+   &middot; mae <b class="good">4.010</b>
+   &middot; within 2/255 85.29% &middot; within 8/255 88.83%</div>
+  <img loading=lazy src="diff/button-destructive.png"></div><div class=case><h3>toggle-lg</h3>
+  <div class=m>54&times;36 
+   &middot; mae <b class="good">4.138</b>
+   &middot; within 2/255 81.79% &middot; within 8/255 90.23%</div>
+  <img loading=lazy src="diff/toggle-lg.png"></div><div class=case><h3>button-secondary</h3>
+  <div class=m>68&times;32 
+   &middot; mae <b class="good">4.159</b>
+   &middot; within 2/255 88.69% &middot; within 8/255 89.84%</div>
+  <img loading=lazy src="diff/button-secondary.png"></div><div class=case><h3>switch-disabled</h3>
+  <div class=m>32&times;20 
+   &middot; mae <b class="good">4.202</b>
+   &middot; within 2/255 79.53% &middot; within 8/255 83.75%</div>
+  <img loading=lazy src="diff/switch-disabled.png"></div><div class=case><h3>button-group-horizontal</h3>
+  <div class=m>174&times;32 
+   &middot; mae <b class="good">4.210</b>
+   &middot; within 2/255 82.80% &middot; within 8/255 87.43%</div>
+  <img loading=lazy src="diff/button-group-horizontal.png"></div><div class=case><h3>breadcrumb-default</h3>
+  <div class=m>168&times;20 
+   &middot; mae <b class="good">4.211</b>
+   &middot; within 2/255 80.33% &middot; within 8/255 85.27%</div>
+  <img loading=lazy src="diff/breadcrumb-default.png"></div><div class=case><h3>badge-secondary</h3>
+  <div class=m>56&times;20 
+   &middot; mae <b class="good">4.288</b>
+   &middot; within 2/255 77.05% &middot; within 8/255 85.89%</div>
+  <img loading=lazy src="diff/badge-secondary.png"></div><div class=case><h3>field-error</h3>
+  <div class=m>320&times;88 
+   &middot; mae <b class="good">4.325</b>
+   &middot; within 2/255 88.54% &middot; within 8/255 89.14%</div>
+  <img loading=lazy src="diff/field-error.png"></div><div class=case><h3>button-link</h3>
+  <div class=m>68&times;32 
+   &middot; mae <b class="good">4.339</b>
+   &middot; within 2/255 88.47% &middot; within 8/255 89.80%</div>
+  <img loading=lazy src="diff/button-link.png"></div><div class=case><h3>badge-link</h3>
+  <div class=m>56&times;20 
+   &middot; mae <b class="good">4.372</b>
+   &middot; within 2/255 79.91% &middot; within 8/255 85.63%</div>
+  <img loading=lazy src="diff/badge-link.png"></div><div class=case><h3>menubar-closed</h3>
+  <div class=m>132&times;32 
+   &middot; mae <b class="good">4.395</b>
+   &middot; within 2/255 85.49% &middot; within 8/255 88.05%</div>
+  <img loading=lazy src="diff/menubar-closed.png"></div><div class=case><h3>breadcrumb-ellipsis</h3>
+  <div class=m>156&times;20 
+   &middot; mae <b class="good">4.418</b>
+   &middot; within 2/255 82.98% &middot; within 8/255 85.35%</div>
+  <img loading=lazy src="diff/breadcrumb-ellipsis.png"></div><div class=case><h3>badge-destructive</h3>
+  <div class=m>56&times;20 
+   &middot; mae <b class="good">4.438</b>
+   &middot; within 2/255 73.93% &middot; within 8/255 81.43%</div>
+  <img loading=lazy src="diff/badge-destructive.png"></div><div class=case><h3>switch-sm</h3>
+  <div class=m>24&times;14 
+   &middot; mae <b class="good">4.521</b>
+   &middot; within 2/255 75.59% &middot; within 8/255 78.87%</div>
+  <img loading=lazy src="diff/switch-sm.png"></div><div class=case><h3>field-horizontal</h3>
+  <div class=m>320&times;44 
+   &middot; mae <b class="good">4.666</b>
+   &middot; within 2/255 89.26% &middot; within 8/255 91.36%</div>
+  <img loading=lazy src="diff/field-horizontal.png"></div><div class=case><h3>button-destructive@hover</h3>
+  <div class=m>68&times;32 
+   &middot; mae <b class="good">4.718</b>
+   &middot; within 2/255 84.10% &middot; within 8/255 86.12%</div>
+  <img loading=lazy src="diff/button-destructive@hover.png"></div><div class=case><h3>tabs-line</h3>
+  <div class=m>384&times;60 
+   &middot; mae <b class="good">4.740</b>
+   &middot; within 2/255 93.02% &middot; within 8/255 94.16%</div>
+  <img loading=lazy src="diff/tabs-line.png"></div><div class=case><h3>button-ghost</h3>
+  <div class=m>68&times;32 
+   &middot; mae <b class="good">4.815</b>
+   &middot; within 2/255 88.05% &middot; within 8/255 89.29%</div>
+  <img loading=lazy src="diff/button-ghost.png"></div><div class=case><h3>avatar-sm</h3>
+  <div class=m>24&times;24 
+   &middot; mae <b class="good">4.960</b>
+   &middot; within 2/255 77.26% &middot; within 8/255 85.59%</div>
+  <img loading=lazy src="diff/avatar-sm.png"></div><div class=case><h3>button-group-text</h3>
+  <div class=m>190&times;32 
+   &middot; mae <b class="good">4.999</b>
+   &middot; within 2/255 83.62% &middot; within 8/255 87.42%</div>
+  <img loading=lazy src="diff/button-group-text.png"></div><div class=case><h3>button-outline</h3>
+  <div class=m>68&times;32 
+   &middot; mae <b class="good">5.002</b>
+   &middot; within 2/255 85.62% &middot; within 8/255 89.29%</div>
+  <img loading=lazy src="diff/button-outline.png"></div><div class=case><h3>badge-ghost</h3>
+  <div class=m>56&times;20 
+   &middot; mae <b class="good">5.084</b>
+   &middot; within 2/255 79.91% &middot; within 8/255 83.30%</div>
+  <img loading=lazy src="diff/badge-ghost.png"></div><div class=case><h3>badge-outline</h3>
+  <div class=m>56&times;20 
+   &middot; mae <b class="good">5.790</b>
+   &middot; within 2/255 69.55% &middot; within 8/255 80.63%</div>
+  <img loading=lazy src="diff/badge-outline.png"></div><div class=case><h3>button-lg</h3>
+  <div class=m>68&times;36 
+   &middot; mae <b class="bad">6.422</b>
+   &middot; within 2/255 85.74% &middot; within 8/255 87.58%</div>
+  <img loading=lazy src="diff/button-lg.png"></div><div class=case><h3>button-default</h3>
+  <div class=m>68&times;32 
+   &middot; mae <b class="bad">7.151</b>
+   &middot; within 2/255 84.33% &middot; within 8/255 86.40%</div>
+  <img loading=lazy src="diff/button-default.png"></div><div class=case><h3>button-default@hover</h3>
+  <div class=m>68&times;32 
+   &middot; mae <b class="bad">7.371</b>
+   &middot; within 2/255 84.65% &middot; within 8/255 86.03%</div>
+  <img loading=lazy src="diff/button-default@hover.png"></div><div class=case><h3>tooltip-kbd</h3>
+  <div class=m>72&times;32 
+   &middot; mae <b class="bad">7.421</b>
+   &middot; within 2/255 85.33% &middot; within 8/255 86.72%</div>
+  <img loading=lazy src="diff/tooltip-kbd.png"></div><div class=case><h3>button-ghost@hover</h3>
+  <div class=m>68&times;32 
+   &middot; mae <b class="bad">7.616</b>
+   &middot; within 2/255 86.31% &middot; within 8/255 87.36%</div>
+  <img loading=lazy src="diff/button-ghost@hover.png"></div><div class=case><h3>switch-on</h3>
+  <div class=m>32&times;20 
+   &middot; mae <b class="bad">7.655</b>
+   &middot; within 2/255 78.28% &middot; within 8/255 80.16%</div>
+  <img loading=lazy src="diff/switch-on.png"></div><div class=case><h3>button-with-icon</h3>
+  <div class=m>77&times;32 
+   &middot; mae <b class="bad">7.719</b>
+   &middot; within 2/255 85.02% &middot; within 8/255 87.22%</div>
+  <img loading=lazy src="diff/button-with-icon.png"></div><div class=case><h3>button-outline@hover</h3>
+  <div class=m>68&times;32 
+   &middot; mae <b class="bad">7.749</b>
+   &middot; within 2/255 83.73% &middot; within 8/255 87.18%</div>
+  <img loading=lazy src="diff/button-outline@hover.png"></div><div class=case><h3>button-secondary@hover</h3>
+  <div class=m>68&times;32 
+   &middot; mae <b class="bad">8.136</b>
+   &middot; within 2/255 85.29% &middot; within 8/255 87.64%</div>
+  <img loading=lazy src="diff/button-secondary@hover.png"></div><div class=case><h3>spinner-default</h3>
+  <div class=m>16&times;16 
+   &middot; mae <b class="bad">8.832</b>
+   &middot; within 2/255 70.70% &middot; within 8/255 75.78%</div>
+  <img loading=lazy src="diff/spinner-default.png"></div><div class=case><h3>badge-notification</h3>
+  <div class=m>42&times;20 
+   &middot; mae <b class="bad">9.258</b>
+   &middot; within 2/255 80.83% &middot; within 8/255 85.95%</div>
+  <img loading=lazy src="diff/badge-notification.png"></div><div class=case><h3>button-default@focus</h3>
+  <div class=m>68&times;32 
+   &middot; mae <b class="bad">9.464</b>
+   &middot; within 2/255 82.03% &middot; within 8/255 85.66%</div>
+  <img loading=lazy src="diff/button-default@focus.png"></div><div class=case><h3>button-xs</h3>
+  <div class=m>58&times;24 
+   &middot; mae <b class="bad">9.881</b>
+   &middot; within 2/255 80.10% &middot; within 8/255 82.04%</div>
+  <img loading=lazy src="diff/button-xs.png"></div><div class=case><h3>tooltip-default</h3>
+  <div class=m>100&times;28 
+   &middot; mae <b class="bad">10.584</b>
+   &middot; within 2/255 83.36% &middot; within 8/255 84.43%</div>
+  <img loading=lazy src="diff/tooltip-default.png"></div><div class=case><h3>label-default</h3>
+  <div class=m>94&times;14 
+   &middot; mae <b class="bad">11.040</b>
+   &middot; within 2/255 61.17% &middot; within 8/255 66.94%</div>
+  <img loading=lazy src="diff/label-default.png"></div><div class=case><h3>toggle-sm</h3>
+  <div class=m>48&times;28 
+   &middot; mae <b class="bad">13.402</b>
+   &middot; within 2/255 85.05% &middot; within 8/255 86.23%</div>
+  <img loading=lazy src="diff/toggle-sm.png"></div><div class=case><h3>checkbox-checked</h3>
+  <div class=m>16&times;16 
+   &middot; mae <b class="bad">13.516</b>
+   &middot; within 2/255 75.78% &middot; within 8/255 78.52%</div>
+  <img loading=lazy src="diff/checkbox-checked.png"></div><div class=case><h3>checkbox-disabled</h3>
+  <div class=m>16&times;16 
+   &middot; mae <b class="bad">13.516</b>
+   &middot; within 2/255 75.78% &middot; within 8/255 78.52%</div>
+  <img loading=lazy src="diff/checkbox-disabled.png"></div><div class=case><h3>button-sm</h3>
+  <div class=m>64&times;28 
+   &middot; mae <b class="bad">14.345</b>
+   &middot; within 2/255 81.31% &middot; within 8/255 82.37%</div>
+  <img loading=lazy src="diff/button-sm.png"></div><div class=case><h3>badge-default</h3>
+  <div class=m>56&times;20 
+   &middot; mae <b class="bad">15.256</b>
+   &middot; within 2/255 72.68% &middot; within 8/255 74.73%</div>
+  <img loading=lazy src="diff/badge-default.png"></div><div class=case><h3>badge-icon</h3>
+  <div class=m>80&times;20 
+   &middot; mae <b class="bad">24.364</b>
+   &middot; within 2/255 71.63% &middot; within 8/255 73.63%</div>
+  <img loading=lazy src="diff/badge-icon.png"></div>

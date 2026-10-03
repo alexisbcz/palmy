@@ -1,0 +1,52 @@
+{
+  "tag": "input",
+  "cls": "disabled:cursor-not-allowed",
+  "text": "",
+  "rect": {
+    "x": 0,
+    "y": 0,
+    "w": 192,
+    "h": 32
+  },
+  "style": {
+    "backgroundColor": "rgba(0, 0, 0, 0)",
+    "color": "rgba(0, 0, 0, 0)",
+    "borderWidth": [
+      0,
+      0,
+      0,
+      0
+    ],
+    "borderColor": "rgba(0, 0, 0, 0)",
+    "borderRadius": [
+      0,
+      0,
+      0,
+      0
+    ],
+    "padding": [
+      0,
+      0,
+      0,
+      0
+    ],
+    "fontSize": 32,
+    "fontWeight": 400,
+    "lineHeight": 32,
+    "letterSpacing": -16,
+    "opacity": 1,
+    "boxShadow": "none",
+    "textAlign": "left"
+  },
+  "children": [],
+  "pageRect": {
+    "x": 544,
+    "y": 384,
+    "w": 192,
+    "h": 32
+  },
+  "cropOffset": {
+    "x": 0,
+    "y": 0
+  }
+}

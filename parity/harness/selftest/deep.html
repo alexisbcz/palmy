@@ -1,0 +1,30 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>selftest deep</title>
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body { background: #fff; font-family: sans-serif; }
+  .n { padding: 2px; border: 1px solid rgb(200, 200, 200); background: rgb(245, 245, 245); }
+</style>
+</head>
+<body>
+<div class="n" data-parity-root id="top"></div>
+<script>
+  // 20 levels deep: the walker must stop at depth 12.
+  var cur = document.getElementById('top');
+  for (var i = 0; i < 20; i++) {
+    var d = document.createElement('div');
+    d.className = 'n';
+    d.setAttribute('data-level', String(i + 1));
+    cur.appendChild(d);
+    cur = d;
+  }
+  cur.textContent = 'bottom';
+  document.fonts.ready.then(function () {
+    document.body.setAttribute('data-parity-ready', '');
+  });
+</script>
+</body>
+</html>

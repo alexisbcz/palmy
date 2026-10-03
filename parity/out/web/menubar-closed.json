@@ -1,0 +1,179 @@
+{
+  "tag": "div",
+  "cls": "flex h-8 items-center gap-0.5 rounded-lg border p-[3px]",
+  "text": "",
+  "rect": {
+    "x": 0,
+    "y": 0,
+    "w": 131.203,
+    "h": 32
+  },
+  "style": {
+    "backgroundColor": "rgba(0, 0, 0, 0)",
+    "color": "rgb(10, 10, 10)",
+    "borderWidth": [
+      1,
+      1,
+      1,
+      1
+    ],
+    "borderColor": "rgb(229, 229, 229)",
+    "borderRadius": [
+      10,
+      10,
+      10,
+      10
+    ],
+    "padding": [
+      3,
+      3,
+      3,
+      3
+    ],
+    "fontSize": 16,
+    "fontWeight": 400,
+    "lineHeight": 24,
+    "letterSpacing": 0,
+    "opacity": 1,
+    "boxShadow": "none",
+    "textAlign": "start"
+  },
+  "children": [
+    {
+      "tag": "button",
+      "cls": "flex items-center rounded-sm px-1.5 py-[2px] text-sm font-medium outline-hidden select-none hover:bg-muted aria-expanded:bg-muted",
+      "text": "File",
+      "rect": {
+        "x": 4,
+        "y": 4,
+        "w": 35.938,
+        "h": 24
+      },
+      "style": {
+        "backgroundColor": "rgba(0, 0, 0, 0)",
+        "color": "rgb(10, 10, 10)",
+        "borderWidth": [
+          0,
+          0,
+          0,
+          0
+        ],
+        "borderColor": "rgb(229, 229, 229)",
+        "borderRadius": [
+          6,
+          6,
+          6,
+          6
+        ],
+        "padding": [
+          2,
+          6,
+          2,
+          6
+        ],
+        "fontSize": 14,
+        "fontWeight": 500,
+        "lineHeight": 20,
+        "letterSpacing": 0,
+        "opacity": 1,
+        "boxShadow": "none",
+        "textAlign": "center"
+      },
+      "children": []
+    },
+    {
+      "tag": "button",
+      "cls": "flex items-center rounded-sm px-1.5 py-[2px] text-sm font-medium outline-hidden select-none hover:bg-muted aria-expanded:bg-muted",
+      "text": "Edit",
+      "rect": {
+        "x": 41.938,
+        "y": 4,
+        "w": 38.375,
+        "h": 24
+      },
+      "style": {
+        "backgroundColor": "rgba(0, 0, 0, 0)",
+        "color": "rgb(10, 10, 10)",
+        "borderWidth": [
+          0,
+          0,
+          0,
+          0
+        ],
+        "borderColor": "rgb(229, 229, 229)",
+        "borderRadius": [
+          6,
+          6,
+          6,
+          6
+        ],
+        "padding": [
+          2,
+          6,
+          2,
+          6
+        ],
+        "fontSize": 14,
+        "fontWeight": 500,
+        "lineHeight": 20,
+        "letterSpacing": 0,
+        "opacity": 1,
+        "boxShadow": "none",
+        "textAlign": "center"
+      },
+      "children": []
+    },
+    {
+      "tag": "button",
+      "cls": "flex items-center rounded-sm px-1.5 py-[2px] text-sm font-medium outline-hidden select-none hover:bg-muted aria-expanded:bg-muted",
+      "text": "View",
+      "rect": {
+        "x": 82.313,
+        "y": 4,
+        "w": 44.891,
+        "h": 24
+      },
+      "style": {
+        "backgroundColor": "rgba(0, 0, 0, 0)",
+        "color": "rgb(10, 10, 10)",
+        "borderWidth": [
+          0,
+          0,
+          0,
+          0
+        ],
+        "borderColor": "rgb(229, 229, 229)",
+        "borderRadius": [
+          6,
+          6,
+          6,
+          6
+        ],
+        "padding": [
+          2,
+          6,
+          2,
+          6
+        ],
+        "fontSize": 14,
+        "fontWeight": 500,
+        "lineHeight": 20,
+        "letterSpacing": 0,
+        "opacity": 1,
+        "boxShadow": "none",
+        "textAlign": "center"
+      },
+      "children": []
+    }
+  ],
+  "pageRect": {
+    "x": 574.391,
+    "y": 384,
+    "w": 131.203,
+    "h": 32
+  },
+  "cropOffset": {
+    "x": 0.391,
+    "y": 0
+  }
+}
