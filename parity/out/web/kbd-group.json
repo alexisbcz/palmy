@@ -1,0 +1,179 @@
+{
+  "tag": "kbd",
+  "cls": "inline-flex items-center gap-1",
+  "text": "",
+  "rect": {
+    "x": 0,
+    "y": 0,
+    "w": 93.484,
+    "h": 20
+  },
+  "style": {
+    "backgroundColor": "rgba(0, 0, 0, 0)",
+    "color": "rgb(10, 10, 10)",
+    "borderWidth": [
+      0,
+      0,
+      0,
+      0
+    ],
+    "borderColor": "rgb(229, 229, 229)",
+    "borderRadius": [
+      0,
+      0,
+      0,
+      0
+    ],
+    "padding": [
+      0,
+      0,
+      0,
+      0
+    ],
+    "fontSize": 16,
+    "fontWeight": 400,
+    "lineHeight": 24,
+    "letterSpacing": 0,
+    "opacity": 1,
+    "boxShadow": "none",
+    "textAlign": "start"
+  },
+  "children": [
+    {
+      "tag": "kbd",
+      "cls": "pointer-events-none inline-flex h-5 w-fit min-w-5 items-center justify-center gap-1 rounded-sm bg-muted px-1 font-sans text-xs font-medium text-muted-foreground select-none in-data-[slot=tooltip-content]:bg-background/20 in-data-[slot=tooltip-content]:text-background dark:in-data-[slot=tooltip-content]:bg-background/10 [&_svg:not([class*='size-'])]:size-3",
+      "text": "Ctrl",
+      "rect": {
+        "x": 0,
+        "y": 0,
+        "w": 29.594,
+        "h": 20
+      },
+      "style": {
+        "backgroundColor": "rgb(245, 245, 245)",
+        "color": "rgb(115, 115, 115)",
+        "borderWidth": [
+          0,
+          0,
+          0,
+          0
+        ],
+        "borderColor": "rgb(229, 229, 229)",
+        "borderRadius": [
+          6,
+          6,
+          6,
+          6
+        ],
+        "padding": [
+          0,
+          4,
+          0,
+          4
+        ],
+        "fontSize": 12,
+        "fontWeight": 500,
+        "lineHeight": 16,
+        "letterSpacing": 0,
+        "opacity": 1,
+        "boxShadow": "none",
+        "textAlign": "start"
+      },
+      "children": []
+    },
+    {
+      "tag": "kbd",
+      "cls": "pointer-events-none inline-flex h-5 w-fit min-w-5 items-center justify-center gap-1 rounded-sm bg-muted px-1 font-sans text-xs font-medium text-muted-foreground select-none in-data-[slot=tooltip-content]:bg-background/20 in-data-[slot=tooltip-content]:text-background dark:in-data-[slot=tooltip-content]:bg-background/10 [&_svg:not([class*='size-'])]:size-3",
+      "text": "Shift",
+      "rect": {
+        "x": 33.594,
+        "y": 0,
+        "w": 35.891,
+        "h": 20
+      },
+      "style": {
+        "backgroundColor": "rgb(245, 245, 245)",
+        "color": "rgb(115, 115, 115)",
+        "borderWidth": [
+          0,
+          0,
+          0,
+          0
+        ],
+        "borderColor": "rgb(229, 229, 229)",
+        "borderRadius": [
+          6,
+          6,
+          6,
+          6
+        ],
+        "padding": [
+          0,
+          4,
+          0,
+          4
+        ],
+        "fontSize": 12,
+        "fontWeight": 500,
+        "lineHeight": 16,
+        "letterSpacing": 0,
+        "opacity": 1,
+        "boxShadow": "none",
+        "textAlign": "start"
+      },
+      "children": []
+    },
+    {
+      "tag": "kbd",
+      "cls": "pointer-events-none inline-flex h-5 w-fit min-w-5 items-center justify-center gap-1 rounded-sm bg-muted px-1 font-sans text-xs font-medium text-muted-foreground select-none in-data-[slot=tooltip-content]:bg-background/20 in-data-[slot=tooltip-content]:text-background dark:in-data-[slot=tooltip-content]:bg-background/10 [&_svg:not([class*='size-'])]:size-3",
+      "text": "P",
+      "rect": {
+        "x": 73.484,
+        "y": 0,
+        "w": 20,
+        "h": 20
+      },
+      "style": {
+        "backgroundColor": "rgb(245, 245, 245)",
+        "color": "rgb(115, 115, 115)",
+        "borderWidth": [
+          0,
+          0,
+          0,
+          0
+        ],
+        "borderColor": "rgb(229, 229, 229)",
+        "borderRadius": [
+          6,
+          6,
+          6,
+          6
+        ],
+        "padding": [
+          0,
+          4,
+          0,
+          4
+        ],
+        "fontSize": 12,
+        "fontWeight": 500,
+        "lineHeight": 16,
+        "letterSpacing": 0,
+        "opacity": 1,
+        "boxShadow": "none",
+        "textAlign": "start"
+      },
+      "children": []
+    }
+  ],
+  "pageRect": {
+    "x": 593.25,
+    "y": 390,
+    "w": 93.484,
+    "h": 20
+  },
+  "cropOffset": {
+    "x": 0.25,
+    "y": 0
+  }
+}

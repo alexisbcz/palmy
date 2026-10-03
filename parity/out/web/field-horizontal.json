@@ -1,0 +1,307 @@
+{
+  "tag": "div",
+  "cls": "group/field flex gap-2 data-[invalid=true]:text-destructive flex-row items-center has-[>[data-slot=field-content]]:items-start *:data-[slot=field-label]:flex-auto has-[>[data-slot=field-content]]:[&>[role=checkbox],[role=radio]]:mt-px w-80",
+  "text": "",
+  "rect": {
+    "x": 0,
+    "y": 0,
+    "w": 320,
+    "h": 43
+  },
+  "style": {
+    "backgroundColor": "rgba(0, 0, 0, 0)",
+    "color": "rgb(10, 10, 10)",
+    "borderWidth": [
+      0,
+      0,
+      0,
+      0
+    ],
+    "borderColor": "rgb(229, 229, 229)",
+    "borderRadius": [
+      0,
+      0,
+      0,
+      0
+    ],
+    "padding": [
+      0,
+      0,
+      0,
+      0
+    ],
+    "fontSize": 16,
+    "fontWeight": 400,
+    "lineHeight": 24,
+    "letterSpacing": 0,
+    "opacity": 1,
+    "boxShadow": "none",
+    "textAlign": "start"
+  },
+  "children": [
+    {
+      "tag": "span",
+      "cls": "peer group/switch relative inline-flex shrink-0 items-center rounded-full border border-transparent transition-all outline-none group-has-[:focus-visible]/field-label:border-transparent group-has-[:focus-visible]/field-label:ring-0 after:absolute after:-inset-x-3 after:-inset-y-2 focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/50 aria-invalid:border-destructive aria-invalid:ring-3 aria-invalid:ring-destructive/20 data-[size=default]:h-[18.4px] data-[size=default]:w-[32px] data-[size=sm]:h-[14px] data-[size=sm]:w-[24px] dark:aria-invalid:border-destructive/50 dark:aria-invalid:ring-destructive/40 data-checked:bg-primary data-unchecked:bg-input dark:data-unchecked:bg-input/80 data-disabled:cursor-not-allowed data-disabled:opacity-50",
+      "text": "",
+      "rect": {
+        "x": 0,
+        "y": 0,
+        "w": 32,
+        "h": 18.391
+      },
+      "style": {
+        "backgroundColor": "rgb(229, 229, 229)",
+        "color": "rgb(10, 10, 10)",
+        "borderWidth": [
+          1,
+          1,
+          1,
+          1
+        ],
+        "borderColor": "rgba(0, 0, 0, 0)",
+        "borderRadius": [
+          3.355,
+          3.355,
+          3.355,
+          3.355
+        ],
+        "padding": [
+          0,
+          0,
+          0,
+          0
+        ],
+        "fontSize": 16,
+        "fontWeight": 400,
+        "lineHeight": 24,
+        "letterSpacing": 0,
+        "opacity": 1,
+        "boxShadow": "none",
+        "textAlign": "start"
+      },
+      "children": [
+        {
+          "tag": "span",
+          "cls": "pointer-events-none block rounded-full bg-background ring-0 transition-transform group-data-[size=default]/switch:size-4 group-data-[size=sm]/switch:size-3 group-data-[size=default]/switch:data-checked:translate-x-[calc(100%-2px)] group-data-[size=sm]/switch:data-checked:translate-x-[calc(100%-2px)] dark:data-checked:bg-primary-foreground group-data-[size=default]/switch:data-unchecked:translate-x-0 group-data-[size=sm]/switch:data-unchecked:translate-x-0 dark:data-unchecked:bg-foreground",
+          "text": "",
+          "rect": {
+            "x": 1,
+            "y": 1.188,
+            "w": 16,
+            "h": 16
+          },
+          "style": {
+            "backgroundColor": "rgb(255, 255, 255)",
+            "color": "rgb(10, 10, 10)",
+            "borderWidth": [
+              0,
+              0,
+              0,
+              0
+            ],
+            "borderColor": "rgb(229, 229, 229)",
+            "borderRadius": [
+              3.355,
+              3.355,
+              3.355,
+              3.355
+            ],
+            "padding": [
+              0,
+              0,
+              0,
+              0
+            ],
+            "fontSize": 16,
+            "fontWeight": 400,
+            "lineHeight": 24,
+            "letterSpacing": 0,
+            "opacity": 1,
+            "boxShadow": "rgba(0, 0, 0, 0) 0px 0px 0px 0px, rgba(0, 0, 0, 0) 0px 0px 0px 0px, rgba(0, 0, 0, 0) 0px 0px 0px 0px, oklch(0.145 0 0) 0px 0px 0px 0px, rgba(0, 0, 0, 0) 0px 0px 0px 0px",
+            "textAlign": "start"
+          },
+          "children": []
+        }
+      ]
+    },
+    {
+      "tag": "input",
+      "cls": "",
+      "text": "",
+      "rect": {
+        "x": -481,
+        "y": -379.5,
+        "w": 1,
+        "h": 1
+      },
+      "style": {
+        "backgroundColor": "rgba(0, 0, 0, 0)",
+        "color": "rgb(10, 10, 10)",
+        "borderWidth": [
+          0,
+          0,
+          0,
+          0
+        ],
+        "borderColor": "rgb(10, 10, 10)",
+        "borderRadius": [
+          0,
+          0,
+          0,
+          0
+        ],
+        "padding": [
+          0,
+          0,
+          0,
+          0
+        ],
+        "fontSize": 16,
+        "fontWeight": 400,
+        "lineHeight": 24,
+        "letterSpacing": 0,
+        "opacity": 1,
+        "boxShadow": "none",
+        "textAlign": "start"
+      },
+      "children": []
+    },
+    {
+      "tag": "div",
+      "cls": "group/field-content flex flex-1 flex-col gap-0.5 leading-snug",
+      "text": "",
+      "rect": {
+        "x": 40,
+        "y": 0,
+        "w": 280,
+        "h": 43
+      },
+      "style": {
+        "backgroundColor": "rgba(0, 0, 0, 0)",
+        "color": "rgb(10, 10, 10)",
+        "borderWidth": [
+          0,
+          0,
+          0,
+          0
+        ],
+        "borderColor": "rgb(229, 229, 229)",
+        "borderRadius": [
+          0,
+          0,
+          0,
+          0
+        ],
+        "padding": [
+          0,
+          0,
+          0,
+          0
+        ],
+        "fontSize": 16,
+        "fontWeight": 400,
+        "lineHeight": 22,
+        "letterSpacing": 0,
+        "opacity": 1,
+        "boxShadow": "none",
+        "textAlign": "start"
+      },
+      "children": [
+        {
+          "tag": "div",
+          "cls": "flex w-fit items-center gap-2 text-sm font-medium group-data-[disabled=true]/field:opacity-50",
+          "text": "Notifications",
+          "rect": {
+            "x": 40,
+            "y": 0,
+            "w": 86.484,
+            "h": 20
+          },
+          "style": {
+            "backgroundColor": "rgba(0, 0, 0, 0)",
+            "color": "rgb(10, 10, 10)",
+            "borderWidth": [
+              0,
+              0,
+              0,
+              0
+            ],
+            "borderColor": "rgb(229, 229, 229)",
+            "borderRadius": [
+              0,
+              0,
+              0,
+              0
+            ],
+            "padding": [
+              0,
+              0,
+              0,
+              0
+            ],
+            "fontSize": 14,
+            "fontWeight": 500,
+            "lineHeight": 20,
+            "letterSpacing": 0,
+            "opacity": 1,
+            "boxShadow": "none",
+            "textAlign": "start"
+          },
+          "children": []
+        },
+        {
+          "tag": "p",
+          "cls": "text-left text-sm leading-normal font-normal text-muted-foreground group-has-data-horizontal/field:text-balance [[data-variant=legend]+&]:-mt-1.5 last:mt-0 nth-last-2:-mt-1 [&>a]:underline [&>a]:underline-offset-4 [&>a:hover]:text-primary",
+          "text": "Send a weekly digest.",
+          "rect": {
+            "x": 40,
+            "y": 22,
+            "w": 280,
+            "h": 21
+          },
+          "style": {
+            "backgroundColor": "rgba(0, 0, 0, 0)",
+            "color": "rgb(115, 115, 115)",
+            "borderWidth": [
+              0,
+              0,
+              0,
+              0
+            ],
+            "borderColor": "rgb(229, 229, 229)",
+            "borderRadius": [
+              0,
+              0,
+              0,
+              0
+            ],
+            "padding": [
+              0,
+              0,
+              0,
+              0
+            ],
+            "fontSize": 14,
+            "fontWeight": 400,
+            "lineHeight": 21,
+            "letterSpacing": 0,
+            "opacity": 1,
+            "boxShadow": "none",
+            "textAlign": "left"
+          },
+          "children": []
+        }
+      ]
+    }
+  ],
+  "pageRect": {
+    "x": 480,
+    "y": 378.5,
+    "w": 320,
+    "h": 43
+  },
+  "cropOffset": {
+    "x": 0,
+    "y": 0.5
+  }
+}

@@ -1,0 +1,732 @@
+{
+  "tag": "table",
+  "cls": "caption-bottom text-sm w-[480px]",
+  "text": "",
+  "rect": {
+    "x": 0,
+    "y": 0,
+    "w": 480,
+    "h": 186.5
+  },
+  "style": {
+    "backgroundColor": "rgba(0, 0, 0, 0)",
+    "color": "rgb(10, 10, 10)",
+    "borderWidth": [
+      0,
+      0,
+      0,
+      0
+    ],
+    "borderColor": "rgb(229, 229, 229)",
+    "borderRadius": [
+      0,
+      0,
+      0,
+      0
+    ],
+    "padding": [
+      0,
+      0,
+      0,
+      0
+    ],
+    "fontSize": 14,
+    "fontWeight": 400,
+    "lineHeight": 20,
+    "letterSpacing": 0,
+    "opacity": 1,
+    "boxShadow": "none",
+    "textAlign": "start"
+  },
+  "children": [
+    {
+      "tag": "caption",
+      "cls": "mt-4 text-sm text-muted-foreground",
+      "text": "A list of recent invoices.",
+      "rect": {
+        "x": 0,
+        "y": 166.5,
+        "w": 480,
+        "h": 20
+      },
+      "style": {
+        "backgroundColor": "rgba(0, 0, 0, 0)",
+        "color": "rgb(115, 115, 115)",
+        "borderWidth": [
+          0,
+          0,
+          0,
+          0
+        ],
+        "borderColor": "rgb(229, 229, 229)",
+        "borderRadius": [
+          0,
+          0,
+          0,
+          0
+        ],
+        "padding": [
+          0,
+          0,
+          0,
+          0
+        ],
+        "fontSize": 14,
+        "fontWeight": 400,
+        "lineHeight": 20,
+        "letterSpacing": 0,
+        "opacity": 1,
+        "boxShadow": "none",
+        "textAlign": "-webkit-center"
+      },
+      "children": []
+    },
+    {
+      "tag": "thead",
+      "cls": "[&_tr]:border-b",
+      "text": "",
+      "rect": {
+        "x": 0,
+        "y": 0,
+        "w": 480,
+        "h": 40
+      },
+      "style": {
+        "backgroundColor": "rgba(0, 0, 0, 0)",
+        "color": "rgb(10, 10, 10)",
+        "borderWidth": [
+          0,
+          0,
+          0,
+          0
+        ],
+        "borderColor": "rgb(229, 229, 229)",
+        "borderRadius": [
+          0,
+          0,
+          0,
+          0
+        ],
+        "padding": [
+          0,
+          0,
+          0,
+          0
+        ],
+        "fontSize": 14,
+        "fontWeight": 400,
+        "lineHeight": 20,
+        "letterSpacing": 0,
+        "opacity": 1,
+        "boxShadow": "none",
+        "textAlign": "start"
+      },
+      "children": [
+        {
+          "tag": "tr",
+          "cls": "border-b transition-colors hover:bg-muted/50 has-aria-expanded:bg-muted/50 data-[state=selected]:bg-muted",
+          "text": "",
+          "rect": {
+            "x": 0,
+            "y": 0,
+            "w": 480,
+            "h": 40
+          },
+          "style": {
+            "backgroundColor": "rgba(0, 0, 0, 0)",
+            "color": "rgb(10, 10, 10)",
+            "borderWidth": [
+              0,
+              0,
+              1,
+              0
+            ],
+            "borderColor": "rgb(229, 229, 229)",
+            "borderRadius": [
+              0,
+              0,
+              0,
+              0
+            ],
+            "padding": [
+              0,
+              0,
+              0,
+              0
+            ],
+            "fontSize": 14,
+            "fontWeight": 400,
+            "lineHeight": 20,
+            "letterSpacing": 0,
+            "opacity": 1,
+            "boxShadow": "none",
+            "textAlign": "start"
+          },
+          "children": [
+            {
+              "tag": "th",
+              "cls": "h-10 px-2 text-left align-middle font-medium whitespace-nowrap text-foreground [&:has([role=checkbox])]:pr-0",
+              "text": "Invoice",
+              "rect": {
+                "x": 0,
+                "y": 0,
+                "w": 236.891,
+                "h": 40
+              },
+              "style": {
+                "backgroundColor": "rgba(0, 0, 0, 0)",
+                "color": "rgb(10, 10, 10)",
+                "borderWidth": [
+                  0,
+                  0,
+                  0,
+                  0
+                ],
+                "borderColor": "rgb(229, 229, 229)",
+                "borderRadius": [
+                  0,
+                  0,
+                  0,
+                  0
+                ],
+                "padding": [
+                  0,
+                  8,
+                  0,
+                  8
+                ],
+                "fontSize": 14,
+                "fontWeight": 500,
+                "lineHeight": 20,
+                "letterSpacing": 0,
+                "opacity": 1,
+                "boxShadow": "none",
+                "textAlign": "left"
+              },
+              "children": []
+            },
+            {
+              "tag": "th",
+              "cls": "h-10 px-2 align-middle font-medium whitespace-nowrap text-foreground [&:has([role=checkbox])]:pr-0 text-right",
+              "text": "Amount",
+              "rect": {
+                "x": 236.891,
+                "y": 0,
+                "w": 243.109,
+                "h": 40
+              },
+              "style": {
+                "backgroundColor": "rgba(0, 0, 0, 0)",
+                "color": "rgb(10, 10, 10)",
+                "borderWidth": [
+                  0,
+                  0,
+                  0,
+                  0
+                ],
+                "borderColor": "rgb(229, 229, 229)",
+                "borderRadius": [
+                  0,
+                  0,
+                  0,
+                  0
+                ],
+                "padding": [
+                  0,
+                  8,
+                  0,
+                  8
+                ],
+                "fontSize": 14,
+                "fontWeight": 500,
+                "lineHeight": 20,
+                "letterSpacing": 0,
+                "opacity": 1,
+                "boxShadow": "none",
+                "textAlign": "right"
+              },
+              "children": []
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "tag": "tbody",
+      "cls": "[&_tr:last-child]:border-0",
+      "text": "",
+      "rect": {
+        "x": 0,
+        "y": 40,
+        "w": 480,
+        "h": 74
+      },
+      "style": {
+        "backgroundColor": "rgba(0, 0, 0, 0)",
+        "color": "rgb(10, 10, 10)",
+        "borderWidth": [
+          0,
+          0,
+          0,
+          0
+        ],
+        "borderColor": "rgb(229, 229, 229)",
+        "borderRadius": [
+          0,
+          0,
+          0,
+          0
+        ],
+        "padding": [
+          0,
+          0,
+          0,
+          0
+        ],
+        "fontSize": 14,
+        "fontWeight": 400,
+        "lineHeight": 20,
+        "letterSpacing": 0,
+        "opacity": 1,
+        "boxShadow": "none",
+        "textAlign": "start"
+      },
+      "children": [
+        {
+          "tag": "tr",
+          "cls": "border-b transition-colors hover:bg-muted/50 has-aria-expanded:bg-muted/50 data-[state=selected]:bg-muted",
+          "text": "",
+          "rect": {
+            "x": 0,
+            "y": 40,
+            "w": 480,
+            "h": 37
+          },
+          "style": {
+            "backgroundColor": "rgba(0, 0, 0, 0)",
+            "color": "rgb(10, 10, 10)",
+            "borderWidth": [
+              0,
+              0,
+              1,
+              0
+            ],
+            "borderColor": "rgb(229, 229, 229)",
+            "borderRadius": [
+              0,
+              0,
+              0,
+              0
+            ],
+            "padding": [
+              0,
+              0,
+              0,
+              0
+            ],
+            "fontSize": 14,
+            "fontWeight": 400,
+            "lineHeight": 20,
+            "letterSpacing": 0,
+            "opacity": 1,
+            "boxShadow": "none",
+            "textAlign": "start"
+          },
+          "children": [
+            {
+              "tag": "td",
+              "cls": "p-2 align-middle whitespace-nowrap [&:has([role=checkbox])]:pr-0",
+              "text": "INV001",
+              "rect": {
+                "x": 0,
+                "y": 40,
+                "w": 236.891,
+                "h": 37
+              },
+              "style": {
+                "backgroundColor": "rgba(0, 0, 0, 0)",
+                "color": "rgb(10, 10, 10)",
+                "borderWidth": [
+                  0,
+                  0,
+                  0,
+                  0
+                ],
+                "borderColor": "rgb(229, 229, 229)",
+                "borderRadius": [
+                  0,
+                  0,
+                  0,
+                  0
+                ],
+                "padding": [
+                  8,
+                  8,
+                  8,
+                  8
+                ],
+                "fontSize": 14,
+                "fontWeight": 400,
+                "lineHeight": 20,
+                "letterSpacing": 0,
+                "opacity": 1,
+                "boxShadow": "none",
+                "textAlign": "start"
+              },
+              "children": []
+            },
+            {
+              "tag": "td",
+              "cls": "p-2 align-middle whitespace-nowrap [&:has([role=checkbox])]:pr-0 text-right",
+              "text": "250.00",
+              "rect": {
+                "x": 236.891,
+                "y": 40,
+                "w": 243.109,
+                "h": 37
+              },
+              "style": {
+                "backgroundColor": "rgba(0, 0, 0, 0)",
+                "color": "rgb(10, 10, 10)",
+                "borderWidth": [
+                  0,
+                  0,
+                  0,
+                  0
+                ],
+                "borderColor": "rgb(229, 229, 229)",
+                "borderRadius": [
+                  0,
+                  0,
+                  0,
+                  0
+                ],
+                "padding": [
+                  8,
+                  8,
+                  8,
+                  8
+                ],
+                "fontSize": 14,
+                "fontWeight": 400,
+                "lineHeight": 20,
+                "letterSpacing": 0,
+                "opacity": 1,
+                "boxShadow": "none",
+                "textAlign": "right"
+              },
+              "children": []
+            }
+          ]
+        },
+        {
+          "tag": "tr",
+          "cls": "border-b transition-colors hover:bg-muted/50 has-aria-expanded:bg-muted/50 data-[state=selected]:bg-muted",
+          "text": "",
+          "rect": {
+            "x": 0,
+            "y": 77,
+            "w": 480,
+            "h": 37
+          },
+          "style": {
+            "backgroundColor": "rgb(245, 245, 245)",
+            "color": "rgb(10, 10, 10)",
+            "borderWidth": [
+              0,
+              0,
+              0,
+              0
+            ],
+            "borderColor": "rgb(229, 229, 229)",
+            "borderRadius": [
+              0,
+              0,
+              0,
+              0
+            ],
+            "padding": [
+              0,
+              0,
+              0,
+              0
+            ],
+            "fontSize": 14,
+            "fontWeight": 400,
+            "lineHeight": 20,
+            "letterSpacing": 0,
+            "opacity": 1,
+            "boxShadow": "none",
+            "textAlign": "start"
+          },
+          "children": [
+            {
+              "tag": "td",
+              "cls": "p-2 align-middle whitespace-nowrap [&:has([role=checkbox])]:pr-0",
+              "text": "INV002",
+              "rect": {
+                "x": 0,
+                "y": 77,
+                "w": 236.891,
+                "h": 37
+              },
+              "style": {
+                "backgroundColor": "rgba(0, 0, 0, 0)",
+                "color": "rgb(10, 10, 10)",
+                "borderWidth": [
+                  0,
+                  0,
+                  0,
+                  0
+                ],
+                "borderColor": "rgb(229, 229, 229)",
+                "borderRadius": [
+                  0,
+                  0,
+                  0,
+                  0
+                ],
+                "padding": [
+                  8,
+                  8,
+                  8,
+                  8
+                ],
+                "fontSize": 14,
+                "fontWeight": 400,
+                "lineHeight": 20,
+                "letterSpacing": 0,
+                "opacity": 1,
+                "boxShadow": "none",
+                "textAlign": "start"
+              },
+              "children": []
+            },
+            {
+              "tag": "td",
+              "cls": "p-2 align-middle whitespace-nowrap [&:has([role=checkbox])]:pr-0 text-right",
+              "text": "150.00",
+              "rect": {
+                "x": 236.891,
+                "y": 77,
+                "w": 243.109,
+                "h": 37
+              },
+              "style": {
+                "backgroundColor": "rgba(0, 0, 0, 0)",
+                "color": "rgb(10, 10, 10)",
+                "borderWidth": [
+                  0,
+                  0,
+                  0,
+                  0
+                ],
+                "borderColor": "rgb(229, 229, 229)",
+                "borderRadius": [
+                  0,
+                  0,
+                  0,
+                  0
+                ],
+                "padding": [
+                  8,
+                  8,
+                  8,
+                  8
+                ],
+                "fontSize": 14,
+                "fontWeight": 400,
+                "lineHeight": 20,
+                "letterSpacing": 0,
+                "opacity": 1,
+                "boxShadow": "none",
+                "textAlign": "right"
+              },
+              "children": []
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "tag": "tfoot",
+      "cls": "border-t bg-muted/50 font-medium [&>tr]:last:border-b-0",
+      "text": "",
+      "rect": {
+        "x": 0,
+        "y": 114,
+        "w": 480,
+        "h": 36.5
+      },
+      "style": {
+        "backgroundColor": "rgba(245, 245, 245, 0.5)",
+        "color": "rgb(10, 10, 10)",
+        "borderWidth": [
+          1,
+          0,
+          0,
+          0
+        ],
+        "borderColor": "rgb(229, 229, 229)",
+        "borderRadius": [
+          0,
+          0,
+          0,
+          0
+        ],
+        "padding": [
+          0,
+          0,
+          0,
+          0
+        ],
+        "fontSize": 14,
+        "fontWeight": 500,
+        "lineHeight": 20,
+        "letterSpacing": 0,
+        "opacity": 1,
+        "boxShadow": "none",
+        "textAlign": "start"
+      },
+      "children": [
+        {
+          "tag": "tr",
+          "cls": "border-b transition-colors hover:bg-muted/50 has-aria-expanded:bg-muted/50 data-[state=selected]:bg-muted",
+          "text": "",
+          "rect": {
+            "x": 0,
+            "y": 114,
+            "w": 480,
+            "h": 36.5
+          },
+          "style": {
+            "backgroundColor": "rgba(0, 0, 0, 0)",
+            "color": "rgb(10, 10, 10)",
+            "borderWidth": [
+              0,
+              0,
+              0,
+              0
+            ],
+            "borderColor": "rgb(229, 229, 229)",
+            "borderRadius": [
+              0,
+              0,
+              0,
+              0
+            ],
+            "padding": [
+              0,
+              0,
+              0,
+              0
+            ],
+            "fontSize": 14,
+            "fontWeight": 500,
+            "lineHeight": 20,
+            "letterSpacing": 0,
+            "opacity": 1,
+            "boxShadow": "none",
+            "textAlign": "start"
+          },
+          "children": [
+            {
+              "tag": "td",
+              "cls": "p-2 align-middle whitespace-nowrap [&:has([role=checkbox])]:pr-0",
+              "text": "Total",
+              "rect": {
+                "x": 0,
+                "y": 114,
+                "w": 236.891,
+                "h": 36.5
+              },
+              "style": {
+                "backgroundColor": "rgba(0, 0, 0, 0)",
+                "color": "rgb(10, 10, 10)",
+                "borderWidth": [
+                  0,
+                  0,
+                  0,
+                  0
+                ],
+                "borderColor": "rgb(229, 229, 229)",
+                "borderRadius": [
+                  0,
+                  0,
+                  0,
+                  0
+                ],
+                "padding": [
+                  8,
+                  8,
+                  8,
+                  8
+                ],
+                "fontSize": 14,
+                "fontWeight": 500,
+                "lineHeight": 20,
+                "letterSpacing": 0,
+                "opacity": 1,
+                "boxShadow": "none",
+                "textAlign": "start"
+              },
+              "children": []
+            },
+            {
+              "tag": "td",
+              "cls": "p-2 align-middle whitespace-nowrap [&:has([role=checkbox])]:pr-0 text-right",
+              "text": "400.00",
+              "rect": {
+                "x": 236.891,
+                "y": 114,
+                "w": 243.109,
+                "h": 36.5
+              },
+              "style": {
+                "backgroundColor": "rgba(0, 0, 0, 0)",
+                "color": "rgb(10, 10, 10)",
+                "borderWidth": [
+                  0,
+                  0,
+                  0,
+                  0
+                ],
+                "borderColor": "rgb(229, 229, 229)",
+                "borderRadius": [
+                  0,
+                  0,
+                  0,
+                  0
+                ],
+                "padding": [
+                  8,
+                  8,
+                  8,
+                  8
+                ],
+                "fontSize": 14,
+                "fontWeight": 500,
+                "lineHeight": 20,
+                "letterSpacing": 0,
+                "opacity": 1,
+                "boxShadow": "none",
+                "textAlign": "right"
+              },
+              "children": []
+            }
+          ]
+        }
+      ]
+    }
+  ],
+  "pageRect": {
+    "x": 32,
+    "y": 306.75,
+    "w": 480,
+    "h": 186.5
+  },
+  "cropOffset": {
+    "x": 0,
+    "y": 0.75
+  }
+}

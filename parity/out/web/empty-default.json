@@ -1,0 +1,265 @@
+{
+  "tag": "div",
+  "cls": "flex min-w-0 flex-1 flex-col items-center justify-center gap-4 rounded-xl border-dashed p-6 text-center text-balance w-96 border",
+  "text": "",
+  "rect": {
+    "x": 0,
+    "y": 0,
+    "w": 1216,
+    "h": 144.75
+  },
+  "style": {
+    "backgroundColor": "rgba(0, 0, 0, 0)",
+    "color": "rgb(10, 10, 10)",
+    "borderWidth": [
+      1,
+      1,
+      1,
+      1
+    ],
+    "borderColor": "rgb(229, 229, 229)",
+    "borderRadius": [
+      14,
+      14,
+      14,
+      14
+    ],
+    "padding": [
+      24,
+      24,
+      24,
+      24
+    ],
+    "fontSize": 16,
+    "fontWeight": 400,
+    "lineHeight": 24,
+    "letterSpacing": 0,
+    "opacity": 1,
+    "boxShadow": "none",
+    "textAlign": "center"
+  },
+  "children": [
+    {
+      "tag": "div",
+      "cls": "flex max-w-sm flex-col items-center gap-2",
+      "text": "",
+      "rect": {
+        "x": 524.234,
+        "y": 25,
+        "w": 167.516,
+        "h": 50.75
+      },
+      "style": {
+        "backgroundColor": "rgba(0, 0, 0, 0)",
+        "color": "rgb(10, 10, 10)",
+        "borderWidth": [
+          0,
+          0,
+          0,
+          0
+        ],
+        "borderColor": "rgb(229, 229, 229)",
+        "borderRadius": [
+          0,
+          0,
+          0,
+          0
+        ],
+        "padding": [
+          0,
+          0,
+          0,
+          0
+        ],
+        "fontSize": 16,
+        "fontWeight": 400,
+        "lineHeight": 24,
+        "letterSpacing": 0,
+        "opacity": 1,
+        "boxShadow": "none",
+        "textAlign": "center"
+      },
+      "children": [
+        {
+          "tag": "div",
+          "cls": "font-heading text-sm font-medium tracking-tight",
+          "text": "No projects",
+          "rect": {
+            "x": 571.156,
+            "y": 25,
+            "w": 73.656,
+            "h": 20
+          },
+          "style": {
+            "backgroundColor": "rgba(0, 0, 0, 0)",
+            "color": "rgb(10, 10, 10)",
+            "borderWidth": [
+              0,
+              0,
+              0,
+              0
+            ],
+            "borderColor": "rgb(229, 229, 229)",
+            "borderRadius": [
+              0,
+              0,
+              0,
+              0
+            ],
+            "padding": [
+              0,
+              0,
+              0,
+              0
+            ],
+            "fontSize": 14,
+            "fontWeight": 500,
+            "lineHeight": 20,
+            "letterSpacing": -0.35,
+            "opacity": 1,
+            "boxShadow": "none",
+            "textAlign": "center"
+          },
+          "children": []
+        },
+        {
+          "tag": "div",
+          "cls": "text-sm/relaxed text-muted-foreground [&>a]:underline [&>a]:underline-offset-4 [&>a:hover]:text-primary",
+          "text": "Create one to get started.",
+          "rect": {
+            "x": 524.234,
+            "y": 53,
+            "w": 167.516,
+            "h": 22.75
+          },
+          "style": {
+            "backgroundColor": "rgba(0, 0, 0, 0)",
+            "color": "rgb(115, 115, 115)",
+            "borderWidth": [
+              0,
+              0,
+              0,
+              0
+            ],
+            "borderColor": "rgb(229, 229, 229)",
+            "borderRadius": [
+              0,
+              0,
+              0,
+              0
+            ],
+            "padding": [
+              0,
+              0,
+              0,
+              0
+            ],
+            "fontSize": 14,
+            "fontWeight": 400,
+            "lineHeight": 22.75,
+            "letterSpacing": 0,
+            "opacity": 1,
+            "boxShadow": "none",
+            "textAlign": "center"
+          },
+          "children": []
+        }
+      ]
+    },
+    {
+      "tag": "div",
+      "cls": "flex w-full max-w-sm min-w-0 flex-col items-center gap-2.5 text-sm text-balance",
+      "text": "",
+      "rect": {
+        "x": 416,
+        "y": 91.75,
+        "w": 384,
+        "h": 28
+      },
+      "style": {
+        "backgroundColor": "rgba(0, 0, 0, 0)",
+        "color": "rgb(10, 10, 10)",
+        "borderWidth": [
+          0,
+          0,
+          0,
+          0
+        ],
+        "borderColor": "rgb(229, 229, 229)",
+        "borderRadius": [
+          0,
+          0,
+          0,
+          0
+        ],
+        "padding": [
+          0,
+          0,
+          0,
+          0
+        ],
+        "fontSize": 14,
+        "fontWeight": 400,
+        "lineHeight": 20,
+        "letterSpacing": 0,
+        "opacity": 1,
+        "boxShadow": "none",
+        "textAlign": "center"
+      },
+      "children": [
+        {
+          "tag": "button",
+          "cls": "group/button inline-flex shrink-0 items-center justify-center border border-transparent bg-clip-padding font-medium whitespace-nowrap transition-all outline-none select-none focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/50 active:not-aria-[haspopup]:translate-y-px disabled:pointer-events-none disabled:opacity-50 aria-invalid:border-destructive aria-invalid:ring-3 aria-invalid:ring-destructive/20 dark:aria-invalid:border-destructive/50 dark:aria-invalid:ring-destructive/40 [&_svg]:pointer-events-none [&_svg]:shrink-0 bg-primary text-primary-foreground hover:bg-primary/80 h-7 gap-1 rounded-[min(var(--radius-md),12px)] px-2.5 text-[0.8rem] in-data-[slot=button-group]:rounded-lg has-data-[icon=inline-end]:pr-1.5 has-data-[icon=inline-start]:pl-1.5 [&_svg:not([class*='size-'])]:size-3.5",
+          "text": "New project",
+          "rect": {
+            "x": 559.781,
+            "y": 91.75,
+            "w": 96.438,
+            "h": 28
+          },
+          "style": {
+            "backgroundColor": "rgb(23, 23, 23)",
+            "color": "rgb(250, 250, 250)",
+            "borderWidth": [
+              1,
+              1,
+              1,
+              1
+            ],
+            "borderColor": "rgba(0, 0, 0, 0)",
+            "borderRadius": [
+              8,
+              8,
+              8,
+              8
+            ],
+            "padding": [
+              0,
+              10,
+              0,
+              10
+            ],
+            "fontSize": 12.8,
+            "fontWeight": 500,
+            "lineHeight": 18.286,
+            "letterSpacing": 0,
+            "opacity": 1,
+            "boxShadow": "none",
+            "textAlign": "center"
+          },
+          "children": []
+        }
+      ]
+    }
+  ],
+  "pageRect": {
+    "x": 32,
+    "y": 327.625,
+    "w": 1216,
+    "h": 144.75
+  },
+  "cropOffset": {
+    "x": 0,
+    "y": 0.625
+  }
+}

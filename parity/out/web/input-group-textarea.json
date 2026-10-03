@@ -1,0 +1,308 @@
+{
+  "tag": "div",
+  "cls": "group/input-group relative flex h-8 min-w-0 items-center rounded-lg border border-input transition-colors outline-none in-data-[slot=combobox-content]:focus-within:border-inherit in-data-[slot=combobox-content]:focus-within:ring-0 has-disabled:bg-input/50 has-disabled:opacity-50 has-[[data-slot=input-group-control]:focus-visible]:border-ring has-[[data-slot=input-group-control]:focus-visible]:ring-3 has-[[data-slot=input-group-control]:focus-visible]:ring-ring/50 has-[[data-slot][aria-invalid=true]]:border-destructive has-[[data-slot][aria-invalid=true]]:ring-3 has-[[data-slot][aria-invalid=true]]:ring-destructive/20 has-[>[data-align=block-end]]:h-auto has-[>[data-align=block-end]]:flex-col has-[>[data-align=block-start]]:h-auto has-[>[data-align=block-start]]:flex-col has-[>textarea]:h-auto dark:bg-input/30 dark:has-disabled:bg-input/80 dark:has-[[data-slot][aria-invalid=true]]:ring-destructive/40 has-[>[data-align=block-end]]:[&>input]:pt-3 has-[>[data-align=block-start]]:[&>input]:pb-3 has-[>[data-align=inline-end]]:[&>input]:pr-1.5 has-[>[data-align=inline-start]]:[&>input]:pl-1.5 w-72",
+  "text": "",
+  "rect": {
+    "x": 0,
+    "y": 0,
+    "w": 288,
+    "h": 104
+  },
+  "style": {
+    "backgroundColor": "rgba(0, 0, 0, 0)",
+    "color": "rgb(10, 10, 10)",
+    "borderWidth": [
+      1,
+      1,
+      1,
+      1
+    ],
+    "borderColor": "rgb(229, 229, 229)",
+    "borderRadius": [
+      10,
+      10,
+      10,
+      10
+    ],
+    "padding": [
+      0,
+      0,
+      0,
+      0
+    ],
+    "fontSize": 16,
+    "fontWeight": 400,
+    "lineHeight": 24,
+    "letterSpacing": 0,
+    "opacity": 1,
+    "boxShadow": "none",
+    "textAlign": "start"
+  },
+  "children": [
+    {
+      "tag": "textarea",
+      "cls": "flex field-sizing-content min-h-16 w-full border-input px-2.5 text-base transition-colors outline-none placeholder:text-muted-foreground focus-visible:border-ring focus-visible:ring-ring/50 disabled:cursor-not-allowed disabled:opacity-50 aria-invalid:border-destructive aria-invalid:ring-destructive/20 md:text-sm dark:aria-invalid:border-destructive/50 dark:aria-invalid:ring-destructive/40 flex-1 resize-none rounded-none border-0 bg-transparent py-2 shadow-none ring-0 focus-visible:ring-0 disabled:bg-transparent aria-invalid:ring-0 dark:bg-transparent dark:disabled:bg-transparent",
+      "text": "",
+      "rect": {
+        "x": 1,
+        "y": 1,
+        "w": 286,
+        "h": 64
+      },
+      "style": {
+        "backgroundColor": "rgba(0, 0, 0, 0)",
+        "color": "rgb(10, 10, 10)",
+        "borderWidth": [
+          0,
+          0,
+          0,
+          0
+        ],
+        "borderColor": "rgb(229, 229, 229)",
+        "borderRadius": [
+          0,
+          0,
+          0,
+          0
+        ],
+        "padding": [
+          8,
+          10,
+          8,
+          10
+        ],
+        "fontSize": 14,
+        "fontWeight": 400,
+        "lineHeight": 20,
+        "letterSpacing": 0,
+        "opacity": 1,
+        "boxShadow": "rgba(0, 0, 0, 0) 0px 0px 0px 0px, rgba(0, 0, 0, 0) 0px 0px 0px 0px, rgba(0, 0, 0, 0) 0px 0px 0px 0px, oklch(0.145 0 0) 0px 0px 0px 0px, rgba(0, 0, 0, 0) 0px 0px 0px 0px",
+        "textAlign": "start"
+      },
+      "children": []
+    },
+    {
+      "tag": "div",
+      "cls": "flex h-auto cursor-text items-center gap-2 py-1.5 text-sm font-medium text-muted-foreground select-none group-data-[disabled=true]/input-group:opacity-50 [&>kbd]:rounded-[calc(var(--radius)-5px)] [&>svg:not([class*='size-'])]:size-4 order-last w-full justify-start px-2.5 pb-2 group-has-[>input]/input-group:pb-2 [.border-t]:pt-2",
+      "text": "",
+      "rect": {
+        "x": 1,
+        "y": 65,
+        "w": 286,
+        "h": 38
+      },
+      "style": {
+        "backgroundColor": "rgba(0, 0, 0, 0)",
+        "color": "rgb(115, 115, 115)",
+        "borderWidth": [
+          0,
+          0,
+          0,
+          0
+        ],
+        "borderColor": "rgb(229, 229, 229)",
+        "borderRadius": [
+          0,
+          0,
+          0,
+          0
+        ],
+        "padding": [
+          6,
+          10,
+          8,
+          10
+        ],
+        "fontSize": 14,
+        "fontWeight": 500,
+        "lineHeight": 20,
+        "letterSpacing": 0,
+        "opacity": 1,
+        "boxShadow": "none",
+        "textAlign": "start"
+      },
+      "children": [
+        {
+          "tag": "button",
+          "cls": "group/button shrink-0 justify-center border border-transparent bg-clip-padding font-medium whitespace-nowrap transition-all outline-none select-none focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/50 active:not-aria-[haspopup]:translate-y-px disabled:pointer-events-none disabled:opacity-50 aria-invalid:border-destructive aria-invalid:ring-3 aria-invalid:ring-destructive/20 dark:aria-invalid:border-destructive/50 dark:aria-invalid:ring-destructive/40 [&_svg]:pointer-events-none [&_svg]:shrink-0 [&_svg:not([class*='size-'])]:size-4 hover:bg-muted hover:text-foreground aria-expanded:bg-muted aria-expanded:text-foreground dark:hover:bg-muted/50 has-data-[icon=inline-end]:pr-2 has-data-[icon=inline-start]:pl-2 flex items-center text-sm shadow-none h-6 gap-1 rounded-[calc(var(--radius)-3px)] px-1.5 [&>svg:not([class*='size-'])]:size-3.5",
+          "text": "",
+          "rect": {
+            "x": 11,
+            "y": 71,
+            "w": 28,
+            "h": 24
+          },
+          "style": {
+            "backgroundColor": "rgba(0, 0, 0, 0)",
+            "color": "rgb(115, 115, 115)",
+            "borderWidth": [
+              1,
+              1,
+              1,
+              1
+            ],
+            "borderColor": "rgba(0, 0, 0, 0)",
+            "borderRadius": [
+              7,
+              7,
+              7,
+              7
+            ],
+            "padding": [
+              0,
+              6,
+              0,
+              6
+            ],
+            "fontSize": 14,
+            "fontWeight": 500,
+            "lineHeight": 20,
+            "letterSpacing": 0,
+            "opacity": 1,
+            "boxShadow": "rgba(0, 0, 0, 0) 0px 0px 0px 0px, rgba(0, 0, 0, 0) 0px 0px 0px 0px, rgba(0, 0, 0, 0) 0px 0px 0px 0px, rgba(0, 0, 0, 0) 0px 0px 0px 0px, rgba(0, 0, 0, 0) 0px 0px 0px 0px",
+            "textAlign": "center"
+          },
+          "children": [
+            {
+              "tag": "svg",
+              "cls": "lucide lucide-send",
+              "text": "",
+              "rect": {
+                "x": 18,
+                "y": 76,
+                "w": 14,
+                "h": 14
+              },
+              "style": {
+                "backgroundColor": "rgba(0, 0, 0, 0)",
+                "color": "rgb(115, 115, 115)",
+                "borderWidth": [
+                  0,
+                  0,
+                  0,
+                  0
+                ],
+                "borderColor": "rgb(229, 229, 229)",
+                "borderRadius": [
+                  0,
+                  0,
+                  0,
+                  0
+                ],
+                "padding": [
+                  0,
+                  0,
+                  0,
+                  0
+                ],
+                "fontSize": 14,
+                "fontWeight": 500,
+                "lineHeight": 20,
+                "letterSpacing": 0,
+                "opacity": 1,
+                "boxShadow": "none",
+                "textAlign": "center"
+              },
+              "children": [
+                {
+                  "tag": "path",
+                  "cls": "",
+                  "text": "",
+                  "rect": {
+                    "x": 19.167,
+                    "y": 77.165,
+                    "w": 11.668,
+                    "h": 11.668
+                  },
+                  "style": {
+                    "backgroundColor": "rgba(0, 0, 0, 0)",
+                    "color": "rgb(115, 115, 115)",
+                    "borderWidth": [
+                      0,
+                      0,
+                      0,
+                      0
+                    ],
+                    "borderColor": "rgb(229, 229, 229)",
+                    "borderRadius": [
+                      0,
+                      0,
+                      0,
+                      0
+                    ],
+                    "padding": [
+                      0,
+                      0,
+                      0,
+                      0
+                    ],
+                    "fontSize": 14,
+                    "fontWeight": 500,
+                    "lineHeight": 20,
+                    "letterSpacing": 0,
+                    "opacity": 1,
+                    "boxShadow": "none",
+                    "textAlign": "center"
+                  },
+                  "children": []
+                },
+                {
+                  "tag": "path",
+                  "cls": "",
+                  "text": "",
+                  "rect": {
+                    "x": 24.367,
+                    "y": 77.252,
+                    "w": 6.382,
+                    "h": 6.381
+                  },
+                  "style": {
+                    "backgroundColor": "rgba(0, 0, 0, 0)",
+                    "color": "rgb(115, 115, 115)",
+                    "borderWidth": [
+                      0,
+                      0,
+                      0,
+                      0
+                    ],
+                    "borderColor": "rgb(229, 229, 229)",
+                    "borderRadius": [
+                      0,
+                      0,
+                      0,
+                      0
+                    ],
+                    "padding": [
+                      0,
+                      0,
+                      0,
+                      0
+                    ],
+                    "fontSize": 14,
+                    "fontWeight": 500,
+                    "lineHeight": 20,
+                    "letterSpacing": 0,
+                    "opacity": 1,
+                    "boxShadow": "none",
+                    "textAlign": "center"
+                  },
+                  "children": []
+                }
+              ]
+            }
+          ]
+        }
+      ]
+    }
+  ],
+  "pageRect": {
+    "x": 496,
+    "y": 348,
+    "w": 288,
+    "h": 104
+  },
+  "cropOffset": {
+    "x": 0,
+    "y": 0
+  }
+}

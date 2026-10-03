@@ -1,0 +1,2489 @@
+{
+  "tag": "div",
+  "cls": "flex aspect-video justify-center text-xs [&_.recharts-cartesian-axis-tick_text]:fill-muted-foreground [&_.recharts-cartesian-grid_line[stroke='#ccc']]:stroke-border/50 [&_.recharts-curve.recharts-tooltip-cursor]:stroke-border [&_.recharts-dot[stroke='#fff']]:stroke-transparent [&_.recharts-layer]:outline-hidden [&_.recharts-polar-grid_[stroke='#ccc']]:stroke-border [&_.recharts-radial-bar-background-sector]:fill-muted [&_.recharts-rectangle.recharts-tooltip-cursor]:fill-muted [&_.recharts-reference-line_[stroke='#ccc']]:stroke-border [&_.recharts-sector]:outline-hidden [&_.recharts-sector[stroke='#fff']]:stroke-transparent [&_.recharts-surface]:outline-hidden h-[220px] w-[380px]",
+  "text": "",
+  "rect": {
+    "x": 0,
+    "y": 0,
+    "w": 380,
+    "h": 220
+  },
+  "style": {
+    "backgroundColor": "rgba(0, 0, 0, 0)",
+    "color": "rgb(10, 10, 10)",
+    "borderWidth": [
+      0,
+      0,
+      0,
+      0
+    ],
+    "borderColor": "rgb(229, 229, 229)",
+    "borderRadius": [
+      0,
+      0,
+      0,
+      0
+    ],
+    "padding": [
+      0,
+      0,
+      0,
+      0
+    ],
+    "fontSize": 12,
+    "fontWeight": 400,
+    "lineHeight": 16,
+    "letterSpacing": 0,
+    "opacity": 1,
+    "boxShadow": "none",
+    "textAlign": "start"
+  },
+  "children": [
+    {
+      "tag": "div",
+      "cls": "recharts-responsive-container",
+      "text": "",
+      "rect": {
+        "x": 0,
+        "y": 0,
+        "w": 380,
+        "h": 220
+      },
+      "style": {
+        "backgroundColor": "rgba(0, 0, 0, 0)",
+        "color": "rgb(10, 10, 10)",
+        "borderWidth": [
+          0,
+          0,
+          0,
+          0
+        ],
+        "borderColor": "rgb(229, 229, 229)",
+        "borderRadius": [
+          0,
+          0,
+          0,
+          0
+        ],
+        "padding": [
+          0,
+          0,
+          0,
+          0
+        ],
+        "fontSize": 12,
+        "fontWeight": 400,
+        "lineHeight": 16,
+        "letterSpacing": 0,
+        "opacity": 1,
+        "boxShadow": "none",
+        "textAlign": "start"
+      },
+      "children": [
+        {
+          "tag": "div",
+          "cls": "recharts-wrapper",
+          "text": "",
+          "rect": {
+            "x": 0,
+            "y": 0,
+            "w": 380,
+            "h": 220
+          },
+          "style": {
+            "backgroundColor": "rgba(0, 0, 0, 0)",
+            "color": "rgb(10, 10, 10)",
+            "borderWidth": [
+              0,
+              0,
+              0,
+              0
+            ],
+            "borderColor": "rgb(229, 229, 229)",
+            "borderRadius": [
+              0,
+              0,
+              0,
+              0
+            ],
+            "padding": [
+              0,
+              0,
+              0,
+              0
+            ],
+            "fontSize": 12,
+            "fontWeight": 400,
+            "lineHeight": 16,
+            "letterSpacing": 0,
+            "opacity": 1,
+            "boxShadow": "none",
+            "textAlign": "start"
+          },
+          "children": [
+            {
+              "tag": "div",
+              "cls": "recharts-legend-wrapper",
+              "text": "",
+              "rect": {
+                "x": 5,
+                "y": 187,
+                "w": 370,
+                "h": 28
+              },
+              "style": {
+                "backgroundColor": "rgba(0, 0, 0, 0)",
+                "color": "rgb(10, 10, 10)",
+                "borderWidth": [
+                  0,
+                  0,
+                  0,
+                  0
+                ],
+                "borderColor": "rgb(229, 229, 229)",
+                "borderRadius": [
+                  0,
+                  0,
+                  0,
+                  0
+                ],
+                "padding": [
+                  0,
+                  0,
+                  0,
+                  0
+                ],
+                "fontSize": 12,
+                "fontWeight": 400,
+                "lineHeight": 16,
+                "letterSpacing": 0,
+                "opacity": 1,
+                "boxShadow": "none",
+                "textAlign": "start"
+              },
+              "children": [
+                {
+                  "tag": "div",
+                  "cls": "flex items-center justify-center gap-4 pt-3",
+                  "text": "",
+                  "rect": {
+                    "x": 5,
+                    "y": 187,
+                    "w": 370,
+                    "h": 28
+                  },
+                  "style": {
+                    "backgroundColor": "rgba(0, 0, 0, 0)",
+                    "color": "rgb(10, 10, 10)",
+                    "borderWidth": [
+                      0,
+                      0,
+                      0,
+                      0
+                    ],
+                    "borderColor": "rgb(229, 229, 229)",
+                    "borderRadius": [
+                      0,
+                      0,
+                      0,
+                      0
+                    ],
+                    "padding": [
+                      12,
+                      0,
+                      0,
+                      0
+                    ],
+                    "fontSize": 12,
+                    "fontWeight": 400,
+                    "lineHeight": 16,
+                    "letterSpacing": 0,
+                    "opacity": 1,
+                    "boxShadow": "none",
+                    "textAlign": "start"
+                  },
+                  "children": [
+                    {
+                      "tag": "div",
+                      "cls": "flex items-center gap-1.5 [&>svg]:h-3 [&>svg]:w-3 [&>svg]:text-muted-foreground",
+                      "text": "Desktop",
+                      "rect": {
+                        "x": 125.734,
+                        "y": 199,
+                        "w": 61.109,
+                        "h": 16
+                      },
+                      "style": {
+                        "backgroundColor": "rgba(0, 0, 0, 0)",
+                        "color": "rgb(10, 10, 10)",
+                        "borderWidth": [
+                          0,
+                          0,
+                          0,
+                          0
+                        ],
+                        "borderColor": "rgb(229, 229, 229)",
+                        "borderRadius": [
+                          0,
+                          0,
+                          0,
+                          0
+                        ],
+                        "padding": [
+                          0,
+                          0,
+                          0,
+                          0
+                        ],
+                        "fontSize": 12,
+                        "fontWeight": 400,
+                        "lineHeight": 16,
+                        "letterSpacing": 0,
+                        "opacity": 1,
+                        "boxShadow": "none",
+                        "textAlign": "start"
+                      },
+                      "children": [
+                        {
+                          "tag": "div",
+                          "cls": "h-2 w-2 shrink-0 rounded-[2px]",
+                          "text": "",
+                          "rect": {
+                            "x": 125.734,
+                            "y": 203,
+                            "w": 8,
+                            "h": 8
+                          },
+                          "style": {
+                            "backgroundColor": "rgb(212, 212, 212)",
+                            "color": "rgb(10, 10, 10)",
+                            "borderWidth": [
+                              0,
+                              0,
+                              0,
+                              0
+                            ],
+                            "borderColor": "rgb(229, 229, 229)",
+                            "borderRadius": [
+                              2,
+                              2,
+                              2,
+                              2
+                            ],
+                            "padding": [
+                              0,
+                              0,
+                              0,
+                              0
+                            ],
+                            "fontSize": 12,
+                            "fontWeight": 400,
+                            "lineHeight": 16,
+                            "letterSpacing": 0,
+                            "opacity": 1,
+                            "boxShadow": "none",
+                            "textAlign": "start"
+                          },
+                          "children": []
+                        }
+                      ]
+                    },
+                    {
+                      "tag": "div",
+                      "cls": "flex items-center gap-1.5 [&>svg]:h-3 [&>svg]:w-3 [&>svg]:text-muted-foreground",
+                      "text": "Mobile",
+                      "rect": {
+                        "x": 202.844,
+                        "y": 199,
+                        "w": 51.406,
+                        "h": 16
+                      },
+                      "style": {
+                        "backgroundColor": "rgba(0, 0, 0, 0)",
+                        "color": "rgb(10, 10, 10)",
+                        "borderWidth": [
+                          0,
+                          0,
+                          0,
+                          0
+                        ],
+                        "borderColor": "rgb(229, 229, 229)",
+                        "borderRadius": [
+                          0,
+                          0,
+                          0,
+                          0
+                        ],
+                        "padding": [
+                          0,
+                          0,
+                          0,
+                          0
+                        ],
+                        "fontSize": 12,
+                        "fontWeight": 400,
+                        "lineHeight": 16,
+                        "letterSpacing": 0,
+                        "opacity": 1,
+                        "boxShadow": "none",
+                        "textAlign": "start"
+                      },
+                      "children": [
+                        {
+                          "tag": "div",
+                          "cls": "h-2 w-2 shrink-0 rounded-[2px]",
+                          "text": "",
+                          "rect": {
+                            "x": 202.844,
+                            "y": 203,
+                            "w": 8,
+                            "h": 8
+                          },
+                          "style": {
+                            "backgroundColor": "rgb(115, 115, 115)",
+                            "color": "rgb(10, 10, 10)",
+                            "borderWidth": [
+                              0,
+                              0,
+                              0,
+                              0
+                            ],
+                            "borderColor": "rgb(229, 229, 229)",
+                            "borderRadius": [
+                              2,
+                              2,
+                              2,
+                              2
+                            ],
+                            "padding": [
+                              0,
+                              0,
+                              0,
+                              0
+                            ],
+                            "fontSize": 12,
+                            "fontWeight": 400,
+                            "lineHeight": 16,
+                            "letterSpacing": 0,
+                            "opacity": 1,
+                            "boxShadow": "none",
+                            "textAlign": "start"
+                          },
+                          "children": []
+                        }
+                      ]
+                    }
+                  ]
+                }
+              ]
+            },
+            {
+              "tag": "svg",
+              "cls": "recharts-surface",
+              "text": "",
+              "rect": {
+                "x": 0,
+                "y": 0,
+                "w": 380,
+                "h": 220
+              },
+              "style": {
+                "backgroundColor": "rgba(0, 0, 0, 0)",
+                "color": "rgb(10, 10, 10)",
+                "borderWidth": [
+                  0,
+                  0,
+                  0,
+                  0
+                ],
+                "borderColor": "rgb(229, 229, 229)",
+                "borderRadius": [
+                  0,
+                  0,
+                  0,
+                  0
+                ],
+                "padding": [
+                  0,
+                  0,
+                  0,
+                  0
+                ],
+                "fontSize": 12,
+                "fontWeight": 400,
+                "lineHeight": 16,
+                "letterSpacing": 0,
+                "opacity": 1,
+                "boxShadow": "none",
+                "textAlign": "start"
+              },
+              "children": [
+                {
+                  "tag": "g",
+                  "cls": "recharts-zIndex-layer_-100",
+                  "text": "",
+                  "rect": {
+                    "x": 5,
+                    "y": 5,
+                    "w": 370,
+                    "h": 152
+                  },
+                  "style": {
+                    "backgroundColor": "rgba(0, 0, 0, 0)",
+                    "color": "rgb(10, 10, 10)",
+                    "borderWidth": [
+                      0,
+                      0,
+                      0,
+                      0
+                    ],
+                    "borderColor": "rgb(229, 229, 229)",
+                    "borderRadius": [
+                      0,
+                      0,
+                      0,
+                      0
+                    ],
+                    "padding": [
+                      0,
+                      0,
+                      0,
+                      0
+                    ],
+                    "fontSize": 12,
+                    "fontWeight": 400,
+                    "lineHeight": 16,
+                    "letterSpacing": 0,
+                    "opacity": 1,
+                    "boxShadow": "none",
+                    "textAlign": "start"
+                  },
+                  "children": [
+                    {
+                      "tag": "g",
+                      "cls": "recharts-cartesian-grid",
+                      "text": "",
+                      "rect": {
+                        "x": 5,
+                        "y": 5,
+                        "w": 370,
+                        "h": 152
+                      },
+                      "style": {
+                        "backgroundColor": "rgba(0, 0, 0, 0)",
+                        "color": "rgb(10, 10, 10)",
+                        "borderWidth": [
+                          0,
+                          0,
+                          0,
+                          0
+                        ],
+                        "borderColor": "rgb(229, 229, 229)",
+                        "borderRadius": [
+                          0,
+                          0,
+                          0,
+                          0
+                        ],
+                        "padding": [
+                          0,
+                          0,
+                          0,
+                          0
+                        ],
+                        "fontSize": 12,
+                        "fontWeight": 400,
+                        "lineHeight": 16,
+                        "letterSpacing": 0,
+                        "opacity": 1,
+                        "boxShadow": "none",
+                        "textAlign": "start"
+                      },
+                      "children": [
+                        {
+                          "tag": "g",
+                          "cls": "recharts-cartesian-grid-horizontal",
+                          "text": "",
+                          "rect": {
+                            "x": 5,
+                            "y": 5,
+                            "w": 370,
+                            "h": 152
+                          },
+                          "style": {
+                            "backgroundColor": "rgba(0, 0, 0, 0)",
+                            "color": "rgb(10, 10, 10)",
+                            "borderWidth": [
+                              0,
+                              0,
+                              0,
+                              0
+                            ],
+                            "borderColor": "rgb(229, 229, 229)",
+                            "borderRadius": [
+                              0,
+                              0,
+                              0,
+                              0
+                            ],
+                            "padding": [
+                              0,
+                              0,
+                              0,
+                              0
+                            ],
+                            "fontSize": 12,
+                            "fontWeight": 400,
+                            "lineHeight": 16,
+                            "letterSpacing": 0,
+                            "opacity": 1,
+                            "boxShadow": "none",
+                            "textAlign": "start"
+                          },
+                          "children": []
+                        }
+                      ]
+                    }
+                  ]
+                },
+                {
+                  "tag": "g",
+                  "cls": "recharts-zIndex-layer_300",
+                  "text": "",
+                  "rect": {
+                    "x": 14.25,
+                    "y": 13.444,
+                    "w": 351.5,
+                    "h": 143.556
+                  },
+                  "style": {
+                    "backgroundColor": "rgba(0, 0, 0, 0)",
+                    "color": "rgb(10, 10, 10)",
+                    "borderWidth": [
+                      0,
+                      0,
+                      0,
+                      0
+                    ],
+                    "borderColor": "rgb(229, 229, 229)",
+                    "borderRadius": [
+                      0,
+                      0,
+                      0,
+                      0
+                    ],
+                    "padding": [
+                      0,
+                      0,
+                      0,
+                      0
+                    ],
+                    "fontSize": 12,
+                    "fontWeight": 400,
+                    "lineHeight": 16,
+                    "letterSpacing": 0,
+                    "opacity": 1,
+                    "boxShadow": "none",
+                    "textAlign": "start"
+                  },
+                  "children": [
+                    {
+                      "tag": "g",
+                      "cls": "recharts-layer recharts-bar",
+                      "text": "",
+                      "rect": {
+                        "x": 14.25,
+                        "y": 13.444,
+                        "w": 312.5,
+                        "h": 143.556
+                      },
+                      "style": {
+                        "backgroundColor": "rgba(0, 0, 0, 0)",
+                        "color": "rgb(10, 10, 10)",
+                        "borderWidth": [
+                          0,
+                          0,
+                          0,
+                          0
+                        ],
+                        "borderColor": "rgb(229, 229, 229)",
+                        "borderRadius": [
+                          0,
+                          0,
+                          0,
+                          0
+                        ],
+                        "padding": [
+                          0,
+                          0,
+                          0,
+                          0
+                        ],
+                        "fontSize": 12,
+                        "fontWeight": 400,
+                        "lineHeight": 16,
+                        "letterSpacing": 0,
+                        "opacity": 1,
+                        "boxShadow": "none",
+                        "textAlign": "start"
+                      },
+                      "children": [
+                        {
+                          "tag": "g",
+                          "cls": "recharts-layer recharts-bar-rectangles",
+                          "text": "",
+                          "rect": {
+                            "x": 14.25,
+                            "y": 13.444,
+                            "w": 312.5,
+                            "h": 143.556
+                          },
+                          "style": {
+                            "backgroundColor": "rgba(0, 0, 0, 0)",
+                            "color": "rgb(10, 10, 10)",
+                            "borderWidth": [
+                              0,
+                              0,
+                              0,
+                              0
+                            ],
+                            "borderColor": "rgb(229, 229, 229)",
+                            "borderRadius": [
+                              0,
+                              0,
+                              0,
+                              0
+                            ],
+                            "padding": [
+                              0,
+                              0,
+                              0,
+                              0
+                            ],
+                            "fontSize": 12,
+                            "fontWeight": 400,
+                            "lineHeight": 16,
+                            "letterSpacing": 0,
+                            "opacity": 1,
+                            "boxShadow": "none",
+                            "textAlign": "start"
+                          },
+                          "children": [
+                            {
+                              "tag": "g",
+                              "cls": "recharts-layer",
+                              "text": "",
+                              "rect": {
+                                "x": 14.25,
+                                "y": 13.444,
+                                "w": 312.5,
+                                "h": 143.556
+                              },
+                              "style": {
+                                "backgroundColor": "rgba(0, 0, 0, 0)",
+                                "color": "rgb(10, 10, 10)",
+                                "borderWidth": [
+                                  0,
+                                  0,
+                                  0,
+                                  0
+                                ],
+                                "borderColor": "rgb(229, 229, 229)",
+                                "borderRadius": [
+                                  0,
+                                  0,
+                                  0,
+                                  0
+                                ],
+                                "padding": [
+                                  0,
+                                  0,
+                                  0,
+                                  0
+                                ],
+                                "fontSize": 12,
+                                "fontWeight": 400,
+                                "lineHeight": 16,
+                                "letterSpacing": 0,
+                                "opacity": 1,
+                                "boxShadow": "none",
+                                "textAlign": "start"
+                              },
+                              "children": [
+                                {
+                                  "tag": "g",
+                                  "cls": "recharts-layer recharts-bar-rectangle",
+                                  "text": "",
+                                  "rect": {
+                                    "x": 14.25,
+                                    "y": 55.667,
+                                    "w": 35,
+                                    "h": 101.333
+                                  },
+                                  "style": {
+                                    "backgroundColor": "rgba(0, 0, 0, 0)",
+                                    "color": "rgb(10, 10, 10)",
+                                    "borderWidth": [
+                                      0,
+                                      0,
+                                      0,
+                                      0
+                                    ],
+                                    "borderColor": "rgb(229, 229, 229)",
+                                    "borderRadius": [
+                                      0,
+                                      0,
+                                      0,
+                                      0
+                                    ],
+                                    "padding": [
+                                      0,
+                                      0,
+                                      0,
+                                      0
+                                    ],
+                                    "fontSize": 12,
+                                    "fontWeight": 400,
+                                    "lineHeight": 16,
+                                    "letterSpacing": 0,
+                                    "opacity": 1,
+                                    "boxShadow": "none",
+                                    "textAlign": "start"
+                                  },
+                                  "children": [
+                                    {
+                                      "tag": "g",
+                                      "cls": "recharts-layer recharts-inactive-bar",
+                                      "text": "",
+                                      "rect": {
+                                        "x": 14.25,
+                                        "y": 55.667,
+                                        "w": 35,
+                                        "h": 101.333
+                                      },
+                                      "style": {
+                                        "backgroundColor": "rgba(0, 0, 0, 0)",
+                                        "color": "rgb(10, 10, 10)",
+                                        "borderWidth": [
+                                          0,
+                                          0,
+                                          0,
+                                          0
+                                        ],
+                                        "borderColor": "rgb(229, 229, 229)",
+                                        "borderRadius": [
+                                          0,
+                                          0,
+                                          0,
+                                          0
+                                        ],
+                                        "padding": [
+                                          0,
+                                          0,
+                                          0,
+                                          0
+                                        ],
+                                        "fontSize": 12,
+                                        "fontWeight": 400,
+                                        "lineHeight": 16,
+                                        "letterSpacing": 0,
+                                        "opacity": 1,
+                                        "boxShadow": "none",
+                                        "textAlign": "start"
+                                      },
+                                      "children": [
+                                        {
+                                          "tag": "path",
+                                          "cls": "recharts-rectangle",
+                                          "text": "",
+                                          "rect": {
+                                            "x": 14.25,
+                                            "y": 55.667,
+                                            "w": 35,
+                                            "h": 101.333
+                                          },
+                                          "style": {
+                                            "backgroundColor": "rgba(0, 0, 0, 0)",
+                                            "color": "rgb(10, 10, 10)",
+                                            "borderWidth": [
+                                              0,
+                                              0,
+                                              0,
+                                              0
+                                            ],
+                                            "borderColor": "rgb(229, 229, 229)",
+                                            "borderRadius": [
+                                              0,
+                                              0,
+                                              0,
+                                              0
+                                            ],
+                                            "padding": [
+                                              0,
+                                              0,
+                                              0,
+                                              0
+                                            ],
+                                            "fontSize": 12,
+                                            "fontWeight": 400,
+                                            "lineHeight": 16,
+                                            "letterSpacing": 0,
+                                            "opacity": 1,
+                                            "boxShadow": "none",
+                                            "textAlign": "start"
+                                          },
+                                          "children": []
+                                        }
+                                      ]
+                                    }
+                                  ]
+                                },
+                                {
+                                  "tag": "g",
+                                  "cls": "recharts-layer recharts-bar-rectangle",
+                                  "text": "",
+                                  "rect": {
+                                    "x": 106.75,
+                                    "y": 30.333,
+                                    "w": 35,
+                                    "h": 126.667
+                                  },
+                                  "style": {
+                                    "backgroundColor": "rgba(0, 0, 0, 0)",
+                                    "color": "rgb(10, 10, 10)",
+                                    "borderWidth": [
+                                      0,
+                                      0,
+                                      0,
+                                      0
+                                    ],
+                                    "borderColor": "rgb(229, 229, 229)",
+                                    "borderRadius": [
+                                      0,
+                                      0,
+                                      0,
+                                      0
+                                    ],
+                                    "padding": [
+                                      0,
+                                      0,
+                                      0,
+                                      0
+                                    ],
+                                    "fontSize": 12,
+                                    "fontWeight": 400,
+                                    "lineHeight": 16,
+                                    "letterSpacing": 0,
+                                    "opacity": 1,
+                                    "boxShadow": "none",
+                                    "textAlign": "start"
+                                  },
+                                  "children": [
+                                    {
+                                      "tag": "g",
+                                      "cls": "recharts-layer recharts-inactive-bar",
+                                      "text": "",
+                                      "rect": {
+                                        "x": 106.75,
+                                        "y": 30.333,
+                                        "w": 35,
+                                        "h": 126.667
+                                      },
+                                      "style": {
+                                        "backgroundColor": "rgba(0, 0, 0, 0)",
+                                        "color": "rgb(10, 10, 10)",
+                                        "borderWidth": [
+                                          0,
+                                          0,
+                                          0,
+                                          0
+                                        ],
+                                        "borderColor": "rgb(229, 229, 229)",
+                                        "borderRadius": [
+                                          0,
+                                          0,
+                                          0,
+                                          0
+                                        ],
+                                        "padding": [
+                                          0,
+                                          0,
+                                          0,
+                                          0
+                                        ],
+                                        "fontSize": 12,
+                                        "fontWeight": 400,
+                                        "lineHeight": 16,
+                                        "letterSpacing": 0,
+                                        "opacity": 1,
+                                        "boxShadow": "none",
+                                        "textAlign": "start"
+                                      },
+                                      "children": [
+                                        {
+                                          "tag": "path",
+                                          "cls": "recharts-rectangle",
+                                          "text": "",
+                                          "rect": {
+                                            "x": 106.75,
+                                            "y": 30.333,
+                                            "w": 35,
+                                            "h": 126.667
+                                          },
+                                          "style": {
+                                            "backgroundColor": "rgba(0, 0, 0, 0)",
+                                            "color": "rgb(10, 10, 10)",
+                                            "borderWidth": [
+                                              0,
+                                              0,
+                                              0,
+                                              0
+                                            ],
+                                            "borderColor": "rgb(229, 229, 229)",
+                                            "borderRadius": [
+                                              0,
+                                              0,
+                                              0,
+                                              0
+                                            ],
+                                            "padding": [
+                                              0,
+                                              0,
+                                              0,
+                                              0
+                                            ],
+                                            "fontSize": 12,
+                                            "fontWeight": 400,
+                                            "lineHeight": 16,
+                                            "letterSpacing": 0,
+                                            "opacity": 1,
+                                            "boxShadow": "none",
+                                            "textAlign": "start"
+                                          },
+                                          "children": []
+                                        }
+                                      ]
+                                    }
+                                  ]
+                                },
+                                {
+                                  "tag": "g",
+                                  "cls": "recharts-layer recharts-bar-rectangle",
+                                  "text": "",
+                                  "rect": {
+                                    "x": 199.25,
+                                    "y": 81,
+                                    "w": 35,
+                                    "h": 76
+                                  },
+                                  "style": {
+                                    "backgroundColor": "rgba(0, 0, 0, 0)",
+                                    "color": "rgb(10, 10, 10)",
+                                    "borderWidth": [
+                                      0,
+                                      0,
+                                      0,
+                                      0
+                                    ],
+                                    "borderColor": "rgb(229, 229, 229)",
+                                    "borderRadius": [
+                                      0,
+                                      0,
+                                      0,
+                                      0
+                                    ],
+                                    "padding": [
+                                      0,
+                                      0,
+                                      0,
+                                      0
+                                    ],
+                                    "fontSize": 12,
+                                    "fontWeight": 400,
+                                    "lineHeight": 16,
+                                    "letterSpacing": 0,
+                                    "opacity": 1,
+                                    "boxShadow": "none",
+                                    "textAlign": "start"
+                                  },
+                                  "children": [
+                                    {
+                                      "tag": "g",
+                                      "cls": "recharts-layer recharts-inactive-bar",
+                                      "text": "",
+                                      "rect": {
+                                        "x": 199.25,
+                                        "y": 81,
+                                        "w": 35,
+                                        "h": 76
+                                      },
+                                      "style": {
+                                        "backgroundColor": "rgba(0, 0, 0, 0)",
+                                        "color": "rgb(10, 10, 10)",
+                                        "borderWidth": [
+                                          0,
+                                          0,
+                                          0,
+                                          0
+                                        ],
+                                        "borderColor": "rgb(229, 229, 229)",
+                                        "borderRadius": [
+                                          0,
+                                          0,
+                                          0,
+                                          0
+                                        ],
+                                        "padding": [
+                                          0,
+                                          0,
+                                          0,
+                                          0
+                                        ],
+                                        "fontSize": 12,
+                                        "fontWeight": 400,
+                                        "lineHeight": 16,
+                                        "letterSpacing": 0,
+                                        "opacity": 1,
+                                        "boxShadow": "none",
+                                        "textAlign": "start"
+                                      },
+                                      "children": [
+                                        {
+                                          "tag": "path",
+                                          "cls": "recharts-rectangle",
+                                          "text": "",
+                                          "rect": {
+                                            "x": 199.25,
+                                            "y": 81,
+                                            "w": 35,
+                                            "h": 76
+                                          },
+                                          "style": {
+                                            "backgroundColor": "rgba(0, 0, 0, 0)",
+                                            "color": "rgb(10, 10, 10)",
+                                            "borderWidth": [
+                                              0,
+                                              0,
+                                              0,
+                                              0
+                                            ],
+                                            "borderColor": "rgb(229, 229, 229)",
+                                            "borderRadius": [
+                                              0,
+                                              0,
+                                              0,
+                                              0
+                                            ],
+                                            "padding": [
+                                              0,
+                                              0,
+                                              0,
+                                              0
+                                            ],
+                                            "fontSize": 12,
+                                            "fontWeight": 400,
+                                            "lineHeight": 16,
+                                            "letterSpacing": 0,
+                                            "opacity": 1,
+                                            "boxShadow": "none",
+                                            "textAlign": "start"
+                                          },
+                                          "children": []
+                                        }
+                                      ]
+                                    }
+                                  ]
+                                },
+                                {
+                                  "tag": "g",
+                                  "cls": "recharts-layer recharts-bar-rectangle",
+                                  "text": "",
+                                  "rect": {
+                                    "x": 291.75,
+                                    "y": 13.444,
+                                    "w": 35,
+                                    "h": 143.556
+                                  },
+                                  "style": {
+                                    "backgroundColor": "rgba(0, 0, 0, 0)",
+                                    "color": "rgb(10, 10, 10)",
+                                    "borderWidth": [
+                                      0,
+                                      0,
+                                      0,
+                                      0
+                                    ],
+                                    "borderColor": "rgb(229, 229, 229)",
+                                    "borderRadius": [
+                                      0,
+                                      0,
+                                      0,
+                                      0
+                                    ],
+                                    "padding": [
+                                      0,
+                                      0,
+                                      0,
+                                      0
+                                    ],
+                                    "fontSize": 12,
+                                    "fontWeight": 400,
+                                    "lineHeight": 16,
+                                    "letterSpacing": 0,
+                                    "opacity": 1,
+                                    "boxShadow": "none",
+                                    "textAlign": "start"
+                                  },
+                                  "children": [
+                                    {
+                                      "tag": "g",
+                                      "cls": "recharts-layer recharts-inactive-bar",
+                                      "text": "",
+                                      "rect": {
+                                        "x": 291.75,
+                                        "y": 13.444,
+                                        "w": 35,
+                                        "h": 143.556
+                                      },
+                                      "style": {
+                                        "backgroundColor": "rgba(0, 0, 0, 0)",
+                                        "color": "rgb(10, 10, 10)",
+                                        "borderWidth": [
+                                          0,
+                                          0,
+                                          0,
+                                          0
+                                        ],
+                                        "borderColor": "rgb(229, 229, 229)",
+                                        "borderRadius": [
+                                          0,
+                                          0,
+                                          0,
+                                          0
+                                        ],
+                                        "padding": [
+                                          0,
+                                          0,
+                                          0,
+                                          0
+                                        ],
+                                        "fontSize": 12,
+                                        "fontWeight": 400,
+                                        "lineHeight": 16,
+                                        "letterSpacing": 0,
+                                        "opacity": 1,
+                                        "boxShadow": "none",
+                                        "textAlign": "start"
+                                      },
+                                      "children": [
+                                        {
+                                          "tag": "path",
+                                          "cls": "recharts-rectangle",
+                                          "text": "",
+                                          "rect": {
+                                            "x": 291.75,
+                                            "y": 13.444,
+                                            "w": 35,
+                                            "h": 143.556
+                                          },
+                                          "style": {
+                                            "backgroundColor": "rgba(0, 0, 0, 0)",
+                                            "color": "rgb(10, 10, 10)",
+                                            "borderWidth": [
+                                              0,
+                                              0,
+                                              0,
+                                              0
+                                            ],
+                                            "borderColor": "rgb(229, 229, 229)",
+                                            "borderRadius": [
+                                              0,
+                                              0,
+                                              0,
+                                              0
+                                            ],
+                                            "padding": [
+                                              0,
+                                              0,
+                                              0,
+                                              0
+                                            ],
+                                            "fontSize": 12,
+                                            "fontWeight": 400,
+                                            "lineHeight": 16,
+                                            "letterSpacing": 0,
+                                            "opacity": 1,
+                                            "boxShadow": "none",
+                                            "textAlign": "start"
+                                          },
+                                          "children": []
+                                        }
+                                      ]
+                                    }
+                                  ]
+                                }
+                              ]
+                            }
+                          ]
+                        }
+                      ]
+                    },
+                    {
+                      "tag": "g",
+                      "cls": "recharts-layer recharts-bar",
+                      "text": "",
+                      "rect": {
+                        "x": 53.25,
+                        "y": 55.667,
+                        "w": 312.5,
+                        "h": 101.333
+                      },
+                      "style": {
+                        "backgroundColor": "rgba(0, 0, 0, 0)",
+                        "color": "rgb(10, 10, 10)",
+                        "borderWidth": [
+                          0,
+                          0,
+                          0,
+                          0
+                        ],
+                        "borderColor": "rgb(229, 229, 229)",
+                        "borderRadius": [
+                          0,
+                          0,
+                          0,
+                          0
+                        ],
+                        "padding": [
+                          0,
+                          0,
+                          0,
+                          0
+                        ],
+                        "fontSize": 12,
+                        "fontWeight": 400,
+                        "lineHeight": 16,
+                        "letterSpacing": 0,
+                        "opacity": 1,
+                        "boxShadow": "none",
+                        "textAlign": "start"
+                      },
+                      "children": [
+                        {
+                          "tag": "g",
+                          "cls": "recharts-layer recharts-bar-rectangles",
+                          "text": "",
+                          "rect": {
+                            "x": 53.25,
+                            "y": 55.667,
+                            "w": 312.5,
+                            "h": 101.333
+                          },
+                          "style": {
+                            "backgroundColor": "rgba(0, 0, 0, 0)",
+                            "color": "rgb(10, 10, 10)",
+                            "borderWidth": [
+                              0,
+                              0,
+                              0,
+                              0
+                            ],
+                            "borderColor": "rgb(229, 229, 229)",
+                            "borderRadius": [
+                              0,
+                              0,
+                              0,
+                              0
+                            ],
+                            "padding": [
+                              0,
+                              0,
+                              0,
+                              0
+                            ],
+                            "fontSize": 12,
+                            "fontWeight": 400,
+                            "lineHeight": 16,
+                            "letterSpacing": 0,
+                            "opacity": 1,
+                            "boxShadow": "none",
+                            "textAlign": "start"
+                          },
+                          "children": [
+                            {
+                              "tag": "g",
+                              "cls": "recharts-layer",
+                              "text": "",
+                              "rect": {
+                                "x": 53.25,
+                                "y": 55.667,
+                                "w": 312.5,
+                                "h": 101.333
+                              },
+                              "style": {
+                                "backgroundColor": "rgba(0, 0, 0, 0)",
+                                "color": "rgb(10, 10, 10)",
+                                "borderWidth": [
+                                  0,
+                                  0,
+                                  0,
+                                  0
+                                ],
+                                "borderColor": "rgb(229, 229, 229)",
+                                "borderRadius": [
+                                  0,
+                                  0,
+                                  0,
+                                  0
+                                ],
+                                "padding": [
+                                  0,
+                                  0,
+                                  0,
+                                  0
+                                ],
+                                "fontSize": 12,
+                                "fontWeight": 400,
+                                "lineHeight": 16,
+                                "letterSpacing": 0,
+                                "opacity": 1,
+                                "boxShadow": "none",
+                                "textAlign": "start"
+                              },
+                              "children": [
+                                {
+                                  "tag": "g",
+                                  "cls": "recharts-layer recharts-bar-rectangle",
+                                  "text": "",
+                                  "rect": {
+                                    "x": 53.25,
+                                    "y": 89.444,
+                                    "w": 35,
+                                    "h": 67.556
+                                  },
+                                  "style": {
+                                    "backgroundColor": "rgba(0, 0, 0, 0)",
+                                    "color": "rgb(10, 10, 10)",
+                                    "borderWidth": [
+                                      0,
+                                      0,
+                                      0,
+                                      0
+                                    ],
+                                    "borderColor": "rgb(229, 229, 229)",
+                                    "borderRadius": [
+                                      0,
+                                      0,
+                                      0,
+                                      0
+                                    ],
+                                    "padding": [
+                                      0,
+                                      0,
+                                      0,
+                                      0
+                                    ],
+                                    "fontSize": 12,
+                                    "fontWeight": 400,
+                                    "lineHeight": 16,
+                                    "letterSpacing": 0,
+                                    "opacity": 1,
+                                    "boxShadow": "none",
+                                    "textAlign": "start"
+                                  },
+                                  "children": [
+                                    {
+                                      "tag": "g",
+                                      "cls": "recharts-layer recharts-inactive-bar",
+                                      "text": "",
+                                      "rect": {
+                                        "x": 53.25,
+                                        "y": 89.444,
+                                        "w": 35,
+                                        "h": 67.556
+                                      },
+                                      "style": {
+                                        "backgroundColor": "rgba(0, 0, 0, 0)",
+                                        "color": "rgb(10, 10, 10)",
+                                        "borderWidth": [
+                                          0,
+                                          0,
+                                          0,
+                                          0
+                                        ],
+                                        "borderColor": "rgb(229, 229, 229)",
+                                        "borderRadius": [
+                                          0,
+                                          0,
+                                          0,
+                                          0
+                                        ],
+                                        "padding": [
+                                          0,
+                                          0,
+                                          0,
+                                          0
+                                        ],
+                                        "fontSize": 12,
+                                        "fontWeight": 400,
+                                        "lineHeight": 16,
+                                        "letterSpacing": 0,
+                                        "opacity": 1,
+                                        "boxShadow": "none",
+                                        "textAlign": "start"
+                                      },
+                                      "children": [
+                                        {
+                                          "tag": "path",
+                                          "cls": "recharts-rectangle",
+                                          "text": "",
+                                          "rect": {
+                                            "x": 53.25,
+                                            "y": 89.444,
+                                            "w": 35,
+                                            "h": 67.556
+                                          },
+                                          "style": {
+                                            "backgroundColor": "rgba(0, 0, 0, 0)",
+                                            "color": "rgb(10, 10, 10)",
+                                            "borderWidth": [
+                                              0,
+                                              0,
+                                              0,
+                                              0
+                                            ],
+                                            "borderColor": "rgb(229, 229, 229)",
+                                            "borderRadius": [
+                                              0,
+                                              0,
+                                              0,
+                                              0
+                                            ],
+                                            "padding": [
+                                              0,
+                                              0,
+                                              0,
+                                              0
+                                            ],
+                                            "fontSize": 12,
+                                            "fontWeight": 400,
+                                            "lineHeight": 16,
+                                            "letterSpacing": 0,
+                                            "opacity": 1,
+                                            "boxShadow": "none",
+                                            "textAlign": "start"
+                                          },
+                                          "children": []
+                                        }
+                                      ]
+                                    }
+                                  ]
+                                },
+                                {
+                                  "tag": "g",
+                                  "cls": "recharts-layer recharts-bar-rectangle",
+                                  "text": "",
+                                  "rect": {
+                                    "x": 145.75,
+                                    "y": 76.778,
+                                    "w": 35,
+                                    "h": 80.222
+                                  },
+                                  "style": {
+                                    "backgroundColor": "rgba(0, 0, 0, 0)",
+                                    "color": "rgb(10, 10, 10)",
+                                    "borderWidth": [
+                                      0,
+                                      0,
+                                      0,
+                                      0
+                                    ],
+                                    "borderColor": "rgb(229, 229, 229)",
+                                    "borderRadius": [
+                                      0,
+                                      0,
+                                      0,
+                                      0
+                                    ],
+                                    "padding": [
+                                      0,
+                                      0,
+                                      0,
+                                      0
+                                    ],
+                                    "fontSize": 12,
+                                    "fontWeight": 400,
+                                    "lineHeight": 16,
+                                    "letterSpacing": 0,
+                                    "opacity": 1,
+                                    "boxShadow": "none",
+                                    "textAlign": "start"
+                                  },
+                                  "children": [
+                                    {
+                                      "tag": "g",
+                                      "cls": "recharts-layer recharts-inactive-bar",
+                                      "text": "",
+                                      "rect": {
+                                        "x": 145.75,
+                                        "y": 76.778,
+                                        "w": 35,
+                                        "h": 80.222
+                                      },
+                                      "style": {
+                                        "backgroundColor": "rgba(0, 0, 0, 0)",
+                                        "color": "rgb(10, 10, 10)",
+                                        "borderWidth": [
+                                          0,
+                                          0,
+                                          0,
+                                          0
+                                        ],
+                                        "borderColor": "rgb(229, 229, 229)",
+                                        "borderRadius": [
+                                          0,
+                                          0,
+                                          0,
+                                          0
+                                        ],
+                                        "padding": [
+                                          0,
+                                          0,
+                                          0,
+                                          0
+                                        ],
+                                        "fontSize": 12,
+                                        "fontWeight": 400,
+                                        "lineHeight": 16,
+                                        "letterSpacing": 0,
+                                        "opacity": 1,
+                                        "boxShadow": "none",
+                                        "textAlign": "start"
+                                      },
+                                      "children": [
+                                        {
+                                          "tag": "path",
+                                          "cls": "recharts-rectangle",
+                                          "text": "",
+                                          "rect": {
+                                            "x": 145.75,
+                                            "y": 76.778,
+                                            "w": 35,
+                                            "h": 80.222
+                                          },
+                                          "style": {
+                                            "backgroundColor": "rgba(0, 0, 0, 0)",
+                                            "color": "rgb(10, 10, 10)",
+                                            "borderWidth": [
+                                              0,
+                                              0,
+                                              0,
+                                              0
+                                            ],
+                                            "borderColor": "rgb(229, 229, 229)",
+                                            "borderRadius": [
+                                              0,
+                                              0,
+                                              0,
+                                              0
+                                            ],
+                                            "padding": [
+                                              0,
+                                              0,
+                                              0,
+                                              0
+                                            ],
+                                            "fontSize": 12,
+                                            "fontWeight": 400,
+                                            "lineHeight": 16,
+                                            "letterSpacing": 0,
+                                            "opacity": 1,
+                                            "boxShadow": "none",
+                                            "textAlign": "start"
+                                          },
+                                          "children": []
+                                        }
+                                      ]
+                                    }
+                                  ]
+                                },
+                                {
+                                  "tag": "g",
+                                  "cls": "recharts-layer recharts-bar-rectangle",
+                                  "text": "",
+                                  "rect": {
+                                    "x": 238.25,
+                                    "y": 97.889,
+                                    "w": 35,
+                                    "h": 59.111
+                                  },
+                                  "style": {
+                                    "backgroundColor": "rgba(0, 0, 0, 0)",
+                                    "color": "rgb(10, 10, 10)",
+                                    "borderWidth": [
+                                      0,
+                                      0,
+                                      0,
+                                      0
+                                    ],
+                                    "borderColor": "rgb(229, 229, 229)",
+                                    "borderRadius": [
+                                      0,
+                                      0,
+                                      0,
+                                      0
+                                    ],
+                                    "padding": [
+                                      0,
+                                      0,
+                                      0,
+                                      0
+                                    ],
+                                    "fontSize": 12,
+                                    "fontWeight": 400,
+                                    "lineHeight": 16,
+                                    "letterSpacing": 0,
+                                    "opacity": 1,
+                                    "boxShadow": "none",
+                                    "textAlign": "start"
+                                  },
+                                  "children": [
+                                    {
+                                      "tag": "g",
+                                      "cls": "recharts-layer recharts-inactive-bar",
+                                      "text": "",
+                                      "rect": {
+                                        "x": 238.25,
+                                        "y": 97.889,
+                                        "w": 35,
+                                        "h": 59.111
+                                      },
+                                      "style": {
+                                        "backgroundColor": "rgba(0, 0, 0, 0)",
+                                        "color": "rgb(10, 10, 10)",
+                                        "borderWidth": [
+                                          0,
+                                          0,
+                                          0,
+                                          0
+                                        ],
+                                        "borderColor": "rgb(229, 229, 229)",
+                                        "borderRadius": [
+                                          0,
+                                          0,
+                                          0,
+                                          0
+                                        ],
+                                        "padding": [
+                                          0,
+                                          0,
+                                          0,
+                                          0
+                                        ],
+                                        "fontSize": 12,
+                                        "fontWeight": 400,
+                                        "lineHeight": 16,
+                                        "letterSpacing": 0,
+                                        "opacity": 1,
+                                        "boxShadow": "none",
+                                        "textAlign": "start"
+                                      },
+                                      "children": [
+                                        {
+                                          "tag": "path",
+                                          "cls": "recharts-rectangle",
+                                          "text": "",
+                                          "rect": {
+                                            "x": 238.25,
+                                            "y": 97.889,
+                                            "w": 35,
+                                            "h": 59.111
+                                          },
+                                          "style": {
+                                            "backgroundColor": "rgba(0, 0, 0, 0)",
+                                            "color": "rgb(10, 10, 10)",
+                                            "borderWidth": [
+                                              0,
+                                              0,
+                                              0,
+                                              0
+                                            ],
+                                            "borderColor": "rgb(229, 229, 229)",
+                                            "borderRadius": [
+                                              0,
+                                              0,
+                                              0,
+                                              0
+                                            ],
+                                            "padding": [
+                                              0,
+                                              0,
+                                              0,
+                                              0
+                                            ],
+                                            "fontSize": 12,
+                                            "fontWeight": 400,
+                                            "lineHeight": 16,
+                                            "letterSpacing": 0,
+                                            "opacity": 1,
+                                            "boxShadow": "none",
+                                            "textAlign": "start"
+                                          },
+                                          "children": []
+                                        }
+                                      ]
+                                    }
+                                  ]
+                                },
+                                {
+                                  "tag": "g",
+                                  "cls": "recharts-layer recharts-bar-rectangle",
+                                  "text": "",
+                                  "rect": {
+                                    "x": 330.75,
+                                    "y": 55.667,
+                                    "w": 35,
+                                    "h": 101.333
+                                  },
+                                  "style": {
+                                    "backgroundColor": "rgba(0, 0, 0, 0)",
+                                    "color": "rgb(10, 10, 10)",
+                                    "borderWidth": [
+                                      0,
+                                      0,
+                                      0,
+                                      0
+                                    ],
+                                    "borderColor": "rgb(229, 229, 229)",
+                                    "borderRadius": [
+                                      0,
+                                      0,
+                                      0,
+                                      0
+                                    ],
+                                    "padding": [
+                                      0,
+                                      0,
+                                      0,
+                                      0
+                                    ],
+                                    "fontSize": 12,
+                                    "fontWeight": 400,
+                                    "lineHeight": 16,
+                                    "letterSpacing": 0,
+                                    "opacity": 1,
+                                    "boxShadow": "none",
+                                    "textAlign": "start"
+                                  },
+                                  "children": [
+                                    {
+                                      "tag": "g",
+                                      "cls": "recharts-layer recharts-inactive-bar",
+                                      "text": "",
+                                      "rect": {
+                                        "x": 330.75,
+                                        "y": 55.667,
+                                        "w": 35,
+                                        "h": 101.333
+                                      },
+                                      "style": {
+                                        "backgroundColor": "rgba(0, 0, 0, 0)",
+                                        "color": "rgb(10, 10, 10)",
+                                        "borderWidth": [
+                                          0,
+                                          0,
+                                          0,
+                                          0
+                                        ],
+                                        "borderColor": "rgb(229, 229, 229)",
+                                        "borderRadius": [
+                                          0,
+                                          0,
+                                          0,
+                                          0
+                                        ],
+                                        "padding": [
+                                          0,
+                                          0,
+                                          0,
+                                          0
+                                        ],
+                                        "fontSize": 12,
+                                        "fontWeight": 400,
+                                        "lineHeight": 16,
+                                        "letterSpacing": 0,
+                                        "opacity": 1,
+                                        "boxShadow": "none",
+                                        "textAlign": "start"
+                                      },
+                                      "children": [
+                                        {
+                                          "tag": "path",
+                                          "cls": "recharts-rectangle",
+                                          "text": "",
+                                          "rect": {
+                                            "x": 330.75,
+                                            "y": 55.667,
+                                            "w": 35,
+                                            "h": 101.333
+                                          },
+                                          "style": {
+                                            "backgroundColor": "rgba(0, 0, 0, 0)",
+                                            "color": "rgb(10, 10, 10)",
+                                            "borderWidth": [
+                                              0,
+                                              0,
+                                              0,
+                                              0
+                                            ],
+                                            "borderColor": "rgb(229, 229, 229)",
+                                            "borderRadius": [
+                                              0,
+                                              0,
+                                              0,
+                                              0
+                                            ],
+                                            "padding": [
+                                              0,
+                                              0,
+                                              0,
+                                              0
+                                            ],
+                                            "fontSize": 12,
+                                            "fontWeight": 400,
+                                            "lineHeight": 16,
+                                            "letterSpacing": 0,
+                                            "opacity": 1,
+                                            "boxShadow": "none",
+                                            "textAlign": "start"
+                                          },
+                                          "children": []
+                                        }
+                                      ]
+                                    }
+                                  ]
+                                }
+                              ]
+                            }
+                          ]
+                        }
+                      ]
+                    }
+                  ]
+                },
+                {
+                  "tag": "g",
+                  "cls": "recharts-zIndex-layer_2000",
+                  "text": "",
+                  "rect": {
+                    "x": 40.875,
+                    "y": 161.52,
+                    "w": 298.172,
+                    "h": 16
+                  },
+                  "style": {
+                    "backgroundColor": "rgba(0, 0, 0, 0)",
+                    "color": "rgb(10, 10, 10)",
+                    "borderWidth": [
+                      0,
+                      0,
+                      0,
+                      0
+                    ],
+                    "borderColor": "rgb(229, 229, 229)",
+                    "borderRadius": [
+                      0,
+                      0,
+                      0,
+                      0
+                    ],
+                    "padding": [
+                      0,
+                      0,
+                      0,
+                      0
+                    ],
+                    "fontSize": 12,
+                    "fontWeight": 400,
+                    "lineHeight": 16,
+                    "letterSpacing": 0,
+                    "opacity": 1,
+                    "boxShadow": "none",
+                    "textAlign": "start"
+                  },
+                  "children": [
+                    {
+                      "tag": "g",
+                      "cls": "recharts-cartesian-axis-tick-labels recharts-xAxis-tick-labels",
+                      "text": "",
+                      "rect": {
+                        "x": 40.875,
+                        "y": 161.52,
+                        "w": 298.172,
+                        "h": 16
+                      },
+                      "style": {
+                        "backgroundColor": "rgba(0, 0, 0, 0)",
+                        "color": "rgb(10, 10, 10)",
+                        "borderWidth": [
+                          0,
+                          0,
+                          0,
+                          0
+                        ],
+                        "borderColor": "rgb(229, 229, 229)",
+                        "borderRadius": [
+                          0,
+                          0,
+                          0,
+                          0
+                        ],
+                        "padding": [
+                          0,
+                          0,
+                          0,
+                          0
+                        ],
+                        "fontSize": 12,
+                        "fontWeight": 400,
+                        "lineHeight": 16,
+                        "letterSpacing": 0,
+                        "opacity": 1,
+                        "boxShadow": "none",
+                        "textAlign": "start"
+                      },
+                      "children": [
+                        {
+                          "tag": "g",
+                          "cls": "recharts-layer recharts-cartesian-axis-tick-label",
+                          "text": "",
+                          "rect": {
+                            "x": 40.875,
+                            "y": 161.52,
+                            "w": 20.776,
+                            "h": 16
+                          },
+                          "style": {
+                            "backgroundColor": "rgba(0, 0, 0, 0)",
+                            "color": "rgb(10, 10, 10)",
+                            "borderWidth": [
+                              0,
+                              0,
+                              0,
+                              0
+                            ],
+                            "borderColor": "rgb(229, 229, 229)",
+                            "borderRadius": [
+                              0,
+                              0,
+                              0,
+                              0
+                            ],
+                            "padding": [
+                              0,
+                              0,
+                              0,
+                              0
+                            ],
+                            "fontSize": 12,
+                            "fontWeight": 400,
+                            "lineHeight": 16,
+                            "letterSpacing": 0,
+                            "opacity": 1,
+                            "boxShadow": "none",
+                            "textAlign": "start"
+                          },
+                          "children": [
+                            {
+                              "tag": "text",
+                              "cls": "recharts-text recharts-cartesian-axis-tick-value",
+                              "text": "",
+                              "rect": {
+                                "x": 40.875,
+                                "y": 161.52,
+                                "w": 20.776,
+                                "h": 16
+                              },
+                              "style": {
+                                "backgroundColor": "rgba(0, 0, 0, 0)",
+                                "color": "rgb(10, 10, 10)",
+                                "borderWidth": [
+                                  0,
+                                  0,
+                                  0,
+                                  0
+                                ],
+                                "borderColor": "rgb(229, 229, 229)",
+                                "borderRadius": [
+                                  0,
+                                  0,
+                                  0,
+                                  0
+                                ],
+                                "padding": [
+                                  0,
+                                  0,
+                                  0,
+                                  0
+                                ],
+                                "fontSize": 12,
+                                "fontWeight": 400,
+                                "lineHeight": 16,
+                                "letterSpacing": 0,
+                                "opacity": 1,
+                                "boxShadow": "none",
+                                "textAlign": "start"
+                              },
+                              "children": [
+                                {
+                                  "tag": "tspan",
+                                  "cls": "",
+                                  "text": "Jan",
+                                  "rect": {
+                                    "x": 40.875,
+                                    "y": 161.52,
+                                    "w": 20.776,
+                                    "h": 16
+                                  },
+                                  "style": {
+                                    "backgroundColor": "rgba(0, 0, 0, 0)",
+                                    "color": "rgb(10, 10, 10)",
+                                    "borderWidth": [
+                                      0,
+                                      0,
+                                      0,
+                                      0
+                                    ],
+                                    "borderColor": "rgb(229, 229, 229)",
+                                    "borderRadius": [
+                                      0,
+                                      0,
+                                      0,
+                                      0
+                                    ],
+                                    "padding": [
+                                      0,
+                                      0,
+                                      0,
+                                      0
+                                    ],
+                                    "fontSize": 12,
+                                    "fontWeight": 400,
+                                    "lineHeight": 16,
+                                    "letterSpacing": 0,
+                                    "opacity": 1,
+                                    "boxShadow": "none",
+                                    "textAlign": "start"
+                                  },
+                                  "children": []
+                                }
+                              ]
+                            }
+                          ]
+                        },
+                        {
+                          "tag": "g",
+                          "cls": "recharts-layer recharts-cartesian-axis-tick-label",
+                          "text": "",
+                          "rect": {
+                            "x": 133.273,
+                            "y": 161.52,
+                            "w": 20.953,
+                            "h": 16
+                          },
+                          "style": {
+                            "backgroundColor": "rgba(0, 0, 0, 0)",
+                            "color": "rgb(10, 10, 10)",
+                            "borderWidth": [
+                              0,
+                              0,
+                              0,
+                              0
+                            ],
+                            "borderColor": "rgb(229, 229, 229)",
+                            "borderRadius": [
+                              0,
+                              0,
+                              0,
+                              0
+                            ],
+                            "padding": [
+                              0,
+                              0,
+                              0,
+                              0
+                            ],
+                            "fontSize": 12,
+                            "fontWeight": 400,
+                            "lineHeight": 16,
+                            "letterSpacing": 0,
+                            "opacity": 1,
+                            "boxShadow": "none",
+                            "textAlign": "start"
+                          },
+                          "children": [
+                            {
+                              "tag": "text",
+                              "cls": "recharts-text recharts-cartesian-axis-tick-value",
+                              "text": "",
+                              "rect": {
+                                "x": 133.273,
+                                "y": 161.52,
+                                "w": 20.953,
+                                "h": 16
+                              },
+                              "style": {
+                                "backgroundColor": "rgba(0, 0, 0, 0)",
+                                "color": "rgb(10, 10, 10)",
+                                "borderWidth": [
+                                  0,
+                                  0,
+                                  0,
+                                  0
+                                ],
+                                "borderColor": "rgb(229, 229, 229)",
+                                "borderRadius": [
+                                  0,
+                                  0,
+                                  0,
+                                  0
+                                ],
+                                "padding": [
+                                  0,
+                                  0,
+                                  0,
+                                  0
+                                ],
+                                "fontSize": 12,
+                                "fontWeight": 400,
+                                "lineHeight": 16,
+                                "letterSpacing": 0,
+                                "opacity": 1,
+                                "boxShadow": "none",
+                                "textAlign": "start"
+                              },
+                              "children": [
+                                {
+                                  "tag": "tspan",
+                                  "cls": "",
+                                  "text": "Feb",
+                                  "rect": {
+                                    "x": 133.273,
+                                    "y": 161.52,
+                                    "w": 20.953,
+                                    "h": 16
+                                  },
+                                  "style": {
+                                    "backgroundColor": "rgba(0, 0, 0, 0)",
+                                    "color": "rgb(10, 10, 10)",
+                                    "borderWidth": [
+                                      0,
+                                      0,
+                                      0,
+                                      0
+                                    ],
+                                    "borderColor": "rgb(229, 229, 229)",
+                                    "borderRadius": [
+                                      0,
+                                      0,
+                                      0,
+                                      0
+                                    ],
+                                    "padding": [
+                                      0,
+                                      0,
+                                      0,
+                                      0
+                                    ],
+                                    "fontSize": 12,
+                                    "fontWeight": 400,
+                                    "lineHeight": 16,
+                                    "letterSpacing": 0,
+                                    "opacity": 1,
+                                    "boxShadow": "none",
+                                    "textAlign": "start"
+                                  },
+                                  "children": []
+                                }
+                              ]
+                            }
+                          ]
+                        },
+                        {
+                          "tag": "g",
+                          "cls": "recharts-layer recharts-cartesian-axis-tick-label",
+                          "text": "",
+                          "rect": {
+                            "x": 225.406,
+                            "y": 161.52,
+                            "w": 22.136,
+                            "h": 16
+                          },
+                          "style": {
+                            "backgroundColor": "rgba(0, 0, 0, 0)",
+                            "color": "rgb(10, 10, 10)",
+                            "borderWidth": [
+                              0,
+                              0,
+                              0,
+                              0
+                            ],
+                            "borderColor": "rgb(229, 229, 229)",
+                            "borderRadius": [
+                              0,
+                              0,
+                              0,
+                              0
+                            ],
+                            "padding": [
+                              0,
+                              0,
+                              0,
+                              0
+                            ],
+                            "fontSize": 12,
+                            "fontWeight": 400,
+                            "lineHeight": 16,
+                            "letterSpacing": 0,
+                            "opacity": 1,
+                            "boxShadow": "none",
+                            "textAlign": "start"
+                          },
+                          "children": [
+                            {
+                              "tag": "text",
+                              "cls": "recharts-text recharts-cartesian-axis-tick-value",
+                              "text": "",
+                              "rect": {
+                                "x": 225.406,
+                                "y": 161.52,
+                                "w": 22.136,
+                                "h": 16
+                              },
+                              "style": {
+                                "backgroundColor": "rgba(0, 0, 0, 0)",
+                                "color": "rgb(10, 10, 10)",
+                                "borderWidth": [
+                                  0,
+                                  0,
+                                  0,
+                                  0
+                                ],
+                                "borderColor": "rgb(229, 229, 229)",
+                                "borderRadius": [
+                                  0,
+                                  0,
+                                  0,
+                                  0
+                                ],
+                                "padding": [
+                                  0,
+                                  0,
+                                  0,
+                                  0
+                                ],
+                                "fontSize": 12,
+                                "fontWeight": 400,
+                                "lineHeight": 16,
+                                "letterSpacing": 0,
+                                "opacity": 1,
+                                "boxShadow": "none",
+                                "textAlign": "start"
+                              },
+                              "children": [
+                                {
+                                  "tag": "tspan",
+                                  "cls": "",
+                                  "text": "Mar",
+                                  "rect": {
+                                    "x": 225.406,
+                                    "y": 161.52,
+                                    "w": 22.136,
+                                    "h": 16
+                                  },
+                                  "style": {
+                                    "backgroundColor": "rgba(0, 0, 0, 0)",
+                                    "color": "rgb(10, 10, 10)",
+                                    "borderWidth": [
+                                      0,
+                                      0,
+                                      0,
+                                      0
+                                    ],
+                                    "borderColor": "rgb(229, 229, 229)",
+                                    "borderRadius": [
+                                      0,
+                                      0,
+                                      0,
+                                      0
+                                    ],
+                                    "padding": [
+                                      0,
+                                      0,
+                                      0,
+                                      0
+                                    ],
+                                    "fontSize": 12,
+                                    "fontWeight": 400,
+                                    "lineHeight": 16,
+                                    "letterSpacing": 0,
+                                    "opacity": 1,
+                                    "boxShadow": "none",
+                                    "textAlign": "start"
+                                  },
+                                  "children": []
+                                }
+                              ]
+                            }
+                          ]
+                        },
+                        {
+                          "tag": "g",
+                          "cls": "recharts-layer recharts-cartesian-axis-tick-label",
+                          "text": "",
+                          "rect": {
+                            "x": 318.891,
+                            "y": 161.52,
+                            "w": 20.156,
+                            "h": 16
+                          },
+                          "style": {
+                            "backgroundColor": "rgba(0, 0, 0, 0)",
+                            "color": "rgb(10, 10, 10)",
+                            "borderWidth": [
+                              0,
+                              0,
+                              0,
+                              0
+                            ],
+                            "borderColor": "rgb(229, 229, 229)",
+                            "borderRadius": [
+                              0,
+                              0,
+                              0,
+                              0
+                            ],
+                            "padding": [
+                              0,
+                              0,
+                              0,
+                              0
+                            ],
+                            "fontSize": 12,
+                            "fontWeight": 400,
+                            "lineHeight": 16,
+                            "letterSpacing": 0,
+                            "opacity": 1,
+                            "boxShadow": "none",
+                            "textAlign": "start"
+                          },
+                          "children": [
+                            {
+                              "tag": "text",
+                              "cls": "recharts-text recharts-cartesian-axis-tick-value",
+                              "text": "",
+                              "rect": {
+                                "x": 318.891,
+                                "y": 161.52,
+                                "w": 20.156,
+                                "h": 16
+                              },
+                              "style": {
+                                "backgroundColor": "rgba(0, 0, 0, 0)",
+                                "color": "rgb(10, 10, 10)",
+                                "borderWidth": [
+                                  0,
+                                  0,
+                                  0,
+                                  0
+                                ],
+                                "borderColor": "rgb(229, 229, 229)",
+                                "borderRadius": [
+                                  0,
+                                  0,
+                                  0,
+                                  0
+                                ],
+                                "padding": [
+                                  0,
+                                  0,
+                                  0,
+                                  0
+                                ],
+                                "fontSize": 12,
+                                "fontWeight": 400,
+                                "lineHeight": 16,
+                                "letterSpacing": 0,
+                                "opacity": 1,
+                                "boxShadow": "none",
+                                "textAlign": "start"
+                              },
+                              "children": [
+                                {
+                                  "tag": "tspan",
+                                  "cls": "",
+                                  "text": "Apr",
+                                  "rect": {
+                                    "x": 318.891,
+                                    "y": 161.52,
+                                    "w": 20.156,
+                                    "h": 16
+                                  },
+                                  "style": {
+                                    "backgroundColor": "rgba(0, 0, 0, 0)",
+                                    "color": "rgb(10, 10, 10)",
+                                    "borderWidth": [
+                                      0,
+                                      0,
+                                      0,
+                                      0
+                                    ],
+                                    "borderColor": "rgb(229, 229, 229)",
+                                    "borderRadius": [
+                                      0,
+                                      0,
+                                      0,
+                                      0
+                                    ],
+                                    "padding": [
+                                      0,
+                                      0,
+                                      0,
+                                      0
+                                    ],
+                                    "fontSize": 12,
+                                    "fontWeight": 400,
+                                    "lineHeight": 16,
+                                    "letterSpacing": 0,
+                                    "opacity": 1,
+                                    "boxShadow": "none",
+                                    "textAlign": "start"
+                                  },
+                                  "children": []
+                                }
+                              ]
+                            }
+                          ]
+                        }
+                      ]
+                    }
+                  ]
+                }
+              ]
+            }
+          ]
+        }
+      ]
+    }
+  ],
+  "pageRect": {
+    "x": 450,
+    "y": 290,
+    "w": 380,
+    "h": 220
+  },
+  "cropOffset": {
+    "x": 0,
+    "y": 0
+  }
+}

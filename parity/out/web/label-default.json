@@ -1,0 +1,52 @@
+{
+  "tag": "label",
+  "cls": "flex items-center gap-2 text-sm leading-none font-medium select-none group-data-[disabled=true]:pointer-events-none group-data-[disabled=true]:opacity-50 peer-disabled:cursor-not-allowed peer-disabled:opacity-50",
+  "text": "Email address",
+  "rect": {
+    "x": 0,
+    "y": 0,
+    "w": 93.313,
+    "h": 14
+  },
+  "style": {
+    "backgroundColor": "rgba(0, 0, 0, 0)",
+    "color": "rgb(10, 10, 10)",
+    "borderWidth": [
+      0,
+      0,
+      0,
+      0
+    ],
+    "borderColor": "rgb(229, 229, 229)",
+    "borderRadius": [
+      0,
+      0,
+      0,
+      0
+    ],
+    "padding": [
+      0,
+      0,
+      0,
+      0
+    ],
+    "fontSize": 14,
+    "fontWeight": 500,
+    "lineHeight": 14,
+    "letterSpacing": 0,
+    "opacity": 1,
+    "boxShadow": "none",
+    "textAlign": "start"
+  },
+  "children": [],
+  "pageRect": {
+    "x": 593.344,
+    "y": 393,
+    "w": 93.313,
+    "h": 14
+  },
+  "cropOffset": {
+    "x": 0.344,
+    "y": 0
+  }
+}

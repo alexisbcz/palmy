@@ -1,0 +1,95 @@
+{
+  "tag": "div",
+  "cls": "flex w-72 flex-col gap-2",
+  "text": "",
+  "rect": {
+    "x": 0,
+    "y": 0,
+    "w": 288,
+    "h": 32
+  },
+  "style": {
+    "backgroundColor": "rgba(0, 0, 0, 0)",
+    "color": "rgb(10, 10, 10)",
+    "borderWidth": [
+      0,
+      0,
+      0,
+      0
+    ],
+    "borderColor": "rgb(229, 229, 229)",
+    "borderRadius": [
+      0,
+      0,
+      0,
+      0
+    ],
+    "padding": [
+      0,
+      0,
+      0,
+      0
+    ],
+    "fontSize": 16,
+    "fontWeight": 400,
+    "lineHeight": 24,
+    "letterSpacing": 0,
+    "opacity": 1,
+    "boxShadow": "none",
+    "textAlign": "start"
+  },
+  "children": [
+    {
+      "tag": "button",
+      "cls": "group/button inline-flex shrink-0 items-center justify-center rounded-lg border bg-clip-padding text-sm font-medium whitespace-nowrap transition-all outline-none select-none focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/50 active:not-aria-[haspopup]:translate-y-px disabled:pointer-events-none disabled:opacity-50 aria-invalid:border-destructive aria-invalid:ring-3 aria-invalid:ring-destructive/20 dark:aria-invalid:border-destructive/50 dark:aria-invalid:ring-destructive/40 [&_svg]:pointer-events-none [&_svg]:shrink-0 [&_svg:not([class*='size-'])]:size-4 border-border bg-background hover:bg-muted hover:text-foreground aria-expanded:bg-muted aria-expanded:text-foreground dark:border-input dark:bg-input/30 dark:hover:bg-input/50 h-8 gap-1.5 px-2.5 has-data-[icon=inline-end]:pr-2 has-data-[icon=inline-start]:pl-2",
+      "text": "Details",
+      "rect": {
+        "x": 0,
+        "y": 0,
+        "w": 288,
+        "h": 32
+      },
+      "style": {
+        "backgroundColor": "rgb(255, 255, 255)",
+        "color": "rgb(10, 10, 10)",
+        "borderWidth": [
+          1,
+          1,
+          1,
+          1
+        ],
+        "borderColor": "rgb(229, 229, 229)",
+        "borderRadius": [
+          10,
+          10,
+          10,
+          10
+        ],
+        "padding": [
+          0,
+          10,
+          0,
+          10
+        ],
+        "fontSize": 14,
+        "fontWeight": 500,
+        "lineHeight": 20,
+        "letterSpacing": 0,
+        "opacity": 1,
+        "boxShadow": "none",
+        "textAlign": "center"
+      },
+      "children": []
+    }
+  ],
+  "pageRect": {
+    "x": 496,
+    "y": 384,
+    "w": 288,
+    "h": 32
+  },
+  "cropOffset": {
+    "x": 0,
+    "y": 0
+  }
+}

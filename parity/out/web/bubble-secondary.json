@@ -1,0 +1,95 @@
+{
+  "tag": "div",
+  "cls": "group/bubble relative flex max-w-[80%] min-w-0 flex-col gap-1 group-data-[align=end]/message:self-end data-[align=end]:self-end data-[variant=ghost]:max-w-full *:data-[slot=bubble-content]:bg-secondary *:data-[slot=bubble-content]:text-secondary-foreground [&>[data-slot=bubble-content]:is(button,a):hover]:bg-[color-mix(in_oklch,var(--secondary),var(--foreground)_5%)] w-64",
+  "text": "",
+  "rect": {
+    "x": 0,
+    "y": 0,
+    "w": 256,
+    "h": 40.75
+  },
+  "style": {
+    "backgroundColor": "rgba(0, 0, 0, 0)",
+    "color": "rgb(10, 10, 10)",
+    "borderWidth": [
+      0,
+      0,
+      0,
+      0
+    ],
+    "borderColor": "rgb(229, 229, 229)",
+    "borderRadius": [
+      0,
+      0,
+      0,
+      0
+    ],
+    "padding": [
+      0,
+      0,
+      0,
+      0
+    ],
+    "fontSize": 16,
+    "fontWeight": 400,
+    "lineHeight": 24,
+    "letterSpacing": 0,
+    "opacity": 1,
+    "boxShadow": "none",
+    "textAlign": "start"
+  },
+  "children": [
+    {
+      "tag": "div",
+      "cls": "w-fit max-w-full min-w-0 overflow-hidden rounded-xl border border-transparent px-3 py-2 text-sm leading-relaxed wrap-break-word group-data-[align=end]/bubble:self-end [button]:text-left [button,a]:transition-colors [button,a]:outline-none [button,a]:focus-visible:border-ring [button,a]:focus-visible:ring-3 [button,a]:focus-visible:ring-ring/50",
+      "text": "Hello there.",
+      "rect": {
+        "x": 0,
+        "y": 0,
+        "w": 100.297,
+        "h": 40.75
+      },
+      "style": {
+        "backgroundColor": "rgb(245, 245, 245)",
+        "color": "rgb(23, 23, 23)",
+        "borderWidth": [
+          1,
+          1,
+          1,
+          1
+        ],
+        "borderColor": "rgba(0, 0, 0, 0)",
+        "borderRadius": [
+          14,
+          14,
+          14,
+          14
+        ],
+        "padding": [
+          8,
+          12,
+          8,
+          12
+        ],
+        "fontSize": 14,
+        "fontWeight": 400,
+        "lineHeight": 22.75,
+        "letterSpacing": 0,
+        "opacity": 1,
+        "boxShadow": "none",
+        "textAlign": "start"
+      },
+      "children": []
+    }
+  ],
+  "pageRect": {
+    "x": 512,
+    "y": 379.625,
+    "w": 256,
+    "h": 40.75
+  },
+  "cropOffset": {
+    "x": 0,
+    "y": 0.625
+  }
+}

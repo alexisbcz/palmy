@@ -1,0 +1,265 @@
+{
+  "tag": "div",
+  "cls": "group/message-scroller relative flex size-full min-h-0 flex-col overflow-hidden h-48 w-80 border",
+  "text": "",
+  "rect": {
+    "x": 0,
+    "y": 0,
+    "w": 320,
+    "h": 192
+  },
+  "style": {
+    "backgroundColor": "rgba(0, 0, 0, 0)",
+    "color": "rgb(10, 10, 10)",
+    "borderWidth": [
+      1,
+      1,
+      1,
+      1
+    ],
+    "borderColor": "rgb(229, 229, 229)",
+    "borderRadius": [
+      0,
+      0,
+      0,
+      0
+    ],
+    "padding": [
+      0,
+      0,
+      0,
+      0
+    ],
+    "fontSize": 16,
+    "fontWeight": 400,
+    "lineHeight": 24,
+    "letterSpacing": 0,
+    "opacity": 1,
+    "boxShadow": "none",
+    "textAlign": "start"
+  },
+  "children": [
+    {
+      "tag": "div",
+      "cls": "size-full min-h-0 min-w-0 scroll-fade-b scrollbar-thin scrollbar-gutter-stable overflow-y-auto overscroll-contain contain-content data-autoscrolling:scrollbar-thumb-transparent data-autoscrolling:scrollbar-track-transparent data-pending-scroll:invisible",
+      "text": "",
+      "rect": {
+        "x": 1,
+        "y": 1,
+        "w": 318,
+        "h": 190
+      },
+      "style": {
+        "backgroundColor": "rgba(0, 0, 0, 0)",
+        "color": "rgb(10, 10, 10)",
+        "borderWidth": [
+          0,
+          0,
+          0,
+          0
+        ],
+        "borderColor": "rgb(229, 229, 229)",
+        "borderRadius": [
+          0,
+          0,
+          0,
+          0
+        ],
+        "padding": [
+          0,
+          0,
+          0,
+          0
+        ],
+        "fontSize": 16,
+        "fontWeight": 400,
+        "lineHeight": 24,
+        "letterSpacing": 0,
+        "opacity": 1,
+        "boxShadow": "none",
+        "textAlign": "start"
+      },
+      "children": [
+        {
+          "tag": "div",
+          "cls": "flex h-max min-h-full flex-col gap-6",
+          "text": "",
+          "rect": {
+            "x": 1,
+            "y": 1,
+            "w": 308,
+            "h": 190
+          },
+          "style": {
+            "backgroundColor": "rgba(0, 0, 0, 0)",
+            "color": "rgb(10, 10, 10)",
+            "borderWidth": [
+              0,
+              0,
+              0,
+              0
+            ],
+            "borderColor": "rgb(229, 229, 229)",
+            "borderRadius": [
+              0,
+              0,
+              0,
+              0
+            ],
+            "padding": [
+              0,
+              0,
+              0,
+              0
+            ],
+            "fontSize": 16,
+            "fontWeight": 400,
+            "lineHeight": 24,
+            "letterSpacing": 0,
+            "opacity": 1,
+            "boxShadow": "none",
+            "textAlign": "start"
+          },
+          "children": [
+            {
+              "tag": "div",
+              "cls": "min-w-0 shrink-0 [contain-intrinsic-size:auto_10rem] [content-visibility:auto]",
+              "text": "First message",
+              "rect": {
+                "x": 1,
+                "y": 1,
+                "w": 308,
+                "h": 24
+              },
+              "style": {
+                "backgroundColor": "rgba(0, 0, 0, 0)",
+                "color": "rgb(10, 10, 10)",
+                "borderWidth": [
+                  0,
+                  0,
+                  0,
+                  0
+                ],
+                "borderColor": "rgb(229, 229, 229)",
+                "borderRadius": [
+                  0,
+                  0,
+                  0,
+                  0
+                ],
+                "padding": [
+                  0,
+                  0,
+                  0,
+                  0
+                ],
+                "fontSize": 16,
+                "fontWeight": 400,
+                "lineHeight": 24,
+                "letterSpacing": 0,
+                "opacity": 1,
+                "boxShadow": "none",
+                "textAlign": "start"
+              },
+              "children": []
+            },
+            {
+              "tag": "div",
+              "cls": "min-w-0 shrink-0 [contain-intrinsic-size:auto_10rem] [content-visibility:auto]",
+              "text": "Second message",
+              "rect": {
+                "x": 1,
+                "y": 49,
+                "w": 308,
+                "h": 24
+              },
+              "style": {
+                "backgroundColor": "rgba(0, 0, 0, 0)",
+                "color": "rgb(10, 10, 10)",
+                "borderWidth": [
+                  0,
+                  0,
+                  0,
+                  0
+                ],
+                "borderColor": "rgb(229, 229, 229)",
+                "borderRadius": [
+                  0,
+                  0,
+                  0,
+                  0
+                ],
+                "padding": [
+                  0,
+                  0,
+                  0,
+                  0
+                ],
+                "fontSize": 16,
+                "fontWeight": 400,
+                "lineHeight": 24,
+                "letterSpacing": 0,
+                "opacity": 1,
+                "boxShadow": "none",
+                "textAlign": "start"
+              },
+              "children": []
+            },
+            {
+              "tag": "div",
+              "cls": "min-w-0 shrink-0 [contain-intrinsic-size:auto_10rem] [content-visibility:auto]",
+              "text": "Third message",
+              "rect": {
+                "x": 1,
+                "y": 97,
+                "w": 308,
+                "h": 24
+              },
+              "style": {
+                "backgroundColor": "rgba(0, 0, 0, 0)",
+                "color": "rgb(10, 10, 10)",
+                "borderWidth": [
+                  0,
+                  0,
+                  0,
+                  0
+                ],
+                "borderColor": "rgb(229, 229, 229)",
+                "borderRadius": [
+                  0,
+                  0,
+                  0,
+                  0
+                ],
+                "padding": [
+                  0,
+                  0,
+                  0,
+                  0
+                ],
+                "fontSize": 16,
+                "fontWeight": 400,
+                "lineHeight": 24,
+                "letterSpacing": 0,
+                "opacity": 1,
+                "boxShadow": "none",
+                "textAlign": "start"
+              },
+              "children": []
+            }
+          ]
+        }
+      ]
+    }
+  ],
+  "pageRect": {
+    "x": 480,
+    "y": 304,
+    "w": 320,
+    "h": 192
+  },
+  "cropOffset": {
+    "x": 0,
+    "y": 0
+  }
+}

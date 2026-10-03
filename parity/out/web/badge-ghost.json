@@ -1,0 +1,52 @@
+{
+  "tag": "span",
+  "cls": "group/badge inline-flex h-5 w-fit shrink-0 items-center justify-center gap-1 overflow-hidden rounded-4xl border border-transparent px-2 py-0.5 text-xs font-medium whitespace-nowrap transition-all focus-visible:border-ring focus-visible:ring-[3px] focus-visible:ring-ring/50 has-data-[icon=inline-end]:pr-1.5 has-data-[icon=inline-start]:pl-1.5 aria-invalid:border-destructive aria-invalid:ring-destructive/20 dark:aria-invalid:ring-destructive/40 [&>svg]:pointer-events-none [&>svg]:size-3! hover:bg-muted hover:text-muted-foreground dark:hover:bg-muted/50",
+  "text": "Badge",
+  "rect": {
+    "x": 0,
+    "y": 0,
+    "w": 54.531,
+    "h": 20
+  },
+  "style": {
+    "backgroundColor": "rgba(0, 0, 0, 0)",
+    "color": "rgb(10, 10, 10)",
+    "borderWidth": [
+      1,
+      1,
+      1,
+      1
+    ],
+    "borderColor": "rgba(0, 0, 0, 0)",
+    "borderRadius": [
+      26,
+      26,
+      26,
+      26
+    ],
+    "padding": [
+      2,
+      8,
+      2,
+      8
+    ],
+    "fontSize": 12,
+    "fontWeight": 500,
+    "lineHeight": 16,
+    "letterSpacing": 0,
+    "opacity": 1,
+    "boxShadow": "none",
+    "textAlign": "start"
+  },
+  "children": [],
+  "pageRect": {
+    "x": 612.734,
+    "y": 390,
+    "w": 54.531,
+    "h": 20
+  },
+  "cropOffset": {
+    "x": 0.734,
+    "y": 0
+  }
+}

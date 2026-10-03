@@ -1,0 +1,95 @@
+{
+  "tag": "span",
+  "cls": "group/avatar relative flex size-8 shrink-0 rounded-full select-none after:absolute after:inset-0 after:rounded-full after:border after:border-border after:mix-blend-darken data-[size=lg]:size-10 data-[size=sm]:size-6 dark:after:mix-blend-lighten",
+  "text": "",
+  "rect": {
+    "x": 0,
+    "y": 0,
+    "w": 24,
+    "h": 24
+  },
+  "style": {
+    "backgroundColor": "rgba(0, 0, 0, 0)",
+    "color": "rgb(10, 10, 10)",
+    "borderWidth": [
+      0,
+      0,
+      0,
+      0
+    ],
+    "borderColor": "rgb(229, 229, 229)",
+    "borderRadius": [
+      3.355,
+      3.355,
+      3.355,
+      3.355
+    ],
+    "padding": [
+      0,
+      0,
+      0,
+      0
+    ],
+    "fontSize": 16,
+    "fontWeight": 400,
+    "lineHeight": 24,
+    "letterSpacing": 0,
+    "opacity": 1,
+    "boxShadow": "none",
+    "textAlign": "start"
+  },
+  "children": [
+    {
+      "tag": "span",
+      "cls": "flex size-full items-center justify-center rounded-full bg-muted text-sm text-muted-foreground group-data-[size=sm]/avatar:text-xs",
+      "text": "AB",
+      "rect": {
+        "x": 0,
+        "y": 0,
+        "w": 24,
+        "h": 24
+      },
+      "style": {
+        "backgroundColor": "rgb(245, 245, 245)",
+        "color": "rgb(115, 115, 115)",
+        "borderWidth": [
+          0,
+          0,
+          0,
+          0
+        ],
+        "borderColor": "rgb(229, 229, 229)",
+        "borderRadius": [
+          3.355,
+          3.355,
+          3.355,
+          3.355
+        ],
+        "padding": [
+          0,
+          0,
+          0,
+          0
+        ],
+        "fontSize": 12,
+        "fontWeight": 400,
+        "lineHeight": 16,
+        "letterSpacing": 0,
+        "opacity": 1,
+        "boxShadow": "none",
+        "textAlign": "start"
+      },
+      "children": []
+    }
+  ],
+  "pageRect": {
+    "x": 628,
+    "y": 388,
+    "w": 24,
+    "h": 24
+  },
+  "cropOffset": {
+    "x": 0,
+    "y": 0
+  }
+}

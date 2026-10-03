@@ -1,0 +1,52 @@
+{
+  "tag": "div",
+  "cls": "shrink-0 bg-border data-horizontal:h-px data-horizontal:w-full data-vertical:w-px data-vertical:self-stretch w-64",
+  "text": "",
+  "rect": {
+    "x": 0,
+    "y": 0,
+    "w": 1216,
+    "h": 1
+  },
+  "style": {
+    "backgroundColor": "rgb(229, 229, 229)",
+    "color": "rgb(10, 10, 10)",
+    "borderWidth": [
+      0,
+      0,
+      0,
+      0
+    ],
+    "borderColor": "rgb(229, 229, 229)",
+    "borderRadius": [
+      0,
+      0,
+      0,
+      0
+    ],
+    "padding": [
+      0,
+      0,
+      0,
+      0
+    ],
+    "fontSize": 16,
+    "fontWeight": 400,
+    "lineHeight": 24,
+    "letterSpacing": 0,
+    "opacity": 1,
+    "boxShadow": "none",
+    "textAlign": "start"
+  },
+  "children": [],
+  "pageRect": {
+    "x": 32,
+    "y": 399.5,
+    "w": 1216,
+    "h": 1
+  },
+  "cropOffset": {
+    "x": 0,
+    "y": 0.5
+  }
+}

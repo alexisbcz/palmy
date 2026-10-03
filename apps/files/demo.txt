@@ -1,0 +1,116 @@
+# Files — a tour. Driven from the keyboard, because this compositor build
+# cannot synthesize pointer clicks; `move` is used only to show hover, and the
+# pointer never leaves the window because focus follows it.
+wait 1.6
+
+# Hover, row by row.
+move 600 96
+wait 0.7
+move 600 180
+wait 0.7
+move 600 264
+wait 0.8
+move 450 26
+wait 0.6
+
+# The arrow keys move the selection.
+key Down
+wait 0.35
+key Down
+wait 0.35
+key Down
+wait 1.0
+
+# Filter the folder as you type, then open the match.
+key slash
+wait 0.6
+type work
+wait 1.5
+key Return
+wait 1.8
+
+# Filter again, narrow it down to one match, open it.
+key slash
+wait 0.6
+type palm
+wait 1.6
+type y
+wait 1.5
+key Return
+wait 1.8
+
+# Move around the detailed list.
+key Down
+wait 0.4
+key Down
+wait 0.4
+key Down
+wait 1.0
+
+# The inspector.
+key i
+wait 2.2
+key i
+wait 0.8
+
+# The icon grid.
+key 2
+wait 1.8
+key Right
+wait 0.4
+key Right
+wait 0.4
+key Right
+wait 0.4
+key Down
+wait 1.6
+key 1
+wait 1.6
+
+# Filter in place, then cancel it.
+key slash
+wait 0.5
+type re
+wait 1.9
+key Escape
+wait 1.1
+
+# The context menu, keyboard driven.
+key m
+wait 1.7
+key Down
+wait 0.5
+key Down
+wait 0.5
+key Down
+wait 0.5
+key Down
+wait 1.3
+key Escape
+wait 1.1
+
+# Hidden files on, then off again.
+key period
+wait 1.7
+key period
+wait 1.1
+
+# Backspace walks back up the tree.
+key BackSpace
+wait 1.6
+key BackSpace
+wait 1.6
+
+# Tab moves to the sidebar; the arrows move between places.
+key Tab
+wait 0.9
+key Down
+wait 1.7
+key Down
+wait 1.9
+key Escape
+wait 0.6
+
+# End jumps to the last item.
+key End
+wait 1.6

@@ -1,0 +1,49 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>selftest basic</title>
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body { background: #fff; font-family: sans-serif; }
+  /* root is offset from the page origin on purpose: every rect in the JSON
+     must come out relative to the root, not to the viewport. */
+  #wrap { padding: 50px 0 0 70px; }
+  .card {
+    width: 300px; height: 120px;
+    background: rgb(23, 23, 23);
+    color: rgb(250, 250, 250);
+    border: 1px solid rgb(229, 229, 229);
+    border-radius: 8px;
+    padding: 8px 16px 8px 16px;
+    font-size: 14px; font-weight: 500; line-height: 20px;
+    letter-spacing: 0; text-align: center;
+    box-shadow: 0 1px 2px 0 rgba(0, 0, 0, 0.05);
+  }
+  .inner {
+    width: 100px; height: 40px;
+    margin: 10px 0 0 20px;
+    /* oklch on purpose: the walker must still emit rgb() */
+    background: oklch(0.646 0.222 41.116);
+    border-radius: 4px 4px 4px 4px;
+  }
+  .ghost { width: 0; height: 0; overflow: visible; }
+  .oklcha { display: block; width: 40px; height: 8px; background: oklch(0.5 0.1 200 / 0.4); color: oklch(0.646 0.222 41.116); }
+  .translucent { display: block; width: 50px; height: 10px; background: rgba(0, 128, 255, 0.5); }
+</style>
+</head>
+<body>
+<div id="wrap">
+  <div class="card" data-parity-root>
+    Hello parity
+    <div class="inner">inner</div>
+    <div class="ghost"><span class="translucent"></span><span class="oklcha"></span></div>
+  </div>
+</div>
+<script>
+  document.fonts.ready.then(function () {
+    document.body.setAttribute('data-parity-ready', '');
+  });
+</script>
+</body>
+</html>

@@ -1,0 +1,351 @@
+{
+  "tag": "div",
+  "cls": "data-horizontal:w-full data-vertical:h-full h-48",
+  "text": "",
+  "rect": {
+    "x": 0,
+    "y": 0,
+    "w": 4,
+    "h": 160
+  },
+  "style": {
+    "backgroundColor": "rgba(0, 0, 0, 0)",
+    "color": "rgb(10, 10, 10)",
+    "borderWidth": [
+      0,
+      0,
+      0,
+      0
+    ],
+    "borderColor": "rgb(229, 229, 229)",
+    "borderRadius": [
+      0,
+      0,
+      0,
+      0
+    ],
+    "padding": [
+      0,
+      0,
+      0,
+      0
+    ],
+    "fontSize": 16,
+    "fontWeight": 400,
+    "lineHeight": 24,
+    "letterSpacing": 0,
+    "opacity": 1,
+    "boxShadow": "none",
+    "textAlign": "start"
+  },
+  "children": [
+    {
+      "tag": "div",
+      "cls": "relative flex w-full touch-none items-center select-none data-disabled:opacity-50 data-vertical:h-full data-vertical:min-h-40 data-vertical:w-auto data-vertical:flex-col",
+      "text": "",
+      "rect": {
+        "x": 0,
+        "y": 0,
+        "w": 4,
+        "h": 160
+      },
+      "style": {
+        "backgroundColor": "rgba(0, 0, 0, 0)",
+        "color": "rgb(10, 10, 10)",
+        "borderWidth": [
+          0,
+          0,
+          0,
+          0
+        ],
+        "borderColor": "rgb(229, 229, 229)",
+        "borderRadius": [
+          0,
+          0,
+          0,
+          0
+        ],
+        "padding": [
+          0,
+          0,
+          0,
+          0
+        ],
+        "fontSize": 16,
+        "fontWeight": 400,
+        "lineHeight": 24,
+        "letterSpacing": 0,
+        "opacity": 1,
+        "boxShadow": "none",
+        "textAlign": "start"
+      },
+      "children": [
+        {
+          "tag": "div",
+          "cls": "relative grow overflow-hidden rounded-full bg-muted select-none data-horizontal:h-1 data-horizontal:w-full data-vertical:h-full data-vertical:w-1",
+          "text": "",
+          "rect": {
+            "x": 0,
+            "y": 0,
+            "w": 4,
+            "h": 160
+          },
+          "style": {
+            "backgroundColor": "rgb(245, 245, 245)",
+            "color": "rgb(10, 10, 10)",
+            "borderWidth": [
+              0,
+              0,
+              0,
+              0
+            ],
+            "borderColor": "rgb(229, 229, 229)",
+            "borderRadius": [
+              3.355,
+              3.355,
+              3.355,
+              3.355
+            ],
+            "padding": [
+              0,
+              0,
+              0,
+              0
+            ],
+            "fontSize": 16,
+            "fontWeight": 400,
+            "lineHeight": 24,
+            "letterSpacing": 0,
+            "opacity": 1,
+            "boxShadow": "none",
+            "textAlign": "start"
+          },
+          "children": [
+            {
+              "tag": "div",
+              "cls": "bg-primary select-none data-horizontal:h-full data-vertical:w-full",
+              "text": "",
+              "rect": {
+                "x": 0,
+                "y": 94.813,
+                "w": 4,
+                "h": 65.188
+              },
+              "style": {
+                "backgroundColor": "rgb(23, 23, 23)",
+                "color": "rgb(10, 10, 10)",
+                "borderWidth": [
+                  0,
+                  0,
+                  0,
+                  0
+                ],
+                "borderColor": "rgb(229, 229, 229)",
+                "borderRadius": [
+                  0,
+                  0,
+                  0,
+                  0
+                ],
+                "padding": [
+                  0,
+                  0,
+                  0,
+                  0
+                ],
+                "fontSize": 16,
+                "fontWeight": 400,
+                "lineHeight": 24,
+                "letterSpacing": 0,
+                "opacity": 1,
+                "boxShadow": "none",
+                "textAlign": "start"
+              },
+              "children": []
+            }
+          ]
+        },
+        {
+          "tag": "div",
+          "cls": "relative block size-3 shrink-0 rounded-full border border-ring bg-white ring-ring/50 transition-[color,box-shadow] select-none after:absolute after:-inset-2 hover:ring-3 focus-visible:ring-3 focus-visible:outline-hidden active:ring-3 disabled:pointer-events-none disabled:opacity-50",
+          "text": "",
+          "rect": {
+            "x": -4,
+            "y": 88.813,
+            "w": 12,
+            "h": 12
+          },
+          "style": {
+            "backgroundColor": "rgb(255, 255, 255)",
+            "color": "rgb(10, 10, 10)",
+            "borderWidth": [
+              1,
+              1,
+              1,
+              1
+            ],
+            "borderColor": "rgb(161, 161, 161)",
+            "borderRadius": [
+              3.355,
+              3.355,
+              3.355,
+              3.355
+            ],
+            "padding": [
+              0,
+              0,
+              0,
+              0
+            ],
+            "fontSize": 16,
+            "fontWeight": 400,
+            "lineHeight": 24,
+            "letterSpacing": 0,
+            "opacity": 1,
+            "boxShadow": "none",
+            "textAlign": "start"
+          },
+          "children": [
+            {
+              "tag": "input",
+              "cls": "",
+              "text": "",
+              "rect": {
+                "x": -4,
+                "y": 88.813,
+                "w": 10,
+                "h": 10
+              },
+              "style": {
+                "backgroundColor": "rgba(0, 0, 0, 0)",
+                "color": "rgb(10, 10, 10)",
+                "borderWidth": [
+                  0,
+                  0,
+                  0,
+                  0
+                ],
+                "borderColor": "rgb(10, 10, 10)",
+                "borderRadius": [
+                  0,
+                  0,
+                  0,
+                  0
+                ],
+                "padding": [
+                  0,
+                  0,
+                  0,
+                  0
+                ],
+                "fontSize": 16,
+                "fontWeight": 400,
+                "lineHeight": 24,
+                "letterSpacing": 0,
+                "opacity": 1,
+                "boxShadow": "none",
+                "textAlign": "start"
+              },
+              "children": []
+            }
+          ]
+        },
+        {
+          "tag": "div",
+          "cls": "relative block size-3 shrink-0 rounded-full border border-ring bg-white ring-ring/50 transition-[color,box-shadow] select-none after:absolute after:-inset-2 hover:ring-3 focus-visible:ring-3 focus-visible:outline-hidden active:ring-3 disabled:pointer-events-none disabled:opacity-50",
+          "text": "",
+          "rect": {
+            "x": -4,
+            "y": 88.813,
+            "w": 12,
+            "h": 12
+          },
+          "style": {
+            "backgroundColor": "rgb(255, 255, 255)",
+            "color": "rgb(10, 10, 10)",
+            "borderWidth": [
+              1,
+              1,
+              1,
+              1
+            ],
+            "borderColor": "rgb(161, 161, 161)",
+            "borderRadius": [
+              3.355,
+              3.355,
+              3.355,
+              3.355
+            ],
+            "padding": [
+              0,
+              0,
+              0,
+              0
+            ],
+            "fontSize": 16,
+            "fontWeight": 400,
+            "lineHeight": 24,
+            "letterSpacing": 0,
+            "opacity": 1,
+            "boxShadow": "none",
+            "textAlign": "start"
+          },
+          "children": [
+            {
+              "tag": "input",
+              "cls": "",
+              "text": "",
+              "rect": {
+                "x": -4,
+                "y": 88.813,
+                "w": 10,
+                "h": 10
+              },
+              "style": {
+                "backgroundColor": "rgba(0, 0, 0, 0)",
+                "color": "rgb(10, 10, 10)",
+                "borderWidth": [
+                  0,
+                  0,
+                  0,
+                  0
+                ],
+                "borderColor": "rgb(10, 10, 10)",
+                "borderRadius": [
+                  0,
+                  0,
+                  0,
+                  0
+                ],
+                "padding": [
+                  0,
+                  0,
+                  0,
+                  0
+                ],
+                "fontSize": 16,
+                "fontWeight": 400,
+                "lineHeight": 24,
+                "letterSpacing": 0,
+                "opacity": 1,
+                "boxShadow": "none",
+                "textAlign": "start"
+              },
+              "children": []
+            }
+          ]
+        }
+      ]
+    }
+  ],
+  "pageRect": {
+    "x": 638,
+    "y": 320,
+    "w": 4,
+    "h": 160
+  },
+  "cropOffset": {
+    "x": 0,
+    "y": 0
+  }
+}

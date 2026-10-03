@@ -1,0 +1,52 @@
+{
+  "tag": "div",
+  "cls": "animate-pulse rounded-md bg-muted h-4 w-64",
+  "text": "",
+  "rect": {
+    "x": 0,
+    "y": 0,
+    "w": 256,
+    "h": 16
+  },
+  "style": {
+    "backgroundColor": "rgb(245, 245, 245)",
+    "color": "rgb(10, 10, 10)",
+    "borderWidth": [
+      0,
+      0,
+      0,
+      0
+    ],
+    "borderColor": "rgb(229, 229, 229)",
+    "borderRadius": [
+      8,
+      8,
+      8,
+      8
+    ],
+    "padding": [
+      0,
+      0,
+      0,
+      0
+    ],
+    "fontSize": 16,
+    "fontWeight": 400,
+    "lineHeight": 24,
+    "letterSpacing": 0,
+    "opacity": 1,
+    "boxShadow": "none",
+    "textAlign": "start"
+  },
+  "children": [],
+  "pageRect": {
+    "x": 512,
+    "y": 392,
+    "w": 256,
+    "h": 16
+  },
+  "cropOffset": {
+    "x": 0,
+    "y": 0
+  }
+}
