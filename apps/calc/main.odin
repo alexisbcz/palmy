@@ -113,6 +113,10 @@ main :: proc() {
 	// <expression>` answers on stdout and exits. The parser is the same one
 	// the window uses, so the two can never disagree.
 	args := os.args[1:]
+	if len(args) > 0 && args[0] == "--selftest" {
+		run_selftest()
+		os.exit(failures == 0 ? 0 : 1)
+	}
 	eval_only := len(args) > 0 && args[0] == "--eval"
 	if eval_only {
 		args = args[1:]
@@ -172,18 +176,22 @@ main :: proc() {
 	}
 }
 
+// set_var owns its key.
+//
+// The name arrives as a slice of the tokeniser's view of the input buffer, and
+// that buffer is cleared and typed over on the very next keystroke. Storing it
+// as a map key without copying it leaves the key pointing at whatever is typed
+// next, so `r = 4.5` followed by `area = pi * r^2` reported that r was not
+// defined — the variable was there, under a name that had been overwritten.
 set_var :: proc(c: ^Calc, name: string, v: f64) {
-	seen := false
-	for n in c.names {
-		if n == name {
-			seen = true
-			break
-		}
+	if _, found := c.vars[name]; found {
+		// The map keeps the key it already has, which is one we own.
+		c.vars[name] = v
+		return
 	}
-	if !seen {
-		append(&c.names, strings.clone(name))
-	}
-	c.vars[name] = v
+	key := strings.clone(name)
+	c.vars[key] = v
+	append(&c.names, key)
 }
 
 note :: proc(c: ^Calc, msg: string) {

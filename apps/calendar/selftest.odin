@@ -3,10 +3,14 @@
 package main
 
 import "core:fmt"
+import "core:os"
+import "core:strings"
 
+checks: int
 failures: int
 
 check :: proc(ok: bool, what: string) {
+	checks += 1
 	if !ok {
 		failures += 1
 		fmt.printfln("  FAIL  %s", what)
@@ -98,9 +102,93 @@ run_selftest :: proc() {
 	_, mok = parse_clock("24:00")
 	check(!mok, "24:00 is rejected")
 
+	test_events()
+
 	if failures == 0 {
-		fmt.println("calendar selftest: all checks passed")
+		fmt.printfln("calendar selftest: %d checks passed", checks)
 	} else {
-		fmt.printfln("calendar selftest: %d failures", failures)
+		fmt.printfln("calendar selftest: %d checks, %d FAILED", checks, failures)
 	}
+}
+
+// ---------------------------------------------------------------------------
+// The events file
+//
+// A calendar that loses an event is worse than no calendar, so the file format
+// is asserted directly: what is written is what is read back, a title with a
+// tab in it cannot break the record separator, and the order is the order the
+// day pane shows.
+// ---------------------------------------------------------------------------
+
+check_eq :: proc(got, want, what: string) {
+	checks += 1
+	if got != want {
+		failures += 1
+		fmt.printfln("  FAIL  %s\n        got  %q\n        want %q", what, got, want)
+	}
+}
+
+test_events :: proc() {
+	dir := "/tmp/palmy-calendar-selftest"
+	if !os.is_dir(dir) {
+		os.make_directory(dir)
+	}
+	os.remove(store_path(dir))
+
+	empty := events_load(dir)
+	check(len(empty) == 0, "a missing events file loads as no events")
+
+	list := make([dynamic]Event, 0, 8, context.temp_allocator)
+	append(&list, Event{Date{2026, 10, 4}, 14 * 60, 60, "Design review", "Studio"})
+	append(&list, Event{Date{2026, 10, 4}, -1, 0, "Pay the bill", ""})
+	append(&list, Event{Date{2026, 10, 4}, 9 * 60 + 30, 45, "Stand-up", "Jitsi"})
+	append(&list, Event{Date{2024, 2, 29}, 0, 0, "Leap day", "Nowhere"})
+	append(&list, Event{Date{2026, 10, 4}, 9 * 60 + 30, 30, "A tab\there and a\nnewline", "x"})
+	events_sort(&list)
+
+	check(date_eq(list[0].date, Date{2024, 2, 29}), "the earliest date sorts first")
+	check(list[1].start == -1, "an all-day entry sorts before the timed ones on its day")
+	check(list[2].start == 9 * 60 + 30, "and then the earliest time")
+	check(list[4].start == 14 * 60, "with the latest time last")
+
+	check(events_save(dir, list[:]), "the events file is written")
+	raw, rerr := os.read_entire_file_from_path(store_path(dir), context.temp_allocator)
+	check(rerr == nil, "and can be read back as bytes")
+	text := string(raw)
+	check(strings.count(text, "\n") == len(list) + 1, "one line per event, plus the header")
+	for line in strings.split_lines(text, context.temp_allocator) {
+		if line == "" || line[0] == '#' {
+			continue
+		}
+		checks += 1
+		if strings.count(line, "\t") != 4 {
+			failures += 1
+			fmt.printfln("  FAIL  a record has the wrong number of fields: %q", line)
+		}
+	}
+
+	back := events_load(dir)
+	check(len(back) == len(list), "every event came back")
+	same := len(back) == len(list)
+	if same {
+		for e, i in back {
+			if !date_eq(e.date, list[i].date) || e.start != list[i].start || e.mins != list[i].mins {
+				same = false
+			}
+		}
+	}
+	check(same, "the dates, times and durations survived the round trip")
+	check_eq(back[0].title, "Leap day", "the first title came back")
+	check_eq(back[0].place, "Nowhere", "and its location")
+	check_eq(back[3].title, "A tab here and a newline", "a tab and a newline in a title became spaces")
+
+	// A malformed line is skipped, not fatal.
+	broken := "# header\nnot a date\tx\t0\tt\tp\n2026-13-99\t-\t0\tbad date\t\n2026-01-02\t08:15\t30\tGood\tHere\n"
+	check(os.write_entire_file(store_path(dir), transmute([]u8)broken) == nil, "a hand-written events file is laid down")
+	survivors := events_load(dir)
+	check(len(survivors) == 1, "a broken line is skipped and the good one survives")
+	check_eq(survivors[0].title, "Good", "and it is the right one")
+	check(survivors[0].start == 8 * 60 + 15, "with its time parsed")
+
+	os.remove(store_path(dir))
 }

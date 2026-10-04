@@ -156,6 +156,15 @@ tc_count :: proc(tc: ^TC, t: string, from: int) -> int {
 	return n
 }
 
+// inbox_len is the only way the test body reads a client's inbox. `tc_dial`
+// returns nil when the dial is refused — which happens the moment anything
+// takes the server away — and a direct `len(tc.inbox)` on that nil is a
+// segfault rather than a failed assertion. This is how the first version of
+// this file crashed instead of reporting.
+inbox_len :: proc(tc: ^TC) -> int {
+	return tc == nil ? 0 : len(tc.inbox)
+}
+
 tc_at :: proc(tc: ^TC, i: int) -> json.Object {
 	if tc == nil || i < 0 || i >= len(tc.inbox) {
 		return nil
@@ -313,7 +322,7 @@ selftest :: proc(args: Args) -> int {
 
 	// -- a second client ---------------------------------------------------
 	fmt.println("\na second client, and presence")
-	mark := len(A.inbox)
+	mark := inbox_len(A)
 	B, bok := tc_dial(port, "bob")
 	check(bok, "bob connected")
 	if !bok {
@@ -337,7 +346,7 @@ selftest :: proc(args: Args) -> int {
 
 	// -- the headline: two clients talking --------------------------------
 	fmt.println("\nmessages, in order, both ways")
-	amark, bmark := len(A.inbox), len(B.inbox)
+	amark, bmark := inbox_len(A), inbox_len(B)
 	tc_post(A, "general", "first")
 	tc_post(A, "general", "second")
 	tc_post(A, "general", "third")
@@ -372,7 +381,7 @@ selftest :: proc(args: Args) -> int {
 	m1 := len(bm) == 3 ? w.oint(bm[0], "id") : 0
 	m2 := len(bm) == 3 ? w.oint(bm[1], "id") : 0
 
-	amark = len(A.inbox)
+	amark = inbox_len(A)
 	tc_post(B, "general", "bob replies")
 	bi, bgot := tc_wait(A, "message", amark)
 	check(bgot, "alice received bob's message")
@@ -386,7 +395,7 @@ selftest :: proc(args: Args) -> int {
 
 	// -- typing indicators -------------------------------------------------
 	fmt.println("\ntyping indicators")
-	bmark, amark = len(B.inbox), len(A.inbox)
+	bmark, amark = inbox_len(B), inbox_len(A)
 	{
 		e: w.Enc
 		w.enc_begin(&e, "typing", context.allocator)
@@ -403,7 +412,7 @@ selftest :: proc(args: Args) -> int {
 
 	// -- reactions ---------------------------------------------------------
 	fmt.println("\nreactions")
-	amark = len(A.inbox)
+	amark = inbox_len(A)
 	react(B, m1, "heart", true)
 	ri, rgot := tc_wait(A, "react", amark)
 	check(rgot, "alice saw the reaction")
@@ -411,17 +420,17 @@ selftest :: proc(args: Args) -> int {
 	check(w.ostr(tc_at(A, ri), "key") == "heart", "the key is heart")
 	check(w.ostr(tc_at(A, ri), "nick") == "bob", "the reactor is bob")
 
-	amark = len(A.inbox)
+	amark = inbox_len(A)
 	react(B, m1, "heart", true)
 	tc_pump(A, 200)
 	check(tc_count(A, "react", amark) == 0, "reacting twice with the same key changes nothing")
 
-	amark = len(A.inbox)
+	amark = inbox_len(A)
 	react(B, m1, "heart", false)
 	ri2, rgot2 := tc_wait(A, "react", amark)
 	check(rgot2 && !w.obool(tc_at(A, ri2), "on"), "removing a reaction broadcasts on=false")
 
-	amark = len(A.inbox)
+	amark = inbox_len(A)
 	react(B, m1, "banana", true)
 	ei, egot := tc_wait(B, "error", 0)
 	check(egot && w.ostr(tc_at(B, ei), "code") == "bad_reaction", "an unknown reaction key is refused")
@@ -432,7 +441,7 @@ selftest :: proc(args: Args) -> int {
 
 	// -- edit and delete ---------------------------------------------------
 	fmt.println("\nedits and deletions")
-	bmark = len(B.inbox)
+	bmark = inbox_len(B)
 	{
 		e: w.Enc
 		w.enc_begin(&e, "edit", context.allocator)
@@ -445,7 +454,7 @@ selftest :: proc(args: Args) -> int {
 	check(w.ostr(tc_at(B, eidx), "text") == "first, corrected", "the edited text arrived")
 	check(w.oint(tc_at(B, eidx), "edited") > 0, "the edit carries a timestamp")
 
-	bmark = len(B.inbox)
+	bmark = inbox_len(B)
 	{
 		e: w.Enc
 		w.enc_begin(&e, "edit", context.allocator)
@@ -456,7 +465,7 @@ selftest :: proc(args: Args) -> int {
 	eidx2, eok2 := tc_wait(B, "error", bmark)
 	check(eok2 && w.ostr(tc_at(B, eidx2), "code") == "not_yours", "only the author may edit")
 
-	bmark = len(B.inbox)
+	bmark = inbox_len(B)
 	{
 		e: w.Enc
 		w.enc_begin(&e, "delete", context.allocator)
@@ -479,7 +488,7 @@ selftest :: proc(args: Args) -> int {
 		}
 	}
 
-	amark = len(A.inbox)
+	amark = inbox_len(A)
 	history(A, "general", 0, 10)
 	hi, hok := tc_wait(A, "history", amark)
 	check(hok, "the first history page came back")
@@ -505,7 +514,7 @@ selftest :: proc(args: Args) -> int {
 	}
 	check(ascending, "a page is oldest-first")
 
-	amark = len(A.inbox)
+	amark = inbox_len(A)
 	history(A, "general", oldest, 10)
 	hi2, hok2 := tc_wait(A, "history", amark)
 	check(hok2, "the second page came back")
@@ -523,7 +532,7 @@ selftest :: proc(args: Args) -> int {
 	fmt.println("\nsearch")
 	tc_post(A, "general", "a quite unmistakable sentinel token")
 	tc_pump(A, 250)
-	amark = len(A.inbox)
+	amark = inbox_len(A)
 	{
 		e: w.Enc
 		w.enc_begin(&e, "search", context.allocator)
@@ -560,8 +569,8 @@ selftest :: proc(args: Args) -> int {
 	tc_pump(A, 200)
 	tc_pump(B, 200)
 
-	bmark = len(B.inbox)
-	cmark := len(C.inbox)
+	bmark = inbox_len(B)
+	cmark := inbox_len(C)
 	tc_post(A, dm, "just between us")
 	dmi, dmok := tc_wait(B, "message", bmark)
 	check(dmok, "bob received the direct message")
@@ -573,14 +582,14 @@ selftest :: proc(args: Args) -> int {
 	tc_pump(C, 300)
 	check(tc_count(C, "message", cmark) == 0, "carol received nothing from someone else's DM")
 
-	cmark = len(C.inbox)
+	cmark = inbox_len(C)
 	history(C, dm, 0, 10)
 	cerr, cerrok := tc_wait(C, "error", cmark)
 	check(cerrok && w.ostr(tc_at(C, cerr), "code") == "no_channel", "carol cannot read that history")
 
 	// -- a client vanishing mid-conversation -------------------------------
 	fmt.println("\na client disconnecting")
-	amark = len(A.inbox)
+	amark = inbox_len(A)
 	tc_close(C)
 	cpi, cpok := tc_wait(A, "presence", amark, 2500)
 	check(cpok, "alice was told carol left")
@@ -589,7 +598,7 @@ selftest :: proc(args: Args) -> int {
 		"carol is offline",
 	)
 
-	amark, bmark = len(A.inbox), len(B.inbox)
+	amark, bmark = inbox_len(A), inbox_len(B)
 	tc_post(A, "general", "still here")
 	si2, sok2 := tc_wait(B, "message", bmark)
 	check(sok2, "bob still receives after another client vanished")
@@ -620,7 +629,7 @@ selftest :: proc(args: Args) -> int {
 
 	marks: [4]int
 	for tc, i in stress {
-		marks[i] = len(tc.inbox)
+		marks[i] = inbox_len(tc)
 	}
 	// Round-robin, so the posts genuinely interleave across connections.
 	for round in 0 ..< 30 {
@@ -678,27 +687,27 @@ selftest :: proc(args: Args) -> int {
 
 	// -- malformed input ---------------------------------------------------
 	fmt.println("\nbad input")
-	bmark = len(B.inbox)
+	bmark = inbox_len(B)
 	tc_send(B, "{this is not json")
 	jerr, jok := tc_wait(B, "error", bmark)
 	check(jok && w.ostr(tc_at(B, jerr), "code") == "bad_json", "a malformed frame is refused by name")
-	bmark = len(B.inbox)
+	bmark = inbox_len(B)
 	tc_post(B, "general", "still usable")
 	_, still := tc_wait(B, "message", bmark)
 	check(still, "the connection survives a malformed frame")
 
-	bmark = len(B.inbox)
+	bmark = inbox_len(B)
 	tc_simple(B, "hello", "nick", "bob")
 	h2, h2ok := tc_wait(B, "error", bmark)
 	check(h2ok && w.ostr(tc_at(B, h2), "code") == "already_hello", "a second hello is refused")
 
-	bmark = len(B.inbox)
+	bmark = inbox_len(B)
 	tc_post(B, "nowhere", "hello?")
 	n1, n1ok := tc_wait(B, "error", bmark)
 	check(n1ok && w.ostr(tc_at(B, n1), "code") == "no_channel", "posting to a missing channel is refused")
 
 	// Count what the store should hold, before the restart.
-	amark = len(A.inbox)
+	amark = inbox_len(A)
 	history(A, "general", 0, 200)
 	hfi, hfok := tc_wait(A, "history", amark)
 	check(hfok, "a full history page came back")
@@ -750,7 +759,7 @@ selftest :: proc(args: Args) -> int {
 	check(saw_delete, "the deletion survived the restart")
 	check(saw_react, "the reaction survived the restart")
 
-	dmark := len(D.inbox)
+	dmark := inbox_len(D)
 	tc_post(D, "general", "after the restart")
 	_, dpok := tc_wait(D, "message", dmark)
 	check(dpok, "the restarted server accepts new messages")

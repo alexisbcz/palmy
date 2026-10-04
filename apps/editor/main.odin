@@ -136,7 +136,7 @@ main :: proc() {
 	args := os.args[1:]
 	path := ""
 	for a in args {
-		if a == "--bench" {
+		if a == "--bench" || a == "--selftest" {
 			continue
 		}
 		if path == "" {
@@ -147,6 +147,10 @@ main :: proc() {
 		if a == "--bench" {
 			run_bench(path)
 			return
+		}
+		if a == "--selftest" {
+			run_selftest()
+			os.exit(failures == 0 ? 0 : 1)
 		}
 	}
 

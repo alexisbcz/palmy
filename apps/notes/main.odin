@@ -80,6 +80,13 @@ Notes :: struct {
 // ---------------------------------------------------------------------------
 
 main :: proc() {
+	for a in os.args[1:] {
+		if a == "--selftest" {
+			run_selftest()
+			os.exit(failures == 0 ? 0 : 1)
+		}
+	}
+
 	app, err := kit.start(
 		{
 			title = "Notes",

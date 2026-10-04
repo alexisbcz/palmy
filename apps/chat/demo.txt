@@ -1,32 +1,38 @@
-# palmy-chat demo.
+# palmy-chat demo, driven by ./record.sh.
 #
-# Two real client processes, one real server on 127.0.0.1:8787. The left
-# window is alexis, the right one is sam; `move` puts the pointer over a
-# window, which is what gives it the keyboard (follow_mouse).
+# Two real client processes and one real server on 127.0.0.1:8787. The left
+# window is alexis, the right one is sam. `focus` names which client gets the
+# keyboard — a pointer warp does not move focus on this compositor, and the
+# first take of this demo had every message authored by one client because of
+# it. `move` is only for hover. `post` is a third nickname speaking the same
+# protocol from the command line, which is how a message arrives in a channel
+# nobody is looking at.
 #
-# Every key here is unmodified: wtype -k cannot send Shift+Enter, so the
-# multi-line markdown in the history is posted by demo-run.sh through
-# `chat --post` instead — over the same protocol, from a third nickname.
+# Every key here is unmodified: `wtype -k` cannot send Shift+Enter, so the
+# multi-line markdown in the history is seeded by record.sh through
+# `chat --post` rather than typed.
 
-wait 7.0
+wait 1.0
 
 # -- alexis types. sam's window shows the typing indicator first.
-move 480 620
-wait 1.2
+focus left
+move 470 580
+wait 1.0
 type Morning sam — parity is back to **zero geometry mismatches**.
 wait 1.6
 key Return
 wait 1.8
 
 # -- sam answers.
-move 1440 620
-wait 1.2
+focus right
+move 1430 580
+wait 1.0
 type Nice. Does `scroll_into_view` still pin the list?
 wait 1.6
 key Return
 wait 1.6
 
-# -- sam browses back one message and reacts to it. 2 is the heart.
+# -- sam browses back one message, to alexis's, and reacts. 2 is the heart.
 key Escape
 wait 0.9
 key Up
@@ -40,14 +46,16 @@ wait 0.8
 type Pinned. The spacer collapses the moment it overflows.
 wait 1.4
 key Return
-wait 2.0
+wait 2.2
 
-# -- meanwhile a message lands in #design, which nobody is looking at.
-wait 4.0
+# -- a message lands in #design, which neither of them is looking at.
+post jordan design Spacing pass on the sidebar is up for review.
+wait 2.5
 
 # -- alexis opens it from the keyboard: F2, down to design, Enter.
-move 480 620
-wait 1.0
+focus left
+move 470 580
+wait 0.8
 key F2
 wait 1.0
 key Down
@@ -83,9 +91,12 @@ wait 3.0
 key Escape
 wait 1.0
 
-# -- sam's process is killed by demo-run.sh. Presence goes offline for real
-#    and alexis carries on.
-wait 4.5
+# -- sam's process ends. Presence goes offline for real, and the client that
+#    is left takes the screen and carries on.
+close right
+wait 2.2
+grow left
+wait 1.2
 type Still here — sam just dropped off.
 wait 1.2
 key Return
