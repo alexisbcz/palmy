@@ -135,6 +135,7 @@ palm reader     library | open | position
 palm torrent    list | add | pause | remove
 palm ai         models | prompt | scope
 
+palm pkg        list | search | install | remove | sync | diff | rollback
 palm identity   list | current | switch | link | scope
 palm dev        build | test | parity | record | lint
 palm schema     the whole surface as JSON
