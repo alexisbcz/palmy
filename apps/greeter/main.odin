@@ -526,6 +526,16 @@ handle_keys :: proc(st: ^St, ui: ^p.Ctx) {
 		shift := .Shift in k.mods
 		ctrl := .Ctrl in k.mods
 
+		// Holding a key should not re-submit, re-cancel or walk the focus
+		// ring: those are one-shot actions. Text, arrows and the delete keys
+		// are the ones that want the compositor's repeat rate.
+		if k.repeat {
+			switch k.sym {
+			case p.KEY_RETURN, p.KEY_KP_ENTER, p.KEY_ESCAPE, p.KEY_TAB, p.KEY_SPACE, p.KEY_F2:
+				continue
+			}
+		}
+
 		switch k.sym {
 		case p.KEY_TAB:
 			focus_step(st, shift ? -1 : 1)

@@ -299,12 +299,23 @@ const ALIASES = {
   "loader2": "loader-circle",
   "more-horizontal": "ellipsis",
   "more-vertical": "ellipsis-vertical",
+  "file-video": "file-play",
+  "file-audio": "file-headphone",
+  "file-json": "file-braces",
+  "trash-2": "trash",
+  "align-left": "text-align-start",
+  "align-center": "text-align-center",
+  "align-right": "text-align-end",
+  "align-justify": "text-align-justify",
 };
 
+// lucide names digits as their own segment — Columns3 is `columns-3`, not
+// `columns3` — so a trailing or embedded number has to be split out too.
 const pascalToKebab = (s) =>
   s.replace(/Icon$/, "")
-    .replace(/([a-z0-9])([A-Z])/g, "$1-$2")
+    .replace(/([a-z])([A-Z])/g, "$1-$2")
     .replace(/([A-Z])([A-Z][a-z])/g, "$1-$2")
+    .replace(/([A-Za-z])(\d)/g, "$1-$2")
     .toLowerCase();
 
 const out = [];
@@ -313,6 +324,11 @@ const missing = [];
 for (const want of WANTED) {
   let kebab = pascalToKebab(want);
   if (!byName.has(kebab) && ALIASES[kebab]) kebab = ALIASES[kebab];
+  if (!byName.has(kebab)) {
+    const joined = kebab.replace(/-(\d)/g, "$1");
+    if (byName.has(joined)) kebab = joined;
+    else if (ALIASES[joined] && byName.has(ALIASES[joined])) kebab = ALIASES[joined];
+  }
   const data = byName.get(kebab);
   if (!data) { missing.push(`${want} (looked for "${kebab}")`); continue; }
   const d = data.node.map(nodeToPath).filter(Boolean).join(" ");

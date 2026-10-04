@@ -579,23 +579,63 @@ cycle_focus :: proc(ctx: ^Ctx, backwards: bool) {
 
 // key_pressed reports whether a keysym was pressed this frame. Use the KEY_*
 // constants, or a character literal for printable keys.
-key_pressed :: proc(ctx: ^Ctx, sym: u32) -> bool {
+//
+// `include_repeat` decides whether auto-repeat counts. Leave it on for a
+// movement key, where holding the key should keep moving; turn it off for a
+// command, where one press must mean one action — a held Backspace that walks
+// a file browser up three directories is this distinction going wrong.
+key_pressed :: proc(ctx: ^Ctx, sym: u32, include_repeat := true) -> bool {
 	for k in ctx.input.keys {
-		if k.sym == sym {
+		if k.sym == sym && (include_repeat || !k.repeat) {
 			return true
 		}
 	}
 	return false
 }
 
+// key_count is how many times a key arrived this frame. Several presses can
+// land in one frame, and a boolean cannot tell one from three.
+key_count :: proc(ctx: ^Ctx, sym: u32, include_repeat := true) -> int {
+	n := 0
+	for k in ctx.input.keys {
+		if k.sym == sym && (include_repeat || !k.repeat) {
+			n += 1
+		}
+	}
+	return n
+}
+
 // shortcut matches a key with modifiers, e.g. `shortcut(ui, 'q', {.Ctrl})`.
-shortcut :: proc(ctx: ^Ctx, sym: u32, mods: Modifiers) -> bool {
+// Auto-repeat is excluded by default: a shortcut is a command, and holding it
+// down should not fire it repeatedly.
+shortcut :: proc(ctx: ^Ctx, sym: u32, mods: Modifiers, include_repeat := false) -> bool {
 	for k in ctx.input.keys {
 		if k.sym == sym && k.mods & {.Shift, .Ctrl, .Alt, .Super} == mods {
-			return true
+			if include_repeat || !k.repeat {
+				return true
+			}
 		}
 	}
 	return false
+}
+
+// One wheel notch, in the units `Input.scroll` carries.
+SCROLL_NOTCH :: f32(10)
+
+// wheel is the wheel movement this frame in notches rather than raw units.
+wheel :: proc(ctx: ^Ctx) -> [2]f32 {
+	return ctx.input.scroll / SCROLL_NOTCH
+}
+
+// set_focus moves keyboard focus to an element, so an app that manages its own
+// panes can take focus back from a widget that grabbed it.
+set_focus :: proc(ctx: ^Ctx, id: u64) {
+	ctx.focus = id
+}
+
+// focus_id is whatever currently holds keyboard focus.
+focus_id :: proc(ctx: ^Ctx) -> u64 {
+	return ctx.focus
 }
 
 // typed_text returns the characters produced this frame, after the keymap has
