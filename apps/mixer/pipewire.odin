@@ -202,6 +202,24 @@ read_devs :: proc(
 	if !good || text == "" {
 		return 0, false
 	}
+	return parse_devs(into, text, input, default_name, al, scratch)
+}
+
+// parse_devs is read_devs with the subprocess taken out: everything from
+// `pactl -f json list sinks` onwards. The self-test feeds it canned documents,
+// including malformed ones, which is the only way to test this without
+// depending on what sound cards happen to be plugged in.
+parse_devs :: proc(
+	into: ^[dynamic]Dev,
+	text: string,
+	input: bool,
+	default_name: string,
+	al: mem.Allocator,
+	scratch: mem.Allocator,
+) -> (
+	n: int,
+	ok: bool,
+) {
 	doc, err := json.parse_string(text, json.DEFAULT_SPECIFICATION, true, scratch)
 	if err != nil {
 		return 0, false
@@ -212,6 +230,12 @@ read_devs :: proc(
 	}
 
 	for item in arr {
+		// An element that is not an object has no fields to read, and turning
+		// it into a Dev with every field blank would put an unnamed, volumeless
+		// row in the device list.
+		if _, is_obj := item.(json.Object); !is_obj {
+			continue
+		}
 		// A monitor source is the loopback of an output, not an input device.
 		// Showing them under "Inputs" is how a mixer ends up listing eight
 		// microphones on a machine with one.
@@ -280,6 +304,16 @@ read_streams :: proc(
 	if !good || text == "" {
 		return
 	}
+	parse_streams(into, text, record, al, scratch)
+}
+
+parse_streams :: proc(
+	into: ^[dynamic]Stream,
+	text: string,
+	record: bool,
+	al: mem.Allocator,
+	scratch: mem.Allocator,
+) {
 	doc, err := json.parse_string(text, json.DEFAULT_SPECIFICATION, true, scratch)
 	if err != nil {
 		return
@@ -289,6 +323,9 @@ read_streams :: proc(
 		return
 	}
 	for item in arr {
+		if _, is_obj := item.(json.Object); !is_obj {
+			continue
+		}
 		vol, _ := jvolume(item)
 		app := jprop(item, "application.name")
 		if app == "" {
@@ -324,11 +361,25 @@ read_streams :: proc(
 // 150% headphone output they did not ask for.
 VOL_CEILING :: f32(1.0)
 
+// vol_clamp is the only place a volume this applet is about to set is bounded.
+// Below zero is meaningless and above 1.0 is PipeWire's software amplifier,
+// which is how somebody ends up with a clipped 150% headphone output.
+vol_clamp :: proc(v: f32) -> f32 {
+	if v != v {return 0} 	// NaN, which clamp() would pass straight through
+	return clamp(v, 0, VOL_CEILING)
+}
+
+// nudge_target is where an arrow key lands: the current volume plus a step,
+// bounded. Separate from the write so it can be checked without a sound card.
+nudge_target :: proc(vol, delta: f32) -> f32 {
+	return vol_clamp(vol + delta)
+}
+
 set_volume :: proc(node: int, v: f32) -> (ok: bool) {
 	if node < 0 {
 		return false
 	}
-	clamped := clamp(v, 0, VOL_CEILING)
+	clamped := vol_clamp(v)
 	arg := fmt.tprintf("%.2f", clamped)
 	id := fmt.tprintf("%d", node)
 	_, good := kit.run({"wpctl", "set-volume", id, arg}, context.temp_allocator)
@@ -368,7 +419,14 @@ read_back :: proc(node: int) -> (vol: f32, mute: bool, ok: bool) {
 	if !good {
 		return 0, false, false
 	}
-	// "Volume: 0.50" or "Volume: 0.50 [MUTED]"
+	return parse_volume_line(out)
+}
+
+// parse_volume_line reads `wpctl get-volume`:
+//
+//	Volume: 0.50            unmuted
+//	Volume: 0.50 [MUTED]    muted
+parse_volume_line :: proc(out: string) -> (vol: f32, mute: bool, ok: bool) {
 	rest := out
 	if i := strings.index_byte(rest, ':'); i >= 0 {
 		rest = rest[i + 1:]

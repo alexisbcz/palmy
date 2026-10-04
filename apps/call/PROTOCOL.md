@@ -302,20 +302,20 @@ by the summary `--headless` prints when it exits.
 
 | | |
 | --- | --- |
-| audio, framer → handed to the player | mean **12.9 ms**, min 0.5, max 32.3, n = 1498 |
-| audio, player queue at hand-over | mean **24.3 ms**, peak 48.2 |
-| audio, **framer → loudspeaker** | **≈ 37 ms**, the sum of those two |
-| audio, capture → received | mean **3.2 ms** — the UDP hop plus the Opus round trip |
-| capture pipe backlog | 33 ms steady, 40 ms peak, measured with `FIONREAD` |
+| audio, framer → handed to the player | mean **12.4 ms**, min 0.5, max 31.7, n = 1498 |
+| audio, player queue at hand-over | mean **20.8 ms**, peak 44.5 |
+| audio, **framer → loudspeaker** | **≈ 33 ms**, the sum of those two |
+| audio, capture → received | mean **2.6 ms** — the UDP hop plus the Opus round trip |
+| capture pipe backlog | 13 ms steady, 40 ms peak, measured with `FIONREAD` |
 | audio frames | **1498 sent, 1498 played** — nothing dropped anywhere |
 | jitter buffer | **0 concealed, 0 duplicate, 0 late, 0 resync, 0 trimmed** |
 | video | **29.9 fps** out and in, 640×360, **0 failed decodes** |
-| video, capture → decoded | mean **3.8 ms** |
-| JPEG frame | 15.1 KB, **0.94 ms** to decode through stb_image |
+| video, capture → decoded | mean **3.3 ms** |
+| JPEG frame | 16.0 KB, **0.95 ms** to decode through stb_image |
 | reassembly | 898 complete, 0 partial, 0 late |
 | transport | 14 062 datagrams / 14.9 MB each way in 30 s, 0 rejected, **≈ 4 Mbit/s** |
 
-### What the 37 ms is made of, and what it was
+### What the 33 ms is made of, and what it was
 
 The single biggest cost in this pipeline turned out not to be the codec, the
 socket or the jitter buffer. It was the capture source's clock.
@@ -329,8 +329,18 @@ somewhere, and the jitter buffer's ceiling duly discarded it: **20 audible
 
 Pacing with the `arealtime` filter instead, which counts samples rather than
 watching a clock, lands within 0.5 %. Every queue in the chain then sits near
-empty instead of near full, and the result is the table above: 37 ms, and
+empty instead of near full, and the result is the table above: 33 ms, and
 1498 frames captured against 1498 frames played.
+
+Those figures are from two headless peers. A **windowed** call pays more,
+because the media pump runs once per UI frame and inherits the frame loop's
+jitter: a 50 ms hitch in the compositor delivers three audio frames at once,
+the far jitter buffer swells past its ceiling, and the ceiling trims. Measured
+over the 45 s demo recording that is **about 1.4 trimmed frames a second** —
+roughly 2.8 % of the audio — against **zero** between two headless peers. The
+counter is on screen for exactly this reason. Raising `JB_MAX_HOLD` from 3
+frames to 4 would roughly halve it for 20 ms more latency; 60 ms and a visible
+counter is the operating point chosen here, not an accident.
 
 What remains is honest architecture cost — a microphone and a loudspeaker that
 are both separate processes on the far side of a pipe cost three queues where
@@ -339,3 +349,57 @@ an in-process audio callback would cost one. The wire itself is 3 ms.
 Loopback has no loss and almost no jitter, so the concealment and reordering
 paths do not fire in a live call — which is exactly why the self-test drives
 them directly, with deliberately dropped, duplicated and reordered packets.
+
+## A hazard worth writing down
+
+Capture and playback are child processes on pipes, and on this toolkit those
+pipes are fragile in a way that has nothing to do with the protocol.
+
+**Resizing a palmy window closes a descriptor palmy does not own.** Float and
+resize a window three seconds into a call and both ends lose their
+microphone — `read()` returns `EBADF`, the capture child is gone, and the only
+symptom is a level meter that stops moving. It reproduces every time, and it
+cost one demo recording: thirty-five seconds of a call with video flowing, two
+dead microphones, and nothing on screen that said so.
+
+Two defences, both in this application, because `palmy/` is not ours to patch:
+
+* Every pipe descriptor is moved above `FD_FLOOR` (64) with
+  `F_DUPFD_CLOEXEC` as soon as the child has its copy, out of the range a
+  stale close can reach. `call --selftest` asserts it.
+* `supervise_media` notices a dead capture or playback process, announces it
+  in the activity log and on stderr, and restarts it — at most five times a
+  call, a second apart, with the count on screen. A microphone that stops is
+  the worst failure a call application can have, because the only symptom is
+  the other person saying "hello?".
+
+## Running it
+
+```sh
+# two windows, calling each other, synthetic sources
+./call.bin --bind 47811 --peer 47812 --name Alice --autocall &
+./call.bin --bind 47812 --peer 47811 --name Bob   --autoanswer &
+
+# the far end with no window, which is how the measurements above were taken
+./call.bin --headless --bind 47812 --peer 47811 --name Bob --autoanswer --quit-after 30
+
+# the pipeline tests, no compositor, no window
+./call.bin --selftest        # 216 checks
+
+# the real interface rendered offscreen with the media pipeline live
+./call.bin --bind 47811 --peer 47812 --autocall --shot /tmp/call --shot-at 6,10:d
+
+# the demo
+bash record.sh demo.mp4 demo.txt
+```
+
+`record.sh` is this application's own recorder rather than
+`apps/tools/record-app.sh`, for three reasons: a call needs two windows and
+the shared recorder launches one; the shared recorder finds its window with
+"the first client whose class is palmy", which on a machine running several
+palmy applications at once returns somebody else's; and a window that steals
+focus mid-script steals the keystrokes with it, so focus is restored before
+every one. It takes the same lock, because every `wtype` attaches its own
+virtual keyboard to the seat.
+
+Neither instance is given `--allow-real-devices` anywhere in that list.

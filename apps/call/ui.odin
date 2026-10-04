@@ -30,7 +30,10 @@ import sc "shadcn:."
 // samples it.
 draw_remote :: proc(c: ^p.Canvas, r: p.Rect, v: ^Video) {
 	p.fill_rect(c, r, p.hex(0xff09090b))
-	if !v.has_remote || v.remote.w <= 0 {
+	// A peer who turned their camera off gets the placeholder, not their last
+	// frame held forever. "Is it frozen, or did they stop sending?" is a
+	// question a call application should never make you ask.
+	if !v.has_remote || v.peer_cam_off || v.remote.w <= 0 {
 		return
 	}
 	dst := p.fitted_rect(f32(v.remote.w), f32(v.remote.h), r, .Contain)
@@ -52,6 +55,13 @@ Meter :: struct {
 }
 
 METER_SEGMENTS :: 24
+
+// The two fixed bars, in points. They are constants rather than classes
+// because `draw_ui` subtracts them from the viewport to size the body; a
+// mismatch between the number here and the class on the element would show up
+// as a sliver of background at the bottom of the window.
+HEADER_H :: 56
+CONTROLS_H :: 64
 
 draw_meter :: proc(c: ^p.Canvas, r: p.Rect, m: ^Meter) {
 	gap: f32 = 2
@@ -161,7 +171,7 @@ state_tone :: proc(s: Call_State) -> string {
 
 draw_header :: proc(app: ^App, ui: ^p.Ctx) {
 	s := &app.s
-	p.row(ui, "h-14 shrink-0 items-center gap-3 px-4 border-b border-border bg-card")
+	p.row(ui, "h-[56] shrink-0 items-center gap-3 px-4 border-b border-border bg-card")
 	defer p.end(ui)
 
 	// A pulsing dot while something is in flight; a steady one when up.
@@ -238,9 +248,10 @@ draw_stage :: proc(app: ^App, ui: ^p.Ctx) {
 	p.div(ui, "relative flex-1 rounded-xl overflow-hidden border border-border bg-[#09090b]")
 	defer p.end(ui)
 
+	v.peer_cam_off = s.peer_cam_off
 	p.pixels(ui, "absolute inset-0", v, draw_remote)
 
-	if !v.has_remote {
+	if !v.has_remote || s.peer_cam_off {
 		// Nothing decoded yet: say which of the several reasons applies
 		// rather than showing a black rectangle.
 		p.col(ui, "absolute inset-0 items-center justify-center gap-3")
@@ -295,7 +306,7 @@ draw_stage :: proc(app: ^App, ui: ^p.Ctx) {
 		p.icon(ui, ICON_VIDEO_OFF, "size-3.5 text-rose-400 shrink-0")
 	}
 	p.end(ui)
-	if v.has_remote {
+	if v.has_remote && !s.peer_cam_off {
 		p.div(ui, "flex-row items-center gap-1.5 px-2 py-1 rounded-lg bg-black/60")
 		p.textf(
 			ui,
@@ -348,15 +359,19 @@ initials :: proc(name: string) -> string {
 // Audio strip
 // ---------------------------------------------------------------------------
 
+// meter_block is one channel: a name, a reading, and the bar.
+//
+// `min-w-0` on the column and `truncate` on the name are what stop the two
+// channels from overlapping when the window is narrow. A label that refuses to
+// shrink does not get clipped by its parent here — it is drawn straight over
+// the next one.
 meter_block :: proc(ui: ^p.Ctx, label: string, m: ^Meter, right: string, tone: string) {
-	p.col(ui, "flex-1 gap-1.5")
+	p.col(ui, "flex-1 min-w-0 gap-1.5")
 	defer p.end(ui)
 
-	p.row(ui, "items-center gap-2")
-	p.text(ui, label, "text-xs font-medium whitespace-nowrap")
-	p.style(ui).shrink = 0
-	p.spacer(ui)
-	p.text(ui, right, fmt.tprintf("text-[11] font-mono %s", tone))
+	p.row(ui, "w-full items-center gap-2")
+	p.text(ui, label, "flex-1 min-w-0 text-xs font-medium truncate")
+	p.text(ui, right, fmt.tprintf("text-[11] font-mono whitespace-nowrap %s", tone))
 	p.style(ui).shrink = 0
 	p.end(ui)
 
@@ -380,7 +395,7 @@ draw_audio_strip :: proc(app: ^App, ui: ^p.Ctx) {
 	label_tx := a.muted ? "Muted" : fmt.tprintf("%.0f dB", level_db(a.tx_level))
 	meter_block(
 		ui,
-		fmt.tprintf("Your microphone — %s", short(src, 34)),
+		fmt.tprintf("You — %s", src),
 		tx,
 		label_tx,
 		a.muted ? "text-rose-400" : "text-muted-foreground",
@@ -390,7 +405,7 @@ draw_audio_strip :: proc(app: ^App, ui: ^p.Ctx) {
 
 	meter_block(
 		ui,
-		fmt.tprintf("%s — %s", app.s.peer_name, short(sink, 30)),
+		fmt.tprintf("%s — %s", app.s.peer_name, sink),
 		rx,
 		call_active(&app.s) ? fmt.tprintf("%.0f dB", level_db(a.rx_level)) : "idle",
 		"text-muted-foreground",
@@ -552,6 +567,14 @@ draw_stats :: proc(app: ^App, ui: ^p.Ctx) {
 		a.jb.too_late > 0 ? "text-amber-400" : "text-muted-foreground",
 	)
 	stat_row(ui, "Resyncs", fmt.tprintf("%d", a.jb.resyncs))
+	if app.restarts > 0 {
+		stat_row(
+			ui,
+			"Capture restarts",
+			fmt.tprintf("%d of %d", app.restarts, RESTART_LIMIT),
+			"text-amber-400",
+		)
+	}
 	stat_row(ui, "Ceiling", fmt.tprintf("%d ms · %d trimmed", JB_MAX_HOLD * A_FRAME_MS, a.jb.trimmed))
 	stat_row(
 		ui,
@@ -711,8 +734,15 @@ draw_devices :: proc(app: ^App, ui: ^p.Ctx) {
 	}
 }
 
+// COMPACT_H is the window height below which the sidebar drops everything
+// that is not a number. A tiled half-screen window on this display is 508
+// points tall, and that has to still be a usable call window.
+COMPACT_H :: 620
+
 draw_sidebar :: proc(app: ^App, ui: ^p.Ctx) {
-	p.col(ui, "w-[376] shrink-0 gap-0 rounded-xl border border-border bg-card overflow-hidden")
+	compact := p.size(ui).y < COMPACT_H
+
+	p.col(ui, "h-full w-[376] shrink-0 gap-0 rounded-xl border border-border bg-card overflow-hidden")
 	defer p.end(ui)
 
 	// Two tabs, switched by key as well as by click.
@@ -741,7 +771,7 @@ draw_sidebar :: proc(app: ^App, ui: ^p.Ctx) {
 
 	// flex-1 with min-h-0 is what lets this scroll instead of growing past the
 	// card and painting over the activity log underneath it.
-	p.col(ui, "flex-1 min-h-0 gap-0 pt-3 overflow-scroll")
+	p.col(ui, "flex-1 min-h-0 gap-0 pt-3 pb-3 overflow-scroll")
 	switch app.panel {
 	case .Stats:
 		draw_stats(app, ui)
@@ -750,15 +780,20 @@ draw_sidebar :: proc(app: ^App, ui: ^p.Ctx) {
 	}
 	p.end(ui)
 
-	// The activity log: a call app has to say what it did.
-	p.col(ui, "shrink-0 gap-0.5 p-3 border-t border-border bg-background/30")
-	section_title(ui, "Activity")
-	// The last four lines; the panel is a status strip, not a terminal.
-	first := max(0, app.log_n - 4)
-	for i in first ..< app.log_n {
-		p.text(ui, app.log[i], "w-full text-[10] font-mono text-muted-foreground leading-snug truncate")
+	// The activity log: a call app has to say what it did. It is the first
+	// thing to go when the window is short, because a tiled half-screen
+	// window leaves the statistics panel clipping mid-row otherwise, and the
+	// numbers are what the panel is for.
+	if !compact {
+		p.col(ui, "shrink-0 gap-0.5 p-3 border-t border-border bg-background/30")
+		section_title(ui, "Activity")
+		// The last four lines; this is a status strip, not a terminal.
+		first := max(0, app.log_n - 4)
+		for i in first ..< app.log_n {
+			p.text(ui, app.log[i], "w-full text-[10] font-mono text-muted-foreground leading-snug truncate")
+		}
+		p.end(ui)
 	}
-	p.end(ui)
 }
 
 // ---------------------------------------------------------------------------
@@ -769,7 +804,7 @@ draw_controls :: proc(app: ^App, ui: ^p.Ctx) {
 	s := &app.s
 	before := s.state
 
-	p.row(ui, "h-16 shrink-0 items-center justify-center gap-2 px-4 border-t border-border bg-card")
+	p.row(ui, "h-[64] shrink-0 items-center justify-center gap-2 px-4 border-t border-border bg-card")
 	defer p.end(ui)
 
 	// Mute and camera are always available: you set them before you dial.
@@ -869,11 +904,26 @@ draw_ui :: proc(app: ^App, ui: ^p.Ctx) {
 
 	draw_header(app, ui)
 
-	p.row(ui, "flex-1 items-stretch gap-4 p-4 overflow-hidden")
-	p.col(ui, "flex-1 gap-4 overflow-hidden")
+	// The body's height is set explicitly rather than left to `flex-1`.
+	//
+	// palmy resolves `flex-1` and `h-full` against the height the row had
+	// *before* its children were shrunk to fit, so a row whose child is a tall
+	// scrolling column reports a height larger than the space it was given,
+	// and its siblings — here the controls bar — are laid out below the
+	// window. `min-h-0` does not change that. Subtracting the two fixed bars
+	// from the viewport is exact and does not depend on the measuring pass.
+	sz := p.size(ui)
+	body_h := max(160, sz.y - HEADER_H - CONTROLS_H)
+
+	p.row(ui, "w-full items-stretch gap-4 p-4 overflow-hidden")
+	p.style(ui).h = p.px(body_h)
+	p.style(ui).shrink = 0
+
+	p.col(ui, "h-full flex-1 min-w-0 gap-4 overflow-hidden")
 	draw_stage(app, ui)
 	draw_audio_strip(app, ui)
 	p.end(ui)
+
 	draw_sidebar(app, ui)
 	p.end(ui)
 

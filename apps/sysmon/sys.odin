@@ -185,10 +185,19 @@ next_field :: proc(s: ^string) -> (field: string, ok: bool) {
 	return field, true
 }
 
+// field_u64 reads the next column. A leading minus is parsed as signed and
+// handed back reinterpreted, because /proc does print negative numbers in
+// columns that are otherwise counters — `nice` is -20 to 19, and `tpgid` is
+// -1 on anything without a terminal. parse_u64 refuses both and returns zero,
+// which is how a renice'd process comes out at nice 0.
 field_u64 :: proc(s: ^string) -> u64 {
 	f, ok := next_field(s)
 	if !ok {
 		return 0
+	}
+	if len(f) > 0 && f[0] == '-' {
+		v, _ := strconv.parse_i64(f)
+		return u64(v)
 	}
 	v, _ := strconv.parse_u64(f)
 	return v
@@ -197,6 +206,11 @@ field_u64 :: proc(s: ^string) -> u64 {
 // ---------------------------------------------------------------------------
 // CPU: /proc/stat
 // ---------------------------------------------------------------------------
+
+// The sysfs roots are variables rather than constants so `--selftest` can
+// point them at a canned tree. Nothing else ever changes them.
+g_hwmon_root := "/sys/class/hwmon/hwmon"
+g_net_root := "/sys/class/net/"
 
 MAX_CORES :: 256
 
@@ -225,7 +239,13 @@ cpu_sample :: proc(c: ^Cpu) {
 	if !ok {
 		return
 	}
+	cpu_parse(c, text)
+}
 
+// cpu_parse is cpu_sample with the file read taken out. /proc/stat deltas are
+// the one thing in this program that cannot be checked by looking at the
+// window, so the self-test drives this directly with canned samples.
+cpu_parse :: proc(c: ^Cpu, text: string) {
 	parse :: proc(rest: string) -> (t: Cpu_Times) {
 		r := rest
 		user := field_u64(&r)
@@ -335,6 +355,10 @@ mem_sample :: proc(m: ^Mem) {
 	if !ok {
 		return
 	}
+	mem_parse(m, text)
+}
+
+mem_parse :: proc(m: ^Mem, text: string) {
 	rest := text
 	for line in strings.split_lines_iterator(&rest) {
 		colon := strings.index_byte(line, ':')
@@ -395,6 +419,10 @@ load_sample :: proc(l: ^Load) {
 	if !ok {
 		return
 	}
+	load_parse(l, text)
+}
+
+load_parse :: proc(l: ^Load, text: string) {
 	r := text
 	for i in 0 ..< 3 {
 		f, got := next_field(&r)
@@ -420,6 +448,10 @@ uptime_sample :: proc() -> (up, idle: f64, ok: bool) {
 	if !got {
 		return 0, 0, false
 	}
+	return uptime_parse(text)
+}
+
+uptime_parse :: proc(text: string) -> (up, idle: f64, ok: bool) {
 	r := text
 	a, _ := next_field(&r)
 	b, _ := next_field(&r)
@@ -525,35 +557,20 @@ read_one_proc :: proc(pid: int, dt: f64, al: mem.Allocator) -> (row: Proc_Row, o
 	if !got {
 		return {}, false
 	}
-	lp := strings.index_byte(text, '(')
-	rp := strings.last_index_byte(text, ')')
-	if lp < 0 || rp <= lp {
+	st, parsed := parse_proc_stat(text)
+	if !parsed {
 		return {}, false
 	}
-	comm := text[lp + 1:rp]
-	rest := text[rp + 1:]
+	comm := st.comm
+	states := st.state
+	ppid := st.ppid
+	nice := st.nice
+	threads := st.threads
+	start := st.start
+	vsz := st.vsz
+	rss := st.rss_pages * u64(g_page)
 
-	// proc(5) numbers the fields from 1: pid, comm, state, ppid, ... Both pid
-	// and comm are already consumed, and `state` is taken next, so f[i] below
-	// holds field i+4 — ppid is f[0].
-	states: u8 = '?'
-	if s, g := next_field(&rest); g && len(s) > 0 {
-		states = s[0]
-	}
-	f := [22]u64{}
-	for i in 0 ..< 22 {
-		f[i] = field_u64(&rest)
-	}
-	ppid := int(f[0]) // 4  ppid
-	utime := f[10] // 14 utime
-	stime := f[11] // 15 stime
-	nice := int(i64(f[15])) // 19 nice
-	threads := int(f[16]) // 20 num_threads
-	start := f[18] // 22 starttime
-	vsz := f[19] // 23 vsize
-	rss := f[20] * u64(g_page) // 24 rss, in pages
-
-	ticks := utime + stime
+	ticks := st.utime + st.stime
 	cpu: f32 = 0
 	if prev, have := g_prev_ticks[pid]; have && prev.start == start && dt > 0 {
 		if ticks >= prev.ticks {
@@ -626,6 +643,56 @@ read_one_proc :: proc(pid: int, dt: f64, al: mem.Allocator) -> (row: Proc_Row, o
 		kernel  = kernel,
 	}
 	return row, true
+}
+
+// Proc_Stat is the subset of /proc/<pid>/stat this monitor reads.
+Proc_Stat :: struct {
+	comm:         string, // points into the text handed in
+	state:        u8,
+	ppid:         int,
+	utime, stime: u64,
+	nice:         int,
+	threads:      int,
+	start:        u64,
+	vsz:          u64,
+	rss_pages:    u64,
+}
+
+// parse_proc_stat splits one /proc/<pid>/stat line.
+//
+// comm is parenthesised and may itself contain spaces and parentheses — a
+// process really can be called `(ノ◕ヮ◕)ノ) x` — so everything after the *last*
+// ')' is the numbered field list. proc(5) numbers from 1: pid, comm, state,
+// ppid, ... pid and comm are consumed here and `state` is taken next, so f[i]
+// below holds field i+4 and ppid is f[0].
+//
+// `comm` aliases `text`; it is cloned by the caller.
+parse_proc_stat :: proc(text: string) -> (st: Proc_Stat, ok: bool) {
+	lp := strings.index_byte(text, '(')
+	rp := strings.last_index_byte(text, ')')
+	if lp < 0 || rp <= lp {
+		return {}, false
+	}
+	st.comm = text[lp + 1:rp]
+	rest := text[rp + 1:]
+
+	st.state = '?'
+	if s, g := next_field(&rest); g && len(s) > 0 {
+		st.state = s[0]
+	}
+	f := [22]u64{}
+	for i in 0 ..< 22 {
+		f[i] = field_u64(&rest)
+	}
+	st.ppid = int(f[0]) // 4  ppid
+	st.utime = f[10] // 14 utime
+	st.stime = f[11] // 15 stime
+	st.nice = int(i64(f[15])) // 19 nice
+	st.threads = int(f[16]) // 20 num_threads
+	st.start = f[18] // 22 starttime
+	st.vsz = f[19] // 23 vsize
+	st.rss_pages = f[20] // 24 rss, in pages
+	return st, true
 }
 
 state_label :: proc(s: u8) -> string {
@@ -722,7 +789,12 @@ disk_sample :: proc(al := context.allocator) -> []Disk {
 	if !got {
 		return nil
 	}
+	return disk_parse(text, al)
+}
 
+// disk_parse is the /proc/mounts half of disk_sample. statvfs still runs, so a
+// canned table has to name mount points that exist; the self-test uses "/".
+disk_parse :: proc(text: string, al := context.allocator) -> []Disk {
 	out := make([dynamic]Disk, 0, 16, al)
 	rest := text
 	for line in strings.split_lines_iterator(&rest) {
@@ -821,6 +893,10 @@ net_sample :: proc(nt: ^Net, dt: f64, al := context.allocator) {
 	if !got {
 		return
 	}
+	net_parse(nt, text, dt, al)
+}
+
+net_parse :: proc(nt: ^Net, text: string, dt: f64, al := context.allocator) {
 	n := 0
 	nt.rx_rate, nt.tx_rate = 0, 0
 	rest := text
@@ -859,10 +935,10 @@ net_sample :: proc(nt: ^Net, dt: f64, al := context.allocator) {
 		// say whether it is down or merely quiet.
 		sp := [128]u8{}
 		nb: [512]u8
-		if s, ok := slurp_into(paths(sp[:], "/sys/class/net/", name, "/operstate"), nb[:]); ok {
+		if s, ok := slurp_into(paths(sp[:], g_net_root, name, "/operstate"), nb[:]); ok {
 			e.up = strings.trim_space(s) == "up"
 		}
-		if s, ok := slurp_into(paths(sp[:], "/sys/class/net/", name, "/carrier"), nb[:]); ok {
+		if s, ok := slurp_into(paths(sp[:], g_net_root, name, "/carrier"), nb[:]); ok {
 			e.carrier = strings.trim_space(s) == "1"
 		}
 
@@ -935,7 +1011,7 @@ temp_sample :: proc(buf: []u8, al := context.allocator) -> []Temp {
 	// than every other part of a sample put together.
 	misses := 0
 	for h in 0 ..< 64 {
-		base := pathi(pb[:], "/sys/class/hwmon/hwmon", h)
+		base := pathi(pb[:], g_hwmon_root, h)
 		chip, has_chip := read_line_into(paths(np[:], base, "/name"), buf, al)
 		if !has_chip {
 			misses += 1

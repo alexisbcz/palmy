@@ -765,10 +765,14 @@ destroy_buffers :: proc(w: ^Window) {
 		linux.munmap(raw_data(w.pool_mem), uint(len(w.pool_mem)))
 		w.pool_mem = nil
 	}
-	if w.pool_fd != 0 {
-		linux.close(w.pool_fd)
-		w.pool_fd = 0
-	}
+	// The pool fd is NOT closed here. conn_flush closes every descriptor it
+	// has passed over SCM_RIGHTS once the message is on the wire, which is the
+	// right ownership rule for fd passing and which already covers this one.
+	// Closing it a second time here freed a descriptor number the application
+	// had since reused: resizing a window three seconds into a call closed the
+	// audio capture pipe, and the only symptom was a level meter that stopped
+	// moving. Keep the number for diagnostics and let the connection own it.
+	w.pool_fd = 0
 }
 
 @(private)
@@ -797,6 +801,8 @@ alloc_buffers :: proc(w: ^Window) -> (err: string) {
 		return fmt.tprintf("mmap failed: %v", merr)
 	}
 
+	// Recorded for diagnostics only; `request` below hands it to the
+	// compositor and conn_flush closes our copy once it is sent.
 	w.pool_fd = fd
 	w.pool_mem = ([^]u8)(mem)[:total]
 	w.pool_size = total

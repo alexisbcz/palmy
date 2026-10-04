@@ -119,6 +119,12 @@ uptime_read :: proc() -> (up, idle: f64, ok: bool) {
 	if !got {
 		return 0, 0, false
 	}
+	return uptime_parse(text)
+}
+
+// uptime_parse is the whole of the above that is not I/O, split out so a test
+// can hand it a line /proc never produces.
+uptime_parse :: proc(text: string) -> (up, idle: f64, ok: bool) {
 	r := strings.trim_space(text)
 	sp := strings.index_byte(r, ' ')
 	if sp <= 0 {
@@ -136,6 +142,10 @@ btime_read :: proc() -> (secs: i64, ok: bool) {
 	if !got {
 		return 0, false
 	}
+	return btime_parse(text)
+}
+
+btime_parse :: proc(text: string) -> (secs: i64, ok: bool) {
 	rest := text
 	for line in strings.split_lines_iterator(&rest) {
 		if strings.has_prefix(line, "btime ") {
@@ -169,12 +179,19 @@ Cpufreq :: struct {
 	mixed:       bool,
 }
 
+// The sysfs roots are variables rather than constants so the self-test can
+// point them at a canned tree. Nothing but `--selftest` ever changes them.
+g_cpu_root := "/sys/devices/system/cpu/cpu"
+g_boost_path := "/sys/devices/system/cpu/cpufreq/boost"
+g_supply_root := "/sys/class/power_supply"
+g_hwmon_root := "/sys/class/hwmon/hwmon"
+
 cpufreq_read :: proc(al := context.allocator) -> (c: Cpufreq) {
 	pb: [128]u8
 	c.boost = -1
 
 	for i in 0 ..< MAX_CPUS {
-		base := pathi(pb[:], "/sys/devices/system/cpu/cpu", i, "/cpufreq")
+		base := pathi(pb[:], g_cpu_root, i, "/cpufreq")
 		nb: [160]u8
 		khz, ok := read_u64_into(paths(nb[:], base, "/scaling_cur_freq"), g_buf[:])
 		if !ok {
@@ -211,7 +228,7 @@ cpufreq_read :: proc(al := context.allocator) -> (c: Cpufreq) {
 		}
 	}
 
-	if v, ok := read_u64("/sys/devices/system/cpu/cpufreq/boost"); ok {
+	if v, ok := read_u64(g_boost_path); ok {
 		c.boost = int(v)
 	}
 	return
@@ -246,7 +263,7 @@ temp_sample :: proc(buf: []u8, al := context.allocator) -> []Temp {
 
 	misses := 0
 	for h in 0 ..< 64 {
-		base := pathi(pb[:], "/sys/class/hwmon/hwmon", h)
+		base := pathi(pb[:], g_hwmon_root, h)
 		chip, has_chip := read_line_into(paths(np[:], base, "/name"), buf, al)
 		if !has_chip {
 			misses += 1
@@ -320,7 +337,7 @@ Supply :: struct {
 
 supplies_read :: proc(al := context.allocator) -> []Supply {
 	out := make([dynamic]Supply, 0, 4, al)
-	dir, err := os.open("/sys/class/power_supply")
+	dir, err := os.open(g_supply_root)
 	if err != nil {
 		return out[:]
 	}
@@ -333,7 +350,7 @@ supplies_read :: proc(al := context.allocator) -> []Supply {
 			continue
 		}
 		pb: [256]u8
-		base := paths(pb[:], "/sys/class/power_supply/", fi.name)
+		base := paths(pb[:], g_supply_root, "/", fi.name)
 		nb: [320]u8
 		s := Supply {
 			name = strings.clone(fi.name, al),
@@ -426,49 +443,55 @@ sessions_read :: proc(al := context.allocator) -> []Session {
 			context.temp_allocator,
 		)
 		if pok {
-			rest := props
-			for pl in strings.split_lines_iterator(&rest) {
-				eq := strings.index_byte(pl, '=')
-				if eq <= 0 {
-					continue
-				}
-				k := pl[:eq]
-				v := pl[eq + 1:]
-				switch k {
-				case "Name":
-					s.user = strings.clone(v, al)
-				case "Seat":
-					s.seat = strings.clone(v, al)
-				case "TTY":
-					s.tty = strings.clone(v, al)
-				case "Type":
-					s.type_ = strings.clone(v, al)
-				case "Class":
-					s.class = strings.clone(v, al)
-				case "State":
-					s.state = strings.clone(v, al)
-				case "Service":
-					s.service = strings.clone(v, al)
-				case "Timestamp":
-					s.since = strings.clone(v, al)
-				case "Remote":
-					s.remote = v == "yes"
-				case "Active":
-					s.active = v == "yes"
-				case "IdleHint":
-					s.idle = v == "yes"
-				case "LockedHint":
-					s.locked = v == "yes"
-				case "CanLock":
-					s.can_lock = v == "yes"
-				case "Leader":
-					s.leader, _ = strconv.parse_int(v)
-				}
-			}
+			session_parse_props(&s, props, al)
 		}
 		append(&out, s)
 	}
 	return out[:]
+}
+
+// session_parse_props folds one `loginctl show-session -p ...` block into a
+// Session. Split out of the reader so the self-test can hand it a block.
+session_parse_props :: proc(s: ^Session, props: string, al := context.allocator) {
+	rest := props
+	for pl in strings.split_lines_iterator(&rest) {
+		eq := strings.index_byte(pl, '=')
+		if eq <= 0 {
+			continue
+		}
+		k := pl[:eq]
+		v := pl[eq + 1:]
+		switch k {
+		case "Name":
+			s.user = strings.clone(v, al)
+		case "Seat":
+			s.seat = strings.clone(v, al)
+		case "TTY":
+			s.tty = strings.clone(v, al)
+		case "Type":
+			s.type_ = strings.clone(v, al)
+		case "Class":
+			s.class = strings.clone(v, al)
+		case "State":
+			s.state = strings.clone(v, al)
+		case "Service":
+			s.service = strings.clone(v, al)
+		case "Timestamp":
+			s.since = strings.clone(v, al)
+		case "Remote":
+			s.remote = v == "yes"
+		case "Active":
+			s.active = v == "yes"
+		case "IdleHint":
+			s.idle = v == "yes"
+		case "LockedHint":
+			s.locked = v == "yes"
+		case "CanLock":
+			s.can_lock = v == "yes"
+		case "Leader":
+			s.leader, _ = strconv.parse_int(v)
+		}
+	}
 }
 
 // ---------------------------------------------------------------------------
@@ -503,6 +526,12 @@ upower_read :: proc(al := context.allocator) -> (u: Upower) {
 	if !ok || text == "" {
 		return
 	}
+	return upower_parse(text, al)
+}
+
+// upower_parse is `upower --dump` turned into structs. It is separate from the
+// subprocess so the self-test can feed it a dump, including a truncated one.
+upower_parse :: proc(text: string, al := context.allocator) -> (u: Upower) {
 	u.ok = true
 	devs := make([dynamic]Upower_Dev, 0, 4, al)
 	cur := Upower_Dev{pct = -1}

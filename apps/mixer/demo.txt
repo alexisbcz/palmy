@@ -1,29 +1,44 @@
 # Audio mixer demo.
 #
-# This applet changes real audio state, so this script is deliberate about it:
-# it moves the default sink down by ten percent, mutes and unmutes it, and then
-# presses U, which puts the volume and mute flag back to exactly what they were
-# when the window opened. Every step is read back with `wpctl get-volume`, and
-# the footer shows the launch value the whole time.
+# This applet changes real audio state, so this script is deliberate about what
+# it touches and puts everything back:
 #
-# Nothing is set above 100%, no device is made default, and no application
-# stream is touched.
+#   * it moves the DEFAULT OUTPUT up two five percent steps and straight back
+#     down again, then presses U, which restores the volume, the mute flag and
+#     the default device to exactly what they were when the window opened.
+#   * it mutes and unmutes that same device.
+#   * it turns the input meter on for five seconds and off again. The meter
+#     opens the default microphone with `parec` and writes to a file in /tmp
+#     that is deleted when the meter stops — PipeWire publishes no peak level,
+#     so the only honest meter is one that looks at the samples.
+#
+# Nothing is set above 100%, no device is made the default, and no application
+# stream is touched. Every write is read back with `wpctl get-volume` and the
+# footer shows the launch value the whole time.
 
 wait 2.0
-# The whole graph: three sinks, three sources, the running streams, and which
-# of each is the default.
+# The whole graph: every sink, every source, whatever is playing, and which of
+# each is the default.
 move 360 330
-wait 4.0
+wait 3.5
+move 360 530
+wait 3.0
 
-# Down to the default output.
+# Down to the default output — the third row.
 key Down
 wait 0.9
 key Down
 wait 1.6
 
-# Volume down in five percent steps, each one read back from wpctl.
-key Left
+# Up two five percent steps, each one read back from wpctl.
+key Right
 wait 2.0
+key Right
+wait 2.2
+
+# And back down again.
+key Left
+wait 1.8
 key Left
 wait 2.0
 
@@ -33,31 +48,39 @@ wait 2.5
 key m
 wait 2.5
 
-# The input level meter. It is off until this key, because the only honest
-# meter is one that opens the microphone and looks at the samples.
-key Down
-wait 1.0
-key Down
-wait 1.0
-key Down
-wait 1.2
-key l
-wait 6.0
-key l
-wait 1.5
-
-# Back up to the output, and U restores it to the launch volume.
-key Home
-wait 0.8
-key Down
-wait 0.5
-key Down
-wait 1.2
+# U puts the device back to exactly its launch state whatever has happened
+# since: volume, mute flag, and the default device itself.
 key u
 wait 3.0
 
-# Every command this applet has run against PipeWire.
+# Down to the default input, and the level meter. It is off until this key,
+# because the only honest meter is one that opens the microphone.
+key Down
+wait 0.8
+key Down
+wait 0.8
+key Down
+wait 1.2
+key l
+wait 5.0
+key l
+wait 1.5
+
+# Every command this applet has run against PipeWire, verbatim.
 key c
 wait 5.0
 key Escape
+wait 1.2
+
+# Every key this window takes.
+key question
+wait 4.0
+key Escape
 wait 1.5
+
+# And one last restore, so the window closes with the machine exactly as it
+# was found.
+key Home
+wait 0.5
+key u
+wait 2.5

@@ -14,6 +14,19 @@ package call
 // jitter buffering downstream recovers it. The capture pipes are therefore
 // shrunk to a stated number of bytes, so the worst case backlog is bounded by
 // construction rather than by hope.
+//
+// FD_FLOOR is a workaround for a bug outside this application. When the
+// compositor resizes a palmy window, palmy reallocates its shared-memory pool
+// and closes a descriptor it no longer owns; if the number it closes has since
+// been handed to one of these pipes, the next read returns EBADF and the
+// capture process is gone. It is reproducible: float and resize the window
+// three seconds into a call and both ends lose their microphone, silently,
+// with the meter simply ceasing to move.
+//
+// palmy's own descriptors are opened at startup and are low, so every pipe
+// here is moved above FD_FLOOR immediately after the child has its copy. The
+// supervisor in main.odin restarts a leg that dies anyway, because a capture
+// process can also die for reasons that are nobody's bug.
 // ---------------------------------------------------------------------------
 
 import "core:fmt"
@@ -24,12 +37,28 @@ import "core:sys/linux"
 Child :: struct {
 	proc_:   os.Process,
 	running: bool,
-	// Exactly one of these is live, depending on the direction.
+	// Exactly one of these is live, depending on the direction. They are raw
+	// descriptors above FD_FLOOR rather than `^os.File`, because the point of
+	// the dance in `lift` is to get out of the range palmy recycles.
 	read_fd:  linux.Fd,
 	write_fd: linux.Fd,
-	read_f:   ^os.File,
-	write_f:  ^os.File,
 	argv:     string, // kept for the UI and for error messages
+	last_errno: linux.Errno,
+}
+
+FD_FLOOR :: linux.Fd(64)
+
+// lift moves a descriptor above FD_FLOOR and closes the original, so a stale
+// close of a low descriptor elsewhere in the process cannot take it. Returns
+// the original unchanged if the kernel will not oblige.
+lift :: proc(f: ^os.File) -> linux.Fd {
+	old := linux.Fd(os.fd(f))
+	hi, err := linux.fcntl_dupfd_cloexec(old, linux.F_DUPFD_CLOEXEC, FD_FLOOR)
+	if err != .NONE || hi < 0 {
+		return old
+	}
+	os.close(f)
+	return hi
 }
 
 set_nonblocking :: proc(fd: linux.Fd) {
@@ -69,8 +98,9 @@ spawn_reader :: proc(argv: []string, pipe_bytes := 0) -> (c: Child, err: string)
 	}
 	c.proc_ = p
 	c.running = true
-	c.read_f = r
-	c.read_fd = linux.Fd(os.fd(r))
+	// The child already has its copy of the write end; this moves ours out of
+	// the range something else in this process may close.
+	c.read_fd = lift(r)
 	set_nonblocking(c.read_fd)
 	if pipe_bytes > 0 {
 		set_pipe_size(c.read_fd, pipe_bytes)
@@ -93,8 +123,7 @@ spawn_writer :: proc(argv: []string, pipe_bytes := 0) -> (c: Child, err: string)
 	}
 	c.proc_ = p
 	c.running = true
-	c.write_f = w
-	c.write_fd = linux.Fd(os.fd(w))
+	c.write_fd = lift(w)
 	set_nonblocking(c.write_fd)
 	if pipe_bytes > 0 {
 		set_pipe_size(c.write_fd, pipe_bytes)
@@ -106,7 +135,7 @@ spawn_writer :: proc(argv: []string, pipe_bytes := 0) -> (c: Child, err: string)
 // child_read fills as much of `buf` as is available right now. `eof` means the
 // child closed its stdout, which is how a capture failure surfaces.
 child_read :: proc(c: ^Child, buf: []u8) -> (n: int, eof: bool) {
-	if !c.running || c.read_fd == 0 && c.read_f == nil {
+	if !c.running || c.read_fd <= 0 {
 		return 0, true
 	}
 	for n < len(buf) {
@@ -118,9 +147,13 @@ child_read :: proc(c: ^Child, buf: []u8) -> (n: int, eof: bool) {
 			continue
 		}
 		if err != .NONE {
+			// Worth distinguishing: EOF means the child exited, anything else
+			// means the descriptor itself went wrong under us.
+			c.last_errno = err
 			return n, true
 		}
 		if got == 0 {
+			c.last_errno = .NONE
 			return n, true
 		}
 		n += got
@@ -175,13 +208,13 @@ child_stop :: proc(c: ^Child) {
 	}
 	// Closing our end makes ffmpeg see EPIPE and pw-play see EOF, which is a
 	// cleaner exit than a signal; the kill is the backstop.
-	if c.read_f != nil {
-		os.close(c.read_f)
-		c.read_f = nil
+	if c.read_fd > 0 {
+		linux.close(c.read_fd)
+		c.read_fd = 0
 	}
-	if c.write_f != nil {
-		os.close(c.write_f)
-		c.write_f = nil
+	if c.write_fd > 0 {
+		linux.close(c.write_fd)
+		c.write_fd = 0
 	}
 	_ = os.process_kill(c.proc_)
 	// Reap it, or the app accumulates zombies every time a device changes.

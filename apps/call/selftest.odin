@@ -70,6 +70,7 @@ run_self_test :: proc() -> int {
 	test_mjpeg_split()
 	test_opus()
 	test_bind_is_loopback()
+	test_pipe_fds()
 	test_device_parsing()
 
 	fmt.printfln("\n%d checks, %d failures", T.checks, T.fails)
@@ -855,6 +856,60 @@ test_bind_is_loopback :: proc() {
 }
 
 // ---------------------------------------------------------------------------
+// 10b. Pipe descriptors are out of the range palmy recycles
+// ---------------------------------------------------------------------------
+
+test_pipe_fds :: proc() {
+	group("capture pipes sit above the descriptor floor")
+
+	if !kit.has_tool("ffmpeg") {
+		fmt.println("  SKIP  ffmpeg is not installed")
+		return
+	}
+	c, err := spawn_reader(
+		[]string{"ffmpeg", "-nostdin", "-hide_banner", "-loglevel", "error",
+			"-f", "lavfi", "-i", "sine=frequency=440:sample_rate=48000",
+			"-t", "1", "-f", "s16le", "-ar", "48000", "-ac", "1", "-"},
+		8192,
+	)
+	check(err == "", "a capture child starts (%s)", err == "" ? "ok" : err)
+	if err != "" {
+		return
+	}
+	defer child_stop(&c)
+
+	// Resizing a palmy window makes palmy close a descriptor it no longer
+	// owns. If one of these pipes has been given that number, the next read is
+	// EBADF and the microphone is gone with no other symptom. Keeping them
+	// above the floor is the whole of the workaround, so it is worth an
+	// assertion.
+	check(
+		c.read_fd >= FD_FLOOR,
+		"the read end is fd %d, at or above the floor of %d",
+		int(c.read_fd),
+		int(FD_FLOOR),
+	)
+
+	got := pipe_size(c.read_fd)
+	check(got >= 4096, "the pipe was resized to %d bytes", got)
+
+	buf: [4096]u8
+	total := 0
+	for _ in 0 ..< 400 {
+		n, eof := child_read(&c, buf[:])
+		total += n
+		if eof {
+			break
+		}
+		if n == 0 {
+			time.sleep(5 * time.Millisecond)
+		}
+	}
+	check(total > 0, "and it carries data (%d bytes)", total)
+	check(c.last_errno == .NONE, "with no descriptor error (%v)", c.last_errno)
+}
+
+// ---------------------------------------------------------------------------
 // 11. Device enumeration parsers
 // ---------------------------------------------------------------------------
 
@@ -929,6 +984,47 @@ test_device_parsing :: proc() {
 			}
 		}
 		check(lavfi, "it is lavfi, which is why it is safe to record")
+	}
+
+	// The privacy guarantee, asserted rather than asserted-in-prose: without
+	// --allow-real-devices, nothing that touches the camera or the microphone
+	// can reach a command line.
+	{
+		mic := Device{kind = .Audio_Source, id = 46, name = "Brio 100 Mono", real = true}
+		cam := Device{kind = .Camera, path = "/dev/video0", name = "Brio 100", real = true}
+
+		src, vid := resolve_capture(false, mic, cam)
+		check(!src.real && src.kind == .Synthetic, "a real microphone is refused without the flag")
+		check(!vid.real && vid.kind == .Synthetic, "a real camera is refused without the flag")
+
+		acmd := strings.join(audio_capture_argv(src), " ", context.temp_allocator)
+		vcmd := strings.join(video_capture_argv(vid), " ", context.temp_allocator)
+		check(
+			!strings.contains(acmd, "pw-record") && !strings.contains(acmd, "--target="),
+			"the resolved audio command names no device: %s",
+			acmd,
+		)
+		check(strings.contains(acmd, "lavfi"), "it is a lavfi source")
+		check(
+			!strings.contains(vcmd, "/dev/video") && !strings.contains(vcmd, "v4l2"),
+			"the resolved video command names no device: %s",
+			vcmd,
+		)
+		check(strings.contains(vcmd, "lavfi"), "it is a lavfi source")
+
+		// And with the flag, they are honoured — the lock is a policy, not an
+		// inability.
+		rsrc, rvid := resolve_capture(true, mic, cam)
+		check(rsrc.real && rvid.real, "with --allow-real-devices the real devices are kept")
+
+		// A PipeWire video node has an id but no /dev path, so it is not
+		// openable even when real devices are unlocked.
+		pw := Device{kind = .Camera, id = 72, name = "Brio 100 (V4L2) [pipewire]", real = true}
+		_, pwv := resolve_capture(true, mic, pw)
+		check(
+			pwv.kind == .Synthetic,
+			"a camera node with no /dev path falls back instead of running ffmpeg with an empty -i",
+		)
 	}
 
 	// And the live machine: the real lists, which is the point of the picker.

@@ -137,7 +137,13 @@ capture_summary :: proc(m: ^Model) -> string {
 		o := m.outputs[m.out_at % len(m.outputs)]
 		return o.desc == "" ? o.name : o.desc
 	case .Region:
-		return m.have_slurp ? "A rectangle you drag with slurp" : "slurp is not installed"
+		if !m.have_slurp {
+			return "slurp is not installed"
+		}
+		if m.have_region {
+			return fmt.tprintf("Drag a rectangle · A repeats %s", geom_arg(m.region))
+		}
+		return "A rectangle you drag with slurp"
 	}
 	return ""
 }
@@ -511,6 +517,7 @@ footer :: proc(ui: ^p.Ctx, m: ^Model) {
 
 	hint(ui, "Enter", "", "capture")
 	hint(ui, "1", "3", "mode")
+	hint(ui, "A", "", "same region")
 	hint(ui, "T", "", "delay")
 	hint(ui, "S", "", "save")
 	hint(ui, "C", "", "copy")
@@ -642,6 +649,7 @@ help_overlay :: proc(ui: ^p.Ctx, m: ^Model) {
 		{"Enter / Space", "Capture"},
 		{"1 2 3", "Whole screen, one output, a region"},
 		{"O", "Next output"},
+		{"A", "Capture the last region again, with no drag"},
 		{"T", "Cycle the delay: none, 3, 5, 10 seconds"},
 		{"Esc", "Cancel a running countdown"},
 		{"Up Down", "Move through this session's captures"},

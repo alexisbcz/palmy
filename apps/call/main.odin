@@ -76,6 +76,14 @@ App :: struct {
 	denied: string, // set when a real device was selected without the flag
 	denied_at: f64,
 
+	// Last reported pipeline failure, so each is announced once, and the
+	// supervisor's budget for bringing a dead one back.
+	last_cap_error:  string,
+	last_vid_error:  string,
+	last_play_error: string,
+	restarts:        int,
+	last_restart:    f64,
+
 	// Snapshots the pixel draw procedures read, refreshed once per frame.
 	meter_tx: Meter,
 	meter_rx: Meter,
@@ -110,6 +118,7 @@ Args :: struct {
 	headless:   bool,
 	shot:       string,
 	shot_at:    string,
+	shot_size:  string,
 	pattern:    string,
 	video:      string,
 	volume:     f64,
@@ -175,7 +184,7 @@ parse_args :: proc() -> (a: Args, err: string) {
 			a.autocall = true
 		case "--autoanswer":
 			a.autoanswer = true
-		case "--self-test":
+		case "--self-test", "--selftest":
 			a.self_test = true
 		case "--headless":
 			a.headless = true
@@ -185,6 +194,12 @@ parse_args :: proc() -> (a: Args, err: string) {
 				return a, "--shot needs a path prefix"
 			}
 			a.shot = v
+		case "--shot-size":
+			v, ok := next(args, &i)
+			if !ok {
+				return a, "--shot-size needs WxH"
+			}
+			a.shot_size = v
 		case "--shot-at":
 			v, ok := next(args, &i)
 			if !ok {
@@ -252,7 +267,7 @@ USAGE :: `call — real-time audio and video calling over loopback UDP
                           in the report were taken.
   --shot PREFIX           render the real interface offscreen, with the media
   --shot-at 4,8:d,12:s    pipeline live, and write PREFIX-<n>.png at each of
-                          those times. An entry may carry a key to press just
+  --shot-size WxH         those times. An entry may carry a key to press just
                           before the shot. No compositor involved.
   --quit-after SECS       exit after SECS
   --self-test             run the headless pipeline tests and exit
@@ -365,6 +380,8 @@ on_state_change :: proc(app: ^App, before: Call_State) {
 	is_active := now == .Connecting || now == .Connected
 
 	if is_active && !was_active {
+		app.restarts = 0
+		app.last_restart = 0
 		start_media(app)
 		log_line(app, "media up — %s", app.a.codec)
 	}
@@ -385,27 +402,86 @@ on_state_change :: proc(app: ^App, before: Call_State) {
 	}
 }
 
-start_media :: proc(app: ^App) {
-	src := sel_source(&app.devs)
-	sink := sel_sink(&app.devs)
-	cam := sel_camera(&app.devs)
-	// Last line of defence. The picker already refuses to select a real
-	// device without the flag; this repeats the check at the point of opening,
-	// because that is the point where it actually matters.
-	if !app.allow_real {
-		if src.real {
-			src = Device{kind = .Synthetic, name = SYNTH_AUDIO_NAME}
+// resolve_capture decides what will actually be opened.
+//
+// This is the privacy guarantee, in one pure function so the self-test can
+// assert it rather than the comments claiming it: unless `allow_real` was
+// passed on the command line, a microphone or a camera that touches hardware
+// is replaced by the synthetic source. The device picker already refuses to
+// move the selection onto a real device without the flag; this is the check
+// at the point where it matters, which is the moment before a process is
+// spawned with a device on its command line.
+//
+// The output sink is deliberately *not* substituted: playing to the real
+// speakers records nothing and reveals nothing.
+resolve_capture :: proc(allow_real: bool, src, cam: Device) -> (out_src, out_cam: Device) {
+	out_src, out_cam = src, cam
+	if !allow_real {
+		if out_src.real {
+			out_src = Device{kind = .Synthetic, name = SYNTH_AUDIO_NAME}
 		}
-		if cam.real {
-			cam = Device{kind = .Synthetic, name = SYNTH_VIDEO_NAME}
+		if out_cam.real {
+			out_cam = Device{kind = .Synthetic, name = SYNTH_VIDEO_NAME}
 		}
 	}
 	// wpctl lists PipeWire's own video nodes, which have an id but no /dev
 	// path — informative in the picker, not openable by ffmpeg. Falling back
 	// is better than handing ffmpeg an empty `-i`.
-	if cam.real && cam.path == "" {
-		log_line(app, "%s has no /dev node; using the synthetic camera", cam.name)
-		cam = Device{kind = .Synthetic, name = SYNTH_VIDEO_NAME}
+	if out_cam.real && out_cam.path == "" {
+		out_cam = Device{kind = .Synthetic, name = SYNTH_VIDEO_NAME}
+	}
+	return
+}
+
+// RESTART_GAP is the minimum time between supervisor restarts, and
+// RESTART_LIMIT the number allowed in one call. Both exist so a capture that
+// cannot start — a camera that has been unplugged, say — degrades into a
+// stated error rather than a loop that respawns ffmpeg sixty times a second.
+RESTART_GAP :: 1.0
+RESTART_LIMIT :: 5
+
+// supervise_media notices a dead capture or playback process and brings it
+// back. A microphone that stops is the worst failure a call application can
+// have, because its only symptom is a meter that stops moving and the person
+// at the other end saying "hello?"; it should be announced and repaired, not
+// endured.
+supervise_media :: proc(app: ^App) {
+	for pair in ([?]struct {
+		msg:  string,
+		dead: bool,
+		err:  string,
+		slot: ^string,
+	} {
+		{"microphone", !app.a.cap.running, app.a.cap_error, &app.last_cap_error},
+		{"camera", !app.v.cap.running && !app.v.camera_off, app.v.cap_error, &app.last_vid_error},
+		{"playback", !app.a.play.running, app.a.play_error, &app.last_play_error},
+	}) {
+		if !pair.dead || pair.err == "" || pair.err == pair.slot^ {
+			continue
+		}
+		pair.slot^ = pair.err
+		log_line(app, "%s: %s", pair.msg, pair.err)
+		fmt.eprintfln("call: %s stopped: %s", pair.msg, pair.err)
+	}
+
+	if app.a.cap.running && app.v.cap.running && app.a.play.running {
+		return
+	}
+	if app.restarts >= RESTART_LIMIT || app.t - app.last_restart < RESTART_GAP {
+		return
+	}
+	app.restarts += 1
+	app.last_restart = app.t
+	log_line(app, "restarting capture (%d of %d)", app.restarts, RESTART_LIMIT)
+	start_media(app)
+}
+
+start_media :: proc(app: ^App) {
+	app.last_cap_error, app.last_vid_error, app.last_play_error = "", "", ""
+	sink := sel_sink(&app.devs)
+	src, cam := resolve_capture(app.allow_real, sel_source(&app.devs), sel_camera(&app.devs))
+	if cam.kind == .Synthetic && sel_camera(&app.devs).kind == .Camera {
+		log_line(app, "%s not opened; using the synthetic camera", sel_camera(&app.devs).name)
 	}
 	audio_start(&app.a, src, sink)
 	video_start(&app.v, cam)
@@ -585,6 +661,8 @@ step :: proc(app: ^App, t: f64, dt: f32) {
 		audio_pump_capture(&app.a, &app.s, app.dt)
 		audio_pump_playout(&app.a, app.dt)
 		video_pump_capture(&app.v, &app.s, app.t)
+
+		supervise_media(app)
 	} else {
 		meter_follow(&app.a.tx_level, 0, app.dt)
 		meter_follow(&app.a.rx_level, 0, app.dt)
@@ -819,7 +897,17 @@ main :: proc() {
 	}
 
 	if args.shot != "" {
-		shot_run(app, args.shot, args.shot_at, args.quit_after)
+		sw, sh := 1180, 780
+		if args.shot_size != "" {
+			if x := strings.index_byte(args.shot_size, 'x'); x > 0 {
+				w, wok := strconv.parse_int(args.shot_size[:x])
+				h, hok := strconv.parse_int(args.shot_size[x + 1:])
+				if wok && hok && w >= 320 && h >= 240 {
+					sw, sh = w, h
+				}
+			}
+		}
+		shot_run(app, args.shot, args.shot_at, args.quit_after, sw, sh)
 		return
 	}
 
@@ -945,7 +1033,7 @@ parse_shots :: proc(spec: string) -> []Shot {
 	return out[:]
 }
 
-shot_run :: proc(app: ^App, prefix, spec: string, seconds: f64) {
+shot_run :: proc(app: ^App, prefix, spec: string, seconds: f64, width, height: int) {
 	shots := parse_shots(spec)
 	defer delete(shots)
 	last_at := 0.0
@@ -954,7 +1042,7 @@ shot_run :: proc(app: ^App, prefix, spec: string, seconds: f64) {
 	}
 	deadline := seconds > 0 ? seconds : last_at + 1.5
 
-	off := p.offscreen_create(1180, 780, 1, "w-full h-full bg-background text-foreground")
+	off := p.offscreen_create(width, height, 1, "w-full h-full bg-background text-foreground")
 	defer p.offscreen_destroy(off)
 	for pair in ([?]struct {
 		file: string,
