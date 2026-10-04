@@ -349,6 +349,19 @@ arrange :: proc(ctx: ^Ctx, idx: int, box: Rect, clip: Rect) {
 		}
 
 		base := ctx.nodes[c].content[main]
+
+		// Re-resolve a definite main-axis size against the space this
+		// container actually got. `measure` resolved it against the space the
+		// container was *offered*, which near the root is the whole window, so
+		// a percentage -- `h-full` on a child of a column -- came back as the
+		// window height and then survived into `arrange` as the item's base.
+		// For a pixel size this recomputes the same number; only percentages
+		// move, which is the case that was wrong.
+		if d := main == 0 ? cs.w : cs.h; d.kind == .Pct {
+			if v := resolve_dim(ctx, d, avail_main, main); v != INDEFINITE {
+				base = v
+			}
+		}
 		if b := resolve_dim(ctx, cs.basis, avail_main, main); b != INDEFINITE {
 			base = b + (main == 0 ? frame_of(cs).x : frame_of(cs).y)
 		}
