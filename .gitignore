@@ -18,3 +18,19 @@ parity/out/diff/*.png
 # Editor / OS
 .DS_Store
 *.swp
+
+# Generated test media and scratch output. Agents synthesise clips, tones and
+# speech with ffmpeg/espeak to exercise their pipelines; none of it is source.
+# demo.mp4 is deliberately not matched — those are the deliverables.
+*.wav
+*.pcm
+*.raw
+apps/*/fixtures/
+apps/*/test-media/
+apps/*/out/
+apps/*/tmp/
+
+# Model weights, should any ever land here. They belong on disk, not in git.
+*.gguf
+*.safetensors
+*.onnx
