@@ -25,6 +25,13 @@ bash tools/diff-all.sh                   # palmy → out/odin, then diff + repor
 open out/report.html
 ```
 
+**169 routes, 182 cases.** The diagram counts browser *routes*; the report
+counts *cases*. They differ because `interact.mjs` captures extra states of a
+component that already has a route — `-open`, `-disabled`, `-checked`,
+`-invalid`, plus the hover/focus/typed pass — and each state is its own
+diffed case. So `out/report.md` listing 182 rows against 169 routes is correct,
+not a truncated table.
+
 `tools/record-demo.sh` records the live palmy window with wf-recorder while
 driving it with real keyboard input. `tools/make-comparison-video.sh` turns
 every diff into a narrated walkthrough.
