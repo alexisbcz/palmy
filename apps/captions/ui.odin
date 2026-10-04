@@ -14,6 +14,7 @@ package main
 import "core:fmt"
 import "core:math"
 import "core:strings"
+import kit "kit:."
 import p "palmy:."
 import sc "shadcn:."
 
@@ -89,6 +90,9 @@ draw :: proc(ui: ^p.Ctx, fonts: ^p.Fonts, m: ^App_State) {
 	if m.help {
 		help_overlay(ui, m)
 	}
+
+	// Last, over everything.
+	pick_overlay(ui, m)
 }
 
 // ---------------------------------------------------------------------------
@@ -439,6 +443,12 @@ wave_panel :: proc(ui: ^p.Ctx, fonts: ^p.Fonts, m: ^App_State) {
 // recogniser.
 wave_input :: proc(ui: ^p.Ctx, m: ^App_State, idx: int) {
 	if !m.loaded {
+		return
+	}
+	// This reads the raw pointer state against the waveform's rectangle
+	// rather than through palmy's hit testing, so it would happily seek on a
+	// press aimed at the file dialog sitting over it.
+	if kit.pick_active(&m.pick) {
 		return
 	}
 	id := p.node_id(ui, idx)
@@ -1789,8 +1799,10 @@ keys_hint :: proc(m: ^App_State) -> string {
 }
 
 HELP := [?][2]string {
+	{"Ctrl O", "choose the media in a file dialog"},
 	{"o", "type a path to open"},
 	{"p / r", "walk the folder list, open the highlighted file"},
+	{"Ctrl Shift S", "choose where to export, then export"},
 	{"t", "transcribe"},
 	{"Space / k", "play or pause"},
 	{"← →", "seek two seconds (ten with Shift)"},

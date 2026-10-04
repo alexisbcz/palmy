@@ -12,6 +12,7 @@ package main
 import "core:fmt"
 import "core:strconv"
 import "core:strings"
+import kit "kit:."
 import p "palmy:."
 import sc "shadcn:."
 
@@ -95,13 +96,24 @@ render_shot :: proc(path: string, what: string, tool: Tool, w := SHOT_W, h := SH
 	demo_content(&st)
 
 	ov := shot_overlay(what)
+	// `--shot file-open` and `--shot file-save` render the shared file dialog,
+	// which is not one of this app's own overlays.
+	fpick := File_Pick.None
+	switch what {
+	case "file-open":
+		fpick = .Open
+	case "file-save":
+		fpick = .Save_As
+	}
 
 	// Three passes. The first establishes the layout `rect_of` reports, the
 	// second lets the canvas fit itself to that rectangle, the third is the one
 	// that is written — the same one-frame settling the window does on its
-	// first configure.
-	for pass in 0 ..< 3 {
-		if pass == 2 && ov != .None {
+	// first configure. The file dialog virtualises its list against the height
+	// it was laid out at, so it is given a few more.
+	passes := fpick == .None ? 3 : 8
+	for pass in 0 ..< passes {
+		if pass == passes - 1 - (fpick == .None ? 0 : 5) && ov != .None {
 			open_overlay(&st, ov)
 			if ov == .Adjust {
 				st.adj_kind = .Brightness_Contrast
@@ -113,11 +125,18 @@ render_shot :: proc(path: string, what: string, tool: Tool, w := SHOT_W, h := SH
 			}
 			refresh_preview(&st)
 		}
+		if pass == 2 && fpick != .None {
+			begin_pick(&st, fpick)
+		}
 		ui := p.offscreen_begin(off)
 		build_ui(ui, &st)
+		// The same last step the real frame loop takes, so a shot of the file
+		// dialog is a shot of what the window would show.
+		pick_overlay(ui, &st)
 		doc_composite(&st.doc)
 		p.offscreen_end(off)
 	}
+	defer kit.pick_destroy(&st.fpick)
 
 	ok := p.offscreen_write_png(off, path)
 	fmt.printfln("%s %s", ok ? "wrote" : "failed to write", path)

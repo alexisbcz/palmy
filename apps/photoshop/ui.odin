@@ -12,6 +12,7 @@ package main
 // shadcn slider into a draggable one.
 
 import "core:fmt"
+import kit "kit:."
 import p "palmy:."
 import sc "shadcn:."
 
@@ -32,7 +33,10 @@ build_ui :: proc(ui: ^p.Ctx, st: ^St) {
 				do_fit(st)
 			}
 			p.clickable(ui, idx)
-			if st.ov == .None {
+			// An overlay owns the pointer as well as the keyboard, and so
+			// does the file dialog: a press meant for its Cancel button must
+			// not also paint a brush stroke on the canvas behind it.
+			if st.ov == .None && !kit.pick_active(&st.fpick) {
 				canvas_input(ui, st, idx)
 			} else {
 				st.over_canvas = false
@@ -220,14 +224,8 @@ top_bar :: proc(ui: ^p.Ctx, st: ^St) {
 	sc.separator(ui, .Vertical, "h-5 mx-1")
 
 	if icon_button(ui, IC_FILE_PLUS) {open_overlay(st, .New_Doc)}
-	if icon_button(ui, IC_FOLDER_OPEN) {open_overlay(st, .Open)}
-	if icon_button(ui, IC_SAVE) {
-		if st.doc.path == "" {
-			open_overlay(st, .Save_As)
-		} else {
-			save_to(st, st.doc.path)
-		}
-	}
+	if icon_button(ui, IC_FOLDER_OPEN) {begin_pick(st, .Open)}
+	if icon_button(ui, IC_SAVE) {save_or_ask(st)}
 	if icon_button(ui, IC_KEYBOARD) {open_overlay(st, .Help)}
 }
 

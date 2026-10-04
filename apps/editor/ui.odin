@@ -94,6 +94,10 @@ frame :: proc(ui: ^p.Ctx, ed: ^Editor) {
 	case .Edit, .Prompt:
 	}
 	toast(ui, ed)
+
+	// Last, so it sits over everything, and inside the root that is already
+	// `relative` so its absolute insets resolve against the window.
+	pick_overlay(ui, ed)
 }
 
 // ---------------------------------------------------------------------------

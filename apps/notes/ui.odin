@@ -40,6 +40,9 @@ frame :: proc(ui: ^p.Ctx, nt: ^Notes) {
 	case .Normal, .Search:
 	}
 	toast(ui, nt)
+
+	// Last, over everything, inside the root that is already `relative`.
+	pick_overlay(ui, nt)
 }
 
 // ---------------------------------------------------------------------------
@@ -680,6 +683,8 @@ HELP_ROWS := [?][2]string {
 	{"Delete", "delete the selected note"},
 	{"Ctrl F  or  /", "search every note's body"},
 	{"Ctrl S", "save now (it also saves itself)"},
+	{"Ctrl O", "import a Markdown file as a new note"},
+	{"Ctrl Shift S", "export this note somewhere"},
 	{"Ctrl Z / Ctrl Y", "undo, redo"},
 	{"Ctrl X / C / V", "cut, copy, paste"},
 	{"Ctrl A", "select the whole note"},

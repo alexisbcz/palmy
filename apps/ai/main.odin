@@ -114,6 +114,9 @@ St :: struct {
 	moved:        bool,
 	started:      bool,
 	quit_at:      f64,
+
+	// The shared file dialog, for attaching a file. See pick.odin.
+	pick:         kit.Pick,
 }
 
 main :: proc() {
@@ -168,6 +171,7 @@ main :: proc() {
 	st.sys_buf = make([dynamic]u8)
 	st.think_open = make(map[int]bool)
 	st.prompts = prompts_load()
+	defer kit.pick_destroy(&st.pick)
 
 	ensure_dirs()
 	settings_load(&st.model, &st.pr, &st.show_think)
@@ -207,6 +211,7 @@ main :: proc() {
 
 		handle_keys(ui, app, &st)
 		build(ui, &st)
+		pick_overlay(ui, &st)
 
 		// A worker thread cannot wake palmy's `poll`, and there is no wake
 		// descriptor to write to, so while anything is in flight the window
@@ -506,6 +511,18 @@ toast :: proc(st: ^St, msg: string) {
 // ---------------------------------------------------------------------------
 
 handle_keys :: proc(ui: ^p.Ctx, app: ^p.App, st: ^St) {
+	// The file dialog owns the keyboard while it is up; it reads its own
+	// input in `pick_overlay`, during the draw pass.
+	if kit.pick_active(&st.pick) {
+		return
+	}
+	// Ctrl+Shift+O, not Ctrl+O: this application already binds Ctrl+O to
+	// pulling a model, and a shared component arriving late does not get to
+	// take a key that already means something.
+	if p.shortcut(ui, 'o', {.Ctrl, .Shift}) || p.shortcut(ui, 'O', {.Ctrl, .Shift}) {
+		begin_attach(st)
+		return
+	}
 	if st.overlay != .None {
 		overlay_keys(ui, app, st)
 		return

@@ -149,6 +149,10 @@ App_State :: struct {
 
 	// Deferred structural edits — see `Act`.
 	queue:         [dynamic]Act,
+
+	// The shared file dialog, and what it was opened for. See pick.odin.
+	pick:          kit.Pick,
+	pick_use:      Pick_Use,
 }
 
 // Act is an edit that changes the *shape* of the caption list, queued rather
@@ -269,6 +273,7 @@ main :: proc() {
 		os.exit(1)
 	}
 	defer p.destroy(app)
+	defer kit.pick_destroy(&m.pick)
 	p.set_min_size(app, 980, 620)
 
 	for ui in p.frames(app) {
@@ -846,8 +851,21 @@ do_merge :: proc(m: ^App_State) {
 // ---------------------------------------------------------------------------
 
 handle_keys :: proc(ui: ^p.Ctx, app: ^p.App, m: ^App_State) {
+	// The file dialog owns the keyboard while it is up; it reads its own
+	// input in `pick_overlay`, during the draw pass.
+	if kit.pick_active(&m.pick) {
+		return
+	}
 	if p.shortcut(ui, 'q', {.Ctrl}) {
 		p.quit_app(app)
+		return
+	}
+	if p.shortcut(ui, 'o', {.Ctrl}) {
+		begin_pick(m, .Media)
+		return
+	}
+	if p.shortcut(ui, 's', {.Ctrl, .Shift}) || p.shortcut(ui, 'S', {.Ctrl, .Shift}) {
+		begin_pick(m, .Output)
 		return
 	}
 	if p.shortcut(ui, 's', {.Ctrl}) {

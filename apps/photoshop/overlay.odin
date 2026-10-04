@@ -988,7 +988,7 @@ HELP := [?][2]string {
 	{", .", "previous / next blend mode"},
 	{"Arrows + Move tool", "nudge the layer (Shift = 10 px)"},
 	{"u / y", "undo / redo"},
-	{"o", "open an image from this folder"},
+	{"o", "open an image, in the file dialog"},
 	{"Ctrl Z", "undo"},
 	{"Ctrl Shift Z", "redo"},
 	{"Ctrl A / Ctrl D", "select all / deselect"},
