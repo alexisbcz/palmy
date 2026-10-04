@@ -385,6 +385,13 @@ divider :: proc(ctx: ^Ctx, class: string = "bg-slate-800") -> int {
 //		proc(c: ^palmy.Canvas, r: palmy.Rect, s: ^Scene) {
 //			...
 //		})
+//
+// `user` is borrowed until the frame is painted, which happens after the whole
+// frame has been built -- not at this call. So it must outlive the frame, and
+// two things that look fine are dangling by then: a struct on the stack of the
+// procedure that called `pixels`, and a slice of a `[dynamic]T` that something
+// later in the same frame appends to and reallocates. Keep it in the model, and
+// defer structural edits to the top of the next frame.
 pixels :: proc(ctx: ^Ctx, class: string, user: ^$T, draw: proc(c: ^Canvas, r: Rect, user: ^T)) -> int {
 	idx := push_node(ctx, .Custom, class)
 	n := &ctx.nodes[idx]

@@ -22,6 +22,12 @@ PREVIEW_H :: 268
 WAVE_H :: 132
 
 MONO :: "font-mono text-[12] leading-[16]"
+
+// A stepper row is label — spacer — minus — value — plus, inside a 392px
+// panel. Without `whitespace-nowrap` the label wraps onto a second line and
+// the row grows; these two classes keep every one of them a single line.
+STEP_LABEL :: "text-[11] text-muted-foreground whitespace-nowrap truncate"
+STEP_HINT :: "font-mono text-[10] text-muted-foreground whitespace-nowrap shrink-0"
 LABEL :: "text-[11] font-semibold uppercase tracking-wider text-muted-foreground"
 
 // Preview_Ctx and Wave_Ctx live in App_State, not on the stack: `p.pixels`
@@ -232,9 +238,9 @@ preview_panel :: proc(ui: ^p.Ctx, fonts: ^p.Fonts, m: ^App_State) {
 fact :: proc(ui: ^p.Ctx, label, value: string) {
 	p.row(ui, "w-full items-baseline gap-2")
 	defer p.end(ui)
-	p.text(ui, label, "text-[11] text-muted-foreground shrink-0")
+	p.text(ui, label, "text-[11] text-muted-foreground shrink-0 whitespace-nowrap truncate")
 	p.spacer(ui)
-	p.text(ui, value, "text-[11] font-medium")
+	p.text(ui, value, "text-[11] font-medium whitespace-nowrap")
 	p.style(ui).shrink = 0
 }
 
@@ -880,12 +886,16 @@ caption_row :: proc(ui: ^p.Ctx, fonts: ^p.Fonts, m: ^App_State, i: int, active: 
 		}
 
 		if warns != {} {
-			p.row(ui, "items-center gap-1.5 flex-wrap")
+			p.row(ui, "w-full items-center gap-1.5 gap-y-1 flex-wrap")
 			for k in Warn_Kind {
 				if k in warns {
-					p.row(ui, "items-center gap-1 h-4 px-1.5 rounded bg-destructive/10")
-					p.icon(ui, IC_TRIANGLE_ALERT, "size-2.5 text-destructive")
-					p.text(ui, warn_text(k, m.limits), "text-[10] text-destructive")
+					// `shrink-0` and `whitespace-nowrap`: a chip is a fixed
+					// 16px tall, so a label that wraps inside one overflows
+					// it. The row wraps instead, which is what `flex-wrap`
+					// on the parent is for.
+					p.row(ui, "shrink-0 items-center gap-1 h-4 px-1.5 rounded bg-destructive/10")
+					p.icon(ui, IC_TRIANGLE_ALERT, "size-2.5 shrink-0 text-destructive")
+					p.text(ui, warn_text(k, m.limits), "text-[10] text-destructive whitespace-nowrap")
 					p.end(ui)
 				}
 			}
@@ -1167,7 +1177,7 @@ pane_transcribe :: proc(ui: ^p.Ctx, m: ^App_State) {
 	section(ui, "SEGMENTS")
 	p.row(ui, "w-full items-center gap-2")
 	{
-		p.text(ui, "Max characters", "text-[11] text-muted-foreground")
+		p.text(ui, "Max characters", STEP_LABEL)
 		p.spacer(ui)
 		if mini_button(ui, IC_MINUS) {
 			m.max_len = max(0, m.max_len - 2)
@@ -1188,7 +1198,7 @@ pane_transcribe :: proc(ui: ^p.Ctx, m: ^App_State) {
 	}
 	p.row(ui, "w-full items-center gap-2")
 	{
-		p.text(ui, "Threads", "text-[11] text-muted-foreground")
+		p.text(ui, "Threads", STEP_LABEL)
 		p.spacer(ui)
 		if mini_button(ui, IC_MINUS) {
 			m.threads = max(1, m.threads - 1)
@@ -1377,7 +1387,8 @@ nudge_row :: proc(ui: ^p.Ctx, m: ^App_State, label: string, is_start: bool) {
 	p.row(ui, "w-full items-center gap-1.5")
 	defer p.end(ui)
 
-	p.text(ui, label, "text-[11] text-muted-foreground w-[64] shrink-0")
+	p.text(ui, label, "text-[11] text-muted-foreground w-[58] shrink-0 whitespace-nowrap")
+	p.text(ui, is_start ? "[ ]" : ", .", "font-mono text-[10] text-muted-foreground w-[22] shrink-0")
 	if mini_button(ui, IC_CHEVRON_DOWN) {
 		if is_start {
 			nudge_start(&m.segs, m.sel, -0.1, m.limits)
@@ -1396,13 +1407,12 @@ nudge_row :: proc(ui: ^p.Ctx, m: ^App_State, label: string, is_start: bool) {
 		}
 		m.dirty = true
 	}
-	p.text(ui, is_start ? "[ ]" : ", .", "font-mono text-[10] text-muted-foreground w-[24]")
 }
 
 limit_row :: proc(ui: ^p.Ctx, label: string, v: ^int, lo, hi, step: int) {
 	p.row(ui, "w-full items-center gap-2")
 	defer p.end(ui)
-	p.text(ui, label, "text-[11] text-muted-foreground")
+	p.text(ui, label, STEP_LABEL)
 	p.spacer(ui)
 	if mini_button(ui, IC_MINUS) {
 		v^ = max(lo, v^ - step)
@@ -1416,7 +1426,7 @@ limit_row :: proc(ui: ^p.Ctx, label: string, v: ^int, lo, hi, step: int) {
 limit_f_row :: proc(ui: ^p.Ctx, label: string, v: ^f64, lo, hi, step: f64) {
 	p.row(ui, "w-full items-center gap-2")
 	defer p.end(ui)
-	p.text(ui, label, "text-[11] text-muted-foreground")
+	p.text(ui, label, STEP_LABEL)
 	p.spacer(ui)
 	if mini_button(ui, IC_MINUS) {
 		v^ = max(lo, v^ - step)
@@ -1433,7 +1443,8 @@ pane_style :: proc(ui: ^p.Ctx, m: ^App_State) {
 	section(ui, "TYPE")
 	p.row(ui, "w-full items-center gap-2")
 	{
-		p.text(ui, "Size", "text-[11] text-muted-foreground")
+		p.text(ui, "Size", STEP_LABEL)
+		p.text(ui, "j l", STEP_HINT)
 		p.spacer(ui)
 		if mini_button(ui, IC_MINUS) {
 			m.style.size = max(8, m.style.size - 2)
@@ -1442,7 +1453,6 @@ pane_style :: proc(ui: ^p.Ctx, m: ^App_State) {
 		if mini_button(ui, IC_PLUS) {
 			m.style.size = min(200, m.style.size + 2)
 		}
-		p.text(ui, "j l", "font-mono text-[10] text-muted-foreground")
 	}
 	p.end(ui)
 	if toggle_row(ui, "Bold (y)", m.style.bold) {
@@ -1455,7 +1465,8 @@ pane_style :: proc(ui: ^p.Ctx, m: ^App_State) {
 	section(ui, "OUTLINE")
 	p.row(ui, "w-full items-center gap-2")
 	{
-		p.text(ui, "Width", "text-[11] text-muted-foreground")
+		p.text(ui, "Width", STEP_LABEL)
+		p.text(ui, "h r", STEP_HINT)
 		p.spacer(ui)
 		if mini_button(ui, IC_MINUS) {
 			m.style.outline = max(0, m.style.outline - 0.5)
@@ -1464,13 +1475,12 @@ pane_style :: proc(ui: ^p.Ctx, m: ^App_State) {
 		if mini_button(ui, IC_PLUS) {
 			m.style.outline = min(10, m.style.outline + 0.5)
 		}
-		p.text(ui, "h r", "font-mono text-[10] text-muted-foreground")
 	}
 	p.end(ui)
 	swatches(ui, &m.style.outline_rgb)
 	p.row(ui, "w-full items-center gap-2")
 	{
-		p.text(ui, "Shadow", "text-[11] text-muted-foreground")
+		p.text(ui, "Shadow", STEP_LABEL)
 		p.spacer(ui)
 		if mini_button(ui, IC_MINUS) {
 			m.style.shadow = max(0, m.style.shadow - 0.5)
@@ -1490,7 +1500,7 @@ pane_style :: proc(ui: ^p.Ctx, m: ^App_State) {
 		swatches(ui, &m.style.box_rgb)
 		p.row(ui, "w-full items-center gap-2")
 		{
-			p.text(ui, "Opacity", "text-[11] text-muted-foreground")
+			p.text(ui, "Opacity", STEP_LABEL)
 			p.spacer(ui)
 			if mini_button(ui, IC_MINUS) {
 				m.style.box_opacity = max(0, m.style.box_opacity - 0.05)
@@ -1523,7 +1533,7 @@ pane_style :: proc(ui: ^p.Ctx, m: ^App_State) {
 
 	p.row(ui, "w-full items-center gap-2")
 	{
-		p.text(ui, "Side margin", "text-[11] text-muted-foreground")
+		p.text(ui, "Side margin", STEP_LABEL)
 		p.spacer(ui)
 		if mini_button(ui, IC_MINUS) {
 			m.style.margin_x = max(0, m.style.margin_x - 4)
@@ -1536,7 +1546,7 @@ pane_style :: proc(ui: ^p.Ctx, m: ^App_State) {
 	p.end(ui)
 	p.row(ui, "w-full items-center gap-2")
 	{
-		p.text(ui, "Edge margin", "text-[11] text-muted-foreground")
+		p.text(ui, "Edge margin", STEP_LABEL)
 		p.spacer(ui)
 		if mini_button(ui, IC_MINUS) {
 			m.style.margin_y = max(0, m.style.margin_y - 4)
@@ -1734,10 +1744,16 @@ status_bar :: proc(ui: ^p.Ctx, m: ^App_State) {
 
 	if job_busy() {
 		sc.spinner(ui, "size-3")
-		p.textf(ui, "text-[11]", "%s · %.0f%%", stage_text(job_stage()), f64(job_progress()) * 100)
+		p.textf(
+			ui,
+			"text-[11] whitespace-nowrap shrink-0",
+			"%s · %.0f%%",
+			stage_text(job_stage()),
+			f64(job_progress()) * 100,
+		)
 		if note := job_note(); note != "" {
-			p.text(ui, "·", "text-[11] text-muted-foreground")
-			p.text(ui, note, "text-[11] text-muted-foreground truncate max-w-[520]")
+			p.text(ui, "·", "text-[11] text-muted-foreground shrink-0")
+			p.text(ui, note, "text-[11] text-muted-foreground truncate whitespace-nowrap max-w-[520]")
 		}
 	} else {
 		p.icon(
@@ -1745,7 +1761,11 @@ status_bar :: proc(ui: ^p.Ctx, m: ^App_State) {
 			m.status_bad ? IC_TRIANGLE_ALERT : IC_CHECK,
 			m.status_bad ? "size-3 text-destructive" : "size-3 text-muted-foreground",
 		)
-		p.text(ui, m.status, m.status_bad ? "text-[11] text-destructive truncate" : "text-[11] text-muted-foreground truncate")
+		status_class := "text-[11] text-muted-foreground truncate whitespace-nowrap"
+		if m.status_bad {
+			status_class = "text-[11] text-destructive truncate whitespace-nowrap"
+		}
+		p.text(ui, m.status, status_class)
 	}
 
 	p.spacer(ui)
