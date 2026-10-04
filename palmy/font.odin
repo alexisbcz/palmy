@@ -5,6 +5,7 @@ import "core:math"
 import "core:os"
 import "core:path/filepath"
 import "core:strings"
+import "core:unicode/utf8"
 import ef "vendor:stb/easy_font"
 import tt "vendor:stb/truetype"
 
@@ -135,6 +136,14 @@ Fonts :: struct {
 	tab_slots: map[Tab_Key]f32,
 
 	owned: [dynamic]Owned_Font,
+
+	// The bidi and shaping scratch, shared by every text procedure. One per
+	// `Fonts` is the right number: text measurement runs several times per
+	// frame per node, and after the first few lines these buffers stop
+	// allocating entirely. The slices they hand out are only valid until the
+	// next text call, which is why nothing in `font.odin` lays out a second
+	// line while still reading the first.
+	shaper: Text_Shaper,
 }
 
 // Metrics describes a font at one size, in pixels.
@@ -532,6 +541,7 @@ fonts_destroy :: proc(f: ^Fonts) {
 	delete(f.fallbacks)
 
 	emoji_destroy(&f.emoji)
+	text_shaper_destroy(f)
 }
 
 @(private)
@@ -951,6 +961,13 @@ tabular_slot :: proc(f: ^Fonts, fam: Font_Family, wt: Font_Weight, sl: Font_Slan
 }
 
 // text_width measures a single line of text in pixels.
+//
+// `dir` is the base direction the line inherits from its paragraph, and only
+// matters for text that reorders; see the bidirectional section below. The
+// width of a reordered line is not the width of the same characters laid out in
+// storage order — shaping changes which glyphs are drawn, and kerning applies
+// to a different set of pairs — so this cannot be answered without doing the
+// reordering, and it is done by the same procedure the drawing uses.
 text_width :: proc(
 	f: ^Fonts,
 	text: string,
@@ -960,10 +977,19 @@ text_width :: proc(
 	tracking: f32 = 0,
 	sl := Font_Slant.Upright,
 	tabular := false,
+	dir := Bidi_Direction.Auto,
 ) -> f32 {
 	face := &f.faces[fam][wt][sl]
 	if !face.ok {
 		return f32(ef.width(text)) * fallback_scale(size) + f32(len(text)) * tracking
+	}
+	if !text_simple(text, dir) {
+		return text_width_complex(
+			f,
+			text,
+			text_base_dir(text, dir),
+			text_style(f, size, fam, wt, sl, tracking, tabular),
+		)
 	}
 	slot := tabular ? tabular_slot(f, fam, wt, sl, size) : 0
 	total := f32(0)
@@ -1024,10 +1050,24 @@ draw_text :: proc(
 	sl := Font_Slant.Upright,
 	tabular := false,
 	outline := Text_Outline{},
+	dir := Bidi_Direction.Auto,
 ) -> f32 {
 	face := &f.faces[fam][wt][sl]
 	if !face.ok {
 		return draw_text_fallback(c, text, x, y, size, col)
+	}
+	if !text_simple(text, dir) {
+		return draw_text_complex(
+			c,
+			f,
+			text,
+			x,
+			y,
+			col,
+			text_base_dir(text, dir),
+			text_style(f, size, fam, wt, sl, tracking, tabular),
+			outline,
+		)
 	}
 
 	slot := tabular ? tabular_slot(f, fam, wt, sl, size) : 0
@@ -1135,10 +1175,11 @@ draw_text_outlined :: proc(
 	tracking: f32 = 0,
 	sl := Font_Slant.Upright,
 	tabular := false,
+	dir := Bidi_Direction.Auto,
 ) -> f32 {
 	return draw_text(
 		c, f, text, x, y, size, col, fam, wt, tracking, sl, tabular,
-		Text_Outline{width = outline_w, color = outline_col},
+		Text_Outline{width = outline_w, color = outline_col}, dir,
 	)
 }
 
@@ -1175,8 +1216,21 @@ text_index_at :: proc(
 	tracking: f32 = 0,
 	sl := Font_Slant.Upright,
 	tabular := false,
+	dir := Bidi_Direction.Auto,
 ) -> int {
-	if x <= 0 || len(text) == 0 {
+	if len(text) == 0 {
+		return 0
+	}
+	if !text_simple(text, dir) {
+		// Once a line reorders, walking forward from the left and stopping at
+		// a midpoint gives an index from the wrong end of the string. The
+		// visual answer, and the affinity that goes with it, is
+		// `text_index_at_affinity`; this is that with the affinity dropped,
+		// which is all an existing caller can use.
+		i, _ := text_index_at_affinity(f, text, size, x, fam, wt, tracking, sl, tabular, dir)
+		return i
+	}
+	if x <= 0 {
 		return 0
 	}
 
@@ -1249,6 +1303,14 @@ rune_len :: proc "contextless" (r: rune) -> int {
 
 // text_width_upto measures the string up to a byte index, which is where a
 // caret at that index sits. Pair it with `text_index_at` for round trips.
+//
+// For text laid out left to right that is the whole story and this is still
+// literally the width of the prefix, which is what the forty-odd callers of it
+// mean. For text that reorders it is not: `text[:index]` can contain characters
+// drawn to the right of the caret, so the prefix has no edge to measure and the
+// question has to be asked of the visual runs instead. Such a string is handed
+// to `text_caret_x`, which is the honest form of this procedure and takes the
+// affinity a direction boundary needs.
 text_width_upto :: proc(
 	f: ^Fonts,
 	text: string,
@@ -1259,7 +1321,775 @@ text_width_upto :: proc(
 	tracking: f32 = 0,
 	sl := Font_Slant.Upright,
 	tabular := false,
+	dir := Bidi_Direction.Auto,
 ) -> f32 {
 	i := clamp(index, 0, len(text))
+	if !text_simple(text, dir) {
+		return text_caret_x(f, text, i, size, .Downstream, fam, wt, tracking, sl, tabular, dir)
+	}
 	return text_width(f, text[:i], size, fam, wt, tracking, sl, tabular)
+}
+
+// ---------------------------------------------------------------------------
+// Bidirectional and shaped text
+//
+// Everything above this line walks a string's codepoints in storage order and
+// treats that as the order they appear on screen. For Latin it is; for Hebrew
+// and Arabic it is backwards, and for Arabic it is also the wrong glyphs, since
+// the letters are cursive and palmy draws one glyph per codepoint.
+//
+// `bidi.odin` and `shape.odin` answer both halves of that, and this section is
+// where they meet the font: one procedure, `text_layout_line`, turns a string
+// into the glyphs that will actually be drawn, in the order they will actually
+// be drawn, each with the x it will be drawn at and the source bytes it came
+// from. Measuring, drawing, hit testing, caret placement and selection all read
+// that one list, which is the only way they can agree — and they have to agree,
+// because a caret that disagrees with the glyphs is worse than no bidi at all.
+//
+// THE ORDER OF OPERATIONS, which is where this goes wrong silently:
+//
+//   1. The base level comes from the *paragraph*; the resolution happens per
+//      *line*. `dir` is threaded through every entry point for exactly that:
+//      a wrapper computes `bidi_base_level` over the whole paragraph once and
+//      passes `bidi_direction_for_level` of it to each line. Resolving a line
+//      `.Auto` lets one that begins with a Latin word flip the whole line.
+//   2. Shape in logical order, then reverse. Arabic joining is a property of
+//      logical neighbours, so the shaper runs over the run as stored and the
+//      glyph sequence is reversed afterwards for a right-to-left run. Reversing
+//      first gives initial forms where final ones belong.
+//   3. A shaped presentation form is never mirrored. `bidi_mirror` is for
+//      brackets and the like; an Arabic letter already points the right way,
+//      and U+FEE0 has no mirror to find anyway.
+//   4. Kerning is between *visually* adjacent glyphs. The pen carries the
+//      previous glyph in visual order across run boundaries, because that is
+//      the pair that is actually next to each other on screen.
+//   5. The directional controls get a glyph with zero advance rather than no
+//      glyph: they must not draw (they have no outline, so they would be
+//      .notdef boxes) but they must still own their bytes, or a caret offset
+//      inside one has nothing to map to.
+//   6. The fast path stays exact. `text_simple` is one pass of byte
+//      comparisons for ASCII, and a string it approves of goes down the
+//      original loops untouched. Text measurement runs several times per frame
+//      per node, and every parity case in the repository is Latin.
+//
+// Allocation is zero per call after warm-up: the `Bidi_Scratch` and the glyph
+// buffer live on `Fonts` and are cleared and refilled. The corollary is that
+// the glyph list is only valid until the next call, so none of these
+// procedures may be called from inside a loop over another's result.
+// ---------------------------------------------------------------------------
+
+// Caret_Affinity resolves the one thing a byte offset cannot say on its own.
+//
+// At a direction boundary a single logical index has *two* valid positions on
+// screen. In `abc` followed by Hebrew `אבג`, the offset just after `c` is both
+// the right edge of `c` and the right edge of `א` — the same character offset,
+// two places, and no amount of further measurement decides between them,
+// because the information is not in the string. It comes from how the caret got
+// there: typing after `c` means one, clicking to the right of `א` means the
+// other.
+//
+// So the affinity travels beside the index:
+//
+//   Downstream  the caret precedes the character *at* `index`, and is drawn at
+//               that character's leading edge — its left side in a
+//               left-to-right run, its right side in a right-to-left one.
+//   Upstream    the caret follows the character *before* `index`, and is drawn
+//               at that character's trailing edge.
+//
+// For text with one direction the two agree everywhere, which is why every
+// entry point defaults to `Downstream` and why nothing already written needs to
+// care.
+Caret_Affinity :: enum u8 {
+	Downstream,
+	Upstream,
+}
+
+// Text_Glyph is one glyph of a laid-out line: what to draw, where, and which
+// bytes of the original string it stands for.
+//
+// The list is in visual order, left to right. `x` and `adv` tile the line
+// without gaps — `adv` includes the kern applied in front of the glyph — so hit
+// testing is a search for the box containing a coordinate, and `dx` is the
+// offset from the box to where the glyph is actually painted.
+//
+// `src` and `size` are the inverse of the whole transformation, and the only
+// way back. A lam-alef ligature has `size` spanning two letters, which is why a
+// byte offset cannot be recovered from the drawn codepoint alone.
+Text_Glyph :: struct {
+	cp:     rune, // the codepoint drawn: a presentation form, a mirror, or the source rune
+	src:    int,  // byte offset in the source string of the first rune behind it
+	size:   int,  // source bytes it consumed; more than one rune for a ligature
+	x:      f32,  // left edge of its advance box, relative to the line origin
+	adv:    f32,  // width of that box: kern + advance + tracking
+	dx:     f32,  // where inside the box the glyph is painted
+	level:  u8,   // the embedding level of its run
+	rtl:    bool, // that level is odd
+	shaped: bool, // `cp` is a presentation form, so it must not be mirrored
+	emoji:  bool, // drawn by the colour bitmap font
+	blank:  bool, // zero advance, nothing drawn: a control or a default-ignorable
+}
+
+// Text_Span is one rectangle's horizontal extent, relative to the line origin.
+// A selection is a list of these rather than a single pair of edges, because a
+// logical range that crosses a direction boundary is discontiguous on screen.
+Text_Span :: struct {
+	x, w: f32,
+}
+
+// Caret_Step is a direction on screen, not in the string. Arrow keys are the
+// one place a text field has to choose: logical movement steps the byte offset,
+// visual movement steps left and right as the reader sees them, and inside a
+// right-to-left run those are opposites. Most toolkits use visual for the arrow
+// keys and logical for word jumps; `text_caret_move` is the visual one.
+Caret_Step :: enum u8 {
+	Left,
+	Right,
+}
+
+// Text_Shaper is the per-`Fonts` scratch. A zeroed one self-initialises on
+// first use, so nothing has to remember to set it up.
+@(private)
+Text_Shaper :: struct {
+	bidi:   Bidi_Scratch,
+	glyphs: [dynamic]Text_Glyph,
+	ready:  bool,
+}
+
+@(private)
+text_shaper :: proc(f: ^Fonts) -> ^Text_Shaper {
+	if !f.shaper.ready {
+		bidi_scratch_init(&f.shaper.bidi)
+		f.shaper.glyphs = make([dynamic]Text_Glyph)
+		f.shaper.ready = true
+	}
+	return &f.shaper
+}
+
+@(private)
+text_shaper_destroy :: proc(f: ^Fonts) {
+	if !f.shaper.ready {
+		return
+	}
+	bidi_scratch_destroy(&f.shaper.bidi)
+	delete(f.shaper.glyphs)
+	f.shaper = {}
+}
+
+// Text_Style is the measurement half of the parameter list, gathered up once so
+// the placement pass does not take eight arguments and so the tabular slot is
+// looked up once per line rather than once per digit.
+@(private)
+Text_Style :: struct {
+	size:     f32,
+	tracking: f32,
+	slot:     f32,
+	fam:      Font_Family,
+	wt:       Font_Weight,
+	sl:       Font_Slant,
+	tabular:  bool,
+}
+
+@(private)
+text_style :: proc(
+	f: ^Fonts,
+	size: f32,
+	fam: Font_Family,
+	wt: Font_Weight,
+	sl: Font_Slant,
+	tracking: f32,
+	tabular: bool,
+) -> Text_Style {
+	return Text_Style {
+		size     = size,
+		tracking = tracking,
+		slot     = tabular ? tabular_slot(f, fam, wt, sl, size) : 0,
+		fam      = fam,
+		wt       = wt,
+		sl       = sl,
+		tabular  = tabular,
+	}
+}
+
+// text_simple reports that a string can go down the original one-run path: its
+// visual order is its logical order and no glyph substitution applies to it.
+//
+// Both halves have to hold. `bidi_cannot_reorder` is a byte scan that no ASCII
+// string escapes; `needs_arabic_shaping` is another, keyed on the two lead
+// bytes the shapable letters live behind. A forced right-to-left base direction
+// fails immediately whatever the text says, because an empty or all-neutral
+// line still has to be laid out from the right.
+@(private)
+text_simple :: proc "contextless" (text: string, dir: Bidi_Direction) -> bool {
+	if dir == .RTL {
+		return false
+	}
+	return bidi_cannot_reorder(text) && !needs_arabic_shaping(text)
+}
+
+// text_base_dir resolves a paragraph's base direction to the forced direction
+// its lines should each be resolved with. Pass the whole paragraph, use the
+// answer for every line of it.
+text_base_dir :: proc(text: string, dir := Bidi_Direction.Auto) -> Bidi_Direction {
+	return bidi_direction_for_level(bidi_base_level(text, dir))
+}
+
+// text_base_rtl reports whether a line's own base direction is right to left,
+// which is what decides where `start` alignment puts it and where an empty
+// field parks its caret. `bidi_base_level("")` with `.RTL` is 1 for that
+// reason: an empty right-to-left search box still wants its caret on the right.
+text_base_rtl :: proc(text: string, dir := Bidi_Direction.Auto) -> bool {
+	return bidi_is_rtl(bidi_base_level(text, dir))
+}
+
+// text_layout_line resolves, shapes and places one line, and is the single
+// source of truth every other procedure in this section reads.
+//
+// The returned slice aliases the scratch on `f` and is invalidated by the next
+// call. `total` is the line's advance, including the allowance a synthetic bold
+// makes for being overprinted.
+@(private)
+text_layout_line :: proc(
+	f: ^Fonts,
+	text: string,
+	dir: Bidi_Direction,
+	st: Text_Style,
+) -> (glyphs: []Text_Glyph, layout: Bidi_Layout, total: f32) {
+	sh := text_shaper(f)
+	layout = bidi_resolve(text, dir, &sh.bidi)
+	clear(&sh.glyphs)
+
+	// --- order and shape -------------------------------------------------
+	// One run at a time, in the visual order L2 put them in. Within a run the
+	// shaper walks the bytes as stored, because that is the order joining is
+	// defined over, and the glyphs it produced are reversed afterwards if the
+	// run runs right to left.
+	for run in layout.runs {
+		rtl := bidi_is_rtl(run.level)
+		sub := text[run.start:run.end]
+		first := len(sh.glyphs)
+		sc := Shape_Ctx{}
+		for {
+			sr, done := shape_step(sub, &sc, DEFAULT_SHAPE_OPTIONS)
+			if done {
+				break
+			}
+			cp := sr.cp
+			ctl := bidi_is_control(cp)
+			// Rule L4, and only for what was not already shaped: a bracket in
+			// a right-to-left run is drawn as its mirror, an Arabic
+			// presentation form is drawn as itself.
+			if rtl && !sr.shaped && !ctl {
+				cp = bidi_mirror(cp)
+			}
+			append(
+				&sh.glyphs,
+				Text_Glyph {
+					cp     = cp,
+					src    = run.start + sr.src,
+					size   = sr.size,
+					level  = run.level,
+					rtl    = rtl,
+					shaped = sr.shaped,
+					blank  = ctl,
+				},
+			)
+		}
+		if rtl {
+			for a, b := first, len(sh.glyphs) - 1; a < b; a, b = a + 1, b - 1 {
+				sh.glyphs[a], sh.glyphs[b] = sh.glyphs[b], sh.glyphs[a]
+			}
+		}
+	}
+
+	// --- place -------------------------------------------------------------
+	// The pen walks the list in visual order, so `prev` is the glyph to the
+	// left of this one on screen and the kern pair is the one the reader sees.
+	// It deliberately survives a run boundary: two runs are drawn flush
+	// against each other, so their touching glyphs are a visual pair.
+	pen := f32(0)
+	prev := rune(0)
+	prev_face: ^Face = nil
+	for i in 0 ..< len(sh.glyphs) {
+		g := &sh.glyphs[i]
+		g.x = pen
+		if g.blank {
+			prev, prev_face = 0, nil
+			continue
+		}
+		// The emoji question is asked of the source string, where the
+		// variation selector that answers it still follows the rune. A shaped
+		// form is never an emoji, and `cp` is not what is in the string.
+		pe := !g.shaped && prefers_emoji(text, g.src, g.cp)
+		rs := resolve_rune(f, st.fam, st.wt, st.sl, g.cp, pe)
+		if rs.blank {
+			g.blank = true
+			prev, prev_face = 0, nil
+			continue
+		}
+		if rs.emoji {
+			g.emoji = true
+			g.adv = emoji_advance(&f.emoji, g.cp, st.size) + st.tracking
+			pen += g.adv
+			prev, prev_face = 0, nil
+			continue
+		}
+		rf := rs.face
+		s := face_scale(rf, st.size)
+		adv, lsb: i32
+		tt.GetCodepointHMetrics(&rf.info, g.cp, &adv, &lsb)
+		if st.tabular && is_digit(g.cp) {
+			// Centred in the slot the measurement committed to, exactly as the
+			// simple path does it.
+			g.dx = (st.slot - f32(adv) * s) / 2
+			g.adv = st.slot + st.tracking
+			pen += g.adv
+			prev, prev_face = g.cp, rf
+			continue
+		}
+		if prev != 0 && !f.no_kerning && prev_face == rf && !(st.tabular && is_digit(prev)) {
+			g.dx = f32(tt.GetCodepointKernAdvance(&rf.info, prev, g.cp)) * s
+		}
+		g.adv = g.dx + f32(adv) * s + st.tracking
+		pen += g.adv
+		prev, prev_face = g.cp, rf
+	}
+
+	total = pen
+	if f.faces[st.fam][st.wt][st.sl].synth_bold {
+		total += st.size * 0.02
+	}
+	return sh.glyphs[:], layout, total
+}
+
+// text_glyph_caret_x is the x of a caret at source byte offset `i` inside one
+// glyph's box.
+//
+// At the two ends of a single-rune glyph this is just the leading or trailing
+// edge, flipped for a right-to-left run. Inside a ligature it interpolates: a
+// lam-alef is one glyph standing for two letters, there is no edge between them
+// to measure, and a caret between the lam and the alef has to go somewhere
+// defensible. Half way is the honest answer.
+@(private)
+text_glyph_caret_x :: proc(g: Text_Glyph, i: int) -> f32 {
+	frac := f32(0)
+	if g.size > 0 {
+		frac = clamp(f32(i - g.src) / f32(g.size), 0, 1)
+	}
+	if g.rtl {
+		return g.x + g.adv * (1 - frac)
+	}
+	return g.x + g.adv * frac
+}
+
+// text_glyph_for finds the glyph a logical byte offset belongs to.
+//
+// `trailing` picks which side of a boundary to look at, and is the whole of
+// what affinity does: `Downstream` wants the glyph whose span *starts* at the
+// offset, `Upstream` the glyph whose span *ends* there. At a direction boundary
+// those are two different glyphs in two different places.
+@(private)
+text_glyph_for :: proc(glyphs: []Text_Glyph, i: int, trailing: bool) -> int {
+	for g, gi in glyphs {
+		if trailing {
+			if i > g.src && i <= g.src + g.size {
+				return gi
+			}
+		} else {
+			if i >= g.src && i < g.src + g.size {
+				return gi
+			}
+		}
+	}
+	return -1
+}
+
+// text_width_complex measures a line that needed resolving. It is
+// `text_layout_line` and nothing else, which is the point: the width a caller
+// centres or wraps on is the sum of the advances the drawing will use, computed
+// by the same code, so the two cannot drift.
+@(private)
+text_width_complex :: proc(f: ^Fonts, text: string, dir: Bidi_Direction, st: Text_Style) -> f32 {
+	_, _, total := text_layout_line(f, text, dir, st)
+	return total
+}
+
+// draw_text_complex draws a resolved, shaped line. The glyph rasterisation is
+// the simple path's, verbatim; only the order of the glyphs and the source of
+// the pen positions differ.
+@(private)
+draw_text_complex :: proc(
+	c: ^Canvas,
+	f: ^Fonts,
+	text: string,
+	x, y: f32,
+	col: Color,
+	dir: Bidi_Direction,
+	st: Text_Style,
+	outline: Text_Outline,
+) -> f32 {
+	glyphs, _, total := text_layout_line(f, text, dir, st)
+	stroke := outline.width > 0 && outline.color.a > 0
+
+	for g in glyphs {
+		if g.blank {
+			continue
+		}
+		gpen := x + g.x + g.dx
+		if g.emoji {
+			emoji_draw(c, &f.emoji, g.cp, gpen, y, st.size, col.a)
+			continue
+		}
+		rf := resolve_rune(f, st.fam, st.wt, st.sl, g.cp).face
+
+		base := math.floor(gpen)
+		frac := gpen - base
+		phase := u8(clamp(frac * SUBPIXEL_PHASES, 0, SUBPIXEL_PHASES - 1))
+		key := glyph_key(g.cp, st.size, st.fam, st.wt, phase, st.sl)
+
+		if stroke {
+			o := outline_glyph_for(f, key, outline.width)^
+			if o.mask != nil {
+				ox := int(base) + o.xoff
+				oy := int(math.round(y)) + o.yoff
+				blit_mask(c, ox, oy, o.mask, o.w, o.h, outline.color)
+				if rf.synth_bold {
+					blit_mask(c, ox + 1, oy, o.mask, o.w, o.h, outline.color)
+				}
+			}
+		}
+		gl := glyph_for_key(f, key)^
+		if gl.mask != nil {
+			px := int(base) + gl.xoff
+			py := int(math.round(y)) + gl.yoff
+			blit_mask(c, px, py, gl.mask, gl.w, gl.h, col)
+			if rf.synth_bold {
+				blit_mask(c, px + 1, py, gl.mask, gl.w, gl.h, col)
+			}
+		}
+	}
+	return total
+}
+
+// text_caret_x is where the caret sits for a logical byte offset, measured from
+// the line origin.
+//
+// This is the procedure `text_width_upto` wanted to be and could not: once a
+// line reorders, the caret's x stops being a function of the prefix of the
+// string, because `text[:index]` contains characters that are drawn to the
+// *right* of the caret. The answer is an edge of a glyph in the visual list,
+// and which edge is what `affinity` says.
+text_caret_x :: proc(
+	f: ^Fonts,
+	text: string,
+	index: int,
+	size: f32,
+	affinity := Caret_Affinity.Downstream,
+	fam := Font_Family.Sans,
+	wt := Font_Weight.Regular,
+	tracking: f32 = 0,
+	sl := Font_Slant.Upright,
+	tabular := false,
+	dir := Bidi_Direction.Auto,
+) -> f32 {
+	i := clamp(index, 0, len(text))
+	face := &f.faces[fam][wt][sl]
+	if !face.ok || text_simple(text, dir) {
+		// Unchanged for text that cannot reorder: the prefix width is the
+		// caret, and both affinities give the same number.
+		return text_width_upto(f, text, i, size, fam, wt, tracking, sl, tabular)
+	}
+
+	st := text_style(f, size, fam, wt, sl, tracking, tabular)
+	glyphs, layout, total := text_layout_line(f, text, text_base_dir(text, dir), st)
+	rtl := bidi_layout_rtl(layout)
+	if len(glyphs) == 0 {
+		// An empty line parks the caret on the side its base direction starts
+		// from, which for a right-to-left field is the right.
+		return rtl ? total : 0
+	}
+
+	// The two ends of the string have only one answer each, whatever the
+	// caller asked for: there is no character at `len(text)` to be downstream
+	// of, and none before 0 to be upstream of.
+	aff := affinity
+	switch {
+	case i >= len(text):
+		aff = .Upstream
+	case i <= 0:
+		aff = .Downstream
+	}
+	if gi := text_glyph_for(glyphs, i, aff == .Upstream); gi >= 0 {
+		return text_glyph_caret_x(glyphs[gi], i)
+	}
+	// Only reachable for an offset no glyph claims, which means an empty run
+	// list or an index past the end of a shorter string than was resolved.
+	return rtl ? 0 : total
+}
+
+// text_index_at_affinity is `text_index_at` with the answer it had to throw
+// away: which side of the character the hit landed on, and therefore which of
+// the two visual positions a boundary offset means.
+//
+// Inside a right-to-left run the logical index *decreases* as x increases, so
+// the midpoint test flips: a hit on the right half of a right-to-left character
+// is a caret before it, not after it.
+text_index_at_affinity :: proc(
+	f: ^Fonts,
+	text: string,
+	size: f32,
+	x: f32,
+	fam := Font_Family.Sans,
+	wt := Font_Weight.Regular,
+	tracking: f32 = 0,
+	sl := Font_Slant.Upright,
+	tabular := false,
+	dir := Bidi_Direction.Auto,
+) -> (index: int, affinity: Caret_Affinity) {
+	face := &f.faces[fam][wt][sl]
+	if !face.ok || text_simple(text, dir) {
+		return text_index_at(f, text, size, x, fam, wt, tracking, sl, tabular), .Downstream
+	}
+
+	st := text_style(f, size, fam, wt, sl, tracking, tabular)
+	glyphs, layout, _ := text_layout_line(f, text, text_base_dir(text, dir), st)
+	if len(glyphs) == 0 {
+		return 0, .Downstream
+	}
+
+	// The boxes tile the line, so a coordinate inside it lands in exactly one
+	// of them. Zero-width boxes — the controls, the variation selectors — sit
+	// on the boundaries and are never what was clicked on.
+	hit, last := -1, -1
+	for g, gi in glyphs {
+		if g.adv <= 0 {
+			continue
+		}
+		last = gi
+		if x < g.x + g.adv {
+			hit = gi
+			break
+		}
+	}
+	if hit < 0 {
+		hit = last
+	}
+	if hit < 0 {
+		// Nothing drawable on the line at all.
+		return bidi_layout_rtl(layout) ? len(text) : 0, .Downstream
+	}
+
+	g := glyphs[hit]
+	left_half := x < g.x + g.adv / 2
+	if g.rtl {
+		// The leading edge of a right-to-left glyph is its *right* side.
+		if left_half {
+			return g.src + g.size, .Upstream
+		}
+		return g.src, .Downstream
+	}
+	if left_half {
+		return g.src, .Downstream
+	}
+	return g.src + g.size, .Upstream
+}
+
+// text_selection_spans fills `out` with the rectangles that highlight the
+// logical byte range `lo..hi`, and returns how many it wrote.
+//
+// A selection stops being one rectangle the moment a range crosses a direction
+// boundary: the characters are contiguous in the string and in two places on
+// screen. Visually adjacent runs of selected glyphs are merged, so selecting a
+// whole mixed line is still one rectangle, and selecting across its boundary is
+// two. Two spans is enough for one boundary; a line alternating direction
+// several times needs more, and a caller that passes a short buffer gets the
+// leftmost spans and a count equal to its length.
+text_selection_spans :: proc(
+	f: ^Fonts,
+	text: string,
+	lo, hi: int,
+	size: f32,
+	out: []Text_Span,
+	fam := Font_Family.Sans,
+	wt := Font_Weight.Regular,
+	tracking: f32 = 0,
+	sl := Font_Slant.Upright,
+	tabular := false,
+	dir := Bidi_Direction.Auto,
+) -> int {
+	if len(out) == 0 {
+		return 0
+	}
+	a := clamp(min(lo, hi), 0, len(text))
+	b := clamp(max(lo, hi), 0, len(text))
+	if a == b {
+		return 0
+	}
+
+	face := &f.faces[fam][wt][sl]
+	if !face.ok || text_simple(text, dir) {
+		x0 := text_width_upto(f, text, a, size, fam, wt, tracking, sl, tabular)
+		x1 := text_width_upto(f, text, b, size, fam, wt, tracking, sl, tabular)
+		out[0] = {x0, x1 - x0}
+		return 1
+	}
+
+	st := text_style(f, size, fam, wt, sl, tracking, tabular)
+	glyphs, _, _ := text_layout_line(f, text, text_base_dir(text, dir), st)
+	n := 0
+	for g in glyphs {
+		if g.adv <= 0 || g.src + g.size <= a || g.src >= b {
+			continue
+		}
+		// A ligature only partly inside the range is highlighted in
+		// proportion, for the same reason the caret inside one is
+		// interpolated: there is no edge between its letters.
+		s := max(g.src, a)
+		e := min(g.src + g.size, b)
+		x0 := text_glyph_caret_x(g, s)
+		x1 := text_glyph_caret_x(g, e)
+		if x0 > x1 {
+			x0, x1 = x1, x0
+		}
+		if n > 0 && abs(out[n - 1].x + out[n - 1].w - x0) <= 0.01 {
+			out[n - 1].w = x1 - out[n - 1].x
+			continue
+		}
+		if n >= len(out) {
+			break
+		}
+		out[n] = {x0, x1 - x0}
+		n += 1
+	}
+	return n
+}
+
+// text_caret_move steps the caret one character to the left or the right *on
+// screen*, which in a right-to-left run is the opposite of stepping the byte
+// offset.
+//
+// The caret is identified by the glyph it is attached to and the side of it,
+// which is what the index and affinity together say. Moving crosses exactly one
+// glyph, and the caret arrives on its far side — stated in terms of that
+// glyph's own direction, so the returned affinity is the one that puts the
+// caret back where this procedure left it. At either end of the line the caret
+// does not move and the input comes back unchanged, which is the signal to try
+// the next line.
+text_caret_move :: proc(
+	f: ^Fonts,
+	text: string,
+	index: int,
+	size: f32,
+	step: Caret_Step,
+	affinity := Caret_Affinity.Downstream,
+	fam := Font_Family.Sans,
+	wt := Font_Weight.Regular,
+	tracking: f32 = 0,
+	sl := Font_Slant.Upright,
+	tabular := false,
+	dir := Bidi_Direction.Auto,
+) -> (int, Caret_Affinity) {
+	i := clamp(index, 0, len(text))
+	face := &f.faces[fam][wt][sl]
+	if !face.ok || text_simple(text, dir) {
+		// Visual movement is logical movement when nothing reorders.
+		if step == .Right {
+			if i >= len(text) {
+				return i, affinity
+			}
+			_, n := utf8.decode_rune_in_string(text[i:])
+			return i + max(n, 1), .Upstream
+		}
+		if i <= 0 {
+			return i, affinity
+		}
+		_, n := utf8.decode_last_rune_in_string(text[:i])
+		return i - max(n, 1), .Downstream
+	}
+
+	st := text_style(f, size, fam, wt, sl, tracking, tabular)
+	glyphs, _, _ := text_layout_line(f, text, text_base_dir(text, dir), st)
+	if len(glyphs) == 0 {
+		return i, affinity
+	}
+
+	aff := affinity
+	switch {
+	case i >= len(text):
+		aff = .Upstream
+	case i <= 0:
+		aff = .Downstream
+	}
+	cur := text_glyph_for(glyphs, i, aff == .Upstream)
+	if cur < 0 {
+		return i, affinity
+	}
+
+	// The caret's position between glyphs, counted in gaps: slot k sits between
+	// glyph k-1 and glyph k. Which gap a (index, affinity) pair names depends
+	// on the direction of the glyph it is attached to, because a right-to-left
+	// glyph's leading edge is on its right.
+	g := glyphs[cur]
+	k := cur
+	if (aff == .Downstream) == g.rtl {
+		k = cur + 1
+	}
+	if aff == .Downstream && i > g.src && i < g.src + g.size {
+		// Mid-ligature: moving leaves the ligature rather than splitting it
+		// further, so snap to the side being moved towards.
+		k = step == .Right ? cur + 1 : cur
+		if g.rtl {
+			k = step == .Right ? cur : cur + 1
+		}
+	}
+
+	if step == .Right {
+		for k < len(glyphs) && glyphs[k].adv <= 0 {
+			k += 1
+		}
+		if k >= len(glyphs) {
+			return i, affinity
+		}
+		crossed := glyphs[k]
+		// The caret is now at the crossed glyph's right edge.
+		if crossed.rtl {
+			return crossed.src, .Downstream
+		}
+		return crossed.src + crossed.size, .Upstream
+	}
+
+	for k > 0 && glyphs[k - 1].adv <= 0 {
+		k -= 1
+	}
+	if k <= 0 {
+		return i, affinity
+	}
+	crossed := glyphs[k - 1]
+	// And here at its left edge.
+	if crossed.rtl {
+		return crossed.src + crossed.size, .Upstream
+	}
+	return crossed.src, .Downstream
+}
+
+// text_glyphs lays out a line and hands back the glyph list, for the callers
+// that genuinely need it: an editor drawing per-character decoration, a
+// truncation that has to happen visually rather than on the logical prefix, or
+// a test reading back what was drawn.
+//
+// The slice aliases scratch on `f` and the next text call overwrites it. Copy
+// it or finish with it.
+text_glyphs :: proc(
+	f: ^Fonts,
+	text: string,
+	size: f32,
+	fam := Font_Family.Sans,
+	wt := Font_Weight.Regular,
+	tracking: f32 = 0,
+	sl := Font_Slant.Upright,
+	tabular := false,
+	dir := Bidi_Direction.Auto,
+) -> (glyphs: []Text_Glyph, total: f32) {
+	st := text_style(f, size, fam, wt, sl, tracking, tabular)
+	g, _, w := text_layout_line(f, text, text_base_dir(text, dir), st)
+	return g, w
 }

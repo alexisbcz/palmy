@@ -1,5 +1,7 @@
 package palmy
 
+import "core:unicode/utf8"
+
 // bidi.odin — the Unicode Bidirectional Algorithm, UAX #9.
 //
 // Everything else in palmy lays a string out by walking its codepoints left to
@@ -2713,3 +2715,73 @@ BIDI_BRACKET_CANON := [2][2]rune{
 	{0x232A, 0x3009},
 }
 // ---- END GENERATED TABLES ----
+
+// ---------------------------------------------------------------------------
+// What the text path needs from here
+//
+// Two questions a layout asks before it asks for anything else: may I skip the
+// whole algorithm, and which direction does this line inherit.
+// ---------------------------------------------------------------------------
+
+// bidi_direction_for_level turns a resolved base level back into the forced
+// direction that reproduces it.
+//
+// This is how a wrapped paragraph gives each of its lines the paragraph's own
+// direction. L1 resets trailing whitespace and L2 reorders per *line*, so every
+// line has to be resolved separately — but resolving each one `.Auto` lets a
+// line that happens to begin with a Latin word flip to left-to-right in the
+// middle of a Hebrew paragraph. Resolve `bidi_base_level` once over the whole
+// paragraph, pass it through here, and hand the result to every line.
+bidi_direction_for_level :: proc "contextless" (level: u8) -> Bidi_Direction {
+	return bidi_is_rtl(level) ? .RTL : .LTR
+}
+
+// bidi_class_needs_resolve reports whether a class can make a left-to-right
+// paragraph reorder: a strong right-to-left type, an Arabic number, or one of
+// the explicit embedding, override and isolate controls.
+//
+// Everything else — L, EN, the separators, the neutrals, NSM, BN — resolves to
+// an even level under an even base level, and L2 reverses nothing when no odd
+// level is present. (EN does rise two levels under I1, which is why the test is
+// about oddness rather than about the level being zero.)
+bidi_class_needs_resolve :: proc "contextless" (c: Bidi_Class) -> bool {
+	switch c {
+	case .R, .AL, .AN, .LRE, .RLE, .LRO, .RLO, .PDF, .LRI, .RLI, .FSI, .PDI:
+		return true
+	case .L, .EN, .ES, .ET, .CS, .NSM, .BN, .B, .S, .WS, .ON:
+		return false
+	}
+	return false
+}
+
+// bidi_cannot_reorder reports that a string's visual order is certainly its
+// logical order under a left-to-right base direction, so the caller may skip
+// `bidi_resolve` entirely and walk the codepoints as it always has.
+//
+// This is the cheap test the module header promises. The common case — every
+// byte below 0x80 — costs one pass of byte comparisons, because no ASCII
+// character is R, AL, AN or an explicit control. Above that, only codepoints
+// from U+0590 up can be any of those (Hebrew is the first right-to-left block,
+// and LRM/RLM, ALM and the isolates all sit higher), so Latin-1, Latin
+// Extended, Greek, Cyrillic and every CJK string are decided by the range test
+// alone and never reach the class table.
+//
+// A true answer is a promise; a false answer is only a suspicion, and the
+// caller resolves to find out.
+bidi_cannot_reorder :: proc "contextless" (text: string) -> bool {
+	for i := 0; i < len(text); {
+		if text[i] < 0x80 {
+			i += 1
+			continue
+		}
+		r, n := utf8.decode_rune_in_string(text[i:])
+		i += max(n, 1)
+		if r < 0x0590 {
+			continue
+		}
+		if bidi_class_needs_resolve(bidi_class(r)) {
+			return false
+		}
+	}
+	return true
+}
