@@ -15,6 +15,7 @@ package call
 
 import "core:fmt"
 import "core:net"
+import "core:os"
 import "core:slice"
 import "core:strings"
 import "core:time"
@@ -71,7 +72,12 @@ run_self_test :: proc() -> int {
 	test_opus()
 	test_bind_is_loopback()
 	test_pipe_fds()
+	test_duplex_child()
 	test_device_parsing()
+	test_codec_negotiation()
+	test_keyframe_flag()
+	test_h264_split()
+	test_keyframe_loss_path()
 
 	fmt.printfln("\n%d checks, %d failures", T.checks, T.fails)
 	if T.fails == 0 {
@@ -950,7 +956,7 @@ test_device_parsing :: proc() {
 		check(argv[len(argv) - 1] == "-", "writing raw PCM to stdout")
 
 		cam := Device{kind = .Camera, path = "/dev/video0", name = "Brio 100", real = true}
-		vargv := video_capture_argv(cam)
+		vargv := video_capture_argv(cam, .MJPEG)
 		check(vargv[0] == "ffmpeg", "a real camera is captured with ffmpeg")
 		has_v4l2, has_path, has_mjpeg := false, false, false
 		for a in vargv {
@@ -967,9 +973,18 @@ test_device_parsing :: proc() {
 		check(has_path, "on the enumerated /dev path")
 		check(has_mjpeg, "producing the same MJPEG the synthetic source does")
 
+		// The same device, asked for H.264: the demuxer and the path must not
+		// move, because the codec is an encoder setting and nothing else.
+		h264argv := video_capture_argv(cam, .H264)
+		hcmd := strings.join(h264argv, " ", context.temp_allocator)
+		check(strings.contains(hcmd, "v4l2"), "the H.264 camera command uses the same demuxer")
+		check(strings.contains(hcmd, "/dev/video0"), "and the same /dev path")
+		check(strings.contains(hcmd, "libx264"), "and encodes with libx264")
+		check(!strings.contains(hcmd, "-f mjpeg"), "and does not also emit MJPEG")
+
 		// And the synthetic default opens nothing at all.
 		syn := Device{kind = .Synthetic, name = SYNTH_VIDEO_NAME}
-		sargv := video_capture_argv(syn)
+		sargv := video_capture_argv(syn, .MJPEG)
 		for a in sargv {
 			check(
 				!strings.has_prefix(a, "/dev/video"),
@@ -998,24 +1013,69 @@ test_device_parsing :: proc() {
 		check(!vid.real && vid.kind == .Synthetic, "a real camera is refused without the flag")
 
 		acmd := strings.join(audio_capture_argv(src), " ", context.temp_allocator)
-		vcmd := strings.join(video_capture_argv(vid), " ", context.temp_allocator)
 		check(
 			!strings.contains(acmd, "pw-record") && !strings.contains(acmd, "--target="),
 			"the resolved audio command names no device: %s",
 			acmd,
 		)
 		check(strings.contains(acmd, "lavfi"), "it is a lavfi source")
+		// Both codecs, because adding one must not add a path to the hardware.
+		for codec in Video_Codec {
+			vcmd := strings.join(video_capture_argv(vid, codec), " ", context.temp_allocator)
+			check(
+				!strings.contains(vcmd, "/dev/video") && !strings.contains(vcmd, "v4l2"),
+				"the resolved %s command names no device: %s",
+				video_codec_name(codec),
+				vcmd,
+			)
+			check(
+				strings.contains(vcmd, "lavfi"),
+				"the resolved %s command is a lavfi source",
+				video_codec_name(codec),
+			)
+		}
+		// The decoder is a pure byte pump with no input of its own, which is
+		// what makes it safe no matter what arrives on the socket.
+		dcmd := strings.join(h264_decoder_argv(320, 180), " ", context.temp_allocator)
 		check(
-			!strings.contains(vcmd, "/dev/video") && !strings.contains(vcmd, "v4l2"),
-			"the resolved video command names no device: %s",
-			vcmd,
+			!strings.contains(dcmd, "/dev/") && !strings.contains(dcmd, "v4l2") &&
+			!strings.contains(dcmd, "pulse") && !strings.contains(dcmd, "alsa"),
+			"the H.264 decoder command opens no device: %s",
+			dcmd,
 		)
-		check(strings.contains(vcmd, "lavfi"), "it is a lavfi source")
 
 		// And with the flag, they are honoured — the lock is a policy, not an
 		// inability.
 		rsrc, rvid := resolve_capture(true, mic, cam)
 		check(rsrc.real && rvid.real, "with --allow-real-devices the real devices are kept")
+
+		// And the path a keyframe request opens. `video_on_keyframe_request`
+		// respawns the encoder, so it is the one place in this application
+		// where a capture command line is built *after* the device picker has
+		// had its say — which would be exactly the place for a resolved
+		// device to be quietly swapped back for the real one. It is not: the
+		// resolved kind and path are what `video_start` stored, and the
+		// restart can only rebuild the command it already had.
+		{
+			rv: Video
+			video_init(&rv)
+			defer video_destroy(&rv)
+			video_start(&rv, vid, .H264)
+			check(
+				!strings.contains(rv.cap.argv, "/dev/video") &&
+				!strings.contains(rv.cap.argv, "v4l2"),
+				"the started encoder opens no camera",
+			)
+			check(rv.src_kind == .Synthetic, "and remembers a synthetic source for a restart")
+			check(video_on_keyframe_request(&rv, 100.0), "a keyframe request restarts it")
+			check(
+				!strings.contains(rv.cap.argv, "/dev/video") &&
+				!strings.contains(rv.cap.argv, "v4l2") &&
+				strings.contains(rv.cap.argv, "lavfi"),
+				"and the restarted encoder still opens no camera: %s",
+				rv.cap.argv,
+			)
+		}
 
 		// A PipeWire video node has an id but no /dev path, so it is not
 		// openable even when real devices are unlocked.
@@ -1047,6 +1107,567 @@ test_device_parsing :: proc() {
 	}
 	for dev in d.sinks[1:] {
 		fmt.printfln("        output #%d %s", dev.id, dev.name)
+	}
+}
+
+// ---------------------------------------------------------------------------
+// 13. Video codec negotiation
+//
+// The whole of it is a bitmask intersection and a preference order, which is
+// exactly the kind of thing that is obviously right and wrong in one
+// direction. Every pair is checked, including the pairs that cannot happen.
+// ---------------------------------------------------------------------------
+
+test_codec_negotiation :: proc() {
+	group("video codec negotiation")
+
+	check(negotiate_video(CODEC_ALL, CODEC_ALL) == .H264, "two modern peers pick H.264")
+	check(
+		negotiate_video(CODEC_ALL, CODEC_MJPEG) == .MJPEG,
+		"a peer that only offers MJPEG gets MJPEG",
+	)
+	check(
+		negotiate_video(CODEC_MJPEG, CODEC_ALL) == .MJPEG,
+		"and so does the other way round, which is what makes it one answer",
+	)
+	check(negotiate_video(CODEC_H264, CODEC_H264) == .H264, "two H.264-only peers pick H.264")
+	check(
+		negotiate_video(CODEC_H264, CODEC_MJPEG) == .MJPEG,
+		"an empty intersection falls back to MJPEG rather than to no video",
+	)
+	check(negotiate_video(0, 0) == .MJPEG, "and so does an offer of nothing at all")
+	check(negotiate_video(CODEC_ALL, 0xFF) == .H264, "unknown bits in an offer are ignored")
+
+	// Symmetry is the property the design rests on: both ends run this over
+	// the same two masks and must not disagree, because there is no answer
+	// message to correct them with.
+	symmetric := true
+	for a in u8(0) ..= 3 {
+		for b in u8(0) ..= 3 {
+			if negotiate_video(a, b) != negotiate_video(b, a) {
+				symmetric = false
+			}
+		}
+	}
+	check(symmetric, "negotiation is symmetric over every pair of offers")
+
+	check(video_codec_payload(.H264) == .Video_H264, "H.264 rides payload type 4")
+	check(video_codec_payload(.MJPEG) == .Video_JPEG, "MJPEG stays on payload type 3")
+	check(is_video(.Video_H264) && is_video(.Video_JPEG), "both are video to the fragmenter")
+	check(!is_video(.Control) && !is_video(.Audio_Opus), "and audio and control are not")
+
+	// Payload type 4 must parse and type 5 must not: an unknown type is a
+	// stray packet, and this port receives strays.
+	{
+		buf: [HDR + 4]u8
+		write_header(buf[:], {ptype = .Video_H264, flags = FLAG_MARKER, nfrag = 1})
+		_, _, ok := parse(buf[:])
+		check(ok, "a payload type 4 datagram parses")
+		buf[4] = 5
+		_, _, bad := parse(buf[:])
+		check(!bad, "a payload type 5 datagram is still rejected")
+	}
+
+	// The offer on the wire, and what silence means.
+	{
+		out: [128]u8
+		body := write_control(out[:], {kind = .Invite, name = "Alice", codecs = CODEC_ALL})
+		c, ok := read_control(body)
+		check(ok && c.codecs == CODEC_ALL, "the codec offer round trips (%02x)", c.codecs)
+		check(c.name == "Alice", "and the name still reads correctly after it")
+
+		// An older peer's message: the same bytes without the trailing offer.
+		old := body[:len(body) - 1]
+		c2, ok2 := read_control(old)
+		check(ok2, "a control message with no offer byte still parses")
+		check(
+			c2.codecs == CODEC_MJPEG,
+			"and reads as MJPEG-only, which is what a peer that never mentioned a codec is",
+		)
+		check(c2.name == "Alice", "with the name intact")
+
+		// And the keyframe request, which is the eighth kind.
+		kf := write_control(out[:], {kind = .Keyframe, name = "Bob", codecs = CODEC_ALL})
+		c3, ok3 := read_control(kf)
+		check(ok3 && c3.kind == .Keyframe, "a keyframe request round trips")
+		bad := out[:4]
+		out[0] = u8(Control_Kind.Keyframe) + 1
+		put_u16(out[2:4], 0)
+		_, ok4 := read_control(bad)
+		check(!ok4, "a control kind above Keyframe is rejected")
+	}
+
+	// The flag's three spellings, because a typo here is a peer that silently
+	// speaks the wrong codec.
+	for spec in ([?]string{"auto", "both", ""}) {
+		m, e := parse_codec_offer(spec)
+		check(e == "" && m == CODEC_ALL, "--video-codec %q offers both", spec)
+	}
+	for spec in ([?]string{"h264", "h.264", "avc"}) {
+		m, e := parse_codec_offer(spec)
+		check(e == "" && m == CODEC_H264, "--video-codec %q offers H.264 only", spec)
+	}
+	for spec in ([?]string{"mjpeg", "jpeg", "mjpg"}) {
+		m, e := parse_codec_offer(spec)
+		check(e == "" && m == CODEC_MJPEG, "--video-codec %q offers MJPEG only", spec)
+	}
+	_, e := parse_codec_offer("vp9")
+	check(e != "", "an unknown codec name is refused rather than ignored")
+}
+
+// ---------------------------------------------------------------------------
+// 14. The keyframe flag in the header
+// ---------------------------------------------------------------------------
+
+test_keyframe_flag :: proc() {
+	group("keyframe flag")
+
+	want := Header {
+		ptype = .Video_H264,
+		flags = FLAG_MARKER | FLAG_KEYFRAME,
+		seq   = 11,
+		ts_us = 99,
+		frame = 7,
+		frag  = 1,
+		nfrag = 2,
+	}
+	buf: [HDR + 4]u8
+	write_header(buf[:], want)
+	got, _, ok := parse(buf[:])
+	check(ok, "a keyframe datagram parses")
+	check(keyframed(got), "the keyframe flag survives")
+	check(marked(got), "alongside the marker bit")
+
+	// The marker check must still bite: the two flags are independent and one
+	// must not excuse the other.
+	buf[5] = FLAG_KEYFRAME
+	_, _, bad := parse(buf[:])
+	check(!bad, "a keyframe fragment whose marker disagrees with the counters is still rejected")
+
+	// Every fragment of a keyframe carries the flag, because losing the first
+	// one must not lose the fact that the frame was a keyframe.
+	{
+		data := make([]u8, 3 * MTU_PAYLOAD + 7)
+		defer delete(data)
+		out: [MAX_PACKET]u8
+		n := fragment_count(len(data))
+		check_eq_int(n, 4, "the test frame fragments")
+		all_kf, markers := true, 0
+		for i in 0 ..< n {
+			dg := fragment_into(out[:], data, i, .Video_H264, u16(i), 5, 1, FLAG_KEYFRAME)
+			h, _, pok := parse(dg)
+			if !pok || !keyframed(h) {
+				all_kf = false
+			}
+			if pok && marked(h) {
+				markers += 1
+			}
+		}
+		check(all_kf, "every fragment of a keyframe is flagged as one")
+		check_eq_int(markers, 1, "and exactly one of them carries the marker")
+
+		dg := fragment_into(out[:], data, 0, .Video_H264, 0, 5, 1, 0)
+		h, _, _ := parse(dg)
+		check(!keyframed(h), "a predicted frame is not flagged")
+	}
+}
+
+// ---------------------------------------------------------------------------
+// 15. The H.264 access-unit splitter, against a stream x264 really produced
+//
+// This is the H.264 twin of the MJPEG splitter test, and it does the same
+// thing: run the encoder arguments this application actually uses, then cut the
+// result up with the code the application actually cuts it up with. It also
+// measures, because "H.264 is smaller" is the entire reason the codec is here
+// and a test is a better place to find out it is not than a demo is.
+// ---------------------------------------------------------------------------
+
+H264_TEST_FILE :: "/tmp/call-selftest.h264"
+MJPEG_TEST_FILE :: "/tmp/call-selftest.mjpeg"
+
+test_h264_split :: proc() {
+	group("H.264 access-unit splitter")
+
+	if !kit.has_tool("ffmpeg") {
+		fmt.println("  SKIP  ffmpeg is not installed")
+		return
+	}
+
+	// A small, short clip at the real settings. The resolution is dropped so
+	// the test costs a second rather than ten; everything else — profile,
+	// preset, GOP, the access-unit delimiters, the repeated parameter sets —
+	// is exactly what a call uses, because that is the point.
+	ow, oh, ofps := v_width, v_height, v_fps
+	v_width, v_height, v_fps = 160, 120, 30
+	defer {v_width, v_height, v_fps = ow, oh, ofps}
+
+	FRAMES :: 90 // three seconds, so the keyframe interval is visible twice
+	enc := strings.join(h264_encode_args(), " ", context.temp_allocator)
+	cmd := fmt.tprintf(
+		"ffmpeg -y -nostdin -hide_banner -loglevel error -f lavfi -i %s -frames:v %d %s",
+		synth_pattern(),
+		FRAMES,
+		strings.trim_suffix(enc, " -"),
+	)
+	_, _ = kit.run({"sh", "-c", fmt.tprintf("%s %s", cmd, H264_TEST_FILE)}, context.temp_allocator)
+	stream, rerr := os.read_entire_file_from_path(H264_TEST_FILE, context.temp_allocator)
+	if rerr != nil || len(stream) == 0 {
+		fmt.println("  SKIP  libx264 produced nothing")
+		return
+	}
+	defer os.remove(H264_TEST_FILE)
+
+	v: Video
+	video_init(&v)
+	defer video_destroy(&v)
+	v.codec = .H264
+	append(&v.accum, ..stream)
+
+	frames, keys, total, biggest := 0, 0, 0, 0
+	key_at := make([dynamic]int, context.temp_allocator)
+	first_au: []u8
+	for {
+		n, kf, ok := next_frame(&v)
+		if !ok {
+			break
+		}
+		au := v.accum[:n]
+		if frames == 0 {
+			first_au = slice.clone(au, context.temp_allocator)
+			check(
+				au[0] == 0 && au[1] == 0 && au[2] == 0 && au[3] == 1 && (au[4] & 0x1F) == 9,
+				"the first access unit opens with a four-byte start code and an AUD",
+			)
+			check(kf, "and it is a keyframe, because a stream has to start on one")
+		}
+		if kf {
+			keys += 1
+			append(&key_at, frames)
+		}
+		total += n
+		biggest = max(biggest, n)
+		frames += 1
+		remove_range(&v.accum, 0, n)
+	}
+
+	// The last access unit has no successor to delimit it, so it stays in the
+	// accumulator: FRAMES - 1 is the right answer, not FRAMES.
+	check(frames >= FRAMES - 2, "the splitter found %d of %d access units", frames, FRAMES)
+	// One at the head of the stream, then one every interval after it.
+	check_eq_int(
+		keys,
+		1 + (frames - 1) / (v_fps * V_GOP_SECONDS),
+		"keyframes in %d frames",
+		frames,
+	)
+	gaps_even := true
+	for i in 1 ..< len(key_at) {
+		if key_at[i] - key_at[i - 1] != v_fps * V_GOP_SECONDS {
+			gaps_even = false
+		}
+	}
+	check(gaps_even, "and they are exactly %d frames apart", v_fps * V_GOP_SECONDS)
+
+	mean := total / max(1, frames)
+	check(mean > 0 && mean < 4 * MTU_PAYLOAD, "the mean access unit is %d bytes", mean)
+	check(
+		biggest < REASM_MAX_FRAGS * MTU_PAYLOAD,
+		"the largest is %d bytes, inside the reassembler's %d",
+		biggest,
+		REASM_MAX_FRAGS * MTU_PAYLOAD,
+	)
+
+	// And the measurement that justifies the whole codec: the same source,
+	// the same frame count, through the MJPEG arguments.
+	{
+		mcmd := strings.join(mjpeg_encode_args(), " ", context.temp_allocator)
+		_, _ = kit.run(
+			{
+				"sh",
+				"-c",
+				fmt.tprintf(
+					"ffmpeg -y -nostdin -hide_banner -loglevel error -f lavfi -i %s -frames:v %d %s %s",
+					synth_pattern(),
+					FRAMES,
+					strings.trim_suffix(mcmd, " -"),
+					MJPEG_TEST_FILE,
+				),
+			},
+			context.temp_allocator,
+		)
+		mjpeg, merr := os.read_entire_file_from_path(MJPEG_TEST_FILE, context.temp_allocator)
+		if merr == nil && len(mjpeg) > 0 {
+			defer os.remove(MJPEG_TEST_FILE)
+			// Three times, not the thirteen the report quotes, and the
+			// difference is the point: H.264 here is rate-targeted, so it
+			// spends 300 kbit/s whether the picture is 160x120 or 640x360,
+			// while MJPEG's cost falls with the pixel count. The ratio in the
+			// report is the ratio at the call resolution; this assertion only
+			// has to catch an encoder that has stopped compressing at all.
+			check(
+				len(stream) * 3 < len(mjpeg),
+				"H.264 is %.1fx smaller than MJPEG over the same %d frames at %dx%d (%d vs %d bytes)",
+				f64(len(mjpeg)) / f64(max(1, len(stream))),
+				FRAMES,
+				v_width,
+				v_height,
+				len(stream),
+				len(mjpeg),
+			)
+		}
+	}
+
+	// Keyframe detection, against real NAL units rather than a fabrication.
+	check(au_has_idr(first_au), "au_has_idr finds the IDR slice in a real keyframe")
+	{
+		v2: Video
+		video_init(&v2)
+		defer video_destroy(&v2)
+		v2.codec = .H264
+		append(&v2.accum, ..stream)
+		// Skip the keyframe; the second access unit is predicted.
+		n1, _, _ := next_frame(&v2)
+		remove_range(&v2.accum, 0, n1)
+		n2, kf2, ok2 := next_frame(&v2)
+		check(ok2 && !kf2, "the second access unit is predicted, not a keyframe")
+		check(!au_has_idr(v2.accum[:n2]), "and au_has_idr says so")
+	}
+
+	// A partial access unit must not be emitted, and garbage in front of one
+	// must be resynchronised past rather than handed to a decoder.
+	{
+		v3: Video
+		video_init(&v3)
+		defer video_destroy(&v3)
+		v3.codec = .H264
+		append(&v3.accum, ..first_au)
+		_, _, got := next_frame(&v3)
+		check(!got, "an access unit with no successor is not emitted")
+
+		v4: Video
+		video_init(&v4)
+		defer video_destroy(&v4)
+		v4.codec = .H264
+		append(&v4.accum, ..([]u8{7, 7, 7, 7, 7, 7, 7, 7, 7}))
+		append(&v4.accum, ..first_au)
+		append(&v4.accum, ..([]u8{0, 0, 0, 1, 9, 0x10}))
+		_, _, g1 := next_frame(&v4)
+		check(!g1, "the first call resynchronises on the delimiter")
+		n4, kf4, g2 := next_frame(&v4)
+		check(g2 && n4 == len(first_au), "the second returns the recovered access unit")
+		check(kf4, "still recognised as a keyframe after the resynchronisation")
+	}
+
+	// The decoder output size: capped so a frame fits the pipe it has to cross.
+	{
+		dw, dh := decoder_output_size(640, 360)
+		check(dw == 640 && dh == 360, "the call resolution is decoded at full size")
+		bw, bh := decoder_output_size(1280, 720)
+		check(bw * bh * 4 <= DEC_PIPE_BYTES, "a 720p frame is capped to %dx%d to fit the pipe", bw, bh)
+		check(bw % 2 == 0 && bh % 2 == 0, "and the capped size stays even")
+		check(abs(f64(bw) / f64(bh) - 16.0 / 9.0) < 0.05, "and keeps the aspect ratio")
+	}
+}
+
+// ---------------------------------------------------------------------------
+// 16. Loss, and the keyframe request
+//
+// MJPEG needed none of this: a lost frame was a lost frame. H.264 predicts, so
+// a frame that never arrived leaves every frame after it referring to a
+// picture the decoder has not got. The receiver therefore has to notice, ask,
+// and wait — and all three are driven here with deliberately dropped frames,
+// because loopback will never drop one.
+// ---------------------------------------------------------------------------
+
+test_keyframe_loss_path :: proc() {
+	group("H.264 loss and keyframe requests")
+
+	v: Video
+	video_init(&v)
+	defer video_destroy(&v)
+	v.codec = .H264
+	// What video_start would have set: nothing is decodable until an IDR.
+	v.need_keyframe = true
+
+	// A session that is not open: send_control writes a datagram into its own
+	// buffer and `send_datagram` drops it, so the counters are exercised
+	// without a socket.
+	s: Session
+	s.codecs = CODEC_ALL
+	check(!s.open, "the test session has no socket, so nothing leaves the process")
+
+	payload := []u8{1, 2, 3, 4, 5, 6, 7, 8}
+	out: [MAX_PACKET]u8
+	seq: u16
+	deliver :: proc(
+		v: ^Video,
+		s: ^Session,
+		out: []u8,
+		payload: []u8,
+		seq: ^u16,
+		frame: u32,
+		kf: bool,
+		t: f64,
+	) {
+		flags: u8 = kf ? FLAG_KEYFRAME : 0
+		dg := fragment_into(out, payload, 0, .Video_H264, seq^, u64(frame) * 1000, frame, flags)
+		seq^ += 1
+		h, pl, ok := parse(dg)
+		if !ok {
+			return
+		}
+		video_receive(v, s, h, pl, t)
+	}
+
+	// 1. A predicted frame, with no keyframe yet seen.
+	deliver(&v, &s, out[:], payload, &seq, 1, false, 1.0)
+	check_eq_int(v.frames_skipped, 1, "a predicted frame before any keyframe is skipped")
+	check(v.need_keyframe, "and the receiver is still waiting")
+	check_eq_int(v.pli_sent, 1, "and it has asked for a keyframe")
+	check_eq_int(v.dec.pushed, 0, "nothing was handed to the decoder")
+
+	// 2. The rate limit: asking again immediately must not ask again.
+	deliver(&v, &s, out[:], payload, &seq, 2, false, 1.0)
+	check_eq_int(v.frames_skipped, 2, "the next predicted frame is skipped too")
+	check_eq_int(v.pli_sent, 1, "but the request is rate limited to one per %.1f s", V_PLI_GAP)
+
+	// 3. A keyframe resumes decoding.
+	deliver(&v, &s, out[:], payload, &seq, 3, true, 1.0)
+	check(!v.need_keyframe, "a keyframe clears the wait")
+	check_eq_int(v.keyframes_rx, 1, "and is counted")
+	check(v.dec.pushed >= 1 || v.dec.starts >= 1, "and reaches the decoder")
+
+	// 4. Frames that follow it are accepted.
+	before := v.frames_skipped
+	deliver(&v, &s, out[:], payload, &seq, 4, false, 1.1)
+	deliver(&v, &s, out[:], payload, &seq, 5, false, 1.2)
+	check_eq_int(v.frames_skipped, before, "predicted frames after a keyframe are not skipped")
+	check_eq_int(v.loss_events, 0, "and a dense frame-id sequence is not mistaken for loss")
+
+	// 5. A hole in the frame-id sequence is loss, and is handled as loss.
+	deliver(&v, &s, out[:], payload, &seq, 7, false, 2.0) // 6 never arrived
+	check_eq_int(v.loss_events, 1, "a gap in the frame ids is detected")
+	check(v.need_keyframe, "and stops the receiver feeding predicted frames")
+	check_eq_int(v.pli_sent, 2, "and asks the sender for a keyframe")
+	check_eq_int(v.frames_skipped, before + 1, "the frame that revealed the gap is itself skipped")
+
+	// 6. And it waits for a real keyframe, not merely for the next frame.
+	deliver(&v, &s, out[:], payload, &seq, 8, false, 2.01)
+	check_eq_int(v.frames_skipped, before + 2, "a predicted frame during the wait is skipped")
+	check(v.need_keyframe, "and the wait continues")
+	deliver(&v, &s, out[:], payload, &seq, 9, true, 2.02)
+	check(!v.need_keyframe, "the next keyframe ends it")
+
+	// 7. `--no-keyframe-request` really stops the asking.
+	{
+		pli := v.pli_sent
+		v.ask_keyframes = false
+		deliver(&v, &s, out[:], payload, &seq, 11, false, 3.0) // another gap
+		check(v.need_keyframe, "a gap still stops the decoder being fed")
+		check_eq_int(v.pli_sent, pli, "but with --no-keyframe-request nothing is asked for")
+		v.ask_keyframes = true
+	}
+
+	// 8. MJPEG never waits, because every MJPEG frame is a keyframe. The same
+	//    gap, the same code path, a different answer.
+	{
+		m: Video
+		video_init(&m)
+		defer video_destroy(&m)
+		m.codec = .MJPEG
+		ms: Session
+		mseq: u16
+		jpeg := []u8{0xFF, 0xD8, 0xFF, 0xD9}
+		deliver(&m, &ms, out[:], jpeg, &mseq, 1, true, 1.0)
+		deliver(&m, &ms, out[:], jpeg, &mseq, 5, true, 1.1) // a gap of three
+		check_eq_int(m.loss_events, 1, "MJPEG still counts the gap")
+		check(!m.need_keyframe, "but never waits, because every frame stands alone")
+		check_eq_int(m.frames_skipped, 0, "so no frame is skipped")
+	}
+
+	// 9. The sender's half: a request is counted, honoured once, then rate
+	//    limited — and under MJPEG it is a no-op, because there is nothing to
+	//    force.
+	{
+		e: Video
+		video_init(&e)
+		defer video_destroy(&e)
+		e.codec = .MJPEG
+		check(!video_on_keyframe_request(&e, 1.0), "MJPEG does not cycle an encoder for a request")
+		check_eq_int(e.pli_rx, 1, "but the request is counted")
+
+		e.codec = .H264
+		e.src_kind = .Synthetic
+		check(video_on_keyframe_request(&e, 10.0), "H.264 honours the first request")
+		check_eq_int(e.keyframes_forced, 1, "and says it forced one")
+		check(
+			strings.contains(e.cap.argv, "lavfi") && !strings.contains(e.cap.argv, "/dev/video"),
+			"the respawned encoder is still the synthetic source: %s",
+			e.cap.argv,
+		)
+		check(
+			!video_on_keyframe_request(&e, 10.1),
+			"a second request inside %.2f s is refused",
+			V_FORCE_GAP,
+		)
+		check_eq_int(e.pli_rx, 3, "though every request is still counted")
+		check(video_on_keyframe_request(&e, 10.0 + V_FORCE_GAP + 0.01), "and after the gap, honoured")
+		check_eq_int(e.keyframes_forced, 2, "twice in total")
+	}
+}
+
+// ---------------------------------------------------------------------------
+// 17. A duplex child
+//
+// The decoder is the first child in this application with pipes in both
+// directions, and the thing that makes it safe is that neither of them can
+// block the frame loop.
+// ---------------------------------------------------------------------------
+
+test_duplex_child :: proc() {
+	group("duplex child process")
+
+	c, err := spawn_duplex({"cat"}, 64 * 1024, 64 * 1024)
+	check(err == "", "a duplex child starts (%s)", err == "" ? "ok" : err)
+	if err != "" {
+		return
+	}
+	defer child_stop(&c)
+
+	check(c.read_fd >= FD_FLOOR, "its read end is above FD_FLOOR (%d)", int(c.read_fd))
+	check(c.write_fd >= FD_FLOOR, "its write end is above FD_FLOOR (%d)", int(c.write_fd))
+	check(pipe_size(c.write_fd) >= 4096, "the input pipe is %d bytes", pipe_size(c.write_fd))
+	check(pipe_size(c.read_fd) >= 4096, "the output pipe is %d bytes", pipe_size(c.read_fd))
+
+	msg := "PCP1 duplex"
+	n, broken := child_write(&c, transmute([]u8)msg)
+	check(!broken && n == len(msg), "a write of %d bytes is accepted", n)
+
+	buf: [64]u8
+	got := 0
+	for _ in 0 ..< 400 {
+		k, eof := child_read(&c, buf[got:])
+		got += k
+		if eof || got >= len(msg) {
+			break
+		}
+		time.sleep(2 * time.Millisecond)
+	}
+	check(got == len(msg), "and comes back through the child (%d bytes)", got)
+	check(string(buf[:got]) == msg, "unchanged")
+
+	// A pipe size above /proc/sys/fs/pipe-max-size must degrade rather than
+	// leave the pipe at its 64 KiB default, which was the bug behind a 30 fps
+	// stream arriving at 17 fps.
+	big, berr := spawn_duplex({"cat"}, 4096, 1 << 26)
+	check(berr == "", "a child asking for an absurd output pipe still starts")
+	if berr == "" {
+		defer child_stop(&big)
+		check(
+			pipe_size(big.read_fd) >= 1 << 16,
+			"and gets the largest the kernel allows (%d bytes), not the 64 KiB default",
+			pipe_size(big.read_fd),
+		)
 	}
 }
 

@@ -31,29 +31,9 @@ for c in json.load(sys.stdin):
   done
 }
 
-DIR="${PALMY_MEDIA_DIR:-/tmp/palmy-demo-audio}"
-mkdir -p "$DIR"
-if [ ! -f "$DIR/01-slow-pulse.mp3" ]; then
-  ffmpeg -y -v error -f lavfi -i "gradients=size=600x600:duration=1:speed=0.1:n=4" -frames:v 1 "$DIR/c1.png"
-  ffmpeg -y -v error -f lavfi -i "mandelbrot=size=600x600" -frames:v 1 "$DIR/c2.png"
-  ffmpeg -y -v error -f lavfi -i "sine=frequency=220:duration=48" -i "$DIR/c1.png" \
-    -filter:a "volume='0.3+0.3*sin(2*PI*t/6)':eval=frame" -map 0:a -map 1:v -c:v mjpeg \
-    -disposition:v attached_pic -metadata title="Slow Pulse in A" -metadata artist="Test Tones" \
-    -metadata album="Signals" -metadata date="2026" -b:a 192k "$DIR/01-slow-pulse.mp3"
-  ffmpeg -y -v error -f lavfi -i "aevalsrc='0.3*sin(2*PI*220*t)+0.25*sin(2*PI*277*t)+0.2*sin(2*PI*330*t)+0.12*sin(2*PI*660*t):d=72'" \
-    -i "$DIR/c2.png" -map 0:a -map 1:v -c:v mjpeg -disposition:v attached_pic \
-    -metadata title="A Major Drone" -metadata artist="Test Tones" -metadata album="Signals" \
-    -metadata date="2026" -b:a 192k "$DIR/02-a-major-drone.mp3"
-  ffmpeg -y -v error -f lavfi -i "sine=frequency=60:beep_factor=4:duration=36" \
-    -metadata title="Beep Factor Four" -metadata artist="Test Tones" -metadata album="Signals" \
-    -b:a 192k "$DIR/03-beep-factor-four.mp3"
-  ffmpeg -y -v error -f lavfi -i "anoisesrc=color=pink:duration=25:amplitude=0.4" \
-    -metadata title="Pink Noise Floor" -metadata artist="Test Tones" -metadata album="Signals" \
-    -b:a 192k "$DIR/04-pink-noise.mp3"
-  rm -f "$DIR/c1.png" "$DIR/c2.png"
-fi
+DIR="$(bash "$HERE/demo-media.sh" "${PALMY_MEDIA_DIR:-/tmp/palmy-demo-audio}")"
 export PALMY_MEDIA_DIR="$DIR"
-"$HERE/audio.bin" "$DIR/01-slow-pulse.mp3" &
+"$HERE/audio.bin" "$DIR/01-ascent-part-1.mp3" &
 APP=$!
 trap 'kill $APP 2>/dev/null' TERM INT
 ( sleep 1.0; float_window "$APP" 1240 800 ) >/dev/null 2>&1 &

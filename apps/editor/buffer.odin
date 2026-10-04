@@ -52,6 +52,11 @@ Edit :: struct {
 	cur_before: Pos,
 	cur_after:  Pos,
 	kind:       Coalesce,
+	// Edits made together undo together. One keystroke with five carets is
+	// five replacements in five places, and undoing them one at a time — five
+	// Ctrl-Z to take back one character — would be worse than not having the
+	// carets. Zero means "on its own", which is every single-caret edit.
+	group:      int,
 }
 
 Eol :: enum {
@@ -74,6 +79,7 @@ Buffer :: struct {
 	// many entries are known good; an edit on line L truncates it to L.
 	states:    [dynamic]Lex_State,
 	valid:     int,
+	group_seq: int, // hands out the ids above; never reused
 }
 
 // ---------------------------------------------------------------------------
@@ -274,12 +280,19 @@ buf_invalidate :: proc(b: ^Buffer, from_line: int) {
 
 // buf_apply replaces [from,to) with text, records it for undo, and returns the
 // caret position after the change.
+// buf_group hands out an identifier for a set of edits that belong together.
+buf_group :: proc(b: ^Buffer) -> int {
+	b.group_seq += 1
+	return b.group_seq
+}
+
 buf_apply :: proc(
 	b: ^Buffer,
 	from, to: Pos,
 	text: string,
 	cur_before: Pos,
 	coalesce := Coalesce.No,
+	group := 0,
 ) -> Pos {
 	lo, hi := pos_order(from, to)
 	lo, hi = pos_clamp(b, lo), pos_clamp(b, hi)
@@ -300,7 +313,7 @@ buf_apply :: proc(
 
 	if coalesce != .No && len(b.undo) > 0 {
 		top := &b.undo[len(b.undo) - 1]
-		if top.kind == coalesce {
+		if top.kind == coalesce && top.group == group {
 			switch coalesce {
 			case .Type:
 				// Extend a run of typing: same insert point, nothing removed,
@@ -345,35 +358,54 @@ buf_apply :: proc(
 			cur_before = cur_before,
 			cur_after = end,
 			kind = coalesce,
+			group = group,
 		},
 	)
 	return end
 }
 
+// buf_undo takes back one edit — or, if that edit belongs to a group, the
+// whole group, because the group is what the user did.
 buf_undo :: proc(b: ^Buffer) -> (cursor: Pos, ok: bool) {
 	if len(b.undo) == 0 {
 		return {}, false
 	}
-	e := pop(&b.undo)
-	end := pos_advance(e.at, e.added)
-	raw_delete(b, e.at, end)
-	raw_insert(b, e.at, e.removed)
-	buf_invalidate(b, e.at.line)
-	append(&b.redo, e)
-	return pos_clamp(b, e.cur_before), true
+	g := b.undo[len(b.undo) - 1].group
+	cur: Pos
+	for {
+		e := pop(&b.undo)
+		end := pos_advance(e.at, e.added)
+		raw_delete(b, e.at, end)
+		raw_insert(b, e.at, e.removed)
+		buf_invalidate(b, e.at.line)
+		append(&b.redo, e)
+		cur = e.cur_before
+		if g == 0 || len(b.undo) == 0 || b.undo[len(b.undo) - 1].group != g {
+			break
+		}
+	}
+	return pos_clamp(b, cur), true
 }
 
 buf_redo :: proc(b: ^Buffer) -> (cursor: Pos, ok: bool) {
 	if len(b.redo) == 0 {
 		return {}, false
 	}
-	e := pop(&b.redo)
-	end := pos_advance(e.at, e.removed)
-	raw_delete(b, e.at, end)
-	raw_insert(b, e.at, e.added)
-	buf_invalidate(b, e.at.line)
-	append(&b.undo, e)
-	return pos_clamp(b, e.cur_after), true
+	g := b.redo[len(b.redo) - 1].group
+	cur: Pos
+	for {
+		e := pop(&b.redo)
+		end := pos_advance(e.at, e.removed)
+		raw_delete(b, e.at, end)
+		raw_insert(b, e.at, e.added)
+		buf_invalidate(b, e.at.line)
+		append(&b.undo, e)
+		cur = e.cur_after
+		if g == 0 || len(b.redo) == 0 || b.redo[len(b.redo) - 1].group != g {
+			break
+		}
+	}
+	return pos_clamp(b, cur), true
 }
 
 buf_dirty :: proc(b: ^Buffer) -> bool {
@@ -395,6 +427,7 @@ buf_init_empty :: proc(b: ^Buffer) {
 	b.final_nl = true
 	b.save_mark = 0
 	b.valid = 0
+	b.group_seq = 0
 }
 
 buf_load :: proc(b: ^Buffer, path: string) -> (ok: bool) {

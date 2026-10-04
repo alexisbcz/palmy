@@ -3,9 +3,14 @@ package main
 // palmy audio — a music player.
 //
 // ffmpeg decodes, pw-cat plays, and the position comes back as a byte count
-// (engine.odin). Separately the whole track is decoded once to 8 kHz mono so
+// (engine.odin). Separately the whole track is decoded once to 16 kHz mono so
 // the waveform, the spectrum and the oscilloscope are drawn from the real
 // samples rather than from an animation (wave.odin).
+//
+// Playback is gapless: the sink is started once and kept, the next track's
+// decoder *and* its analysis are started two seconds before the boundary, and
+// the UI follows the engine's idea of which track is audible rather than which
+// one the pump happens to be reading.
 
 import "core:fmt"
 import "core:math/rand"
@@ -43,7 +48,13 @@ Track :: struct {
 
 St :: struct {
 	e:          Engine,
-	a:          Analysis,
+	// Two analysis slots, because the next track's samples are decoded while
+	// the current one is still playing. `an_i` is the audible one; the other
+	// holds whatever was prefetched. Flipping an index rather than moving the
+	// structs matters — a worker thread holds a pointer to its own slot.
+	an:         [2]Analysis,
+	an_i:       int,
+	an_for:     [2]int,
 
 	list:       []Track,
 	order:      []int, // play order, shuffled or not
@@ -88,6 +99,9 @@ main :: proc() {
 			os.exit(failures == 0 ? 0 : 1)
 		}
 	}
+	if ga, gb, restart, lead, want := gap_test_requested(); want {
+		os.exit(run_gap_test(ga, gb, restart, lead))
+	}
 
 	shot_out, shot_secs, shot_keys, want_shot := shot_requested()
 
@@ -118,6 +132,7 @@ main :: proc() {
 		cover_for = -1,
 		wave_for  = -1,
 		gain      = 1,
+		an_for    = {-1, -1},
 	}
 	engine_init(&st.e)
 
@@ -158,7 +173,8 @@ main :: proc() {
 		}
 	}
 	defer engine_stop(&st.e)
-	defer analysis_stop(&st.a)
+	defer analysis_stop(&st.an[0])
+	defer analysis_stop(&st.an[1])
 
 	if want_shot {
 		run_shot(&st, shot_out, shot_secs, shot_keys)
@@ -175,6 +191,10 @@ main :: proc() {
 		if st.e.live {
 			engine_tick(&st.e)
 			st.now = engine_clock(&st.e)
+			// The pump is ~60 ms ahead of the speakers, so the display flips
+			// when the *audible* track changes, not when the pump switched.
+			sync_audible(&st)
+			maybe_prefetch(&st)
 			if engine_eof(&st.e) {
 				advance(&st, 1, true)
 			}
@@ -193,7 +213,7 @@ main :: proc() {
 			}
 			p.redraw(ui)
 		}
-		if ready, _, _, _ := analysis_ready(&st.a); !ready {
+		if ready, _, _, _ := analysis_ready(ana(&st)); !ready {
 			p.redraw(ui)
 		}
 	}
@@ -387,6 +407,53 @@ order_pos :: proc(st: ^St, idx: int) -> int {
 	return 0
 }
 
+// ana is the analysis of the track that is audible. The other slot belongs to
+// whatever was prefetched.
+ana :: proc(st: ^St) -> ^Analysis {
+	return &st.an[st.an_i]
+}
+
+// set_analysis makes slot `an_i` hold track `idx`, reusing the prefetched slot
+// when it already has it — which is the whole point of prefetching it.
+set_analysis :: proc(st: ^St, idx: int, path: string) {
+	if st.an_for[st.an_i] == idx {
+		return
+	}
+	if st.an_for[1 - st.an_i] == idx {
+		st.an_i = 1 - st.an_i
+		return
+	}
+	analysis_start(&st.an[st.an_i], path)
+	st.an_for[st.an_i] = idx
+}
+
+// drop_spare throws away a prefetched analysis that no longer applies.
+drop_spare :: proc(st: ^St) {
+	sp := 1 - st.an_i
+	if st.an_for[sp] == -1 {
+		return
+	}
+	// Joining a decode that is still running would freeze the frame for as
+	// long as ffmpeg takes on a whole track, so one still in flight is left to
+	// finish on its own and simply marked as belonging to nothing. The next
+	// use of the slot joins it, which by then costs nothing.
+	if ready, _, _, _ := analysis_ready(&st.an[sp]); !ready {
+		st.an_for[sp] = -1
+		return
+	}
+	analysis_stop(&st.an[sp])
+	st.an_for[sp] = -1
+}
+
+// rethink_next discards everything queued for the end of the current track.
+// Whatever picked it — the play order, repeat-one — has just changed.
+rethink_next :: proc(st: ^St) {
+	engine_cancel_prefetch(&st.e)
+	drop_spare(st)
+}
+
+// play is the hard path: a track chosen by hand. It is the only thing that
+// starts a decoder cold, and the only thing that discards a prefetch.
 play :: proc(st: ^St, idx: int, at: f64 = 0) {
 	if idx < 0 || idx >= len(st.list) {
 		return
@@ -399,14 +466,87 @@ play :: proc(st: ^St, idx: int, at: f64 = 0) {
 	}
 	st.err = ""
 	st.cur = idx
-	engine_start(&st.e, t.m, at)
+	engine_start(&st.e, t.m, at, idx)
 	if st.e.err != "" {
 		st.err = strings.clone(st.e.err)
 	}
-	analysis_start(&st.a, t.path)
+	set_analysis(st, idx, t.path)
+	drop_spare(st)
 	st.wave_for = -1
 	st.wave_ready = false
 	load_cover(st, idx)
+}
+
+// sync_audible moves the whole display — the highlighted row, the title, the
+// cover, the waveform and the analysis — onto whichever track the engine says
+// is coming out of the speakers. Called every frame; it does nothing until the
+// audible track actually changes, which at a gapless join happens about 60 ms
+// after the pump switched decoders.
+sync_audible :: proc(st: ^St) {
+	tr := engine_current_track(&st.e)
+	if tr < 0 || tr >= len(st.list) || tr == st.cur {
+		return
+	}
+	st.cur = tr
+	st.sel = tr
+	t := &st.list[tr]
+	set_analysis(st, tr, t.path)
+	st.wave_for = -1
+	st.wave_ready = false
+	load_cover(st, tr)
+}
+
+// up_next is what an automatic advance would choose: the same track under
+// repeat-one, the next one in the play order otherwise, and nothing at the end
+// of the playlist — where the engine is meant to stop rather than wrap.
+up_next :: proc(st: ^St) -> (int, bool) {
+	if len(st.list) == 0 || len(st.order) == 0 {
+		return 0, false
+	}
+	// Asked of the track being *fed* to the sink, not the audible one: for the
+	// two seconds around a join they differ.
+	from := engine_feeding_track(&st.e)
+	if from < 0 || from >= len(st.list) {
+		from = st.cur
+	}
+	if from < 0 {
+		return 0, false
+	}
+	if st.repeat {
+		return from, true
+	}
+	pos := order_pos(st, from) + 1
+	if pos >= len(st.order) {
+		return 0, false
+	}
+	return st.order[pos], true
+}
+
+// maybe_prefetch starts the next track's decoder, and its analysis, while the
+// current one still has two seconds to run.
+maybe_prefetch :: proc(st: ^St) {
+	if !engine_prefetch_due(&st.e) {
+		return
+	}
+	nxt, ok := up_next(st)
+	if !ok || nxt < 0 || nxt >= len(st.list) {
+		return
+	}
+	t := &st.list[nxt]
+	ensure_probed(t)
+	if !t.m.ok {
+		return
+	}
+	if !engine_prefetch(&st.e, t.m, nxt) {
+		return
+	}
+	// Decode its samples now too, so the waveform and the spectrum are ready
+	// at the join instead of appearing a second after it. Repeat-one needs
+	// nothing: the samples are already in the audible slot.
+	if nxt != st.cur && st.an_for[1 - st.an_i] != nxt {
+		analysis_start(&st.an[1 - st.an_i], t.path)
+		st.an_for[1 - st.an_i] = nxt
+	}
 }
 
 advance :: proc(st: ^St, d: int, auto := false) {
@@ -439,8 +579,11 @@ seek_to :: proc(st: ^St, t: f64) {
 		return
 	}
 	was := engine_paused(&st.e)
-	engine_start(&st.e, cur.m, clamp(t, 0, max(0, cur.m.duration - 0.1)))
+	engine_start(&st.e, cur.m, clamp(t, 0, max(0, cur.m.duration - 0.1)), st.cur)
 	engine_pause(&st.e, was)
+	// A seek keeps the sink and the decoded samples, but whatever was queued
+	// for the end of the track is no longer two seconds away.
+	rethink_next(st)
 }
 
 load_cover :: proc(st: ^St, idx: int) {
@@ -478,7 +621,8 @@ toast :: proc(st: ^St, ui: ^p.Ctx, msg: string) {
 // ---------------------------------------------------------------------------
 
 update_vis :: proc(st: ^St) {
-	ready, ok, _, _ := analysis_ready(&st.a)
+	a := ana(st)
+	ready, ok, _, _ := analysis_ready(a)
 	if !ready || !ok {
 		for i in 0 ..< BARS {
 			st.bars[i] *= 0.85
@@ -491,7 +635,7 @@ update_vis :: proc(st: ^St) {
 
 	if st.vis_mode == .Spectrum {
 		next: [BARS]f32
-		if spectrum(&st.a, t, next[:]) && playing {
+		if spectrum(a, t, next[:]) && playing {
 			for i in 0 ..< BARS {
 				// Fast attack, slow release: the way an analyser is read.
 				st.bars[i] = next[i] > st.bars[i] \
@@ -504,7 +648,7 @@ update_vis :: proc(st: ^St) {
 			}
 		}
 	} else {
-		if !scope(&st.a, t, st.scope_buf[:], 1200, st.gain) {
+		if !scope(a, t, st.scope_buf[:], SCOPE_SPAN, st.gain) {
 			for i in 0 ..< len(st.scope_buf) {
 				st.scope_buf[i] = 0
 			}
@@ -514,7 +658,7 @@ update_vis :: proc(st: ^St) {
 
 // ensure_wave recomputes the envelope only when the track or the width changes.
 ensure_wave :: proc(st: ^St, cols: int) {
-	ready, ok, _, _ := analysis_ready(&st.a)
+	ready, ok, _, _ := analysis_ready(ana(st))
 	if !ready || !ok || cols <= 0 {
 		return
 	}
@@ -525,7 +669,7 @@ ensure_wave :: proc(st: ^St, cols: int) {
 		delete(st.wave)
 		st.wave = make([]f32, cols)
 	}
-	st.gain = peaks(&st.a, st.wave)
+	st.gain = peaks(ana(st), st.wave)
 	st.wave_cols = cols
 	st.wave_for = st.cur
 	st.wave_ready = true
@@ -601,11 +745,13 @@ handle_keys :: proc(ui: ^p.Ctx, app: ^p.App, st: ^St) {
 	}
 	if p.key_pressed(ui, 'r') {
 		st.repeat = !st.repeat
+		rethink_next(st)
 		toast(st, ui, st.repeat ? "Repeat one" : "Repeat off")
 	}
 	if p.key_pressed(ui, 's') {
 		st.shuffle = !st.shuffle
 		rebuild_order(st)
+		rethink_next(st)
 		toast(st, ui, st.shuffle ? "Shuffle on" : "Shuffle off")
 	}
 	if p.key_pressed(ui, 'v') {

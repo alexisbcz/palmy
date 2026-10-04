@@ -1,103 +1,128 @@
 # palmy-chat demo, driven by ./record.sh.
 #
-# Two real client processes and one real server on 127.0.0.1:8787. The left
-# window is alexis, the right one is sam. `focus` names which client gets the
-# keyboard — a pointer warp does not move focus on this compositor, and the
-# first take of this demo had every message authored by one client because of
-# it. `move` is only for hover. `post` is a third nickname speaking the same
-# protocol from the command line, which is how a message arrives in a channel
-# nobody is looking at.
+# Two real client processes and one real server, on a private headless
+# compositor the user never sees. The left window is alexis, the right one is
+# sam. sway tiles them side by side, so `focus left|right` names a side rather
+# than a pid and a keystroke cannot land anywhere else. `post` and `attach` are
+# other nicknames speaking the same protocol from the command line, which is
+# how a message arrives in a channel nobody is looking at.
 #
-# Every key here is unmodified: `wtype -k` cannot send Shift+Enter, so the
-# multi-line markdown in the history is seeded by record.sh through
-# `chat --post` rather than typed.
+# Every key here is unmodified or a named chord: `wtype -k` cannot send
+# Shift+Enter, so the multi-line markdown in the seeded history goes in through
+# `chat --post` rather than being typed.
 
-wait 1.0
+wait 1.4
 
 # -- alexis types. sam's window shows the typing indicator first.
 focus left
-move 470 580
+move 480 720
 wait 1.0
 type Morning sam — parity is back to **zero geometry mismatches**.
-wait 1.6
+wait 1.5
 key Return
 wait 1.8
 
 # -- sam answers.
 focus right
-move 1430 580
-wait 1.0
+move 1440 720
+wait 0.9
 type Nice. Does `scroll_into_view` still pin the list?
-wait 1.6
+wait 1.5
 key Return
 wait 1.6
 
-# -- sam browses back one message, to alexis's, and reacts. 2 is the heart.
+# -- Threads. sam browses up to the read-cursor proposal, which already has a
+#    thread on it, and opens it with `t`. The thread is its own panel; the
+#    composer at the bottom now posts into it.
 key Escape
-wait 0.9
+wait 1.0
 key Up
-wait 0.9
-type 2
-wait 1.8
+wait 0.5
+key Up
+wait 0.5
+key Up
+wait 1.2
+key t
+wait 2.6
 
-# -- and replies to the same message.
-type r
-wait 0.8
-type Pinned. The spacer collapses the moment it overflows.
+# -- and replies in-thread. Watch the left window: the reply count on the stub
+#    goes up, and no new row appears in #general. That is the whole point.
+type Then the badge can stay honest.
 wait 1.4
 key Return
-wait 2.2
+wait 3.0
+key Escape
+wait 1.6
 
 # -- a message lands in #design, which neither of them is looking at.
 post jordan design Spacing pass on the sidebar is up for review.
 wait 2.5
 
-# -- alexis opens it from the keyboard: F2, down to design, Enter.
+# -- alexis opens it from the keyboard: F2, down to design, Enter. The badge
+#    clears because the server-side cursor moved, not because the client
+#    forgot.
 focus left
-move 470 580
-wait 0.8
+move 480 720
+wait 0.9
 key F2
 wait 1.0
 key Down
 wait 0.5
 key Down
-wait 0.9
+wait 1.0
 key Return
-wait 2.0
+wait 2.2
 
-# -- back to #general, then search the whole history.
+# -- back to #general.
 key F2
 wait 0.8
 key Up
 wait 0.4
 key Up
-wait 0.7
+wait 0.8
 key Return
-wait 1.5
-key F4
-wait 1.0
-type scroll
-wait 1.0
-key Return
-wait 2.2
-key Down
-wait 1.2
+wait 1.8
+
+# -- the attachment that jordan uploaded. Browse to it and save it: the client
+#    asks for the bytes by message id and never learns a path.
 key Escape
-wait 1.2
+wait 0.9
+key Up
+wait 0.5
+key Up
+wait 1.4
+key o
+wait 3.0
+
+# -- the same thing from the other direction: Ctrl+O is the attach dialog.
+key Escape
+wait 0.8
+chord ctrl+o
+wait 3.0
+key Escape
+wait 1.4
 
 # -- the key map.
 key F1
-wait 3.0
+wait 3.2
 key Escape
-wait 1.0
+wait 1.2
 
-# -- sam's process ends. Presence goes offline for real, and the client that
-#    is left takes the screen and carries on.
+# -- The headline. sam's process ends — presence goes offline for real — and
+#    three messages land in #engineering while he is gone, one naming him.
 close right
-wait 2.2
-grow left
-wait 1.2
-type Still here — sam just dropped off.
-wait 1.2
-key Return
-wait 2.5
+wait 2.4
+post jordan engineering Ship list for the cut is up.
+wait 1.0
+post alexis engineering sam — three of these are yours.
+wait 1.0
+post jordan engineering And the parity run is green on both themes.
+wait 2.6
+
+# -- sam's client starts again. A brand new process, a brand new connection,
+#    and #engineering still reads 3 with a mention: the cursor was never his
+#    client's to lose. Under the old model this said zero.
+open right sam
+wait 4.5
+focus right
+wait 3.0

@@ -74,6 +74,8 @@ run_shot :: proc(st: ^St, out: string, seconds: f64, keys: string) {
 		if st.e.live {
 			engine_tick(&st.e)
 			st.now = engine_clock(&st.e)
+			sync_audible(st)
+			maybe_prefetch(st)
 			if engine_eof(&st.e) {
 				advance(st, 1, true)
 			}
@@ -123,10 +125,24 @@ apply_keys :: proc(st: ^St, keys: string) {
 		case "shuffle":
 			st.shuffle = !st.shuffle
 			rebuild_order(st)
+			rethink_next(st)
 		case "repeat":
 			st.repeat = !st.repeat
+			rethink_next(st)
 		case "mute":
 			engine_mute(&st.e, !st.e.muted)
+		case "silent":
+			engine_set_volume(&st.e, 0)
+		case:
+			// `seek0.8` jumps to eight tenths of the track, which is how a
+			// headless run gets near a track boundary without waiting for it.
+			if strings.has_prefix(k, "seek") {
+				if v, good := strconv.parse_f64(strings.trim_space(k)[4:]); good {
+					if c := current(st); c != nil {
+						seek_to(st, c.m.duration * clamp(v, 0, 1))
+					}
+				}
+			}
 		}
 	}
 }

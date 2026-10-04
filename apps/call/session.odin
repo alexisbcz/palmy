@@ -72,6 +72,13 @@ Session :: struct {
 	peer_muted:   bool,
 	peer_cam_off: bool,
 
+	// Video codec negotiation. `codecs` is what we can decode and advertise on
+	// every control message; `peer_codecs` is what came back. A peer that has
+	// never said anything is assumed to speak MJPEG and nothing else, which is
+	// the correct reading of silence — see `read_control`.
+	codecs:      u8,
+	peer_codecs: u8,
+
 	// Counters.
 	tx_packets: int,
 	rx_packets: int,
@@ -85,6 +92,15 @@ Session :: struct {
 	rate_rx0:   int,
 	tx_kbps:    f32,
 	rx_kbps:    f32,
+
+	// Deliberate loss, for exercising the H.264 keyframe path on a transport
+	// that has none of its own. `--loss N` drops N of every thousand outgoing
+	// *video* fragments; signalling is left alone, because a test of the video
+	// loss path should not also be a test of the state machine. The generator
+	// is a fixed-seed xorshift, so a run is reproducible.
+	drop_permille: int,
+	drop_state:    u64,
+	tx_dropped:    int,
 
 	seq_audio: u16,
 	seq_video: u16,
@@ -122,6 +138,9 @@ session_open :: proc(s: ^Session, bind_port, peer_port: int, name: string) -> st
 	// Cloned, not a literal: `handle_control` replaces this string when the
 	// peer announces its name, and freeing a literal is a crash.
 	s.peer_name = clone_string("Peer")
+	s.codecs = CODEC_ALL
+	s.drop_state = 0x5DEECE66D
+	s.peer_codecs = CODEC_MJPEG
 	s.state = .Idle
 	return ""
 }
@@ -153,14 +172,17 @@ send_datagram :: proc(s: ^Session, dg: []u8) {
 
 // send_media fragments a payload and sends every piece. One sequence counter
 // per stream, so audio loss and video loss are independently measurable.
-send_media :: proc(s: ^Session, ptype: Payload_Type, data: []u8, ts_us: u64) {
+// `extra_flags` is header flags that belong to the frame rather than to the
+// fragment — today that is FLAG_KEYFRAME, which goes on every fragment of the
+// frame so that losing the first one does not lose the fact.
+send_media :: proc(s: ^Session, ptype: Payload_Type, data: []u8, ts_us: u64, extra_flags: u8 = 0) {
 	nf := fragment_count(len(data))
 	frame: u32
 	switch ptype {
 	case .Audio_Opus, .Audio_PCM:
 		s.frame_audio += 1
 		frame = s.frame_audio
-	case .Video_JPEG:
+	case .Video_JPEG, .Video_H264:
 		s.frame_video += 1
 		frame = s.frame_video
 	case .Control:
@@ -168,14 +190,21 @@ send_media :: proc(s: ^Session, ptype: Payload_Type, data: []u8, ts_us: u64) {
 	}
 	for i in 0 ..< nf {
 		seq: u16
-		if ptype == .Video_JPEG {
+		if is_video(ptype) {
 			seq = s.seq_video
 			s.seq_video += 1
 		} else {
 			seq = s.seq_audio
 			s.seq_audio += 1
 		}
-		dg := fragment_into(s.txbuf[:], data, i, ptype, seq, ts_us, frame)
+		dg := fragment_into(s.txbuf[:], data, i, ptype, seq, ts_us, frame, extra_flags)
+		if s.drop_permille > 0 && is_video(ptype) && draw_permille(s) < s.drop_permille {
+			// Dropped on purpose, and counted. The sequence number and the
+			// frame id are already spent, which is exactly what a real loss
+			// looks like to the far end.
+			s.tx_dropped += 1
+			continue
+		}
 		send_datagram(s, dg)
 	}
 }
@@ -189,7 +218,10 @@ send_control :: proc(s: ^Session, kind: Control_Kind, muted, cam_off: bool) {
 	if cam_off {
 		flags |= CTRL_CAM_OFF
 	}
-	payload := write_control(body[:], {kind = kind, flags = flags, name = s.name})
+	payload := write_control(
+		body[:],
+		{kind = kind, flags = flags, name = s.name, codecs = s.codecs},
+	)
 	if payload == nil {
 		return
 	}
@@ -350,6 +382,16 @@ handle_control :: proc(s: ^Session, c: Control, muted, cam_off: bool) {
 		s.peer_muted = c.flags & CTRL_MUTED != 0
 		s.peer_cam_off = c.flags & CTRL_CAM_OFF != 0
 	}
+	// Every signalling message carries the offer, so by the time the state
+	// machine reaches `Connecting` — which cannot happen without an INVITE or
+	// an ACCEPT — both ends have each other's and the choice is already made.
+	// A keyframe request is deliberately excluded: it is sent in a hurry, and
+	// a peer's codec set is not what it is about.
+	switch c.kind {
+	case .Hello, .Invite, .Ringing, .Accept, .State:
+		s.peer_codecs = c.codecs
+	case .Decline, .Bye, .Keyframe:
+	}
 
 	switch c.kind {
 	case .Invite:
@@ -389,6 +431,10 @@ handle_control :: proc(s: ^Session, c: Control, muted, cam_off: bool) {
 		if s.state != .Idle {
 			set_state(s, .Ended, "Peer hung up")
 		}
+	case .Keyframe:
+		// A PLI equivalent. It says nothing about the call's state and must
+		// not be mistaken for a keepalive from a peer we are not talking to;
+		// `pump_receive` hands it to the video engine.
 	case .Hello, .State:
 		switch s.state {
 		case .Connecting:
@@ -404,6 +450,15 @@ handle_control :: proc(s: ^Session, c: Control, muted, cam_off: bool) {
 		case .Dialing, .Ringing, .Connected:
 		}
 	}
+}
+
+// draw_permille returns 0..999 from a fixed-seed xorshift, so a run with
+// `--loss` drops the same fragments every time.
+draw_permille :: proc(s: ^Session) -> int {
+	s.drop_state ~= s.drop_state << 13
+	s.drop_state ~= s.drop_state >> 7
+	s.drop_state ~= s.drop_state << 17
+	return int(s.drop_state % 1000)
 }
 
 clone_string :: proc(sv: string) -> string {

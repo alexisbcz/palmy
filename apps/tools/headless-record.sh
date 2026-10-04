@@ -73,10 +73,15 @@ default_border none
 # unknown directive, and it lands in every frame of the recording.
 CONF
 
-# sway picks the next free socket name itself, so note what exists first and
-# find the one that appeared. Starting it with a pre-set WAYLAND_DISPLAY would
-# make it a *nested* client of the user's session instead of a headless host.
-before="$(ls "$XDG_RUNTIME_DIR"/wayland-* 2>/dev/null | tr '\n' ' ')"
+# Ask sway which display it opened, through a helper it execs itself. Starting
+# it with a pre-set WAYLAND_DISPLAY would make it a nested client of the user's
+# session instead of a headless host, so it has to choose -- but it must then
+# *tell* us.
+#
+# This used to diff the socket directory before and after, which is a race: two
+# recordings overlapping meant one could adopt the other's compositor, and a
+# take really did come back showing a different agent's chat window.
+echo "exec printf '%s' \"\$WAYLAND_DISPLAY\" > $TMP/display" >> "$TMP/sway.conf"
 
 env -u WAYLAND_DISPLAY -u DISPLAY \
     WLR_BACKENDS=headless WLR_LIBINPUT_NO_DEVICES=1 \
@@ -84,16 +89,12 @@ env -u WAYLAND_DISPLAY -u DISPLAY \
 SWAY=$!
 
 WD=""
-for _ in $(seq 1 50); do
+for _ in $(seq 1 80); do
   sleep 0.1
-  for s in "$XDG_RUNTIME_DIR"/wayland-*; do
-    case "$s" in *.lock) continue;; esac
-    case " $before " in *" $s "*) continue;; esac
-    WD="$(basename "$s")"; break
-  done
+  WD="$(cat "$TMP/display" 2>/dev/null)"
   [ -n "$WD" ] && break
 done
-[ -n "$WD" ] || { echo "the headless compositor never came up:"; tail -5 "$TMP/sway.log"; exit 1; }
+[ -n "$WD" ] || { echo "the headless compositor never reported a display:"; tail -5 "$TMP/sway.log"; exit 1; }
 export WAYLAND_DISPLAY="$WD"
 
 # swaymsg finds its socket through SWAYSOCK, which only sway's own children
@@ -128,33 +129,72 @@ wf-recorder -f "$OUT" -c libx264 -p crf=20 -p preset=veryfast --overwrite \
 REC=$!
 sleep 1.0
 
-# Each wtype invocation attaches a fresh virtual keyboard and sends at once,
-# racing the compositor's delivery of the keymap and focus, so an invocation's
-# first keystroke is occasionally dropped. This is not a palmy bug -- foot
-# loses it the same way on the same seat -- and attempts to absorb it with a
-# priming keypress made it worse, so it is left alone. `-s` spaces the keys
-# out, which helps a little. If a step must not lose its first character, put
-# a throwaway key before it in the steps file.
+# Drive the whole take through ONE wtype process.
+#
+# wtype attaches a virtual keyboard, sends, and detaches. Running it per step
+# means the seat's keyboard capability cycles for every keystroke, and the
+# client's re-bind is asynchronous -- it asks for a keyboard and the keymap and
+# focus arrive afterwards, so a key pressed in that window is simply gone.
+# Measured at roughly one key in five lost, which is worse than it sounds: a
+# dropped key does not just omit a step, it redirects the ones after it. One
+# take left a mail demo deleting the wrong conversation.
+#
+# Two agents measured the same thing independently, and driving the identical
+# keys by hand without the per-step loop works every time. So: translate the
+# whole steps file into a single argv, where `wait` becomes wtype's own `-s`
+# (sleep before the following options) and one keyboard stays attached from the
+# first key to the last.
+#
+# Pointer steps have to break the batch, so they flush what has accumulated,
+# act, and start a new one.
+argv=()
+flush_keys() {
+  [ ${#argv[@]} -eq 0 ] && return
+  wtype "${argv[@]}"
+  argv=()
+}
+
 while IFS= read -r line || [ -n "$line" ]; do
   [ -z "$line" ] && continue
   case "$line" in
     \#*)      ;;
-    key\ *)   wtype -k "${line#key }" ;;
+    key\ *)   argv+=( -k "${line#key }" ) ;;
+    # No `--` here: it makes wtype treat everything after it as literal text,
+    # so the flags of later steps get typed into the window. Text therefore
+    # goes in as a plain positional, which means a step whose text starts with
+    # a dash is not supported -- say so rather than silently typing a flag.
+    type\ *)  txt="${line#type }"
+              case "$txt" in -*) echo "step text may not start with '-': $txt"; exit 1;; esac
+              argv+=( -d 8 "$txt" ) ;;
     chord\ *) set -- $(printf '%s' "${line#chord }" | tr '+' ' ')
-              mods=""; while [ $# -gt 1 ]; do mods="$mods -M $1"; shift; done
-              wtype $mods -k "$1" $(printf '%s' "$mods" | sed 's/-M/-m/g') ;;
-    type\ *)  wtype -s 8 -- "${line#type }" ;;
-    move\ *)  set -- ${line#move }
-              swaymsg "seat seat0 cursor set $1 $2" >/dev/null 2>&1 ;;
-    click*)   b="${line#click}"; b="${b# }"; b="${b:-left}"
-              swaymsg "seat seat0 cursor press button$b"   >/dev/null 2>&1
-              sleep 0.1
-              swaymsg "seat seat0 cursor release button$b" >/dev/null 2>&1 ;;
-    wait\ *)  sleep "${line#wait }" ;;
+              mods=(); while [ $# -gt 1 ]; do mods+=( "$1" ); shift; done
+              for m in "${mods[@]}"; do argv+=( -M "$m" ); done
+              argv+=( -k "$1" )
+              for m in "${mods[@]}"; do argv+=( -m "$m" ); done ;;
+    wait\ *)  ms=$(awk -v s="${line#wait }" 'BEGIN{printf "%d", s*1000}')
+              argv+=( -s "$ms" ) ;;
+    # POINTER STEPS DO NOT REACH THE CLIENT ON THIS SEAT, and they are kept
+    # only so an existing steps file does not fail outright. The compositor is
+    # started with WLR_LIBINPUT_NO_DEVICES=1, so the seat never gains a pointer
+    # capability and no client is ever sent motion or button. `swaymsg seat
+    # cursor` reports success regardless -- it is moving sway's own cursor --
+    # which is why these appeared to work for a long time and never did.
+    # wlrctl speaks the right protocol but its move is relative, and a click
+    # with no pointer capability still reaches nobody; verified by clicking a
+    # calculator keypad and watching nothing happen.
+    #
+    # Drive demos from the keyboard. Every application here is keyboard-usable
+    # because of this.
+    move\ *|click*)
+              flush_keys
+              if [ -z "${POINTER_WARNED:-}" ]; then
+                echo "warning: pointer steps do not reach the client on this seat; drive from the keyboard" >&2
+                POINTER_WARNED=1
+              fi ;;
     *)        echo "unknown step: $line" ;;
   esac
-  sleep 0.12
 done < "$STEPS"
+flush_keys
 
 sleep 0.8
 cleanup

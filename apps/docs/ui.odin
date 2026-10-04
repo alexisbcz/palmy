@@ -125,6 +125,27 @@ pill :: proc(ui: ^p.Ctx, key, label: string, width := "", chevron := true) -> bo
 // where the attribute selector outranks a utility — so `self-stretch` always
 // wins and a caller cannot ask for a 16px rule. Nesting it in a fixed-height
 // box gives it something short to stretch against.
+// text_button is a labelled button that reports its click. shadcn's `button`
+// draws one but returns nothing, so this wraps the same classes around
+// `p.clickable` the way `tool_button` does for the icon buttons.
+text_button :: proc(ui: ^p.Ctx, key, label: string, primary := false) -> bool {
+	p.key(ui, key)
+	idx := p.row(
+		ui,
+		"h-8 shrink-0 items-center justify-center px-3 rounded-md border transition cursor-pointer",
+	)
+	if primary {
+		p.apply(ui, "bg-primary text-primary-foreground border-primary hover:bg-primary/90", idx)
+	} else {
+		p.apply(ui, "bg-background text-foreground border-input hover:bg-accent", idx)
+	}
+	fired := p.clickable(ui, idx)
+	p.text(ui, label, "text-[12.5] font-medium whitespace-nowrap")
+	p.style(ui).shrink = 0
+	p.end(ui)
+	return fired
+}
+
 vrule :: proc(ui: ^p.Ctx) {
 	p.div(ui, "flex-row h-4 shrink-0 items-center mx-1")
 	sc.separator(ui, .Vertical)
@@ -411,6 +432,26 @@ find_bar :: proc(ui: ^p.Ctx, st: ^State) {
 		toggle_find_word(st)
 	}
 
+	vrule(ui)
+
+	// The three actions, as buttons. The keys stay, and both paths call the
+	// same procedures.
+	if text_button(ui, "fnext", "Next", true) {
+		find_next(st)
+		st.find_hits = count_hits(st)
+	}
+	if text_button(ui, "frepl", "Replace") {
+		replace_one(st)
+		st.find_hits = count_hits(st)
+	}
+	if text_button(ui, "fall", "All") {
+		replace_all(st)
+		st.find_hits = count_hits(st)
+	}
+	if text_button(ui, "fclose", "Close") {
+		st.mode = .Doc
+	}
+
 	p.spacer(ui)
 
 	hint(ui, "Return", "next")
@@ -419,7 +460,6 @@ find_bar :: proc(ui: ^p.Ctx, st: ^State) {
 	hint(ui, "F6", "word")
 	hint(ui, "F11", "replace")
 	hint(ui, "F12", "all")
-	hint(ui, "Esc", "close")
 }
 
 hint :: proc(ui: ^p.Ctx, keyname, what: string) {
@@ -514,6 +554,19 @@ prompt_overlay :: proc(ui: ^p.Ctx, st: ^State) {
 	if blink_phase(p.elapsed(ui)) {
 		p.div(ui, "w-px h-[16] ml-px bg-foreground shrink-0")
 		p.end(ui)
+	}
+	p.end(ui)
+
+	// A dialog with a text field and no buttons asks the reader to know a
+	// keyboard shortcut to get out of it. These run the same two procedures
+	// Return and Escape run.
+	p.row(ui, "w-full items-center gap-2")
+	p.spacer(ui)
+	if text_button(ui, "pcancel", "Cancel") {
+		cancel_prompt(st)
+	}
+	if text_button(ui, "pok", prompt_verb(st.prompt), true) {
+		commit_prompt(st)
 	}
 	p.end(ui)
 }

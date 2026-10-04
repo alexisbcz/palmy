@@ -121,8 +121,27 @@ Args :: struct {
 	shot_size:  string,
 	pattern:    string,
 	video:      string,
+	codec:      string,
+	bitrate:    int,
+	loss:       int,
+	no_pli:     bool,
 	volume:     f64,
 	quit_after: f64,
+}
+
+// parse_codec_offer reads `--video-codec` into an offer bitmask. The flag is
+// an *offer*, not a choice: naming one codec means refusing the other, which is
+// how the MJPEG-only peer in the report is produced from the same binary.
+parse_codec_offer :: proc(spec: string) -> (mask: u8, err: string) {
+	switch spec {
+	case "auto", "both", "":
+		return CODEC_ALL, ""
+	case "h264", "h.264", "avc":
+		return CODEC_H264, ""
+	case "mjpeg", "jpeg", "mjpg":
+		return CODEC_MJPEG, ""
+	}
+	return 0, "--video-codec takes auto, h264 or mjpeg"
 }
 
 parse_args :: proc() -> (a: Args, err: string) {
@@ -218,6 +237,34 @@ parse_args :: proc() -> (a: Args, err: string) {
 				return a, "--pattern needs a lavfi source name"
 			}
 			a.pattern = v
+		case "--video-codec":
+			v, ok := next(args, &i)
+			if !ok {
+				return a, "--video-codec needs auto, h264 or mjpeg"
+			}
+			a.codec = v
+		case "--video-bitrate":
+			v, ok := next(args, &i)
+			if !ok {
+				return a, "--video-bitrate needs kbit/s"
+			}
+			n, good := strconv.parse_int(v)
+			if !good || n < 32 || n > 20000 {
+				return a, "--video-bitrate needs 32..20000 kbit/s"
+			}
+			a.bitrate = n
+		case "--loss":
+			v, ok := next(args, &i)
+			if !ok {
+				return a, "--loss needs a count per thousand"
+			}
+			n, good := strconv.parse_int(v)
+			if !good || n < 0 || n > 500 {
+				return a, "--loss needs 0..500 per thousand"
+			}
+			a.loss = n
+		case "--no-keyframe-request":
+			a.no_pli = true
 		case "--volume":
 			v, ok := next(args, &i)
 			if !ok {
@@ -260,6 +307,19 @@ USAGE :: `call — real-time audio and video calling over loopback UDP
   --pattern NAME          lavfi video source for the synthetic camera, so the
                           two ends of a call look different
                           (testsrc2, smptehdbars, rgbtestsrc, mandelbrot, ...)
+  --video-codec WHICH     which video codecs to *offer*: auto (H.264 and
+                          MJPEG, the default), h264, or mjpeg. The peer offers
+                          too and the best both sides have wins, so
+                          --video-codec mjpeg on one end is how you get an
+                          MJPEG-only peer out of this binary.
+  --video-bitrate KBPS    the H.264 target, in kbit/s          (default 300)
+  --loss N                drop N of every thousand outgoing video fragments,
+                          on purpose, with a fixed seed. Loopback has no loss
+                          and H.264's whole risk is loss, so this is how the
+                          keyframe path gets exercised against a real stream.
+  --no-keyframe-request   never ask a peer for a keyframe, so recovery waits
+                          for the keyframe interval instead. The two runs
+                          together are what the report compares.
   --headless              no window: capture, encode, send, receive, decode
                           and play, with a statistics line every second. This
                           is the other end of a call when you only want one
@@ -350,6 +410,13 @@ pump_receive :: proc(app: ^App) {
 			if before != app.s.state {
 				on_state_change(app, before)
 			}
+			if c.kind == .Keyframe {
+				// The peer has lost something and cannot decode until it is
+				// given a frame that stands alone.
+				if video_on_keyframe_request(&app.v, app.t) {
+					log_line(app, "keyframe requested by peer — cycling the encoder")
+				}
+			}
 		case .Audio_Opus, .Audio_PCM:
 			app.s.last_peer_rx = app.t
 			if app.s.state == .Connecting {
@@ -358,14 +425,14 @@ pump_receive :: proc(app: ^App) {
 				on_state_change(app, before)
 			}
 			audio_receive(&app.a, h, payload)
-		case .Video_JPEG:
+		case .Video_JPEG, .Video_H264:
 			app.s.last_peer_rx = app.t
 			if app.s.state == .Connecting {
 				before := app.s.state
 				set_state(&app.s, .Connected)
 				on_state_change(app, before)
 			}
-			video_receive(&app.v, h, payload)
+			video_receive(&app.v, &app.s, h, payload, app.t)
 		}
 	}
 }
@@ -484,7 +551,60 @@ start_media :: proc(app: ^App) {
 		log_line(app, "%s not opened; using the synthetic camera", sel_camera(&app.devs).name)
 	}
 	audio_start(&app.a, src, sink)
-	video_start(&app.v, cam)
+
+	// The codec is not a setting, it is the intersection of two offers. Both
+	// ends compute it from the same two bitmasks, so there is no answer
+	// message and no round trip: see `negotiate_video`.
+	codec := negotiate_video(app.v.offer, app.s.peer_codecs)
+	app.v.peer_offer = app.s.peer_codecs
+	app.v.negotiated = true
+	video_start(&app.v, cam, codec)
+	log_line(
+		app,
+		"video codec %s (we offer %s, peer offers %s)",
+		video_codec_name(codec),
+		codec_offer_label(app.v.offer),
+		codec_offer_label(app.s.peer_codecs),
+	)
+}
+
+// codec_offer_label renders an offer bitmask the way the log and the statistics
+// panel want to read it.
+codec_offer_label :: proc(mask: u8) -> string {
+	switch mask & CODEC_ALL {
+	case CODEC_ALL:
+		return "H.264+MJPEG"
+	case CODEC_H264:
+		return "H.264"
+	case CODEC_MJPEG:
+		return "MJPEG"
+	}
+	return "none"
+}
+
+// renegotiate_video handles the offer arriving after the media did. In practice
+// it cannot: `Connecting` is only reachable through an INVITE or an ACCEPT and
+// both carry the offer. But a peer that restarts mid-call, or one whose first
+// control message was lost, would otherwise be stuck on the MJPEG floor for
+// the rest of the call, and the cost of noticing is one comparison a frame.
+renegotiate_video :: proc(app: ^App) {
+	if !call_active(&app.s) || !app.v.negotiated {
+		return
+	}
+	want := negotiate_video(app.v.offer, app.s.peer_codecs)
+	if want == app.v.codec {
+		return
+	}
+	app.v.peer_offer = app.s.peer_codecs
+	log_line(
+		app,
+		"peer now offers %s — switching to %s",
+		codec_offer_label(app.s.peer_codecs),
+		video_codec_name(want),
+	)
+	src, cam := resolve_capture(app.allow_real, sel_source(&app.devs), sel_camera(&app.devs))
+	_ = src
+	video_start(&app.v, cam, want)
 }
 
 stop_media :: proc(app: ^App) {
@@ -658,9 +778,13 @@ step :: proc(app: ^App, t: f64, dt: f32) {
 	}
 
 	if call_active(&app.s) {
+		renegotiate_video(app)
 		audio_pump_capture(&app.a, &app.s, app.dt)
 		audio_pump_playout(&app.a, app.dt)
 		video_pump_capture(&app.v, &app.s, app.t)
+		// A decoder is a process and answers on its own schedule, so it is
+		// drained every tick rather than only when a datagram arrives.
+		video_pump_decoders(&app.v)
 
 		supervise_media(app)
 	} else {
@@ -686,10 +810,11 @@ HEADLESS_TICK :: 4 * time.Millisecond
 
 headless_run :: proc(app: ^App, seconds: f64) {
 	fmt.printfln(
-		"call: headless, bound 127.0.0.1:%d, peer 127.0.0.1:%d, %s",
+		"call: headless, bound 127.0.0.1:%d, peer 127.0.0.1:%d, %s, video offer %s",
 		app.s.bind_port,
 		app.s.peer.port,
 		app.a.codec,
+		codec_offer_label(app.v.offer),
 	)
 	start := time.tick_now()
 	last := start
@@ -736,7 +861,7 @@ print_stats :: proc(app: ^App, t: f64) {
 	s := &app.s
 	fmt.printfln(
 		"%.1fs  %-10s  audio %.1f ms (wire %.2f, player q %.1f)  jb hold %.0f ms conceal %d late %d  "+
-		"video out %.1f in %.1f fps %dx%d  net tx %.0f rx %.0f kbit/s",
+		"video %s out %.1f in %.1f fps %dx%d  net tx %.0f rx %.0f kbit/s",
 		t,
 		state_label(s.state),
 		a.stats.last_us / 1000,
@@ -745,6 +870,7 @@ print_stats :: proc(app: ^App, t: f64) {
 		jb_depth_ms(&a.jb, A_FRAME_MS),
 		a.jb.concealed,
 		a.jb.too_late,
+		video_codec_name(v.codec),
 		v.fps_tx,
 		v.fps_rx,
 		v.has_remote ? v.remote.w : 0,
@@ -760,7 +886,13 @@ print_summary :: proc(app: ^App) {
 	s := &app.s
 	fmt.println("")
 	fmt.println("── measured over the whole call ──")
-	fmt.printfln("  codec              %s", a.codec)
+	fmt.printfln("  audio codec        %s", a.codec)
+	fmt.printfln(
+		"  video codec        %s  (offered %s, peer offered %s)",
+		video_codec_name(v.codec),
+		codec_offer_label(v.offer),
+		codec_offer_label(v.peer_offer),
+	)
 	fmt.printfln("  audio frames       %d sent, %d played", a.frames_sent, a.frames_played)
 	if a.stats.n > 0 {
 		fmt.printfln(
@@ -815,8 +947,43 @@ print_summary :: proc(app: ^App) {
 		v.fps_rx,
 	)
 	if v.has_remote {
-		fmt.printfln("  frame size         %dx%d, %.1f KB, %.2f ms to decode",
-			v.remote.w, v.remote.h, f32(v.last_jpeg_bytes) / 1024, v.decode_ms)
+		fmt.printfln("  frame size         %dx%d, %.2f KB mean, %.2f KB last, %.2f ms to decode",
+			v.remote.w, v.remote.h,
+			video_mean_frame_bytes(v) / 1024,
+			f32(v.last_frame_bytes) / 1024,
+			v.decode_ms)
+	}
+	fmt.printfln(
+		"  video wire         %.0f kbit/s of video alone (%d frames, %.2f MB)",
+		f32(v.bytes_sent) * 8 / 1000 / f32(max(0.001, s.t)),
+		v.frames_sent,
+		f32(v.bytes_sent) / 1_000_000,
+	)
+	fmt.printfln(
+		"  keyframes          %d sent, %d received, %d forced by request (interval %d s)",
+		v.keyframes_sent,
+		v.keyframes_rx,
+		v.keyframes_forced,
+		V_GOP_SECONDS,
+	)
+	fmt.printfln(
+		"  loss path          %d gaps seen, %d keyframe requests out, %d in, %d frames skipped waiting",
+		v.loss_events,
+		v.pli_sent,
+		v.pli_rx,
+		v.frames_skipped,
+	)
+	if v.dec.starts > 0 || v.dec_self.starts > 0 {
+		fmt.printfln(
+			"  h264 decoders      peer %d in / %d out / %d dropped / %d starts, self %d in / %d out%s",
+			v.dec.pushed,
+			v.dec.frames,
+			v.dec.dropped,
+			v.dec.starts,
+			v.dec_self.pushed,
+			v.dec_self.frames,
+			v.dec.error == "" ? "" : fmt.tprintf(" — %s", v.dec.error),
+		)
 	}
 	if v.latency_n > 0 {
 		fmt.printfln("  video latency      mean %.2f ms, n=%d", video_latency_mean_us(v) / 1000, v.latency_n)
@@ -835,6 +1002,13 @@ print_summary :: proc(app: ^App) {
 		f32(s.rx_bytes) / 1_000_000,
 		s.rx_bad,
 	)
+	if s.drop_permille > 0 {
+		fmt.printfln(
+			"  deliberate loss    %d of 1000 video fragments asked for, %d actually dropped",
+			s.drop_permille,
+			s.tx_dropped,
+		)
+	}
 }
 
 // ---------------------------------------------------------------------------
@@ -882,6 +1056,18 @@ main :: proc() {
 			os.exit(2)
 		}
 	}
+	if args.bitrate > 0 {
+		v_bitrate_kbps = args.bitrate
+	}
+	app.v.ask_keyframes = !args.no_pli
+	{
+		mask, e := parse_codec_offer(args.codec)
+		if e != "" {
+			fmt.eprintfln("call: %s", e)
+			os.exit(2)
+		}
+		app.v.offer = mask
+	}
 	defer video_destroy(&app.v)
 
 	if e := session_open(&app.s, args.bind, args.peer, args.name); e != "" {
@@ -889,6 +1075,10 @@ main :: proc() {
 		os.exit(1)
 	}
 	defer session_close(&app.s)
+	// What we advertise on every control message is exactly what this instance
+	// can decode, so there is one source of truth for it.
+	app.s.codecs = app.v.offer
+	app.s.drop_permille = args.loss
 
 	log_line(app, "bound 127.0.0.1:%d, peer 127.0.0.1:%d", args.bind, args.peer)
 	log_line(app, "%s", app.devs.note)

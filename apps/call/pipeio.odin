@@ -70,16 +70,23 @@ set_nonblocking :: proc(fd: linux.Fd) {
 	linux.fcntl_setfl(fd, linux.F_SETFL, fl)
 }
 
+// set_pipe_size asks for a capacity and settles for the largest the kernel
+// will give. The retry matters: the kernel refuses anything above
+// /proc/sys/fs/pipe-max-size (1 MiB here) for an unprivileged process, and a
+// refusal leaves the pipe at its 64 KiB default — which for a decoder writing
+// 27 MB a second is 2.4 ms of buffer and was measured capping a 30 fps stream
+// at 17 fps, because a frame loop drains at most one pipe-full per tick.
 set_pipe_size :: proc(fd: linux.Fd, bytes: int) -> int {
-	got, err := linux.fcntl_setpipe_sz(fd, linux.F_SETPIPE_SZ, i32(bytes))
-	if err != .NONE {
-		// The kernel refuses anything below one page and anything above
-		// /proc/sys/fs/pipe-max-size for an unprivileged process; either way
-		// the existing size stands.
-		cur, _ := linux.fcntl_getpipe_sz(fd, linux.F_GETPIPE_SZ)
-		return int(cur)
+	want := bytes
+	for want >= 4096 {
+		got, err := linux.fcntl_setpipe_sz(fd, linux.F_SETPIPE_SZ, i32(want))
+		if err == .NONE {
+			return int(got)
+		}
+		want /= 2
 	}
-	return int(got)
+	cur, _ := linux.fcntl_getpipe_sz(fd, linux.F_GETPIPE_SZ)
+	return int(cur)
 }
 
 // spawn_reader starts `argv` with its stdout on a pipe we read.
@@ -127,6 +134,47 @@ spawn_writer :: proc(argv: []string, pipe_bytes := 0) -> (c: Child, err: string)
 	set_nonblocking(c.write_fd)
 	if pipe_bytes > 0 {
 		set_pipe_size(c.write_fd, pipe_bytes)
+	}
+	c.argv = strings.join(argv, " ")
+	return c, ""
+}
+
+// spawn_duplex starts `argv` with both its stdin and its stdout on pipes, which
+// is what a codec is: bytes in, bytes out, state kept between them.
+//
+// Both ends are non-blocking and both are lifted above FD_FLOOR, so a frame
+// loop can offer it a frame and take whatever has come back without ever
+// waiting. A short write is normal and the caller keeps the remainder.
+spawn_duplex :: proc(argv: []string, in_bytes := 0, out_bytes := 0) -> (c: Child, err: string) {
+	ir, iw, e1 := os.pipe()
+	if e1 != nil {
+		return {}, "pipe failed"
+	}
+	or_, ow, e2 := os.pipe()
+	if e2 != nil {
+		os.close(ir)
+		os.close(iw)
+		return {}, "pipe failed"
+	}
+	p, serr := os.process_start({command = argv, stdin = ir, stdout = ow, stderr = nil})
+	os.close(ir)
+	os.close(ow)
+	if serr != nil {
+		os.close(iw)
+		os.close(or_)
+		return {}, fmt.aprintf("could not start %s", argv[0])
+	}
+	c.proc_ = p
+	c.running = true
+	c.write_fd = lift(iw)
+	c.read_fd = lift(or_)
+	set_nonblocking(c.write_fd)
+	set_nonblocking(c.read_fd)
+	if in_bytes > 0 {
+		set_pipe_size(c.write_fd, in_bytes)
+	}
+	if out_bytes > 0 {
+		set_pipe_size(c.read_fd, out_bytes)
 	}
 	c.argv = strings.join(argv, " ")
 	return c, ""

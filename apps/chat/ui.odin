@@ -7,11 +7,13 @@ package main
 import "core:fmt"
 import "core:strings"
 import "core:time"
+import kit "kit:."
 import p "palmy:."
 import sc "shadcn:."
 import w "wire"
 
 LINE_H :: 20
+THREAD_W :: 340
 
 AVATAR_BG := [?]string {
 	"bg-indigo-500",
@@ -34,7 +36,14 @@ build :: proc(ui: ^p.Ctx, a: ^App) {
 	jump_button(ui, a)
 	p.end(ui)
 
-	member_panel(ui, a)
+	// The thread view takes the right-hand column while it is open. It is the
+	// same shape Slack uses, and it means the one composer at the bottom can
+	// target the thread without a second text model.
+	if a.thread_root != 0 {
+		thread_panel(ui, a)
+	} else {
+		member_panel(ui, a)
+	}
 
 	if a.mode == .Search {
 		search_overlay(ui, a)
@@ -45,6 +54,8 @@ build :: proc(ui: ^p.Ctx, a: ^App) {
 	if a.toast != "" {
 		toast_strip(ui, a)
 	}
+	// The attach dialog draws last, over everything else.
+	attach_overlay(ui, a)
 }
 
 // ---------------------------------------------------------------------------
@@ -162,6 +173,17 @@ channel_row :: proc(ui: ^p.Ctx, a: ^App, i: int) {
 			? "flex-1 min-w-0 text-[13] font-semibold truncate" \
 			: active ? "flex-1 min-w-0 text-[13] truncate" : "flex-1 min-w-0 text-[13] text-muted-foreground truncate",
 		)
+	}
+
+	// Unread replies inside threads are not timeline rows, so they get their
+	// own quiet marker rather than inflating the channel badge into a promise
+	// of messages that are not there.
+	if c.threads > 0 && !active {
+		p.row(ui, "shrink-0 items-center gap-0.5 h-[18] px-1 rounded-full border border-border")
+		p.icon(ui, IC_MESSAGES_SQUARE, "size-2.5 shrink-0 text-muted-foreground")
+		p.textf(ui, "text-[9.5] text-muted-foreground whitespace-nowrap", "%d", min(c.threads, 99))
+		p.style(ui).shrink = 0
+		p.end(ui)
 	}
 
 	if c.unread > 0 && !active {
@@ -447,8 +469,16 @@ message_row :: proc(ui: ^p.Ctx, a: ^App, c: ^Channel, i: int) -> bool {
 		md_render(ui, m.text, "text-sm text-foreground", avail)
 	}
 
+	if m.file.id != 0 && !m.deleted {
+		attachment_card(ui, a, m, sel)
+	}
 	if len(m.reacts) > 0 {
 		reaction_row(ui, a, m)
+	}
+	// The thread stub is the first-class part: a row in the channel that says
+	// a conversation hangs off this message, and opens it.
+	if m.replies > 0 && !m.deleted {
+		thread_stub(ui, a, m)
 	}
 	if sel && !m.deleted {
 		reaction_palette(ui, a, m)
@@ -459,6 +489,74 @@ message_row :: proc(ui: ^p.Ctx, a: ^App, c: ^Channel, i: int) -> bool {
 		action_bar(ui, a, m)
 	}
 	return hov
+}
+
+// thread_stub is the "4 replies" row under a message that has a thread.
+thread_stub :: proc(ui: ^p.Ctx, a: ^App, m: ^w.Msg) {
+	open := a.thread_root == m.id
+	idx := p.row(ui, "shrink-0 self-start items-center gap-1.5 h-[24] px-2 mt-0.5 rounded-md border transition")
+	p.apply(ui, open ? "border-primary/60 bg-primary/15" : "border-border bg-muted/40 hover:bg-muted", idx)
+	if p.clickable(ui, idx) {
+		a.sel_msg = m.id
+		open_thread(a)
+	}
+	defer p.end(ui)
+
+	p.icon(ui, IC_MESSAGES_SQUARE, "size-3 shrink-0 text-primary")
+	p.textf(
+		ui,
+		"text-[11] font-semibold text-primary whitespace-nowrap",
+		"%d repl%s",
+		m.replies,
+		m.replies == 1 ? "y" : "ies",
+	)
+	p.style(ui).shrink = 0
+	if m.last_reply != 0 {
+		p.textf(
+			ui,
+			"text-[10] text-muted-foreground whitespace-nowrap",
+			"last at %s",
+			hhmm(ui, a, m.last_reply),
+		)
+		p.style(ui).shrink = 0
+	}
+	p.icon(ui, IC_CHEVRON_RIGHT, "size-3 shrink-0 text-muted-foreground")
+}
+
+// attachment_card is the receive half of attachments: what the file is, how
+// big it is, and the key that saves it. The bytes are never in the message —
+// `o` fetches them by id.
+attachment_card :: proc(ui: ^p.Ctx, a: ^App, m: ^w.Msg, sel: bool) {
+	idx := p.row(ui, "shrink-0 self-start items-center gap-2.5 h-[44] px-3 mt-1 rounded-lg border border-border bg-muted/40 max-w-full")
+	if p.clickable(ui, idx) {
+		// Hand `save_attachment` the message rather than a selection to
+		// resolve: this card is also drawn inside the thread panel, where the
+		// message is not in the channel timeline at all.
+		save_attachment(a, m)
+	}
+	defer p.end(ui)
+
+	p.div(ui, "size-7 shrink-0 flex-row items-center justify-center rounded-md bg-background border border-border")
+	p.icon(ui, strings.has_prefix(m.file.mime, "image/") ? IC_IMAGE : IC_FILE, "size-3.5 text-muted-foreground")
+	p.end(ui)
+
+	p.col(ui, "min-w-0 gap-0")
+	p.text(ui, m.file.name, "text-[12] font-medium truncate")
+	p.textf(
+		ui,
+		"text-[10] text-muted-foreground whitespace-nowrap",
+		"%s · %s",
+		kit.pick_size_text(i64(m.file.size), context.temp_allocator),
+		m.file.mime,
+	)
+	p.style(ui).shrink = 0
+	p.end(ui)
+
+	p.row(ui, "shrink-0 items-center gap-1 pl-1")
+	p.icon(ui, IC_DOWNLOAD, "size-3 shrink-0 text-muted-foreground")
+	sc.kbd(ui, "o")
+	p.end(ui)
+	_ = sel
 }
 
 reply_stub :: proc(ui: ^p.Ctx, a: ^App, c: ^Channel, id: i64) {
@@ -538,6 +636,7 @@ action_bar :: proc(ui: ^p.Ctx, a: ^App, m: ^w.Msg) {
 
 	action_icon(ui, IC_FACE_SLIGHTLY_SMILING_PLUS, "1-6")
 	action_icon(ui, IC_REPLY, "r")
+	action_icon(ui, IC_MESSAGES_SQUARE, "t")
 	if m.nick == a.nick {
 		action_icon(ui, IC_PENCIL, "e")
 		action_icon(ui, IC_TRASH, "d")
@@ -603,7 +702,7 @@ composer :: proc(ui: ^p.Ctx, a: ^App) {
 
 	typing_strip(ui, a)
 
-	if a.editing != 0 || a.replying != 0 {
+	if a.editing != 0 || a.replying != 0 || a.thread_root != 0 {
 		draft_banner(ui, a)
 	}
 
@@ -721,6 +820,17 @@ draft_banner :: proc(ui: ^p.Ctx, a: ^App) {
 		p.icon(ui, IC_PENCIL, "size-3 shrink-0 text-muted-foreground")
 		p.text(ui, "Editing your message", "text-[11.5] text-muted-foreground whitespace-nowrap")
 		p.style(ui).shrink = 0
+	} else if a.replying == 0 && a.thread_root != 0 {
+		p.icon(ui, IC_MESSAGES_SQUARE, "size-3 shrink-0 text-primary")
+		p.textf(
+			ui,
+			"text-[11.5] font-medium text-primary whitespace-nowrap",
+			"Replying in thread · %d repl%s",
+			thread_reply_count(a),
+			thread_reply_count(a) == 1 ? "y" : "ies",
+		)
+		p.style(ui).shrink = 0
+		p.text(ui, "this stays out of the channel", "flex-1 min-w-0 text-[10.5] text-muted-foreground truncate")
 	} else {
 		p.icon(ui, IC_REPLY, "size-3 shrink-0 text-muted-foreground")
 		src := msg_at(c, a.replying)
@@ -748,6 +858,152 @@ hint :: proc(ui: ^p.Ctx, k1, k2, label: string) {
 // ---------------------------------------------------------------------------
 // Member panel
 // ---------------------------------------------------------------------------
+
+attach_overlay :: proc(ui: ^p.Ctx, a: ^App) {
+	if !kit.pick_active(&a.pick) {
+		return
+	}
+	res, done := kit.pick_draw(ui, &a.pick)
+	if !done {
+		return
+	}
+	defer kit.pick_result_free(res)
+	if !res.ok {
+		return
+	}
+	finish_attach(a, res.path)
+}
+
+// ---------------------------------------------------------------------------
+// The thread panel
+//
+// A thread is its own place: the root, then every reply, in id order. The
+// composer at the bottom of the window posts into it while this is open, so
+// there is exactly one text model in the app and no second caret to get wrong.
+// ---------------------------------------------------------------------------
+
+thread_panel :: proc(ui: ^p.Ctx, a: ^App) {
+	p.col(ui, p.concat(ui, "h-full shrink-0 border-l border-border bg-card w-[", itoa(ui, THREAD_W), "]"))
+	defer p.end(ui)
+
+	// Header.
+	p.row(ui, "w-full h-[52] shrink-0 items-center gap-2 px-3 border-b border-border")
+	p.icon(ui, IC_MESSAGES_SQUARE, "size-4 shrink-0 text-primary")
+	p.col(ui, "flex-1 min-w-0 gap-0")
+	p.text(ui, "Thread", "text-[13] font-semibold truncate")
+	p.textf(
+		ui,
+		"text-[10.5] text-muted-foreground truncate",
+		"%s · %d repl%s",
+		chan_name_for(a, a.thread_ch),
+		thread_reply_count(a),
+		thread_reply_count(a) == 1 ? "y" : "ies",
+	)
+	p.end(ui)
+	idx := p.row(ui, "shrink-0 items-center gap-1 h-6 px-1.5 rounded-md hover:bg-muted")
+	if p.clickable(ui, idx) {
+		close_thread(a)
+	}
+	sc.kbd(ui, "Esc")
+	p.icon(ui, IC_X, "size-3 shrink-0 text-muted-foreground")
+	p.end(ui)
+	p.end(ui)
+
+	// Body.
+	p.col(ui, "flex-1 min-h-0 w-full overflow-scroll px-3 py-3 gap-2")
+	if !a.tloaded {
+		for _ in 0 ..< 3 {
+			p.row(ui, "w-full shrink-0 items-start gap-2 py-1")
+			sc.skeleton(ui, "size-7 shrink-0 rounded-full")
+			p.col(ui, "flex-1 min-w-0 gap-1.5 pt-1")
+			sc.skeleton(ui, "h-3 w-[90]")
+			sc.skeleton(ui, "h-3 w-full")
+			p.end(ui)
+			p.end(ui)
+		}
+		p.end(ui)
+		return
+	}
+
+	thread_msg(ui, a, &a.troot, true)
+
+	p.row(ui, "w-full shrink-0 items-center gap-2 py-1")
+	p.div(ui, "flex-1 h-px bg-border")
+	p.end(ui)
+	p.textf(
+		ui,
+		"text-[10] font-semibold uppercase tracking-wide text-muted-foreground whitespace-nowrap",
+		a.tmore ? "%d repl%s · newest shown" : "%d repl%s",
+		thread_reply_count(a),
+		thread_reply_count(a) == 1 ? "y" : "ies",
+	)
+	p.style(ui).shrink = 0
+	p.div(ui, "flex-1 h-px bg-border")
+	p.end(ui)
+	p.end(ui)
+
+	if len(a.tmsgs) == 0 {
+		p.col(ui, "w-full items-center justify-center gap-1.5 py-8")
+		p.icon(ui, IC_MESSAGES_SQUARE, "size-5 text-muted-foreground")
+		p.text(ui, "No replies yet", "text-xs text-muted-foreground")
+		p.text(ui, "What you type goes here, not to the channel.", "text-[10.5] text-muted-foreground")
+		p.end(ui)
+	}
+	for i in 0 ..< len(a.tmsgs) {
+		p.key(ui, itoa64(ui, a.tmsgs[i].id))
+		thread_msg(ui, a, &a.tmsgs[i], false)
+	}
+	p.end(ui)
+
+	// Footer.
+	p.row(ui, "w-full h-[44] shrink-0 items-center gap-2 px-3 border-t border-border")
+	p.icon(ui, IC_CORNER_DOWN_LEFT, "size-3 shrink-0 text-muted-foreground")
+	p.text(ui, "the composer posts in here", "flex-1 text-[10.5] text-muted-foreground truncate")
+	sc.kbd(ui, "Ctrl T")
+	p.end(ui)
+}
+
+thread_msg :: proc(ui: ^p.Ctx, a: ^App, m: ^w.Msg, is_root: bool) {
+	row := p.row(ui, "w-full shrink-0 items-start gap-2 rounded-md px-1.5 py-1")
+	if is_root {
+		p.apply(ui, "bg-muted/50 border border-border", row)
+	}
+	defer p.end(ui)
+
+	avatar(ui, m.nick, "size-7", "text-[10.5]")
+	body := p.col(ui, "flex-1 min-w-0 gap-1")
+	avail := p.rect_of(ui, p.node_id(ui, body)).w
+	if avail < 60 {
+		avail = f32(THREAD_W - 80)
+	}
+	p.row(ui, "w-full items-baseline gap-2")
+	p.text(ui, m.nick, "text-[12] font-semibold whitespace-nowrap")
+	p.style(ui).shrink = 0
+	p.text(ui, hhmm(ui, a, m.ts), "text-[10] text-muted-foreground whitespace-nowrap")
+	p.style(ui).shrink = 0
+	if m.edited != 0 {
+		p.text(ui, "(edited)", "text-[9.5] text-muted-foreground whitespace-nowrap")
+		p.style(ui).shrink = 0
+	}
+	p.spacer(ui)
+	if is_root {
+		sc.badge(ui, "root", .Outline)
+	}
+	p.end(ui)
+
+	if m.deleted {
+		p.text(ui, "This message was deleted", "text-[12] text-muted-foreground")
+	} else {
+		md_render(ui, m.text, "text-[12.5] text-foreground", avail)
+	}
+	if m.file.id != 0 && !m.deleted {
+		attachment_card(ui, a, m, false)
+	}
+	if len(m.reacts) > 0 {
+		reaction_row(ui, a, m)
+	}
+	p.end(ui)
+}
 
 member_panel :: proc(ui: ^p.Ctx, a: ^App) {
 	p.col(ui, p.concat(ui, "h-full shrink-0 border-l border-border bg-card w-[", itoa(ui, MEMBERS_W), "]"))
@@ -931,6 +1187,8 @@ help_overlay :: proc(ui: ^p.Ctx, a: ^App) {
 			{"Ctrl Up/Down", "previous / next channel"},
 			{"Ctrl 1-9", "channel by number"},
 			{"Ctrl L", "jump to latest"},
+			{"Ctrl T", "open / close the thread"},
+			{"Ctrl O", "attach a file"},
 			{"Ctrl G", "toggle away"},
 			{"Ctrl Q", "quit"},
 		},
@@ -953,7 +1211,9 @@ help_overlay :: proc(ui: ^p.Ctx, a: ^App) {
 		[]Help_Line{
 			{"Up/Down, j/k", "select a message"},
 			{"1 - 6", "react"},
-			{"r", "reply"},
+			{"r", "quote-reply in the channel"},
+			{"t", "open the thread"},
+			{"o", "save the attachment"},
 			{"e", "edit yours"},
 			{"d / Del", "delete yours"},
 			{"y", "copy the text"},

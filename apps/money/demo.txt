@@ -1,0 +1,46 @@
+# money — import a statement, watch it categorise, set a budget and see it
+# fill, spot a recurring charge, read the spend chart.
+#
+# The dialog opens on this app's fixtures directory. Everything in it is
+# fictitious: invented names, IBANs on an unissued bank code, synthetic
+# amounts.
+wait 1.6
+
+# Import. Down picks the September statement, Return imports it.
+chord ctrl+o
+wait 1.4
+key Down
+wait 0.6
+key Return
+wait 2.2
+
+# The rows arrive categorised by the rules; the status bar says how many.
+wait 1.4
+key Down
+key Down
+key Down
+wait 1.0
+
+# What the rules could not place.
+key u
+wait 1.8
+key u
+wait 0.8
+
+# Budgets: the envelopes for the month, one of them over.
+key 2
+wait 2.4
+
+# The recurring charges found in the history.
+key 3
+wait 2.6
+
+# Spend by category, then the balance over time.
+key 4
+wait 2.4
+key t
+wait 2.4
+
+# Reconciliation against the statement's own closing balance.
+key 5
+wait 2.6

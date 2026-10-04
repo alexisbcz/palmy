@@ -2,11 +2,23 @@
 # Bob is the right window and answers by itself, so the call is up before the
 # recording starts and both windows show the other one's picture.
 #
+# Both instances offer H.264 and MJPEG, so the call runs on H.264 at about
+# 300 kbit/s; the Statistics panel names the codec and both offers that chose
+# it, and the keyframe and loss-recovery rows below it are the H.264 story.
+#
 # Synthetic sources only: a 440 Hz tone modulated at 0.4 Hz, ffmpeg's testsrc2
 # on the left and SMPTE bars on the right. Nothing here opens the camera or
-# the microphone; see record.sh and start_media() in main.odin.
+# the microphone; see record.sh and resolve_capture() in main.odin.
+#
+# Everything in this file becomes one wtype argv — see the note at the top of
+# record.sh for why — so `wait` is wtype's own `-s` and the pacing is exact.
 
-wait 3.5
+wait 2.5
+
+# The live numbers first: the negotiated codec, measured latency, the jitter
+# buffer, measured frame rate in and out, keyframes, and the packet counters
+# both ways.
+wait 4.5
 
 # Mute: the left meter falls to silence, and the badge appears on the right
 # window's tile for Alice, because mute travels in the STATE control message.
@@ -16,7 +28,8 @@ key m
 wait 2.5
 
 # Camera off: the right window shows the camera-off placeholder where Alice's
-# video was, and the left window's self-view says so too.
+# video was, and the left window's self-view says so too. The self-view is its
+# own H.264 decode of our own stream, scaled to the size of the tile.
 key v
 wait 3.0
 key v
@@ -35,10 +48,9 @@ wait 1.0
 key Right
 wait 2.0
 
-# Back to the live numbers: measured latency, jitter buffer, measured frame
-# rate, packet counters both ways.
+# Back to the statistics, which is where the codec row is.
 key s
-wait 4.5
+wait 5.0
 
 # Volume.
 key bracketright
@@ -58,6 +70,7 @@ wait 3.0
 key h
 wait 2.0
 
-# And call again, which the right window answers.
+# And call again, which the right window answers — a fresh negotiation, a
+# fresh keyframe, and video flowing within a frame or two of ACCEPT.
 key c
-wait 4.0
+wait 5.0

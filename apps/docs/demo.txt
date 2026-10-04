@@ -1,199 +1,214 @@
-# Docs — a word processor on palmy.
+# Docs — tables, pictures, and find with case and whole-word.
 #
-# Most commands here are bare function keys, because that is what a recorder
-# can always send. The table and picture commands need a modifier, so they use
-# `chord`. Press F1 in the app for the whole table of shortcuts.
+# ## Why every key is a `chord capslock+…`
+#
+# `headless-record.sh` runs one `wtype` per step, and each invocation attaches
+# a fresh virtual keyboard and starts sending before the compositor has
+# finished handing focus to it — so an invocation's **first** key event is
+# occasionally dropped. A bare `key Return` is a one-event invocation, so a
+# drop loses the whole step; in a take of this script with bare keys, four of
+# five Returns went missing and the document came out as one run-on paragraph.
+#
+# A chord is a multi-event invocation: the modifier press goes first and is
+# the one that gets sacrificed. Caps Lock is the modifier to use, because it
+# is the one palmy reports that this app's key table deliberately ignores —
+# `plain` and `edit_count` mask on Shift/Ctrl/Alt/Super only — so the key
+# fires identically whether or not the Caps Lock press arrived, and typing
+# after it is unaffected. Every bare key below is wrapped for that reason and
+# no other; a person pressing Return gets the same result.
 
 wait 1.4
 move 590 520
 wait 1.0
 
 # Walk to the end of the document.
-key Next
+chord capslock+Next
 wait 0.4
-key Next
+chord capslock+Next
 wait 0.4
-key Next
+chord capslock+Next
 wait 0.4
-key Next
+chord capslock+Next
 wait 0.9
 
 # A new paragraph, promoted to a heading (F5 cycles Body, H1, H2, ...).
-key Return
+chord capslock+Return
 wait 0.4
-key F5
+chord capslock+F5
 wait 0.4
-key F5
+chord capslock+F5
 wait 0.8
 type A table, and a picture
 wait 1.2
 
 # Return at the end of a heading starts body text.
-key Return
+chord capslock+Return
 wait 0.4
 type A table is a paragraph kind whose content is a grid of cells, and each cell holds ordinary paragraphs — so wrapping, styling and the caret all keep working inside one.
-wait 1.6
-key Return
-wait 0.5
+wait 1.7
+chord capslock+Return
+wait 0.6
 
 # ---------------------------------------------------------------------------
-# Insert a table. Ctrl+Shift+T opens a prompt that takes "rows x columns".
+# A table. Ctrl+Shift+T opens a prompt that takes "rows x columns".
 # ---------------------------------------------------------------------------
 chord ctrl+shift+t
-wait 1.2
+wait 1.3
 chord ctrl+u
 wait 0.4
 type 4x3
 wait 1.0
-key Return
-wait 1.6
+chord capslock+Return
+wait 1.8
 
 # The caret lands in the first cell and a table strip appears above the page.
-# Tab walks the grid; Tab at the last cell grows the table by a row.
+# Tab walks the grid.
 type Format
 wait 0.5
-key Tab
+chord capslock+Tab
 wait 0.4
 type Carries a table as
 wait 0.5
-key Tab
+chord capslock+Tab
 wait 0.4
 type Carries a picture as
-wait 0.7
-key Tab
+wait 0.8
+chord capslock+Tab
 wait 0.6
 
 type PDF
 wait 0.4
-key Tab
+chord capslock+Tab
 wait 0.3
 type lines and positioned text
 wait 0.4
-key Tab
+chord capslock+Tab
 wait 0.3
 type an XObject stream
 wait 0.6
-key Tab
+chord capslock+Tab
 wait 0.5
 
 type .docx
 wait 0.4
-key Tab
+chord capslock+Tab
 wait 0.3
 type w:tbl with a tblGrid
 wait 0.4
-key Tab
+chord capslock+Tab
 wait 0.3
 type w:drawing plus a relationship
 wait 0.6
-key Tab
+chord capslock+Tab
 wait 0.5
 
 type .odt
 wait 0.4
-key Tab
+chord capslock+Tab
 wait 0.3
 type table:table
 wait 0.4
-key Tab
+chord capslock+Tab
 wait 0.3
 type draw:frame and draw:image
-wait 1.3
+wait 1.4
 
 # Tab at the last cell grows the table rather than leaving it.
-key Tab
-wait 0.8
+chord capslock+Tab
+wait 1.0
 type .rtf
 wait 0.4
-key Tab
+chord capslock+Tab
 wait 0.3
-type a run of \trowd rows
+type a run of trowd rows
 wait 0.4
-key Tab
+chord capslock+Tab
 wait 0.3
-type a \pict of hex bytes
-wait 1.6
+type a pict of hex bytes
+wait 1.8
 
-# Widen the middle column, then narrow it back (Alt+Left / Alt+Right).
-key Up
-wait 0.4
+# Widen the middle column and bring it back (Alt+Right / Alt+Left).
+chord capslock+Up
+wait 0.5
 chord alt+Right
-wait 0.7
+wait 0.8
 chord alt+Right
-wait 1.1
-chord alt+Left
 wait 1.2
+chord alt+Left
+wait 1.3
 
-# Turn the header row off and on again — it is what repeats across a page
+# The header row off and on again — it is the row that repeats across a page
 # break, so it is worth seeing.
 chord alt+h
-wait 1.2
+wait 1.3
 chord alt+h
-wait 1.4
+wait 1.5
 
 # ---------------------------------------------------------------------------
 # Leave the table and insert a picture. Ctrl+Shift+I takes a path.
 # ---------------------------------------------------------------------------
-key Down
+chord capslock+Down
 wait 0.4
-key Down
+chord capslock+Down
 wait 0.4
-key Down
+chord capslock+Down
 wait 0.4
-key Down
+chord capslock+Down
 wait 0.4
-key Down
-wait 0.9
-key Return
+chord capslock+Down
 wait 0.4
+chord capslock+Down
+wait 1.0
+chord capslock+Return
+wait 0.5
 type And a picture, which participates in line layout and pagination:
-wait 1.2
+wait 1.3
 
 chord ctrl+shift+i
-wait 1.0
+wait 1.1
 chord ctrl+u
 wait 0.4
 type /home/alex/Work/palmy/apps/docs/demo-chart.png
-wait 1.2
-key Return
-wait 1.8
+wait 1.3
+chord capslock+Return
+wait 2.0
 
 # Alt+Up and Alt+Down scale it.
 chord alt+Up
-wait 1.3
+wait 1.4
 chord alt+Down
-wait 1.3
+wait 1.4
 
 # ---------------------------------------------------------------------------
-# Find and replace, with the two new depth switches.
+# Find and replace, with the two depth switches.
 # ---------------------------------------------------------------------------
-key F9
-wait 0.9
-type cell
-wait 1.4
-key F6
-wait 1.5
-key F5
-wait 1.5
-key F6
+chord capslock+F9
 wait 1.0
-key F5
-wait 0.8
-key Tab
+type cell
+wait 1.5
+chord capslock+F6
+wait 1.6
+chord capslock+F5
+wait 1.6
+chord capslock+F6
+wait 1.1
+chord capslock+F5
+wait 0.9
+chord capslock+Tab
 wait 0.5
 type box
-wait 1.2
-key F12
-wait 1.8
-key Escape
-wait 1.2
+wait 1.3
+chord capslock+F12
+wait 1.9
+chord capslock+Escape
+wait 1.3
 
-# Zoom out far enough to see the table and the picture on the page together.
-key KP_Subtract
-wait 0.8
-key KP_Subtract
-wait 1.0
-key Prior
-wait 1.6
-key Next
-wait 2.0
+# Zoom out far enough to see the table and the picture together.
+chord capslock+KP_Subtract
+wait 0.9
+chord capslock+KP_Subtract
+wait 1.1
+chord capslock+Prior
+wait 1.7
+chord capslock+Next
+wait 2.2

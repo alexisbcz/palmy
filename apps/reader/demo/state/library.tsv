@@ -1,0 +1,7 @@
+# palmy-reader library: id	path	format	title	author	added	opened	chapter	block	off	page	frac	pages
+1a86d2981bf686e1	/home/alex/Work/palmy/apps/reader/demo/books/novel.epub	EPUB	A Large Generated Novel	L. Fixture	1791135480	1791135613	0	0	0	0	0.00000	24
+1b9ca65277ee9cf0	/home/alex/Work/palmy/apps/reader/demo/books/generated.epub	EPUB	The Generated Book	A. Fixture	1791135480	1791135480	0	0	0	0	0.00000	0
+63d626da6616219a	/home/alex/Work/palmy/apps/reader/demo/books/novel.mobi	MOBI	A Large Generated Novel	L. Fixture	1791135480	1791135480	0	0	0	0	0.00000	0
+b97332114252860b	/home/alex/Work/palmy/apps/reader/demo/books/generated.mobi	MOBI	A Generated Mobipocket	M. Fixture	1791135480	1791135480	0	0	0	0	0.00000	0
+a310e9b8b8fc9405	/home/alex/Work/palmy/apps/reader/demo/books/slides.pdf	PDF	Drawing a desktop from scratch	palmy	1791135480	1791135480	0	0	0	1	0.00000	8
+5acbcd47cb1a1cb1	/home/alex/Work/palmy/apps/reader/demo/books/generated.djvu	DjVu	A Scanned Document	D. Fixture	1791135480	1791135480	0	0	0	1	0.00000	3

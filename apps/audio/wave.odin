@@ -5,13 +5,21 @@ package main
 // Everything drawn here comes from the file's own samples, decoded once per
 // track with
 //
-//   ffmpeg -i FILE -f s16le -ac 1 -ar 8000 -
+//   ffmpeg -i FILE -f s16le -ac 1 -ar 16000 -
 //
-// which is 16 KB of PCM per second of audio — small enough to keep the whole
+// which is 32 KB of PCM per second of audio — small enough to keep the whole
 // track in memory and cheap enough to decode on a worker thread while the
 // first sound is already playing. From that one buffer come three things: the
-// peak envelope behind the scrub bar, a 512-point FFT at the playhead for the
+// peak envelope behind the scrub bar, a 1024-point FFT at the playhead for the
 // spectrum, and the raw samples for the oscilloscope.
+//
+// The rate is 16 kHz rather than 8, so the analyser reaches 8 kHz instead of
+// stopping at 4 and the top two octaves of a real recording are actually on
+// the screen. Doubling the rate halves the frequency resolution of a fixed
+// transform, so FFT_N doubles with it: bin width stays at 15.6 Hz and the
+// window stays 64 ms long. The price is twice the memory — 32 KB per second,
+// 115 MB for an hour-long track, and the player holds two of these while it
+// is pre-decoding the next track.
 
 import "core:math"
 import "core:os"
@@ -19,9 +27,17 @@ import "core:sync"
 import "core:thread"
 import "core:time"
 
-WAVE_RATE :: 8000
-FFT_N :: 512
+WAVE_RATE :: 16000
+FFT_N :: 1024
 BARS :: 56
+// The oscilloscope window, in samples: 150 ms whatever the rate.
+SCOPE_SPAN :: WAVE_RATE * 150 / 1000
+// ffmpeg's `-ar` argument. It is spelled out rather than formatted because the
+// analysis runs on a worker thread, and a worker has no business touching the
+// temporary allocator for the lifetime of a decode.
+WAVE_RATE_STR :: "16000"
+#assert(WAVE_RATE == 16000) // keep WAVE_RATE_STR honest
+#assert(FFT_N & (FFT_N - 1) == 0) // radix-2 needs a power of two
 
 Analysis :: struct {
 	mu:     sync.Mutex,
@@ -77,7 +93,7 @@ analysis_main :: proc(t: ^thread.Thread) {
 				"-ac",
 				"1",
 				"-ar",
-				"8000",
+				WAVE_RATE_STR,
 				"-",
 			},
 		},
@@ -162,7 +178,7 @@ peaks :: proc(a: ^Analysis, out: []f32) -> (gain: f32) {
 // Spectrum
 // ---------------------------------------------------------------------------
 
-// spectrum computes a 512-point FFT of the window at `t` seconds and folds it
+// spectrum computes an FFT_N-point FFT of the window at `t` seconds and folds it
 // into logarithmically spaced bars, the way a real analyser is read.
 spectrum :: proc(a: ^Analysis, t: f64, out: []f32) -> bool {
 	re: [FFT_N]f32
