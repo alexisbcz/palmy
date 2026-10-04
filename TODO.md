@@ -395,6 +395,47 @@ own directories.
 
 ---
 
+# Packages
+
+`docs/PACKAGES.md` has the design. The short version: **do not write a package
+manager.** pacman already works, `yay` reaches the AUR, and rollback exists —
+`snapper` is configured on `/` and `limine-snapper-sync` keeps boot entries in
+step with the snapshots. A new one would begin with zero packages.
+
+What is missing is a declarative layer: a file per identity saying what the
+machine should have, a `sync` that converges toward it, a diff that shows how
+it has drifted, and an interface an agent can drive without parsing prose.
+
+> **Prompt.** Build `palm pkg`, the declarative package layer in
+> `docs/PACKAGES.md`. Read that file first; it is specific, and the rules in it
+> are each a way a package layer destroys a working machine.
+>
+> You own `apps/pkg/`. Do not touch `palmy/`, `shadcn/`, `apps/kit/` or
+> `parity/`, and do not touch another application.
+>
+> **Write the whole thing against a fake `pacman` before you run a real one.**
+> Everything that matters is testable without modifying this system: the
+> declaration parser, the diff between declared and installed, the refusal
+> rules, and — the assertion I care most about — **the exact argv that would be
+> run**. Assert that a `-Sy` without `-u` is never emitted, because a partial
+> upgrade is the documented way to break Arch; that a removal with dependants
+> refuses without `--yes`; that the bootloader, kernel, display manager and
+> init system are refused separately. `apps/power`'s self-test is the pattern
+> to copy: fake binaries on `PATH` writing to a sentinel file, the sentinel
+> asserted empty after every verb is driven, and the trap sprung deliberately
+> first so a broken trap fails loudly rather than passing.
+>
+> Only when that is green, and once, install something small and removable for
+> real, and say exactly what you installed and that you removed it.
+>
+> Snapshot before every mutation and name it for the operation. sudo needs a
+> password on this machine: ask, never cache, never embed. An agent may not
+> start an unattended full upgrade — a `.pacnew` or a keyring change needs a
+> person — so `upgrade` is interactive by design and should say so.
+>
+> Report the assertion count, the argv assertions specifically, what you
+> installed for real, and everything you chose not to automate.
+
 # Applications
 
 Gaps the owning agent named as deliberately unfinished. Each is small enough to
