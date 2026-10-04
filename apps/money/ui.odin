@@ -1346,11 +1346,47 @@ modal_keys :: proc(ui: ^p.Ctx, app: ^App) {
 			commit_budget(app)
 		}
 	case .Mapping:
-		app.modal_prof = clamp(
-			app.modal_prof + p.key_count(ui, p.KEY_DOWN) - p.key_count(ui, p.KEY_UP),
+		// Tab moves between banks, Up/Down between the fields of one, and
+		// Left/Right changes which column a field reads. That is the whole
+		// editor: a CSV mapping is eight small integers, and anything more
+		// elaborate would be in the way.
+		if len(app.profiles) == 0 {
+			break
+		}
+		if p.key_pressed(ui, p.KEY_TAB) {
+			app.modal_prof = (app.modal_prof + 1) % len(app.profiles)
+			app.modal_sel = 0
+		}
+		fields := mapping_fields(&app.profiles[app.modal_prof])
+		app.modal_sel = clamp(
+			app.modal_sel + p.key_count(ui, p.KEY_DOWN) - p.key_count(ui, p.KEY_UP),
 			0,
-			max(len(app.profiles) - 1, 0),
+			len(fields) - 1,
 		)
+		step := p.key_count(ui, p.KEY_RIGHT) - p.key_count(ui, p.KEY_LEFT)
+		if step != 0 {
+			col := fields[app.modal_sel].col
+			// -1 is "this bank has no such column", and it sits just below
+			// column 0 rather than being a separate mode.
+			col^ = clamp(col^ + step, -1, MAPPING_MAX_COL)
+			app.profiles[app.modal_prof].learned = true
+			app.dirty = true
+		}
+		for d in 0 ..= 9 {
+			if p.key_pressed(ui, u32('0' + d)) {
+				fields[app.modal_sel].col^ = d
+				app.profiles[app.modal_prof].learned = true
+				app.dirty = true
+			}
+		}
+		if p.key_pressed(ui, p.KEY_RETURN) {
+			status(
+				app,
+				"cartographie «%s» enregistrée: les prochains fichiers de cette banque la réutiliseront",
+				app.profiles[app.modal_prof].name,
+			)
+			app.modal = .None
+		}
 	case .Account, .Help, .None:
 		if p.key_pressed(ui, p.KEY_RETURN) {
 			app.modal = .None
@@ -1576,60 +1612,103 @@ modal_budget :: proc(ui: ^p.Ctx, app: ^App) {
 	}
 }
 
+// MAPPING_MAX_COL bounds the column index an editor can reach. No bank
+// export this importer has met has more than a couple of dozen columns, and
+// an unbounded spinner is just a way to get lost.
+MAPPING_MAX_COL :: 31
+
+Mapping_Field :: struct {
+	name: string,
+	col:  ^int,
+}
+
+// mapping_fields is the editable part of a profile: which column plays which
+// role. Pointers, so the editor writes straight into the stored profile.
+mapping_fields :: proc(pr: ^Bank_Profile) -> [8]Mapping_Field {
+	return [8]Mapping_Field {
+		{"Date", &pr.col_date},
+		{"Libellé", &pr.col_label},
+		{"Libellé (suite)", &pr.col_label2},
+		{"Montant signé", &pr.col_amount},
+		{"Débit", &pr.col_debit},
+		{"Crédit", &pr.col_credit},
+		{"Solde", &pr.col_balance},
+		{"Référence", &pr.col_ref},
+	}
+}
+
 @(private = "file")
 modal_mapping :: proc(ui: ^p.Ctx, app: ^App) {
 	modal_head(
 		ui,
-		"Cartographies bancaires enregistrées",
-		"Une par en-tête de fichier. La première importation d'une banque la déduit; les suivantes la réutilisent.",
+		"Cartographies bancaires",
+		"Une par en-tête de fichier. La première importation d'une banque la déduit; les suivantes la réutilisent. Tab: banque · ↑↓: champ · ←→ ou 0-9: colonne · Entrée: enregistrer.",
 	)
 	p.col(ui, "flex-1 w-full p-3 gap-2 overflow-scroll")
 	defer p.end(ui)
 
 	if len(app.profiles) == 0 {
-		p.text(ui, "Aucune cartographie pour l'instant.", "text-sm text-muted-foreground")
+		p.text(
+			ui,
+			"Aucune cartographie pour l'instant: importez un CSV et elle sera déduite puis gardée.",
+			"text-sm text-muted-foreground",
+		)
 		return
 	}
-	for pr, i in app.profiles {
-		selected := i == app.modal_prof
-		p.key(ui, fmt.tprintf("prof%d", i))
-		p.col(
+	app.modal_prof = clamp(app.modal_prof, 0, len(app.profiles) - 1)
+	pr := &app.profiles[app.modal_prof]
+
+	p.row(ui, "w-full items-center gap-2")
+	p.text(ui, pr.name, "text-sm font-medium flex-1 truncate")
+	sc.badge(ui, pr.learned ? "réglée" : "déduite", pr.learned ? .Default : .Secondary)
+	sc.badge(ui, fmt.tprintf("%d / %d", app.modal_prof + 1, len(app.profiles)), .Outline)
+	p.end(ui)
+	p.text(ui, pr.fingerprint, "text-xs text-muted-foreground truncate")
+	p.text(
+		ui,
+		fmt.tprintf(
+			"délimiteur %q · %d ligne(s) de préambule · date %s · décimale %s",
+			rune(pr.delim),
+			pr.skip,
+			pr.date_fmt == .YMD ? "aaaa-mm-jj" : "jj/mm/aaaa",
+			pr.decimal == .Dot ? "point" : "virgule",
+		),
+		"text-xs text-muted-foreground",
+	)
+
+	fields := mapping_fields(pr)
+	for f, i in fields {
+		selected := i == app.modal_sel
+		p.key(ui, f.name)
+		p.row(
 			ui,
 			fmt.tprintf(
-				"w-full gap-1 p-3 rounded-lg border %s",
-				selected ? "border-ring bg-accent/30" : "border-border",
+				"w-full items-center gap-3 px-3 h-9 rounded-md cursor-pointer %s",
+				selected ? "bg-accent" : "hover:bg-accent/50",
 			),
 		)
-		p.row(ui, "w-full items-center gap-2")
-		p.text(ui, pr.name, "text-sm font-medium flex-1 truncate")
-		sc.badge(ui, pr.learned ? "réglée" : "déduite", pr.learned ? .Default : .Secondary)
+		if p.clickable(ui) {
+			app.modal_sel = i
+		}
+		p.text(ui, f.name, "flex-1 text-sm truncate")
+		if f.col^ < 0 {
+			p.text(ui, "absente", "text-xs text-muted-foreground tabular-nums")
+		} else {
+			p.text(
+				ui,
+				fmt.tprintf("colonne %d", f.col^),
+				"text-sm tabular-nums font-medium",
+			)
+		}
 		p.end(ui)
-		p.text(ui, pr.fingerprint, "text-xs text-muted-foreground truncate")
+	}
+
+	if !profile_complete(pr^) {
 		p.text(
 			ui,
-			fmt.tprintf(
-				"délimiteur %q · %d ligne(s) de préambule · date %s · décimale %s",
-				rune(pr.delim),
-				pr.skip,
-				pr.date_fmt == .YMD ? "aaaa-mm-jj" : "jj/mm/aaaa",
-				pr.decimal == .Dot ? "point" : "virgule",
-			),
-			"text-xs text-muted-foreground",
+			"Incomplète: il faut au minimum une date, un libellé et soit un montant signé, soit un couple débit/crédit.",
+			"text-xs text-destructive",
 		)
-		p.text(
-			ui,
-			fmt.tprintf(
-				"colonnes: date %d · libellé %d · montant %d · débit %d · crédit %d · solde %d",
-				pr.col_date,
-				pr.col_label,
-				pr.col_amount,
-				pr.col_debit,
-				pr.col_credit,
-				pr.col_balance,
-			),
-			"text-xs text-muted-foreground tabular-nums",
-		)
-		p.end(ui)
 	}
 }
 
