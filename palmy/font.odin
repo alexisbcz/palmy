@@ -1425,6 +1425,7 @@ Text_Glyph :: struct {
 	level:  u8,   // the embedding level of its run
 	rtl:    bool, // that level is odd
 	shaped: bool, // `cp` is a presentation form, so it must not be mirrored
+	mark:   bool, // a combining mark, which stays with the base before it
 	emoji:  bool, // drawn by the colour bitmap font
 	blank:  bool, // zero advance, nothing drawn: a control or a default-ignorable
 }
@@ -1590,14 +1591,13 @@ text_layout_line :: proc(
 					level  = run.level,
 					rtl    = rtl,
 					shaped = sr.shaped,
+					mark   = !sr.shaped && bidi_class(sr.cp) == .NSM,
 					blank  = ctl,
 				},
 			)
 		}
 		if rtl {
-			for a, b := first, len(sh.glyphs) - 1; a < b; a, b = a + 1, b - 1 {
-				sh.glyphs[a], sh.glyphs[b] = sh.glyphs[b], sh.glyphs[a]
-			}
+			text_reverse_clusters(sh.glyphs[first:])
 		}
 	}
 
@@ -1609,6 +1609,9 @@ text_layout_line :: proc(
 	pen := f32(0)
 	prev := rune(0)
 	prev_face: ^Face = nil
+	// Where the base of the cluster being placed was drawn, for the marks that
+	// follow it.
+	base_x := f32(0)
 	for i in 0 ..< len(sh.glyphs) {
 		g := &sh.glyphs[i]
 		g.x = pen
@@ -1629,6 +1632,7 @@ text_layout_line :: proc(
 		if rs.emoji {
 			g.emoji = true
 			g.adv = emoji_advance(&f.emoji, g.cp, st.size) + st.tracking
+			base_x = g.x
 			pen += g.adv
 			prev, prev_face = 0, nil
 			continue
@@ -1642,14 +1646,37 @@ text_layout_line :: proc(
 			// simple path does it.
 			g.dx = (st.slot - f32(adv) * s) / 2
 			g.adv = st.slot + st.tracking
+			base_x = g.x + g.dx
 			pen += g.adv
 			prev, prev_face = g.cp, rf
 			continue
 		}
+		kern := f32(0)
 		if prev != 0 && !f.no_kerning && prev_face == rf && !(st.tabular && is_digit(prev)) {
-			g.dx = f32(tt.GetCodepointKernAdvance(&rf.info, prev, g.cp)) * s
+			kern = f32(tt.GetCodepointKernAdvance(&rf.info, prev, g.cp)) * s
 		}
-		g.adv = g.dx + f32(adv) * s + st.tracking
+		g.dx = kern
+		g.adv = kern + f32(adv) * s + st.tracking
+		if g.mark && adv == 0 {
+			// A combining mark with no advance is drawn at the origin of the
+			// base it belongs to, not at the pen that base left behind.
+			//
+			// This is as close to mark positioning as palmy gets, and it is a
+			// font convention rather than a rule: the Noto faces that carry
+			// Hebrew and Arabic are positioned by GPOS, so their marks are
+			// drawn around the base's own origin -- Noto's shin dot has its ink
+			// from x=20 to x=23 against a shin 22.67 wide, which is over the
+			// right arm exactly where it belongs, and only if the pen is still
+			// at the shin. (The other convention, a mark whose ink sits to the
+			// *left* of the pen so that it backs up over the base already
+			// drawn, is what the Latin combining marks in DejaVu do -- and
+			// those never reach here, because text that is only Latin and marks
+			// cannot reorder and takes the fast path, which draws them that way
+			// already.)
+			g.dx = base_x - g.x
+		} else {
+			base_x = g.x + kern
+		}
 		pen += g.adv
 		prev, prev_face = g.cp, rf
 	}
@@ -1659,6 +1686,39 @@ text_layout_line :: proc(
 		total += st.size * 0.02
 	}
 	return sh.glyphs[:], layout, total
+}
+
+// text_reverse_clusters reverses a right-to-left run for display, keeping each
+// base character and the combining marks that follow it together and in that
+// order.
+//
+// This is rule L3, which `bidi.odin` deliberately leaves to whatever knows how
+// marks attach -- and which is not optional here. A plain reversal puts a mark
+// *before* its base, and palmy draws a mark with the font's own advance and no
+// GPOS attachment, so "before" means over the previous letter: vocalised Hebrew
+// and Arabic come out with every point one letter to the left of where it
+// belongs. Reversing the run and then turning each cluster back round leaves
+// the bases in visual order and the marks on the base they came from.
+@(private)
+text_reverse_clusters :: proc(gs: []Text_Glyph) {
+	for a, b := 0, len(gs) - 1; a < b; a, b = a + 1, b - 1 {
+		gs[a], gs[b] = gs[b], gs[a]
+	}
+	// After the reversal a cluster reads marks first and its base last.
+	i := 0
+	for i < len(gs) {
+		j := i
+		for j < len(gs) && gs[j].mark {
+			j += 1
+		}
+		if j < len(gs) {
+			j += 1 // the base the marks belong to
+		}
+		for a, b := i, j - 1; a < b; a, b = a + 1, b - 1 {
+			gs[a], gs[b] = gs[b], gs[a]
+		}
+		i = j
+	}
 }
 
 // text_glyph_caret_x is the x of a caret at source byte offset `i` inside one
@@ -2093,3 +2153,4 @@ text_glyphs :: proc(
 	g, _, w := text_layout_line(f, text, text_base_dir(text, dir), st)
 	return g, w
 }
+

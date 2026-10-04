@@ -581,3 +581,69 @@ test_reordered_lines_actually_draw :: proc(t: ^testing.T) {
 		)
 	}
 }
+
+@(test)
+test_combining_marks_stay_with_their_base :: proc(t: ^testing.T) {
+	off := fonts(t)
+	defer p.offscreen_destroy(off)
+
+	// Vocalised Hebrew: shin + qamats + shin-dot, lamed, vav + holam, final
+	// mem. Rule L3. The plain reversal a right-to-left run gets would put each
+	// mark *before* its base, and since palmy has no GPOS attachment and draws
+	// a mark wherever the pen is, "before" means on the previous letter --
+	// every point one letter to the left of the word it belongs to.
+	s := "שָׁלוֹם"
+	gs, _ := p.text_glyphs(&off.fonts, s, 32)
+
+	prev_base := -1
+	bases, marks := 0, 0
+	for g in gs {
+		if g.mark {
+			marks += 1
+			testing.expect_value(t, g.adv, f32(0))
+			testing.expect(t, prev_base >= 0, "a mark must follow a base, never precede it")
+			// It belongs to the base before it in the string, too, not just in
+			// the glyph list.
+			testing.expectf(
+				t,
+				g.src > prev_base,
+				"the mark at %d should follow its base at %d",
+				g.src,
+				prev_base,
+			)
+			continue
+		}
+		bases += 1
+		prev_base = g.src
+	}
+	testing.expect_value(t, bases, 4)
+	testing.expect_value(t, marks, 3)
+
+	// The bases are still reversed, which is the point of doing this inside the
+	// reversal rather than instead of it.
+	last := -1
+	for g in gs {
+		if g.mark {
+			continue
+		}
+		if last >= 0 {
+			testing.expect(t, g.src < last, "the bases of a Hebrew word run right to left")
+		}
+		last = g.src
+	}
+
+	// And the marks are drawn on their base rather than after it, which with a
+	// zero advance would be the next letter along.
+	for g, i in gs {
+		if !g.mark {
+			continue
+		}
+		testing.expectf(
+			t,
+			abs((g.x + g.dx) - (gs[i - 1].x + gs[i - 1].dx)) < 0.01,
+			"a mark should be drawn at its base's origin, %.2f against %.2f",
+			g.x + g.dx,
+			gs[i - 1].x + gs[i - 1].dx,
+		)
+	}
+}
