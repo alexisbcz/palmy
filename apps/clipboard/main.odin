@@ -413,10 +413,11 @@ copy_back :: proc(st: ^St, ui: ^p.Ctx, e: ^Entry) {
 	}
 	switch e.kind {
 	case .Text:
-		if kit.clipboard_set(e.text) {
+		// Detached, never through kit.clipboard_set — see the note below.
+		if kit.launch({"wl-copy", "--", e.text}) {
 			toast(st, ui, fmt.tprintf("Copied %s", short(e.preview, 48)))
 		} else {
-			toast(st, ui, "wl-copy failed")
+			toast(st, ui, "wl-copy could not be started")
 		}
 	case .Image:
 		cmd := fmt.tprintf("wl-copy --type %s < '%s'", e.mime, e.blob)
@@ -427,6 +428,16 @@ copy_back :: proc(st: ^St, ui: ^p.Ctx, e: ^Entry) {
 		}
 	}
 }
+
+// kit.clipboard_set runs `wl-copy` through os.process_exec, which captures the
+// child's stdout and stderr and waits for them to reach EOF. wl-copy forks a
+// daemon that keeps owning the selection — and keeps those pipes open — until
+// something else takes the clipboard, so process_exec never returns and the
+// frame loop stops forever. The compositor puts up "Application Not
+// Responding" a few seconds later.
+//
+// Starting it detached is what the launcher does, and it is the only thing that
+// works. This is a gap in apps/kit, reported rather than patched.
 
 drop_preview :: proc(st: ^St) {
 	if st.prev_ok {

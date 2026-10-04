@@ -55,8 +55,27 @@ mk :: proc(text: string, when_: i64) -> Entry {
 	return e
 }
 
+// SCRATCH_HOME is set before anything else runs. `push` persists, so a single
+// store check performed against the real HOME would overwrite the user's
+// actual clipboard history with fixtures — which is exactly what happened the
+// first time this file was written.
+SCRATCH_HOME :: "/tmp/palmy-clipboard-selftest"
+
 selftest :: proc() -> int {
 	g_test = true
+
+	_ = os.remove_all(SCRATCH_HOME)
+	_ = os.make_directory_all(SCRATCH_HOME)
+	_ = os.set_env("HOME", SCRATCH_HOME)
+	ensure_dirs()
+	{
+		dir := data_dir()
+		ok(
+			strings.has_prefix(dir, SCRATCH_HOME),
+			"the self-test must never touch the real history; data_dir is %s",
+			dir,
+		)
+	}
 
 	// ---------------------------------------------------------------------
 	fmt.println("-- the fuzzy matcher")
@@ -208,11 +227,7 @@ selftest :: proc() -> int {
 	// ---------------------------------------------------------------------
 	fmt.println("-- persistence, in a scratch HOME")
 	{
-		tmp := "/tmp/palmy-clipboard-selftest"
-		_ = os.remove_all(tmp)
-		_ = os.make_directory_all(tmp)
-		_ = os.set_env("HOME", tmp)
-
+		tmp := SCRATCH_HOME
 		clear(&g.items)
 		ensure_dirs()
 		push(mk("a line with\ttab and\nnewline", 500))
