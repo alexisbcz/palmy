@@ -1,0 +1,106 @@
+# The file picker, driven entirely from the keyboard.
+# Recorded with apps/pickdemo/record.sh, which holds /tmp/palmy-record.lock.
+
+wait 1.6
+
+# --- Open File -------------------------------------------------------------
+key F1
+wait 1.8
+
+# Arrow keys move the cursor.
+key Down
+wait 0.45
+key Down
+wait 0.55
+
+# Type-ahead jumps to the entry whose name you are spelling.
+type pho
+wait 1.4
+
+# Enter descends into a folder.
+key Return
+wait 1.8
+key Down
+wait 0.3
+key Down
+wait 0.3
+key Down
+wait 1.0
+
+# Ctrl+2 sorts by size, Ctrl+1 back by name.
+chord ctrl 2
+wait 1.8
+chord ctrl 1
+wait 1.3
+
+# Ctrl+H shows the hidden files, and hides them again.
+chord ctrl h
+wait 1.7
+chord ctrl h
+wait 1.2
+
+# Tab reaches the filter; Enter opens it, Down picks Images.
+key Tab
+wait 0.8
+key Return
+wait 1.1
+key Down
+wait 0.7
+key Return
+wait 2.0
+
+# Ctrl+L types a literal path, and Tab completes it.
+chord ctrl l
+wait 1.1
+chord ctrl u
+wait 0.5
+type /tmp/palmy-pickdemo/Doc
+wait 1.1
+key Tab
+wait 1.6
+key Escape
+wait 1.0
+
+# Back to the list, and open a file.
+key Tab
+wait 0.4
+key Tab
+wait 0.6
+key Down
+wait 0.5
+key Return
+wait 2.2
+
+# --- Save As ---------------------------------------------------------------
+key F4
+wait 1.8
+
+# Ctrl+N makes a folder, right here, with a name that is free.
+chord ctrl n
+wait 1.5
+chord ctrl u
+wait 0.5
+type Exports
+wait 1.0
+key Return
+wait 1.9
+
+# The basename is selected and the extension is not, so typing keeps ".png".
+type sunset
+wait 1.8
+
+# Saving over a file that exists has to be confirmed, and Cancel is focused.
+key Return
+wait 2.0
+
+# Enter — the cheapest keystroke — declines.
+key Return
+wait 1.6
+
+# Ask again, move deliberately onto Replace, and only then agree.
+key Return
+wait 1.5
+key Right
+wait 1.1
+key Return
+wait 2.4

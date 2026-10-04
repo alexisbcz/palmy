@@ -320,6 +320,10 @@ row :: proc(ctx: ^Ctx, class: string = "") -> int {
 	idx := push_node(ctx, .Box, "flex-row")
 	ctx.nodes[idx].style.dir = .Row
 	apply_classes(&ctx.nodes[idx].style, class, interaction_of(ctx, ctx.nodes[idx].id))
+	// push_node derived `scrollable` from the class it was handed, which is only
+	// "flex-row" -- the caller's `overflow-scroll` arrives here. Without this the
+	// box clips and the wheel never reaches it, which is a silent failure.
+	ctx.nodes[idx].scrollable = ctx.nodes[idx].style.overflow == .Scroll
 	append(&ctx.stack, idx)
 	return idx
 }
@@ -327,6 +331,9 @@ row :: proc(ctx: ^Ctx, class: string = "") -> int {
 col :: proc(ctx: ^Ctx, class: string = "") -> int {
 	idx := push_node(ctx, .Box, "flex-col")
 	apply_classes(&ctx.nodes[idx].style, class, interaction_of(ctx, ctx.nodes[idx].id))
+	// See `row`: the caller's `overflow-scroll` is applied after push_node has
+	// already decided whether this node scrolls.
+	ctx.nodes[idx].scrollable = ctx.nodes[idx].style.overflow == .Scroll
 	append(&ctx.stack, idx)
 	return idx
 }
