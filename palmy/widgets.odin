@@ -326,11 +326,19 @@ text_field :: proc(
 
 	w.cursor = clamp(w.cursor, 0, len(buf))
 
+	// One direction for the whole field, resolved from everything in it, so
+	// that the caret, the arrow keys and the drawn text cannot disagree about
+	// which way the line runs.
+	field_dir := text_base_dir(string(buf[:]))
+
 	if has_focus {
 		// Printable input.
 		if typed := typed_text(ctx); len(typed) > 0 {
 			inject_at_elems(buf, w.cursor, ..transmute([]u8)typed)
 			w.cursor += len(typed)
+			// The caret follows what was just typed, which is the trailing
+			// edge of it -- the one thing that stays true in a mixed line.
+			w.affinity = .Upstream
 			changed = true
 		}
 		for k in ctx.input.keys {
@@ -349,31 +357,78 @@ text_field :: proc(
 					changed = true
 				}
 			case KEY_LEFT:
-				if w.cursor > 0 {
-					w.cursor -= rune_back(buf[:], w.cursor)
+				// Visual movement, not logical: the left arrow moves the caret
+				// left on screen. In a right-to-left run that means the byte
+				// offset goes up, and across a boundary it can jump. For text
+				// that cannot reorder this is exactly rune_back.
+				if mask != 0 {
+					// A masked field draws one repeated glyph, so its visual
+					// order is its logical order whatever the buffer holds.
+					if w.cursor > 0 {
+						w.cursor -= rune_back(buf[:], w.cursor)
+					}
+					w.affinity = .Downstream
+					break
 				}
+				w.cursor, w.affinity = text_caret_move(
+					ctx.fonts,
+					string(buf[:]),
+					w.cursor,
+					s.font_size,
+					.Left,
+					w.affinity,
+					s.family,
+					s.weight,
+					s.tracking_em * s.font_size,
+					s.slant,
+					s.tabular,
+					field_dir,
+				)
 			case KEY_RIGHT:
-				if w.cursor < len(buf) {
-					w.cursor += rune_forward(buf[:], w.cursor)
+				if mask != 0 {
+					if w.cursor < len(buf) {
+						w.cursor += rune_forward(buf[:], w.cursor)
+					}
+					w.affinity = .Upstream
+					break
 				}
+				w.cursor, w.affinity = text_caret_move(
+					ctx.fonts,
+					string(buf[:]),
+					w.cursor,
+					s.font_size,
+					.Right,
+					w.affinity,
+					s.family,
+					s.weight,
+					s.tracking_em * s.font_size,
+					s.slant,
+					s.tabular,
+					field_dir,
+				)
 			case KEY_HOME:
 				w.cursor = 0
+				w.affinity = .Downstream
 			case KEY_END:
 				w.cursor = len(buf)
+				w.affinity = .Upstream
 			case KEY_RETURN, KEY_KP_ENTER:
 				submitted = true
 			case 'a':
 				if .Ctrl in k.mods {
 					w.cursor = 0
+					w.affinity = .Downstream
 				}
 			case 'e':
 				if .Ctrl in k.mods {
 					w.cursor = len(buf)
+					w.affinity = .Upstream
 				}
 			case 'u':
 				if .Ctrl in k.mods {
 					clear(buf)
 					w.cursor = 0
+					w.affinity = .Downstream
 					changed = true
 				}
 			}
@@ -407,15 +462,27 @@ text_field :: proc(
 		}
 		caret_prefix = strings.to_string(mb)
 	}
-	caret_x := text_width(
+	// Not the width of the prefix. Once text can reorder, the characters
+	// before the caret in the string are not the characters to the left of it
+	// on screen, so the prefix width is the wrong number -- it measures glyphs
+	// that may be drawn to the caret's right. text_caret_x walks the visual
+	// runs instead and returns the edge of the run the index actually sits in,
+	// which is why it needs to know which side of the index was meant.
+	//
+	// A masked field is measured on the mask, not the buffer: what is on
+	// screen is what the caret has to agree with.
+	caret_x := text_caret_x(
 		ctx.fonts,
-		caret_prefix,
+		mask != 0 ? content : string(buf[:]),
+		mask != 0 ? len(caret_prefix) : w.cursor,
 		s.font_size,
+		w.affinity,
 		s.family,
 		s.weight,
 		s.tracking_em * s.font_size,
 		s.slant,
 		s.tabular,
+		mask != 0 ? .LTR : field_dir,
 	)
 	inner_w := max(0, rect_of(ctx, id).w - s.pad[LEFT] - s.pad[RIGHT] - 2)
 	if caret_x - w.scroll.x > inner_w {
