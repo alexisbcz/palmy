@@ -38,3 +38,7 @@ apps/*/tmp/
 *.gguf
 *.safetensors
 *.onnx
+
+# Python bytecode from the table/corpus generators under tools/
+__pycache__/
+*.pyc
