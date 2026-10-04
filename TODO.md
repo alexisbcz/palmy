@@ -21,9 +21,12 @@ apply.
   that other agents are working in other directories concurrently. If a build
   fails inside shared code, that is somebody else mid-edit: wait and retry,
   never "fix" it.
-- **Never end a tool call with shared code uncompilable.** 42 applications and
-  a parity suite build against `palmy/`. Breaking it blocks everyone, and it
-  has happened twice.
+- **Never end a tool call with shared code uncompilable.** Every application and
+  the parity suite build against `palmy/`. Breaking it blocks everyone, and it
+  has happened twice. The count is whatever
+  `ls -d apps/*/ | wc -l` reports minus `kit/` and `tools/`, which have no
+  `main` -- it was 40 when this file was written and grows; do not trust a
+  number quoted in a brief over that command.
 - **The 182-case parity suite must stay at mean mae 2.953.** `cd parity && bash
   tools/diff-all.sh`. It compares against real browser captures and is the
   instrument that says whether something changed that was not meant to.
@@ -100,7 +103,7 @@ running, so it repaints continuously while unlocked and says so.
 > before and after.
 >
 > Parity must stay at 182 cases / mean mae 2.953, the 44 unit tests must pass,
-> and all 42 apps must build. Never end a tool call with `palmy/`
+> and every app must build. Never end a tool call with `palmy/`
 > uncompilable.
 
 ## T2 — `flex-wrap` does not grow the row's height
@@ -139,7 +142,7 @@ more lines than it reserved height for. That is the same class of bug as the
 > everywhere. The parity suite is the instrument — 182 cases, mean mae 2.953,
 > and the whole `metrics.ndjson` should stay byte-identical unless you can
 > explain exactly which case moved and why. The 44 unit tests must pass, and
-> all 42 apps must build.
+> every app must build.
 >
 > When it is fixed, tell me, because `apps/mail` has a workaround (an explicit
 > column instead of a wrapping row) that can be reverted.
@@ -216,7 +219,7 @@ asserted — they just cannot be typed). `mail`'s composer, `notes`, `docs` and
 >
 > Then prove it: replace `vault`'s Notes field with it (that directory is yours
 > for this task only) and show a newline can be typed and survives a save and
-> reload. Parity must not move; the 44 unit tests must pass; all 42 apps must
+> reload. Parity must not move; the `tests/` suite must pass; every app must
 > build.
 
 ## T5 — Parity does not cover palmy's own widgets
@@ -224,7 +227,7 @@ asserted — they just cannot be typed). `mail`'s composer, `notes`, `docs` and
 `grep text_field parity/odin/render/` returns nothing. The suite exercises
 `sc.input`, not `p.text_field` — which is exactly how a regression shipped
 this session where a text field rendered slate-200 text on a white page under
-no theme. Parity passed, all 42 apps built, and only `tests/` caught it.
+no theme. Parity passed, every app built, and only `tests/` caught it.
 
 > **Prompt.** Extend the test coverage to palmy's own widget set and to layout
 > against a container.
@@ -295,7 +298,7 @@ Listed with their source so the next agent does not have to rediscover why.
 > deliberate constraint rather than something to fix.
 >
 > Every change is additive — no existing signature changes. Parity at 182 /
-> 2.953 with the metrics byte-identical, the full `tests/` suite passing, 42 apps building, and
+> 2.953 with the metrics byte-identical, the full `tests/` suite passing, every app building, and
 > a reported assertion count. For `drop_shadow` and `p.image`, report the
 > measured frame time before and after, since that is the point of both.
 
@@ -347,7 +350,7 @@ bidi at all:
 > **Parity must stay at 182 cases, mean mae 2.953, metrics byte-identical.**
 > Every parity case is Latin, so any movement at all means the fast path is
 > not actually bypassing the new code. That is the single most important
-> check in this task. Also: the full `tests/` suite, 42 apps building, and
+> check in this task. Also: the full `tests/` suite, every app building, and
 > screenshots of Arabic and Hebrew text read back and described.
 
 ---
@@ -362,7 +365,7 @@ The inventory as it stands: `mailcore` carries 33 flags, `torrent` 24, `call`
 22, while `maps`, `reader`, `shop`, `launcher`, `files`, `notes` and `calendar`
 have essentially none — and the conventions have diverged (`--selftest` against
 `--self-test`, which `call` accepts both of; `--shot` against `--export-png`;
-`--help` in about a dozen of forty-two).
+`--help` in about a dozen of forty).
 
 ## C1 — The shared convention and the dispatcher
 
@@ -377,7 +380,7 @@ have essentially none — and the conventions have diverged (`--selftest` agains
 > You own `apps/kit/` (add files; extend `kit.odin` additively only, since 42
 > applications compile against it) and a new `apps/palm/`.
 >
-> The convention goes in the kit so forty-two applications cannot each invent
+> The convention goes in the kit so forty applications cannot each invent
 > their own: an application declares its commands, and the kit parses,
 > validates, generates `--help`, emits `--json`, honours `--dry-run`, and
 > produces the documented exit codes. `palm schema` then introspects the same

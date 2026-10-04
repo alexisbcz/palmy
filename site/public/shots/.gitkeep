@@ -1,0 +1,11 @@
+Screenshots rendered by palmy land here. The site reads this directory per
+request, so a capture that appears later shows up without a rebuild, and
+anything missing degrades to a labelled placeholder.
+
+Names the pages look for, first match wins:
+  apps          app-<slug>.png, apps-<slug>.png, <slug>.png
+  components    component-<slug>.png, components-<slug>.png, <slug>.png,
+                or the parity case id, e.g. button-default.png
+  home hero     gallery.png, components.png, hero.png, widgets.png
+
+Any of .png .jpg .jpeg .webp .avif .gif is accepted.

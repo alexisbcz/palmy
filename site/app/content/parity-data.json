@@ -1,0 +1,1026 @@
+{
+ "summary": {
+  "captured": 182,
+  "rendered": 182,
+  "notImplemented": 0,
+  "meanMae": 2.953,
+  "meanWithin2": 90.4,
+  "sizeMismatches": 0
+ },
+ "cases": [
+  {
+   "id": "separator-horizontal",
+   "size": "1216x2",
+   "mae": 0,
+   "within2": 100
+  },
+  {
+   "id": "separator-vertical",
+   "size": "2x64",
+   "mae": 0,
+   "within2": 100
+  },
+  {
+   "id": "aspect-ratio-16-9",
+   "size": "320x180",
+   "mae": 0.002,
+   "within2": 99.98
+  },
+  {
+   "id": "aspect-ratio-1-1",
+   "size": "192x192",
+   "mae": 0.003,
+   "within2": 99.98
+  },
+  {
+   "id": "skeleton-default",
+   "size": "256x16",
+   "mae": 0.007,
+   "within2": 100
+  },
+  {
+   "id": "resizable-vertical",
+   "size": "1216x4",
+   "mae": 0.012,
+   "within2": 99.75
+  },
+  {
+   "id": "slider-default",
+   "size": "1216x4",
+   "mae": 0.034,
+   "within2": 99.63
+  },
+  {
+   "id": "skeleton-circle",
+   "size": "40x40",
+   "mae": 0.046,
+   "within2": 100
+  },
+  {
+   "id": "slider-range",
+   "size": "1216x4",
+   "mae": 0.06,
+   "within2": 99.34
+  },
+  {
+   "id": "chart-line",
+   "size": "380x220",
+   "mae": 0.13,
+   "within2": 98.97
+  },
+  {
+   "id": "direction-rtl",
+   "size": "1216x4",
+   "mae": 0.178,
+   "within2": 99.42
+  },
+  {
+   "id": "sheet-right",
+   "size": "384x800",
+   "mae": 0.253,
+   "within2": 99.43
+  },
+  {
+   "id": "drawer-right",
+   "size": "384x800",
+   "mae": 0.266,
+   "within2": 99.39
+  },
+  {
+   "id": "input-group-textarea",
+   "size": "288x104",
+   "mae": 0.279,
+   "within2": 98.23
+  },
+  {
+   "id": "chart-bar",
+   "size": "380x220",
+   "mae": 0.303,
+   "within2": 98.44
+  },
+  {
+   "id": "carousel-default",
+   "size": "288x44",
+   "mae": 0.325,
+   "within2": 98.24
+  },
+  {
+   "id": "sidebar-submenu",
+   "size": "256x288",
+   "mae": 0.33,
+   "within2": 98.7
+  },
+  {
+   "id": "resizable-horizontal",
+   "size": "1216x38",
+   "mae": 0.345,
+   "within2": 98.82
+  },
+  {
+   "id": "sheet-bottom",
+   "size": "1280x159",
+   "mae": 0.379,
+   "within2": 99.13
+  },
+  {
+   "id": "empty-icon",
+   "size": "1216x150",
+   "mae": 0.436,
+   "within2": 96.64
+  },
+  {
+   "id": "slider-vertical",
+   "size": "4x160",
+   "mae": 0.461,
+   "within2": 96.25
+  },
+  {
+   "id": "textarea-default",
+   "size": "288x64",
+   "mae": 0.491,
+   "within2": 97.49
+  },
+  {
+   "id": "textarea-disabled",
+   "size": "288x64",
+   "mae": 0.491,
+   "within2": 97.31
+  },
+  {
+   "id": "progress-default",
+   "size": "288x4",
+   "mae": 0.535,
+   "within2": 99.13
+  },
+  {
+   "id": "checkbox-default",
+   "size": "16x16",
+   "mae": 0.563,
+   "within2": 87.5
+  },
+  {
+   "id": "pagination-default",
+   "size": "1216x32",
+   "mae": 0.566,
+   "within2": 97.81
+  },
+  {
+   "id": "input-group-icon",
+   "size": "288x32",
+   "mae": 0.581,
+   "within2": 95.76
+  },
+  {
+   "id": "input-disabled",
+   "size": "288x32",
+   "mae": 0.601,
+   "within2": 96.57
+  },
+  {
+   "id": "drawer-bottom",
+   "size": "1280x111",
+   "mae": 0.612,
+   "within2": 98.62
+  },
+  {
+   "id": "sidebar-default",
+   "size": "256x384",
+   "mae": 0.632,
+   "within2": 98
+  },
+  {
+   "id": "questionnaire-input",
+   "size": "384x118",
+   "mae": 0.696,
+   "within2": 97.13
+  },
+  {
+   "id": "accordion-closed",
+   "size": "320x86",
+   "mae": 0.733,
+   "within2": 97.53
+  },
+  {
+   "id": "questionnaire-choices",
+   "size": "384x324",
+   "mae": 0.747,
+   "within2": 96.94
+  },
+  {
+   "id": "kbd-default",
+   "size": "20x20",
+   "mae": 0.805,
+   "within2": 93.5
+  },
+  {
+   "id": "toast-default",
+   "size": "384x78",
+   "mae": 0.824,
+   "within2": 95.51
+  },
+  {
+   "id": "input-placeholder",
+   "size": "288x32",
+   "mae": 0.844,
+   "within2": 93.93
+  },
+  {
+   "id": "empty-default",
+   "size": "1216x146",
+   "mae": 0.855,
+   "within2": 96.14
+  },
+  {
+   "id": "switch-off",
+   "size": "32x20",
+   "mae": 0.863,
+   "within2": 85.63
+  },
+  {
+   "id": "input-invalid",
+   "size": "288x32",
+   "mae": 0.894,
+   "within2": 96.67
+  },
+  {
+   "id": "table-footer",
+   "size": "480x188",
+   "mae": 0.922,
+   "within2": 96.74
+  },
+  {
+   "id": "marker-border",
+   "size": "288x30",
+   "mae": 0.931,
+   "within2": 93.65
+  },
+  {
+   "id": "collapsible-closed",
+   "size": "288x32",
+   "mae": 0.961,
+   "within2": 96.17
+  },
+  {
+   "id": "field-group",
+   "size": "320x164",
+   "mae": 0.982,
+   "within2": 94.8
+  },
+  {
+   "id": "message-start",
+   "size": "320x68",
+   "mae": 1.002,
+   "within2": 96.24
+  },
+  {
+   "id": "combobox-open",
+   "size": "223x120",
+   "mae": 1.013,
+   "within2": 96.12
+  },
+  {
+   "id": "attachment-vertical",
+   "size": "120x164",
+   "mae": 1.017,
+   "within2": 95.26
+  },
+  {
+   "id": "message-scroller-default",
+   "size": "320x192",
+   "mae": 1.023,
+   "within2": 96.74
+  },
+  {
+   "id": "avatar-lg",
+   "size": "40x40",
+   "mae": 1.029,
+   "within2": 93.81
+  },
+  {
+   "id": "combobox-empty",
+   "size": "223x36",
+   "mae": 1.039,
+   "within2": 94.32
+  },
+  {
+   "id": "bubble-secondary",
+   "size": "256x42",
+   "mae": 1.053,
+   "within2": 96.22
+  },
+  {
+   "id": "accordion-default",
+   "size": "320x116",
+   "mae": 1.068,
+   "within2": 96.5
+  },
+  {
+   "id": "select-open",
+   "size": "224x125",
+   "mae": 1.14,
+   "within2": 96.3
+  },
+  {
+   "id": "input-group-button",
+   "size": "288x32",
+   "mae": 1.169,
+   "within2": 93.42
+  },
+  {
+   "id": "toggle-group-default",
+   "size": "124x32",
+   "mae": 1.172,
+   "within2": 95.59
+  },
+  {
+   "id": "select-trigger-sm",
+   "size": "224x28",
+   "mae": 1.181,
+   "within2": 93.72
+  },
+  {
+   "id": "scroll-area-default",
+   "size": "256x160",
+   "mae": 1.204,
+   "within2": 95.94
+  },
+  {
+   "id": "select-trigger",
+   "size": "224x32",
+   "mae": 1.224,
+   "within2": 94.78
+  },
+  {
+   "id": "popover-header",
+   "size": "288x104",
+   "mae": 1.233,
+   "within2": 94.24
+  },
+  {
+   "id": "accordion-multiple",
+   "size": "320x146",
+   "mae": 1.246,
+   "within2": 95.87
+  },
+  {
+   "id": "alert-default",
+   "size": "384x60",
+   "mae": 1.26,
+   "within2": 93.97
+  },
+  {
+   "id": "toggle-group-vertical",
+   "size": "36x72",
+   "mae": 1.266,
+   "within2": 95.53
+  },
+  {
+   "id": "item-muted",
+   "size": "320x68",
+   "mae": 1.282,
+   "within2": 96.74
+  },
+  {
+   "id": "command-dialog",
+   "size": "384x145",
+   "mae": 1.31,
+   "within2": 93.04
+  },
+  {
+   "id": "bubble-outline",
+   "size": "256x42",
+   "mae": 1.319,
+   "within2": 94.66
+  },
+  {
+   "id": "dropdown-menu-open",
+   "size": "192x125",
+   "mae": 1.37,
+   "within2": 94
+  },
+  {
+   "id": "alert-destructive",
+   "size": "384x60",
+   "mae": 1.39,
+   "within2": 93.59
+  },
+  {
+   "id": "input-default",
+   "size": "288x32",
+   "mae": 1.413,
+   "within2": 94.1
+  },
+  {
+   "id": "item-default",
+   "size": "320x68",
+   "mae": 1.462,
+   "within2": 96.15
+  },
+  {
+   "id": "table-default",
+   "size": "480x152",
+   "mae": 1.47,
+   "within2": 95.39
+  },
+  {
+   "id": "alert-with-icon",
+   "size": "384x60",
+   "mae": 1.499,
+   "within2": 92.83
+  },
+  {
+   "id": "input-otp-separator",
+   "size": "208x32",
+   "mae": 1.522,
+   "within2": 93.31
+  },
+  {
+   "id": "navigation-menu-open",
+   "size": "225x80",
+   "mae": 1.537,
+   "within2": 94.61
+  },
+  {
+   "id": "marker-separator",
+   "size": "288x20",
+   "mae": 1.539,
+   "within2": 88.75
+  },
+  {
+   "id": "attachment-xs",
+   "size": "160x38",
+   "mae": 1.54,
+   "within2": 92.12
+  },
+  {
+   "id": "item-outline",
+   "size": "320x68",
+   "mae": 1.565,
+   "within2": 90.45
+  },
+  {
+   "id": "progress-label",
+   "size": "288x36",
+   "mae": 1.568,
+   "within2": 94.23
+  },
+  {
+   "id": "bubble-group",
+   "size": "288x90",
+   "mae": 1.603,
+   "within2": 95.14
+  },
+  {
+   "id": "dropdown-menu-radio",
+   "size": "192x92",
+   "mae": 1.612,
+   "within2": 95.39
+  },
+  {
+   "id": "input-group-text",
+   "size": "288x32",
+   "mae": 1.644,
+   "within2": 91.17
+  },
+  {
+   "id": "toast-action",
+   "size": "384x78",
+   "mae": 1.65,
+   "within2": 94.09
+  },
+  {
+   "id": "collapsible-open",
+   "size": "288x60",
+   "mae": 1.652,
+   "within2": 94.14
+  },
+  {
+   "id": "tabs-vertical",
+   "size": "384x58",
+   "mae": 1.69,
+   "within2": 93.56
+  },
+  {
+   "id": "tabs-default",
+   "size": "384x60",
+   "mae": 1.725,
+   "within2": 93.09
+  },
+  {
+   "id": "radio-group-default",
+   "size": "288x48",
+   "mae": 1.737,
+   "within2": 96.48
+  },
+  {
+   "id": "radio-group-disabled",
+   "size": "288x48",
+   "mae": 1.737,
+   "within2": 96.48
+  },
+  {
+   "id": "context-menu-open",
+   "size": "144x125",
+   "mae": 1.762,
+   "within2": 91.95
+  },
+  {
+   "id": "field-set",
+   "size": "320x122",
+   "mae": 1.778,
+   "within2": 92.59
+  },
+  {
+   "id": "dropdown-menu-checkbox",
+   "size": "192x116",
+   "mae": 1.834,
+   "within2": 95.1
+  },
+  {
+   "id": "input-otp-default",
+   "size": "192x32",
+   "mae": 1.852,
+   "within2": 93.13
+  },
+  {
+   "id": "calendar-dropdown",
+   "size": "212x260",
+   "mae": 1.879,
+   "within2": 93.18
+  },
+  {
+   "id": "calendar-default",
+   "size": "212x260",
+   "mae": 1.908,
+   "within2": 93.12
+  },
+  {
+   "id": "calendar-range",
+   "size": "212x260",
+   "mae": 1.955,
+   "within2": 93.07
+  },
+  {
+   "id": "dialog-default",
+   "size": "384x124",
+   "mae": 1.986,
+   "within2": 94.17
+  },
+  {
+   "id": "combobox-chips",
+   "size": "288x32",
+   "mae": 2.007,
+   "within2": 89.45
+  },
+  {
+   "id": "message-end",
+   "size": "320x68",
+   "mae": 2.063,
+   "within2": 95.49
+  },
+  {
+   "id": "command-default",
+   "size": "320x214",
+   "mae": 2.077,
+   "within2": 92.05
+  },
+  {
+   "id": "menubar-open",
+   "size": "144x101",
+   "mae": 2.091,
+   "within2": 92.56
+  },
+  {
+   "id": "avatar-group",
+   "size": "104x32",
+   "mae": 2.095,
+   "within2": 83.32
+  },
+  {
+   "id": "hover-card-open",
+   "size": "256x60",
+   "mae": 2.099,
+   "within2": 91.24
+  },
+  {
+   "id": "kbd-group",
+   "size": "94x20",
+   "mae": 2.155,
+   "within2": 82.13
+  },
+  {
+   "id": "attachment-error",
+   "size": "160x58",
+   "mae": 2.197,
+   "within2": 89.84
+  },
+  {
+   "id": "toggle-pressed",
+   "size": "36x32",
+   "mae": 2.2,
+   "within2": 93.32
+  },
+  {
+   "id": "toggle-default",
+   "size": "36x32",
+   "mae": 2.237,
+   "within2": 93.75
+  },
+  {
+   "id": "toggle-outline",
+   "size": "38x32",
+   "mae": 2.279,
+   "within2": 85.69
+  },
+  {
+   "id": "attachment-default",
+   "size": "166x58",
+   "mae": 2.288,
+   "within2": 89.61
+  },
+  {
+   "id": "bubble-default",
+   "size": "256x42",
+   "mae": 2.288,
+   "within2": 95.34
+  },
+  {
+   "id": "button-icon",
+   "size": "32x32",
+   "mae": 2.366,
+   "within2": 87.99
+  },
+  {
+   "id": "toggle-group-outline",
+   "size": "68x32",
+   "mae": 2.389,
+   "within2": 84.56
+  },
+  {
+   "id": "avatar-default",
+   "size": "32x32",
+   "mae": 2.453,
+   "within2": 78.91
+  },
+  {
+   "id": "context-menu-checkbox",
+   "size": "144x101",
+   "mae": 2.539,
+   "within2": 91.94
+  },
+  {
+   "id": "marker-default",
+   "size": "288x20",
+   "mae": 2.67,
+   "within2": 85.69
+  },
+  {
+   "id": "attachment-sm",
+   "size": "160x48",
+   "mae": 2.84,
+   "within2": 90.74
+  },
+  {
+   "id": "field-vertical",
+   "size": "320x90",
+   "mae": 2.849,
+   "within2": 88.25
+  },
+  {
+   "id": "avatar-badge",
+   "size": "32x32",
+   "mae": 2.862,
+   "within2": 77.15
+  },
+  {
+   "id": "card-default",
+   "size": "320x114",
+   "mae": 2.93,
+   "within2": 92.87
+  },
+  {
+   "id": "spinner-lg",
+   "size": "32x32",
+   "mae": 2.996,
+   "within2": 86.82
+  },
+  {
+   "id": "card-footer",
+   "size": "320x176",
+   "mae": 2.997,
+   "within2": 94.27
+  },
+  {
+   "id": "popover-default",
+   "size": "288x40",
+   "mae": 3.03,
+   "within2": 89.26
+  },
+  {
+   "id": "navigation-menu-closed",
+   "size": "196x36",
+   "mae": 3.135,
+   "within2": 89.67
+  },
+  {
+   "id": "card-sm",
+   "size": "288x100",
+   "mae": 3.292,
+   "within2": 89.59
+  },
+  {
+   "id": "checkbox-indeterminate",
+   "size": "16x16",
+   "mae": 3.336,
+   "within2": 74.22
+  },
+  {
+   "id": "dialog-footer",
+   "size": "384x142",
+   "mae": 3.379,
+   "within2": 90.86
+  },
+  {
+   "id": "item-xs",
+   "size": "320x56",
+   "mae": 3.397,
+   "within2": 88.8
+  },
+  {
+   "id": "alert-dialog-default",
+   "size": "384x148",
+   "mae": 3.606,
+   "within2": 90.56
+  },
+  {
+   "id": "alert-dialog-sm",
+   "size": "320x148",
+   "mae": 3.65,
+   "within2": 90.45
+  },
+  {
+   "id": "alert-dialog-media",
+   "size": "384x148",
+   "mae": 3.68,
+   "within2": 90.72
+  },
+  {
+   "id": "button-group-vertical",
+   "size": "72x96",
+   "mae": 3.755,
+   "within2": 87.53
+  },
+  {
+   "id": "native-select-sm",
+   "size": "108x28",
+   "mae": 3.765,
+   "within2": 86.94
+  },
+  {
+   "id": "button-icon-sm",
+   "size": "28x28",
+   "mae": 3.799,
+   "within2": 86.99
+  },
+  {
+   "id": "button-disabled",
+   "size": "68x32",
+   "mae": 3.877,
+   "within2": 84.33
+  },
+  {
+   "id": "native-select-default",
+   "size": "94x32",
+   "mae": 3.979,
+   "within2": 84.61
+  },
+  {
+   "id": "button-destructive",
+   "size": "68x32",
+   "mae": 4.01,
+   "within2": 85.29
+  },
+  {
+   "id": "toggle-lg",
+   "size": "54x36",
+   "mae": 4.138,
+   "within2": 81.79
+  },
+  {
+   "id": "button-secondary",
+   "size": "68x32",
+   "mae": 4.159,
+   "within2": 88.69
+  },
+  {
+   "id": "switch-disabled",
+   "size": "32x20",
+   "mae": 4.202,
+   "within2": 79.53
+  },
+  {
+   "id": "button-group-horizontal",
+   "size": "174x32",
+   "mae": 4.21,
+   "within2": 82.8
+  },
+  {
+   "id": "breadcrumb-default",
+   "size": "168x20",
+   "mae": 4.211,
+   "within2": 80.33
+  },
+  {
+   "id": "badge-secondary",
+   "size": "56x20",
+   "mae": 4.288,
+   "within2": 77.05
+  },
+  {
+   "id": "field-error",
+   "size": "320x88",
+   "mae": 4.325,
+   "within2": 88.54
+  },
+  {
+   "id": "button-link",
+   "size": "68x32",
+   "mae": 4.339,
+   "within2": 88.47
+  },
+  {
+   "id": "badge-link",
+   "size": "56x20",
+   "mae": 4.372,
+   "within2": 79.91
+  },
+  {
+   "id": "menubar-closed",
+   "size": "132x32",
+   "mae": 4.395,
+   "within2": 85.49
+  },
+  {
+   "id": "breadcrumb-ellipsis",
+   "size": "156x20",
+   "mae": 4.418,
+   "within2": 82.98
+  },
+  {
+   "id": "badge-destructive",
+   "size": "56x20",
+   "mae": 4.438,
+   "within2": 73.93
+  },
+  {
+   "id": "switch-sm",
+   "size": "24x14",
+   "mae": 4.521,
+   "within2": 75.59
+  },
+  {
+   "id": "field-horizontal",
+   "size": "320x44",
+   "mae": 4.666,
+   "within2": 89.26
+  },
+  {
+   "id": "tabs-line",
+   "size": "384x60",
+   "mae": 4.74,
+   "within2": 93.02
+  },
+  {
+   "id": "button-ghost",
+   "size": "68x32",
+   "mae": 4.815,
+   "within2": 88.05
+  },
+  {
+   "id": "avatar-sm",
+   "size": "24x24",
+   "mae": 4.96,
+   "within2": 77.26
+  },
+  {
+   "id": "button-group-text",
+   "size": "190x32",
+   "mae": 4.999,
+   "within2": 83.62
+  },
+  {
+   "id": "button-outline",
+   "size": "68x32",
+   "mae": 5.002,
+   "within2": 85.62
+  },
+  {
+   "id": "badge-ghost",
+   "size": "56x20",
+   "mae": 5.084,
+   "within2": 79.91
+  },
+  {
+   "id": "badge-outline",
+   "size": "56x20",
+   "mae": 5.79,
+   "within2": 69.55
+  },
+  {
+   "id": "button-lg",
+   "size": "68x36",
+   "mae": 6.422,
+   "within2": 85.74
+  },
+  {
+   "id": "button-default",
+   "size": "68x32",
+   "mae": 7.151,
+   "within2": 84.33
+  },
+  {
+   "id": "tooltip-kbd",
+   "size": "72x32",
+   "mae": 7.421,
+   "within2": 85.33
+  },
+  {
+   "id": "switch-on",
+   "size": "32x20",
+   "mae": 7.655,
+   "within2": 78.28
+  },
+  {
+   "id": "button-with-icon",
+   "size": "77x32",
+   "mae": 7.719,
+   "within2": 85.02
+  },
+  {
+   "id": "spinner-default",
+   "size": "16x16",
+   "mae": 8.832,
+   "within2": 70.7
+  },
+  {
+   "id": "badge-notification",
+   "size": "42x20",
+   "mae": 9.258,
+   "within2": 80.83
+  },
+  {
+   "id": "button-xs",
+   "size": "58x24",
+   "mae": 9.881,
+   "within2": 80.1
+  },
+  {
+   "id": "tooltip-default",
+   "size": "100x28",
+   "mae": 10.584,
+   "within2": 83.36
+  },
+  {
+   "id": "label-default",
+   "size": "94x14",
+   "mae": 11.04,
+   "within2": 61.17
+  },
+  {
+   "id": "toggle-sm",
+   "size": "48x28",
+   "mae": 13.402,
+   "within2": 85.05
+  },
+  {
+   "id": "checkbox-checked",
+   "size": "16x16",
+   "mae": 13.516,
+   "within2": 75.78
+  },
+  {
+   "id": "checkbox-disabled",
+   "size": "16x16",
+   "mae": 13.516,
+   "within2": 75.78
+  },
+  {
+   "id": "button-sm",
+   "size": "64x28",
+   "mae": 14.345,
+   "within2": 81.31
+  },
+  {
+   "id": "badge-default",
+   "size": "56x20",
+   "mae": 15.256,
+   "within2": 72.68
+  },
+  {
+   "id": "badge-icon",
+   "size": "80x20",
+   "mae": 24.364,
+   "within2": 71.63
+  }
+ ]
+}
