@@ -40,6 +40,16 @@ run_cmd :: proc(argv: []string) -> (string, bool) {
 }
 
 main :: proc() {
+	// `--shots <dir>` renders the browser offscreen and writes PNGs. It never
+	// opens a window and never reads the real home directory; see shot.odin.
+	args := os.args[1:]
+	for a, i in args {
+		if a == "--shots" {
+			dir := i + 1 < len(args) ? args[i + 1] : "shots"
+			os.exit(shots(dir))
+		}
+	}
+
 	app, err := kit.start(
 		{
 			title = "Files",

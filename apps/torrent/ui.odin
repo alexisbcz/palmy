@@ -559,6 +559,13 @@ ui_geom :: proc(u: ^Ui, ui: ^p.Ctx) -> Geom {
 // The frame
 // ---------------------------------------------------------------------------
 
+// ui_frame_offscreen is the door shot.odin builds its frames through: the
+// frame builder is private to this file, and the offscreen renderer lives in
+// another one.
+ui_frame_offscreen :: proc(u: ^Ui, ui: ^p.Ctx) {
+	ui_frame(u, ui)
+}
+
 @(private = "file")
 ui_frame :: proc(u: ^Ui, ui: ^p.Ctx) {
 	g := ui_geom(u, ui)

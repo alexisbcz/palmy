@@ -123,9 +123,19 @@ g_test: bool
 g_test_clip: string
 
 main :: proc() {
-	for a in os.args[1:] {
+	args := os.args[1:]
+	for a, i in args {
 		if a == "--selftest" || a == "-selftest" {
 			os.exit(selftest() == 0 ? 0 : 1)
+		}
+		// `colorpick --shots <dir>` renders the interface offscreen: see
+		// shot.odin. It opens no window and never captures the screen.
+		if a == "--shots" || a == "-shots" {
+			if i + 1 >= len(args) {
+				fmt.eprintln("colorpick --shots <dir>")
+				os.exit(2)
+			}
+			os.exit(shots(args[i + 1]))
 		}
 	}
 

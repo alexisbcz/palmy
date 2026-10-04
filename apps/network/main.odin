@@ -62,6 +62,19 @@ UI :: struct {
 }
 
 main :: proc() {
+	// `--shots <dir>` renders the panel offscreen and exits without opening a
+	// window and without running a single nmcli command. See shot.odin.
+	for a, i in os.args[1:] {
+		if a == "--shots" || a == "-shots" {
+			rest := os.args[1:]
+			if i + 1 >= len(rest) {
+				fmt.eprintln("network --shots <dir>")
+				os.exit(2)
+			}
+			os.exit(shots(rest[i + 1]))
+		}
+	}
+
 	// The window class is "palmy" like every app here. NETWORK_APP_ID overrides
 	// it, which is only useful while several of these applets are being driven
 	// on one desktop and their capture scripts match windows by class.

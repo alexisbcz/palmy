@@ -117,6 +117,15 @@ main :: proc() {
 		run_selftest()
 		os.exit(failures == 0 ? 0 : 1)
 	}
+	// `calc --shots <dir>` renders the interface offscreen and writes PNGs,
+	// without opening a window.
+	if len(args) > 0 && args[0] == "--shots" {
+		if len(args) < 2 {
+			fmt.eprintln("calc --shots <dir>")
+			os.exit(2)
+		}
+		os.exit(shots(args[1]))
+	}
 	eval_only := len(args) > 0 && args[0] == "--eval"
 	if eval_only {
 		args = args[1:]

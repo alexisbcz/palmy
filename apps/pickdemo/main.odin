@@ -26,10 +26,20 @@ FILTERS_SAVE := [?]kit.Pick_Filter{kit.PICK_IMAGES, kit.PICK_TEXT, kit.PICK_ALL}
 
 main :: proc() {
 	start := ""
-	for a in os.args[1:] {
+	args := os.args[1:]
+	for a, i in args {
 		if a == "--selftest" {
 			selftest()
 			return
+		}
+		// `pickdemo --shots <dir>` renders the dialog offscreen instead of
+		// opening a window. See shot.odin.
+		if a == "--shots" || a == "-shots" {
+			if i + 1 >= len(args) {
+				fmt.eprintln("pickdemo: --shots needs a directory")
+				os.exit(2)
+			}
+			os.exit(shots(args[i + 1]))
 		}
 		// `pickdemo <dir>` opens the dialogs there instead of the home
 		// directory, which is what the recorded demo uses so that the video

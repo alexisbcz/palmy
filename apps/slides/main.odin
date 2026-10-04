@@ -33,6 +33,7 @@ USAGE :: `palmy slides — a presentation editor
   slides.bin --pptx FILE      write a PowerPoint deck
   slides.bin --pdf FILE       write a PDF, one page per slide
   slides.bin --make-assets    regenerate the pictures the fixture uses
+  slides.bin --shots DIR      render the interface offscreen into PNGs
   slides.bin --selftest       run the headless test suite`
 
 Mode :: enum u8 {
@@ -196,6 +197,12 @@ main :: proc() {
 			}
 		case a == "--selftest":
 			mode = "selftest"
+		case a == "--shots":
+			mode = "shots"
+			if i + 1 < len(args) && !strings.has_prefix(args[i + 1], "--") {
+				export_dir = args[i + 1]
+				i += 1
+			}
 		case a == "--help", a == "-h":
 			fmt.println(USAGE)
 			return
@@ -249,6 +256,9 @@ main :: proc() {
 		return
 	case "selftest":
 		os.exit(selftest(exe_dir))
+	case "shots":
+		// Offscreen screenshots of the real editor. No compositor, no window.
+		os.exit(shots(export_dir != "" ? export_dir : "slides-shots"))
 	}
 
 	// The editor and the projector are two surfaces, opened one at a time in

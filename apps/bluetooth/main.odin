@@ -88,6 +88,20 @@ BLUE :: "bg-blue-600"
 g_now: f64
 
 main :: proc() {
+	// `--shots <dir>` renders the panel offscreen and exits without opening a
+	// window and without running a single bluetoothctl or rfkill command.
+	// See shot.odin.
+	for a, i in os.args[1:] {
+		if a == "--shots" || a == "-shots" {
+			rest := os.args[1:]
+			if i + 1 >= len(rest) {
+				fmt.eprintln("bluetooth --shots <dir>")
+				os.exit(2)
+			}
+			os.exit(shots(rest[i + 1]))
+		}
+	}
+
 	app, err := kit.start(
 		{
 			title = "Bluetooth",

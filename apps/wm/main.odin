@@ -1590,7 +1590,16 @@ main :: proc() {
 	display := "wayland-palmy"
 	overlay := false
 	seconds := 0
-	for a in os.args[1:] {
+	args := os.args[1:]
+	for a, i in args {
+		// `--shots <dir>` renders the compositor's output offscreen and writes
+		// PNGs. No surface is opened and no socket is bound; the clients in
+		// the picture are fabricated. See shot.odin.
+		if a == "--shots" {
+			os.exit(shots(i + 1 < len(args) ? args[i + 1] : "shots"))
+		}
+	}
+	for a in args {
 		switch {
 		case a == "-v" || a == "--verbose":
 			VERBOSE = true

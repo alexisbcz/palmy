@@ -58,6 +58,19 @@ Args :: struct {
 }
 
 main :: proc() {
+	// `--shots <dir>` renders the window offscreen and exits. No window is
+	// opened and no socket is created. See shot.odin.
+	for arg, i in os.args[1:] {
+		if arg == "--shots" || arg == "-shots" {
+			rest := os.args[1:]
+			if i + 1 >= len(rest) {
+				fmt.eprintln("torrent --shots <dir>")
+				os.exit(2)
+			}
+			os.exit(shots(rest[i + 1]))
+		}
+	}
+
 	a := parse_args()
 	switch a.mode {
 	case .Selftest:

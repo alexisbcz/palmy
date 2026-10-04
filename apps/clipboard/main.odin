@@ -73,9 +73,20 @@ g_test: bool
 g_test_clip: string
 
 main :: proc() {
-	for a in os.args[1:] {
+	args := os.args[1:]
+	for a, i in args {
 		if a == "--selftest" || a == "-selftest" {
 			os.exit(selftest() == 0 ? 0 : 1)
+		}
+		// `clipboard --shots <dir>` renders the interface offscreen, from a
+		// fabricated history: see shot.odin. It opens no window, reads no
+		// clipboard and never loads the stored history.
+		if a == "--shots" || a == "-shots" {
+			if i + 1 >= len(args) {
+				fmt.eprintln("clipboard --shots <dir>")
+				os.exit(2)
+			}
+			os.exit(shots(args[i + 1]))
 		}
 	}
 
