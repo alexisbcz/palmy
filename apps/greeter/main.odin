@@ -507,6 +507,18 @@ rune_forward :: proc(b: []u8, at: int) -> int {
 }
 
 handle_keys :: proc(st: ^St, ui: ^p.Ctx) {
+	// Printable input only lands in the answer field, and it is taken before
+	// the named keys below. A frame can carry both — `type "palmy"` followed
+	// immediately by Return arrives as one batch — and handling Return first
+	// would submit a password that is missing its last characters.
+	if st.focus == .Answer && st.stage != .Busy && st.stage != .Started {
+		if typed := p.typed_text(ui); len(typed) > 0 {
+			st.caret = clamp(st.caret, 0, len(st.answer))
+			inject_at_elems(&st.answer, st.caret, ..transmute([]u8)typed)
+			st.caret += len(typed)
+		}
+	}
+
 	// One dispatcher for the whole screen: the greeter owns its focus ring
 	// rather than letting each field grab keys, because the arrows mean
 	// different things depending on where focus is.
@@ -638,14 +650,6 @@ handle_keys :: proc(st: ^St, ui: ^p.Ctx) {
 		}
 	}
 
-	// Printable input only lands in the answer field.
-	if st.focus == .Answer && st.stage != .Busy && st.stage != .Started {
-		if typed := p.typed_text(ui); len(typed) > 0 {
-			st.caret = clamp(st.caret, 0, len(st.answer))
-			inject_at_elems(&st.answer, st.caret, ..transmute([]u8)typed)
-			st.caret += len(typed)
-		}
-	}
 }
 
 step_user :: proc(st: ^St, d: int) {

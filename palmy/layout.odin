@@ -177,6 +177,10 @@ measure :: proc(ctx: ^Ctx, idx: int, avail: [2]f32) -> [2]f32 {
 		// An icon behaves like an inline square the size of the text.
 		content = {s.font_size, s.font_size}
 
+	case .Image:
+		// An image's intrinsic size is its pixel size, as in CSS.
+		content = {f32(n.img.w), f32(n.img.h)}
+
 	case .Box:
 		main := s.dir == .Row ? 0 : 1
 		cross := 1 - main

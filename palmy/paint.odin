@@ -177,6 +177,27 @@ paint_node :: proc(ctx: ^Ctx, c: ^Canvas, idx: int) {
 	}
 
 	switch n.kind {
+	case .Image:
+		if n.img.w > 0 && n.img.h > 0 {
+			inner := Rect {
+				r.x + (s.border_w[LEFT] + s.pad[LEFT]) * sc,
+				r.y + (s.border_w[TOP] + s.pad[TOP]) * sc,
+				max(0, r.w - frame_of(s).x * sc),
+				max(0, r.h - frame_of(s).y * sc),
+			}
+			// An image is clipped to its own box unless told otherwise, so a
+			// `cover` fit crops rather than spilling over its neighbours.
+			if s.overflow != .Visible || n.fit == .Cover || n.zoom > 1 {
+				push_clip(c, rect_intersect(c.clip, inner))
+			}
+			z := n.zoom <= 0 ? 1 : n.zoom
+			dst := fitted_rect(f32(n.img.w), f32(n.img.h), inner, n.fit, z)
+			draw_image(c, n.img, dst, o)
+			if s.overflow != .Visible || n.fit == .Cover || n.zoom > 1 {
+				pop_clip(c)
+			}
+		}
+
 	case .Icon:
 		inner := Rect {
 			r.x + (s.border_w[LEFT] + s.pad[LEFT]) * sc,

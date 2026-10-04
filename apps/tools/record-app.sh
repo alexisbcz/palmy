@@ -15,6 +15,16 @@ set -uo pipefail
 BIN="${1:?binary}"; OUT="${2:?output mp4}"; SCRIPT="${3:?script file}"
 mkdir -p "$(dirname "$OUT")"
 
+# Only one recording at a time. wtype attaches a virtual keyboard to the seat,
+# so two concurrent recordings type into each other's windows — and an overlay
+# holding an exclusive keyboard grab swallows the lot. Serialise on a lock.
+LOCK=/tmp/palmy-record.lock
+exec 9>"$LOCK"
+if ! flock -w 900 9; then
+  echo "timed out waiting for the recording lock ($LOCK)"; exit 1
+fi
+echo "holding the recording lock"
+
 kill_palmy() {
   for pid in $(hyprctl clients -j | python3 -c '
 import json,sys

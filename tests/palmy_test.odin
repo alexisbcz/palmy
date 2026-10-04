@@ -533,3 +533,83 @@ test_layer_config_plumbs_through :: proc(t: ^testing.T) {
 	testing.expect_value(t, transmute(u32)p.Anchor{.Right}, u32(8))
 	testing.expect_value(t, transmute(u32)p.Anchor{.Top, .Left, .Right}, u32(13))
 }
+
+@(test)
+test_image_decode_and_fit :: proc(t: ^testing.T) {
+	// Encode a known 4x2 image, decode it back, and check both the pixels and
+	// the fit arithmetic. A round trip is the only honest check that the
+	// channel order survives.
+	src := [8]u32 {
+		0xffff0000, 0xff00ff00, 0xff0000ff, 0xffffffff,
+		0x80ff0000, 0x00000000, 0xff000000, 0xffcccccc,
+	}
+	rgba := make([]u8, 8 * 4)
+	defer delete(rgba)
+	for v, i in src {
+		rgba[i * 4 + 0] = u8(v >> 16)
+		rgba[i * 4 + 1] = u8(v >> 8)
+		rgba[i * 4 + 2] = u8(v)
+		rgba[i * 4 + 3] = u8(v >> 24)
+	}
+
+	path := "/tmp/palmy_image_test.png"
+	ok := p.write_png_rgba(path, rgba, 4, 2)
+	testing.expect(t, ok, "wrote the test png")
+
+	img, loaded := p.load_image(path)
+	defer p.image_destroy(&img)
+	testing.expect(t, loaded, "decoded the test png")
+	testing.expect_value(t, img.w, 4)
+	testing.expect_value(t, img.h, 2)
+	testing.expect_value(t, img.px[0], u32(0xffff0000)) // opaque red survives
+	testing.expect_value(t, img.px[1], u32(0xff00ff00)) // green, not swapped
+	testing.expect_value(t, img.px[2], u32(0xff0000ff)) // blue, not swapped
+	testing.expect_value(t, img.px[5] >> 24, u32(0))    // transparent stays transparent
+
+	w, h, _, sized := p.image_size(path)
+	testing.expect(t, sized && w == 4 && h == 2, "size probe agrees without decoding")
+
+	// Fit: a 4x2 image in a 100x100 box.
+	box := p.Rect{0, 0, 100, 100}
+	contain := p.fitted_rect(4, 2, box, .Contain)
+	testing.expect_value(t, contain.w, f32(100))
+	testing.expect_value(t, contain.h, f32(50))
+	testing.expect_value(t, contain.y, f32(25)) // centred vertically
+
+	cover := p.fitted_rect(4, 2, box, .Cover)
+	testing.expect_value(t, cover.h, f32(100))
+	testing.expect_value(t, cover.w, f32(200)) // overflows, to be clipped
+
+	none := p.fitted_rect(4, 2, box, .None)
+	testing.expect_value(t, none.w, f32(4))
+	testing.expect_value(t, none.x, f32(48))
+}
+
+@(test)
+test_image_draws_into_canvas :: proc(t: ^testing.T) {
+	src := [4]u32{0xffff0000, 0xffff0000, 0xffff0000, 0xffff0000}
+	rgba := make([]u8, 16)
+	defer delete(rgba)
+	for v, i in src {
+		rgba[i * 4 + 0] = u8(v >> 16)
+		rgba[i * 4 + 1] = u8(v >> 8)
+		rgba[i * 4 + 2] = u8(v)
+		rgba[i * 4 + 3] = 255
+	}
+	path := "/tmp/palmy_image_draw.png"
+	testing.expect(t, p.write_png_rgba(path, rgba, 2, 2))
+
+	img, ok := p.load_image(path)
+	defer p.image_destroy(&img)
+	testing.expect(t, ok)
+
+	px := make([]u32, 40 * 40)
+	defer delete(px)
+	c := p.canvas_from(px, 40, 40)
+	defer p.canvas_destroy(&c)
+	p.clear_canvas(&c, p.WHITE)
+
+	p.draw_image(&c, img, p.fitted_rect(2, 2, {0, 0, 40, 40}, .Contain))
+	mid := p.get(&c, 20, 20)
+	testing.expect(t, mid.r > 200 && mid.g < 60 && mid.b < 60, "the red image landed")
+}

@@ -66,6 +66,28 @@ There is no `xdg_popup`, so **menus are drawn inside the window** as absolutely
 positioned overlays with a `z-` class. That is a real constraint, not a bug to
 work around with a second window.
 
+## Images
+
+palmy decodes images through stb_image — PNG, JPEG, BMP, GIF, TGA, PSD, PNM,
+HDR. Pixels are straight 0xAARRGGBB and composite like anything else.
+
+```odin
+img, ok := p.load_image("/path/photo.jpg")   // decode
+defer p.image_destroy(&img)
+
+p.image(ui, img, "w-full h-full", .Contain)  // .Contain .Cover .Fill .None
+p.image(ui, img, "w-full h-full", .None, zoom)   // zoom magnifies around centre
+
+w, h, ch, ok := p.image_size(path)   // dimensions without decoding pixels
+p.is_image_path(path)                // cheap extension check
+p.write_png_rgba(path, rgba, w, h)   // save
+```
+
+Sampling is bilinear, switching to nearest past 2x magnification so a zoomed
+photo shows real pixels rather than mush. `draw_image` is available directly
+inside `p.pixels` if you need to composite frames yourself — which is how a
+video player should blit decoded frames.
+
 ## Recording a demo
 
 Write a plain-text script and hand it to the recorder:
@@ -85,7 +107,12 @@ bash /home/alex/Work/palmy/apps/tools/record-app.sh \
 ```
 
 Steps: `key <X11name>`, `type <text>`, `move <x> <y>` (window-relative pointer),
-`wait <seconds>`. Note this compositor build has **no click dispatcher**, so
+`wait <seconds>`.
+
+**Recordings serialise on a lock** (`/tmp/palmy-record.lock`). Every `wtype`
+attaches its own virtual keyboard to the seat, so two recordings running at
+once type into each other's windows and ruin both takes. The script waits its
+turn automatically — call it normally and never bypass it. Note this compositor build has **no click dispatcher**, so
 pointer clicks cannot be synthesized — drive activation from the keyboard, and
 use `move` to show hover states. Verify the result by extracting frames with
 `ffmpeg -ss <t> -i out.mp4 -frames:v 1 frame.png` and looking at them.
