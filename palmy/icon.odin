@@ -28,7 +28,12 @@ Icon_Key :: struct {
 	name:   string,
 	size:   u16,
 	stroke: u16, // tenths of a pixel
+	turn:   u16, // rotation in 1/256ths of a turn
 }
+
+// ROTATION_STEPS is how finely a rotation is cached. A spinner wants smooth
+// motion without rasterising a fresh mask for every sub-degree change.
+ROTATION_STEPS :: 256
 
 @(private)
 Icon_Mask :: struct {
@@ -288,7 +293,7 @@ flatten_path :: proc(d: string, allocator := context.temp_allocator) -> [dynamic
 
 // stroke_mask rasterises an icon into an 8-bit coverage mask at `size` pixels.
 @(private)
-build_mask :: proc(icon: Icon, size: f32) -> Icon_Mask {
+build_mask :: proc(icon: Icon, size: f32, turns: f32 = 0) -> Icon_Mask {
 	dim := int(math.ceil(size)) + 2
 	m := Icon_Mask {
 		mask = make([]u8, dim * dim),
@@ -302,6 +307,24 @@ build_mask :: proc(icon: Icon, size: f32) -> Icon_Mask {
 	off := f32(1)
 
 	polys := flatten_path(icon.d)
+
+	// Rotation is applied to the flattened points about the view box centre,
+	// which costs nothing extra and keeps the stroker unaware of it.
+	if turns != 0 {
+		angle := turns * 2 * math.PI
+		ca := math.cos(angle)
+		sa := math.sin(angle)
+		mid := icon.view / 2
+		for &poly in polys {
+			for &pt in poly {
+				dx := pt.x - mid
+				dy := pt.y - mid
+				pt.x = mid + dx * ca - dy * sa
+				pt.y = mid + dx * sa + dy * ca
+			}
+		}
+	}
+
 	cov := make([]f32, dim * dim, context.temp_allocator)
 
 	for poly in polys {
@@ -345,25 +368,31 @@ build_mask :: proc(icon: Icon, size: f32) -> Icon_Mask {
 }
 
 @(private)
-icon_mask :: proc(ic: ^Icons, icon: Icon, size: f32) -> Icon_Mask {
+icon_mask :: proc(ic: ^Icons, icon: Icon, size: f32, turns: f32 = 0) -> Icon_Mask {
+	// Wrap into [0,1) before quantising so negative and >1 rotations share
+	// cache slots with their equivalents.
+	t := turns - math.floor(turns)
 	key := Icon_Key {
 		name   = icon.name,
 		size   = u16(clamp(size + 0.5, 1, 1024)),
 		stroke = u16(clamp(icon.stroke * 10, 0, 1000)),
+		turn   = u16(t * ROTATION_STEPS) % ROTATION_STEPS,
 	}
 	if m, found := ic.cache[key]; found {
 		return m
 	}
-	m := build_mask(icon, f32(key.size))
+	m := build_mask(icon, f32(key.size), f32(key.turn) / ROTATION_STEPS)
 	ic.cache[key] = m
 	return m
 }
 
-// draw_icon stamps an icon at the given top-left corner.
-draw_icon :: proc(c: ^Canvas, ic: ^Icons, icon: Icon, x, y, size: f32, col: Color) {
+// draw_icon stamps an icon at the given top-left corner. `turns` rotates it
+// about its centre, measured in whole turns, so a spinner is just the frame
+// clock: `palmy.elapsed(ui) * 0.8`.
+draw_icon :: proc(c: ^Canvas, ic: ^Icons, icon: Icon, x, y, size: f32, col: Color, turns: f32 = 0) {
 	if icon.d == "" || size <= 0 {
 		return
 	}
-	m := icon_mask(ic, icon, size)
+	m := icon_mask(ic, icon, size, turns)
 	blit_mask(c, int(math.round(x)) - 1, int(math.round(y)) - 1, m.mask, m.w, m.h, col)
 }

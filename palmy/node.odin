@@ -45,6 +45,7 @@ Node :: struct {
 	custom:      Custom_Fn,
 	user:        rawptr,
 	icon:        Icon,
+	icon_turns:  f32,
 	img:         Image,
 	fit:         Fit,
 	zoom:        f32,
@@ -398,9 +399,15 @@ pixels :: proc(ctx: ^Ctx, class: string, user: ^$T, draw: proc(c: ^Canvas, r: Re
 // SVG does in a browser.
 //
 //	palmy.icon(ui, ICON_CHECK, "size-4 text-white")
-icon :: proc(ctx: ^Ctx, ic: Icon, class: string = "") -> int {
+//	palmy.icon(ui, ICON_LOADER_CIRCLE, "size-4", palmy.elapsed(ui))  // spins
+icon :: proc(ctx: ^Ctx, ic: Icon, class: string = "", turns: f32 = 0) -> int {
 	idx := push_node(ctx, .Icon, class)
 	ctx.nodes[idx].icon = ic
+	ctx.nodes[idx].icon_turns = turns
+	if turns != 0 {
+		// A rotating icon has to keep asking for frames.
+		ctx.animating = true
+	}
 	return idx
 }
 

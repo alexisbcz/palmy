@@ -88,15 +88,6 @@ BLUE :: "bg-blue-600"
 g_now: f64
 
 main :: proc() {
-	// A palmy window only draws when something changed, which is exactly right
-	// for an applet and wrong for a screen recorder: a headless wlroots output
-	// presents no frames while the UI is idle, so the capture's timestamps come
-	// out compressed. PALMY_CONTINUOUS=1 asks for a frame every vsync instead.
-	continuous := os.get_env("PALMY_CONTINUOUS", context.temp_allocator) != ""
-	if continuous {
-		fmt.eprintfln("[bluetooth] continuous redraw on (recording mode)")
-	}
-
 	app, err := kit.start(
 		{
 			title = "Bluetooth",
@@ -105,7 +96,6 @@ main :: proc() {
 			min_width = 880,
 			min_height = 560,
 			root_class = "w-full h-full bg-background text-foreground",
-			always = continuous,
 		},
 	)
 	if err != "" {
