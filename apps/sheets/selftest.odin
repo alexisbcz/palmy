@@ -275,6 +275,18 @@ selftest :: proc() -> int {
 	t_csv(&tc)
 	t_document(&tc)
 	t_xlsx(&tc)
+	t_cross_syntax(&tc)
+	t_row_ranges(&tc)
+	t_cross_eval(&tc)
+	t_cross_cycles(&tc)
+	t_cross_structural(&tc)
+	t_sheet_ops(&tc)
+	t_panes(&tc)
+	t_merges(&tc)
+	t_names(&tc)
+	t_charts(&tc)
+	t_book_document(&tc)
+	t_xlsx_book(&tc)
 	t_robustness(&tc)
 
 	fmt.println()
@@ -913,7 +925,7 @@ t_dates :: proc(tc: ^TC) {
 	recalc(sh)
 	ok_mark(tc, cell_at(sh, ref("A1")).volatile, "TODAY marks the cell volatile")
 	recalc(sh)
-	ok_mark(tc, sh.evaluated == 1, "a volatile cell recalculates with no edit")
+	ok_mark(tc, sh.book.evaluated == 1, "a volatile cell recalculates with no edit")
 }
 
 // --- lookup ----------------------------------------------------------------
@@ -1106,12 +1118,12 @@ t_incremental :: proc(tc: ^TC) {
 	recalc(sh)
 	at_num(tc, sh, "B1", 10)
 	at_num(tc, sh, "C1", 11)
-	ok_mark(tc, sh.evaluated == 2, fmt.tprintf("only the two dependents recalculated (got %d)", sh.evaluated))
+	ok_mark(tc, sh.book.evaluated == 2, fmt.tprintf("only the two dependents recalculated (got %d)", sh.book.evaluated))
 
 	// Editing the unrelated cell touches nothing else.
 	put(sh, "Z1", "=98")
 	recalc(sh)
-	ok_mark(tc, sh.evaluated == 1, fmt.tprintf("an unrelated edit recalculates one cell (got %d)", sh.evaluated))
+	ok_mark(tc, sh.book.evaluated == 1, fmt.tprintf("an unrelated edit recalculates one cell (got %d)", sh.book.evaluated))
 
 	// A range dependency fires for a cell inside the range that did not exist
 	// when the formula was written.
@@ -1121,7 +1133,7 @@ t_incremental :: proc(tc: ^TC) {
 	put(sh, "A7", "100")
 	recalc(sh)
 	at_num(tc, sh, "D1", 105)
-	ok_mark(tc, sh.evaluated == 1, fmt.tprintf("a range watcher recalculates one cell (got %d)", sh.evaluated))
+	ok_mark(tc, sh.book.evaluated == 1, fmt.tprintf("a range watcher recalculates one cell (got %d)", sh.book.evaluated))
 
 	// Clearing a cell propagates too.
 	put(sh, "A7", "")
@@ -1143,7 +1155,7 @@ t_incremental :: proc(tc: ^TC) {
 	put(s2, "A1", "3")
 	recalc(s2)
 	at_num(tc, s2, "A5", 48)
-	ok_mark(tc, sh.evaluated >= 0, "recalculation completes")
+	ok_mark(tc, sh.book.evaluated >= 0, "recalculation completes")
 }
 
 // --- number formats --------------------------------------------------------

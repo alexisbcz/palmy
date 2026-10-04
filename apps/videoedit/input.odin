@@ -24,8 +24,30 @@ sel_find :: proc(ed: ^Editor) -> (track, idx: int, ok: bool) {
 	return t, i, t >= 0
 }
 
+// edited is what every timeline mutation ends with. The preview's cached
+// frames may now be at the wrong timeline position, and what is audible under
+// the playhead may have changed, so both have to be told.
 edited :: proc(ed: ^Editor) {
 	ed.last_edit += 1
+	ed.mix_dirty = true
+}
+
+// edited_audio is for a change only the speakers can notice — a clip gain, or
+// mute and solo on an audio track. The decoded frames are all still in the
+// right places, so there is no reason to throw a cache of them away.
+edited_audio :: proc(ed: ^Editor) {
+	ed.mix_dirty = true
+}
+
+// seek_to moves the playhead *deliberately*, as opposed to the playhead moving
+// because the audio clock advanced. That distinction is the whole of seeking:
+// `seek_req` is what tells the mixer to throw its pipeline away and build a
+// new one at the new position, and tearing the pipeline down is the flush —
+// the pipe, ffmpeg's buffer and pw-cat's queue all go with the processes, so
+// there is nothing stale left to come out.
+seek_to :: proc(ed: ^Editor, t: f64) {
+	ed.playhead = math.max(0, t)
+	ed.seek_req = true
 }
 
 handle_keys :: proc(ed: ^Editor, ui: ^p.Ctx) {
@@ -50,6 +72,26 @@ handle_keys :: proc(ed: ^Editor, ui: ^p.Ctx) {
 		begin_pick(ed, .Project)
 		return
 	}
+	// Undo and redo come before the mode check: an undo is useful while a text
+	// field has the keyboard, and Ctrl-Z is not something a path field wants.
+	if p.shortcut(ui, 'z', {.Ctrl}) {
+		if label, ok := undo_apply(ed); ok {
+			status(ed, ui, fmt.tprintf("undid: %s", label))
+		} else {
+			status(ed, ui, "nothing to undo")
+		}
+		return
+	}
+	if p.shortcut(ui, 'z', {.Ctrl, .Shift}) ||
+	   p.shortcut(ui, 'Z', {.Ctrl, .Shift}) ||
+	   p.shortcut(ui, 'y', {.Ctrl}) {
+		if label, ok := redo_apply(ed); ok {
+			status(ed, ui, fmt.tprintf("redid: %s", label))
+		} else {
+			status(ed, ui, "nothing to redo")
+		}
+		return
+	}
 	if p.key_pressed(ui, p.KEY_ESCAPE, false) {
 		if ed.mode != .Normal {
 			ed.mode = .Normal
@@ -71,21 +113,24 @@ handle_keys :: proc(ed: ^Editor, ui: ^p.Ctx) {
 	if p.shortcut(ui, p.KEY_SPACE, {}) {
 		ed.playing = !ed.playing
 		if ed.playing && ed.playhead >= total - 0.01 {
-			ed.playhead = 0
+			seek_to(ed, 0)
+		}
+		if ed.playing {
+			audio_reset_presentation(ed)
 		}
 	}
 	step := .Shift in ui.input.mods ? 1.0 : FRAME_STEP
 	if n := p.key_count(ui, p.KEY_LEFT); n > 0 {
-		ed.playhead = math.max(0, ed.playhead - f64(n) * step)
+		seek_to(ed, ed.playhead - f64(n) * step)
 	}
 	if n := p.key_count(ui, p.KEY_RIGHT); n > 0 {
-		ed.playhead = math.min(total, ed.playhead + f64(n) * step)
+		seek_to(ed, math.min(total, ed.playhead + f64(n) * step))
 	}
 	if p.key_pressed(ui, p.KEY_HOME) {
-		ed.playhead = 0
+		seek_to(ed, 0)
 	}
 	if p.key_pressed(ui, p.KEY_END) {
-		ed.playhead = total
+		seek_to(ed, total)
 	}
 
 	// --- media bin ------------------------------------------------------
@@ -113,9 +158,11 @@ handle_keys :: proc(ed: ^Editor, ui: ^p.Ctx) {
 		status(ed, ui, n > 0 ? fmt.tprintf("importing %d file(s)", n) : "nothing new to import")
 	}
 	if p.shortcut(ui, 'a', {}) {
+		undo_mark(ed, .Place, "place a clip")
 		place_media(ed, ui, -1)
 	}
 	if p.shortcut(ui, 'n', {}) {
+		undo_mark(ed, .Place, "place a clip")
 		place_media(ed, ui, ed.playhead)
 	}
 
@@ -137,16 +184,24 @@ handle_keys :: proc(ed: ^Editor, ui: ^p.Ctx) {
 
 	// --- clip operations -------------------------------------------------
 	if p.shortcut(ui, 's', {}) {
+		// The mark has to come first, and a refused split must not leave an
+		// empty step behind, so the state is snapshotted and the step dropped
+		// again when nothing happened.
+		fresh := undo_mark(ed, .Split, "split")
 		if id, ok := split_at(pr, ed.cur_track, ed.playhead); ok {
 			edited(ed)
 			status(ed, ui, fmt.tprintf("split at %s", timecode(ed.playhead, pr.out_fps)))
 			_ = id
 		} else {
+			if fresh {
+				undo_drop(ed)
+			}
 			status(ed, ui, "nothing to split under the playhead")
 		}
 	}
 	if p.shortcut(ui, 'd', {}) {
 		if t, i, ok := sel_find(ed); ok {
+			undo_mark(ed, .Ripple, "ripple delete")
 			ripple_delete(pr, t, i)
 			ed.sel = -1
 			edited(ed)
@@ -155,6 +210,7 @@ handle_keys :: proc(ed: ^Editor, ui: ^p.Ctx) {
 	}
 	if p.key_pressed(ui, p.KEY_DELETE, false) || p.key_pressed(ui, p.KEY_BACKSPACE, false) {
 		if t, i, ok := sel_find(ed); ok {
+			undo_mark(ed, .Lift, "delete")
 			lift_delete(pr, t, i)
 			ed.sel = -1
 			edited(ed)
@@ -163,17 +219,21 @@ handle_keys :: proc(ed: ^Editor, ui: ^p.Ctx) {
 	}
 	if t, i, ok := sel_find(ed); ok {
 		moved := false
+		// `trim_in`/`trim_out` return the delta they actually applied, which is
+		// zero once the clip is against the end of its source or the timeline
+		// origin. A clamped trim is not an edit, so the step it marked is
+		// dropped — but only if the mark opened a new one.
 		if p.shortcut(ui, 'q', {}, true) {
-			trim_in(pr, t, i, -NUDGE);moved = true
+			moved |= trimmed(ed, .Trim_In, true, t, i, -NUDGE)
 		}
 		if p.shortcut(ui, 'w', {}, true) {
-			trim_in(pr, t, i, NUDGE);moved = true
+			moved |= trimmed(ed, .Trim_In, true, t, i, NUDGE)
 		}
 		if p.shortcut(ui, 'e', {}, true) {
-			trim_out(pr, t, i, -NUDGE);moved = true
+			moved |= trimmed(ed, .Trim_Out, false, t, i, -NUDGE)
 		}
 		if p.shortcut(ui, 'r', {}, true) {
-			trim_out(pr, t, i, NUDGE);moved = true
+			moved |= trimmed(ed, .Trim_Out, false, t, i, NUDGE)
 		}
 		if moved {
 			edited(ed)
@@ -202,13 +262,20 @@ handle_keys :: proc(ed: ^Editor, ui: ^p.Ctx) {
 			d = NUDGE
 		}
 		if d != 0 {
-			c := pr.tracks[t].clips[i]
+			c0 := pr.tracks[t].clips[i]
+			fresh := undo_mark(ed, .Move, "move a clip", ed.sel)
+			c := c0
 			want := c.start + d
 			snapped, hit := snap_time(pr, want, ed.zoom, ed.playhead, c.id)
 			if hit {
 				want = snapped
 			}
 			move_clip(pr, t, i, t, want)
+			if _, ci := find_clip(pr, c0.id); ci >= 0 && pr.tracks[t].clips[ci].start == c0.start {
+				if fresh {
+					undo_drop(ed)
+				}
+			}
 			edited(ed)
 			status(
 				ed,
@@ -221,6 +288,7 @@ handle_keys :: proc(ed: ^Editor, ui: ^p.Ctx) {
 		if t, i, ok := sel_find(ed); ok {
 			to := next_track_of_kind(pr, t)
 			if to != t {
+				undo_mark(ed, .Retrack, "move to another track", ed.sel)
 				nt, _ := move_clip(pr, t, i, to, pr.tracks[t].clips[i].start)
 				ed.cur_track = nt
 				edited(ed)
@@ -230,6 +298,7 @@ handle_keys :: proc(ed: ^Editor, ui: ^p.Ctx) {
 	}
 	if p.shortcut(ui, 'x', {}) {
 		if t, i, ok := sel_find(ed); ok {
+			undo_mark(ed, .Dissolve, "toggle the dissolve", ed.sel)
 			toggle_dissolve(ed, t, i)
 			edited(ed)
 			c := pr.tracks[t].clips[i]
@@ -243,15 +312,25 @@ handle_keys :: proc(ed: ^Editor, ui: ^p.Ctx) {
 	if p.shortcut(ui, 'g', {}, true) || p.shortcut(ui, 'G', {.Shift}, true) {
 		if t, i, ok := sel_find(ed); ok {
 			up := p.shortcut(ui, 'G', {.Shift}, true)
+			was := pr.tracks[t].clips[i].gain
+			fresh := undo_mark(ed, .Gain, "change the gain", ed.sel)
 			c := &pr.tracks[t].clips[i]
 			c.gain = clamp(c.gain + (up ? 0.1 : -0.1), 0, 4)
+			if c.gain == was && fresh {
+				undo_drop(ed)
+			}
+			// The gain is in the mix graph, so the mixer has to rebuild for
+			// the change to be heard — but the frames are untouched.
+			edited_audio(ed)
 			status(ed, ui, fmt.tprintf("gain %.0f%%", c.gain * 100))
 		}
 	}
 
 	// --- tracks ----------------------------------------------------------
 	if p.shortcut(ui, 'u', {}) {
+		undo_mark(ed, .Track_Flags, "mute a track", ed.cur_track)
 		pr.tracks[ed.cur_track].mute = !pr.tracks[ed.cur_track].mute
+		edited(ed)
 		status(
 			ed,
 			ui,
@@ -263,7 +342,9 @@ handle_keys :: proc(ed: ^Editor, ui: ^p.Ctx) {
 		)
 	}
 	if p.shortcut(ui, 'o', {}) {
+		undo_mark(ed, .Track_Flags, "solo a track", ed.cur_track)
 		pr.tracks[ed.cur_track].solo = !pr.tracks[ed.cur_track].solo
+		edited(ed)
 		status(
 			ed,
 			ui,
@@ -294,6 +375,7 @@ handle_keys :: proc(ed: ^Editor, ui: ^p.Ctx) {
 
 	// --- titles and captions -----------------------------------------------
 	if p.shortcut(ui, 't', {}) {
+		undo_mark(ed, .Title_Add, "add a title")
 		v := track_of_kind(pr, .Video, 0)
 		id := insert_title(pr, v, ed.playhead, 2.5, buf_str(&ed.buf_title))
 		ed.sel = id
@@ -303,19 +385,25 @@ handle_keys :: proc(ed: ^Editor, ui: ^p.Ctx) {
 	}
 	if p.shortcut(ui, 'c', {}) {
 		path := buf_str(&ed.buf_caption)
+		fresh := undo_mark(ed, .Captions, "import captions")
 		n, f, ok := load_captions(pr, path)
 		if ok {
 			edited(ed)
 			status(ed, ui, fmt.tprintf("%d cues from %v: %s", n, f, base_name(path)))
 		} else {
+			if fresh {
+				undo_drop(ed)
+			}
 			status(ed, ui, fmt.tprintf("could not read captions from %s", path))
 		}
 	}
 	if p.shortcut(ui, ',', {}, true) {
+		undo_mark(ed, .Caption_Nudge, "nudge the captions")
 		pr.caption_offset -= 0.1
 		status(ed, ui, fmt.tprintf("caption offset %+.1fs", pr.caption_offset))
 	}
 	if p.shortcut(ui, '.', {}, true) {
+		undo_mark(ed, .Caption_Nudge, "nudge the captions")
 		pr.caption_offset += 0.1
 		status(ed, ui, fmt.tprintf("caption offset %+.1fs", pr.caption_offset))
 	}
@@ -336,10 +424,12 @@ handle_keys :: proc(ed: ^Editor, ui: ^p.Ctx) {
 		path := buf_str(&ed.buf_project)
 		res := project_load(pr, path)
 		if res.ok {
-			ed.playhead = res.playhead
+			seek_to(ed, res.playhead)
 			ed.zoom = res.zoom
 			ed.sel = -1
 			ed.cur_track = min(ed.cur_track, len(pr.tracks) - 1)
+			// Loading is not an edit; there is nothing behind it to go back to.
+			undo_reset(ed)
 			// Thumbnails and waveforms are derived, so rebuild them.
 			for m in pr.media {
 				importer_push(&ed.im, m.path)
@@ -356,6 +446,22 @@ handle_keys :: proc(ed: ^Editor, ui: ^p.Ctx) {
 	if p.shortcut(ui, '?', {.Shift}) || p.key_pressed(ui, p.KEY_F1, false) {
 		ed.mode = ed.mode == .Help ? .Normal : .Help
 	}
+}
+
+// trimmed marks, trims, and unmarks again when the trim was fully clamped.
+// Both trim procedures report the delta they applied, so "did anything happen"
+// is an answer the model already has rather than something to guess at.
+trimmed :: proc(ed: ^Editor, kind: Undo_Kind, in_point: bool, t, i: int, delta: f64) -> bool {
+	label := in_point ? "trim the in point" : "trim the out point"
+	fresh := undo_mark(ed, kind, label, ed.sel)
+	d := in_point ? trim_in(&ed.pr, t, i, delta) : trim_out(&ed.pr, t, i, delta)
+	if d == 0 {
+		if fresh {
+			undo_drop(ed)
+		}
+		return false
+	}
+	return true
 }
 
 // follow_playhead keeps the playhead on screen while the timeline plays or the
@@ -412,7 +518,7 @@ step_selection :: proc(ed: ^Editor, dir: int) {
 	}
 	next := at < 0 ? (dir > 0 ? 0 : len(t.clips) - 1) : clamp(at + dir, 0, len(t.clips) - 1)
 	ed.sel = t.clips[next].id
-	ed.playhead = t.clips[next].start
+	seek_to(ed, t.clips[next].start)
 }
 
 next_track_of_kind :: proc(pr: ^Project, from: int) -> int {
@@ -603,7 +709,7 @@ handle_timeline_mouse :: proc(ed: ^Editor, ui: ^p.Ctx) {
 		ed.snap_show = false
 		if m.y < ed.tl.y + RULER_H {
 			ed.drag = .Scrub
-			ed.playhead = math.max(0, x_to_time(ed, m.x))
+			seek_to(ed, x_to_time(ed, m.x))
 		} else if m.x < ed.tl.x + GUTTER {
 			// The name gutter: the M and S buttons, at the rectangles
 			// draw_timeline paints them in.
@@ -613,9 +719,11 @@ handle_timeline_mouse :: proc(ed: ^Editor, ui: ^p.Ctx) {
 				rx := m.x - ed.tl.x
 				switch {
 				case rx >= 8 && rx <= 26:
+					undo_mark(ed, .Track_Flags, "mute a track", ti)
 					pr.tracks[ti].mute = !pr.tracks[ti].mute
 					edited(ed)
 				case rx >= 30 && rx <= 48:
+					undo_mark(ed, .Track_Flags, "solo a track", ti)
 					pr.tracks[ti].solo = !pr.tracks[ti].solo
 					edited(ed)
 				}
@@ -652,7 +760,7 @@ handle_timeline_mouse :: proc(ed: ^Editor, ui: ^p.Ctx) {
 					}
 				} else {
 					ed.drag = .Scrub
-					ed.playhead = math.max(0, tm)
+					seek_to(ed, tm)
 					ed.cur_track = ti
 				}
 			}
@@ -664,10 +772,15 @@ handle_timeline_mouse :: proc(ed: ^Editor, ui: ^p.Ctx) {
 		switch ed.drag {
 		case .None:
 		case .Scrub:
-			ed.playhead = math.max(0, tm)
+			seek_to(ed, tm)
 		case .Move:
 			t, i := find_clip(pr, ed.drag_id)
 			if t >= 0 {
+				// One mark for the whole gesture: `undo_mark` folds every
+				// frame of the drag into the step the first one opened,
+				// because the kind, the clip and the time window all match.
+				// `undo_break` on release is what ends it.
+				undo_mark(ed, .Move, "move a clip", ed.drag_id)
 				want := math.max(0, tm - ed.drag_grab)
 				snapped, hit := snap_time(pr, want, ed.zoom, ed.playhead, ed.drag_id)
 				if hit {
@@ -686,6 +799,7 @@ handle_timeline_mouse :: proc(ed: ^Editor, ui: ^p.Ctx) {
 		case .Trim_In:
 			t, i := find_clip(pr, ed.drag_id)
 			if t >= 0 {
+				_ = undo_mark(ed, .Trim_In, "trim the in point", ed.drag_id)
 				c := pr.tracks[t].clips[i]
 				want := tm
 				snapped, hit := snap_time(pr, want, ed.zoom, ed.playhead, ed.drag_id)
@@ -699,6 +813,7 @@ handle_timeline_mouse :: proc(ed: ^Editor, ui: ^p.Ctx) {
 		case .Trim_Out:
 			t, i := find_clip(pr, ed.drag_id)
 			if t >= 0 {
+				_ = undo_mark(ed, .Trim_Out, "trim the out point", ed.drag_id)
 				c := pr.tracks[t].clips[i]
 				want := tm
 				snapped, hit := snap_time(pr, want, ed.zoom, ed.playhead, ed.drag_id)
@@ -714,6 +829,15 @@ handle_timeline_mouse :: proc(ed: ^Editor, ui: ^p.Ctx) {
 	}
 
 	if ui.input.released[.Left] {
+		if ed.drag != .None {
+			// The gesture is over: a second drag of the same clip is a second
+			// undo step however quickly it follows this one.
+			undo_break(ed)
+		}
+		if ed.drag == .Scrub && ed.playing {
+			// Starting the mixer again at the new position is the flush.
+			ed.seek_req = true
+		}
 		ed.drag = .None
 		ed.snap_show = false
 	}

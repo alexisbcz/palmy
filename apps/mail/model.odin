@@ -441,6 +441,21 @@ State :: struct {
 
 	reader_msg: int, // the message the reader is showing
 	show_raw:   bool, // show source headers in the reader
+
+	// Attachments. `att_sel` indexes the *saveable* attachments of the message
+	// the reader is showing, not `Message.attachments`, because an inline
+	// image the HTML references is not something to save and a cursor that
+	// could land on one would be a cursor that could do nothing.
+	att_sel:    int,
+	saver:      Saver,
+	save_dir:   string, // where the Save dialog opens
+
+	// Filing. The move sheet is drawn in-window, like every other overlay
+	// here: Wayland gives this toolkit no xdg_popup.
+	move_open:  bool,
+	move_sel:   int,
+	confirm_purge: bool,
+	undo:       Move_Undo,
 	warn:       string, // a configuration problem worth saying out loud
 
 	list_scroll_to: int, // a row to bring into view on the next frame
@@ -540,7 +555,16 @@ port = 10110
 path = lists
 `
 
+// data_dir_override points the whole app at a tree other than the default.
+// Only the offscreen harness sets it, and it sets it so that a run which files
+// messages, deletes them and saves an attachment cannot touch the mailbox
+// somebody is actually reading.
+data_dir_override: string
+
 default_data_dir :: proc(allocator := context.allocator) -> string {
+	if data_dir_override != "" {
+		return strings.clone(data_dir_override, allocator)
+	}
 	home := os.get_env("HOME", context.temp_allocator)
 	if home == "" {
 		home = "/tmp"
@@ -734,6 +758,7 @@ free_message :: proc(m: Message) {
 		delete(at.name)
 		delete(at.mime)
 		delete(at.inline_cid)
+		delete(at.section)
 	}
 	delete(m.attachments)
 	delete(m.blob)
@@ -771,12 +796,22 @@ scan_accounts :: proc(st: ^State) {
 	// cannot live on a server.
 	apply_local_flags(st)
 
+	recount_folders(st)
+}
+
+// recount_folders recomputes every folder's totals from the messages. It runs
+// after a scan and again after anything that moves a message between folders,
+// so the sidebar's counts are never a stale memory of where mail used to be.
+recount_folders :: proc(st: ^State) {
 	for &f in st.folders {
 		f.total, f.unread, f.count = 0, 0, 0
 		f.first = -1
 	}
 	for m, i in st.messages {
 		if m.folder < 0 || m.folder >= len(st.folders) {
+			continue
+		}
+		if msg_hidden(st, m) {
 			continue
 		}
 		f := &st.folders[m.folder]
@@ -789,6 +824,24 @@ scan_accounts :: proc(st: ^State) {
 			f.unread += 1
 		}
 	}
+}
+
+// msg_hidden is the one case where a message in a folder is not shown in it: a
+// POP3 message the user has deleted.
+//
+// POP3 has no folders to move it to and no server-side flag to set, so
+// "deleted" can only be a local fact. It is recorded as the Maildir Trashed
+// flag in this account's local sidecar, the file itself is left exactly where
+// the engine put it, and the list stops showing it. Nothing is pretended about
+// the server, and nothing is destroyed.
+msg_hidden :: proc(st: ^State, m: Message) -> bool {
+	if .Deleted not_in m.flags {
+		return false
+	}
+	if m.account < 0 || m.account >= len(st.accounts) {
+		return false
+	}
+	return !has_server_folders(st.accounts[m.account].protocol)
 }
 
 scan_account :: proc(st: ^State, ai: int) {

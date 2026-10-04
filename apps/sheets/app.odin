@@ -11,6 +11,7 @@ import p "palmy:."
 TOOLBAR_H :: f32(40)
 FORMULA_H :: f32(34)
 STATUS_H :: f32(26)
+TABS_H :: f32(28)
 HDR_H :: f32(22)
 HDR_W :: f32(50)
 
@@ -31,6 +32,9 @@ Prompt_Kind :: enum u8 {
 	Export_XLSX,
 	Import_XLSX,
 	Goto,
+	Sheet_Name,
+	Name_Define,
+	Name_Delete,
 }
 
 // Line is a one-line text editor owned by this app. palmy's `text_field`
@@ -126,7 +130,8 @@ Undo :: struct {
 }
 
 App :: struct {
-	sh:        Sheet,
+	book:      ^Book,
+	sh:        ^Sheet, // the active sheet: always book.sheets[book.active]
 	fonts:     ^p.Fonts,
 	pal:       Palette,
 	cur:       Addr,
@@ -137,6 +142,8 @@ App :: struct {
 	cols_vis:  int,
 	grid_w:    f32,
 	grid_h:    f32,
+	scroll_w:  f32, // the grid minus the frozen strip, which is what scrolls
+	scroll_h:  f32,
 
 	mode:      Mode,
 	edit:      Line,
@@ -155,6 +162,61 @@ App :: struct {
 	clip_file: string, // owned: the scratch file the clipboard is written through
 	undo:      Undo,
 	quit:      bool,
+	tab_edit:  bool, // the prompt is renaming the sheet tab
+	chart_pick: Chart_Kind,
+}
+
+// app_init gives the application a book with one sheet in it.
+app_init :: proc(app: ^App) {
+	app.book = book_new()
+	app.sh = app.book.sheets[0]
+}
+
+app_destroy :: proc(app: ^App) {
+	if app.book == nil {
+		return
+	}
+	book_destroy(app.book)
+	free(app.book)
+	app.book = nil
+	app.sh = nil
+}
+
+// use_sheet switches the active tab. The cursor and the scroll are shared
+// between sheets, as they are in a spreadsheet that remembers one selection
+// per book; what matters is that both are clamped into the new sheet's frozen
+// region, or the cursor would sit under the split.
+use_sheet :: proc(app: ^App, i: int) {
+	if app.book == nil || len(app.book.sheets) == 0 {
+		return
+	}
+	want := clamp(i, 0, len(app.book.sheets) - 1)
+	if want == app.book.active && app.sh != nil {
+		return
+	}
+	if app.sh != nil {
+		app.sh.ui_cur = app.cur
+		app.sh.ui_anchor = app.anchor
+		app.sh.ui_top = app.top_row
+		app.sh.ui_left = app.left_col
+	}
+	app.book.active = want
+	app.sh = app.book.sheets[want]
+	app.cur = app.sh.ui_cur
+	app.anchor = app.sh.ui_anchor
+	app.top_row = max(app.sh.ui_top, app.sh.frz_rows)
+	app.left_col = max(app.sh.ui_left, app.sh.frz_cols)
+	follow_cursor(app)
+}
+
+// sync_sheet re-points `app.sh` after the book changed under it — which a
+// document load and an undo both do.
+sync_sheet :: proc(app: ^App) {
+	if app.book == nil || len(app.book.sheets) == 0 {
+		return
+	}
+	app.book.active = clamp(app.book.active, 0, len(app.book.sheets) - 1)
+	app.sh = app.book.sheets[app.book.active]
 }
 
 sel_rect :: proc(app: ^App) -> Rect_I {
@@ -220,7 +282,7 @@ base_name :: proc(path: string) -> string {
 
 snap_take :: proc(app: ^App) -> Snap {
 	return Snap {
-		doc = doc_save_string(&app.sh, app.name, app.cur, app.anchor),
+		doc = doc_save_string(app.sh, app.name, app.cur, app.anchor),
 		cursor = app.cur,
 		anchor = app.anchor,
 	}
@@ -244,7 +306,10 @@ undo_push :: proc(app: ^App) {
 }
 
 snap_restore :: proc(app: ^App, s: Snap) {
-	_, cur, anc, ok := doc_load_string(&app.sh, s.doc)
+	// The undo entry is the whole book, so restoring it rebuilds the sheet
+	// list — and `app.sh` has to be re-pointed at whatever came back.
+	_, cur, anc, ok := doc_load_string(app.book.sheets[0], s.doc)
+	sync_sheet(app)
 	if ok {
 		app.cur = cur
 		app.anchor = anc
@@ -290,7 +355,7 @@ visible_cols :: proc(app: ^App, from: int, width: f32) -> int {
 	x := f32(0)
 	n := 0
 	for c := from; c < MAX_COLS; c += 1 {
-		w := col_width(&app.sh, c)
+		w := col_width(app.sh, c)
 		if x + w > width && n > 0 {
 			break
 		}
@@ -307,7 +372,7 @@ visible_rows :: proc(app: ^App, from: int, height: f32) -> int {
 	y := f32(0)
 	n := 0
 	for r := from; r < MAX_ROWS; r += 1 {
-		h := row_height(&app.sh, r)
+		h := row_height(app.sh, r)
 		if y + h > height && n > 0 {
 			break
 		}
@@ -331,42 +396,78 @@ header_width :: proc(app: ^App) -> f32 {
 	return max(HDR_W, f32(d) * 7.5 + 18)
 }
 
+// frozen_w / frozen_h measure the pinned strip. Everything else is measured
+// against what is left, which is the whole of what freezing changes about the
+// viewport: the scrolled region is smaller, and it starts after the split.
+frozen_w :: proc(app: ^App) -> f32 {
+	w := f32(0)
+	for c in 0 ..< min(app.sh.frz_cols, 64) {
+		w += col_width(app.sh, c)
+	}
+	return w
+}
+
+frozen_h :: proc(app: ^App) -> f32 {
+	h := f32(0)
+	for r in 0 ..< min(app.sh.frz_rows, 64) {
+		h += row_height(app.sh, r)
+	}
+	return h
+}
+
 measure_viewport :: proc(app: ^App, win: [2]f32) {
-	app.grid_h = max(win.y - TOOLBAR_H - FORMULA_H - STATUS_H - HDR_H, 1)
-	app.rows_vis = visible_rows(app, app.top_row, app.grid_h)
+	app.grid_h = max(win.y - TOOLBAR_H - FORMULA_H - STATUS_H - TABS_H - HDR_H, 1)
 	app.grid_w = max(win.x - header_width(app), 1)
-	app.cols_vis = visible_cols(app, app.left_col, app.grid_w)
+	// A frozen strip is never scrolled past, so the scroll position can never
+	// be inside it.
+	app.top_row = max(app.top_row, app.sh.frz_rows)
+	app.left_col = max(app.left_col, app.sh.frz_cols)
+	app.scroll_h = max(app.grid_h - frozen_h(app), 1)
+	app.scroll_w = max(app.grid_w - frozen_w(app), 1)
+	app.rows_vis = visible_rows(app, app.top_row, app.scroll_h)
+	app.cols_vis = visible_cols(app, app.left_col, app.scroll_w)
 }
 
 // follow_cursor scrolls the least amount that brings the cursor back into
-// view, which is what keeps arrow-key navigation from jumping around.
+// view, which is what keeps arrow-key navigation from jumping around. A
+// cursor inside the frozen region needs no scrolling at all — it is already
+// on screen by definition, and scrolling for it would pull the data out from
+// under the headers.
 follow_cursor :: proc(app: ^App) {
-	if app.cur.row < app.top_row {
-		app.top_row = app.cur.row
-	}
-	// Converge on the scroll position rather than crawling to it: jumping to
-	// row 900000 must not iterate 900000 times.
-	for _ in 0 ..< 64 {
-		n := visible_rows(app, app.top_row, app.grid_h)
-		if app.cur.row < app.top_row + n {
-			break
+	sh := app.sh
+	app.top_row = max(app.top_row, sh.frz_rows)
+	app.left_col = max(app.left_col, sh.frz_cols)
+
+	if app.cur.row >= sh.frz_rows {
+		if app.cur.row < app.top_row {
+			app.top_row = app.cur.row
 		}
-		app.top_row = min(app.cur.row, app.cur.row - n + 1)
-	}
-	if app.cur.col < app.left_col {
-		app.left_col = app.cur.col
-	}
-	for _ in 0 ..< 64 {
-		n := visible_cols(app, app.left_col, app.grid_w)
-		if app.cur.col < app.left_col + n {
-			break
+		// Converge on the scroll position rather than crawling to it: jumping
+		// to row 900000 must not iterate 900000 times.
+		for _ in 0 ..< 64 {
+			n := visible_rows(app, app.top_row, app.scroll_h)
+			if app.cur.row < app.top_row + n {
+				break
+			}
+			app.top_row = min(app.cur.row, app.cur.row - n + 1)
 		}
-		app.left_col = min(app.cur.col, app.cur.col - n + 1)
 	}
-	app.top_row = max(app.top_row, 0)
-	app.left_col = max(app.left_col, 0)
-	app.cols_vis = visible_cols(app, app.left_col, app.grid_w)
-	app.rows_vis = visible_rows(app, app.top_row, app.grid_h)
+	if app.cur.col >= sh.frz_cols {
+		if app.cur.col < app.left_col {
+			app.left_col = app.cur.col
+		}
+		for _ in 0 ..< 64 {
+			n := visible_cols(app, app.left_col, app.scroll_w)
+			if app.cur.col < app.left_col + n {
+				break
+			}
+			app.left_col = min(app.cur.col, app.cur.col - n + 1)
+		}
+	}
+	app.top_row = max(app.top_row, sh.frz_rows)
+	app.left_col = max(app.left_col, sh.frz_cols)
+	app.cols_vis = visible_cols(app, app.left_col, app.scroll_w)
+	app.rows_vis = visible_rows(app, app.top_row, app.scroll_h)
 }
 
 move_cursor :: proc(app: ^App, dr, dc: int, extend: bool) {
@@ -392,7 +493,7 @@ goto_cell :: proc(app: ^App, a: Addr, extend := false) {
 // gap to the start of the next one.
 jump_edge :: proc(app: ^App, dr, dc: int, extend: bool) {
 	has :: proc(app: ^App, a: Addr) -> bool {
-		return cell_at(&app.sh, a) != nil
+		return cell_at(app.sh, a) != nil
 	}
 	lim_r := max(app.sh.max_row, 0)
 	lim_c := max(app.sh.max_col, 0)

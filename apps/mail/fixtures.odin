@@ -469,6 +469,92 @@ crlf :: proc(s: string, allocator := context.allocator) -> string {
 }
 
 // ---------------------------------------------------------------------------
+// The one message shape a reader cannot fake its way through
+//
+// Everything else in these fixtures is text, and text forgives. This one is
+// not: an inline image the message's own HTML points at with a `cid:` URL —
+// which must be recognised as part of the message rather than listed as a file
+// to save — and a real binary attachment beside it, whose bytes have to come
+// back off disk byte for byte.
+// ---------------------------------------------------------------------------
+
+// fixture_payload is every byte value once, then a `\r\n\r\n` run and a NUL.
+// Those last bytes are the point: a NUL truncates anything that treats the
+// buffer as a C string, and a CRLF run is what a text path quietly normalises
+// to a bare LF. Bytes that come back equal to this have not been through one.
+fixture_payload :: proc(allocator := context.temp_allocator) -> []u8 {
+	tail := [?]u8{'\r', '\n', '\r', '\n', 0x00, 0xff}
+	out := make([]u8, 256 + len(tail), allocator)
+	for i in 0 ..< 256 {
+		out[i] = u8(i)
+	}
+	for b, i in tail {
+		out[256 + i] = b
+	}
+	return out
+}
+
+// render_related_fixture builds multipart/related wrapping a plain/html
+// alternative, an inline PNG the HTML references, a binary attachment under
+// `attach_name`, and one attachment part with no name at all.
+//
+// The sections come out as the reader will ask for them: 1.1 plain, 1.2 html,
+// 2 the inline png, 3 the attachment, 4 the unnamed part.
+render_related_fixture :: proc(
+	m: Fixture_Msg,
+	attach_name: string,
+	payload: []u8,
+	allocator := context.allocator,
+) -> string {
+	b := strings.builder_make(allocator)
+	fmt.sbprintf(&b, "Date: %s\r\n", format_rfc5322_date(m.date, context.temp_allocator))
+	fmt.sbprintf(&b, "From: %s\r\n", render_person(m.from, context.temp_allocator))
+	fmt.sbprintf(&b, "To: %s\r\n", render_people(m.to, context.temp_allocator))
+	fmt.sbprintf(&b, "Subject: %s\r\n", m.subject)
+	fmt.sbprintf(&b, "Message-ID: <%s>\r\n", m.id)
+	strings.write_string(&b, "MIME-Version: 1.0\r\n")
+	strings.write_string(&b, "Content-Type: multipart/related; type=\"multipart/alternative\"; boundary=\"REL\"\r\n\r\n")
+
+	strings.write_string(&b, "--REL\r\n")
+	strings.write_string(&b, "Content-Type: multipart/alternative; boundary=\"ALT\"\r\n\r\n")
+	strings.write_string(&b, "--ALT\r\nContent-Type: text/plain; charset=utf-8\r\n\r\n")
+	strings.write_string(&b, crlf(m.body, context.temp_allocator))
+	strings.write_string(&b, "\r\n--ALT\r\nContent-Type: text/html; charset=utf-8\r\n\r\n")
+	fmt.sbprintf(
+		&b,
+		"<html><body><p><img src=\"cid:logo@fixtures.test\" alt=\"logo\"></p><p>%s</p></body></html>\r\n",
+		m.body,
+	)
+	strings.write_string(&b, "--ALT--\r\n\r\n")
+
+	strings.write_string(&b, "--REL\r\n")
+	strings.write_string(&b, "Content-Type: image/png\r\n")
+	strings.write_string(&b, "Content-ID: <logo@fixtures.test>\r\n")
+	strings.write_string(&b, "Content-Disposition: inline; filename=\"logo.png\"\r\n")
+	strings.write_string(&b, "Content-Transfer-Encoding: base64\r\n\r\n")
+	strings.write_string(&b, "iVBORw0KGgoAAAANSUhEUg==\r\n")
+
+	strings.write_string(&b, "--REL\r\n")
+	strings.write_string(&b, "Content-Type: application/octet-stream\r\n")
+	fmt.sbprintf(&b, "Content-Disposition: attachment; filename=\"%s\"\r\n", attach_name)
+	strings.write_string(&b, "Content-Transfer-Encoding: base64\r\n\r\n")
+	enc := encode_base64(payload, context.temp_allocator)
+	for i := 0; i < len(enc); i += 76 {
+		strings.write_string(&b, enc[i:min(i + 76, len(enc))])
+		strings.write_string(&b, "\r\n")
+	}
+
+	strings.write_string(&b, "--REL\r\n")
+	strings.write_string(&b, "Content-Type: application/pdf\r\n")
+	strings.write_string(&b, "Content-Disposition: attachment\r\n")
+	strings.write_string(&b, "Content-Transfer-Encoding: base64\r\n\r\n")
+	strings.write_string(&b, "JVBERi0xLjQK\r\n")
+
+	strings.write_string(&b, "--REL--\r\n")
+	return strings.to_string(b)
+}
+
+// ---------------------------------------------------------------------------
 // Generating conversations
 // ---------------------------------------------------------------------------
 
@@ -917,6 +1003,29 @@ fill_account :: proc(root: string, sh: Fixture_Shape) -> int {
 			alternative = true,
 		}
 		write_fixture(&w, inbox, render_fixture(fm, context.temp_allocator), {}, fm.date)
+		specials += 1
+	}
+
+	// 5b. An inline image the HTML points at, plus a real binary attachment.
+	//     This is the message the reader's attachment list is judged on: the
+	//     logo must not be offered as a file, and `measurements.bin` must come
+	//     back off disk byte for byte, NUL and CRLF run intact.
+	{
+		fm := Fixture_Msg {
+			id = fmt.tprintf("%s-inline@fixtures.test", slug_of(sh.account)),
+			from = Person{"Grace Hopper", "grace@navy.test", false},
+			to = []Person{me},
+			subject = "Instrument trace, raw",
+			date = time.Time{_nsec = now._nsec - 3 * 3600 * 1_000_000_000},
+			body = "The trace came off the logger unmodified. Do not open it in an editor; it is not text.\n\nThe banner above is inline, not an attachment.",
+		}
+		write_fixture(
+			&w,
+			inbox,
+			render_related_fixture(fm, "measurements.bin", fixture_payload(), context.temp_allocator),
+			{},
+			fm.date,
+		)
 		specials += 1
 	}
 

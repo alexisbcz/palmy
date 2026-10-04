@@ -18,9 +18,35 @@ package main
 // So the preview is a cache, not a decoder. The UI thread works out which
 // source frames the next few seconds of timeline need and hands that plan to a
 // worker; the worker streams them in and pushes finished frames back; the UI
-// draws whatever is in the cache and advances the playhead from its own clock.
+// draws whatever is in the cache and the audio clock says which one is due.
 // Playback is then limited by palmy's frame loop (60 Hz) rather than by
-// ffmpeg, and the cache grid (15 fps) is what actually shows.
+// ffmpeg, and the cache grid is what actually shows.
+//
+// Why the grid is 30 fps and not 15
+// ---------------------------------
+// It was 15 while the playhead ran on `delta_time`, where the grid was not the
+// largest error in the chain. Now that the playhead is read off the audio
+// clock the grid *is* the whole of the presentation error — a frame can only
+// sit at a multiple of 1/PREVIEW_FPS, so even a perfect decoder is up to half
+// a step out — and `--audiobench` measures exactly that:
+//
+//   grid    presentation error      cold scrub     decoded window
+//   15 fps  14.0 ms mean / 33.3 max  165 ms mean    10.7 clip-seconds
+//   30 fps   8.0 ms mean / 16.1 max  179 ms mean     5.3 clip-seconds
+//
+// The mean error halves, which is the number a viewer notices on a lip-sync,
+// for 8 % on a cold scrub and half the cache coverage. 160 slots at 30 fps
+// still hold 5.3 seconds against a 3-second plan window, so the coverage that
+// was lost was coverage nothing was reading.
+//
+// Stepping backwards
+// ------------------
+// A plan used to start 0.3 s behind the playhead and the re-plan trigger only
+// watched the leading edge, so stepping back past that point left the decoded
+// window and waited on a fresh ffmpeg seek. Measured from a cold cache, 30
+// backward frame steps: **10 served, 20 missed**. The window now starts
+// `PREVIEW_BACK` behind and the trigger watches both edges — **30 served, 0
+// missed**, and nothing else in the bench moved.
 //
 // Locking (one mutex, `Preview.mu`)
 // ---------------------------------
@@ -42,8 +68,9 @@ import "core:thread"
 import "core:time"
 import p "palmy:."
 
-PREVIEW_FPS :: 15.0
-PREVIEW_WINDOW :: 3.0 // seconds decoded ahead of the plan start
+PREVIEW_FPS :: 30.0
+PREVIEW_WINDOW :: 3.0 // seconds of timeline in one plan
+PREVIEW_BACK :: 1.0 // how much of that sits behind the playhead
 CACHE_N :: 160
 
 Preview_Quality :: enum u8 {
@@ -234,7 +261,21 @@ cache_insert :: proc(pv: ^Preview, f: Frame, playhead: f64) {
 
 // cache_lookup finds the best cached frame for a clip at a time. `tol` is how
 // far off the grid a frame may be and still count.
-cache_lookup :: proc(pv: ^Preview, clip_id: int, t: f64, tol: f64) -> (img: p.Image, ok: bool) {
+//
+// It returns the frame's own timeline time as well as its pixels, because the
+// difference between that and the clock is the preview's presentation error and
+// the only honest way to report it is to measure the frame that was actually
+// painted. See `audio_note_presentation`.
+cache_lookup :: proc(
+	pv: ^Preview,
+	clip_id: int,
+	t: f64,
+	tol: f64,
+) -> (
+	img: p.Image,
+	at: f64,
+	ok: bool,
+) {
 	best := -1
 	bestd := tol
 	for i in 0 ..< CACHE_N {
@@ -249,10 +290,10 @@ cache_lookup :: proc(pv: ^Preview, clip_id: int, t: f64, tol: f64) -> (img: p.Im
 	}
 	if best < 0 {
 		pv.misses += 1
-		return {}, false
+		return {}, 0, false
 	}
 	pv.hits += 1
-	return pv.cache[best].img, true
+	return pv.cache[best].img, pv.cache[best].t, true
 }
 
 // cache_drop_all is what a timeline edit calls: every cached frame may now be
@@ -320,16 +361,21 @@ build_plan :: proc(pr: ^Project, pv: ^Preview, from: f64, gen: int) -> Plan {
 	return pl
 }
 
-// preview_follow keeps the plan ahead of the playhead. It re-plans only when
-// the playhead has left the part of the window that is already covered, so a
-// playing timeline re-plans about once every two seconds rather than every
-// frame.
+// preview_follow keeps the plan around the playhead. It re-plans only when the
+// playhead has left the comfortable middle of the window, so a playing
+// timeline re-plans about once every two seconds rather than every frame.
+//
+// Both edges are watched, not just the leading one. The backward guard is
+// skipped when the window is already against the timeline origin, because
+// there `want_from` cannot move any further back and asking for it again every
+// frame would re-plan forever.
 preview_follow :: proc(pr: ^Project, pv: ^Preview, playhead: f64, force: bool) {
-	want_from := math.max(0, playhead - 0.3)
+	want_from := math.max(0, playhead - PREVIEW_BACK)
 	need := force || !pv.planned
 	if !need {
-		// Still inside the comfortable part of the decoded window?
-		if playhead < pv.plan_from || playhead > pv.plan_from + PREVIEW_WINDOW - 1.0 {
+		behind := pv.plan_from > 0 && playhead < pv.plan_from + 0.15
+		ahead := playhead > pv.plan_from + PREVIEW_WINDOW - 0.75
+		if behind || ahead {
 			need = true
 		}
 	}

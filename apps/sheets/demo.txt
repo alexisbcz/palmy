@@ -1,152 +1,84 @@
-# Sheets — a spreadsheet for palmy.
-# Every step here is an unmodified key or typed text: the palette (F10) is how
-# copy, paste, go-to and export are reached without a modifier.
+# Sheets — multiple sheets, frozen panes and charts.
+#
+# This is the same story as apps/sheets/film.txt, in the recorder's grammar.
+# It is not what built demo.mp4: palmy's Wayland keyboard currently delivers
+# one key event per window and then goes silent, so a recorded take shows a
+# single keystroke and a still picture. `bash apps/sheets/film.sh` drives the
+# same key handler through palmy's offscreen path instead. Use this file with
+# apps/tools/headless-record.sh once the keyboard works again.
+wait 1.4
+
+# The header row and the label column are frozen: scroll and they stay put.
+key Page_Down
+wait 0.7
+key Page_Down
+wait 0.9
+chord ctrl+Home
+wait 1.0
+
+# The Summary tab is nothing but cross-sheet references, plus a chart of them.
+chord ctrl+Next
+wait 1.4
+key Down
+wait 0.5
+key Down
+wait 0.5
+key Down
+wait 0.9
+chord ctrl+Home
+wait 0.6
+
+# Change one number on Sales...
+chord ctrl+Prior
+wait 0.9
+chord ctrl+g
+wait 0.5
+type B5
+key Return
+wait 0.7
+type 500
+key Return
+wait 1.2
+
+# ...and the Summary totals and the chart have already followed it.
+chord ctrl+Next
 wait 1.8
 
-# --- entering data: a target for each region ---
-key Right
-key Right
-key Right
-key Right
-key Right
+# A third sheet, reading from both of the others.
+chord alt+s
+wait 0.9
+chord alt+n
 wait 0.5
-type Target
+type Check
 key Return
-wait 0.3
-type 600
+wait 0.9
+type Revenue total
 key Return
-type 400
+type =SUM(Sales!D3:D7)
 key Return
-type 850
+wait 0.8
+type Matches summary
 key Return
-type 700
-key Return
-wait 1.0
-
-# --- a formula over a range ---
-key Down
-wait 0.4
-type =SUM(F2:F5)
-wait 1.0
+type =Summary!B8=A2
 key Return
 wait 1.4
 
-# --- change one input; the total recalculates ---
-key Up
-key Up
-key Up
-key Up
-key Up
-wait 0.6
-type 1200
-key Return
-wait 1.8
-
-# --- a formula worth copying: revenue against target ---
-key Up
-key Up
+# Freeze this sheet at the cursor too.
+chord ctrl+Home
+wait 0.4
+key Down
 key Right
-wait 0.5
-type =D2/F2
+wait 0.4
+chord alt+f
+wait 1.4
+
+# And a pie chart of the summary, drawn into the grid.
+chord ctrl+Prior
 wait 0.8
-key Return
-wait 1.0
-key Up
-wait 0.8
-
-# --- copy it down, and watch the references move with it ---
-key F10
-wait 0.7
-type copy
-wait 0.8
-key Return
-wait 0.9
-key F10
+chord ctrl+g
 wait 0.5
-type go to
-wait 0.7
-key Return
-wait 0.5
-type G3:G5
-wait 0.6
+type A2:B6
 key Return
 wait 0.7
-key F10
-wait 0.5
-type paste
-wait 0.8
-key Return
-wait 1.6
-
-# --- format the column as percentages ---
-key F10
-wait 0.4
-type go to
-key Return
-wait 0.4
-type G2:G5
-key Return
-wait 0.6
-key F10
-wait 0.5
-type percent
-wait 0.7
-key Return
-wait 1.6
-
-# --- G5 now reads =D5/F5: the copy moved the rows, not the columns ---
-key F10
-wait 0.4
-type go to
-key Return
-wait 0.4
-type G5
-key Return
-wait 2.2
-
-# --- a deliberate circular reference ---
-key F10
-wait 0.4
-type go to
-key Return
-wait 0.4
-type I2
-key Return
-wait 0.6
-type =I3+1
-wait 0.7
-key Return
-wait 0.6
-type =I2+1
-wait 0.7
-key Return
-wait 2.2
-key Up
-key Up
-wait 1.8
-
-# --- undo both of them ---
-key F10
-wait 0.4
-type undo
-wait 0.6
-key Return
-wait 0.7
-key F10
-wait 0.4
-type undo
-wait 0.6
-key Return
-wait 1.6
-
-# --- export the sheet as CSV ---
-key F10
-wait 0.5
-type export
-wait 0.8
-key Return
-wait 1.0
-type /tmp/sheets-demo.csv
-wait 1.0
-key Return
-wait 2.6
+chord alt+p
+wait 2.4

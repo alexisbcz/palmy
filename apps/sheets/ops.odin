@@ -193,20 +193,29 @@ structural_op :: proc(sh: ^Sheet, insert: bool, axis_row: bool, at, n: int) {
 	if n <= 0 || at < 0 {
 		return
 	}
+	bk := sh.book
+	target := sh.index
 
-	// 1. Fix up every formula and write it back out as source.
-	for _, c in sh.cells {
-		if c.ast == nil {
-			continue
+	// 1. Fix up every formula in the *book* and write it back out as source.
+	//
+	// This is the part a single-sheet engine gets to skip. A reference is to
+	// a sheet, not to a coordinate system, so inserting a row on this sheet
+	// has to move `Sheet1!A5` written on Sheet2 while leaving the plain `A5`
+	// written on Sheet2 exactly where it is. `ast_structural` is handed both
+	// the sheet the formula lives on and the sheet that was edited, and only
+	// touches references that resolve to the second.
+	for s in bk.sheets {
+		for _, c in s.cells {
+			if c.ast == nil {
+				continue
+			}
+			ast_structural(c.ast, insert, axis_row, at, n, bk, s.index, target)
+			src := ast_source(c.ast, context.temp_allocator)
+			context.allocator = s.heap
+			delete(c.input)
+			c.input = strings.clone(src, s.heap)
+			c.state = .Dirty
 		}
-		ast_structural(c.ast, insert, axis_row, at, n)
-		src := ast_source(c.ast, context.temp_allocator)
-		context.allocator = sh.heap
-		delete(c.input)
-		c.input = strings.clone(src, sh.heap)
-		clear(&c.deps)
-		ast_deps(c.ast, &c.deps, MAX_ROWS - 1)
-		c.state = .Dirty
 	}
 
 	// 2. Move the cells themselves.
@@ -259,9 +268,80 @@ structural_op :: proc(sh: ^Sheet, insert: bool, axis_row: bool, at, n: int) {
 	delete(sizes^)
 	sizes^ = ns
 
+	// 4. And everything else that is addressed in grid coordinates: merges,
+	// the frozen split, and the ranges and anchors of the charts.
+	for i := len(sh.merges) - 1; i >= 0; i -= 1 {
+		if r, ok := rect_structural(sh.merges[i], insert, axis_row, at, n); ok {
+			sh.merges[i] = r
+		} else {
+			ordered_remove(&sh.merges, i)
+		}
+	}
+	split := axis_row ? &sh.frz_rows : &sh.frz_cols
+	if split^ > at {
+		split^ = insert ? split^ + n : max(at, split^ - n)
+	}
+	for s in bk.sheets {
+		for i in 0 ..< len(s.charts) {
+			ch := &s.charts[i]
+			// A chart's data range moves when its *data* sheet is edited.
+			if resolve_sheet(bk, ch.sheet, s.index) == target {
+				if r, ok := rect_structural(ch.rect, insert, axis_row, at, n); ok {
+					ch.rect = r
+				}
+			}
+			// Its anchor moves when the sheet it is drawn on is edited.
+			if s.index == target {
+				if r, ok := rect_structural(
+					{ch.at.row, ch.at.col, ch.at.row, ch.at.col},
+					insert,
+					axis_row,
+					at,
+					n,
+				); ok {
+					ch.at = {r.r0, r.c0}
+				}
+			}
+		}
+	}
+
 	refresh_bounds(sh)
-	sh.graph_dirty = true
-	recalc_all(sh)
+	bk.graph_dirty = true
+	book_recalc_all(bk)
+}
+
+// rect_structural maps a rectangle through an insert or a delete. A rectangle
+// wholly inside a deleted block is gone, and one that straddles it is
+// clamped — the same rule a range reference follows.
+rect_structural :: proc(
+	r_in: Rect_I,
+	insert: bool,
+	axis_row: bool,
+	at, n: int,
+) -> (
+	Rect_I,
+	bool,
+) {
+	r := r_in
+	lo := axis_row ? r.r0 : r.c0
+	hi := axis_row ? r.r1 : r.c1
+	nlo, nhi := lo, hi
+	if insert {
+		if lo >= at {nlo = lo + n}
+		if hi >= at {nhi = hi + n}
+	} else {
+		if at <= lo && at + n > hi {
+			return r, false
+		}
+		nlo = lo < at ? lo : (lo >= at + n ? lo - n : at)
+		nhi = hi < at ? hi : (hi >= at + n ? hi - n : at - 1)
+	}
+	if axis_row {
+		r.r0, r.r1 = min(nlo, nhi), max(nlo, nhi)
+	} else {
+		r.c0, r.c1 = min(nlo, nhi), max(nlo, nhi)
+	}
+	return r, true
 }
 
 insert_rows :: proc(sh: ^Sheet, at, n: int) {structural_op(sh, true, true, at, n)}

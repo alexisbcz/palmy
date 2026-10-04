@@ -155,7 +155,196 @@ frame :: proc(ui: ^p.Ctx, st: ^State) {
 	if st.comp.open {
 		composer(ui, st)
 	}
+	if st.move_open {
+		move_sheet(ui, st)
+	}
+	if st.confirm_purge {
+		purge_confirm(ui, st)
+	}
 	toast(ui, st)
+	// The file dialog is drawn last, over everything, because while it is up
+	// it owns the keyboard and nothing behind it is live.
+	save_overlay(ui, st)
+}
+
+// ---------------------------------------------------------------------------
+// Filing: the move sheet and the one irreversible confirmation
+// ---------------------------------------------------------------------------
+
+// move_sheet is "file this where?": the account's own folders, with the roles
+// in their familiar order, drawn in-window because there is no xdg_popup.
+move_sheet :: proc(ui: ^p.Ctx, st: ^State) {
+	msgs := selection_messages(st, context.temp_allocator)
+	if len(msgs) == 0 {
+		st.move_open = false
+		return
+	}
+	targets := move_targets(st, msgs[0])
+	if len(targets) == 0 {
+		st.move_open = false
+		return
+	}
+	st.move_sel = clamp(st.move_sel, 0, len(targets) - 1)
+
+	scrim := p.div(ui, "absolute inset-0 z-50 bg-black/40")
+	if p.clickable(ui, scrim) {
+		st.move_open = false
+	}
+	p.end(ui)
+
+	p.row(ui, "absolute z-50 left-[24] right-[24] top-[72] justify-center")
+	defer p.end(ui)
+	p.col(ui, "w-full max-w-[440] rounded-xl bg-popover border border-border shadow-2xl p-4 gap-2 overflow-hidden")
+	defer p.end(ui)
+
+	p.row(ui, "items-center gap-2 shrink-0")
+	p.icon(ui, ICON_FOLDER_OPEN, "size-4 shrink-0 text-selection")
+	p.text(
+		ui,
+		tfmt("Move %d message%s to", len(msgs), plural(len(msgs))),
+		"text-[14] font-semibold text-foreground",
+	)
+	p.style(ui).shrink = 0
+	p.end(ui)
+
+	a := st.accounts[st.messages[msgs[0]].account]
+	p.text(
+		ui,
+		tfmt(
+			"A rename inside %s. The :2, flag suffix travels with the file, so what you have read stays read.",
+			a.name,
+		),
+		"w-full text-[11.5] text-muted-foreground leading-[16]",
+	)
+
+	list := p.col(ui, "w-full max-h-[320] gap-px overflow-scroll")
+	for fi, i in targets {
+		f := st.folders[fi]
+		on := i == st.move_sel
+		p.key(ui, tfmt("mv:%d", fi))
+		idx := p.row(ui, "h-8 shrink-0 items-center gap-2 px-2 rounded-md transition cursor-pointer")
+		p.apply(ui, on ? "bg-selection" : "hover:bg-accent", idx)
+		if p.clickable(ui, idx) {
+			do_move(st, fi)
+		}
+		p.icon(
+			ui,
+			f.depth > 0 ? ICON_FOLDER : role_icon(f.role),
+			on ? "size-3.5 shrink-0 text-white" : "size-3.5 shrink-0 text-muted-foreground",
+		)
+		p.text(
+			ui,
+			f.name,
+			on \
+			? "flex-1 min-w-0 truncate text-[12.5] font-medium text-white" \
+			: "flex-1 min-w-0 truncate text-[12.5] text-foreground",
+		)
+		p.text(
+			ui,
+			tfmt("%d", f.total),
+			on ? "text-[10.5] text-white/70" : "text-[10.5] text-muted-foreground/70",
+		)
+		p.style(ui).shrink = 0
+		p.end(ui)
+	}
+	p.end(ui)
+	_ = list
+
+	p.row(ui, "items-center gap-2 shrink-0 pt-1")
+	hint(ui, "J K", "choose")
+	hint(ui, "Enter", "move")
+	hint(ui, "Esc", "cancel")
+	p.end(ui)
+}
+
+// purge_confirm is the only irreversible thing this client can do, so it names
+// the file it is about to unlink and starts on Cancel. Enter cancels: the
+// keystroke that confirms everything else in this app must not be the one that
+// destroys mail.
+purge_confirm :: proc(ui: ^p.Ctx, st: ^State) {
+	n, path := purge_label(st)
+	if n == 0 {
+		st.confirm_purge = false
+		return
+	}
+
+	scrim := p.div(ui, "absolute inset-0 z-50 bg-black/50")
+	if p.clickable(ui, scrim) {
+		st.confirm_purge = false
+	}
+	p.end(ui)
+
+	p.row(ui, "absolute z-50 left-[24] right-[24] top-[88] justify-center")
+	defer p.end(ui)
+	p.col(ui, "w-full max-w-[520] rounded-xl bg-popover border border-destructive/50 shadow-2xl p-5 gap-3")
+	defer p.end(ui)
+
+	p.row(ui, "items-center gap-2 shrink-0")
+	p.icon(ui, ICON_TRIANGLE_ALERT, "size-4 shrink-0 text-destructive")
+	p.text(
+		ui,
+		tfmt("Delete %d message%s from disk?", n, plural(n)),
+		"text-[14] font-semibold text-foreground whitespace-nowrap",
+	)
+	p.style(ui).shrink = 0
+	p.end(ui)
+
+	p.text(
+		ui,
+		"The file is unlinked. There is no Trash to recover it from and no undo.",
+		"w-full text-[12] text-muted-foreground leading-[18]",
+	)
+
+	// Name the file. The basename is what identifies it, so it goes on its own
+	// line and is not allowed to be the part that gets truncated.
+	p.col(ui, "w-full shrink-0 gap-0.5 px-3 py-2 rounded-lg bg-muted/60 border border-border")
+	p.text(ui, basename_of(path), "w-full truncate font-mono text-[12] font-medium text-foreground")
+	p.text(
+		ui,
+		tfmt("in %s", dirname_of(path)),
+		"w-full truncate font-mono text-[10.5] text-muted-foreground",
+	)
+	if n > 1 {
+		p.text(
+			ui,
+			tfmt("and %d more file%s in this conversation", n - 1, plural(n - 1)),
+			"w-full text-[11] text-muted-foreground",
+		)
+	}
+	p.end(ui)
+
+	p.row(ui, "items-center gap-2 shrink-0 pt-1")
+	{
+		// Cancel is first, is focused, and is what Enter and Escape both do.
+		idx := p.row(ui, "h-8 shrink-0 items-center px-3 rounded-lg border border-border bg-background ring-3 ring-ring/50 hover:bg-muted cursor-pointer transition")
+		if p.clickable(ui, idx) {
+			st.confirm_purge = false
+		}
+		p.text(ui, "Cancel", "text-[13] font-medium whitespace-nowrap")
+		p.style(ui).shrink = 0
+		p.end(ui)
+	}
+	{
+		idx := p.row(ui, "h-8 shrink-0 items-center gap-1.5 px-3 rounded-lg bg-destructive text-white cursor-pointer transition hover:bg-destructive/80")
+		if p.clickable(ui, idx) {
+			st.confirm_purge = false
+			purge_selection(st)
+		}
+		p.icon(ui, ICON_TRASH, "size-3.5 shrink-0")
+		p.text(ui, "Delete from disk", "text-[13] font-medium whitespace-nowrap")
+		p.style(ui).shrink = 0
+		p.end(ui)
+	}
+	p.spacer(ui, "flex-1")
+	p.row(ui, "shrink-0 items-center gap-1")
+	sc.kbd(ui, "Enter", "h-4 text-[9.5]")
+	p.text(ui, "cancel", "text-[10] text-muted-foreground/70 whitespace-nowrap")
+	p.style(ui).shrink = 0
+	sc.kbd(ui, "Shift D", "h-4 text-[9.5]")
+	p.text(ui, "delete", "text-[10] text-muted-foreground/70 whitespace-nowrap")
+	p.style(ui).shrink = 0
+	p.end(ui)
+	p.end(ui)
 }
 
 // NARROW_W is where the sidebar stops being a column and becomes a drawer.
@@ -243,6 +432,22 @@ toolbar :: proc(ui: ^p.Ctx, st: ^State) {
 	}
 	if tool_button(ui, "fwd", ICON_FORWARD, has, false, "Forward") {
 		compose_forward(st, mi)
+	}
+	sc.separator(ui, .Vertical, "h-5 mx-1 shrink-0")
+	// Filing. Enabled whenever something is under the cursor; what each
+	// protocol can honestly do with it is decided in filing.odin, and a POP3
+	// account is told so in words rather than shown a dead button.
+	if tool_button(ui, "archive", ICON_ARCHIVE, ti >= 0, false, "Archive (E)") {
+		archive_selection(st)
+	}
+	if tool_button(ui, "move", ICON_FOLDER_OPEN, ti >= 0, st.move_open, "Move to folder (M)") {
+		open_move_sheet(st)
+	}
+	if tool_button(ui, "trash", ICON_TRASH, ti >= 0, false, "Delete (D)") {
+		delete_selection(st)
+	}
+	if tool_button(ui, "undo", ICON_CORNER_UP_LEFT, st.undo.valid, false, "Undo the last move (Z)") {
+		do_undo(st)
 	}
 	sc.separator(ui, .Vertical, "h-5 mx-1 shrink-0")
 	if tool_button(ui, "flag", ICON_STAR, ti >= 0, flagged, "Flag") {
@@ -405,6 +610,9 @@ sidebar :: proc(ui: ^p.Ctx, st: ^State, drawer: bool) {
 	hint(ui, "Enter", "open thread")
 	hint(ui, "C", "compose")
 	hint(ui, "R", "reply")
+	hint(ui, "V W", "choose · save file")
+	hint(ui, "E M D", "archive · move · trash")
+	hint(ui, "Z", "undo a move")
 	hint(ui, "/", "search")
 	p.end(ui)
 }
@@ -476,7 +684,7 @@ pop3_note :: proc(ui: ^p.Ctx) {
 	p.icon(ui, ICON_INFO, "size-2.5 shrink-0 text-muted-foreground/60")
 	p.text(
 		ui,
-		"POP3: one inbox, and read and flagged state kept on this machine.",
+		"POP3: one inbox. Read, flagged and deleted are kept on this machine — the protocol has no folders and no server-side flags, so nothing you file here is filed anywhere else.",
 		"flex-1 min-w-0 text-[10] text-muted-foreground/70 leading-[13]",
 	)
 }
@@ -965,7 +1173,7 @@ reader_pane :: proc(ui: ^p.Ctx, st: ^State) {
 	p.end(ui)
 
 	if len(m.attachments) > 0 {
-		attachments_block(ui, m)
+		attachments_block(ui, st, m)
 	}
 
 	// The HTML fallback has to announce itself. Calling a text reduction
@@ -1035,7 +1243,17 @@ badge_pill :: proc(ui: ^p.Ctx, label: string, ic: p.Icon, class: string) {
 
 MAX_ATTACHMENT_CHIPS :: 24
 
-attachments_block :: proc(ui: ^p.Ctx, m: Message) {
+// attachments_block is the reader's list of files. Each chip is clickable —
+// click selects, the download button saves — and the keyboard walks the same
+// list with V and saves with W.
+//
+// Inline images the message's own HTML points at with a `cid:` URL are counted
+// on a separate line rather than listed here. They are part of how the message
+// reads; offering "save logo.png" for a signature image is noise.
+attachments_block :: proc(ui: ^p.Ctx, st: ^State, m: Message) {
+	saveable := saveable_attachments(m)
+	inline_n := inline_attachment_count(m)
+
 	p.col(ui, "w-full shrink-0 gap-1.5")
 	defer p.end(ui)
 
@@ -1043,32 +1261,82 @@ attachments_block :: proc(ui: ^p.Ctx, m: Message) {
 	p.icon(ui, ICON_PAPERCLIP, "size-3 shrink-0 text-muted-foreground")
 	p.text(
 		ui,
-		tfmt("%d attachment%s", len(m.attachments), len(m.attachments) == 1 ? "" : "s"),
+		tfmt("%d attachment%s", len(saveable), plural(len(saveable))),
 		"text-[11] font-medium text-muted-foreground",
 	)
 	p.style(ui).shrink = 0
+	if inline_n > 0 {
+		p.text(
+			ui,
+			tfmt("·  %d inline image%s the message refers to, not listed", inline_n, plural(inline_n)),
+			"text-[10.5] text-muted-foreground/70 whitespace-nowrap",
+		)
+		p.style(ui).shrink = 0
+	}
+	p.spacer(ui, "flex-1")
+	if len(saveable) > 0 {
+		p.row(ui, "shrink-0 items-center gap-1")
+		sc.kbd(ui, "V", "h-4 text-[9.5]")
+		p.text(ui, "choose", "text-[10] text-muted-foreground/70 whitespace-nowrap")
+		p.style(ui).shrink = 0
+		sc.kbd(ui, "W", "h-4 text-[9.5]")
+		p.text(ui, "save", "text-[10] text-muted-foreground/70 whitespace-nowrap")
+		p.style(ui).shrink = 0
+		p.end(ui)
+	}
 	p.end(ui)
 
-	p.row(ui, "w-full flex-wrap gap-2")
-	for at, i in m.attachments {
-		if i >= MAX_ATTACHMENT_CHIPS {
+	if len(saveable) == 0 {
+		return
+	}
+
+	// One row per attachment rather than a wrapped row of chips.
+	//
+	// Chips were fine while they were decoration. Now each one carries a Save
+	// button, they are wide enough that five of them wrap — and palmy's
+	// `flex-wrap` lays a second line out without growing the row's height, so
+	// the overflow draws straight over the message body. A column has no wrap
+	// to get wrong, and it gives a long filename somewhere to go. (Reported as
+	// a toolkit gap; worked around here rather than patched there.)
+	p.col(ui, "w-full shrink-0 gap-1")
+	for ai, k in saveable {
+		if k >= MAX_ATTACHMENT_CHIPS {
 			p.text(
 				ui,
-				tfmt("+%d more", len(m.attachments) - MAX_ATTACHMENT_CHIPS),
+				tfmt("+%d more", len(saveable) - MAX_ATTACHMENT_CHIPS),
 				"text-[11] text-muted-foreground",
 			)
 			break
 		}
-		p.key(ui, at.name)
-		p.row(ui, "h-9 shrink-0 items-center gap-2 pl-2 pr-2.5 rounded-lg border border-border bg-muted/40")
+		at := m.attachments[ai]
+		on := st.att_sel == k
+
+		p.key(ui, tfmt("att:%d", ai))
+		row := p.row(ui, "h-9 w-full shrink-0 items-center gap-2 pl-2 pr-1.5 rounded-lg border bg-muted/40 transition cursor-pointer")
+		p.apply(ui, on ? "border-selection ring-2 ring-selection/35" : "border-border hover:bg-muted", row)
+		if p.clickable(ui, row) {
+			st.att_sel = k
+		}
 		p.icon(ui, attachment_icon(at.mime), "size-4 shrink-0 text-muted-foreground")
-		p.col(ui, "gap-0 max-w-[180]")
-		p.text(ui, at.name, "truncate text-[11.5] font-medium text-foreground")
+		p.text(ui, at.name, "flex-1 min-w-0 truncate text-[11.5] font-medium text-foreground")
 		p.text(
 			ui,
 			tfmt("%s · %s", at.mime, human_bytes(at.size, context.temp_allocator)),
-			"truncate text-[10] text-muted-foreground",
+			"shrink-0 text-[10] text-muted-foreground whitespace-nowrap",
 		)
+		p.style(ui).shrink = 0
+
+		// The save button. A list without one would be a list of things you
+		// can look at and not open, which is what this was before.
+		p.key(ui, tfmt("att-save:%d", ai))
+		btn := p.row(ui, "h-6 shrink-0 items-center gap-1 px-1.5 rounded-md transition cursor-pointer hover:bg-selection hover:text-white text-muted-foreground")
+		if p.clickable(ui, btn) {
+			st.att_sel = k
+			begin_save_attachment(st)
+		}
+		p.icon(ui, ICON_DOWNLOAD, "size-3.5 shrink-0")
+		p.text(ui, "Save", "text-[10.5] font-medium whitespace-nowrap")
+		p.style(ui).shrink = 0
 		p.end(ui)
 		p.end(ui)
 	}

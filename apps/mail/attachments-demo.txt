@@ -1,0 +1,22 @@
+# Steps for apps/mail/attachments-demo.mp4.
+#
+# There is only a wait here, which needs explaining and is temporary.
+#
+# The keystrokes are sent by apps/mail/attachments-demo-run.sh — the thing the
+# recorder launches — in a single `wtype` invocation, because on a headless
+# seat only the first of the recorder's per-step `wtype` calls reaches a palmy
+# window. The seat has no permanent keyboard, so its capabilities toggle around
+# every invocation, and palmy binds wl_keyboard when the capability appears
+# without releasing it when it goes away; the stale id then makes it skip
+# re-binding. That is a toolkit bug, now being fixed.
+#
+# When the fix lands, move the key sequence out of the run script and into this
+# file as ordinary `key` lines — that is the form these steps should take, and
+# the run script should go back to doing nothing but building the throwaway
+# mailbox.
+#
+# (`swaymsg` also cannot find its socket from inside the recorder, since
+# SWAYSOCK is never exported, so `move` and `click` steps are silently no-ops
+# there. This demo is keyboard-only for that reason too.)
+
+wait 46

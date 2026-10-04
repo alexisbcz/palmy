@@ -103,11 +103,20 @@ print_usage :: proc() {
   mail --fixtures      write a fixture Maildir and accounts.conf, then exit
   mail --selftest      run the headless assertions, then exit
   mail --maildir=PATH  read one Maildir tree instead of the configured accounts
+  mail --save-dir=PATH where the Save Attachment dialog opens
   mail --uitest=DIR    render the interface offscreen into PNGs and exit
   mail --walkthrough=DIR  render the whole walkthrough as a PNG sequence
 
+Keys, all unmodified so the keyboard alone is enough:
+
+  J K  move      Enter  open      C reply/compose    / search
+  V W  choose an attachment, save it through the file dialog
+  E M D  archive · move to a folder · delete to Trash      Z  undo a move
+  Shift+D  delete from disk — the one irreversible thing, and it asks first
+
 This client has no network code. It reads a Maildir from disk; Send queues a
-message into the account's own local Outbox and transmits nothing.`,
+message into the account's own local Outbox and transmits nothing. Saving an
+attachment writes the decoded bytes to a file you choose, and nowhere else.`,
 	)
 }
 
@@ -117,17 +126,23 @@ init_state :: proc(st: ^State) {
 	st.now = time.now()
 	st.reader_msg = -1
 	st.list_scroll_to = -1
+	st.att_sel = -1
 	st.pane = .List
 
 	// `--maildir=PATH` makes one ad-hoc account out of a tree on disk, which
 	// is how to point the UI at whatever the engine has just written without
 	// editing a config file. It is still only ever read.
 	override := ""
+	save_dir := ""
 	for arg in os.args[1:] {
 		if strings.has_prefix(arg, "--maildir=") {
 			override = arg[len("--maildir="):]
 		}
+		if strings.has_prefix(arg, "--save-dir=") {
+			save_dir = arg[len("--save-dir="):]
+		}
 	}
+	st.save_dir = strings.clone(save_dir != "" ? save_dir : default_save_dir(context.temp_allocator))
 
 	st.single_tree = override != ""
 	if override != "" {
@@ -165,6 +180,24 @@ init_state :: proc(st: ^State) {
 	}
 
 	reload_all(st)
+}
+
+// default_save_dir is where the Save dialog opens the first time: the usual
+// Downloads directory when there is one, and home otherwise. `--save-dir=`
+// overrides it, which is what the recorded demo uses so that a recording
+// writes into a scratch directory rather than somebody's Downloads.
+default_save_dir :: proc(allocator := context.allocator) -> string {
+	home := os.get_env("HOME", context.temp_allocator)
+	if home == "" {
+		return strings.clone("/tmp", allocator)
+	}
+	for name in ([?]string{"Downloads", "Desktop"}) {
+		cand := tfmt("%s/%s", home, name)
+		if os.is_dir(cand) {
+			return strings.clone(cand, allocator)
+		}
+	}
+	return strings.clone(home, allocator)
 }
 
 // reload_all rescans the Maildir from disk. The engine writes files
@@ -314,6 +347,22 @@ PANE_CYCLE :: [?]Pane{.Sidebar, .List, .Reader, .Search}
 handle_keys :: proc(ui: ^p.Ctx, st: ^State, app: ^p.App) {
 	if app != nil && p.shortcut(ui, 'q', {.Ctrl}) {
 		p.quit_app(app)
+		return
+	}
+
+	// The file dialog owns the keyboard outright while it is up — it has its
+	// own panes, its own type-ahead and its own overwrite confirmation, and a
+	// stray 'd' reaching this app's delete would be unforgivable.
+	if kit.pick_active(&st.saver.pick) {
+		return
+	}
+	// The two in-window confirmations come next, for the same reason.
+	if st.confirm_purge {
+		purge_keys(ui, st)
+		return
+	}
+	if st.move_open {
+		move_keys(ui, st)
 		return
 	}
 
@@ -547,6 +596,37 @@ list_keys :: proc(ui: ^p.Ctx, st: ^State) {
 	if plain(ui, 'i') {
 		st.show_raw = !st.show_raw
 	}
+
+	// Attachments: V walks the chips, W writes the selected one out through
+	// the shared file dialog. Both unmodified, so the recorder can drive them.
+	if plain(ui, 'v') {
+		attachment_cycle(st, 1)
+	}
+	if shifted(ui, 'v') {
+		attachment_cycle(st, -1)
+	}
+	if plain(ui, 'w') {
+		begin_save_attachment(st)
+	}
+
+	// Filing. M opens the folder sheet, E archives, D trashes, Shift+D is the
+	// one irreversible operation and asks first, Z puts the last move back.
+	if plain(ui, 'm') {
+		open_move_sheet(st)
+	}
+	if plain(ui, 'e') {
+		archive_selection(st)
+	}
+	if plain(ui, 'd') {
+		delete_selection(st)
+	}
+	if shifted(ui, 'd') {
+		begin_purge(st)
+	}
+	if plain(ui, 'z') {
+		do_undo(st)
+	}
+
 	if plain(ui, '/') {
 		focus_search(st)
 	}
@@ -586,6 +666,100 @@ list_keys :: proc(ui: ^p.Ctx, st: ^State) {
 			p.scroll_nudge(ui, st.read_id, {0, -320})
 			p.redraw(ui)
 		}
+	}
+}
+
+// ---------------------------------------------------------------------------
+// Filing: the move sheet, the permanent-delete confirmation, undo
+// ---------------------------------------------------------------------------
+
+open_move_sheet :: proc(st: ^State) {
+	msgs := selection_messages(st, context.temp_allocator)
+	if len(msgs) == 0 {
+		note(st, "Nothing to move")
+		return
+	}
+	if ok, why := can_file(st, st.messages[msgs[0]].account); !ok {
+		note(st, why)
+		return
+	}
+	if len(move_targets(st, msgs[0])) == 0 {
+		note(st, "This account has nowhere else to put it")
+		return
+	}
+	st.move_open = true
+	st.move_sel = 0
+}
+
+move_keys :: proc(ui: ^p.Ctx, st: ^State) {
+	msgs := selection_messages(st, context.temp_allocator)
+	if len(msgs) == 0 {
+		st.move_open = false
+		return
+	}
+	targets := move_targets(st, msgs[0])
+	if len(targets) == 0 {
+		st.move_open = false
+		return
+	}
+	step := key_times(ui, p.KEY_DOWN) + key_times(ui, 'j')
+	step -= key_times(ui, p.KEY_UP) + key_times(ui, 'k')
+	if step != 0 {
+		st.move_sel = clamp(st.move_sel + step, 0, len(targets) - 1)
+	}
+	if plain(ui, p.KEY_ESCAPE) {
+		st.move_open = false
+		return
+	}
+	if plain(ui, p.KEY_RETURN) || plain(ui, p.KEY_SPACE) {
+		do_move(st, targets[clamp(st.move_sel, 0, len(targets) - 1)])
+	}
+}
+
+do_move :: proc(st: ^State, target_fi: int) {
+	if target_fi < 0 || target_fi >= len(st.folders) {
+		return
+	}
+	name := strings.clone(st.folders[target_fi].name, context.temp_allocator)
+	st.move_open = false
+	n, err := file_selection(st, target_fi)
+	if err != "" {
+		note(st, err)
+		return
+	}
+	note(st, tfmt("Moved %d message%s to %s  ·  Z to undo", n, plural(n), name))
+}
+
+do_undo :: proc(st: ^State) {
+	what, err := undo_move(st)
+	if err != "" {
+		note(st, err)
+		return
+	}
+	note(st, tfmt("Put “%s” back", what))
+}
+
+begin_purge :: proc(st: ^State) {
+	n, _ := purge_label(st)
+	if n == 0 {
+		note(st, "Nothing to delete")
+		return
+	}
+	st.confirm_purge = true
+}
+
+purge_keys :: proc(ui: ^p.Ctx, st: ^State) {
+	// Enter does not confirm here. Every other dialog in this app takes Enter,
+	// which is exactly why this one does not: the keystroke that queues a
+	// message must not be the keystroke that unlinks one. Shift+D again, or
+	// the button, and nothing else.
+	if plain(ui, p.KEY_ESCAPE) || plain(ui, p.KEY_RETURN) || plain(ui, 'n') {
+		st.confirm_purge = false
+		return
+	}
+	if shifted(ui, 'd') || shifted(ui, 'y') {
+		st.confirm_purge = false
+		purge_selection(st)
 	}
 }
 

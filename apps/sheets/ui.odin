@@ -17,6 +17,7 @@ frame :: proc(ui: ^p.Ctx, app: ^App) {
 
 	p.pixels(ui, "flex-1 w-full overflow-hidden", app, draw_grid)
 
+	sheet_tabs(ui, app)
 	status_bar(ui, app)
 
 	if app.mode == .Prompt {
@@ -46,6 +47,8 @@ toolbar :: proc(ui: ^p.Ctx, app: ^App) {
 
 	p.icon(ui, sc.ICON_COLUMNS_3, "size-4 text-muted-foreground")
 	p.text(ui, app.name != "" ? app.name : "Untitled sheet", "text-sm font-semibold whitespace-nowrap shrink-0")
+	p.text(ui, "/", "text-sm text-muted-foreground shrink-0")
+	p.text(ui, app.sh.name, "text-sm text-muted-foreground whitespace-nowrap shrink-0 truncate max-w-[160]")
 	if app.modified {
 		p.div(ui, "size-1.5 rounded-full bg-primary")
 		p.end(ui)
@@ -53,7 +56,7 @@ toolbar :: proc(ui: ^p.Ctx, app: ^App) {
 	sc.separator(ui, .Vertical, "h-4 mx-1")
 
 	// What the active cell's format is, so the keys have visible feedback.
-	f := fmt_at(&app.sh, app.cur)
+	f := fmt_at(app.sh, app.cur)
 	sc.badge(ui, num_format_name(f.num), .Outline)
 	if f.dec > 0 && (f.num == .Fixed || f.num == .Percent || f.num == .Currency) {
 		sc.badge(ui, fmt.tprintf("%d dp", f.dec), .Ghost)
@@ -79,6 +82,81 @@ toolbar :: proc(ui: ^p.Ctx, app: ^App) {
 	}
 	p.text(ui, "Keys", "text-xs text-muted-foreground whitespace-nowrap shrink-0")
 	sc.kbd(ui, "F1")
+}
+
+// ---------------------------------------------------------------------------
+// The tab strip
+//
+// One tab per sheet, the active one lifted out of the strip the way a
+// spreadsheet's is. Clicking a tab switches to it; the trailing `+` adds one.
+// Both are also commands, because the demo recorder drives the palette.
+// ---------------------------------------------------------------------------
+
+sheet_tabs :: proc(ui: ^p.Ctx, app: ^App) {
+	p.row(
+		ui,
+		p.concat(
+			ui,
+			"shrink-0 items-stretch gap-1 px-2 border-t border-border bg-muted/40 overflow-hidden h-[",
+			int_text(int(TABS_H)),
+			"]",
+		),
+	)
+	defer p.end(ui)
+
+	for sh, i in app.book.sheets {
+		active := i == app.book.active
+		idx := p.div(
+			ui,
+			active 			? "px-3 items-center justify-center rounded-t-md border border-border border-b-0 bg-background shrink-0" 			: "px-3 items-center justify-center rounded-t-md hover:bg-accent shrink-0",
+		)
+		p.focusable(ui)
+		p.text(
+			ui,
+			sh.name,
+			active 			? "text-xs font-semibold whitespace-nowrap" 			: "text-xs text-muted-foreground whitespace-nowrap",
+		)
+		// A dot marks a sheet that carries a chart, so a summary tab is
+		// findable without opening it.
+		if len(sh.charts) > 0 {
+			p.div(ui, "size-1.5 rounded-full bg-primary/60 ml-1.5")
+			p.end(ui)
+		}
+		p.end(ui)
+		if p.activated(ui, idx) {
+			use_sheet(app, i)
+			set_status(app, "Sheet %s", sh.name)
+		}
+	}
+
+	add := p.div(ui, "px-2 items-center justify-center rounded-md hover:bg-accent shrink-0")
+	p.focusable(ui)
+	p.icon(ui, sc.ICON_PLUS, "size-3.5 text-muted-foreground")
+	p.end(ui)
+	if p.activated(ui, add) {
+		run_cmd(app, .Sheet_Add)
+	}
+
+	p.spacer(ui)
+	if app.sh.frz_rows > 0 || app.sh.frz_cols > 0 {
+		p.row(ui, "items-center gap-1.5 shrink-0 px-2")
+		p.icon(ui, sc.ICON_PANEL_LEFT, "size-3 text-muted-foreground")
+		p.textf(
+			ui,
+			"text-xs text-muted-foreground whitespace-nowrap",
+			"frozen %dR x %dC",
+			app.sh.frz_rows,
+			app.sh.frz_cols,
+		)
+		p.end(ui)
+	}
+	p.textf(
+		ui,
+		"text-xs text-muted-foreground whitespace-nowrap shrink-0 px-1",
+		"%d sheet%s",
+		len(app.book.sheets),
+		len(app.book.sheets) == 1 ? "" : "s",
+	)
 }
 
 // ---------------------------------------------------------------------------
@@ -129,7 +207,7 @@ draw_formula_line :: proc(c: ^p.Canvas, r: p.Rect, app: ^App) {
 	// routine serves both.
 	tmp := Line{}
 	defer delete(tmp.buf)
-	line_set(&tmp, input_at(&app.sh, app.cur))
+	line_set(&tmp, input_at(app.sh, app.cur))
 	tmp.caret = 0
 	draw_line_edit(c, r, app, &tmp, "", app.pal.fg, false)
 }
@@ -219,7 +297,7 @@ status_bar :: proc(ui: ^p.Ctx, app: ^App) {
 		sc.separator(ui, .Vertical, "h-3")
 	}
 
-	st := selection_stats(&app.sh, sel_rect(app))
+	st := selection_stats(app.sh, sel_rect(app))
 	if st.count > 0 {
 		stat(ui, "Sum", general_text(round_sig(st.sum, 12)))
 		stat(ui, "Average", general_text(round_sig(st.avg, 12)))
@@ -323,6 +401,18 @@ HELP_FORMAT := [?]Key_Row {
 	{"Alt+Shift+Arrows", "column width / row height"},
 }
 
+HELP_SHEET := [?]Key_Row {
+	{"Ctrl+PgDn / Ctrl+PgUp", "next / previous sheet"},
+	{"Alt+S / Alt+Shift+S", "add / delete a sheet"},
+	{"Alt+N", "rename the sheet"},
+	{"Ctrl+Shift+PgDn/PgUp", "move the sheet in the strip"},
+	{"Alt+F / Alt+Shift+F", "freeze at the cursor / unfreeze"},
+	{"Alt+M / Alt+Shift+M", "merge / unmerge the selection"},
+	{"Alt+B / Alt+L / Alt+P", "bar / line / pie chart"},
+	{"Alt+Shift+B", "delete the chart under the cursor"},
+	{"Ctrl+Shift+N", "name the selection"},
+}
+
 HELP_DOC := [?]Key_Row {
 	{"Alt+R / Alt+Shift+R", "insert / delete rows"},
 	{"Alt+C / Alt+Shift+C", "insert / delete columns"},
@@ -337,7 +427,7 @@ help_overlay :: proc(ui: ^p.Ctx, app: ^App) {
 	p.div(ui, "absolute inset-0 z-50 bg-black/45 items-center justify-center")
 	defer p.end(ui)
 
-	p.col(ui, "w-[880] max-w-full gap-3 p-5 rounded-xl border border-border bg-popover shadow-2xl")
+	p.col(ui, "w-[1100] max-w-full gap-2.5 p-5 rounded-xl border border-border bg-popover shadow-2xl")
 	defer p.end(ui)
 
 	p.row(ui, "items-center gap-2")
@@ -359,12 +449,13 @@ help_overlay :: proc(ui: ^p.Ctx, app: ^App) {
 	p.row(ui, "gap-6 items-start")
 	help_column(ui, "Format", HELP_FORMAT[:])
 	help_column(ui, "Document", HELP_DOC[:])
+	help_column(ui, "Sheets, panes and charts", HELP_SHEET[:])
 	p.end(ui)
 
 	sc.separator(ui, .Horizontal)
 	p.text(
 		ui,
-		"Formulas: + - * / ^ % & = <> < <= > >=,  A1  $A$1  A1:B10  A:A,  and SUM AVERAGE MIN MAX COUNT COUNTA IF AND OR NOT ABS ROUND FLOOR CEILING SQRT POWER MOD CONCAT LEN LEFT RIGHT MID UPPER LOWER TRIM TODAY NOW DATE YEAR MONTH DAY VLOOKUP INDEX MATCH IFERROR IS*",
+		"Formulas: + - * / ^ % & = <> < <= > >=,  A1  $A$1  A1:B10  A:A  1:1  Sheet2!A1  'My Sheet'!A1:B4  a named range,  and SUM AVERAGE MIN MAX COUNT COUNTA IF AND OR NOT ABS ROUND FLOOR CEILING SQRT POWER MOD CONCAT LEN LEFT RIGHT MID UPPER LOWER TRIM TODAY NOW DATE YEAR MONTH DAY VLOOKUP INDEX MATCH IFERROR IS*",
 		"text-xs text-muted-foreground",
 	)
 }
@@ -375,7 +466,7 @@ help_column :: proc(ui: ^p.Ctx, title: string, rows: []Key_Row) {
 	p.text(ui, title, "text-xs font-semibold uppercase tracking-wide text-muted-foreground")
 	for r in rows {
 		p.row(ui, "items-center gap-2 min-w-0 w-full")
-		p.div(ui, "w-[168] shrink-0")
+		p.div(ui, "w-[150] shrink-0")
 		p.text(ui, r.keys, "text-xs font-mono whitespace-nowrap")
 		p.end(ui)
 		p.text(ui, r.what, "text-xs text-muted-foreground truncate")

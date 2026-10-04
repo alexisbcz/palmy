@@ -85,7 +85,7 @@ bench :: proc(ed: ^Editor, off: ^p.Offscreen) {
 			if ci >= 0 {
 				tr, _ := topmost_video_at(&ed.pr, at)
 				id := ed.pr.tracks[tr].clips[ci].id
-				if _, ok := cache_lookup(&ed.pv, id, at, tol); ok {
+				if _, _, ok := cache_lookup(&ed.pv, id, at, tol); ok {
 					got = true
 					break
 				}
@@ -143,6 +143,47 @@ bench :: proc(ed: ^Editor, off: ^p.Offscreen) {
 		ed.pv.hits,
 		ed.pv.misses,
 	)
+
+	// Stepping *backwards*, which used to leave the decoded window after nine
+	// frames and pay for a fresh ffmpeg seek per step. The plan now starts
+	// PREVIEW_BACK behind the playhead, so this should be cache hits.
+	// Start cold, or the earlier phases of this bench have already filled the
+	// cache with the frames the backward steps would be asking for and the
+	// measurement means nothing.
+	cache_drop_all(&ed.pv)
+	ed.playhead = 2.6
+	for _ in 0 ..< 200 {
+		preview_collect(&ed.pv, ed.playhead)
+		preview_follow(&ed.pr, &ed.pv, ed.playhead, false)
+		if cache_count(&ed.pv) > 40 {
+			break
+		}
+		time.sleep(2 * time.Millisecond)
+	}
+	ed.pv.hits, ed.pv.misses = 0, 0
+	back_steps := 0
+	t2 := time.now()
+	for i in 0 ..< 30 {
+		ed.playhead = 2.6 - f64(i) / PREVIEW_FPS
+		if ed.playhead < 0 {
+			break
+		}
+		preview_collect(&ed.pv, ed.playhead)
+		preview_follow(&ed.pr, &ed.pv, ed.playhead, false)
+		if tr, ci := topmost_video_at(&ed.pr, ed.playhead); ci >= 0 {
+			id := ed.pr.tracks[tr].clips[ci].id
+			if _, _, ok := cache_lookup(&ed.pv, id, ed.playhead, 1.0 / PREVIEW_FPS * 0.75); ok {
+				back_steps += 1
+			}
+		}
+	}
+	bms := time.duration_milliseconds(time.since(t2))
+	fmt.printf(
+		"bench: 30 backward frame steps — %d served from the cache, %.2f ms each, %d misses\n",
+		back_steps,
+		bms / 30,
+		ed.pv.misses,
+	)
 }
 
 shot :: proc(out_path: string, at: f64) {
@@ -181,6 +222,7 @@ shot :: proc(out_path: string, at: f64) {
 	importer_start(&ed.im)
 	preview_start(&ed.pv)
 	exporter_start(&ed.ex)
+	mixer_init(&ed.mx)
 	defer {
 		importer_stop(&ed.im)
 		preview_stop(&ed.pv)

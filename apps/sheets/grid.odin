@@ -59,38 +59,153 @@ CELL_PAD :: f32(5)
 CELL_TEXT :: f32(12.5)
 HDR_TEXT :: f32(11)
 
+// ---------------------------------------------------------------------------
+// Geometry
+//
+// One pass works out which rows and columns are on screen and where their
+// edges fall, in device pixels. A frozen split does not need a second pass or
+// four clipped quadrants: the pinned columns are simply laid out first, from
+// the left edge, and the scrolled ones continue after them. The two regions
+// cannot overlap, so everything downstream — contents, selection, charts —
+// just indexes into the same two arrays.
+// ---------------------------------------------------------------------------
+
+Grid_Geom :: struct {
+	scale:   f32,
+	body:    p.Rect, // the cell area, headers excluded
+	cols:    [dynamic]int,
+	xs:      [dynamic]f32, // left edges, plus one final right edge
+	rows:    [dynamic]int,
+	ys:      [dynamic]f32,
+	nfz_c:   int, // how many of `cols` are frozen
+	nfz_r:   int,
+	split_x: f32, // where the scrolling region begins
+	split_y: f32,
+}
+
+grid_geom :: proc(app: ^App, r: p.Rect, s: f32, hdr_w, hdr_h: f32) -> (g: Grid_Geom) {
+	sh := app.sh
+	g.scale = s
+	g.body = {r.x + hdr_w, r.y + hdr_h, max(0, r.w - hdr_w), max(0, r.h - hdr_h)}
+	g.cols = make([dynamic]int, 0, 64, context.temp_allocator)
+	g.xs = make([dynamic]f32, 0, 64, context.temp_allocator)
+	g.rows = make([dynamic]int, 0, 64, context.temp_allocator)
+	g.ys = make([dynamic]f32, 0, 64, context.temp_allocator)
+
+	right := p.rect_right(r)
+	bottom := p.rect_bottom(r)
+
+	x := g.body.x
+	for col in 0 ..< sh.frz_cols {
+		if x >= right {
+			break
+		}
+		append(&g.cols, col)
+		append(&g.xs, x)
+		x += col_width(sh, col) * s
+	}
+	g.nfz_c = len(g.cols)
+	g.split_x = x
+	for col := max(app.left_col, sh.frz_cols); col < MAX_COLS && x < right; col += 1 {
+		append(&g.cols, col)
+		append(&g.xs, x)
+		x += col_width(sh, col) * s
+	}
+	append(&g.xs, x)
+
+	y := g.body.y
+	for row in 0 ..< sh.frz_rows {
+		if y >= bottom {
+			break
+		}
+		append(&g.rows, row)
+		append(&g.ys, y)
+		y += row_height(sh, row) * s
+	}
+	g.nfz_r = len(g.rows)
+	g.split_y = y
+	for row := max(app.top_row, sh.frz_rows); row < MAX_ROWS && y < bottom; row += 1 {
+		append(&g.rows, row)
+		append(&g.ys, y)
+		y += row_height(sh, row) * s
+	}
+	append(&g.ys, y)
+	return
+}
+
+geom_col_slot :: proc(g: ^Grid_Geom, col: int) -> int {
+	for c, i in g.cols {
+		if c == col {
+			return i
+		}
+	}
+	return -1
+}
+
+geom_row_slot :: proc(g: ^Grid_Geom, row: int) -> int {
+	for rr, i in g.rows {
+		if rr == row {
+			return i
+		}
+	}
+	return -1
+}
+
+geom_col_x :: proc(g: ^Grid_Geom, col: int) -> (f32, bool) {
+	i := geom_col_slot(g, col)
+	if i < 0 {
+		return 0, false
+	}
+	return g.xs[i], true
+}
+
+geom_row_y :: proc(g: ^Grid_Geom, row: int) -> (f32, bool) {
+	i := geom_row_slot(g, row)
+	if i < 0 {
+		return 0, false
+	}
+	return g.ys[i], true
+}
+
+// geom_cell is the rectangle of one cell, expanded over its merge when it is
+// the anchor of one.
+geom_cell :: proc(app: ^App, g: ^Grid_Geom, a: Addr) -> (p.Rect, bool) {
+	ci := geom_col_slot(g, a.col)
+	ri := geom_row_slot(g, a.row)
+	if ci < 0 || ri < 0 {
+		return {}, false
+	}
+	cr := p.Rect{g.xs[ci], g.ys[ri], g.xs[ci + 1] - g.xs[ci], g.ys[ri + 1] - g.ys[ri]}
+	if m, ok := merge_at(app.sh, a); ok && m.r0 == a.row && m.c0 == a.col {
+		if c1 := geom_col_slot(g, m.c1); c1 >= 0 {
+			cr.w = g.xs[c1 + 1] - cr.x
+		} else {
+			cr.w = p.rect_right(g.body) - cr.x
+		}
+		if r1 := geom_row_slot(g, m.r1); r1 >= 0 {
+			cr.h = g.ys[r1 + 1] - cr.y
+		} else {
+			cr.h = p.rect_bottom(g.body) - cr.y
+		}
+	}
+	return cr, true
+}
+
 // draw_grid is the `p.pixels` callback. `r` arrives in device pixels, so
 // everything measured in logical pixels is scaled on the way in.
 draw_grid :: proc(c: ^p.Canvas, r: p.Rect, app: ^App) {
 	s := c.scale
 	pal := app.pal
+	sh := app.sh
 	p.fill_rect(c, r, pal.bg)
 
 	hdr_w := header_width(app) * s
 	hdr_h := HDR_H * s
-	body := p.Rect{r.x + hdr_w, r.y + hdr_h, max(0, r.w - hdr_w), max(0, r.h - hdr_h)}
+	g := grid_geom(app, r, s, hdr_w, hdr_h)
+	body := g.body
+	xs, ys := g.xs, g.ys
+	cols, rows := g.cols, g.rows
 	sel := sel_rect(app)
-
-	// Column edges, in device pixels, for the columns that can be seen.
-	xs := make([dynamic]f32, 0, 64, context.temp_allocator)
-	cols := make([dynamic]int, 0, 64, context.temp_allocator)
-	x := body.x
-	for col := app.left_col; col < MAX_COLS && x < p.rect_right(r); col += 1 {
-		append(&xs, x)
-		append(&cols, col)
-		x += col_width(&app.sh, col) * s
-	}
-	append(&xs, x)
-
-	ys := make([dynamic]f32, 0, 64, context.temp_allocator)
-	rows := make([dynamic]int, 0, 64, context.temp_allocator)
-	y := body.y
-	for row := app.top_row; row < MAX_ROWS && y < p.rect_bottom(r); row += 1 {
-		append(&ys, y)
-		append(&rows, row)
-		y += row_height(&app.sh, row) * s
-	}
-	append(&ys, y)
 
 	// --- selection fill, behind everything ---
 	p.push_clip(c, p.rect_intersect(c.clip, body))
@@ -120,18 +235,32 @@ draw_grid :: proc(c: ^p.Canvas, r: p.Rect, app: ^App) {
 		p.fill_rect(c, {body.x, ys[ri + 1] - line, body.w, line}, pal.grid)
 	}
 
+	// --- merged regions, painted over the rules they swallow ---
+	for m in sh.merges {
+		if a, ok := geom_cell(app, g_ptr(&g), {m.r0, m.c0}); ok {
+			inside := rect_contains(m, app.cur)
+			p.fill_rect(c, a, inside ? pal.sel_fill : pal.bg)
+			p.fill_rect(c, {p.rect_right(a) - line, a.y, line, a.h}, pal.grid)
+			p.fill_rect(c, {a.x, p.rect_bottom(a) - line, a.w, line}, pal.grid)
+		}
+	}
+
 	// --- cell contents ---
 	for row, ri in rows {
 		for col, ci in cols {
 			a := Addr{row, col}
-			cell := cell_at(&app.sh, a)
+			cell := cell_at(sh, a)
 			if cell == nil {
+				continue
+			}
+			// A cell swallowed by a merge shows nothing; the anchor shows all.
+			if m, mok := merge_at(sh, a); mok && (m.r0 != row || m.c0 != col) {
 				continue
 			}
 			if app.mode == .Edit && !app.in_bar && a == app.cur {
 				continue // the editor draws over it
 			}
-			cr := p.Rect{xs[ci], ys[ri], xs[ci + 1] - xs[ci], ys[ri + 1] - ys[ri]}
+			cr, _ := geom_cell(app, g_ptr(&g), a)
 			text := format_value(cell.val, cell.fmt)
 			if text == "" {
 				continue
@@ -158,7 +287,7 @@ draw_grid :: proc(c: ^p.Canvas, r: p.Rect, app: ^App) {
 					tw = p.text_width(app.fonts, text, size, fam, wt)
 				} else if cell.val.kind == .Text || cell.val.kind == .Error {
 					k := ci + 1
-					for k < len(cols) && cell_at(&app.sh, {row, cols[k]}) == nil {
+					for k < len(cols) && cell_at(sh, {row, cols[k]}) == nil {
 						clip.w += xs[k + 1] - xs[k]
 						k += 1
 					}
@@ -182,12 +311,21 @@ draw_grid :: proc(c: ^p.Canvas, r: p.Rect, app: ^App) {
 		}
 	}
 
+	// --- charts, over the cells they cover ---
+	for ch in sh.charts {
+		box, ok := chart_box(app, ch, g_ptr(&g))
+		if !ok {
+			continue
+		}
+		p.push_clip(c, p.rect_intersect(c.clip, body))
+		draw_chart(c, app, ch, box)
+		p.pop_clip(c)
+	}
+
 	// --- the cell being edited ---
 	if app.mode == .Edit && !app.in_bar {
-		ri := app.cur.row - app.top_row
-		ci := app.cur.col - app.left_col
-		if ri >= 0 && ri < len(rows) && ci >= 0 && ci < len(cols) {
-			cr := p.Rect{xs[ci], ys[ri], xs[ci + 1] - xs[ci], ys[ri + 1] - ys[ri]}
+		if cr0, ok := geom_cell(app, g_ptr(&g), app.cur); ok {
+			cr := cr0
 			// Grow the box to the right so a long formula is readable while
 			// it is being typed.
 			size := CELL_TEXT * s
@@ -202,11 +340,8 @@ draw_grid :: proc(c: ^p.Canvas, r: p.Rect, app: ^App) {
 	}
 
 	// --- the active cell outline ---
-	{
-		ri := app.cur.row - app.top_row
-		ci := app.cur.col - app.left_col
-		if ri >= 0 && ri < len(rows) && ci >= 0 && ci < len(cols) && !(app.mode == .Edit && !app.in_bar) {
-			cr := p.Rect{xs[ci], ys[ri], xs[ci + 1] - xs[ci], ys[ri + 1] - ys[ri]}
+	if !(app.mode == .Edit && !app.in_bar) {
+		if cr, ok := geom_cell(app, g_ptr(&g), app.cur); ok {
 			p.push_clip(c, p.rect_intersect(c.clip, body))
 			p.stroke_round_rect(c, cr, {0, 0, 0, 0}, max(1, 2 * s), pal.sel_edge)
 			p.pop_clip(c)
@@ -288,6 +423,22 @@ draw_grid :: proc(c: ^p.Canvas, r: p.Rect, app: ^App) {
 		p.fill_rect(c, {r.x, ys[ri + 1] - line, hdr_w, line}, pal.border)
 	}
 	p.pop_clip(c)
+
+	// --- the split, drawn over everything so it reads as a pinned edge ---
+	split := max(2 * s, 2)
+	if sh.frz_cols > 0 && g.nfz_c > 0 {
+		p.fill_rect(c, {g.split_x - split, r.y, split, r.h}, pal.sel_edge)
+	}
+	if sh.frz_rows > 0 && g.nfz_r > 0 {
+		p.fill_rect(c, {r.x, g.split_y - split, r.w, split}, pal.sel_edge)
+	}
+}
+
+// g_ptr hands out a pointer to a local geometry without taking the address of
+// a loop variable, which Odin would not allow anyway.
+@(private = "file")
+g_ptr :: proc(g: ^Grid_Geom) -> ^Grid_Geom {
+	return g
 }
 
 @(private = "file")

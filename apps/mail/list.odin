@@ -75,12 +75,18 @@ rebuild_list :: proc(st: ^State) {
 	set := make([dynamic]int, 0, 256, context.temp_allocator)
 	if st.searching {
 		for m, i in st.messages {
+			if msg_hidden(st, m) {
+				continue
+			}
 			if matches_query(st, m, le_text(&st.query)) {
 				append(&set, i)
 			}
 		}
 	} else {
 		for m, i in st.messages {
+			if msg_hidden(st, m) {
+				continue
+			}
 			if m.folder == st.folder_sel {
 				append(&set, i)
 			}
@@ -192,6 +198,9 @@ sync_reader :: proc(st: ^State) {
 	if mi != st.reader_msg {
 		st.reader_msg = mi
 		st.read_scroll_home = true
+		// A different message has different attachments, so the attachment
+		// cursor cannot survive the change.
+		st.att_sel = -1
 	}
 }
 

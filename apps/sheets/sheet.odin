@@ -1,17 +1,17 @@
-// The document: sparse cell storage, the dependency graph, and recalculation.
+// One sheet of the book: sparse cell storage, geometry, the frozen split, and
+// the single door through which cell content changes.
 //
 // Storage is a map keyed by address, so a nominally 16384 x 1048576 sheet
 // costs only what is actually written into it.
 //
-// Recalculation is demand driven. An edit marks its transitive dependents
-// dirty, and evaluating a dirty cell pulls its precedents through the same
-// path, which visits cells in topological order without ever building the
-// order explicitly. A cell already being visited when it is asked for again
-// is, by definition, part of a cycle: that is where #CIRC! comes from.
+// The dependency graph and recalculation live one level up, in book.odin,
+// because `Sheet2!A1` makes an edge with one end on each sheet. What stays
+// here is `ensure_value`: the cached value of a cell, computed on demand, and
+// the place a circular reference is noticed — a cell already marked
+// `.Visiting` when it is asked for again is, by definition, part of a cycle.
 package main
 
 import "core:mem"
-import "core:mem/virtual"
 import "core:strings"
 
 Calc_State :: enum u8 {
@@ -26,13 +26,8 @@ Cell :: struct {
 	val:      Value, // the computed value; .text is owned
 	fmt:      Cell_Fmt,
 	state:    Calc_State,
-	deps:     [dynamic]Rect_I, // the rectangles this formula reads
+	deps:     [dynamic]Dep, // the rectangles this formula reads, sheet included
 	volatile: bool, // contains TODAY/NOW: recompute every pass
-}
-
-Watcher :: struct {
-	rect: Rect_I,
-	who:  Addr,
 }
 
 // How deep a chain of references may go before it is treated as runaway. A
@@ -41,49 +36,81 @@ Watcher :: struct {
 MAX_DEPTH :: 1500
 
 Sheet :: struct {
-	cells:       map[Addr]^Cell,
-	col_w:       map[int]f32,
-	row_h:       map[int]f32,
-	max_row:     int, // the used bounds, -1 when the sheet is empty
-	max_col:     int,
+	name:      string, // owned
+	book:      ^Book,
+	index:     int, // this sheet's position in the book
+	allocated: bool, // the book allocated this Sheet and must free it
+	// A sheet created by `sheet_init` carries its own one-sheet book, so the
+	// single-sheet API works with no ceremony. That book is freed with it.
+	own_book:  bool,
 
-	// The reverse dependency index, rebuilt whenever a formula changes.
-	// Single-cell precedents go in the map; ranges go in the watcher list,
-	// because materialising one edge per cell of `A1:A10000` is how a
-	// spreadsheet runs out of memory.
-	rdep:        map[Addr][dynamic]Addr,
-	watchers:    [dynamic]Watcher,
-	graph_dirty: bool,
-	seeds:       [dynamic]Addr,
+	cells:     map[Addr]^Cell,
+	col_w:     map[int]f32,
+	row_h:     map[int]f32,
+	max_row:   int, // the used bounds, -1 when the sheet is empty
+	max_col:   int,
 
-	// Scratch memory for one recalculation pass. Intermediate strings from
-	// CONCAT and friends land here and are released in one go.
-	scratch:     virtual.Arena,
-	heap:        mem.Allocator,
-	depth:       int,
-	evaluated:   int, // cells evaluated by the last pass, for the status bar
+	// The frozen split: the first `frz_rows` rows and `frz_cols` columns stay
+	// put while the rest scrolls under them.
+	frz_rows:  int,
+	frz_cols:  int,
+
+	charts:    [dynamic]Chart,
+	merges:    [dynamic]Rect_I,
+
+	// Where the user last was on this sheet. Transient — it is not part of
+	// the document — but it has to live per sheet or switching tabs would
+	// leave the scroll position of the one you came from, which is wrong the
+	// moment the two sheets have different frozen regions.
+	ui_cur:    Addr,
+	ui_anchor: Addr,
+	ui_top:    int,
+	ui_left:   int,
+
+	heap:      mem.Allocator,
 }
 
 DEFAULT_COL_W :: f32(88)
 DEFAULT_ROW_H :: f32(22)
 
-sheet_init :: proc(sh: ^Sheet) {
+// sheet_init prepares a standalone sheet and gives it a private book, which
+// is what lets a caller with one sheet in hand ignore books entirely.
+sheet_init :: proc(sh: ^Sheet, name := "Sheet1") {
 	sh.heap = context.allocator
 	sh.max_row = -1
 	sh.max_col = -1
-	sh.graph_dirty = true
-	_ = virtual.arena_init_growing(&sh.scratch)
+	if sh.book == nil {
+		bk := new(Book, sh.heap)
+		book_init(bk)
+		sh.own_book = true
+		book_attach(bk, sh, name)
+	}
 }
 
-sheet_destroy :: proc(sh: ^Sheet) {
+// sheet_release frees everything the sheet owns, leaving the book alone.
+sheet_release :: proc(sh: ^Sheet) {
 	sheet_clear(sh)
 	delete(sh.cells)
 	delete(sh.col_w)
 	delete(sh.row_h)
-	delete(sh.rdep)
-	delete(sh.watchers)
-	delete(sh.seeds)
-	virtual.arena_destroy(&sh.scratch)
+	delete(sh.charts)
+	delete(sh.merges)
+	if sh.name != "" {
+		delete(sh.name, sh.heap)
+		sh.name = ""
+	}
+}
+
+sheet_destroy :: proc(sh: ^Sheet) {
+	bk := sh.book
+	if sh.own_book && bk != nil {
+		heap := sh.heap
+		book_destroy(bk) // releases every sheet, this one included
+		free(bk, heap)
+		sh.book = nil
+		return
+	}
+	sheet_release(sh)
 }
 
 cell_destroy :: proc(sh: ^Sheet, c: ^Cell) {
@@ -107,15 +134,18 @@ sheet_clear :: proc(sh: ^Sheet) {
 	clear(&sh.cells)
 	clear(&sh.col_w)
 	clear(&sh.row_h)
-	for _, arr in sh.rdep {
-		delete(arr)
+	for ch in sh.charts {
+		chart_release(ch, sh.heap)
 	}
-	clear(&sh.rdep)
-	clear(&sh.watchers)
-	clear(&sh.seeds)
+	clear(&sh.charts)
+	clear(&sh.merges)
+	sh.frz_rows = 0
+	sh.frz_cols = 0
 	sh.max_row = -1
 	sh.max_col = -1
-	sh.graph_dirty = true
+	if sh.book != nil {
+		sh.book.graph_dirty = true
+	}
 }
 
 cell_at :: proc(sh: ^Sheet, a: Addr) -> ^Cell {
@@ -136,6 +166,14 @@ cell_ensure :: proc(sh: ^Sheet, a: Addr) -> ^Cell {
 	sh.max_row = max(sh.max_row, a.row)
 	sh.max_col = max(sh.max_col, a.col)
 	return c
+}
+
+// seed marks a cell as changed for the next recalculation pass.
+seed :: proc(sh: ^Sheet, a: Addr) {
+	if sh.book == nil {
+		return
+	}
+	append(&sh.book.seeds, Key{sh.index, a})
 }
 
 // ---------------------------------------------------------------------------
@@ -162,6 +200,58 @@ set_col_width :: proc(sh: ^Sheet, col: int, w: f32) {
 
 set_row_height :: proc(sh: ^Sheet, row: int, h: f32) {
 	sh.row_h[row] = clamp(h, 14, 200)
+}
+
+// set_freeze pins the first `rows` rows and `cols` columns in place. Both are
+// counts, not indices: `set_freeze(sh, 1, 0)` freezes row 1 only.
+set_freeze :: proc(sh: ^Sheet, rows, cols: int) {
+	sh.frz_rows = clamp(rows, 0, MAX_ROWS - 1)
+	sh.frz_cols = clamp(cols, 0, MAX_COLS - 1)
+}
+
+// ---------------------------------------------------------------------------
+// Merged cells
+//
+// A merge is a rectangle whose top-left cell owns the content; the rest are
+// covered. Overlapping merges are not a thing, so adding one drops whatever
+// it intersects.
+// ---------------------------------------------------------------------------
+
+rects_overlap :: proc(a, b: Rect_I) -> bool {
+	return a.r0 <= b.r1 && b.r0 <= a.r1 && a.c0 <= b.c1 && b.c0 <= a.c1
+}
+
+add_merge :: proc(sh: ^Sheet, r: Rect_I) -> bool {
+	if r.r0 == r.r1 && r.c0 == r.c1 {
+		return false
+	}
+	for i := len(sh.merges) - 1; i >= 0; i -= 1 {
+		if rects_overlap(sh.merges[i], r) {
+			ordered_remove(&sh.merges, i)
+		}
+	}
+	append(&sh.merges, r)
+	return true
+}
+
+// drop_merge removes any merge covering `a`, and reports whether it did.
+drop_merge :: proc(sh: ^Sheet, a: Addr) -> bool {
+	for i := len(sh.merges) - 1; i >= 0; i -= 1 {
+		if rect_contains(sh.merges[i], a) {
+			ordered_remove(&sh.merges, i)
+			return true
+		}
+	}
+	return false
+}
+
+merge_at :: proc(sh: ^Sheet, a: Addr) -> (Rect_I, bool) {
+	for m in sh.merges {
+		if rect_contains(m, a) {
+			return m, true
+		}
+	}
+	return {}, false
 }
 
 // ---------------------------------------------------------------------------
@@ -232,8 +322,9 @@ decimals_in :: proc(s: string) -> int {
 	return min(n, 9)
 }
 
-// set_input is the single door through which cell content changes. It parses,
-// records the dependency rectangles, and seeds the next recalculation.
+// set_input is the single door through which cell content changes. It parses
+// and seeds the next recalculation; the dependency rectangles are worked out
+// by the graph rebuild, which is also where sheet names are resolved.
 set_input :: proc(sh: ^Sheet, a: Addr, text: string) {
 	if a.row < 0 || a.col < 0 || a.row >= MAX_ROWS || a.col >= MAX_COLS {
 		return
@@ -265,7 +356,6 @@ set_input :: proc(sh: ^Sheet, a: Addr, text: string) {
 			c.state = .Clean
 		} else {
 			c.ast = root
-			ast_deps(root, &c.deps, MAX_ROWS - 1)
 			c.volatile = ast_has_volatile(root)
 			c.state = .Dirty
 		}
@@ -278,8 +368,8 @@ set_input :: proc(sh: ^Sheet, a: Addr, text: string) {
 		c.state = .Clean
 	}
 
-	sh.graph_dirty = true
-	append(&sh.seeds, a)
+	sh.book.graph_dirty = true
+	seed(sh, a)
 }
 
 set_cell_fmt :: proc(sh: ^Sheet, a: Addr, f: Cell_Fmt) {
@@ -303,8 +393,8 @@ clear_cell :: proc(sh: ^Sheet, a: Addr) {
 	}
 	delete_key(&sh.cells, a)
 	cell_destroy(sh, c)
-	sh.graph_dirty = true
-	append(&sh.seeds, a)
+	sh.book.graph_dirty = true
+	seed(sh, a)
 	// Only a cell on the used boundary can shrink it, and rescanning is O(n),
 	// so a bulk clear does not pay for it per cell.
 	if a.row == sh.max_row || a.col == sh.max_col {
@@ -322,134 +412,13 @@ refresh_bounds :: proc(sh: ^Sheet) {
 }
 
 // ---------------------------------------------------------------------------
-// The dependency graph
+// Reading cells
 // ---------------------------------------------------------------------------
-
-rebuild_graph :: proc(sh: ^Sheet) {
-	context.allocator = sh.heap
-	for _, arr in sh.rdep {
-		delete(arr)
-	}
-	clear(&sh.rdep)
-	clear(&sh.watchers)
-
-	for addr, c in sh.cells {
-		if c.ast == nil {
-			continue
-		}
-		for d in c.deps {
-			if d.r0 == d.r1 && d.c0 == d.c1 {
-				key := Addr{d.r0, d.c0}
-				if arr, found := &sh.rdep[key]; found {
-					append(arr, addr)
-				} else {
-					a := make([dynamic]Addr, sh.heap)
-					append(&a, addr)
-					sh.rdep[key] = a
-				}
-			} else {
-				append(&sh.watchers, Watcher{d, addr})
-			}
-		}
-	}
-	sh.graph_dirty = false
-}
-
-// mark_dirty walks forward over the dependency edges from the changed cells,
-// so only what can possibly have changed is recomputed.
-mark_dirty :: proc(sh: ^Sheet, seeds: []Addr) -> [dynamic]Addr {
-	stack := make([dynamic]Addr, 0, len(seeds) + 16, context.temp_allocator)
-	seen := make(map[Addr]bool, 64, context.temp_allocator)
-	out := make([dynamic]Addr, 0, 32, context.temp_allocator)
-	for s in seeds {
-		append(&stack, s)
-	}
-	for len(stack) > 0 {
-		a := pop(&stack)
-		if a in seen {
-			continue
-		}
-		seen[a] = true
-		if c := cell_at(sh, a); c != nil && c.ast != nil {
-			c.state = .Dirty
-			append(&out, a)
-		}
-		if arr, ok := sh.rdep[a]; ok {
-			for d in arr {
-				if !(d in seen) {
-					append(&stack, d)
-				}
-			}
-		}
-		for w in sh.watchers {
-			if rect_contains(w.rect, a) && !(w.who in seen) {
-				append(&stack, w.who)
-			}
-		}
-	}
-	return out
-}
-
-// recalc brings the sheet up to date. Call it after any batch of edits.
-recalc :: proc(sh: ^Sheet) {
-	if sh.graph_dirty {
-		rebuild_graph(sh)
-	}
-	for addr, c in sh.cells {
-		if c.volatile {
-			append(&sh.seeds, addr)
-		}
-	}
-	if len(sh.seeds) == 0 {
-		sh.evaluated = 0
-		return
-	}
-	work := mark_dirty(sh, sh.seeds[:])
-	clear(&sh.seeds)
-
-	virtual.arena_free_all(&sh.scratch)
-	arena := virtual.arena_allocator(&sh.scratch)
-	ctx := context
-	ctx.allocator = arena
-	ctx.temp_allocator = arena
-	sh.depth = 0
-	sh.evaluated = 0
-	context = ctx
-	for a in work {
-		ensure_value(sh, a)
-	}
-}
-
-// recalc_all recomputes every formula from scratch, which is what loading a
-// document or importing a CSV needs.
-recalc_all :: proc(sh: ^Sheet) {
-	if sh.graph_dirty {
-		rebuild_graph(sh)
-	}
-	work := make([dynamic]Addr, 0, len(sh.cells), context.temp_allocator)
-	for addr, c in sh.cells {
-		if c.ast != nil {
-			c.state = .Dirty
-			append(&work, addr)
-		}
-	}
-	clear(&sh.seeds)
-	virtual.arena_free_all(&sh.scratch)
-	arena := virtual.arena_allocator(&sh.scratch)
-	ctx := context
-	ctx.allocator = arena
-	ctx.temp_allocator = arena
-	sh.depth = 0
-	sh.evaluated = 0
-	context = ctx
-	for a in work {
-		ensure_value(sh, a)
-	}
-}
 
 // ensure_value is the heart of it: the cached value of a cell, computing it
 // first if it is stale, and reporting a cycle if the cell is already on the
-// evaluation stack.
+// evaluation stack. Nothing here knows which sheet it is on, which is why a
+// cycle that crosses sheets is caught by the same three lines.
 ensure_value :: proc(sh: ^Sheet, a: Addr) -> Value {
 	c := cell_at(sh, a)
 	if c == nil {
@@ -467,16 +436,17 @@ ensure_value :: proc(sh: ^Sheet, a: Addr) -> Value {
 		c.state = .Clean
 		return c.val
 	}
-	if sh.depth >= MAX_DEPTH {
+	bk := sh.book
+	if bk.depth >= MAX_DEPTH {
 		set_cell_value(sh, c, verr(.Circ))
 		c.state = .Clean
 		return c.val
 	}
 
 	c.state = .Visiting
-	sh.depth += 1
+	bk.depth += 1
 	res := eval_ast(sh, c.ast, a)
-	sh.depth -= 1
+	bk.depth -= 1
 	v := res_scalar(sh, res)
 	// A reference to an empty cell is zero when it is the whole answer:
 	// `=Z99` shows 0, not nothing.
@@ -485,7 +455,7 @@ ensure_value :: proc(sh: ^Sheet, a: Addr) -> Value {
 	}
 	set_cell_value(sh, c, v)
 	c.state = .Clean
-	sh.evaluated += 1
+	bk.evaluated += 1
 	return c.val
 }
 

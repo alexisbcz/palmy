@@ -264,38 +264,18 @@ build_export :: proc(
 	fmt.sbprintf(&g, "[%s]format=yuv420p[vout];", cur)
 
 	// --- audio ---------------------------------------------------------
-	// Sound comes from the audio tracks and nowhere else. A video clip and its
-	// audio are placed as a pair, so counting a video clip's audio too would
-	// mix every take twice — which is exactly what it did before this rule was
-	// written down. One clip, one contribution.
+	// Which clips are audible, and at what gain, is not decided here: it is
+	// decided by `resolve_audio_mix`, which the preview's mixer calls with the
+	// same project. That is the only way the speakers and the file can be made
+	// to agree about a muted track or a clip at 40 %. From `from = 0` the list
+	// is the whole timeline, and each contribution's delay is its clip start.
+	// See audio.odin.
 	alabels := make([dynamic]string, context.temp_allocator)
-	for &t, ti in pr.tracks {
-		if t.kind != .Audio || !track_enabled(pr, ti) {
-			continue
-		}
-		for c in t.clips {
-			if c.media < 0 || c.media >= len(pr.media) || !pr.media[c.media].has_audio {
-				continue
-			}
-			if clip_len(c) <= 0.01 {
-				continue
-			}
-			ii := input_of(&inputs, pr.media[c.media].path)
-			k := len(alabels)
-			fmt.sbprintf(
-				&g,
-				"[%d:a]atrim=start=%.4f:end=%.4f,asetpts=PTS-STARTPTS,volume=%.4f," +
-				"aresample=44100,aformat=sample_fmts=fltp:channel_layouts=stereo," +
-				"adelay=%d:all=1[a%d];",
-				ii,
-				c.src_in,
-				c.src_out,
-				c.gain,
-				int(c.start * 1000 + 0.5),
-				k,
-			)
-			append(&alabels, fmt.tprintf("a%d", k))
-		}
+	for ms in resolve_audio_mix(pr, 0, context.temp_allocator) {
+		ii := input_of(&inputs, pr.media[ms.media].path)
+		label := fmt.tprintf("a%d", len(alabels))
+		mix_chain(&g, ms, ii, 44100, label)
+		append(&alabels, label)
 	}
 	switch len(alabels) {
 	case 0:

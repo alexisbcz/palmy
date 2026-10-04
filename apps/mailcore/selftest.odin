@@ -81,6 +81,7 @@ selftest_unit :: proc(t: ^T) {
 	test_imap_utf7(t)
 	test_dot_stuffing(t)
 	test_maildir(t)
+	test_attachments(t)
 	test_threading(t)
 	test_compose(t)
 	test_json(t)
@@ -1370,6 +1371,225 @@ os_rm_rf_inner :: proc(path: string) {
 		}
 	}
 	_ = os.remove(path)
+}
+
+// ---------------------------------------------------------------------------
+// Attachments: bytes by section, byte-exact saves, hostile filenames
+// ---------------------------------------------------------------------------
+
+// binary_payload is every byte value once, followed by a `\r\n\r\n` run and a
+// NUL. Those last six bytes are the point: a NUL truncates anything that
+// treats the buffer as a C string, and a CRLF run is what a text path
+// normalises to a bare LF. A round trip that compares equal to this, byte for
+// byte, has not been through a text path.
+BINARY_PAYLOAD_TAIL :: [?]u8{'\r', '\n', '\r', '\n', 0x00, 0xff}
+
+binary_payload :: proc(allocator := context.allocator) -> []u8 {
+	tail := BINARY_PAYLOAD_TAIL
+	out := make([]u8, 256 + len(tail), allocator)
+	for i in 0 ..< 256 {
+		out[i] = u8(i)
+	}
+	for b, i in tail {
+		out[256 + i] = b
+	}
+	return out
+}
+
+test_attachments :: proc(t: ^T) {
+	tsection(t, "attachments")
+
+	// --- path_within, the containment check -------------------------------
+	tcheck(t, "a plain name inside the directory is within it", path_within("/tmp/x", "/tmp/x/a.png"))
+	tcheck(t, "a trailing slash on the directory does not matter", path_within("/tmp/x/", "/tmp/x/a.png"))
+	tcheck(t, "a sibling directory is not within", !path_within("/tmp/x", "/tmp/y/a.png"))
+	tcheck(t, "a prefix that is not a path component is not within", !path_within("/tmp/x", "/tmp/xy/a.png"))
+	tcheck(t, "a nested path is not within", !path_within("/tmp/x", "/tmp/x/sub/a.png"))
+	tcheck(t, "traversal out of the directory is not within", !path_within("/tmp/x", "/tmp/x/../a.png"))
+	tcheck(t, "the directory itself is not a file within it", !path_within("/tmp/x", "/tmp/x"))
+	tcheck(t, "the directory with a slash is not a file within it", !path_within("/tmp/x", "/tmp/x/"))
+	tcheck(t, "a relative path is not within an absolute directory", !path_within("/tmp/x", "a.png"))
+	tcheck(t, "a file at the root is within the root", path_within("/", "/a.png"))
+
+	// --- sanitise_filename, restated where it is relied on ----------------
+	teq(t, "../../.bashrc loses every directory component", sanitise_filename("../../.bashrc", context.temp_allocator), ".bashrc")
+	teq(t, "an absolute path loses it too", sanitise_filename("/etc/passwd", context.temp_allocator), "passwd")
+	teq(t, "a Windows path loses its backslashes", sanitise_filename("..\\..\\boot.ini", context.temp_allocator), "boot.ini")
+	teq(t, "a bare .. is not a file name", sanitise_filename("..", context.temp_allocator), "")
+	teq(t, "a control character is dropped", sanitise_filename("ev\x01il.png", context.temp_allocator), "evil.png")
+	teq(t, "an ordinary name survives", sanitise_filename("report.pdf", context.temp_allocator), "report.pdf")
+
+	// --- attachment_dest refuses what it cannot make safe -----------------
+	{
+		p1, e1 := attachment_dest("/tmp/x", "../../.bashrc", context.temp_allocator)
+		teq(t, "a hostile name resolves inside the chosen directory", p1, "/tmp/x/.bashrc")
+		teq(t, "...with no error", e1, "")
+		_, e2 := attachment_dest("/tmp/x", "..", context.temp_allocator)
+		tcheck(t, "a name that sanitises to nothing is refused", e2 != "", e2)
+		_, e3 := attachment_dest("/tmp/x", "", context.temp_allocator)
+		tcheck(t, "an empty name is refused", e3 != "")
+	}
+
+	// --- the round trip ---------------------------------------------------
+	//
+	// Build a message carrying a known binary payload, encode it base64, parse
+	// it back, write it out, and compare the bytes on disk with the bytes we
+	// started from.
+	payload := binary_payload(context.temp_allocator)
+	teq_int(t, "the payload is 262 bytes", len(payload), 262)
+	teq_int(t, "...it starts with a NUL", int(payload[0]), 0)
+	tcheck(t, "...it ends with a CRLF run", payload[256] == '\r' && payload[257] == '\n' && payload[258] == '\r' && payload[259] == '\n')
+	teq_int(t, "...followed by a second NUL", int(payload[260]), 0)
+
+	raw := strings.concatenate(
+		{
+			"From: Robot <robot@localhost>\r\n",
+			"To: alice@localhost\r\n",
+			"Subject: with a payload\r\n",
+			"Message-ID: <attach@localhost>\r\n",
+			"Date: Tue, 3 Feb 2026 12:00:00 +0000\r\n",
+			"MIME-Version: 1.0\r\n",
+			"Content-Type: multipart/related; boundary=\"REL\"\r\n",
+			"\r\n",
+			"--REL\r\n",
+			"Content-Type: text/html; charset=utf-8\r\n",
+			"\r\n",
+			"<p>see <img src=\"cid:logo@localhost\"> and the file</p>\r\n",
+			"--REL\r\n",
+			"Content-Type: image/png\r\n",
+			"Content-ID: <logo@localhost>\r\n",
+			"Content-Disposition: inline; filename=\"logo.png\"\r\n",
+			"Content-Transfer-Encoding: base64\r\n",
+			"\r\n",
+			"iVBORw0KGgo=\r\n",
+			"--REL\r\n",
+			// The filename is hostile on purpose.
+			"Content-Type: application/octet-stream\r\n",
+			"Content-Disposition: attachment; filename=\"../../.bashrc\"\r\n",
+			"Content-Transfer-Encoding: base64\r\n",
+			"\r\n",
+			base64_encode(payload, 76, context.temp_allocator),
+			"\r\n--REL\r\n",
+			// And one part with no name at all, to exercise the fallback.
+			"Content-Type: application/pdf\r\n",
+			"Content-Transfer-Encoding: base64\r\n",
+			"Content-Disposition: attachment\r\n",
+			"\r\n",
+			"JVBERi0=\r\n",
+			"--REL--\r\n",
+		},
+		context.temp_allocator,
+	)
+	m := parse_message(transmute([]u8)raw, context.temp_allocator)
+
+	teq_int(t, "the message has three non-body parts", len(m.attachments), 3)
+
+	// Bytes by section number.
+	b1, ok1 := part_bytes(&m, "1")
+	tcheck(t, "section 1 is the html part", ok1 && strings.contains(string(b1), "cid:logo@localhost"))
+	b2, ok2 := part_bytes(&m, "2")
+	tcheck(t, "section 2 is the png, base64-decoded", ok2 && len(b2) == 8 && b2[0] == 0x89, fmt.aprintf("%d bytes", len(b2)))
+	b3, ok3 := part_bytes(&m, "3")
+	tcheck(t, "section 3 exists", ok3)
+	teq_int(t, "section 3 decodes to the payload's length", len(b3), 262)
+	tcheck(t, "section 3's bytes are the payload, byte for byte", ok3 && slice_eq(b3, payload))
+	_, ok_root := part_bytes(&m, "")
+	tcheck(t, "the root is a multipart and so has no bytes of its own", !ok_root)
+	_, ok_miss := part_bytes(&m, "9")
+	tcheck(t, "a section that does not exist is a miss, not a crash", !ok_miss)
+
+	// Inline recognition: the png is referenced by the html, so it is part of
+	// the message rather than a file to save. The others are not.
+	inline_parts := message_inline_parts(&m, context.temp_allocator)
+	teq_int(t, "one part is inline", len(inline_parts), 1)
+	teq(t, "...and it is the referenced png", len(inline_parts) > 0 ? inline_parts[0].content_id : "", "logo@localhost")
+	tcheck(t, "cid_referenced finds the reference", cid_referenced(&m, "logo@localhost"))
+	tcheck(t, "...and does not invent one", !cid_referenced(&m, "nothing@localhost"))
+
+	saveable := message_saveable(&m, context.temp_allocator)
+	teq_int(t, "two parts are offered to save", len(saveable), 2)
+	teq(t, "the hostile filename was reduced to a safe one", len(saveable) > 0 ? saveable[0].filename : "", ".bashrc")
+	teq_int(t, "...with the payload's length", len(saveable) > 0 ? saveable[0].size : -1, 262)
+	teq(
+		t,
+		"an unnamed part is named after its section and type",
+		len(saveable) > 1 ? saveable[1].filename : "",
+		"part-4.pdf",
+	)
+
+	// --- and now to disk --------------------------------------------------
+	root := strings.concatenate({maildir_default_root(context.temp_allocator), "/_selftest-attach"}, context.temp_allocator)
+	os_rm_rf(root)
+	dir := strings.concatenate({root, "/out"}, context.temp_allocator)
+	if !tcheck(t, "a staging directory was created", os.make_directory_all(dir) == nil || os.is_dir(dir)) {
+		return
+	}
+
+	wrote, werr := attachment_write(dir, saveable[0], false, context.temp_allocator)
+	if tcheck(t, "the attachment was written", werr == "", werr) {
+		teq(t, "...directly inside the directory that was chosen", wrote, strings.concatenate({dir, "/.bashrc"}, context.temp_allocator))
+		tcheck(t, "...and the path is within it", path_within(dir, wrote))
+		tcheck(t, "the file is on disk", os.exists(wrote))
+
+		back, rerr := os.read_entire_file_from_path(wrote, context.temp_allocator)
+		if tcheck(t, "it reads back", rerr == nil) {
+			teq_int(t, "with exactly 262 bytes", len(back), 262)
+			tcheck(t, "BYTE-EXACT: the file on disk equals the payload we encoded", slice_eq(back, payload))
+			tcheck(t, "...the NUL survived", len(back) > 0 && back[0] == 0)
+			tcheck(
+				t,
+				"...the CRLF run survived unnormalised",
+				len(back) == 262 && back[256] == '\r' && back[257] == '\n' && back[258] == '\r' && back[259] == '\n',
+			)
+			tcheck(t, "...and the high bytes survived", len(back) == 262 && back[255] == 0xff && back[261] == 0xff)
+		}
+
+		// Nothing escaped. The hostile name asked for two levels up.
+		tcheck(
+			t,
+			"nothing was written two directories above the chosen one",
+			!os.exists(strings.concatenate({maildir_default_root(context.temp_allocator), "/.bashrc"}, context.temp_allocator)),
+		)
+		tcheck(t, "nor one directory above it", !os.exists(strings.concatenate({root, "/.bashrc"}, context.temp_allocator)))
+
+		// A second write must not silently replace the first.
+		_, again := attachment_write(dir, saveable[0], false, context.temp_allocator)
+		tcheck(t, "writing over an existing file is refused without an explicit yes", again != "", again)
+		_, forced := attachment_write(dir, saveable[0], true, context.temp_allocator)
+		tcheck(t, "...and allowed with one", forced == "", forced)
+	}
+
+	// The second, unnamed part lands under its generated name.
+	w2, werr2 := attachment_write(dir, saveable[1], false, context.temp_allocator)
+	if tcheck(t, "the unnamed part was written too", werr2 == "", werr2) {
+		tcheck(t, "...as part-4.pdf", strings.has_suffix(w2, "/part-4.pdf"), w2)
+	}
+
+	// A directory that is not one is refused rather than created.
+	_, nod := attachment_write(strings.concatenate({root, "/nope"}, context.temp_allocator), saveable[0], false, context.temp_allocator)
+	tcheck(t, "writing into a directory that does not exist is refused", nod != "", nod)
+
+	os_rm_rf(root)
+
+	// --- mime_extension ---------------------------------------------------
+	teq(t, "image/png is .png", mime_extension("image/png"), ".png")
+	teq(t, "application/pdf is .pdf", mime_extension("application/pdf"), ".pdf")
+	teq(t, "a type nobody knows is .bin", mime_extension("application/x-nonsense"), ".bin")
+	teq(t, "and the case does not matter", mime_extension("IMAGE/PNG"), ".png")
+}
+
+// slice_eq compares two byte slices for exact equality, which is the whole
+// point of the round-trip assertion above.
+slice_eq :: proc(a, b: []u8) -> bool {
+	if len(a) != len(b) {
+		return false
+	}
+	for i in 0 ..< len(a) {
+		if a[i] != b[i] {
+			return false
+		}
+	}
+	return true
 }
 
 // ---------------------------------------------------------------------------

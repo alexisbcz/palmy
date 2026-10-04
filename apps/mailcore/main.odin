@@ -5,6 +5,7 @@ package main
 //	mailcore --selftest [--verbose] [--no-e2e] [--no-tls] [--testserver PATH]
 //	mailcore --layout
 //	mailcore --parse FILE
+//	mailcore --extract FILE [--out DIR] [--section N] [--force]
 //	mailcore --thread [--root DIR] [--folder NAME]
 //	mailcore fetch  --proto imap|pop3|jmap --port N --user U --password P
 //	                [--host 127.0.0.1] [--folder NAME] [--root DIR] [--tls MODE]
@@ -78,6 +79,8 @@ main :: proc() {
 		os.exit(0)
 	case "--parse":
 		os.exit(cmd_parse(args[1:]))
+	case "--extract":
+		os.exit(cmd_extract(args[1:]))
 	case "--thread":
 		os.exit(cmd_thread(args[1:]))
 	case "fetch":
@@ -100,6 +103,8 @@ usage :: proc() {
   mailcore --selftest [--verbose] [--no-e2e] [--no-tls] [--testserver PATH]
   mailcore --layout                       describe the Maildir this writes
   mailcore --parse FILE                   dump a message's MIME tree
+  mailcore --extract FILE [--out DIR] [--section N] [--force]
+                                          write a message's attachments out
   mailcore --thread [--root DIR] [--folder NAME]
   mailcore fetch --proto imap|pop3|jmap --port N --user U --password P
                  [--host 127.0.0.1] [--folder NAME] [--root DIR]
@@ -262,6 +267,80 @@ dump_part :: proc(p: ^Part, depth: int) {
 	for i in 0 ..< len(p.parts) {
 		dump_part(&p.parts[i], depth + 1)
 	}
+}
+
+// ---------------------------------------------------------------------------
+// --extract
+//
+// The other half of `--parse`: not "what parts are in here" but "put them on
+// disk". Every byte written is the transfer-decoded content, and every name is
+// run through the sanitiser and then through the containment check, so a
+// message whose filename is "../../.bashrc" writes ".bashrc" into the
+// directory that was asked for and nowhere else.
+// ---------------------------------------------------------------------------
+
+cmd_extract :: proc(args: []string) -> int {
+	file := ""
+	out := "."
+	section := ""
+	force := false
+	for i := 0; i < len(args); i += 1 {
+		switch args[i] {
+		case "--out":
+			i += 1;if i < len(args) {out = args[i]}
+		case "--section":
+			i += 1;if i < len(args) {section = args[i]}
+		case "--force":
+			force = true
+		case:
+			if strings.has_prefix(args[i], "-") {
+				fmt.eprintfln("mailcore --extract: unknown option %q", args[i])
+				return 2
+			}
+			file = args[i]
+		}
+	}
+	if file == "" {
+		fmt.eprintln("mailcore --extract: needs a file")
+		return 2
+	}
+	data, err := os.read_entire_file_from_path(file, context.allocator)
+	if err != nil {
+		fmt.eprintfln("mailcore: cannot read %s: %v", file, err)
+		return 1
+	}
+	if !os.is_dir(out) {
+		fmt.eprintfln("mailcore: %s is not a directory", out)
+		return 1
+	}
+	m := parse_message(data, context.allocator)
+
+	inline_parts := message_inline_parts(&m, context.allocator)
+	saveable := message_saveable(&m, context.allocator)
+	if len(saveable) == 0 {
+		fmt.printfln("%s: nothing to extract (%d inline part(s))", file, len(inline_parts))
+		return 0
+	}
+
+	wrote, failed := 0, 0
+	for s in saveable {
+		if section != "" && s.section != section {
+			continue
+		}
+		path, werr := attachment_write(out, s, force, context.allocator)
+		if werr != "" {
+			fmt.eprintfln("  %-30s FAILED  %s", s.filename, werr)
+			failed += 1
+			continue
+		}
+		fmt.printfln("  %-30s %-28s %d bytes -> %s", s.filename, s.mime_type, s.size, path)
+		wrote += 1
+	}
+	for a in inline_parts {
+		fmt.printfln("  %-30s %-28s %d bytes    inline, cid:%s — not written", a.filename == "" ? "<unnamed>" : a.filename, a.mime_type, a.size, a.content_id)
+	}
+	fmt.printfln("%d written, %d failed, %d inline", wrote, failed, len(inline_parts))
+	return failed > 0 ? 1 : 0
 }
 
 // ---------------------------------------------------------------------------

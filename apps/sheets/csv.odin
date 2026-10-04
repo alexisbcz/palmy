@@ -147,7 +147,7 @@ import_delim :: proc(sh: ^Sheet, text: string, at: Addr, delim: u8) -> (rows, co
 		cols = max(cols, len(r))
 	}
 	rows = len(parsed)
-	sh.graph_dirty = true
+	sh.book.graph_dirty = true
 	recalc_all(sh)
 	return
 }
