@@ -10,6 +10,7 @@ Node_Kind :: enum u8 {
 	Text,
 	Custom,
 	Icon,
+	Image,
 }
 
 // Custom_Fn is the escape hatch: a procedure handed the node's rectangle and
@@ -44,6 +45,9 @@ Node :: struct {
 	custom:      Custom_Fn,
 	user:        rawptr,
 	icon:        Icon,
+	img:         Image,
+	fit:         Fit,
+	zoom:        f32,
 }
 
 // Widget is the state palmy keeps for a node between frames: where it was, how
@@ -397,6 +401,19 @@ pixels :: proc(ctx: ^Ctx, class: string, user: ^$T, draw: proc(c: ^Canvas, r: Re
 icon :: proc(ctx: ^Ctx, ic: Icon, class: string = "") -> int {
 	idx := push_node(ctx, .Icon, class)
 	ctx.nodes[idx].icon = ic
+	return idx
+}
+
+// image places a decoded image. It fills the box the way CSS object-fit does,
+// and `zoom` magnifies around the centre for a viewer that can zoom in.
+//
+//	img, ok := palmy.load_image("photo.jpg")
+//	palmy.image(ui, img, "w-full h-full", .Contain)
+image :: proc(ctx: ^Ctx, img: Image, class: string = "", fit := Fit.Contain, zoom: f32 = 1) -> int {
+	idx := push_node(ctx, .Image, class)
+	ctx.nodes[idx].img = img
+	ctx.nodes[idx].fit = fit
+	ctx.nodes[idx].zoom = zoom
 	return idx
 }
 

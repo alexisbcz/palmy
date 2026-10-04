@@ -45,6 +45,7 @@ Model :: struct {
 	p_top:       int,
 	n_top:       int,
 	rows:        int, // how many list rows the window has room for
+	tall:        bool, // enough height for the inspector's activity feed
 	vis_p:       int,
 	vis_n:       int,
 	sel_row_id:  u64,
@@ -175,6 +176,7 @@ main :: proc() {
 measure_rows :: proc(m: ^Model, vp: [2]f32) {
 	list_h := vp.y - HEADER_H - TOOLBAR_H - FOOTER_H - 20 - 56 - 8 - 24
 	m.rows = clamp(int(list_h / 56), 2, 40)
+	m.tall = vp.y >= 800
 }
 
 // note shows a short line in the footer for a few seconds.
