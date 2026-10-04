@@ -28,6 +28,7 @@ COL_CODE_BG :: u32(0xf4f4f5)
 COL_RULE :: u32(0xd4d4d4)
 COL_FOOT :: u32(0x9a9a9a)
 COL_FIND :: u32(0xfacc15)
+COL_IMG_PH :: u32(0xe6e6e7)
 
 // A selection and a find hit are washes rather than solid fills, so the text
 // under them keeps its own colour.
@@ -124,7 +125,16 @@ pos_at_view :: proc(st: ^State, vx, vy: f32) -> Pos {
 		pick = li
 	}
 	l := st.lay.lines[pick]
-	return Pos{l.para, off_at_x(&st.lay, pick, lx)}
+	if l.repeat {
+		// A click on a repeated header row belongs to the row the model has.
+		for li in lo ..= hi {
+			if !st.lay.lines[li].repeat && line_blk(st.lay.lines[li]) == line_blk(l) {
+				l = st.lay.lines[li]
+				break
+			}
+		}
+	}
+	return line_pos(l, off_at_x(&st.lay, pick, lx))
 }
 
 // ---------------------------------------------------------------------------
@@ -197,6 +207,11 @@ draw_page :: proc(c: ^p.Canvas, st: ^State, pi: int, dr: p.Rect, z, sc: f32, liv
 	p.push_clip(c, dr)
 	defer p.pop_clip(c)
 
+	// Tables first: the rules and the header shading sit under every line that
+	// falls inside them, and they come straight out of the layout's cell boxes
+	// so the window and the PDF cannot disagree about where a cell is.
+	draw_table_cells(c, st, pi, ox, oy, k)
+
 	lo, hi := page_lines(lay, pi)
 	sel_lo, sel_hi, has_sel := selection(st)
 
@@ -218,7 +233,9 @@ draw_page :: proc(c: ^p.Canvas, st: ^State, pi: int, dr: p.Rect, z, sc: f32, liv
 				)
 			case .Quote:
 				p.fill_rect(c, {ox + (l.indent - 16) * k, ly, 3 * k, lh}, p.hex(COL_RULE))
-			case .Body, .H1, .H2, .H3:
+			case .Image:
+				draw_image_para(c, pa, {ox + l.x * k, ly, l.w * k, lh})
+			case .Body, .H1, .H2, .H3, .Table:
 			}
 
 			// Find highlights sit under the selection.
@@ -230,7 +247,7 @@ draw_page :: proc(c: ^p.Canvas, st: ^State, pi: int, dr: p.Rect, z, sc: f32, liv
 			if live && has_sel {
 				a := l.para == sel_lo.para ? max(l.start, sel_lo.off) : l.start
 				b := l.para == sel_hi.para ? min(l.end, sel_hi.off) : l.end
-				covered := !pos_less(Pos{l.para, l.end}, sel_lo) && !pos_less(sel_hi, Pos{l.para, l.start})
+				covered := !pos_less(pos(l.para, l.end), sel_lo) && !pos_less(sel_hi, pos(l.para, l.start))
 				if covered && b >= a {
 					x0 := caret_x(lay, li, a)
 					x1 := caret_x(lay, li, b)
@@ -312,39 +329,100 @@ draw_page :: proc(c: ^p.Canvas, st: ^State, pi: int, dr: p.Rect, z, sc: f32, liv
 // draw_find_marks highlights every occurrence of the search term on a line.
 // The match the caret is sitting on is left alone: it already wears the
 // selection, and two washes on top of each other read as neither.
+//
+// The search runs over the whole block, not over the line's slice, because
+// whole-word mode has to see the characters either side of a match and a match
+// that starts on the previous line is not this line's business.
 draw_find_marks :: proc(c: ^p.Canvas, st: ^State, li: int, ox, ly, lh, k: f32) {
 	l := st.lay.lines[li]
-	s := para_string(&st.lay, l.para)
-	if l.end > len(s) || len(st.find) == 0 {
+	hay := block_string(&st.lay, l.blk)
+	needle := string(st.find[:])
+	if len(needle) == 0 || l.end > len(hay) {
 		return
 	}
 	sel_lo, sel_hi, has_sel := selection(st)
-	hay := s[l.start:l.end]
-	at := 0
-	for {
-		i := index_fold(hay[at:], string(st.find[:]))
-		if i < 0 {
+	at := l.start
+	for at <= l.end {
+		i := find_index(hay, needle, at, !st.find_case, st.find_word)
+		if i < 0 || i >= l.end {
 			break
 		}
-		a := l.start + at + i
-		b := a + len(st.find)
-		if has_sel && sel_lo == (Pos{l.para, a}) && sel_hi == (Pos{l.para, b}) {
-			at += i + max(1, len(st.find))
-			if at >= len(hay) {
-				break
-			}
+		a := i
+		b := min(i + len(needle), l.end)
+		at = i + max(1, len(needle))
+		if has_sel && sel_lo == line_pos(l, a) && sel_hi == line_pos(l, i + len(needle)) {
 			continue
 		}
 		x0 := caret_x(&st.lay, li, a)
-		x1 := caret_x(&st.lay, li, min(b, l.end))
+		x1 := caret_x(&st.lay, li, b)
 		if x1 > x0 {
 			p.fill_rect(c, {ox + x0 * k, ly, (x1 - x0) * k, lh}, find_wash())
 		}
-		at += i + max(1, len(st.find))
-		if at >= len(hay) {
-			break
-		}
 	}
+}
+
+// ---------------------------------------------------------------------------
+// Tables and images
+// ---------------------------------------------------------------------------
+
+// draw_table_cells paints the header shading and the cell rules for every
+// table box on one page. The geometry is the layout's, not recomputed here, so
+// a rule is in the same place on screen, in the PNG and in the PDF.
+draw_table_cells :: proc(c: ^p.Canvas, st: ^State, page: int, ox, oy, k: f32) {
+	lay := &st.lay
+	lo, hi := page_cells(lay, page)
+	if lo < 0 {
+		return
+	}
+	rule := max(1, TABLE_RULE * k)
+	for i in lo ..= hi {
+		cb := lay.cells[i]
+		if cb.para < 0 || cb.para >= len(st.doc.paras) {
+			continue
+		}
+		t := st.doc.paras[cb.para].table
+		x := ox + cb.x * k
+		y := oy + cb.y * k
+		w := cb.w * k
+		h := cb.h * k
+		if cb.header {
+			p.fill_rect(c, {x, y, w, h}, p.hex(COL_TABLE_HEAD))
+		}
+		if t == nil || !t.borders {
+			continue
+		}
+		col := p.hex(COL_TABLE_RULE)
+		// All four edges of every cell. Neighbouring cells overlap on their
+		// shared edge, which is exactly what a single-weight grid wants and
+		// means a cell never has a missing side at the end of a row.
+		p.fill_rect(c, {x, y, w, rule}, col)
+		p.fill_rect(c, {x, y + h - rule, w, rule}, col)
+		p.fill_rect(c, {x, y, rule, h}, col)
+		p.fill_rect(c, {x + w - rule, y, rule, h}, col)
+	}
+}
+
+// draw_image_para blits one picture into its line box, or draws a framed
+// placeholder when the bytes would not decode — a document that has travelled
+// should say what it is missing rather than closing the gap silently.
+draw_image_para :: proc(c: ^p.Canvas, pa: ^Paragraph, dst: p.Rect) {
+	if dst.w <= 0 || dst.h <= 0 {
+		return
+	}
+	if pa.img != nil && len(pa.img.px) >= pa.img.w * pa.img.h && pa.img.w > 0 {
+		img := p.Image {
+			px = pa.img.px[:pa.img.w * pa.img.h],
+			w  = pa.img.w,
+			h  = pa.img.h,
+		}
+		p.draw_image(c, img, dst)
+		return
+	}
+	p.fill_rect(c, dst, p.hex(COL_IMG_PH))
+	p.fill_rect(c, {dst.x, dst.y, dst.w, 1}, p.hex(COL_RULE))
+	p.fill_rect(c, {dst.x, dst.y + dst.h - 1, dst.w, 1}, p.hex(COL_RULE))
+	p.fill_rect(c, {dst.x, dst.y, 1, dst.h}, p.hex(COL_RULE))
+	p.fill_rect(c, {dst.x + dst.w - 1, dst.y, 1, dst.h}, p.hex(COL_RULE))
 }
 
 // draw_ruler is the strip across the top of the workspace: the page's measure

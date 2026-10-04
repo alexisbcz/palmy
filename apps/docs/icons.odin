@@ -44,3 +44,48 @@ ICON_HEADING_2 :: p.Icon{name = "heading-2", d = "M4 12 L12 12 M4 18 L4 6 M12 18
 ICON_HEADING_3 :: p.Icon{name = "heading-3", d = "M4 12 L12 12 M4 18 L4 6 M12 18 L12 6 M17.5 10.5 C19.2 9.5 21 10.5 21 12 C21 13.105 20.105 14 19 14 M17 17.5 C19 19 21 17.8 21 16 C21 14.895 20.105 14 19 14", view = 24, stroke = 2}
 ICON_CASE_SENSITIVE :: p.Icon{name = "case-sensitive", d = "M2 16 L6.039 6.31 C6.117 6.124 6.299 6.002 6.501 6.002 C6.702 6.002 6.884 6.124 6.962 6.31 L11 16 M22 9 L22 16 M3.304 13 L9.696 13 M15 12.5 C15 10.567003375592222 16.567003375592222 9 18.5 9 C20.432996624407778 9 22 10.567003375592222 22 12.5 C22 14.432996624407778 20.432996624407778 16 18.5 16 C16.567003375592222 16 15 14.432996624407778 15 12.5 Z", view = 24, stroke = 2}
 ICON_KEYBOARD :: p.Icon{name = "keyboard", d = "M10 8 L10.01 8 M12 12 L12.01 12 M14 8 L14.01 8 M16 12 L16.01 12 M18 8 L18.01 8 M6 8 L6.01 8 M7 16 L17 16 M8 12 L8.01 12 M4 4 L20 4 C21.104569499661586 4 22 4.895430500338413 22 6 L22 18 C22 19.104569499661586 21.104569499661586 20 20 20 L4 20 C2.8954305003384126 20 2 19.104569499661586 2 18 L2 6 C2 4.895430500338413 2.8954305003384126 4 4 4 Z", view = 24, stroke = 2}
+
+// Table and picture icons, and the two find-mode switches. Hand-written rather
+// than generated: the generator writes into `parity/`, which this app does not
+// own, and these are four paths.
+ICON_TABLE :: p.Icon {
+	name   = "table",
+	d      = "M3 5 L21 5 L21 19 L3 19 Z M3 10 L21 10 M3 14.5 L21 14.5 M9 5 L9 19 M15 5 L15 19",
+	view   = 24,
+	stroke = 2,
+}
+
+ICON_ROWS :: p.Icon {
+	name   = "rows",
+	d      = "M3 5 L21 5 L21 19 L3 19 Z M3 12 L21 12",
+	view   = 24,
+	stroke = 2,
+}
+
+ICON_COLUMNS :: p.Icon {
+	name   = "columns",
+	d      = "M3 5 L21 5 L21 19 L3 19 Z M12 5 L12 19",
+	view   = 24,
+	stroke = 2,
+}
+
+ICON_TRASH :: p.Icon {
+	name   = "trash",
+	d      = "M3 6 L21 6 M8 6 L8 4 C8 3.448 8.448 3 9 3 L15 3 C15.552 3 16 3.448 16 4 L16 6 M5 6 L6 20 C6 20.552 6.448 21 7 21 L17 21 C17.552 21 18 20.552 18 20 L19 6 M10 11 L10 17 M14 11 L14 17",
+	view   = 24,
+	stroke = 2,
+}
+
+ICON_WHOLE_WORD :: p.Icon {
+	name   = "whole-word",
+	d      = "M7 12 C7 10.343 8.343 9 10 9 C11.657 9 13 10.343 13 12 C13 13.657 11.657 15 10 15 C8.343 15 7 13.657 7 12 Z M17 9 L17 15 M13 7 L13 15 M22 17 L22 19 C22 20.105 21.105 21 20 21 L4 21 C2.895 21 2 20.105 2 19 L2 17",
+	view   = 24,
+	stroke = 2,
+}
+
+ICON_SQUARE :: p.Icon {
+	name   = "square",
+	d      = "M4 4 L20 4 L20 20 L4 20 Z",
+	view   = 24,
+	stroke = 2,
+}

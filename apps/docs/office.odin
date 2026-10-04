@@ -46,6 +46,68 @@ half_pt :: proc(px: f32) -> int {
 	return int(px * 1.5 + 0.5) // px → pt → half-points
 }
 
+// OOXML drawing sizes are in English Metric Units: 914400 per inch, so 9525
+// per CSS pixel at 96 dpi.
+emu :: proc(px: f32) -> int {
+	return int(px * 9525 + 0.5)
+}
+
+// Media is one embedded picture, shared by the .docx and .odt writers: the
+// part name inside the archive, the relationship id .docx refers to it by, and
+// the original file bytes.
+Media :: struct {
+	part:  string,
+	rid:   string,
+	mime:  string,
+	ext:   string,
+	bytes: []u8,
+}
+
+// collect_media walks the document and lists the pictures to embed, in order.
+// Both container formats need the list before they can write their manifest,
+// and both refer to the entries by index, so it is gathered once.
+collect_media :: proc(d: ^Doc, prefix: string, alloc := context.temp_allocator) -> []Media {
+	out := make([dynamic]Media, 0, 4, alloc)
+	for &pa in d.paras {
+		if pa.kind != .Image || pa.img == nil || len(pa.img.bytes) == 0 {
+			continue
+		}
+		n := len(out) + 1
+		ext := image_ext(pa.img.kind)
+		// `tprintf`, not `aprintf`: the list itself is temporary and is
+		// consumed inside the one export call, and `zip_add` clones the names
+		// it is given.
+		append(
+			&out,
+			Media {
+				part = fmt.tprintf("%simage%d.%s", prefix, n, ext),
+				rid = fmt.tprintf("rIdImg%d", n),
+				mime = image_mime(pa.img.kind),
+				ext = ext,
+				bytes = pa.img.bytes,
+			},
+		)
+	}
+	return out[:]
+}
+
+// media_of finds the entry for one image paragraph, by counting the image
+// paragraphs before it — the same order `collect_media` used.
+media_of :: proc(d: ^Doc, media: []Media, want: int) -> (Media, bool) {
+	k := 0
+	for pi in 0 ..< len(d.paras) {
+		pa := &d.paras[pi]
+		if pa.kind != .Image || pa.img == nil || len(pa.img.bytes) == 0 {
+			continue
+		}
+		if pi == want {
+			return k < len(media) ? media[k] : Media{}, k < len(media)
+		}
+		k += 1
+	}
+	return {}, false
+}
+
 @(private = "file")
 xml_escape :: proc(b: ^strings.Builder, s: string) {
 	for i in 0 ..< len(s) {
@@ -86,7 +148,7 @@ docx_style :: proc(pa: ^Paragraph) -> string {
 		return "Quote"
 	case .Code:
 		return "Code"
-	case .Body:
+	case .Body, .Table, .Image:
 		return pa.list != .None ? "ListParagraph" : "BodyText"
 	}
 	return "BodyText"
@@ -129,50 +191,235 @@ docx_runs :: proc(b: ^strings.Builder, pa: ^Paragraph) {
 	}
 }
 
-doc_to_docx_document :: proc(d: ^Doc, alloc := context.allocator) -> string {
+// docx_ppr writes a paragraph's <w:pPr>. It is shared between a body
+// paragraph and a paragraph inside a table cell, which is the whole point of a
+// cell holding ordinary paragraphs.
+@(private = "file")
+docx_ppr :: proc(b: ^strings.Builder, pa: ^Paragraph, in_cell := false) {
+	km := kind_metrics(pa.kind)
+	strings.write_string(b, "<w:pPr>")
+	fmt.sbprintf(b, "<w:pStyle w:val=\"%s\"/>", docx_style(pa))
+	if pa.break_before && !in_cell {
+		strings.write_string(b, "<w:pageBreakBefore/>")
+	}
+	if pa.list != .None {
+		fmt.sbprintf(
+			b,
+			"<w:numPr><w:ilvl w:val=\"%d\"/><w:numId w:val=\"%d\"/></w:numPr>",
+			min(pa.depth, 8),
+			pa.list == .Bullet ? 1 : 2,
+		)
+	} else if pa.depth > 0 {
+		fmt.sbprintf(b, "<w:ind w:left=\"%d\"/>", tw(f32(pa.depth) * DEPTH_INDENT))
+	}
+	if pa.before != 0 || pa.after != 0 {
+		fmt.sbprintf(
+			b,
+			"<w:spacing w:before=\"%d\" w:after=\"%d\"/>",
+			tw(km.before + pa.before),
+			tw(km.after + pa.after),
+		)
+	}
+	switch pa.align {
+	case .Center:
+		strings.write_string(b, "<w:jc w:val=\"center\"/>")
+	case .Right:
+		strings.write_string(b, "<w:jc w:val=\"right\"/>")
+	case .Justify:
+		strings.write_string(b, "<w:jc w:val=\"both\"/>")
+	case .Left:
+	}
+	strings.write_string(b, "</w:pPr>")
+}
+
+// docx_table writes a <w:tbl>.
+//
+// Four things in here are not optional, and getting any of them wrong is the
+// usual reason Word says a file is corrupt or LibreOffice shows one wide
+// column:
+//
+//   * `<w:tblGrid>` must name every column, and the widths must agree with the
+//     `<w:tcW>` in each cell;
+//   * every `<w:tc>` must contain at least one `<w:p>`, even an empty one;
+//   * `<w:tblLayout w:type="fixed"/>` is what makes the grid widths binding
+//     rather than a suggestion the reader may re-fit;
+//   * `<w:tblHeader/>` on the first row's `<w:trPr>` is what repeats the header
+//     on a page break — the same rule this app's own pagination uses, so the
+//     exported file breaks the way the window does.
+@(private = "file")
+docx_table :: proc(b: ^strings.Builder, t: ^Table) {
+	ncols := table_cols(t)
+	strings.write_string(b, "<w:tbl><w:tblPr><w:tblStyle w:val=\"TableGrid\"/>")
+	fmt.sbprintf(b, "<w:tblW w:w=\"%d\" w:type=\"dxa\"/>", tw(CONTENT_W))
+	if t.borders {
+		strings.write_string(b, "<w:tblBorders>")
+		for side in ([?]string{"top", "left", "bottom", "right", "insideH", "insideV"}) {
+			fmt.sbprintf(
+				b,
+				"<w:%s w:val=\"single\" w:sz=\"6\" w:space=\"0\" w:color=\"A8A8AA\"/>",
+				side,
+			)
+		}
+		strings.write_string(b, "</w:tblBorders>")
+	} else {
+		strings.write_string(b, "<w:tblBorders>")
+		for side in ([?]string{"top", "left", "bottom", "right", "insideH", "insideV"}) {
+			fmt.sbprintf(b, "<w:%s w:val=\"none\" w:sz=\"0\" w:space=\"0\"/>", side)
+		}
+		strings.write_string(b, "</w:tblBorders>")
+	}
+	fmt.sbprintf(
+		b,
+		"<w:tblCellMar><w:top w:w=\"%d\" w:type=\"dxa\"/><w:left w:w=\"%d\" w:type=\"dxa\"/>" +
+		"<w:bottom w:w=\"%d\" w:type=\"dxa\"/><w:right w:w=\"%d\" w:type=\"dxa\"/></w:tblCellMar>",
+		tw(CELL_PAD),
+		tw(CELL_PAD),
+		tw(CELL_PAD),
+		tw(CELL_PAD),
+	)
+	strings.write_string(b, "<w:tblLayout w:type=\"fixed\"/></w:tblPr>")
+
+	strings.write_string(b, "<w:tblGrid>")
+	for c in 0 ..< ncols {
+		fmt.sbprintf(b, "<w:gridCol w:w=\"%d\"/>", tw(table_width(t, c)))
+	}
+	strings.write_string(b, "</w:tblGrid>")
+
+	for r in 0 ..< len(t.rows) {
+		strings.write_string(b, "<w:tr>")
+		head := t.header && r == 0
+		strings.write_string(b, "<w:trPr><w:cantSplit/>")
+		if head {
+			strings.write_string(b, "<w:tblHeader/>")
+		}
+		strings.write_string(b, "</w:trPr>")
+		for c in 0 ..< ncols {
+			strings.write_string(b, "<w:tc><w:tcPr>")
+			fmt.sbprintf(b, "<w:tcW w:w=\"%d\" w:type=\"dxa\"/>", tw(table_width(t, c)))
+			if head {
+				strings.write_string(b, "<w:shd w:val=\"clear\" w:color=\"auto\" w:fill=\"F1F1F2\"/>")
+			}
+			strings.write_string(b, "</w:tcPr>")
+			cl := table_cell(t, r, c)
+			if cl == nil || len(cl.paras) == 0 {
+				// A cell with no paragraph is not a legal <w:tc>.
+				strings.write_string(b, "<w:p/>")
+			} else {
+				for &cp in cl.paras {
+					strings.write_string(b, "<w:p>")
+					docx_ppr(b, &cp, true)
+					if head {
+						// A header cell's text is bold, matching the shading.
+						for &r2 in cp.runs {
+							if len(r2.text) == 0 {
+								continue
+							}
+							cs := r2.style
+							cs.bold = true
+							strings.write_string(b, "<w:r><w:rPr><w:b/>")
+							if cs.italic {strings.write_string(b, "<w:i/>")}
+							if cs.underline {strings.write_string(b, "<w:u w:val=\"single\"/>")}
+							if cs.mono {
+								strings.write_string(
+									b,
+									"<w:rFonts w:ascii=\"Courier New\" w:hAnsi=\"Courier New\" w:cs=\"Courier New\"/>",
+								)
+							}
+							strings.write_string(b, "</w:rPr><w:t xml:space=\"preserve\">")
+							xml_escape(b, string(r2.text[:]))
+							strings.write_string(b, "</w:t></w:r>")
+						}
+					} else {
+						docx_runs(b, &cp)
+					}
+					strings.write_string(b, "</w:p>")
+				}
+			}
+			strings.write_string(b, "</w:tc>")
+		}
+		strings.write_string(b, "</w:tr>")
+	}
+	strings.write_string(b, "</w:tbl>")
+}
+
+// docx_drawing writes an inline picture: a <w:drawing> holding a DrawingML
+// <pic:pic> that points at a relationship, which points at the part in
+// word/media. The extents are given twice — once on <wp:extent> for the layout
+// and once on <a:ext> for the shape — and a reader that finds them disagreeing
+// scales the picture to the wrong size.
+@(private = "file")
+docx_drawing :: proc(b: ^strings.Builder, pa: ^Paragraph, m: Media, id: int) {
+	w, h := image_para_size(pa)
+	cx, cy := emu(w), emu(h)
+	strings.write_string(b, "<w:r><w:drawing>")
+	strings.write_string(b, "<wp:inline distT=\"0\" distB=\"0\" distL=\"0\" distR=\"0\">")
+	fmt.sbprintf(b, "<wp:extent cx=\"%d\" cy=\"%d\"/>", cx, cy)
+	strings.write_string(b, "<wp:effectExtent l=\"0\" t=\"0\" r=\"0\" b=\"0\"/>")
+	fmt.sbprintf(b, "<wp:docPr id=\"%d\" name=\"Picture %d\" descr=\"", id, id)
+	xml_escape(b, pa.img == nil ? "" : pa.img.alt)
+	strings.write_string(b, "\"/>")
+	strings.write_string(
+		b,
+		"<wp:cNvGraphicFramePr><a:graphicFrameLocks xmlns:a=\"http://schemas.openxmlformats.org/drawingml/2006/main\" noChangeAspect=\"1\"/></wp:cNvGraphicFramePr>",
+	)
+	strings.write_string(
+		b,
+		"<a:graphic xmlns:a=\"http://schemas.openxmlformats.org/drawingml/2006/main\">" +
+		"<a:graphicData uri=\"http://schemas.openxmlformats.org/drawingml/2006/picture\">" +
+		"<pic:pic xmlns:pic=\"http://schemas.openxmlformats.org/drawingml/2006/picture\">" +
+		"<pic:nvPicPr>",
+	)
+	fmt.sbprintf(b, "<pic:cNvPr id=\"%d\" name=\"", id)
+	xml_escape(b, base_name(m.part))
+	strings.write_string(b, "\" descr=\"")
+	xml_escape(b, pa.img == nil ? "" : pa.img.alt)
+	strings.write_string(b, "\"/><pic:cNvPicPr/></pic:nvPicPr><pic:blipFill>")
+	fmt.sbprintf(b, "<a:blip r:embed=\"%s\"/><a:stretch><a:fillRect/></a:stretch></pic:blipFill>", m.rid)
+	strings.write_string(b, "<pic:spPr><a:xfrm><a:off x=\"0\" y=\"0\"/>")
+	fmt.sbprintf(b, "<a:ext cx=\"%d\" cy=\"%d\"/></a:xfrm>", cx, cy)
+	strings.write_string(b, "<a:prstGeom prst=\"rect\"><a:avLst/></a:prstGeom></pic:spPr></pic:pic>")
+	strings.write_string(b, "</a:graphicData></a:graphic></wp:inline></w:drawing></w:r>")
+}
+
+doc_to_docx_document :: proc(d: ^Doc, media: []Media = nil, alloc := context.allocator) -> string {
 	b := strings.builder_make(alloc)
 	strings.write_string(
 		&b,
 		`<?xml version="1.0" encoding="UTF-8" standalone="yes"?>` + "\n" +
 		`<w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main" ` +
-		`xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships"><w:body>`,
+		`xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships" ` +
+		`xmlns:wp="http://schemas.openxmlformats.org/drawingml/2006/wordprocessingDrawing" ` +
+		`xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main" ` +
+		`xmlns:pic="http://schemas.openxmlformats.org/drawingml/2006/picture"><w:body>`,
 	)
-	for &pa in d.paras {
-		km := kind_metrics(pa.kind)
-		strings.write_string(&b, "<w:p><w:pPr>")
-		fmt.sbprintf(&b, "<w:pStyle w:val=\"%s\"/>", docx_style(&pa))
-		if pa.break_before {
-			strings.write_string(&b, "<w:pageBreakBefore/>")
+	img_id := 1
+	for &pa, pi in d.paras {
+		if pa.kind == .Table && pa.table != nil {
+			docx_table(&b, pa.table)
+			// A table may not be the last thing in a body: Word and
+			// LibreOffice both want a paragraph after it, and without one the
+			// file opens with the table merged into the section break.
+			if pi == len(d.paras) - 1 {
+				strings.write_string(&b, "<w:p/>")
+			}
+			continue
 		}
-		if pa.list != .None {
-			fmt.sbprintf(
-				&b,
-				"<w:numPr><w:ilvl w:val=\"%d\"/><w:numId w:val=\"%d\"/></w:numPr>",
-				min(pa.depth, 8),
-				pa.list == .Bullet ? 1 : 2,
-			)
-		} else if pa.depth > 0 {
-			fmt.sbprintf(&b, "<w:ind w:left=\"%d\"/>", tw(f32(pa.depth) * DEPTH_INDENT))
+		strings.write_string(&b, "<w:p>")
+		docx_ppr(&b, &pa)
+		if pa.kind == .Image {
+			if m, got := media_of(d, media, pi); got {
+				docx_drawing(&b, &pa, m, img_id)
+				img_id += 1
+			} else {
+				// No bytes to embed: say what is missing, in text, rather than
+				// writing an empty paragraph.
+				strings.write_string(&b, "<w:r><w:t xml:space=\"preserve\">[")
+				xml_escape(&b, pa.img == nil ? "picture" : (pa.img.alt != "" ? pa.img.alt : pa.img.path))
+				strings.write_string(&b, "]</w:t></w:r>")
+			}
+		} else {
+			docx_runs(&b, &pa)
 		}
-		if pa.before != 0 || pa.after != 0 {
-			fmt.sbprintf(
-				&b,
-				"<w:spacing w:before=\"%d\" w:after=\"%d\"/>",
-				tw(km.before + pa.before),
-				tw(km.after + pa.after),
-			)
-		}
-		switch pa.align {
-		case .Center:
-			strings.write_string(&b, "<w:jc w:val=\"center\"/>")
-		case .Right:
-			strings.write_string(&b, "<w:jc w:val=\"right\"/>")
-		case .Justify:
-			strings.write_string(&b, "<w:jc w:val=\"both\"/>")
-		case .Left:
-		}
-		strings.write_string(&b, "</w:pPr>")
-		docx_runs(&b, &pa)
 		strings.write_string(&b, "</w:p>")
 	}
 	// A4 with one-inch margins, so the page matches the app's own A4.
@@ -296,6 +543,23 @@ docx_styles :: proc(alloc := context.allocator) -> string {
 		tw(4),
 		374,
 	)
+	// A real table style, so an exported table is restyleable in Word rather
+	// than a grid of direct formatting.
+	fmt.sbprintf(
+		&b,
+		"<w:style w:type=\"table\" w:styleId=\"TableGrid\"><w:name w:val=\"Table Grid\"/>" +
+		"<w:basedOn w:val=\"TableNormal\"/><w:qFormat/><w:tblPr>" +
+		"<w:tblBorders>" +
+		"<w:top w:val=\"single\" w:sz=\"6\" w:space=\"0\" w:color=\"A8A8AA\"/>" +
+		"<w:left w:val=\"single\" w:sz=\"6\" w:space=\"0\" w:color=\"A8A8AA\"/>" +
+		"<w:bottom w:val=\"single\" w:sz=\"6\" w:space=\"0\" w:color=\"A8A8AA\"/>" +
+		"<w:right w:val=\"single\" w:sz=\"6\" w:space=\"0\" w:color=\"A8A8AA\"/>" +
+		"<w:insideH w:val=\"single\" w:sz=\"6\" w:space=\"0\" w:color=\"A8A8AA\"/>" +
+		"<w:insideV w:val=\"single\" w:sz=\"6\" w:space=\"0\" w:color=\"A8A8AA\"/>" +
+		"</w:tblBorders></w:tblPr></w:style>" +
+		"<w:style w:type=\"table\" w:default=\"1\" w:styleId=\"TableNormal\">" +
+		"<w:name w:val=\"Normal Table\"/></w:style>",
+	)
 	strings.write_string(&b, "</w:styles>")
 	return strings.to_string(b)
 }
@@ -351,13 +615,31 @@ export_docx :: proc(d: ^Doc, path, title: string) -> bool {
 	zip_init(&z)
 	defer zip_destroy(&z)
 
-	zip_add_string(
-		&z,
-		"[Content_Types].xml",
+	media := collect_media(d, "word/media/", context.temp_allocator)
+
+	// [Content_Types].xml has to declare a default for every extension in the
+	// package, so a picture needs its own entry or the reader rejects the part.
+	ct := strings.builder_make(context.temp_allocator)
+	strings.write_string(
+		&ct,
 		`<?xml version="1.0" encoding="UTF-8" standalone="yes"?>` + "\n" +
 		`<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types">` +
 		`<Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/>` +
-		`<Default Extension="xml" ContentType="application/xml"/>` +
+		`<Default Extension="xml" ContentType="application/xml"/>`,
+	)
+	for ext in ([?][2]string{{"png", "image/png"}, {"jpeg", "image/jpeg"}, {"jpg", "image/jpeg"}}) {
+		used := false
+		for m in media {
+			if m.ext == ext[0] {
+				used = true
+			}
+		}
+		if used {
+			fmt.sbprintf(&ct, `<Default Extension="%s" ContentType="%s"/>`, ext[0], ext[1])
+		}
+	}
+	strings.write_string(
+		&ct,
 		`<Override PartName="/word/document.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.document.main+xml"/>` +
 		`<Override PartName="/word/styles.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.styles+xml"/>` +
 		`<Override PartName="/word/numbering.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.numbering+xml"/>` +
@@ -365,6 +647,8 @@ export_docx :: proc(d: ^Doc, path, title: string) -> bool {
 		`<Override PartName="/docProps/app.xml" ContentType="application/vnd.openxmlformats-officedocument.extended-properties+xml"/>` +
 		`</Types>`,
 	)
+	zip_add_string(&z, "[Content_Types].xml", strings.to_string(ct))
+
 	zip_add_string(
 		&z,
 		"_rels/.rels",
@@ -375,15 +659,25 @@ export_docx :: proc(d: ^Doc, path, title: string) -> bool {
 		`<Relationship Id="rId3" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/extended-properties" Target="docProps/app.xml"/>` +
 		`</Relationships>`,
 	)
-	zip_add_string(
-		&z,
-		"word/_rels/document.xml.rels",
+
+	rels := strings.builder_make(context.temp_allocator)
+	strings.write_string(
+		&rels,
 		`<?xml version="1.0" encoding="UTF-8" standalone="yes"?>` + "\n" +
 		`<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">` +
 		`<Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/styles" Target="styles.xml"/>` +
-		`<Relationship Id="rId2" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/numbering" Target="numbering.xml"/>` +
-		`</Relationships>`,
+		`<Relationship Id="rId2" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/numbering" Target="numbering.xml"/>`,
 	)
+	for m in media {
+		fmt.sbprintf(
+			&rels,
+			`<Relationship Id="%s" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/image" Target="media/%s"/>`,
+			m.rid,
+			base_name(m.part),
+		)
+	}
+	strings.write_string(&rels, `</Relationships>`)
+	zip_add_string(&z, "word/_rels/document.xml.rels", strings.to_string(rels))
 
 	core := strings.builder_make(context.temp_allocator)
 	strings.write_string(
@@ -416,9 +710,12 @@ export_docx :: proc(d: ^Doc, path, title: string) -> bool {
 		),
 	)
 
-	zip_add_string(&z, "word/document.xml", doc_to_docx_document(d, context.temp_allocator))
+	zip_add_string(&z, "word/document.xml", doc_to_docx_document(d, media, context.temp_allocator))
 	zip_add_string(&z, "word/styles.xml", docx_styles(context.temp_allocator))
 	zip_add_string(&z, "word/numbering.xml", docx_numbering(context.temp_allocator))
+	for m in media {
+		zip_add(&z, m.part, m.bytes)
+	}
 	return os.write_entire_file(path, zip_finish(&z)) == nil
 }
 
@@ -439,7 +736,7 @@ odt_para_style :: proc(k: Para_Kind) -> string {
 		return "Quote"
 	case .Code:
 		return "Preformatted_20_Text"
-	case .Body:
+	case .Body, .Table, .Image:
 		return "Standard"
 	}
 	return "Standard"
@@ -577,7 +874,7 @@ odt_para_auto :: proc(st: ^Odt_Styles, pa: ^Paragraph) -> string {
 	return fmt.tprintf("P%d", len(st.para))
 }
 
-doc_to_odt_content :: proc(d: ^Doc, alloc := context.allocator) -> string {
+doc_to_odt_content :: proc(d: ^Doc, media: []Media = nil, alloc := context.allocator) -> string {
 	styles := Odt_Styles {
 		text = make([dynamic]string, 0, 8, context.temp_allocator),
 		para = make([dynamic]string, 0, 8, context.temp_allocator),
@@ -616,7 +913,116 @@ doc_to_odt_content :: proc(d: ^Doc, alloc := context.allocator) -> string {
 		}
 	}
 
-	for &pa in d.paras {
+	// odt_table writes a <table:table>. ODF puts a repeating header inside
+	// <table:table-header-rows>, which is both the structure and the
+	// pagination instruction — the same rule the app's own layout uses.
+	odt_table :: proc(b: ^strings.Builder, st: ^Odt_Styles, t: ^Table, n: int) {
+		ncols := table_cols(t)
+		fmt.sbprintf(
+			b,
+			"<table:table table:name=\"Table%d\" table:style-name=\"Tbl%d\">",
+			n,
+			n,
+		)
+		for c in 0 ..< ncols {
+			fmt.sbprintf(b, "<table:table-column table:style-name=\"Tbl%d.%d\"/>", n, c)
+		}
+		row :: proc(b: ^strings.Builder, st: ^Odt_Styles, t: ^Table, n, r, ncols: int) {
+			head := t.header && r == 0
+			strings.write_string(b, "<table:table-row>")
+			for c in 0 ..< ncols {
+				fmt.sbprintf(
+					b,
+					"<table:table-cell table:style-name=\"Tbl%d.%s\" office:value-type=\"string\">",
+					n,
+					head ? "H" : "C",
+				)
+				cl := table_cell(t, r, c)
+				if cl == nil || len(cl.paras) == 0 {
+					strings.write_string(b, "<text:p/>")
+				} else {
+					for &cp in cl.paras {
+						name := head ? "TblHead" : odt_para_style(cp.kind)
+						fmt.sbprintf(b, "<text:p text:style-name=\"%s\">", name)
+						emit_inline(b, st, &cp)
+						strings.write_string(b, "</text:p>")
+					}
+				}
+				strings.write_string(b, "</table:table-cell>")
+			}
+			strings.write_string(b, "</table:table-row>")
+		}
+		if t.header && len(t.rows) > 0 {
+			strings.write_string(b, "<table:table-header-rows>")
+			row(b, st, t, n, 0, ncols)
+			strings.write_string(b, "</table:table-header-rows>")
+			for r in 1 ..< len(t.rows) {
+				row(b, st, t, n, r, ncols)
+			}
+		} else {
+			for r in 0 ..< len(t.rows) {
+				row(b, st, t, n, r, ncols)
+			}
+		}
+		strings.write_string(b, "</table:table>")
+	}
+
+	// odt_image writes a <draw:frame> anchored as a character inside its own
+	// paragraph, which is how ODF says "an inline picture".
+	odt_image :: proc(b: ^strings.Builder, pa: ^Paragraph, href: string, n: int) {
+		w, h := image_para_size(pa)
+		align := "center"
+		switch pa.align {
+		case .Left:
+			align = "start"
+		case .Right:
+			align = "end"
+		case .Center, .Justify:
+		}
+		fmt.sbprintf(b, "<text:p text:style-name=\"Img%s\">", align)
+		fmt.sbprintf(
+			b,
+			"<draw:frame draw:style-name=\"Frame1\" draw:name=\"Image%d\" text:anchor-type=\"as-char\" " +
+			"svg:width=\"%.3fin\" svg:height=\"%.3fin\" draw:z-index=\"%d\">",
+			n,
+			w / 96,
+			h / 96,
+			n,
+		)
+		if href != "" {
+			fmt.sbprintf(
+				b,
+				"<draw:image xlink:href=\"%s\" xlink:type=\"simple\" xlink:show=\"embed\" xlink:actuate=\"onLoad\"/>",
+				href,
+			)
+		}
+		if pa.img != nil && pa.img.alt != "" {
+			strings.write_string(b, "<svg:title>")
+			xml_escape(b, pa.img.alt)
+			strings.write_string(b, "</svg:title>")
+		}
+		strings.write_string(b, "</draw:frame></text:p>")
+	}
+
+	tbl_n := 0
+	img_n := 0
+	for &pa, pi in d.paras {
+		if pa.kind == .Table && pa.table != nil {
+			close_lists(&body, &levels, &list_kind)
+			tbl_n += 1
+			odt_table(&body, &styles, pa.table, tbl_n)
+			continue
+		}
+		if pa.kind == .Image {
+			close_lists(&body, &levels, &list_kind)
+			img_n += 1
+			href := ""
+			if m, got := media_of(d, media, pi); got {
+				href = m.part
+			}
+			odt_image(&body, &pa, href, img_n)
+			continue
+		}
 		if pa.list == .None {
 			close_lists(&body, &levels, &list_kind)
 			auto := odt_para_auto(&styles, &pa)
@@ -632,7 +1038,7 @@ doc_to_odt_content :: proc(d: ^Doc, alloc := context.allocator) -> string {
 				)
 				emit_inline(&body, &styles, &pa)
 				strings.write_string(&body, "</text:h>")
-			case .Body, .Quote, .Code:
+			case .Body, .Quote, .Code, .Table, .Image:
 				fmt.sbprintf(&body, "<text:p text:style-name=\"%s\">", name)
 				emit_inline(&body, &styles, &pa)
 				strings.write_string(&body, "</text:p>")
@@ -677,6 +1083,10 @@ doc_to_odt_content :: proc(d: ^Doc, alloc := context.allocator) -> string {
 		`xmlns:office="urn:oasis:names:tc:opendocument:xmlns:office:1.0" ` +
 		`xmlns:style="urn:oasis:names:tc:opendocument:xmlns:style:1.0" ` +
 		`xmlns:text="urn:oasis:names:tc:opendocument:xmlns:text:1.0" ` +
+		`xmlns:table="urn:oasis:names:tc:opendocument:xmlns:table:1.0" ` +
+		`xmlns:draw="urn:oasis:names:tc:opendocument:xmlns:drawing:1.0" ` +
+		`xmlns:svg="urn:oasis:names:tc:opendocument:xmlns:svg-compatible:1.0" ` +
+		`xmlns:xlink="http://www.w3.org/1999/xlink" ` +
 		`xmlns:fo="urn:oasis:names:tc:opendocument:xmlns:xsl-fo-compatible:1.0" ` +
 		`office:version="1.3"><office:automatic-styles>`,
 	)
@@ -698,6 +1108,69 @@ doc_to_odt_content :: proc(d: ^Doc, alloc := context.allocator) -> string {
 			i + 1,
 			parent,
 			entry[bar + 1:],
+		)
+	}
+	// The automatic styles for every table: one for the table's width, one per
+	// column, and two cell styles — the header's and the body's.
+	{
+		n := 0
+		for &pa in d.paras {
+			if pa.kind != .Table || pa.table == nil {
+				continue
+			}
+			n += 1
+			t := pa.table
+			fmt.sbprintf(
+				&out,
+				"<style:style style:name=\"Tbl%d\" style:family=\"table\">" +
+				"<style:table-properties style:width=\"%.3fin\" table:align=\"margins\"/></style:style>",
+				n,
+				CONTENT_W / 96,
+			)
+			for c in 0 ..< table_cols(t) {
+				fmt.sbprintf(
+					&out,
+					"<style:style style:name=\"Tbl%d.%d\" style:family=\"table-column\">" +
+					"<style:table-column-properties style:column-width=\"%.3fin\"/></style:style>",
+					n,
+					c,
+					table_width(t, c) / 96,
+				)
+			}
+			border := t.borders ? "0.0007in solid #a8a8aa" : "none"
+			for pair in ([?][2]string{{"H", "#f1f1f2"}, {"C", "transparent"}}) {
+				fmt.sbprintf(
+					&out,
+					"<style:style style:name=\"Tbl%d.%s\" style:family=\"table-cell\">" +
+					"<style:table-cell-properties fo:padding=\"%.3fin\" fo:border=\"%s\"",
+					n,
+					pair[0],
+					CELL_PAD / 96,
+					border,
+				)
+				if pair[0] == "H" {
+					fmt.sbprintf(&out, " fo:background-color=\"%s\"", pair[1])
+				}
+				strings.write_string(&out, "/></style:style>")
+			}
+		}
+	}
+	// A frame style for pictures, and the three alignments an image paragraph
+	// can take.
+	strings.write_string(
+		&out,
+		"<style:style style:name=\"Frame1\" style:family=\"graphic\">" +
+		"<style:graphic-properties style:vertical-pos=\"top\" style:vertical-rel=\"baseline\" " +
+		"fo:border=\"none\" style:wrap=\"none\"/></style:style>",
+	)
+	for al in ([?][2]string{{"start", "start"}, {"center", "center"}, {"end", "end"}}) {
+		fmt.sbprintf(
+			&out,
+			"<style:style style:name=\"Img%s\" style:family=\"paragraph\" style:parent-style-name=\"Standard\">" +
+			"<style:paragraph-properties fo:text-align=\"%s\" fo:margin-top=\"0.125in\" fo:margin-bottom=\"0.125in\"/>" +
+			"</style:style>",
+			al[0],
+			al[1],
 		)
 	}
 	strings.write_string(&out, odt_list_styles())
@@ -814,6 +1287,22 @@ odt_styles_xml :: proc(alloc := context.allocator) -> string {
 		f32(11) / 96,
 		f32(15) * 0.75,
 	)
+	// The header-cell paragraph style, so an exported header row is bold by
+	// style rather than by direct formatting on every run.
+	fmt.sbprintf(
+		&b,
+		"<style:style style:name=\"TblHead\" style:display-name=\"Table Heading\" style:family=\"paragraph\" " +
+		"style:parent-style-name=\"Standard\"><style:paragraph-properties fo:margin-bottom=\"0in\"/>" +
+		"<style:text-properties fo:font-weight=\"bold\" fo:font-size=\"%.1fpt\"/></style:style>",
+		f32(15) * 0.75,
+	)
+	fmt.sbprintf(
+		&b,
+		"<style:style style:name=\"TblBody\" style:display-name=\"Table Contents\" style:family=\"paragraph\" " +
+		"style:parent-style-name=\"Standard\"><style:paragraph-properties fo:margin-bottom=\"0in\"/>" +
+		"<style:text-properties fo:font-size=\"%.1fpt\"/></style:style>",
+		f32(15) * 0.75,
+	)
 	pstyle(&b, "Heading", "Heading", "Standard", 18, true, 16, 6, 1.36)
 	pstyle(&b, "Heading_20_1", "Heading 1", "Heading", 30, true, 24, 10, 1.22, "", "", 1)
 	pstyle(&b, "Heading_20_2", "Heading 2", "Heading", 23, true, 20, 8, 1.28, "", "", 2)
@@ -864,13 +1353,16 @@ export_odt :: proc(d: ^Doc, path, title: string) -> bool {
 	zip_init(&z)
 	defer zip_destroy(&z)
 
+	media := collect_media(d, "Pictures/", context.temp_allocator)
+
 	// First entry, stored, no extra field — the one hard requirement ODF
 	// makes of the container, so that `file(1)` can identify the type from
 	// the first thirty-odd bytes of the archive.
 	zip_add_string(&z, "mimetype", ODT_MIME)
-	zip_add_string(
-		&z,
-		"META-INF/manifest.xml",
+
+	man := strings.builder_make(context.temp_allocator)
+	strings.write_string(
+		&man,
 		`<?xml version="1.0" encoding="UTF-8"?>` + "\n" +
 		`<manifest:manifest xmlns:manifest="urn:oasis:names:tc:opendocument:xmlns:manifest:1.0" manifest:version="1.3">` +
 		`<manifest:file-entry manifest:full-path="/" manifest:version="1.3" manifest:media-type="` +
@@ -878,9 +1370,18 @@ export_odt :: proc(d: ^Doc, path, title: string) -> bool {
 		`"/>` +
 		`<manifest:file-entry manifest:full-path="content.xml" manifest:media-type="text/xml"/>` +
 		`<manifest:file-entry manifest:full-path="styles.xml" manifest:media-type="text/xml"/>` +
-		`<manifest:file-entry manifest:full-path="meta.xml" manifest:media-type="text/xml"/>` +
-		`</manifest:manifest>`,
+		`<manifest:file-entry manifest:full-path="meta.xml" manifest:media-type="text/xml"/>`,
 	)
+	for m in media {
+		fmt.sbprintf(
+			&man,
+			`<manifest:file-entry manifest:full-path="%s" manifest:media-type="%s"/>`,
+			m.part,
+			m.mime,
+		)
+	}
+	strings.write_string(&man, `</manifest:manifest>`)
+	zip_add_string(&z, "META-INF/manifest.xml", strings.to_string(man))
 
 	meta := strings.builder_make(context.temp_allocator)
 	strings.write_string(
@@ -897,9 +1398,12 @@ export_odt :: proc(d: ^Doc, path, title: string) -> bool {
 	strings.write_string(&meta, "</meta:initial-creator><dc:language>en-US</dc:language>")
 	strings.write_string(&meta, "<meta:generator>palmy docs</meta:generator></office:meta></office:document-meta>")
 
-	zip_add_string(&z, "content.xml", doc_to_odt_content(d, context.temp_allocator))
+	zip_add_string(&z, "content.xml", doc_to_odt_content(d, media, context.temp_allocator))
 	zip_add_string(&z, "styles.xml", odt_styles_xml(context.temp_allocator))
 	zip_add_string(&z, "meta.xml", strings.to_string(meta))
+	for m in media {
+		zip_add(&z, m.part, m.bytes)
+	}
 	return os.write_entire_file(path, zip_finish(&z)) == nil
 }
 
@@ -950,7 +1454,11 @@ doc_to_rtf :: proc(d: ^Doc, title: string, alloc := context.allocator) -> string
 	// A colour table: index 0 is "auto", 1 is the ink, and the rest are
 	// whatever colours the document actually uses.
 	cols := make([dynamic]u32, 0, 8, context.temp_allocator)
-	for &pa in d.paras {
+	for blk in doc_blocks(d, context.temp_allocator) {
+		pa := blk_para(d, blk)
+		if pa == nil {
+			continue
+		}
 		for &r in pa.runs {
 			if r.style.color == 0 {
 				continue
@@ -968,7 +1476,9 @@ doc_to_rtf :: proc(d: ^Doc, title: string, alloc := context.allocator) -> string
 			}
 		}
 	}
-	strings.write_string(&b, "{\\colortbl;\\red18\\green18\\blue18;")
+	// Index 1 is the ink and index 2 is the header-row shading, so a table's
+	// `\clcbpat2` resolves without a per-document lookup.
+	strings.write_string(&b, "{\\colortbl;\\red18\\green18\\blue18;\\red241\\green241\\blue242;")
 	for c in cols {
 		fmt.sbprintf(&b, "\\red%d\\green%d\\blue%d;", (c >> 16) & 0xff, (c >> 8) & 0xff, c & 0xff)
 	}
@@ -1020,16 +1530,20 @@ doc_to_rtf :: proc(d: ^Doc, title: string, alloc := context.allocator) -> string
 	rtf_text(&b, title)
 	strings.write_string(&b, "}}\n")
 
-	color_index :: proc(cols: []u32, c: u32) -> int {
-		for q, i in cols {
-			if q == c & 0xffffff {
-				return i + 2
-			}
-		}
-		return 1
-	}
-
 	for &pa, pi in d.paras {
+		// A table is the one construct RTF expresses as a *sequence of
+		// paragraphs* rather than as a container: every cell is a paragraph
+		// marked `\intbl`, the row's geometry is declared once in `\trowd`
+		// before the cells, and `\row` closes it. It is the oldest and
+		// ugliest of the three table syntaxes and it works everywhere.
+		if pa.kind == .Table && pa.table != nil {
+			rtf_table(&b, pa.table, cols[:])
+			continue
+		}
+		if pa.kind == .Image {
+			rtf_image(&b, &pa)
+			continue
+		}
 		km := kind_metrics(pa.kind)
 		strings.write_string(&b, "\\pard\\plain")
 		switch pa.kind {
@@ -1043,7 +1557,7 @@ doc_to_rtf :: proc(d: ^Doc, title: string, alloc := context.allocator) -> string
 			strings.write_string(&b, "\\s4")
 		case .Code:
 			strings.write_string(&b, "\\s5")
-		case .Body:
+		case .Body, .Table, .Image:
 			strings.write_string(&b, "\\s0")
 		}
 		if pa.break_before && pi > 0 {
@@ -1087,35 +1601,162 @@ doc_to_rtf :: proc(d: ^Doc, title: string, alloc := context.allocator) -> string
 		}
 		strings.write_byte(&b, ' ')
 
-		for &r in pa.runs {
-			text := string(r.text[:])
-			if len(text) == 0 {
-				continue
-			}
-			cs := r.style
-			// The control words first, into their own buffer: a control word
-			// swallows the space that ends it, but a group with no control
-			// word at all would keep that space as literal text — which is
-			// how every word in the document ends up with a leading blank.
-			cw := strings.builder_make(context.temp_allocator)
-			if cs.mono || pa.kind == .Code {strings.write_string(&cw, "\\f1")}
-			if cs.bold {strings.write_string(&cw, "\\b")}
-			if cs.italic {strings.write_string(&cw, "\\i")}
-			if cs.underline {strings.write_string(&cw, "\\ul")}
-			if cs.size != 0 {fmt.sbprintf(&cw, "\\fs%d", half_pt(cs.size))}
-			if cs.color != 0 {fmt.sbprintf(&cw, "\\cf%d", color_index(cols[:], cs.color))}
-			strings.write_byte(&b, '{')
-			if strings.builder_len(cw) > 0 {
-				strings.write_string(&b, strings.to_string(cw))
-				strings.write_byte(&b, ' ')
-			}
-			rtf_text(&b, text)
-			strings.write_byte(&b, '}')
-		}
+		rtf_runs(&b, &pa, cols[:], false, pa.kind == .Code)
 		strings.write_string(&b, "\\par\n")
 	}
 	strings.write_string(&b, "}\n")
 	return strings.to_string(b)
+}
+
+// rtf_runs writes one paragraph's runs. Control words go into their own buffer
+// first for the reason given in `doc_to_rtf`: a control word swallows the space
+// that terminates it, and a group with none would keep that space as text.
+@(private = "file")
+rtf_runs :: proc(b: ^strings.Builder, pa: ^Paragraph, cols: []u32, force_bold := false, mono := false) {
+	// Index 0 is "auto", 1 the ink and 2 the header shading, so the document's
+	// own colours start at 3.
+	color_index :: proc(cols: []u32, c: u32) -> int {
+		for q, i in cols {
+			if q == c & 0xffffff {
+				return i + 3
+			}
+		}
+		return 1
+	}
+	for &r in pa.runs {
+		text := string(r.text[:])
+		if len(text) == 0 {
+			continue
+		}
+		cs := r.style
+		cw := strings.builder_make(context.temp_allocator)
+		if cs.mono || mono {strings.write_string(&cw, "\\f1")}
+		if cs.bold || force_bold {strings.write_string(&cw, "\\b")}
+		if cs.italic {strings.write_string(&cw, "\\i")}
+		if cs.underline {strings.write_string(&cw, "\\ul")}
+		if cs.size != 0 {fmt.sbprintf(&cw, "\\fs%d", half_pt(cs.size))}
+		if cs.color != 0 {fmt.sbprintf(&cw, "\\cf%d", color_index(cols, cs.color))}
+		strings.write_byte(b, '{')
+		if strings.builder_len(cw) > 0 {
+			strings.write_string(b, strings.to_string(cw))
+			strings.write_byte(b, ' ')
+		}
+		rtf_text(b, text)
+		strings.write_byte(b, '}')
+	}
+}
+
+// rtf_table writes one table as a run of `\trowd` rows.
+//
+// The two things that make or break it:
+//
+//   * `\cellx` is the *cumulative* right edge of each column in twips, not the
+//     column's width. Writing widths instead gives a table whose columns all
+//     collapse into the first one.
+//   * the row definition has to be repeated before every row. A reader that
+//     meets `\intbl` without a preceding `\trowd` either drops the row or
+//     merges it into the one before.
+@(private = "file")
+rtf_table :: proc(b: ^strings.Builder, t: ^Table, cols: []u32) {
+	ncols := table_cols(t)
+	for r in 0 ..< len(t.rows) {
+		head := t.header && r == 0
+		strings.write_string(b, "\\trowd\\trgaph")
+		fmt.sbprintf(b, "%d\\trleft0", tw(CELL_PAD) / 2)
+		if head {
+			// `\trhdr` is RTF's repeating header row — the same pagination
+			// promise the .docx `<w:tblHeader/>` makes.
+			strings.write_string(b, "\\trhdr")
+		}
+		strings.write_string(b, "\\trkeep")
+		edge := f32(0)
+		for c in 0 ..< ncols {
+			edge += table_width(t, c)
+			if t.borders {
+				strings.write_string(
+					b,
+					"\\clbrdrt\\brdrs\\brdrw10\\clbrdrl\\brdrs\\brdrw10" +
+					"\\clbrdrb\\brdrs\\brdrw10\\clbrdrr\\brdrs\\brdrw10",
+				)
+			}
+			if head {
+				// Cell shading, in hundredths of a percent, plus the colour.
+				strings.write_string(b, "\\clcbpat2")
+			}
+			fmt.sbprintf(b, "\\cellx%d", tw(edge))
+		}
+		strings.write_byte(b, '\n')
+		for c in 0 ..< ncols {
+			strings.write_string(b, "\\pard\\intbl\\ql")
+			fmt.sbprintf(b, "\\f0\\fs%d ", half_pt(15))
+			if cl := table_cell(t, r, c); cl != nil {
+				for &cp, i in cl.paras {
+					if i > 0 {
+						// Several paragraphs in one cell are separated by
+						// `\line`; `\par` inside a cell ends the cell in some
+						// readers.
+						strings.write_string(b, "\\line ")
+					}
+					rtf_runs(b, &cp, cols, head, cp.kind == .Code)
+				}
+			}
+			strings.write_string(b, "\\cell\n")
+		}
+		strings.write_string(b, "\\row\n")
+	}
+	strings.write_string(b, "\\pard\\plain\\s0 \n")
+}
+
+// rtf_image writes a `{\pict}` group with the file's bytes in hex.
+//
+// RTF has no container and no compression: the picture goes in as hexadecimal
+// digits, two per byte, which doubles it. `\pngblip` and `\jpegblip` say what
+// the bytes are, `\picw`/`\pich` give the intrinsic size in pixels and
+// `\picwgoal`/`\pichgoal` the drawn size in twips — a reader that finds only
+// the first pair draws the picture at its pixel size in points, which is a
+// third too big.
+@(private = "file")
+rtf_image :: proc(b: ^strings.Builder, pa: ^Paragraph) {
+	im := pa.img
+	w, h := image_para_size(pa)
+	strings.write_string(b, "\\pard\\plain\\s0")
+	switch pa.align {
+	case .Center, .Justify:
+		strings.write_string(b, "\\qc")
+	case .Right:
+		strings.write_string(b, "\\qr")
+	case .Left:
+		strings.write_string(b, "\\ql")
+	}
+	strings.write_byte(b, ' ')
+	if im == nil || len(im.bytes) == 0 || im.kind == .Unknown {
+		strings.write_byte(b, '{')
+		rtf_text(b, fmt.tprintf("[%s]", im == nil ? "picture" : (im.alt != "" ? im.alt : im.path)))
+		strings.write_byte(b, '}')
+		strings.write_string(b, "\\par\n")
+		return
+	}
+	strings.write_byte(b, '{')
+	strings.write_string(b, "\\pict")
+	strings.write_string(b, im.kind == .PNG ? "\\pngblip" : "\\jpegblip")
+	fmt.sbprintf(
+		b,
+		"\\picw%d\\pich%d\\picwgoal%d\\pichgoal%d\n",
+		im.w,
+		im.h,
+		tw(w),
+		tw(h),
+	)
+	hex := "0123456789abcdef"
+	for v, i in im.bytes {
+		strings.write_byte(b, hex[v >> 4])
+		strings.write_byte(b, hex[v & 0xf])
+		if i % 40 == 39 {
+			strings.write_byte(b, '\n')
+		}
+	}
+	strings.write_byte(b, '}')
+	strings.write_string(b, "\\par\n")
 }
 
 export_rtf :: proc(d: ^Doc, path, title: string) -> bool {
@@ -1410,8 +2051,35 @@ docx_numbering_kinds :: proc(src: string) -> map[int]List_Kind {
 // assembles paragraphs and runs. It is deliberately forgiving — anything it
 // does not recognise is ignored rather than rejected, because a .docx from
 // the wild carries a great deal this model has no place for.
-doc_from_docx_xml :: proc(document, numbering: string) -> Doc {
+// docx_rel_targets reads word/_rels/document.xml.rels and maps a relationship
+// id to its target. The import needs it for pictures: a <a:blip> names an id,
+// and only the relationship part says which file in word/media that is.
+@(private = "file")
+docx_rel_targets :: proc(src: string) -> map[string]string {
+	out := make(map[string]string, 8, context.temp_allocator)
+	x := Xml {
+		src = src,
+	}
+	for xml_next(&x) {
+		if x.name != "Relationship" || x.kind == .Text || x.kind == .Close {
+			continue
+		}
+		id, has_id := xml_attr(&x, "Id")
+		target, has_t := xml_attr(&x, "Target")
+		if has_id && has_t {
+			out[strings.clone(id, context.temp_allocator)] = strings.clone(target, context.temp_allocator)
+		}
+	}
+	return out
+}
+
+doc_from_docx_xml :: proc(
+	document, numbering: string,
+	rels := "",
+	archive: []u8 = nil,
+) -> Doc {
 	num_kinds := docx_numbering_kinds(numbering)
+	rel_map := docx_rel_targets(rels)
 	out := Doc {
 		paras = make([dynamic]Paragraph, 0, 64),
 	}
@@ -1432,6 +2100,28 @@ doc_from_docx_xml :: proc(document, numbering: string) -> Doc {
 	explicit_size := f32(0)
 	num_id := -1
 	ilvl := 0
+
+	// --- table state.
+	//
+	// The scanner is flat, so the table is assembled in three accumulators:
+	// the table being built, the row, and the cell. A paragraph that closes
+	// while `cell_open` is set goes into the cell instead of into the
+	// document, which is the whole of the nesting this needs.
+	//
+	// `tbl_depth` guards against a nested table: the model has no place for
+	// one, so an inner table's paragraphs are flattened into the cell that
+	// contains it rather than producing a grid nothing would lay out.
+	tbl_depth := 0
+	tbl: Table
+	row: Row
+	cell: Cell
+	cell_open := false
+	row_open := false
+	grid := make([dynamic]f32, 0, 8, context.temp_allocator)
+	tbl_header := false
+	tbl_borders := true
+	// --- picture state
+	blip_rid := ""
 	run_text := strings.builder_make(context.temp_allocator)
 	// One `<w:t>` at a time, so `xml:space` can be honoured per element:
 	// without `preserve`, OOXML says the edges of the text may be trimmed,
@@ -1464,29 +2154,177 @@ doc_from_docx_xml :: proc(document, numbering: string) -> Doc {
 		}
 
 		switch x.name {
+		case "w:tbl":
+			switch x.kind {
+			case .Open:
+				tbl_depth += 1
+				if tbl_depth == 1 {
+					tbl = Table {
+						rows    = make([dynamic]Row, 0, 4),
+						widths  = make([dynamic]f32, 0, 4),
+						borders = true,
+					}
+					clear(&grid)
+					tbl_header = false
+					tbl_borders = true
+				}
+			case .Close:
+				if tbl_depth == 1 {
+					tbl.header = tbl_header
+					tbl.borders = tbl_borders
+					for w in grid {
+						append(&tbl.widths, w)
+					}
+					if len(tbl.rows) == 0 {
+						r := Row {
+							cells = make([dynamic]Cell, 0, 1),
+						}
+						append(&r.cells, cell_make())
+						append(&tbl.rows, r)
+					}
+					table_fit_widths(&tbl)
+					tp := para_make(.Table)
+					tp.table = new(Table)
+					tp.table^ = tbl
+					append(&out.paras, tp)
+					tbl = {}
+				}
+				tbl_depth = max(0, tbl_depth - 1)
+			case .Empty, .Text, .Done:
+			}
+		case "w:tblBorders":
+			// A border block that names `none` on every side means the table
+			// was written without rules.
+			if x.kind == .Open && tbl_depth == 1 {
+				tbl_borders = false
+			}
+		case "w:top", "w:left", "w:bottom", "w:right", "w:insideH", "w:insideV":
+			if tbl_depth == 1 {
+				if v, has := xml_attr(&x, "w:val"); has && v != "none" && v != "nil" {
+					tbl_borders = true
+				}
+			}
+		case "w:gridCol":
+			if tbl_depth == 1 {
+				if n := attr_int(&x, "w:w", 0); n > 0 {
+					append(&grid, f32(n) / 15) // twips → px
+				}
+			}
+		case "w:tblHeader":
+			if tbl_depth == 1 && docx_on(&x) {
+				tbl_header = true
+			}
+		case "w:tr":
+			if tbl_depth != 1 {
+				break
+			}
+			switch x.kind {
+			case .Open:
+				row = Row {
+					cells = make([dynamic]Cell, 0, 4),
+				}
+				row_open = true
+			case .Close:
+				if row_open {
+					if len(row.cells) == 0 {
+						append(&row.cells, cell_make())
+					}
+					append(&tbl.rows, row)
+					row_open = false
+				}
+			case .Empty, .Text, .Done:
+			}
+		case "w:tc":
+			if tbl_depth != 1 {
+				break
+			}
+			switch x.kind {
+			case .Open:
+				cell = Cell {
+					paras = make([dynamic]Paragraph, 0, 1),
+				}
+				cell_open = true
+			case .Close:
+				if cell_open {
+					if len(cell.paras) == 0 {
+						append(&cell.paras, para_make())
+					}
+					if row_open {
+						append(&row.cells, cell)
+					} else {
+						cell_destroy(&cell)
+					}
+					cell_open = false
+				}
+			case .Empty, .Text, .Done:
+			}
+		case "a:blip":
+			if v, has := xml_attr(&x, "r:embed"); has {
+				blip_rid = strings.clone(v, context.temp_allocator)
+			}
 		case "w:p":
 			switch x.kind {
 			case .Open:
 				start_para(&pa)
 				in_para = true
 				num_id, ilvl = -1, 0
+				blip_rid = ""
 			case .Close:
 				if in_para {
 					if num_id > 0 {
 						pa.list = num_kinds[num_id] or_else .Numbered
 						pa.depth = clamp(ilvl, 0, 8)
 					}
+					// A paragraph that carried a picture becomes an image
+					// paragraph, with the bytes read back out of the archive.
+					if blip_rid != "" && !cell_open {
+						if target, has := rel_map[blip_rid]; has {
+							part := strings.has_prefix(target, "/") 							? target[1:] 							: fmt.tprintf("word/%s", target)
+							if data, got := zip_read_entry(archive, part, context.temp_allocator);
+							   got {
+								if im, decoded := image_from_bytes(data, part, "", 1); decoded {
+									for &r in pa.runs {
+										delete(r.text)
+									}
+									clear(&pa.runs)
+									pa.kind = .Image
+									pa.img = new(Doc_Image)
+									pa.img^ = im
+								}
+							}
+						}
+					}
+					blip_rid = ""
 					if len(pa.runs) == 0 {
 						append(&pa.runs, run_make({}))
 					}
 					normalise(&pa)
-					append(&out.paras, pa)
+					if cell_open {
+						// Inside a cell: cell paragraphs carry no page break
+						// and no table of their own.
+						pa.break_before = false
+						if !text_kind(pa.kind) {
+							pa.kind = .Body
+							if pa.img != nil {
+								image_destroy(pa.img)
+								free(pa.img)
+								pa.img = nil
+							}
+						}
+						append(&cell.paras, pa)
+					} else {
+						append(&out.paras, pa)
+					}
 					in_para = false
 				}
 			case .Empty:
 				start_para(&pa)
 				append(&pa.runs, run_make({}))
-				append(&out.paras, pa)
+				if cell_open {
+					append(&cell.paras, pa)
+				} else {
+					append(&out.paras, pa)
+				}
 			case .Text, .Done:
 			}
 		case "w:pPr":
@@ -1624,6 +2462,21 @@ doc_from_docx_xml :: proc(document, numbering: string) -> Doc {
 		}
 	}
 
+	// A .docx may not end with a table: the body needs a paragraph after one,
+	// and every writer — this one included — emits an empty paragraph to
+	// satisfy that. It is structure, not content, so reading it back as a
+	// blank paragraph would make a round trip grow a line every time. Dropping
+	// exactly that one trailing empty paragraph is the inverse of the rule the
+	// writer applies.
+	if len(out.paras) >= 2 {
+		last := &out.paras[len(out.paras) - 1]
+		prev := &out.paras[len(out.paras) - 2]
+		if prev.kind == .Table && last.kind == .Body && para_len(last) == 0 && last.list == .None {
+			para_destroy(last)
+			pop(&out.paras)
+		}
+	}
+
 	if len(out.paras) == 0 {
 		append(&out.paras, para_make())
 	}
@@ -1640,5 +2493,6 @@ import_docx :: proc(path: string) -> (d: Doc, ok: bool) {
 		return {}, false
 	}
 	numbering, _ := zip_read_entry(archive, "word/numbering.xml", context.temp_allocator)
-	return doc_from_docx_xml(string(document), string(numbering)), true
+	rels, _ := zip_read_entry(archive, "word/_rels/document.xml.rels", context.temp_allocator)
+	return doc_from_docx_xml(string(document), string(numbering), string(rels), archive), true
 }

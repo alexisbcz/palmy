@@ -327,7 +327,7 @@ run_bench :: proc(n: int) {
 
 	// Typing in the middle of the document: each keystroke is an edit plus a
 	// full relayout, which is what the app actually does per frame.
-	st.caret = Pos{n / 2, 0}
+	st.caret = pos(n / 2, 0)
 	st.anchor = st.caret
 	t2 := time.now()
 	keys := 200
