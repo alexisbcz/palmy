@@ -1,0 +1,63 @@
+# Audio mixer demo.
+#
+# This applet changes real audio state, so this script is deliberate about it:
+# it moves the default sink down by ten percent, mutes and unmutes it, and then
+# presses U, which puts the volume and mute flag back to exactly what they were
+# when the window opened. Every step is read back with `wpctl get-volume`, and
+# the footer shows the launch value the whole time.
+#
+# Nothing is set above 100%, no device is made default, and no application
+# stream is touched.
+
+wait 2.0
+# The whole graph: three sinks, three sources, the running streams, and which
+# of each is the default.
+move 360 330
+wait 4.0
+
+# Down to the default output.
+key Down
+wait 0.9
+key Down
+wait 1.6
+
+# Volume down in five percent steps, each one read back from wpctl.
+key Left
+wait 2.0
+key Left
+wait 2.0
+
+# Mute, and unmute.
+key m
+wait 2.5
+key m
+wait 2.5
+
+# The input level meter. It is off until this key, because the only honest
+# meter is one that opens the microphone and looks at the samples.
+key Down
+wait 1.0
+key Down
+wait 1.0
+key Down
+wait 1.2
+key l
+wait 6.0
+key l
+wait 1.5
+
+# Back up to the output, and U restores it to the launch volume.
+key Home
+wait 0.8
+key Down
+wait 0.5
+key Down
+wait 1.2
+key u
+wait 3.0
+
+# Every command this applet has run against PipeWire.
+key c
+wait 5.0
+key Escape
+wait 1.5

@@ -1,0 +1,46 @@
+# The character picker. Nothing here is an emoji table written from memory:
+# every codepoint came from the Unicode Character Database crossed with the
+# cmap of the font that draws it.
+wait 1.2
+key Right
+key Right
+key Right
+key Down
+wait 1.0
+type arrow right
+wait 1.4
+key Right
+key Right
+wait 0.8
+key Return
+wait 1.6
+key Escape
+wait 0.6
+type heart
+wait 1.4
+key Right
+key Right
+key Return
+wait 1.4
+key Escape
+wait 0.5
+# A codepoint typed straight in is matched first.
+type 2318
+wait 1.4
+key Return
+wait 1.4
+key Escape
+wait 0.6
+# Tab walks the blocks; the Recently used block now has three characters in it.
+key Tab
+wait 0.9
+key Tab
+wait 0.9
+key Tab
+wait 0.9
+key Tab
+wait 1.2
+key Down
+key Right
+key Right
+wait 1.6

@@ -1,0 +1,760 @@
+// Mail — a mail client for palmy.
+//
+// Folder sidebar, threaded conversation list, reader, composer and search over
+// a Maildir on disk. The engine that fills that Maildir (IMAP, JMAP, POP3)
+// lives elsewhere; this is the part a person looks at.
+//
+// SAFETY, stated once and enforced everywhere below:
+//
+//   - There is no network code in this binary. No socket is opened, no host is
+//     resolved, no URL is fetched. Accounts carry a host and port only so the
+//     sidebar can say which local test server they belong to, and a config
+//     naming anything that is not loopback is shown as refused.
+//   - Send writes a file into the account's own local Outbox Maildir. Nothing
+//     is transmitted. See compose.odin.
+//   - Mail is read only from the app's own data directory,
+//     ~/.local/share/palmy-mail, or from a `--maildir=` path given on the
+//     command line. The user's real mail, wherever it might be, is never
+//     touched.
+//   - The reader never loads a remote resource, which is the tracking-pixel
+//     problem solved by not having a loader: html_to_text discards every
+//     attribute, including every src and href.
+package main
+
+import "core:fmt"
+import "core:os"
+import "core:strings"
+import "core:time"
+import kit "kit:."
+import p "palmy:."
+
+// The faces the kit loads for a window. The offscreen renderer has its own
+// font table, so `--uitest` needs the same list; it is spelled out here rather
+// than reached for inside the kit, which this app does not own.
+FONT_DIR :: "/home/alex/Work/palmy/parity/web/public/fonts"
+
+MONO_FONTS :: [?]string {
+	"/usr/share/fonts/TTF/JetBrainsMonoNerdFont-Regular.ttf",
+	"/usr/share/fonts/TTF/DejaVuSansMono.ttf",
+	"/usr/share/fonts/liberation/LiberationMono-Regular.ttf",
+}
+
+main :: proc() {
+	// Modes that do not need a window, handled before one is opened.
+	for arg in os.args[1:] {
+		switch {
+		case arg == "--fixtures":
+			os.exit(run_fixtures())
+		case arg == "--selftest":
+			os.exit(run_selftest())
+		case strings.has_prefix(arg, "--uitest"):
+			dir := "/tmp/palmy-mail-uitest"
+			if eq := strings.index_byte(arg, '='); eq > 0 {
+				dir = arg[eq + 1:]
+			}
+			os.exit(run_uitest(dir))
+		case arg == "--help" || arg == "-h":
+			print_usage()
+			os.exit(0)
+		}
+	}
+
+	app, err := kit.start(
+		{
+			title = "Mail",
+			width = 1360,
+			height = 860,
+			min_width = 900,
+			min_height = 520,
+			root_class = "w-full h-full bg-background text-foreground",
+		},
+	)
+	if err != "" {
+		fmt.eprintfln("mail: %s", err)
+		os.exit(1)
+	}
+	defer p.destroy(app)
+
+	p.register_color("selection", p.hex(SELECTION))
+
+	st := new(State)
+	init_state(st)
+
+	for ui in p.frames(app) {
+		st.now = time.now()
+		handle_keys(ui, st, app)
+		frame(ui, st)
+		apply_scroll(ui, st)
+		retitle(app, st)
+	}
+}
+
+print_usage :: proc() {
+	fmt.println(
+		`mail — a Maildir mail client on palmy
+
+  mail                 open the client
+  mail --fixtures      write a fixture Maildir and accounts.conf, then exit
+  mail --selftest      run the headless assertions, then exit
+  mail --maildir=PATH  read one Maildir tree instead of the configured accounts
+  mail --uitest=DIR    render the interface offscreen into PNGs and exit
+
+This client has no network code. It reads a Maildir from disk; Send queues a
+message into the account's own local Outbox and transmits nothing.`,
+	)
+}
+
+init_state :: proc(st: ^State) {
+	st.data_dir = default_data_dir()
+	st.tz_offset = local_offset()
+	st.now = time.now()
+	st.reader_msg = -1
+	st.list_scroll_to = -1
+	st.pane = .List
+
+	// `--maildir=PATH` makes one ad-hoc account out of a tree on disk, which
+	// is how to point the UI at whatever the engine has just written without
+	// editing a config file. It is still only ever read.
+	override := ""
+	for arg in os.args[1:] {
+		if strings.has_prefix(arg, "--maildir=") {
+			override = arg[len("--maildir="):]
+		}
+	}
+
+	st.single_tree = override != ""
+	if override != "" {
+		append(
+			&st.accounts,
+			Account {
+				name = strings.clone("Maildir"),
+				protocol = .IMAP,
+				address = strings.clone("local@localhost"),
+				host = strings.clone("127.0.0.1"),
+				root = strings.clone(override),
+				loopback = true,
+			},
+		)
+	} else {
+		load_config(st)
+		discover_accounts(st)
+	}
+
+	// No fixtures yet and nothing configured on disk? Write them, rather than
+	// opening onto an empty window with no way forward.
+	any_mail := false
+	for a in st.accounts {
+		if is_maildir(a.root) || os.is_dir(a.root) {
+			any_mail = true
+			break
+		}
+	}
+	if !any_mail && override == "" {
+		write_fixtures(st.data_dir)
+		clear(&st.accounts)
+		load_config(st)
+		discover_accounts(st)
+		note(st, "No mailbox found, so a fixture Maildir was generated.")
+	}
+
+	reload_all(st)
+}
+
+// reload_all rescans the Maildir from disk. The engine writes files
+// underneath us, so this is the refresh button and it has to be cheap enough
+// to press.
+reload_all :: proc(st: ^State) {
+	// A Maildir the engine created since the last scan should appear without
+	// anyone editing a config file, so discovery runs on every refresh —
+	// except under `--maildir`, where the user named exactly one tree and
+	// means exactly that one.
+	if !st.single_tree {
+		discover_accounts(st)
+	}
+
+	keep_folder := ""
+	if st.folder_sel >= 0 && st.folder_sel < len(st.folders) {
+		keep_folder = strings.clone(st.folders[st.folder_sel].name, context.temp_allocator)
+		keep_folder = tfmt("%d/%s", st.folders[st.folder_sel].account, keep_folder)
+	}
+
+	scan_accounts(st)
+	rebuild_sidebar(st)
+
+	st.folder_sel = 0
+	if keep_folder != "" {
+		for f, i in st.folders {
+			if tfmt("%d/%s", f.account, f.name) == keep_folder {
+				st.folder_sel = i
+				break
+			}
+		}
+	} else {
+		// Open on the first inbox, which is what a mail client is for.
+		for f, i in st.folders {
+			if f.role == .Inbox {
+				st.folder_sel = i
+				break
+			}
+		}
+	}
+	select_folder(st, st.folder_sel)
+}
+
+// local_offset asks the system for the UTC offset so dates read as wall clock.
+local_offset :: proc() -> i64 {
+	out, ok := kit.run({"date", "+%z"}, context.temp_allocator)
+	if !ok || len(out) < 5 {
+		return 0
+	}
+	sign: i64 = out[0] == '-' ? -1 : 1
+	hh := i64(out[1] - '0') * 10 + i64(out[2] - '0')
+	mm := i64(out[3] - '0') * 10 + i64(out[4] - '0')
+	return sign * (hh * 3600 + mm * 60)
+}
+
+// apply_scroll drives palmy's scroll API after the tree has been built. The
+// container and the row both have to have been laid out for their rectangles
+// to exist, which is why this runs at the end of the frame rather than inside
+// the row that asked for it.
+apply_scroll :: proc(ui: ^p.Ctx, st: ^State) {
+	if st.list_scroll_home && st.list_id != 0 {
+		// A new folder or a new query starts at the top, not wherever the last
+		// one happened to be scrolled to.
+		p.scroll_to(ui, st.list_id, {0, 0})
+		st.list_scroll_home = false
+		st.list_scroll_to = -1
+		p.redraw(ui)
+	}
+	if st.list_scroll_to >= 0 && st.list_id != 0 {
+		i := clamp(st.list_scroll_to, 0, max(0, len(st.rows) - 1))
+		if st.sel_row_id != 0 {
+			// The row was built this frame, so palmy can work out the shortest
+			// move for itself.
+			p.scroll_into_view(ui, st.list_id, st.sel_row_id, 24)
+		} else if i < len(st.row_y) {
+			// The row is outside the virtualised window and has no rectangle,
+			// so the offset comes from the model instead.
+			view := p.rect_of(ui, st.list_id).h
+			y := st.row_y[i]
+			h := row_height(st.rows[i].kind)
+			cur := p.scroll_of(ui, st.list_id).y
+			if y < cur {
+				p.scroll_to(ui, st.list_id, {0, max(0, y - 24)})
+			} else if y + h > cur + view {
+				p.scroll_to(ui, st.list_id, {0, y + h - view + 24})
+			}
+		}
+		st.list_scroll_to = -1
+		p.redraw(ui)
+	}
+	if st.side_scroll && st.side_id != 0 && st.side_row_id != 0 {
+		p.scroll_into_view(ui, st.side_id, st.side_row_id, 12)
+		st.side_scroll = false
+		p.redraw(ui)
+	}
+	if st.read_scroll_home && st.read_id != 0 {
+		p.scroll_to(ui, st.read_id, {0, 0})
+		st.read_scroll_home = false
+	}
+}
+
+// ---------------------------------------------------------------------------
+// Keyboard
+//
+// Every command is reachable with an unmodified key. That is partly taste — a
+// mail client that needs the mouse is a failure — and partly necessity: the
+// recording harness can type and press named keys but cannot hold a modifier
+// or synthesize a click, so a shortcut behind Ctrl is a shortcut that cannot
+// be demonstrated or driven in a test.
+// ---------------------------------------------------------------------------
+
+// plain matches an unmodified, non-repeating press. Holding a key down should
+// not open five threads.
+plain :: proc(ui: ^p.Ctx, sym: u32) -> bool {
+	for k in ui.input.keys {
+		if k.sym == sym && !k.repeat && k.mods & {.Shift, .Ctrl, .Alt, .Super} == {} {
+			return true
+		}
+	}
+	return false
+}
+
+// key_times counts presses this frame, repeats included. Two arrow presses can
+// land in one frame when a script drives the window, and a cursor that moves
+// by one would fall behind.
+key_times :: proc(ui: ^p.Ctx, sym: u32) -> int {
+	n := 0
+	for k in ui.input.keys {
+		if k.sym == sym && k.mods & {.Shift, .Ctrl, .Alt, .Super} == {} {
+			n += 1
+		}
+	}
+	return n
+}
+
+shifted :: proc(ui: ^p.Ctx, sym: u32) -> bool {
+	for k in ui.input.keys {
+		if k.sym == sym && !k.repeat && .Shift in k.mods {
+			return true
+		}
+	}
+	return false
+}
+
+PANE_CYCLE :: [?]Pane{.Sidebar, .List, .Reader, .Search}
+
+handle_keys :: proc(ui: ^p.Ctx, st: ^State, app: ^p.App) {
+	if app != nil && p.shortcut(ui, 'q', {.Ctrl}) {
+		p.quit_app(app)
+		return
+	}
+
+	// The composer owns the keyboard while it is open: unmodified letters are
+	// text there, not commands.
+	if st.comp.open {
+		compose_keys(ui, st)
+		return
+	}
+
+	if p.shortcut(ui, 'f', {.Ctrl}) {
+		focus_search(st)
+		return
+	}
+
+	switch st.pane {
+	case .Search:
+		search_keys(ui, st)
+	case .Sidebar:
+		sidebar_keys(ui, st)
+	case .List, .Reader:
+		list_keys(ui, st)
+	case .Compose:
+		// The pane says compose but the composer is shut; recover.
+		st.pane = .List
+	}
+}
+
+focus_search :: proc(st: ^State) {
+	st.pane = .Search
+	st.swallow = true
+	le_end(&st.query)
+}
+
+cycle_pane :: proc(st: ^State, by: int) {
+	cycle := PANE_CYCLE
+	at := 0
+	for pane, i in cycle {
+		if pane == st.pane {
+			at = i
+			break
+		}
+	}
+	st.pane = cycle[(at + by + len(cycle)) % len(cycle)]
+	if st.pane == .Search {
+		st.swallow = true
+	}
+}
+
+search_keys :: proc(ui: ^p.Ctx, st: ^State) {
+	changed := false
+	typed := st.swallow ? "" : p.typed_text(ui)
+	st.swallow = false
+	for b in transmute([]u8)typed {
+		if b >= 0x20 {
+			le_insert(&st.query, string([]u8{b}))
+			changed = true
+		}
+	}
+	if plain(ui, p.KEY_BACKSPACE) && le_backspace(&st.query) {
+		changed = true
+	}
+	if plain(ui, p.KEY_DELETE) && le_delete(&st.query) {
+		changed = true
+	}
+	if key_times(ui, p.KEY_LEFT) > 0 {
+		le_left(&st.query)
+	}
+	if key_times(ui, p.KEY_RIGHT) > 0 {
+		le_right(&st.query)
+	}
+	if plain(ui, p.KEY_HOME) {
+		le_home(&st.query)
+	}
+	if plain(ui, p.KEY_END) {
+		le_end(&st.query)
+	}
+	if p.shortcut(ui, 'u', {.Ctrl}) {
+		le_clear(&st.query)
+		changed = true
+	}
+	if plain(ui, p.KEY_ESCAPE) {
+		// Escape clears the search, then leaves the field — the two-step every
+		// search box has.
+		if le_text(&st.query) != "" {
+			le_clear(&st.query)
+			run_search(st)
+		}
+		st.pane = .List
+		return
+	}
+	if plain(ui, p.KEY_TAB) {
+		cycle_pane(st, 1)
+	}
+	if changed {
+		run_search(st)
+	}
+	if plain(ui, p.KEY_DOWN) || plain(ui, p.KEY_RETURN) {
+		st.pane = .List
+		if len(st.rows) > 0 {
+			st.row_sel = clamp(st.row_sel, 0, len(st.rows) - 1)
+			st.list_scroll_to = st.row_sel
+			sync_reader(st)
+		}
+	}
+}
+
+sidebar_keys :: proc(ui: ^p.Ctx, st: ^State) {
+	n := len(st.side_rows)
+	if n == 0 {
+		st.pane = .List
+		return
+	}
+	step := 0
+	step += key_times(ui, p.KEY_DOWN) + key_times(ui, 'j')
+	step -= key_times(ui, p.KEY_UP) + key_times(ui, 'k')
+	if step != 0 {
+		st.side_sel = clamp(st.side_sel + step, 0, n - 1)
+		st.side_scroll = true
+	}
+	if plain(ui, p.KEY_HOME) || plain(ui, 'g') {
+		st.side_sel = 0
+		st.side_scroll = true
+	}
+	if plain(ui, p.KEY_END) || shifted(ui, 'g') {
+		st.side_sel = n - 1
+		st.side_scroll = true
+	}
+
+	row := st.side_rows[clamp(st.side_sel, 0, n - 1)]
+	if plain(ui, p.KEY_RETURN) || plain(ui, p.KEY_RIGHT) || plain(ui, 'l') {
+		switch row.kind {
+		case .Account:
+			st.accounts[row.account].collapsed = !st.accounts[row.account].collapsed
+			rebuild_sidebar(st)
+		case .Folder:
+			select_folder(st, row.folder)
+			st.pane = .List
+		}
+	}
+	// Moving the cursor over a folder opens it, the way a sidebar does.
+	if step != 0 && row.kind == .Folder {
+		select_folder(st, row.folder)
+		st.side_sel = clamp(st.side_sel, 0, len(st.side_rows) - 1)
+	}
+	if plain(ui, p.KEY_ESCAPE) {
+		st.pane = .List
+	}
+	if plain(ui, p.KEY_TAB) {
+		cycle_pane(st, 1)
+	}
+	if plain(ui, 'c') {
+		compose_new(st)
+	}
+	if plain(ui, '/') {
+		focus_search(st)
+	}
+	if plain(ui, 'r') {
+		reload_all(st)
+		note(st, "Reloaded from disk")
+	}
+}
+
+list_keys :: proc(ui: ^p.Ctx, st: ^State) {
+	// The wheel is handled by palmy's own scroll container; the keyboard moves
+	// the cursor and asks for it to be scrolled into view.
+	step := 0
+	step += key_times(ui, p.KEY_DOWN) + key_times(ui, 'j')
+	step -= key_times(ui, p.KEY_UP) + key_times(ui, 'k')
+	if step != 0 {
+		move_selection(st, step)
+	}
+	if plain(ui, p.KEY_PAGE_DOWN) {
+		move_selection(st, 10)
+	}
+	if plain(ui, p.KEY_PAGE_UP) {
+		move_selection(st, -10)
+	}
+	if plain(ui, p.KEY_HOME) || plain(ui, 'g') {
+		st.row_sel = 0
+		st.list_scroll_to = 0
+		sync_reader(st)
+	}
+	if plain(ui, p.KEY_END) || shifted(ui, 'g') {
+		st.row_sel = max(0, len(st.rows) - 1)
+		st.list_scroll_to = st.row_sel
+		sync_reader(st)
+	}
+
+	if plain(ui, p.KEY_RETURN) || plain(ui, 'o') {
+		open_row(st)
+	}
+	// Right expands a thread without leaving the list; left collapses it.
+	if plain(ui, p.KEY_RIGHT) || plain(ui, 'l') || plain(ui, 'x') {
+		if ti := current_thread(st); ti >= 0 && len(st.threads[ti].msgs) > 1 {
+			st.threads[ti].expanded = true
+			rebuild_rows(st)
+			sync_reader(st)
+		}
+	}
+	if plain(ui, p.KEY_LEFT) || plain(ui, 'h') {
+		if ti := current_thread(st); ti >= 0 && st.threads[ti].expanded {
+			st.threads[ti].expanded = false
+			rebuild_rows(st)
+			sync_reader(st)
+			st.list_scroll_to = st.row_sel
+		} else {
+			st.pane = .Sidebar
+		}
+	}
+
+	mi := st.reader_msg
+	if plain(ui, 'c') {
+		compose_new(st)
+	}
+	if plain(ui, 'r') && mi >= 0 {
+		compose_reply(st, mi, false)
+	}
+	if plain(ui, 'a') && mi >= 0 {
+		compose_reply(st, mi, true)
+	}
+	if plain(ui, 'f') && mi >= 0 {
+		compose_forward(st, mi)
+	}
+	if plain(ui, 's') || plain(ui, '*') {
+		toggle_flagged(st)
+	}
+	if plain(ui, 'u') {
+		mark_read_toggle(st)
+	}
+	if plain(ui, 'i') {
+		st.show_raw = !st.show_raw
+	}
+	if plain(ui, '/') {
+		focus_search(st)
+	}
+	if plain(ui, p.KEY_F5) {
+		reload_all(st)
+		note(st, "Reloaded from disk")
+	}
+	if plain(ui, p.KEY_TAB) {
+		cycle_pane(st, 1)
+	}
+	// Escape backs out of one thing at a time and never moves the keyboard
+	// somewhere the user did not ask for: collapse the conversation, then drop
+	// the search, and then stop. The sidebar is reached with Left or Tab.
+	if plain(ui, p.KEY_ESCAPE) {
+		if ti := current_thread(st); ti >= 0 && st.threads[ti].expanded {
+			st.threads[ti].expanded = false
+			rebuild_rows(st)
+			sync_reader(st)
+			st.list_scroll_to = st.row_sel
+		} else if st.searching {
+			le_clear(&st.query)
+			run_search(st)
+			select_folder(st, st.folder_sel)
+		} else {
+			st.pane = .List
+		}
+	}
+
+	// The reader scrolls with space and the brackets, so a long message can be
+	// read without reaching for the mouse.
+	if st.read_id != 0 {
+		if plain(ui, p.KEY_SPACE) {
+			p.scroll_nudge(ui, st.read_id, {0, 320})
+			p.redraw(ui)
+		}
+		if shifted(ui, p.KEY_SPACE) {
+			p.scroll_nudge(ui, st.read_id, {0, -320})
+			p.redraw(ui)
+		}
+	}
+}
+
+close_composer :: proc(st: ^State) {
+	st.comp.open = false
+	st.comp.confirm = false
+	st.pane = .List
+}
+
+do_send :: proc(st: ^State) {
+	path, ok := compose_send(st)
+	if !ok {
+		st.comp.confirm = false
+		return
+	}
+	close_composer(st)
+	// Rescan, so the queued message appears in the Outbox folder the way any
+	// other message does. Nothing special: it is a file in a Maildir.
+	reload_all(st)
+	note(st, tfmt("Queued locally: %s", path))
+}
+
+compose_keys :: proc(ui: ^p.Ctx, st: ^State) {
+	c := &st.comp
+
+	if c.confirm {
+		if plain(ui, p.KEY_RETURN) {
+			do_send(st)
+		}
+		if plain(ui, p.KEY_ESCAPE) {
+			c.confirm = false
+		}
+		return
+	}
+
+	if plain(ui, p.KEY_ESCAPE) {
+		close_composer(st)
+		return
+	}
+	if plain(ui, p.KEY_TAB) {
+		c.field = Compose_Field((int(c.field) + 1) % len(Compose_Field))
+		return
+	}
+	if p.shortcut(ui, p.KEY_TAB, {.Shift}) {
+		c.field = Compose_Field((int(c.field) + len(Compose_Field) - 1) % len(Compose_Field))
+		return
+	}
+	if p.shortcut(ui, p.KEY_RETURN, {.Ctrl}) {
+		c.confirm = true
+		return
+	}
+
+	if c.field == .Send {
+		if plain(ui, p.KEY_RETURN) || plain(ui, p.KEY_SPACE) {
+			c.confirm = true
+		}
+		if plain(ui, p.KEY_UP) {
+			c.field = .Body
+		}
+		return
+	}
+
+	typed := p.typed_text(ui)
+
+	if c.field == .Body {
+		b := &c.body
+		if len(typed) > 0 {
+			// One checkpoint per burst of typing, so undo steps in words
+			// rather than in characters.
+			if len(b.undo) == 0 || typed_is_boundary(typed) {
+				buf_checkpoint(b)
+			}
+			buf_insert(b, typed)
+		}
+		if plain(ui, p.KEY_RETURN) {
+			buf_newline(b)
+		}
+		for _ in 0 ..< key_times(ui, p.KEY_BACKSPACE) {
+			buf_backspace(b)
+		}
+		for _ in 0 ..< key_times(ui, p.KEY_DELETE) {
+			buf_delete_forward(b)
+		}
+		for _ in 0 ..< key_times(ui, p.KEY_LEFT) {
+			buf_left(b)
+		}
+		for _ in 0 ..< key_times(ui, p.KEY_RIGHT) {
+			buf_right(b)
+		}
+		for _ in 0 ..< key_times(ui, p.KEY_UP) {
+			buf_up(b)
+		}
+		for _ in 0 ..< key_times(ui, p.KEY_DOWN) {
+			buf_down(b)
+		}
+		if plain(ui, p.KEY_HOME) {
+			buf_home(b)
+		}
+		if plain(ui, p.KEY_END) {
+			buf_end_of_line(b)
+		}
+		if p.shortcut(ui, p.KEY_LEFT, {.Ctrl}) {
+			buf_word_left(b)
+		}
+		if p.shortcut(ui, p.KEY_RIGHT, {.Ctrl}) {
+			buf_word_right(b)
+		}
+		if p.shortcut(ui, 'k', {.Ctrl}) {
+			buf_kill_to_end(b)
+		}
+		if p.shortcut(ui, 'u', {.Ctrl}) {
+			buf_kill_to_start(b)
+		}
+		if p.shortcut(ui, 'z', {.Ctrl}) {
+			buf_undo(b)
+		}
+		if p.shortcut(ui, 'y', {.Ctrl}) || p.shortcut(ui, 'z', {.Ctrl, .Shift}) {
+			buf_redo(b)
+		}
+		return
+	}
+
+	// The header fields.
+	e: ^Line_Edit
+	switch c.field {
+	case .To:
+		e = &c.to
+	case .Cc:
+		e = &c.cc
+	case .Subject:
+		e = &c.subject
+	case .Body, .Send:
+		return
+	}
+	for b in transmute([]u8)typed {
+		if b >= 0x20 {
+			le_insert(e, string([]u8{b}))
+		}
+	}
+	for _ in 0 ..< key_times(ui, p.KEY_BACKSPACE) {
+		le_backspace(e)
+	}
+	for _ in 0 ..< key_times(ui, p.KEY_DELETE) {
+		le_delete(e)
+	}
+	for _ in 0 ..< key_times(ui, p.KEY_LEFT) {
+		le_left(e)
+	}
+	for _ in 0 ..< key_times(ui, p.KEY_RIGHT) {
+		le_right(e)
+	}
+	if plain(ui, p.KEY_HOME) {
+		le_home(e)
+	}
+	if plain(ui, p.KEY_END) {
+		le_end(e)
+	}
+	if p.shortcut(ui, 'u', {.Ctrl}) {
+		le_clear(e)
+	}
+	if plain(ui, p.KEY_RETURN) || plain(ui, p.KEY_DOWN) {
+		c.field = Compose_Field(min(int(c.field) + 1, int(Compose_Field.Body)))
+	}
+	if plain(ui, p.KEY_UP) {
+		c.field = Compose_Field(max(int(c.field) - 1, 0))
+	}
+}
+
+// typed_is_boundary decides whether a burst of typing starts a new undo step.
+// Whitespace and punctuation do; letters continue the current one.
+typed_is_boundary :: proc(typed: string) -> bool {
+	for i in 0 ..< len(typed) {
+		c := typed[i]
+		if c == ' ' || c == '\t' || c == '.' || c == ',' || c == ';' || c == ':' {
+			return true
+		}
+	}
+	return false
+}

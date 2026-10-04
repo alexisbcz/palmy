@@ -1,0 +1,80 @@
+# System monitor demo.
+#
+# Everything here is read-only: this applet runs no subprocess at all and has
+# no way to change the machine. There is deliberately no kill, no renice and
+# no signal, so nothing in this script can do any harm.
+
+wait 2.0
+# The dashboard, filling in. The first sample primes the counters; the second
+# one, a third of a second later, is the first real reading.
+move 690 480
+wait 4.5
+
+# The graphs accumulating a minute of history, sample by sample.
+move 220 200
+wait 3.0
+move 220 400
+wait 3.0
+move 220 600
+wait 3.0
+
+# Sorting is keyboard-driven: M for memory.
+key m
+wait 3.0
+# T for thread count.
+key t
+wait 2.5
+# And back to CPU, which is where a monitor should sit.
+key c
+wait 2.5
+
+# Walk the selection down the table.
+key Down
+wait 0.9
+key Down
+wait 0.9
+key Down
+wait 0.9
+key Down
+wait 1.4
+
+# The full reading for one process: resident and virtual size, thread count,
+# accumulated CPU time, and the whole command line.
+key d
+wait 4.5
+key Escape
+wait 1.2
+
+# Filtering. Slash takes the keyboard, Escape gives it back.
+key slash
+wait 0.8
+type chrom
+wait 2.5
+type ium
+wait 2.5
+key BackSpace
+key BackSpace
+key BackSpace
+wait 1.5
+key Escape
+wait 0.6
+key Escape
+wait 1.5
+
+# Kernel threads are hidden by default; K shows them.
+key k
+wait 3.0
+key k
+wait 2.0
+
+# Pause freezes sampling, so a moment can be read rather than chased.
+key space
+wait 3.0
+key space
+wait 2.0
+
+# Every key this window takes.
+key question
+wait 5.0
+key Escape
+wait 1.5

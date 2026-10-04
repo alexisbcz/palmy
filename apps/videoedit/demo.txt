@@ -1,0 +1,129 @@
+# videoedit — a non-linear editor, driven entirely from the keyboard because
+# this compositor build cannot synthesize pointer clicks.
+wait 3.0
+
+# The bin fills itself from apps/videoedit/media: four generated clips, each
+# probed with ffprobe and given a real extracted thumbnail. Three of them are
+# already laid onto V1 with their audio alongside on A1.
+move 140 300
+wait 1.6
+move 140 380
+wait 1.4
+
+# Scrub: each Right is one frame, and the preview is served from the decoded
+# frame cache rather than a fresh ffmpeg seek.
+move 700 300
+key Right
+key Right
+key Right
+key Right
+key Right
+key Right
+key Right
+key Right
+key Right
+key Right
+key Right
+key Right
+key Right
+key Right
+key Right
+wait 1.2
+
+# Select the second clip. The inspector shows its source in/out points.
+# The first `]` takes the selection from nothing to the first clip.
+type ]
+wait 0.6
+type ]
+wait 1.6
+
+# Turn that cut into a cross-dissolve: the clip slides back to overlap its
+# neighbour and its alpha ramps up over the overlap.
+type x
+wait 1.8
+
+# Park the playhead inside the overlap and watch the two clips composite.
+# Selecting a clip puts the playhead on its start, which is now 0.5s before
+# the previous clip ends, so a few frames forward lands in the dissolve.
+type [
+wait 0.6
+type ]
+wait 0.8
+key Right
+key Right
+key Right
+key Right
+key Right
+key Right
+wait 2.2
+
+# Trim the out point in, a quarter second at a time.
+type e
+wait 0.7
+type e
+wait 1.6
+
+# And trim the in point back out again.
+type q
+wait 0.7
+type q
+wait 1.6
+
+# Nudge the clip along the timeline. It snaps to the neighbouring clip edge
+# and to the playhead, and the snap guide shows which.
+type l
+wait 0.7
+type h
+wait 1.4
+
+# Split the clip under the playhead in two.
+type s
+wait 2.0
+
+# Ripple delete closes the gap the deleted clip leaves behind.
+type ]
+wait 0.8
+type d
+wait 2.0
+
+# A title overlay on the top video track.
+type t
+wait 2.0
+
+# Import the caption file. SRT, WebVTT and ASS all parse into the same cue
+# list; it shows as a caption track under the timeline and over the preview.
+type c
+wait 2.2
+
+# Nudge the caption timing.
+type .
+wait 0.5
+type .
+wait 1.4
+
+# Play back. The playhead advances from the frame clock and the preview is
+# served from the cache, which the worker keeps filled ahead of it.
+key space
+wait 5.0
+key space
+wait 1.0
+
+# Back to the top, so the preview has a frame to show while the export runs.
+key Home
+wait 1.2
+
+# Export a draft. One ffmpeg invocation built from the timeline: trim, scale,
+# overlay, alpha fade for the dissolve, drawtext for the title, subtitles for
+# the burn-in and amix for the audio. Progress is parsed live from ffmpeg.
+type p
+wait 9.0
+
+# Read the finished file back with ffprobe and pull a frame out of it.
+type v
+wait 4.0
+
+# The key map.
+key F1
+wait 4.0
+key Escape
+wait 1.2

@@ -1,0 +1,69 @@
+# Calc — precedence, parentheses, functions, variables.
+wait 1.4
+key Return
+wait 1.0
+type sqrt(2)^2 + log(1000) * 3
+wait 1.2
+key Return
+wait 1.0
+type r = 4.5
+key Return
+wait 0.8
+type area = pi * r^2
+wait 1.2
+key Return
+wait 1.2
+type min(3, 7, -2) + max(1, 2) + 5!
+wait 1.4
+key Return
+wait 1.2
+
+# An error points at the character that caused it.
+type 2 * (3 + sin(x)
+wait 2.4
+key Escape
+wait 0.6
+
+# Degrees and radians.
+type sin(90)
+wait 1.2
+key F2
+wait 1.8
+key Return
+wait 1.2
+key F2
+wait 0.6
+
+# The pad is keyboard-driven too: arrows move, Enter presses.
+key Tab
+wait 1.0
+key Down
+key Down
+wait 0.6
+key Return
+key Right
+wait 0.6
+key Return
+key Down
+key Down
+key Right
+key Right
+wait 0.7
+key Return
+key Up
+wait 0.6
+key Return
+key Down
+key Right
+wait 0.7
+key Return
+wait 1.8
+key Tab
+key Tab
+wait 0.6
+
+# What the parser understands.
+key F1
+wait 3.0
+key Escape
+wait 0.8

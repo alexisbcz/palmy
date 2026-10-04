@@ -75,6 +75,24 @@ loader_start :: proc(l: ^Loader, shots: []Shot) {
 	thread.start(l.worker)
 }
 
+// loader_destroy stops the worker and releases every thumbnail. A folder of
+// five hundred pictures is a hundred megabytes of thumbnails; switching folders
+// without this would keep every one of them.
+loader_destroy :: proc(l: ^Loader) {
+	loader_stop(l)
+	for &t in l.thumbs {
+		if t.img.w > 0 {
+			p.image_destroy(&t.img)
+		}
+	}
+	delete(l.thumbs)
+	delete(l.paths)
+	if l.have >= 0 {
+		p.image_destroy(&l.full)
+	}
+	l^ = {}
+}
+
 loader_stop :: proc(l: ^Loader) {
 	sync.lock(&l.mu)
 	l.quit = true

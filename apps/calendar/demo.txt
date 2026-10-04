@@ -1,0 +1,54 @@
+# Calendar — a computed month grid with real events.
+wait 1.4
+key Right
+key Right
+key Right
+wait 0.9
+key Down
+wait 0.9
+key t
+wait 1.2
+
+# The day pane.
+key Return
+wait 1.2
+key Down
+wait 1.0
+key Escape
+wait 0.6
+
+# A new event, typed into a form. The date and time are filled in from the
+# day the cursor is on; Tab moves to the next field.
+key a
+wait 1.2
+type Ship the calendar app
+wait 0.8
+key Tab
+wait 0.5
+type Studio
+wait 1.6
+key Return
+wait 2.2
+
+# Months and years.
+key Next
+wait 1.0
+key Next
+wait 1.0
+key Prior
+key Prior
+wait 1.0
+key y
+wait 2.6
+key Right
+key Right
+key Down
+wait 1.0
+key Return
+wait 1.6
+
+# The keyboard reference.
+key F1
+wait 3.0
+key Escape
+wait 0.8

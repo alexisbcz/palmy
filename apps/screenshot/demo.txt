@@ -1,0 +1,65 @@
+# Screenshot demo.
+#
+# grim and slurp against the real screen, with the result decoded by palmy and
+# shown in the window. Nothing is deleted: a capture lands in /tmp, S copies it
+# into ~/Pictures, and the /tmp originals are removed when the window closes.
+
+wait 2.0
+# A whole-screen capture. This window is part of the screen, so it appears in
+# its own shot — which is what the delay is for.
+key Return
+wait 4.0
+
+# Save it into ~/Pictures with a dated name.
+key s
+wait 3.0
+
+# Copy it to the clipboard as image/png, through wl-copy.
+key c
+wait 3.0
+
+# Zoom in. Past two times magnification palmy switches from bilinear to
+# nearest, so a zoomed screenshot shows real pixels rather than mush.
+key equal
+wait 2.0
+key equal
+wait 2.5
+key equal
+wait 3.0
+key f
+wait 2.0
+
+# The delay, for getting this window out of the way first.
+key t
+wait 1.2
+key Return
+wait 4.5
+key Escape
+wait 1.5
+
+# Back to whole screen, and one more capture so the list has two.
+key 1
+wait 1.0
+key Return
+wait 3.5
+
+# Move through the session's captures.
+key Down
+wait 2.0
+key Up
+wait 2.0
+
+# Every command this tool has run.
+key g
+wait 4.0
+key Escape
+wait 1.5
+
+# Region mode. slurp takes the screen and waits for a rectangle; Escape gives
+# it back and the capture is simply cancelled.
+key 3
+wait 1.5
+key Return
+wait 3.0
+key Escape
+wait 2.5

@@ -27,9 +27,16 @@ import "core:sys/posix"
 // Asked of libc anyway at start-up rather than trusted.
 g_hz: f64 = 100
 
+// /proc/<pid>/stat reports rss in pages, so the page size has to come from the
+// same place rather than being assumed to be 4096.
+g_page: int = 4096
+
 hz_init :: proc() {
 	if v := posix.sysconf(._CLK_TCK); v > 0 {
 		g_hz = f64(v)
+	}
+	if v := posix.sysconf(._PAGESIZE); v > 0 {
+		g_page = int(v)
 	}
 }
 
@@ -120,7 +127,13 @@ concat3 :: proc(al: mem.Allocator, a, b, c: string) -> string {
 }
 
 read_u64 :: proc(path: string) -> (v: u64, ok: bool) {
-	s, got := slurp(path)
+	return read_u64_into(path, g_buf[:])
+}
+
+// The _into variants take their own scratch buffer, so the sensor thread in
+// temps.odin never touches the frame's.
+read_u64_into :: proc(path: string, buf: []u8) -> (v: u64, ok: bool) {
+	s, got := slurp_into(path, buf)
 	if !got {
 		return 0, false
 	}
@@ -128,7 +141,15 @@ read_u64 :: proc(path: string) -> (v: u64, ok: bool) {
 }
 
 read_line :: proc(path: string, allocator := context.allocator) -> (s: string, ok: bool) {
-	text, got := slurp(path)
+	return read_line_into(path, g_buf[:], allocator)
+}
+
+read_line_into :: proc(
+	path: string,
+	buf: []u8,
+	allocator := context.allocator,
+) -> (s: string, ok: bool) {
+	text, got := slurp_into(path, buf)
 	if !got {
 		return "", false
 	}
@@ -512,25 +533,25 @@ read_one_proc :: proc(pid: int, dt: f64, al: mem.Allocator) -> (row: Proc_Row, o
 	comm := text[lp + 1:rp]
 	rest := text[rp + 1:]
 
-	// Fields 3..; indices below are 0-based into what follows comm.
-	f := [24]u64{}
+	// proc(5) numbers the fields from 1: pid, comm, state, ppid, ... Both pid
+	// and comm are already consumed, and `state` is taken next, so f[i] below
+	// holds field i+4 — ppid is f[0].
 	states: u8 = '?'
 	if s, g := next_field(&rest); g && len(s) > 0 {
 		states = s[0]
 	}
+	f := [22]u64{}
 	for i in 0 ..< 22 {
 		f[i] = field_u64(&rest)
 	}
-	// f[0] ppid, f[9] utime, f[10] stime, f[13] priority, f[14] nice,
-	// f[15] num_threads, f[17] starttime, f[18] vsize, f[19] rss(pages).
-	ppid := int(f[0])
-	utime := f[9]
-	stime := f[10]
-	nice := int(i64(f[14]))
-	threads := int(f[15])
-	start := f[17]
-	vsz := f[18]
-	rss := f[19] * 4096
+	ppid := int(f[0]) // 4  ppid
+	utime := f[10] // 14 utime
+	stime := f[11] // 15 stime
+	nice := int(i64(f[15])) // 19 nice
+	threads := int(f[16]) // 20 num_threads
+	start := f[18] // 22 starttime
+	vsz := f[19] // 23 vsize
+	rss := f[20] * u64(g_page) // 24 rss, in pages
 
 	ticks := utime + stime
 	cpu: f32 = 0
@@ -544,9 +565,12 @@ read_one_proc :: proc(pid: int, dt: f64, al: mem.Allocator) -> (row: Proc_Row, o
 
 	// /proc/<pid>/status for the owning uid. The kernel also repeats Name here,
 	// but stat's comm is the same string and we already have it.
+	// Uid: is the ninth line of status and well inside the first 640 bytes, so
+	// a single short read gets it. Reading the whole file would be two
+	// syscalls per process for one field.
 	uid: u32 = 0xffff_ffff
 	status_path := pathi(path_buf[:], "/proc/", pid, "/status")
-	stbuf: [8192]u8
+	stbuf: [640]u8
 	if stext, sgot := slurp_into(status_path, stbuf[:]); sgot {
 		srest := stext
 		for line in strings.split_lines_iterator(&srest) {
@@ -901,39 +925,78 @@ Temp :: struct {
 	crit:  f32, // 0 when the chip does not publish one
 }
 
-temp_sample :: proc(al := context.allocator) -> []Temp {
+temp_sample :: proc(buf: []u8, al := context.allocator) -> []Temp {
 	out := make([dynamic]Temp, 0, 16, al)
 	pb: [160]u8
 	np: [192]u8
 
-	for h in 0 ..< 32 {
+	// hwmon numbers its chips and sensors densely, so a run of misses means the
+	// end rather than a gap. Scanning all 32 x 16 combinations blind cost more
+	// than every other part of a sample put together.
+	misses := 0
+	for h in 0 ..< 64 {
 		base := pathi(pb[:], "/sys/class/hwmon/hwmon", h)
-		chip, has_chip := read_line(paths(np[:], base, "/name"), al)
+		chip, has_chip := read_line_into(paths(np[:], base, "/name"), buf, al)
 		if !has_chip {
+			misses += 1
+			if misses >= 3 {
+				break
+			}
 			continue
 		}
-		for t in 1 ..= 16 {
+		misses = 0
+		// Each Temp clones this below, so the device's own copy is released
+		// here rather than leaking once per chip per reading.
+		defer delete(chip, al)
+		tmiss := 0
+		for t in 1 ..= 24 {
 			tb: [192]u8
 			stem := paths(tb[:], base, "/temp")
 			sb: [208]u8
-			milli, ok := read_u64(pathi(sb[:], stem, t, "_input"))
+			milli, ok := read_u64_into(pathi(sb[:], stem, t, "_input"), buf)
 			if !ok {
+				tmiss += 1
+				if tmiss >= 4 {
+					break
+				}
 				continue
 			}
+			tmiss = 0
 			lb: [208]u8
-			label, has_label := read_line(pathi(lb[:], stem, t, "_label"), al)
+			label, has_label := read_line_into(pathi(lb[:], stem, t, "_label"), buf, al)
 			if !has_label {
-				label = chip
+				label = strings.clone(chip, al)
 			}
 			cb: [208]u8
 			crit: f32 = 0
-			if cv, cok := read_u64(pathi(cb[:], stem, t, "_crit")); cok {
+			if cv, cok := read_u64_into(pathi(cb[:], stem, t, "_crit"), buf); cok {
 				crit = f32(cv) / 1000
 			}
-			append(&out, Temp{chip = chip, label = label, c = f32(milli) / 1000, crit = crit})
+			// Every Temp owns its own copies: the caller frees them one by
+			// one, and a chip name shared between four sensors would be freed
+			// four times.
+			append(
+				&out,
+				Temp {
+					chip = strings.clone(chip, al),
+					label = label,
+					c = f32(milli) / 1000,
+					crit = crit,
+				},
+			)
 		}
 	}
-	return out[:]
+	// Hottest first: a list that opens with the 20 degree ACPI zone and hides
+	// the 85 degree CPU in the overflow is not a thermal readout.
+	xs := out[:]
+	for i in 1 ..< len(xs) {
+		j := i
+		for j > 0 && xs[j].c > xs[j - 1].c {
+			xs[j], xs[j - 1] = xs[j - 1], xs[j]
+			j -= 1
+		}
+	}
+	return xs
 }
 
 // ---------------------------------------------------------------------------

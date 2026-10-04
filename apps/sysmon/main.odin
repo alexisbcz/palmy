@@ -21,7 +21,7 @@ import "core:time"
 import p "palmy:."
 
 HEADER_H :: 92
-STRIP_H :: 152
+STRIP_H :: 166
 FOOTER_H :: 44
 ROW_H :: 28
 
@@ -70,7 +70,11 @@ Model :: struct {
 	net:          Net,
 	procs:        []Proc_Row,
 	disks:        []Disk,
+	// Sensors are read on a worker thread (temps.odin) and are therefore heap
+	// owned rather than part of the sample arena.
 	temps:        []Temp,
+	temps_at:     f64,
+	next_temps:   f64,
 	uptime:       f64,
 	idle_secs:    f64,
 
@@ -96,6 +100,10 @@ Model :: struct {
 	filter:       [dynamic]u8,
 	filter_focus: bool,
 	filter_id:    u64,
+	// Slash focuses the field, but the same key press also arrives as typed
+	// text. Focusing on the *next* frame means the slash lands nowhere rather
+	// than in the field it just opened.
+	focus_next:   bool,
 	sel_pid:      int,
 	top:          int,
 	rows:         int,
@@ -106,7 +114,6 @@ Model :: struct {
 	g_cpu:        Graph,
 	g_mem:        Graph,
 	g_net:        Graph,
-	cores_art:    Cores,
 
 	help_open:    bool,
 	detail_open:  bool,
@@ -155,11 +162,19 @@ main :: proc() {
 		g_now = now
 		p.redraw(ui)
 
+		pump_temps(m)
+
 		if !m.paused && now >= m.next_sample {
 			dt := m.last_sample > 0 ? now - m.last_sample : SAMPLE_DT
 			sample(m, dt)
 			m.last_sample = now
 			m.next_sample = now + SAMPLE_DT
+		}
+
+		// Deferred from the previous frame; see Model.focus_next.
+		if m.focus_next {
+			p.set_focus(ui, m.filter_id)
+			m.focus_next = false
 		}
 
 		measure_rows(m, p.size(ui))
@@ -196,7 +211,6 @@ sample :: proc(m: ^Model, dt: f64) {
 
 	net_sample(&m.net, dt, m.al)
 	m.disks = disk_sample(m.al)
-	m.temps = temp_sample(m.al)
 	m.uptime, m.idle_secs, _ = uptime_sample()
 
 	t1 := time.tick_now()
@@ -224,6 +238,24 @@ sample :: proc(m: ^Model, dt: f64) {
 
 	m.sample_ms = f32(time.duration_milliseconds(time.tick_diff(t0, t2)))
 	m.proc_ms = f32(time.duration_milliseconds(time.tick_diff(t1, t2)))
+}
+
+// pump_temps runs the sensor thread's side of the loop: collect a finished
+// reading, and start the next one when it is due. Neither call ever blocks.
+pump_temps :: proc(m: ^Model) {
+	if ts, got := temps_collect(); got {
+		if m.temps != nil {
+			temps_free(m.temps)
+		}
+		m.temps = ts
+		m.temps_at = g_now
+		m.next_temps = g_now + TEMP_PERIOD
+	}
+	if !m.paused && g_now >= m.next_temps && !temps_busy() {
+		temps_kick()
+		// Do not ask again until it answers.
+		m.next_temps = g_now + TEMP_PERIOD
+	}
 }
 
 // ---------------------------------------------------------------------------
@@ -370,7 +402,18 @@ build_view :: proc(m: ^Model) -> (v: View) {
 	return
 }
 
+// proc_less is the sort comparator. Descending reverses the *arguments* rather
+// than negating the result: `!(a < b)` is `a >= b`, which is reflexive and
+// therefore not a strict weak ordering — a heapsort fed one produces an order
+// that looks almost right and is not.
 proc_less :: proc(m: ^Model, a, b: int) -> bool {
+	if m.desc {
+		return proc_less_asc(m, b, a)
+	}
+	return proc_less_asc(m, a, b)
+}
+
+proc_less_asc :: proc(m: ^Model, a, b: int) -> bool {
 	x, y := m.procs[a], m.procs[b]
 	r: bool
 	switch m.sort {
@@ -403,7 +446,7 @@ proc_less :: proc(m: ^Model, a, b: int) -> bool {
 			r = x.cpu < y.cpu
 		}
 	}
-	return m.desc ? !r : r
+	return r
 }
 
 less_fold :: proc(a, b: string) -> bool {
@@ -474,6 +517,15 @@ keys :: proc(ui: ^p.Ctx, app: ^p.App, m: ^Model, v: View) {
 		   p.key_pressed(ui, '?') ||
 		   p.key_pressed(ui, p.KEY_F1) {
 			m.help_open = false
+		}
+		return
+	}
+
+	// The detail panel is modal: it is a reading of one process, and letting
+	// the arrows move the selection underneath it would make it lie.
+	if m.detail_open {
+		if p.key_pressed(ui, p.KEY_ESCAPE) || p.key_pressed(ui, 'd') {
+			m.detail_open = false
 		}
 		return
 	}
@@ -559,9 +611,8 @@ keys :: proc(ui: ^p.Ctx, app: ^p.App, m: ^Model, v: View) {
 	if p.key_pressed(ui, '?') || p.key_pressed(ui, p.KEY_F1) {
 		m.help_open = true
 	}
-	if p.key_pressed(ui, '/') {
-		m.filter_focus = true
-		p.set_focus(ui, m.filter_id)
+	if p.key_pressed(ui, '/') || p.shortcut(ui, 'f', {.Ctrl}) {
+		m.focus_next = true
 	}
 	if p.key_pressed(ui, p.KEY_ESCAPE) {
 		if len(m.filter) > 0 {

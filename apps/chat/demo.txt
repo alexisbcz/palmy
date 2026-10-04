@@ -1,0 +1,92 @@
+# palmy-chat demo.
+#
+# Two real client processes, one real server on 127.0.0.1:8787. The left
+# window is alexis, the right one is sam; `move` puts the pointer over a
+# window, which is what gives it the keyboard (follow_mouse).
+#
+# Every key here is unmodified: wtype -k cannot send Shift+Enter, so the
+# multi-line markdown in the history is posted by demo-run.sh through
+# `chat --post` instead — over the same protocol, from a third nickname.
+
+wait 7.0
+
+# -- alexis types. sam's window shows the typing indicator first.
+move 480 620
+wait 1.2
+type Morning sam — parity is back to **zero geometry mismatches**.
+wait 1.6
+key Return
+wait 1.8
+
+# -- sam answers.
+move 1440 620
+wait 1.2
+type Nice. Does `scroll_into_view` still pin the list?
+wait 1.6
+key Return
+wait 1.6
+
+# -- sam browses back one message and reacts to it. 2 is the heart.
+key Escape
+wait 0.9
+key Up
+wait 0.9
+type 2
+wait 1.8
+
+# -- and replies to the same message.
+type r
+wait 0.8
+type Pinned. The spacer collapses the moment it overflows.
+wait 1.4
+key Return
+wait 2.0
+
+# -- meanwhile a message lands in #design, which nobody is looking at.
+wait 4.0
+
+# -- alexis opens it from the keyboard: F2, down to design, Enter.
+move 480 620
+wait 1.0
+key F2
+wait 1.0
+key Down
+wait 0.5
+key Down
+wait 0.9
+key Return
+wait 2.0
+
+# -- back to #general, then search the whole history.
+key F2
+wait 0.8
+key Up
+wait 0.4
+key Up
+wait 0.7
+key Return
+wait 1.5
+key F4
+wait 1.0
+type scroll
+wait 1.0
+key Return
+wait 2.2
+key Down
+wait 1.2
+key Escape
+wait 1.2
+
+# -- the key map.
+key F1
+wait 3.0
+key Escape
+wait 1.0
+
+# -- sam's process is killed by demo-run.sh. Presence goes offline for real
+#    and alexis carries on.
+wait 4.5
+type Still here — sam just dropped off.
+wait 1.2
+key Return
+wait 2.5

@@ -1,0 +1,138 @@
+# Mail — driven entirely from the keyboard, because the compositor build here
+# has no click dispatcher and because a mail client that needs the mouse is a
+# failure anyway.
+
+wait 1.6
+move 760 420
+wait 1.2
+
+# ---------------------------------------------------------------------------
+# The inbox. Walk the conversations; the reader follows the cursor.
+# ---------------------------------------------------------------------------
+key j
+wait 0.55
+key j
+wait 0.55
+key j
+wait 0.7
+key j
+wait 0.9
+key j
+wait 1.1
+
+# ---------------------------------------------------------------------------
+# Open a conversation: it expands into its messages, indented by reply depth.
+# ---------------------------------------------------------------------------
+key Return
+wait 1.3
+key j
+wait 0.7
+key j
+wait 0.7
+key j
+wait 1.1
+key Escape
+wait 0.9
+
+# ---------------------------------------------------------------------------
+# Scrolling. This one folder holds a couple of hundred messages.
+# ---------------------------------------------------------------------------
+key Page_Down
+wait 0.45
+key Page_Down
+wait 0.45
+key Page_Down
+wait 0.45
+key Page_Down
+wait 0.45
+key Page_Down
+wait 0.8
+key Page_Up
+wait 0.45
+key Page_Up
+wait 0.8
+key Home
+wait 1.0
+
+# ---------------------------------------------------------------------------
+# Search, across every account and folder at once.
+# ---------------------------------------------------------------------------
+key slash
+wait 0.6
+type quarterly
+wait 1.4
+key Down
+wait 1.2
+key j
+wait 1.0
+key Escape
+wait 0.9
+
+# An HTML-only message: palmy has no HTML engine, so the reader says so and
+# shows the text it reduced the markup to. No remote resource is ever fetched.
+key slash
+wait 0.5
+type digest
+wait 1.3
+key Down
+wait 2.2
+key Escape
+wait 1.0
+
+# ---------------------------------------------------------------------------
+# Reply. The quote and In-Reply-To come from the message; the text is typed.
+# ---------------------------------------------------------------------------
+key r
+wait 1.4
+type Thursday works for me. I will have the revised forecast ready by Wednesday evening, and I will send the regional breakdown separately.
+wait 1.4
+key Tab
+wait 0.8
+key Return
+wait 1.3
+key Return
+wait 1.8
+
+# ---------------------------------------------------------------------------
+# The folder tree: three accounts, three protocols. IMAP and JMAP have a full
+# tree; POP3 has an inbox and nothing else, because the protocol has nothing
+# else. The Outbox that the reply was queued into is now there too.
+# ---------------------------------------------------------------------------
+key h
+wait 1.0
+key j
+wait 0.5
+key j
+wait 0.6
+key j
+wait 0.6
+key j
+wait 0.6
+key j
+wait 0.7
+key j
+wait 0.7
+key j
+wait 0.7
+key j
+wait 0.8
+key j
+wait 0.6
+key j
+wait 0.6
+key j
+wait 0.6
+key j
+wait 0.6
+key j
+wait 0.6
+key j
+wait 0.6
+key j
+wait 0.8
+key j
+wait 1.0
+key j
+wait 1.6
+key l
+wait 1.8
