@@ -30,6 +30,8 @@ USAGE :: `palmy slides — a presentation editor
 
   slides.bin [deck.json]      open a deck, or the built-in fixture
   slides.bin --export [DIR]   render every slide to PNG, plus a contact sheet
+  slides.bin --pptx FILE      write a PowerPoint deck
+  slides.bin --pdf FILE       write a PDF, one page per slide
   slides.bin --make-assets    regenerate the pictures the fixture uses
   slides.bin --selftest       run the headless test suite`
 
@@ -175,6 +177,7 @@ main :: proc() {
 	// Arguments in any order: a deck path, and at most one mode flag.
 	deck_path := ""
 	export_dir := ""
+	out_file := ""
 	mode := ""
 	for i := 0; i < len(args); i += 1 {
 		a := args[i]
@@ -183,6 +186,12 @@ main :: proc() {
 			mode = "export"
 			if i + 1 < len(args) && !strings.has_prefix(args[i + 1], "--") {
 				export_dir = args[i + 1]
+				i += 1
+			}
+		case a == "--pptx", a == "--pdf":
+			mode = a[2:]
+			if i + 1 < len(args) && !strings.has_prefix(args[i + 1], "--") {
+				out_file = args[i + 1]
 				i += 1
 			}
 		case a == "--selftest":
@@ -221,6 +230,22 @@ main :: proc() {
 			os.exit(1)
 		}
 		fmt.printfln("exported %d slides and a contact sheet to %s", n, dir)
+		return
+	case "pptx", "pdf":
+		out := out_file
+		if out == "" {
+			out = tprintf("%s/deck.%s", default_export_dir(context.temp_allocator), mode)
+		}
+		fonts: p.Fonts
+		fonts_headless(&fonts)
+		err := mode == "pptx" \
+			? pptx_write_file(&st.deck, out, &fonts, &st.imgs) \
+			: pdf_write_file(&st.deck, out, &fonts, &st.imgs)
+		if err != "" {
+			fmt.eprintfln("slides: %s", err)
+			os.exit(1)
+		}
+		fmt.printfln("wrote %s (%d slides)", out, len(st.deck.slides))
 		return
 	case "selftest":
 		os.exit(selftest(exe_dir))

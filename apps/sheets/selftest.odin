@@ -274,6 +274,7 @@ selftest :: proc() -> int {
 	t_formatting(&tc)
 	t_csv(&tc)
 	t_document(&tc)
+	t_xlsx(&tc)
 	t_robustness(&tc)
 
 	fmt.println()

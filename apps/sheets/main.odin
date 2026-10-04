@@ -12,6 +12,73 @@ import "core:strings"
 import kit "kit:."
 import p "palmy:."
 
+USAGE :: `sheets — a spreadsheet for palmy
+
+  sheets [file.sheet.json | file.csv | file.xlsx]
+  sheets --export OUT.xlsx [IN]    write an Excel workbook, headless
+  sheets --export OUT.csv   [IN]   write a CSV, headless
+  sheets --selftest                run the engine test suite
+  sheets --shot PATH               render one frame to a PNG`
+
+// export_mode is the headless writer: `--export out.xlsx [in.sheet.json]`.
+// With no input it exports the demo book, which is what makes the flag
+// testable on a machine with no documents on it.
+export_mode :: proc(args: []string) -> int {
+	if len(args) == 0 {
+		fmt.eprintln("sheets: --export needs an output path")
+		return 2
+	}
+	out := args[0]
+	app := new(App)
+	defer free(app)
+	sheet_init(&app.sh)
+	defer sheet_destroy(&app.sh)
+	app.name = strings.clone(base_name(out))
+
+	if len(args) > 1 {
+		src := args[1]
+		ok := false
+		switch {
+		case strings.has_suffix(src, ".csv"), strings.has_suffix(src, ".tsv"):
+			got, _, _ := csv_read_file(&app.sh, src, {0, 0})
+			ok = got
+		case strings.has_suffix(src, ".xlsx"):
+			got, _, _, _ := xlsx_read_file(&app.sh, src, {0, 0})
+			ok = got
+		case:
+			_, _, got := doc_load_file(&app.sh, src)
+			ok = got
+		}
+		if !ok {
+			fmt.eprintfln("sheets: cannot read %s", src)
+			return 1
+		}
+	} else {
+		seed_demo(app)
+	}
+
+	switch {
+	case strings.has_suffix(out, ".xlsx"):
+		if !xlsx_write_file(&app.sh, out, app.name) {
+			fmt.eprintfln("sheets: cannot write %s", out)
+			return 1
+		}
+	case strings.has_suffix(out, ".csv"), strings.has_suffix(out, ".tsv"):
+		rect := Rect_I{0, 0, max(app.sh.max_row, 0), max(app.sh.max_col, 0)}
+		if !csv_write_file(&app.sh, out, rect) {
+			fmt.eprintfln("sheets: cannot write %s", out)
+			return 1
+		}
+	case:
+		if !doc_save_file(&app.sh, out, base_name(out), {}, {}) {
+			fmt.eprintfln("sheets: cannot write %s", out)
+			return 1
+		}
+	}
+	fmt.printfln("wrote %s (%d cells)", out, len(app.sh.cells))
+	return 0
+}
+
 main :: proc() {
 	for arg, i in os.args[1:] {
 		if arg == "--selftest" || arg == "-t" {
@@ -20,8 +87,11 @@ main :: proc() {
 		if arg == "--shot" {
 			os.exit(shot_mode(os.args[2 + i:]))
 		}
+		if arg == "--export" {
+			os.exit(export_mode(os.args[2 + i:]))
+		}
 		if arg == "--help" || arg == "-h" {
-			fmt.println("sheets [--selftest] [file.sheet.json | file.csv]")
+			fmt.println(USAGE)
 			os.exit(0)
 		}
 	}
@@ -50,6 +120,18 @@ main :: proc() {
 		if strings.has_suffix(arg, ".csv") || strings.has_suffix(arg, ".tsv") {
 			if ok, rows, cols := csv_read_file(&app.sh, arg, {0, 0}); ok {
 				set_status(app, "Imported %d x %d from %s", rows, cols, base_name(arg))
+				loaded = true
+			}
+		} else if strings.has_suffix(arg, ".xlsx") {
+			if ok, rows, cols, sheet := xlsx_read_file(&app.sh, arg, {0, 0}); ok {
+				// The name follows the file, but `path` deliberately does
+				// not: Ctrl+S writes the native JSON, and it must not land on
+				// top of the workbook that was imported.
+				if app.name != "" {
+					delete(app.name)
+				}
+				app.name = strings.clone(base_name(arg))
+				set_status(app, "Imported sheet %s, %d x %d, from %s", sheet, rows, cols, base_name(arg))
 				loaded = true
 			}
 		} else {

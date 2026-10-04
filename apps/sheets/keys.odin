@@ -188,6 +188,8 @@ handle_keys :: proc(ui: ^p.Ctx, app: ^App) {
 		{'S', {.Ctrl, .Shift}, .Save_As},
 		{'e', {.Ctrl}, .Export_CSV},
 		{'O', {.Ctrl, .Shift}, .Import_CSV},
+		{'e', {.Alt}, .Export_XLSX},
+		{'o', {.Alt}, .Import_XLSX},
 	}
 	for b in BINDS {
 		if once(ui, b.sym, b.mods) {
@@ -354,6 +356,10 @@ prompt_title :: proc(k: Prompt_Kind) -> string {
 		return "Export CSV to"
 	case .Import_CSV:
 		return "Import CSV from"
+	case .Export_XLSX:
+		return "Export Excel workbook to"
+	case .Import_XLSX:
+		return "Import Excel workbook from"
 	case .Goto:
 		return "Go to reference"
 	case .None:
@@ -469,6 +475,30 @@ run_prompt :: proc(app: ^App, text: string) {
 			return
 		}
 		set_status(app, "Imported %d x %d from %s", rows, cols, base_name(arg))
+	case .Export_XLSX:
+		if arg == "" {
+			return
+		}
+		if xlsx_write_file(&app.sh, arg, app.name) {
+			set_status(app, "Wrote %s", arg)
+		} else {
+			set_status(app, "Could not write %s", arg)
+		}
+	case .Import_XLSX:
+		if arg == "" {
+			return
+		}
+		undo_push(app)
+		ok, rows, cols, sheet := xlsx_read_file(&app.sh, arg, app.cur)
+		if !ok {
+			set_status(app, "%s is not a readable .xlsx", base_name(arg))
+			return
+		}
+		if sheet != "" {
+			set_status(app, "Imported %d x %d from sheet %s of %s", rows, cols, sheet, base_name(arg))
+		} else {
+			set_status(app, "Imported %d x %d from %s", rows, cols, base_name(arg))
+		}
 	}
 }
 

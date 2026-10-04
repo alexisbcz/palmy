@@ -54,6 +54,8 @@ Cmd :: enum u8 {
 	Save,
 	Open,
 	Export,
+	Export_Pptx,
+	Export_Pdf,
 	Present,
 	Present_Start,
 	Undo,
@@ -115,6 +117,8 @@ MENU := [?]MI {
 	{label = "Save deck", keys = "Ctrl S · F3", cmd = .Save},
 	{label = "Load deck", keys = "Ctrl O", cmd = .Open},
 	{label = "Export PNGs", keys = "Ctrl E", cmd = .Export},
+	{label = "Export PowerPoint", keys = "Ctrl Shift E", cmd = .Export_Pptx},
+	{label = "Export PDF", keys = "Ctrl Shift D", cmd = .Export_Pdf},
 	{label = "Present from here", keys = "F5", cmd = .Present},
 	{label = "Present from start", keys = "Shift F5", cmd = .Present_Start},
 	{label = "Undo", keys = "U · Ctrl Z", cmd = .Undo},
@@ -151,7 +155,7 @@ menu_step :: proc(from, dir: int) -> int {
 // question `invoke` has to answer before it runs one.
 cmd_mutates :: proc(cmd: Cmd) -> bool {
 	#partial switch cmd {
-	case .Toggle_Snap, .Toggle_Notes, .Edit_Notes, .Save, .Open, .Export,
+	case .Toggle_Snap, .Toggle_Notes, .Edit_Notes, .Save, .Open, .Export, .Export_Pptx, .Export_Pdf,
 	     .Present, .Present_Start, .Help, .Quit, .None, .Elem_Edit, .Undo, .Redo:
 		return false
 	}
@@ -275,6 +279,14 @@ browse_keys :: proc(ui: ^p.Ctx, app: ^p.App, st: ^St) {
 	}
 	if p.shortcut(ui, 'e', {.Ctrl}) {
 		invoke(st, ui, app, .Export)
+		return
+	}
+	if p.shortcut(ui, 'E', {.Ctrl, .Shift}) {
+		invoke(st, ui, app, .Export_Pptx)
+		return
+	}
+	if p.shortcut(ui, 'D', {.Ctrl, .Shift}) {
+		invoke(st, ui, app, .Export_Pdf)
 		return
 	}
 	// F2 and F3 are the modifier-free aliases: they are what a kiosk, a remote
@@ -732,6 +744,18 @@ invoke :: proc(st: ^St, ui: ^p.Ctx, app: ^p.App, cmd: Cmd) {
 			toast(st, ui, err)
 		} else {
 			toast(st, ui, tprintf("Exported %d slides to %s", n, dir))
+		}
+
+	case .Export_Pptx, .Export_Pdf:
+		pptx := cmd == .Export_Pptx
+		out := tprintf("%s/%s.%s", default_export_dir(context.temp_allocator), deck_slug(st), pptx ? "pptx" : "pdf")
+		err := pptx \
+			? pptx_write_file(&st.deck, out, st.fonts, &st.imgs) \
+			: pdf_write_file(&st.deck, out, st.fonts, &st.imgs)
+		if err != "" {
+			toast(st, ui, err)
+		} else {
+			toast(st, ui, tprintf("Wrote %s", out))
 		}
 
 	case .Present:

@@ -289,6 +289,9 @@ selftest :: proc(exe_dir: string) -> int {
 	sheet, serr := os.read_entire_file_from_path(fmt.tprintf("%s/contact-sheet.png", dir), context.temp_allocator)
 	check(&t, serr == nil && len(sheet) > 1000, "the contact sheet was not written")
 
+	// --- the interchange formats ----------------------------------------
+	t_export_formats(&t, &fonts, &imgs)
+
 	fmt.printfln("%d checks, %d passed, %d failed", t.ok + t.fail, t.ok, t.fail)
 	return t.fail == 0 ? 0 : 1
 }
