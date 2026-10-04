@@ -63,7 +63,10 @@ shots :: proc(dir: string) {
 	n += shot_reading(dir, "03-epub-dark-bigger", epub, {theme = .Dark, size = 24, line = 1.7}, 1180, 820)
 	// The first chapter, which holds every block kind there is.
 	n += shot_reading(dir, "04-epub-blocks", epub, {theme = .Light, chapter = 0, page = 0, size = 15}, 1180, 820)
-	n += shot_reading(dir, "05-epub-blocks-p2", epub, {theme = .Light, chapter = 0, page = 1, size = 15}, 1180, 820)
+	// A page that is genuinely not the first one. Chapter two is long, so its
+	// third page exercises the pagination offsets the painter depends on --
+	// which chapter one, at one page, cannot.
+	n += shot_reading(dir, "05-epub-page-three", epub, {theme = .Light, chapter = 1, page = 2, size = 17}, 1180, 820)
 	// Continuous scroll, narrow window: the awkward case for margins.
 	n += shot_reading(dir, "06-epub-continuous-narrow", epub, {theme = .Sepia, mode = .Continuous, size = 16}, 760, 900)
 	// Spaced paragraphs rather than indented.

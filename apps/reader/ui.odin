@@ -219,7 +219,7 @@ draw_library_card :: proc(r: ^Reader, ui: ^p.Ctx, i: int) {
 		if e.missing {
 			reader_say(r, tfmt("%s is no longer at that path", path_base(e.path)))
 		} else {
-			r.open_next = strings.clone(e.path)
+			reader_request_open(r, ui, e.path)
 		}
 	}
 
@@ -474,7 +474,12 @@ draw_reflow_body :: proc(r: ^Reader, ui: ^p.Ctx) {
 
 	if r.set.mode == .Paged {
 		r.pd.lines = layout_page_lines(cl, r.page)
-		r.pd.y0 = len(r.pd.lines) > 0 ? f32(r.page) * r.col_h : 0
+		// A line's y is already relative to the page it is on -- pagination
+		// resets it at every break -- so the painter needs no offset. Giving
+		// it one drew page one correctly and every page after it off the top
+		// of the element, which is invisible rather than wrong-looking, and
+		// so survived every assertion in the suite.
+		r.pd.y0 = 0
 
 		p.col(ui, "h-full items-center")
 		p.style(ui).w = p.px(avail)

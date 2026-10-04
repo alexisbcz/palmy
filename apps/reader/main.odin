@@ -245,8 +245,7 @@ reader_frame :: proc(r: ^Reader, ui: ^p.Ctx) {
 		if res, done := kit.pick_draw(ui, &r.pick); done {
 			defer kit.pick_result_free(res)
 			if res.ok {
-				r.open_next = strings.clone(res.path)
-				p.redraw(ui)
+				reader_request_open(r, ui, res.path)
 			}
 		}
 		reader_body(r, ui)
@@ -254,6 +253,12 @@ reader_frame :: proc(r: ^Reader, ui: ^p.Ctx) {
 	}
 
 	reader_keys(r, ui)
+
+	// The palette is recomputed *after* the keys, because a key may have just
+	// changed the theme. Reading it once at the top of the frame meant the
+	// toast said "Sepia theme" over a page that was still white until the
+	// next input event woke the loop -- and an idle palmy window waits.
+	r.pal = palette_of(r.set.theme)
 
 	// Images decode on the UI thread under a budget, and a decoded picture
 	// changes its block's measured height, so the chapter is laid out again.
@@ -313,6 +318,9 @@ reader_body :: proc(r: ^Reader, ui: ^p.Ctx) {
 
 	if r.note != "" && p.elapsed(ui) - f32(r.note_at) < 4.2 {
 		draw_toast(r, ui)
+		// Keep the loop awake so the toast can go away on its own; an idle
+		// palmy window draws nothing until something happens to it.
+		p.redraw(ui)
 	} else if r.note != "" {
 		delete(r.note)
 		r.note = ""
@@ -328,6 +336,21 @@ reader_say :: proc(r: ^Reader, text: string) {
 // ---------------------------------------------------------------------------
 // Opening and closing a book
 // ---------------------------------------------------------------------------
+
+// reader_request_open defers an open to the top of the next frame, and asks
+// for that frame.
+//
+// The deferral is necessary: the book being replaced owns the lines the
+// painter is about to be handed, so it cannot be closed in the middle of
+// building a frame. Asking for the next frame is equally necessary and is
+// easier to forget — an idle palmy window blocks in `poll` until something
+// happens to it, so without this the book opens only when the reader next
+// touches a key, and pressing Enter on a library card appears to do nothing.
+reader_request_open :: proc(r: ^Reader, ui: ^p.Ctx, path: string) {
+	delete(r.open_next)
+	r.open_next = strings.clone(path)
+	p.redraw(ui)
+}
 
 reader_open :: proc(r: ^Reader, path: string) {
 	abs := path

@@ -1032,8 +1032,13 @@ check_pages :: proc(t: ^T, b: ^Book, cl: ^Chapter_Layout, ci: int) {
 	}
 	ck_eq_int(t, wrong, 0, tfmt("chapter %d: lines agree with the page index", ci))
 
-	// No page overflows its height.
+	// No page overflows its height, and -- the part the painter depends on --
+	// every line's y is relative to the page it is on, not to the chapter.
+	// Without this assertion the painter drew page one correctly and every
+	// page after it off the top of the element, which is invisible rather
+	// than wrong-looking and so passed everything else here.
 	over := 0
+	outside := 0
 	for page in 0 ..< cl.pages {
 		lines := layout_page_lines(cl, page)
 		if len(lines) == 0 {
@@ -1044,8 +1049,29 @@ check_pages :: proc(t: ^T, b: ^Book, cl: ^Chapter_Layout, ci: int) {
 		if bot - top > b.reflow.opts.page_h + 1 {
 			over += 1
 		}
+		for ln in lines {
+			if ln.y < -0.5 || ln.y + ln.h > b.reflow.opts.page_h + 1 {
+				outside += 1
+			}
+		}
 	}
 	ck_eq_int(t, over, 0, tfmt("chapter %d: no page is taller than the page", ci))
+	ck_eq_int(
+		t,
+		outside,
+		0,
+		tfmt("chapter %d: every line sits inside its own page's box, measured from its top", ci),
+	)
+	if cl.pages > 1 {
+		second := layout_page_lines(cl, 1)
+		ck(
+			t,
+			len(second) > 0 && second[0].y < b.reflow.opts.page_h,
+			"chapter %d: page two starts near the top of the page, not below it (y = %.0f)",
+			ci,
+			len(second) > 0 ? second[0].y : -1,
+		)
+	}
 
 	// Keep-with-next: a heading is never the last thing on a page.
 	stranded := 0
@@ -1845,8 +1871,8 @@ test_fixed :: proc(t: ^T, dir: string, fonts: ^p.Fonts) {
 	if docs_bin == "" {
 		ck(t, true, "apps/docs/docs.bin is not built; the PDF oracle was skipped")
 	} else {
-		// Cloned for the same reason as in write_fixtures: the document body
-		// built below is large enough to wrap the temp allocator.
+		// Cloned for the same reason as in write_fixtures: a path handed to a
+		// subprocess should not live in a scratch allocator.
 		md := strings.clone(tfmt("%s/oracle.md", dir))
 		pdf := strings.clone(tfmt("%s/oracle.pdf", dir))
 		defer delete(md)
@@ -1865,7 +1891,7 @@ test_fixed :: proc(t: ^T, dir: string, fonts: ^p.Fonts) {
 		}
 		strings.write_string(&body, "## The Last Section\n\nORACLE-MARKER-TWO appears near the end.\n")
 		_ = os.write_entire_file(md, transmute([]u8)strings.to_string(body))
-		_, conv := kit_run({docs_bin, "--convert", md, pdf})
+		_, conv := kit_run({"env", "USER=palmy docs", docs_bin, "--convert", md, pdf})
 		if !conv || !os.exists(pdf) {
 			// apps/docs is in this repository and other agents rebuild it
 			// while this runs. A PDF it could not produce is not something
@@ -1894,6 +1920,7 @@ test_fixed :: proc(t: ^T, dir: string, fonts: ^p.Fonts) {
 				ck_near(t, b.fixed.pt_w, 595.276, 0.5, "page width in points")
 				ck_near(t, b.fixed.pt_h, 841.89, 0.5, "page height in points")
 				ck_eq_str(t, b.doc.title, "Oracle Document", "the PDF's title metadata")
+				ck_eq_str(t, b.doc.author, "palmy docs", "the PDF's author metadata")
 
 				// The text layer, and the markers in it.
 				fixed_load_text(&b.fixed)
@@ -2389,12 +2416,11 @@ write_fixtures :: proc(dir: string) {
 		fmt.printfln("%s %v", out, c)
 	}
 	if docs := find_docs_bin(); docs != "" {
-		// Cloned, not temp. The markdown below is built in the temp
-		// allocator and is large enough to make it wrap, which overwrites
-		// anything put there first -- so a tprintf path made before it and
-		// used after it is garbage by the time a subprocess gets it. This is
-		// the same failure as a path handed across two offscreen frames, and
-		// it is silent: argv simply names a file that does not exist.
+		// Cloned rather than left in the temp allocator. Nothing here resets
+		// it, so a tprintf path would in fact survive -- but these two are
+		// handed to a subprocess, and a path that argv holds is exactly the
+		// kind of thing that should not depend on an allocator somebody else
+		// may decide to reset.
 		md := strings.clone(tfmt("%s/oracle.md", dir))
 		pdf := strings.clone(tfmt("%s/generated.pdf", dir))
 		defer delete(md)
@@ -2413,7 +2439,12 @@ write_fixtures :: proc(dir: string) {
 		}
 		strings.write_string(&b, "## The Second Section\n\nAnd a heading, so the outline has more than one entry.\n")
 		_ = os.write_entire_file(md, transmute([]u8)strings.to_string(b))
-		_, c := kit_run({docs, "--convert", md, pdf})
+		// `env USER=...` is not decoration. apps/docs stamps the PDFs it
+		// exports with `$USER`, so a fixture made here would carry the name
+		// of whoever built it -- straight into a committed screenshot and
+		// into the recorded demo. Overriding it for the child is the whole
+		// fix, and it touches nothing in apps/docs.
+		_, c := kit_run({"env", "USER=palmy docs", docs, "--convert", md, pdf})
 		fmt.printfln("%s %v", pdf, c)
 	}
 	if dj := make_test_djvu(dir); dj != "" {

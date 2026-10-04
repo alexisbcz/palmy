@@ -1,0 +1,16 @@
+# The books, covers and library this app's own tooling generates. None of it
+# is source: `bash apps/reader/demo.sh --books` writes the demo's library and
+# `reader.bin --shots <dir>` writes the fixtures the reference PNGs are
+# rendered from. Keeping them out of the repository also keeps a couple of
+# megabytes of generated EPUBs out of every clone.
+demo/books/
+demo/state/
+shots/state/
+shots/*.epub
+shots/*.mobi
+shots/*.pdf
+shots/*.djvu
+shots/*.pgm
+shots/*.md
+shots/cover.png
+shots/outline.txt

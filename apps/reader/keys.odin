@@ -101,7 +101,7 @@ library_keys :: proc(r: ^Reader, ui: ^p.Ctx) {
 		if e.missing {
 			reader_say(r, tfmt("%s is no longer at that path", path_base(e.path)))
 		} else {
-			r.open_next = strings.clone(e.path)
+			reader_request_open(r, ui, e.path)
 		}
 	}
 	if p.key_pressed(ui, p.KEY_DELETE, false) {
