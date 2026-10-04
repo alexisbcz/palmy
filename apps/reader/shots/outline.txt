@@ -1,4 +1,0 @@
-(bookmarks
- ("Chapter One" "#1")
- ("Chapter Two" "#2"
-  ("Sub A" "#3") ) )

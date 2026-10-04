@@ -11,7 +11,15 @@ odin build apps/reader \
 
 apps/reader/reader.bin              # the library
 apps/reader/reader.bin book.epub    # straight into a book
-apps/reader/reader.bin --selftest   # 455 headless assertions
+apps/reader/reader.bin --selftest   # 461 headless assertions
+```
+
+```
+--shots <dir>            reference PNGs of every view, plus the books they use
+--fixtures <dir>         write the generated test books on their own
+--genbig <out> [c] [p]   a novel-sized generated book (.epub or .mobi)
+--add <file>...          put books in the library without opening a window
+--bench <file>           open, page-turn and re-wrap timings for one book
 ```
 
 ## Two kinds of book, and the interface says so
@@ -174,17 +182,28 @@ paragraph never leaves exactly one line behind.
 A generated novel: 36 chapters, 1.67 MB of text, 2652 blocks, 2.0 MB on disk.
 A bigger one: 60 chapters, 4.38 MB of text, 6915 blocks.
 
-| | 1.67 MB EPUB | 4.38 MB EPUB | 1.67 MB MOBI |
+| | 1.67 MB EPUB | 1.67 MB MOBI | 4.38 MB EPUB |
 | --- | --- | --- | --- |
-| open (parse, no layout) | 42 ms | 94 ms | 39 ms |
-| first page on screen | **55 ms** | 114 ms | 52 ms |
-| page turn, same chapter | **0.00001 ms** | 0.00001 ms | — |
-| page turn, averaged over the whole book | 0.004 ms | 0.34 ms | — |
-| type size change | 14 ms | 20 ms | 13 ms |
-| type size changed *back* | **0.13 ms** | 0.20 ms | 0.12 ms |
-| whole book laid out | 487 ms / 1201 pages | 1226 ms / 3312 pages | — |
-| search | 1.7 ms, 500 hits | 1.3 ms | — |
-| memory held | 4.9 MB + 3.1 MB cache | 12.6 MB + 5.1 MB | 5.8 MB |
+| chapters / blocks | 36 / 2652 | 36 / 2652 | 60 / 6915 |
+| open (parse, no layout) | 37 ms | 32 ms | 85 ms |
+| **first page on screen** | **49 ms** | **45 ms** | **103 ms** |
+| page turn, same chapter | 0.00001 ms | 0.00001 ms | 0.00001 ms |
+| page turn, averaged over the whole book | 0.003 ms | 0.003 ms | 0.35 ms |
+| type size change | 12 ms | 12 ms | 19 ms |
+| **type size changed back** | **0.13 ms** | **0.11 ms** | **0.18 ms** |
+| whole book laid out | 455 ms / 1201 pages | 459 ms / 1500 pages | 1167 ms / 3312 pages |
+| search the whole book | 1.3 ms | 1.8 ms | 1.3 ms |
+| memory held | 4.9 + 3.1 MB | 5.8 + 3.9 MB | 12.6 + 5.1 MB |
+
+Memory is *document and archive* plus *wrap cache*. The first number is the
+decompressed text, the block table and the file itself, which is held because
+images are read out of it on demand; the second is the cached line shapes,
+bounded at about 5 MB and evicted least-recently-seen.
+
+The row that matters most is the last-but-one pair: changing the type size
+costs one chapter's wrapping, and changing it *back* costs nothing, because
+the block cache is keyed on the size it wrapped to. The row below it is why
+nothing lays out the whole book: a reader who did would wait a second.
 
 PDF: a 2-page A4 document opens in 26 ms; one page rasterises to 910 × 1287 in
 186 ms, which is exactly why it happens on a worker thread; the text layer costs
@@ -250,7 +269,7 @@ exit, so a crash or a kill costs at most the page you were on.
 
 ## Verification
 
-`--selftest` runs 455 assertions headlessly and reports the count.
+`--selftest` runs 461 assertions headlessly and reports the count.
 
 Most of them need no real book, because the books are generated: `gen.odin`
 holds a ZIP writer (stored *and* fixed-Huffman deflated entries, so the real
