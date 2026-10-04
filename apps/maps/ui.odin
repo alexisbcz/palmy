@@ -89,14 +89,27 @@ toolbar :: proc(a: ^Maps, ui: ^p.Ctx) {
 			"Search places and streets",
 			"w-full h-8 text-[12.5]",
 		)
+		if a.focus_search {
+			p.set_focus(ui, p.node_id(ui, fi))
+			a.focus_search = false
+		}
 		a.searching = p.focused(ui, fi)
 		if changed {
 			search(&a.ix, string(a.q[:]), &a.hits)
 			a.sel = len(a.hits) > 0 ? 0 : -1
 			a.panel = .Search
 		}
-		if submitted && a.sel >= 0 && a.sel < len(a.hits) {
-			goto_hit(a, ui, a.sel)
+		if submitted {
+			// Enter always hands the keyboard back, result or no result.
+			// Leaving it in the field on a query that matched nothing meant
+			// every key after it — the tool shortcuts, the arrows, the panel
+			// digits — was typed into the search box instead.
+			if a.sel >= 0 && a.sel < len(a.hits) {
+				goto_hit(a, ui, a.sel)
+			} else {
+				a.searching = false
+				p.set_focus(ui, 0)
+			}
 		}
 	}
 	p.end(ui)
@@ -271,8 +284,12 @@ route_panel :: proc(a: ^Maps, ui: ^p.Ctx) {
 	// The summary.
 	p.col(ui, "w-full gap-1 p-2.5 rounded-lg bg-card border border-border")
 	p.row(ui, "items-baseline gap-2 w-full")
-	p.text(ui, format_duration(a.route.time_s), "text-[19] font-semibold")
-	p.text(ui, format_distance(a.route.dist_m), "text-[13] text-muted-foreground")
+	p.text(ui, format_duration(a.route.time_s), "text-[19] font-semibold whitespace-nowrap shrink-0")
+	p.text(
+		ui,
+		format_distance(a.route.dist_m),
+		"text-[13] text-muted-foreground whitespace-nowrap shrink-0",
+	)
 	p.end(ui)
 	p.row(ui, "items-center gap-2 w-full")
 	p.textf(
@@ -317,12 +334,18 @@ route_panel :: proc(a: ^Maps, ui: ^p.Ctx) {
 		p.col(ui, "flex-1 min-w-0 gap-0")
 		p.text(ui, step_text(st), "text-[12] leading-[16]")
 		p.row(ui, "items-center gap-2 w-full")
+		META :: "text-[10.5] text-muted-foreground whitespace-nowrap shrink-0"
 		if st.man != .Arrive {
-			p.text(ui, format_distance(st.dist_m), "text-[10.5] text-muted-foreground")
-			p.text(ui, format_duration(st.time_s), "text-[10.5] text-muted-foreground")
+			p.text(ui, format_distance(st.dist_m), META)
+			p.text(ui, format_duration(st.time_s), META)
 		}
 		if k > 0 {
-			p.textf(ui, "font-mono text-[9.5] text-muted-foreground", "at %s", format_distance(cum))
+			p.textf(
+				ui,
+				"font-mono text-[9.5] text-muted-foreground whitespace-nowrap shrink-0",
+				"at %s",
+				format_distance(cum),
+			)
 		}
 		p.end(ui)
 		p.end(ui)
@@ -426,14 +449,18 @@ help_panel :: proc(a: ^Maps, ui: ^p.Ctx) {
 	keyrow(ui, "Enter", "fly to the selected result")
 	group(ui, "Tools")
 	keyrow(ui, "m", "drop markers")
-	keyrow(ui, "r", "route: click a start, then a destination")
+	keyrow(ui, "r", "route: a start, then a destination")
 	keyrow(ui, "d", "measure along a line")
+	keyrow(ui, "Enter", "with a tool armed, act at the crosshair")
+	keyrow(ui, "click", "or act where you click")
 	keyrow(ui, "t", "optimise travel time or distance")
 	keyrow(ui, "c", "clear markers, measurement and route")
 	keyrow(ui, "Escape", "back to panning")
 	group(ui, "Drawing")
 	keyrow(ui, "l", "labels on and off")
 	keyrow(ui, "b", "buildings on and off")
+	group(ui, "Panels")
+	keyrow(ui, "1 2 3 4", "results, directions, data, keys")
 	group(ui, "Data")
 	keyrow(ui, "Ctrl-O", "open a .geojson or .osm file")
 

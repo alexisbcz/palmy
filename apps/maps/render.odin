@@ -391,6 +391,9 @@ Scene :: struct {
 	show_buildings: bool,
 	show_route:     bool,
 	show_chrome:    bool,
+	// A crosshair at the centre of the view, shown while a tool is armed so
+	// that Enter has a visible target.
+	crosshair:      bool,
 	profile:        bool, // print a per-class timing breakdown
 	// Where the pointer is, for the coordinate read-out drawn over the map.
 	cursor:         World_Pt,
@@ -451,6 +454,9 @@ draw_scene :: proc(c: ^p.Canvas, r: p.Rect, s: ^Scene) {
 		draw_route(s, c, r)
 	}
 	draw_measure(s, c, r)
+	if s.crosshair {
+		draw_crosshair(c, r)
+	}
 
 	t1 := time.now()
 	if s.show_labels {
@@ -777,6 +783,23 @@ draw_route :: proc(s: ^Scene, c: ^p.Canvas, rect: p.Rect) {
 		}
 		raster_fill(&s.rast, c, pass == 0 ? p.hex(C_ROUTE_CASE) : p.hex(C_ROUTE), .Nonzero)
 	}
+}
+
+// draw_crosshair marks where Enter will act.
+@(private = "file")
+draw_crosshair :: proc(c: ^p.Canvas, rect: p.Rect) {
+	cx := rect.x + rect.w / 2
+	cy := rect.y + rect.h / 2
+	white := p.Color{255, 255, 255, 220}
+	dark := p.hex(0x33322E)
+	for pass in 0 ..< 2 {
+		t := pass == 0 ? f32(3.0) : f32(1.2)
+		col := pass == 0 ? white : dark
+		p.fill_rect(c, {cx - 11, cy - t / 2, 22, t}, col)
+		p.fill_rect(c, {cx - t / 2, cy - 11, t, 22}, col)
+	}
+	p.fill_circle(c, cx, cy, 3.4, white)
+	p.fill_circle(c, cx, cy, 2.0, dark)
 }
 
 @(private = "file")

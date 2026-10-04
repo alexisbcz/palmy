@@ -528,10 +528,43 @@ srgb_to_linear :: proc "contextless" (v: u8) -> f32 {
 }
 
 @(private)
-linear_to_srgb :: proc "contextless" (v: f32) -> u8 {
+SRGB_REV_N :: 4096
+
+// The reverse direction is the expensive one and it is on the hot path: every
+// antialiased pixel of every glyph, border and shadow goes through it, and the
+// forward direction already had a table because it only has 256 inputs. A map
+// drawing a hundred labels measured about 10 ms a frame inside this `pow`.
+//
+// A direct table over a quantised input cannot be trusted to round the same
+// way -- the curve's slope is 12.92 near zero, so a coarse bucket can land on
+// the wrong side of a rounding boundary. So the table gets within one step and
+// the thresholds correct it exactly: `srgb_thresh[n]` is the lowest linear
+// value whose exact result is `n`, which makes the comparison below the same
+// decision the original rounding made.
+@(private)
+srgb_rev: [SRGB_REV_N]u8
+@(private)
+srgb_thresh: [257]f32
+
+@(private)
+linear_to_srgb_exact :: proc "contextless" (v: f32) -> u8 {
 	c := clamp(v, 0, 1)
 	s := c <= 0.0031308 ? c * 12.92 : 1.055 * math.pow(c, 1.0 / 2.4) - 0.055
 	return u8(clamp(s * 255 + 0.5, 0, 255))
+}
+
+@(private)
+linear_to_srgb :: proc "contextless" (v: f32) -> u8 {
+	c := clamp(v, 0, 1)
+	n := srgb_rev[int(c * f32(SRGB_REV_N - 1))]
+	// At most one step out either way, by construction of the table.
+	for n < 255 && c >= srgb_thresh[n + 1] {
+		n += 1
+	}
+	for n > 0 && c < srgb_thresh[n] {
+		n -= 1
+	}
+	return n
 }
 
 @(private)
@@ -542,6 +575,25 @@ ensure_srgb_lut :: proc "contextless" () {
 	for i in 0 ..< 256 {
 		c := f32(i) / 255
 		srgb_lut[i] = c <= 0.04045 ? c / 12.92 : math.pow((c + 0.055) / 1.055, 2.4)
+	}
+
+	// Thresholds first: the lowest linear value that rounds to each byte. The
+	// exact function is monotonic, so a bisection finds each boundary.
+	srgb_thresh[0] = 0
+	for n in 1 ..= 256 {
+		lo, hi := f32(0), f32(1)
+		for _ in 0 ..< 60 {
+			mid := (lo + hi) / 2
+			if int(linear_to_srgb_exact(mid)) >= n {
+				hi = mid
+			} else {
+				lo = mid
+			}
+		}
+		srgb_thresh[n] = hi
+	}
+	for i in 0 ..< SRGB_REV_N {
+		srgb_rev[i] = linear_to_srgb_exact(f32(i) / f32(SRGB_REV_N - 1))
 	}
 	srgb_lut_ready = true
 }

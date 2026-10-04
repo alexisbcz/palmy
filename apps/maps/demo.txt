@@ -1,153 +1,148 @@
-# A tour of the map, at 1500x940.
+# A tour of the map, at 1500x940, driven entirely from the keyboard.
 #
-# Two things shape this script.
-#
-# Almost everything is driven by the pointer. palmy on a headless compositor
-# currently receives only the first `wtype` invocation — the seat advertises
-# and withdraws its keyboard capability around each one and the client does not
-# re-bind — so the script spends its one reliable burst of keystrokes on the
-# search query and does the rest with clicks. The zoom buttons, the fly-to
-# animation from a search result and the route tool between them cover panning,
-# zooming, searching, routing and markers without needing a second one.
-#
-# And the pointer keeps moving between actions rather than the script simply
-# waiting. An idle palmy window blocks in poll and commits no frames, so a
-# `wait 2` with nothing happening records as nothing at all — the capture ends
-# at the last commit. Moving the pointer over the map updates the coordinate
-# read-out, which asks for a frame, so the recording stays continuous.
+# Not a stylistic choice: on this headless compositor the seat never gains a
+# pointer capability, so no client is ever sent motion or button events, and
+# `move`/`click` steps reach nothing. Every tool here therefore has a keyboard
+# route to it — with a tool armed, Enter acts at the crosshair in the middle of
+# the view, which is also how you would use the program on a laptop without
+# reaching for the trackpad.
 
-wait 1.2
-move 900 400
-wait 0.3
-move 1000 500
-wait 0.3
+wait 1.4
+
+# --- pan and zoom ------------------------------------------------------
+# Three whole zoom levels in, then a pan across the city with the arrows.
+key Prior
+wait 0.7
+key Prior
+wait 0.9
+key Right
+key Right
+key Right
+key Right
+wait 0.5
+key Down
+key Down
+key Down
+wait 0.9
+key Left
+key Left
+key Left
+key Left
+key Left
+key Left
+wait 0.9
+key plus
+wait 0.5
+key plus
+wait 1.0
+key minus
+wait 1.0
 
 # --- search ------------------------------------------------------------
-# Click into the search field and type a street name.
-move 230 24
-click
-wait 0.4
-type Harbour
+# `/` puts the keyboard in the search box; the results list is live as you
+# type, and Enter flies the view to the selected one.
+key slash
 wait 0.5
-move 700 300
-wait 0.3
-move 800 420
-wait 0.4
+type Jubilee
+wait 1.0
+key Down
+wait 0.5
+key Return
+wait 2.0
 
-# The first result. Clicking it flies the view there: a pan and a zoom in one
-# eased move, which is the pan this demo shows.
-move 160 104
-click
-wait 0.3
-move 700 400
-wait 0.3
-move 760 450
-wait 0.3
-move 820 500
-wait 0.3
-move 880 430
+# Another one, by its initials: "mcs" finds Marisport Central Station.
+key slash
 wait 0.4
-
-# --- zoom --------------------------------------------------------------
-# In three levels with the on-map control, then back out two.
-move 1470 76
-click
-wait 0.5
-click
-wait 0.5
-click
-wait 0.5
-move 900 500
-wait 0.3
-move 820 430
-wait 0.4
-move 1470 113
-click
-wait 0.5
-click
-wait 0.5
-move 760 380
-wait 0.3
-move 900 460
-wait 0.4
+type mcs
+wait 1.0
+key Return
+wait 2.0
 
 # --- routing -----------------------------------------------------------
-# Pick the route tool, then click a start and a destination on the map.
-move 690 24
-click
+# Arm the route tool. A crosshair appears; Enter sets the start there.
+key r
+wait 0.8
+key Return
+wait 0.8
+
+# Pan across the city to the destination and set it.
+key minus
+wait 0.4
+key Left
+key Left
+key Left
+key Left
+key Left
+key Left
+key Left
+key Left
 wait 0.5
-move 620 300
-click
-wait 0.5
-move 900 500
-wait 0.3
-move 1180 760
-click
+key Up
+key Up
+key Up
+key Up
+key Up
+key Up
 wait 0.6
-move 1000 600
-wait 0.3
-move 900 450
-wait 0.3
-move 800 380
-wait 0.4
+key Return
+wait 2.2
 
-# Look at a step: clicking one flies the view to that turn.
-move 160 240
-click
-wait 0.4
-move 800 420
-wait 0.3
-move 880 480
-wait 0.3
-move 950 400
-wait 0.4
+# The directions panel. 2 selects it; the steps are in the Tab order, so Tab
+# and Enter walk them and fly the view to each turn.
+key 2
+wait 1.6
 
-# Switch the cost from travel time to distance and watch the route change.
-move 1167 24
-click
+# Optimise for distance instead of travel time and watch the route change.
+key t
+wait 2.0
+key t
+wait 1.6
+
+# --- markers and measuring ---------------------------------------------
+key m
+wait 0.6
+key Return
+wait 0.6
+key Right
+key Right
+key Right
+key Down
+key Down
 wait 0.5
-move 820 420
-wait 0.3
-move 900 520
-wait 0.3
-move 980 440
-wait 0.4
+key Return
+wait 1.2
 
-# --- markers -----------------------------------------------------------
-move 545 24
-click
-wait 0.4
-move 860 420
-click
-wait 0.4
-move 1010 560
-click
+key d
 wait 0.5
-move 900 480
-wait 0.3
-move 820 400
+key Return
 wait 0.4
+key Left
+key Left
+key Left
+key Left
+key Up
+key Up
+wait 0.4
+key Return
+wait 1.6
+key Escape
+wait 0.8
 
 # --- what was loaded ---------------------------------------------------
-move 181 66
-click
-wait 0.5
-move 700 400
-wait 0.3
-move 800 460
-wait 0.3
-move 900 520
-wait 0.4
+# 3 is the data panel: feature counts, graph size, and this frame's timings.
+key 3
+wait 2.4
 
-# Back to the directions.
-move 114 66
-click
-wait 0.5
-move 760 420
-wait 0.3
-move 860 500
-wait 0.3
-move 960 420
-wait 0.5
-move 700 350
-wait 0.5
+# 4 is the key list.
+key 4
+wait 2.0
+
+# Back to the map, labels off and on again to show what the labeller is doing.
+key 1
+wait 0.6
+key l
+wait 1.4
+key l
+wait 1.6
+key f
+wait 2.4

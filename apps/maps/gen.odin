@@ -503,14 +503,26 @@ gen_residential :: proc(b: ^Builder, r: ^Rng) {
 			rx1 := river_x(by + GRID_STEP)
 			crosses := (rx0 > bx && rx0 < bx + GRID_STEP) || (rx1 > bx && rx1 < bx + GRID_STEP)
 
+			// Where the two north-south streets cross the middle of the block,
+			// so the service alley below can be hung off them rather than
+			// floating in the block as a pair of nodes with no way out.
+			cross_x: [2]f64
 			for k in 1 ..< 3 {
 				if crosses {
 					break
 				}
 				// A north-south street.
+				//
+				// The wiggle is `sin(3*pi*t)`, which is zero at t = 0, 1/3,
+				// 2/3 and 1. That is not decoration: it puts a vertex exactly
+				// on the street's nominal line at the two places the block's
+				// east-west streets cross it, so the two really do share a
+				// node and the block is a network rather than four lines
+				// lying on top of each other. A graph built from shared
+				// vertices only joins what the data actually joins.
 				x := bx + f64(k) * GRID_STEP / 3
 				amp := rng_range(r, 6, 16)
-				ph := rng_range(r, 0, 6.28)
+				cross_x[k - 1] = x + amp * math.sin(1.5 * math.PI)
 				name := fmt.tprintf(
 					"%s %s",
 					STREET_HEADS[(n * 7 + 3) % len(STREET_HEADS)],
@@ -519,16 +531,22 @@ gen_residential :: proc(b: ^Builder, r: ^Rng) {
 				n += 1
 				begin_feature(b, .Line, .Residential_Road, name, "")
 				begin_ring(b)
-				for t := 0.0; t <= 1.0001; t += 1.0 / 8 {
-					y := by + t * GRID_STEP
-					add_met(b, x + amp * math.sin(t * 3.4 * math.PI + ph), y)
+				// A stub along the arterial to the junction at the corner of
+				// the block, so the street is reachable from the grid. Without
+				// it every residential street in the city is an island: its
+				// ends sit *on* an arterial but not on one of its vertices,
+				// and nothing shares a node with it.
+				add_met(b, bx, by)
+				for j in 0 ..= 6 {
+					t := f64(j) / 6
+					add_met(b, x + amp * math.sin(3 * math.PI * t), by + t * GRID_STEP)
 				}
+				add_met(b, bx, by + GRID_STEP)
 				end_feature(b)
 
-				// An east-west one.
+				// An east-west one, built the same way.
 				y := by + f64(k) * GRID_STEP / 3
 				amp2 := rng_range(r, 6, 16)
-				ph2 := rng_range(r, 0, 6.28)
 				name2 := fmt.tprintf(
 					"%s %s",
 					STREET_HEADS[(n * 11 + 5) % len(STREET_HEADS)],
@@ -537,10 +555,12 @@ gen_residential :: proc(b: ^Builder, r: ^Rng) {
 				n += 1
 				begin_feature(b, .Line, .Residential_Road, name2, "")
 				begin_ring(b)
-				for t := 0.0; t <= 1.0001; t += 1.0 / 8 {
-					xx := bx + t * GRID_STEP
-					add_met(b, xx, y + amp2 * math.sin(t * 3.1 * math.PI + ph2))
+				add_met(b, bx, by)
+				for j in 0 ..= 6 {
+					t := f64(j) / 6
+					add_met(b, bx + t * GRID_STEP, y + amp2 * math.sin(3 * math.PI * t))
 				}
+				add_met(b, bx + GRID_STEP, by)
 				end_feature(b)
 			}
 
@@ -555,7 +575,13 @@ gen_residential :: proc(b: ^Builder, r: ^Rng) {
 					"",
 				)
 				begin_ring(b)
+				// Through the two residential streets' own mid-block
+				// vertices, so the alley is part of the network instead of an
+				// island. The vertices are shared exactly, which is what the
+				// graph builder joins on.
 				add_met(b, bx + 60, by + GRID_STEP / 2)
+				add_met(b, cross_x[0], by + GRID_STEP / 2)
+				add_met(b, cross_x[1], by + GRID_STEP / 2)
 				add_met(b, bx + GRID_STEP - 60, by + GRID_STEP / 2)
 				end_feature(b)
 				b.m.features[len(b.m.features) - 1].oneway = 1

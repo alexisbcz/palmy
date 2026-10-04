@@ -50,7 +50,37 @@ usage :: proc() {
 
 main :: proc() {
 	args := os.args[1:]
+
+	// Two passes over the command line. The first collects the file to open,
+	// because an option that acts immediately — `--shot`, `--sheet`, `--bench`
+	// — needs it and may well appear before it. One pass that acted as it went
+	// rendered the generated city every time a file was named after the
+	// option, which is the normal way round to type it.
 	file := ""
+	{
+		i := 0
+		for i < len(args) {
+			a := args[i]
+			switch a {
+			case "--shot":
+				i += 2 // an output path and an optional zoom
+				if i < len(args) {
+					if _, ok := strconv.parse_f64(args[i]); ok {
+						i += 1
+					}
+				}
+				continue
+			case "--gen", "--sheet":
+				i += 2
+				continue
+			}
+			if !strings.has_prefix(a, "-") {
+				file = a
+			}
+			i += 1
+		}
+	}
+
 	for a, i in args {
 		switch {
 		case a == "--selftest" || a == "-selftest":
@@ -111,8 +141,6 @@ main :: proc() {
 		case strings.has_prefix(a, "-"):
 			fmt.eprintfln("maps: unknown option %s", a)
 			os.exit(2)
-		case:
-			file = a
 		}
 	}
 
@@ -155,6 +183,7 @@ main :: proc() {
 		if a.map_id != 0 {
 			a.map_rect = p.rect_of(ui, a.map_id)
 		}
+		sync_view_size(a)
 		fly_step(a, f64(p.delta_time(ui)))
 		if a.fly {
 			p.redraw(ui)
@@ -172,6 +201,7 @@ main :: proc() {
 		a.sc.cursor = a.cursor
 		a.sc.has_cursor = a.has_cursor
 		a.sc.show_route = a.route.ok
+		a.sc.crosshair = a.tool != .Pan
 
 		draw_ui(a, ui)
 		record_frame(a, f32(a.sc.ms_total))

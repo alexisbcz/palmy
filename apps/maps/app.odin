@@ -84,6 +84,11 @@ Maps :: struct {
 	hits:    [dynamic]Hit,
 	sel:     int,
 	searching: bool,
+	// Set by the `/` shortcut and consumed by the toolbar, which is the only
+	// place the field's node id exists. Focus belongs to palmy and is keyed by
+	// node, so a key handler that runs before the tree is built cannot move it
+	// itself — it can only leave a note.
+	focus_search: bool,
 
 	// Routing.
 	from_node, to_node: i32,
@@ -263,6 +268,20 @@ fly_step :: proc(a: ^Maps, dt: f64) {
 // Input
 // ---------------------------------------------------------------------------
 
+// sync_view_size copies the panel's real size into the camera.
+//
+// It has to happen before any input is handled, not when the panel is painted:
+// `screen_to_world` divides by the viewport's width, so a camera still holding
+// the size it was initialised with turns every cursor read-out and every
+// click-to-place into a position off by half the difference. The panel's size
+// is only known from the previous frame's layout, which is where it comes from.
+sync_view_size :: proc(a: ^Maps) {
+	if a.map_rect.w > 0 && a.map_rect.h > 0 {
+		a.view.w = f64(a.map_rect.w)
+		a.view.h = f64(a.map_rect.h)
+	}
+}
+
 handle_map_mouse :: proc(a: ^Maps, ui: ^p.Ctx) {
 	r := a.map_rect
 	if r.w <= 0 || r.h <= 0 {
@@ -333,20 +352,25 @@ map_click :: proc(a: ^Maps, ui: ^p.Ctx, w: World_Pt) {
 			say(a, now, fmt.tprintf("%.5f, %.5f", lat, lon))
 		}
 	case .Marker:
-		append(
-			&a.sc.markers,
-			Marker{w = w, label = fmt.tprintf("%d", len(a.sc.markers) + 1), col = p.hex(C_MARKER)},
-		)
-		// The label is temp-allocated; markers outlive the frame, so clone.
-		a.sc.markers[len(a.sc.markers) - 1].label = strings.clone(
-			a.sc.markers[len(a.sc.markers) - 1].label,
-		)
-		say(a, now, fmt.tprintf("marker %d dropped", len(a.sc.markers)))
+		// Numbered among the dropped pins only. The route's own A and B live
+		// in the same list, and counting them made the first marker a user
+		// dropped come out as "3".
+		n := 1
+		for mk in a.sc.markers {
+			if mk.kind == 0 {
+				n += 1
+			}
+		}
+		append(&a.sc.markers, Marker{w = w, label = fmt.aprintf("%d", n), col = p.hex(C_MARKER)})
+		say(a, now, fmt.tprintf("marker %d dropped", n))
 	case .Measure:
 		append(&a.sc.measure, w)
 		say(a, now, fmt.tprintf("%s measured", format_distance(measure_total(a))))
 	case .Route:
-		id, d := graph_nearest(&a.g, w)
+		// Snapped to a road you could actually drive down, not merely to the
+		// nearest vertex: a service yard or a footpath stub is often closer
+		// and routing from one is a dead end.
+		id, d := graph_nearest(&a.g, w, true)
 		if id < 0 {
 			say(a, now, "no road network loaded")
 			return
@@ -452,6 +476,7 @@ handle_keys :: proc(a: ^Maps, ui: ^p.Ctx) {
 		// are taken; everything printable belongs to the field.
 		if p.key_pressed(ui, p.KEY_ESCAPE) {
 			a.searching = false
+			a.focus_search = false
 			p.set_focus(ui, 0)
 		}
 		n := len(a.hits)
@@ -503,9 +528,32 @@ handle_keys :: proc(a: ^Maps, ui: ^p.Ctx) {
 		view_zoom_at(&a.view, -1, a.view.w / 2, a.view.h / 2)
 	}
 
+	// Enter acts at the centre of the view, which is what makes every tool
+	// usable without a pointer: pan and zoom to the place you mean, then
+	// press Enter. A crosshair is drawn there while a tool is active so there
+	// is no doubt about where "here" is. It is also the only way to drive the
+	// map on a seat with no pointer, which is what a headless compositor is.
+	if a.tool != .Pan && (p.key_pressed(ui, p.KEY_RETURN) || p.key_pressed(ui, p.KEY_KP_ENTER)) {
+		map_click(a, ui, a.view.center)
+	}
+
+	// The side panel's four tabs.
+	for panel, k in ([?]Panel{.Search, .Route, .Layers, .Help}) {
+		if p.key_pressed(ui, u32('1') + u32(k)) {
+			a.panel = panel
+		}
+	}
+
 	if p.key_pressed(ui, '/') || p.shortcut(ui, 'f', {.Ctrl}) {
+		// A fresh query. Clearing the buffer also resets the caret, which the
+		// widget clamps to the text's length — and a stale caret is how a
+		// second search ends up spliced into the middle of the first.
+		clear(&a.q)
+		clear(&a.hits)
+		a.sel = -1
 		a.panel = .Search
 		a.searching = true
+		a.focus_search = true
 	}
 	if p.key_pressed(ui, 'm') {
 		a.tool = a.tool == .Marker ? .Pan : .Marker
