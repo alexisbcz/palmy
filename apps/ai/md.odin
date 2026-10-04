@@ -680,6 +680,28 @@ md_frag :: proc(ui: ^p.Ctx, f: Frag, size: f32) {
 	st.font_size = size
 }
 
+// expand_tabs turns tabs into four spaces at the next stop.
+expand_tabs :: proc(s: string, allocator := context.temp_allocator) -> string {
+	if !strings.contains(s, "\t") {
+		return s
+	}
+	b := strings.builder_make(allocator)
+	col := 0
+	for i in 0 ..< len(s) {
+		if s[i] == '\t' {
+			n := 4 - col % 4
+			for _ in 0 ..< n {
+				strings.write_byte(&b, ' ')
+			}
+			col += n
+			continue
+		}
+		strings.write_byte(&b, s[i])
+		col += 1
+	}
+	return strings.to_string(b)
+}
+
 // md_render draws a whole markdown document. `size` is the body text size, so
 // the same renderer serves a transcript bubble and a smaller preview.
 md_render :: proc(ui: ^p.Ctx, src: string, width: f32, size: f32 = 14) {
@@ -777,9 +799,11 @@ md_render :: proc(ui: ^p.Ctx, src: string, width: f32, size: f32 = 14) {
 			p.col(ui, "w-full min-w-0 px-2.5 py-2 gap-0 overflow-hidden")
 			for l, li in blk.lines {
 				p.key(ui, fmt.tprintf("l%d", li))
+				// No font has a tab glyph, so a tab draws as .notdef. Code
+				// out of a model is full of them.
 				p.text(
 					ui,
-					l == "" ? " " : l,
+					l == "" ? " " : expand_tabs(l),
 					"font-mono text-[12.5] leading-[18] whitespace-nowrap text-foreground",
 				)
 				p.style(ui).shrink = 0
