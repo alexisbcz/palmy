@@ -95,6 +95,17 @@ for _ in $(seq 1 50); do
 done
 [ -n "$WD" ] || { echo "the headless compositor never came up:"; tail -5 "$TMP/sway.log"; exit 1; }
 export WAYLAND_DISPLAY="$WD"
+
+# swaymsg finds its socket through SWAYSOCK, which only sway's own children
+# inherit -- and this script is sway's *parent*. Without it every swaymsg below
+# failed silently, so the window wait, the fullscreen and every cursor move and
+# click were no-ops and nobody noticed, because each one redirects its own
+# errors away. Point it at the socket sway opened for this pid.
+export SWAYSOCK="$XDG_RUNTIME_DIR/sway-ipc.$(id -u).$SWAY.sock"
+for _ in $(seq 1 50); do [ -S "$SWAYSOCK" ] && break; sleep 0.1; done
+if ! swaymsg -t get_version >/dev/null 2>&1; then
+  echo "warning: cannot reach sway's IPC at $SWAYSOCK -- pointer steps will not work"
+fi
 echo "headless compositor on $WAYLAND_DISPLAY (${W}x${H}), invisible to the session"
 
 "$BIN" > "$TMP/app.log" 2>&1 &
@@ -117,6 +128,13 @@ wf-recorder -f "$OUT" -c libx264 -p crf=20 -p preset=veryfast --overwrite \
 REC=$!
 sleep 1.0
 
+# Each wtype invocation attaches a fresh virtual keyboard and sends at once,
+# racing the compositor's delivery of the keymap and focus, so an invocation's
+# first keystroke is occasionally dropped. This is not a palmy bug -- foot
+# loses it the same way on the same seat -- and attempts to absorb it with a
+# priming keypress made it worse, so it is left alone. `-s` spaces the keys
+# out, which helps a little. If a step must not lose its first character, put
+# a throwaway key before it in the steps file.
 while IFS= read -r line || [ -n "$line" ]; do
   [ -z "$line" ] && continue
   case "$line" in
@@ -125,7 +143,7 @@ while IFS= read -r line || [ -n "$line" ]; do
     chord\ *) set -- $(printf '%s' "${line#chord }" | tr '+' ' ')
               mods=""; while [ $# -gt 1 ]; do mods="$mods -M $1"; shift; done
               wtype $mods -k "$1" $(printf '%s' "$mods" | sed 's/-M/-m/g') ;;
-    type\ *)  wtype -- "${line#type }" ;;
+    type\ *)  wtype -s 8 -- "${line#type }" ;;
     move\ *)  set -- ${line#move }
               swaymsg "seat seat0 cursor set $1 $2" >/dev/null 2>&1 ;;
     click*)   b="${line#click}"; b="${b# }"; b="${b:-left}"
