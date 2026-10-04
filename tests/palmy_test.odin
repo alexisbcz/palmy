@@ -806,3 +806,46 @@ test_icon_rotation :: proc(t: ^testing.T) {
 	w360, h360 := render(bar, 1.0)
 	testing.expect(t, abs(w360 - w0) <= 1 && abs(h360 - h0) <= 1, "a whole turn is a no-op")
 }
+
+@(test)
+test_text_hit_testing_round_trips :: proc(t: ^testing.T) {
+	off := p.offscreen_create(10, 10)
+	defer p.offscreen_destroy(off)
+
+	TEXT :: "Hello, world"
+	SIZE :: f32(16)
+
+	// x=0 is the start, far right is the end.
+	testing.expect_value(t, p.text_index_at(&off.fonts, TEXT, SIZE, 0), 0)
+	wide := p.text_width(&off.fonts, TEXT, SIZE)
+	testing.expect_value(t, p.text_index_at(&off.fonts, TEXT, SIZE, wide + 50), len(TEXT))
+
+	// Every caret position must map back to itself: measure where index i
+	// sits, ask what index is there, get i back.
+	for i in 0 ..= len(TEXT) {
+		x := p.text_width_upto(&off.fonts, TEXT, i, SIZE)
+		back := p.text_index_at(&off.fonts, TEXT, SIZE, x)
+		testing.expectf(t, back == i, "index %d measured at %.2f mapped back to %d", i, x, back)
+	}
+
+	// The nearest boundary wins: just past a glyph's midpoint lands after it.
+	w1 := p.text_width_upto(&off.fonts, TEXT, 1, SIZE)
+	testing.expect_value(t, p.text_index_at(&off.fonts, TEXT, SIZE, w1 * 0.9), 1)
+	testing.expect_value(t, p.text_index_at(&off.fonts, TEXT, SIZE, w1 * 0.1), 0)
+}
+
+@(test)
+test_text_hit_testing_is_rune_safe :: proc(t: ^testing.T) {
+	off := p.offscreen_create(10, 10)
+	defer p.offscreen_destroy(off)
+
+	// Multi-byte runes: indices must land on boundaries, never mid-sequence.
+	text := "aéb€c"
+	for x := f32(0); x < 120; x += 1.5 {
+		i := p.text_index_at(&off.fonts, text, 16, x)
+		testing.expect(t, i >= 0 && i <= len(text), "index in range")
+		if i < len(text) {
+			testing.expectf(t, text[i] & 0xc0 != 0x80, "index %d is a rune boundary", i)
+		}
+	}
+}

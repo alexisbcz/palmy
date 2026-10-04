@@ -88,6 +88,23 @@ photo shows real pixels rather than mush. `draw_image` is available directly
 inside `p.pixels` if you need to composite frames yourself — which is how a
 video player should blit decoded frames.
 
+## Text editing
+
+Beyond `p.text_field`, which is a single-line widget, palmy gives you the two
+measurements a real text editor needs:
+
+```odin
+// Where does a click land in this string?
+i := p.text_index_at(&app.fonts, line, size, click_x)
+
+// Where does the caret at index i sit?
+x := p.text_width_upto(&app.fonts, line, i, size)
+```
+
+Both are rune-safe and round-trip against each other. `p.text_field` also takes
+a mask rune for password entry. If you need styled runs, selection across
+lines, or undo, own that model in your app — palmy deliberately does not.
+
 ## Recording a demo
 
 Write a plain-text script and hand it to the recorder:
