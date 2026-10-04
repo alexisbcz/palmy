@@ -96,10 +96,17 @@ wait 1.8
 # ---------------------------------------------------------------------------
 # The folder tree: three accounts, three protocols. IMAP and JMAP have a full
 # tree; POP3 has an inbox and nothing else, because the protocol has nothing
-# else. The Outbox that the reply was queued into is now there too.
+# else. The Outbox the reply was queued into is now there too — and below the
+# configured accounts are the Maildirs the engine wrote, found on disk.
 # ---------------------------------------------------------------------------
 key h
 wait 1.0
+key j
+wait 0.45
+key j
+wait 0.5
+key j
+wait 0.5
 key j
 wait 0.5
 key j
@@ -111,11 +118,23 @@ wait 0.6
 key j
 wait 0.7
 key j
-wait 0.7
+wait 0.5
+key j
+wait 0.5
+key j
+wait 0.5
+key j
+wait 0.5
+key j
+wait 0.5
+key j
+wait 0.5
 key j
 wait 0.7
 key j
-wait 0.8
+wait 1.4
+key j
+wait 1.2
 key j
 wait 0.6
 key j
@@ -127,12 +146,8 @@ wait 0.6
 key j
 wait 0.6
 key j
-wait 0.6
-key j
-wait 0.8
-key j
-wait 1.0
+wait 0.7
 key j
 wait 1.6
 key l
-wait 1.8
+wait 2.0

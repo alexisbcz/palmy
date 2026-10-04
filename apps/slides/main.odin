@@ -5,7 +5,7 @@ package main
 //   slides.bin [deck.json]        open a deck, or the built-in fixture
 //   slides.bin --export DIR       render every slide to PNG, headless
 //   slides.bin --make-assets      regenerate the pictures the fixture uses
-//   slides.bin --selftest         save, load and compare, then export
+//   slides.bin --selftest         the headless test suite
 //
 // Three panes: the slide sorter on the left with live thumbnails, the canvas in
 // the middle, the inspector on the right. Presenting opens a second surface —
@@ -31,7 +31,7 @@ USAGE :: `palmy slides — a presentation editor
   slides.bin [deck.json]      open a deck, or the built-in fixture
   slides.bin --export [DIR]   render every slide to PNG, plus a contact sheet
   slides.bin --make-assets    regenerate the pictures the fixture uses
-  slides.bin --selftest       save, load and compare the deck byte for byte`
+  slides.bin --selftest       run the headless test suite`
 
 Mode :: enum u8 {
 	Browse, // the editor, nothing capturing the keyboard
@@ -223,16 +223,7 @@ main :: proc() {
 		fmt.printfln("exported %d slides and a contact sheet to %s", n, dir)
 		return
 	case "selftest":
-		dir := os.get_env("TMPDIR", context.temp_allocator)
-		if dir == "" {
-			dir = "/tmp"
-		}
-		ok, detail := roundtrip(&st.deck, tprintf("%s/palmy-slides-selftest.json", dir))
-		fmt.printfln("round trip: %s (%s)", ok ? "identical" : "DIFFERENT", detail)
-		if !ok {
-			os.exit(1)
-		}
-		return
+		os.exit(selftest(exe_dir))
 	}
 
 	// The editor and the projector are two surfaces, opened one at a time in
@@ -278,6 +269,10 @@ run_editor :: proc(st: ^St) {
 	}
 	defer p.destroy(app)
 	register_chrome_theme()
+
+	// A new window restarts the frame clock, so a toast from before the
+	// projector would otherwise hang around until the new clock caught up.
+	st.toast = ""
 
 	st.fonts = &app.fonts
 	for i in 0 ..< MAX_THUMBS {
@@ -349,9 +344,11 @@ cur_elem :: proc(st: ^St) -> ^Element {
 	return &s.elems[st.sel]
 }
 
+// toast takes a nil context so that the headless tests can drive the same
+// commands the keyboard does.
 toast :: proc(st: ^St, ui: ^p.Ctx, msg: string) {
 	st.toast = strings.clone(msg, context.allocator)
-	st.toast_t = ui.now + 3.5
+	st.toast_t = ui == nil ? 0 : ui.now + 3.5
 }
 
 // register_chrome_theme is the shadcn dark palette with a workspace colour
@@ -417,6 +414,7 @@ run_present :: proc(st: ^St) {
 	st.fonts = &app.fonts
 	st.pres_black = false
 	st.pres_start = 0
+	st.toast = ""
 
 	for ui in p.frames(app) {
 		free_all(context.temp_allocator)

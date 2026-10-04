@@ -19,10 +19,18 @@ UITEST_H :: 940
 
 @(private = "file")
 Rig :: struct {
-	off: ^p.Offscreen,
-	st:  ^State,
-	dir: string,
-	n:   int,
+	off:   ^p.Offscreen,
+	st:    ^State,
+	dir:   string,
+	n:     int,
+
+	// Filming: every rendered frame is written, numbered, so the sequence can
+	// be encoded into a video. The recording harness serialises on a lock that
+	// a dozen agents are queued on, and `wtype` cannot be used off it; this
+	// path needs no compositor at all and renders at whatever size is asked
+	// for rather than whatever the tiler decides.
+	film:  bool,
+	frame: int,
 }
 
 // settle renders a few frames so layout, scrolling and hover all reach a
@@ -31,17 +39,36 @@ Rig :: struct {
 settle :: proc(r: ^Rig, frames := 3) {
 	for _ in 0 ..< frames {
 		ui := p.offscreen_begin(r.off)
-		r.st.now = r.st.now
 		handle_keys(ui, r.st, nil)
 		frame(ui, r.st)
 		apply_scroll(ui, r.st)
 		p.offscreen_end(r.off)
+		if r.film {
+			r.frame += 1
+			p.offscreen_write_png(r.off, fmt.tprintf("%s/f%05d.png", r.dir, r.frame))
+		}
 	}
 }
+
+// hold renders the current state for a while, so a viewer has time to read it.
+@(private = "file")
+hold :: proc(r: ^Rig, seconds: f32) {
+	if !r.film {
+		return
+	}
+	settle(r, int(seconds * WALKTHROUGH_FPS))
+}
+
+WALKTHROUGH_FPS :: 20
 
 @(private = "file")
 shot :: proc(r: ^Rig, name: string) {
 	settle(r)
+	if r.film {
+		hold(r, 1.6)
+		r.n += 1
+		return
+	}
 	r.n += 1
 	path := fmt.tprintf("%s/%02d-%s.png", r.dir, r.n, name)
 	if p.offscreen_write_png(r.off, path) {
@@ -57,16 +84,33 @@ key :: proc(r: ^Rig, sym: u32, times := 1) {
 		p.press_key(r.off, sym)
 		settle(r, 1)
 		settle(r, 1)
+		hold(r, 0.22)
 	}
 }
 
 @(private = "file")
 typ :: proc(r: ^Rig, text: string) {
-	p.type_text(r.off, text)
-	settle(r, 2)
+	if !r.film {
+		p.type_text(r.off, text)
+		settle(r, 2)
+		return
+	}
+	// Filming types a character at a time, because a field that fills in one
+	// frame does not read as typing.
+	i := 0
+	for i < len(text) {
+		n := 1
+		for i + n < len(text) && text[i + n] & 0xc0 == 0x80 {
+			n += 1
+		}
+		p.type_text(r.off, text[i:i + n])
+		settle(r, 1)
+		settle(r, 1)
+		i += n
+	}
 }
 
-run_uitest :: proc(dir: string) -> int {
+run_uitest :: proc(dir: string, film := false) -> int {
 	os.make_directory_all(dir)
 
 	off := p.offscreen_create(UITEST_W, UITEST_H, 1, "w-full h-full bg-background text-foreground")
@@ -99,9 +143,10 @@ run_uitest :: proc(dir: string) -> int {
 	init_state(st)
 
 	r := Rig {
-		off = off,
-		st  = st,
-		dir = dir,
+		off  = off,
+		st   = st,
+		dir  = dir,
+		film = film,
 	}
 
 	fmt.printfln("mail --uitest: %d messages, %d folders, %d accounts", len(st.messages), len(st.folders), len(st.accounts))
@@ -121,8 +166,11 @@ run_uitest :: proc(dir: string) -> int {
 			1000.0 / max(ms / f64(n), 0.0001),
 		)
 	}
-	bench(&r, "inbox, collapsed", 60)
+	if !film {
+		bench(&r, "inbox, collapsed", 60)
+	}
 
+	hold(&r, 1.2)
 	shot(&r, "inbox")
 
 	// Walk the conversation list.
@@ -140,7 +188,9 @@ run_uitest :: proc(dir: string) -> int {
 	// Scroll a few hundred conversations.
 	key(&r, p.KEY_PAGE_DOWN, 8)
 	shot(&r, "scrolled")
-	bench(&r, "inbox, scrolled", 60)
+	if !film {
+		bench(&r, "inbox, scrolled", 60)
+	}
 	key(&r, p.KEY_HOME)
 
 	// Search.
@@ -187,6 +237,11 @@ run_uitest :: proc(dir: string) -> int {
 	key(&r, 'l')
 	key(&r, 'i')
 	shot(&r, "headers")
+
+	if film {
+		fmt.printfln("mail --walkthrough: %d frames at %d fps", r.frame, int(WALKTHROUGH_FPS))
+		return 0
+	}
 
 	// The same interface at the width this compositor actually tiles to. Three
 	// fixed panes do not fit there, so the folder list becomes a drawer; that

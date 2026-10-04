@@ -80,6 +80,13 @@ St :: struct {
 }
 
 main :: proc() {
+	for a in os.args[1:] {
+		if a == "--selftest" {
+			run_selftest()
+			os.exit(failures == 0 ? 0 : 1)
+		}
+	}
+
 	shot_out, shot_secs, shot_keys, want_shot := shot_requested()
 
 	app: ^p.App

@@ -1,0 +1,122 @@
+#!/usr/bin/env bash
+# Record the Docs demo.
+#
+#   apps/docs/record.sh [out.mp4] [script-file]
+#
+# This is apps/tools/record-app.sh with the two changes that matter on a
+# machine where several agents are running palmy applications at once:
+#
+#   * the window is found by the **pid this script started**, not by taking the
+#     first window whose class is "palmy" — that query routinely hands back
+#     somebody else's window, and the recording is then of their application;
+#   * focus is put back on that pid before **every** keystroke, because a
+#     window appearing mid-take takes the keyboard with it, and the only sign
+#     of that in the video is an application that quietly stops responding.
+#
+# The same `/tmp/palmy-record.lock` is taken, for the same reason the shared
+# recorder takes it: every `wtype` attaches its own virtual keyboard to the
+# seat, so two recordings running at once type into each other's windows.
+#
+# Steps, one per line:
+#   key <X11name>   wtype -k
+#   type <text>     wtype
+#   move <x> <y>    pointer to a window-relative position
+#   wait <seconds>  sleep
+set -uo pipefail
+
+HERE="$(cd "$(dirname "$0")" && pwd)"
+BIN="$HERE/docs.bin"
+OUT="${1:-$HERE/demo.mp4}"
+SCRIPT="${2:-$HERE/demo.txt}"
+W_WANT=1180
+H_WANT=980
+
+mkdir -p "$(dirname "$OUT")"
+
+exec 9>/tmp/palmy-record.lock
+if ! flock -w 2400 9; then
+	echo "timed out waiting for the recording lock (/tmp/palmy-record.lock)"
+	exit 1
+fi
+echo "holding the recording lock"
+
+cleanup() {
+	[ -n "${REC:-}" ] && kill -INT "$REC" 2>/dev/null
+	[ -n "${APP:-}" ] && kill "$APP" 2>/dev/null
+	wait 2>/dev/null
+}
+trap cleanup EXIT INT TERM
+
+"$BIN" &
+APP=$!
+sleep 3.0
+if ! kill -0 "$APP" 2>/dev/null; then
+	echo "the application exited before it could be recorded"
+	exit 1
+fi
+
+# This Hyprland build uses the Lua dispatcher API; the old positional syntax is
+# a parse error that silently does nothing.
+hyprctl dispatch "hl.dsp.window.float({window='pid:$APP'})" >/dev/null 2>&1
+hyprctl dispatch "hl.dsp.window.resize({window='pid:$APP', x=$W_WANT, y=$H_WANT, exact=true})" >/dev/null 2>&1
+hyprctl dispatch "hl.dsp.window.move({window='pid:$APP', x=80, y=50, exact=true})" >/dev/null 2>&1
+hyprctl dispatch "hl.dsp.window.bring_to_top({window='pid:$APP'})" >/dev/null 2>&1
+sleep 1.0
+
+read X Y W H WS <<< "$(hyprctl clients -j | python3 -c "
+import json, sys
+for c in json.load(sys.stdin):
+    if c.get('pid') == $APP:
+        x, y = c['at']; w, h = c['size']
+        print(x, y, w, h, c['workspace']['id']); break")"
+if [ -z "${X:-}" ]; then
+	echo "the application's window never appeared"
+	exit 1
+fi
+
+hyprctl dispatch "hl.dsp.focus({workspace='$WS'})" >/dev/null 2>&1
+sleep 0.6
+echo "recording $BIN (pid $APP) at $X,$Y ${W}x${H} on workspace $WS"
+
+wf-recorder -g "$X,$Y ${W}x${H}" -f "$OUT" -c libx264 -p crf=20 -p preset=veryfast --overwrite >/dev/null 2>&1 &
+REC=$!
+sleep 1.4
+
+focus_app() { hyprctl dispatch "hl.dsp.focus({window='pid:$APP'})" >/dev/null 2>&1; }
+
+while IFS= read -r line; do
+	[ -z "$line" ] && continue
+	case "$line" in
+	\#*) ;;
+	key\ *)
+		focus_app
+		wtype -k "${line#key }"
+		;;
+	type\ *)
+		focus_app
+		wtype -- "${line#type }"
+		;;
+	move\ *)
+		set -- ${line#move }
+		hyprctl dispatch "hl.dsp.cursor.move({x=$((X + $1)),y=$((Y + $2))})" >/dev/null 2>&1
+		;;
+	wait\ *) sleep "${line#wait }" ;;
+	*) echo "unknown step: $line" ;;
+	esac
+done < "$SCRIPT"
+
+sleep 1
+kill -INT $REC 2>/dev/null
+wait $REC 2>/dev/null
+REC=""
+kill $APP 2>/dev/null
+APP=""
+sleep 0.5
+
+if [ -s "$OUT" ]; then
+	ffprobe -v error -show_entries format=duration -of default=nw=1:nk=1 "$OUT" |
+		xargs -I{} echo "wrote $OUT ({}s)"
+else
+	echo "recording failed"
+	exit 1
+fi

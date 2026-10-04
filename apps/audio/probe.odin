@@ -49,10 +49,6 @@ Media :: struct {
 
 // probe_file runs ffprobe and reads the answer.
 probe_file :: proc(path: string) -> Media {
-	m := Media {
-		path = strings.clone(path),
-		name = strings.clone(base_of(path)),
-	}
 	out, ok := kit.run(
 		{
 			"ffprobe",
@@ -67,8 +63,21 @@ probe_file :: proc(path: string) -> Media {
 		context.temp_allocator,
 	)
 	if !ok || out == "" {
-		m.err = "ffprobe could not read this file"
-		return m
+		return Media {
+			path = strings.clone(path),
+			name = strings.clone(base_of(path)),
+			err = "ffprobe could not read this file",
+		}
+	}
+	return parse_probe(out, path)
+}
+
+// parse_probe is the half that does not touch the filesystem, so the shape of
+// ffprobe's JSON can be tested without running it.
+parse_probe :: proc(out: string, path: string) -> Media {
+	m := Media {
+		path = strings.clone(path),
+		name = strings.clone(base_of(path)),
 	}
 	root, jerr := json.parse_string(out, .JSON, false, context.temp_allocator)
 	if jerr != .None {
