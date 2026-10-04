@@ -11,17 +11,28 @@
  *   - a page count that does not match what the content files declare,
  *     which is how a page that nothing links to gets caught
  *
- * Usage: node scripts/check-links.mjs [--base http://host:port]
- * With no --base it builds nothing and expects ./build to exist already.
+ * By default it serves ./build/client as plain static files, because that is
+ * what actually deploys: the site is fully prerendered and the host serves
+ * files, resolving /docs/introduction to /docs/introduction/index.html. The
+ * React Router server resolves that route itself, so checking only the server
+ * would pass on a tree that 404s once deployed.
+ *
+ * Usage: node scripts/check-links.mjs [--base http://host:port] [--ssr]
+ * With no --base it expects ./build to exist already. --ssr checks the
+ * server build instead of the static output.
  */
 
 import { spawn } from "node:child_process";
+import { createReadStream, existsSync, statSync } from "node:fs";
+import { createServer } from "node:http";
+import { extname, join, normalize } from "node:path";
 import { setTimeout as sleep } from "node:timers/promises";
 
 const argv = process.argv.slice(2);
 const baseArg = argv.includes("--base")
   ? argv[argv.indexOf("--base") + 1]
   : null;
+const useSsr = argv.includes("--ssr");
 
 const PORT = Number(process.env.PORT ?? 41731);
 const BASE = baseArg ?? `http://127.0.0.1:${PORT}`;
@@ -36,9 +47,68 @@ const EXPECT = {
 /* -------------------------------------------------------------------------- */
 
 let child = null;
+let staticServer = null;
+
+const TYPES = {
+  ".html": "text/html; charset=utf-8",
+  ".js": "text/javascript",
+  ".css": "text/css",
+  ".json": "application/json",
+  ".png": "image/png",
+  ".jpg": "image/jpeg",
+  ".jpeg": "image/jpeg",
+  ".webp": "image/webp",
+  ".avif": "image/avif",
+  ".gif": "image/gif",
+  ".svg": "image/svg+xml",
+  ".ico": "image/x-icon",
+  ".woff2": "font/woff2",
+  ".data": "text/plain; charset=utf-8",
+};
+
+/**
+ * Serves ./build/client the way a static host does: a path maps to a file, a
+ * directory maps to its index.html, and anything missing is a 404 rather than
+ * being handed to an application router. That difference is the whole point of
+ * checking the static output.
+ */
+function startStatic() {
+  const root = join(process.cwd(), "build", "client");
+  if (!existsSync(root)) {
+    throw new Error(`${root} does not exist -- run \`npm run build\` first`);
+  }
+  staticServer = createServer((req, res) => {
+    const url = new URL(req.url, "http://localhost");
+    let rel = normalize(decodeURIComponent(url.pathname)).replace(/^(\.\.[/\\])+/, "");
+    let file = join(root, rel);
+    try {
+      if (existsSync(file) && statSync(file).isDirectory()) {
+        file = join(file, "index.html");
+      } else if (!existsSync(file) && existsSync(`${file}.html`)) {
+        file = `${file}.html`;
+      }
+    } catch {
+      /* fall through to the 404 below */
+    }
+    if (!existsSync(file) || !statSync(file).isFile()) {
+      res.writeHead(404, { "content-type": "text/plain" });
+      res.end("not found");
+      return;
+    }
+    res.writeHead(200, {
+      "content-type": TYPES[extname(file)] ?? "application/octet-stream",
+    });
+    createReadStream(file).pipe(res);
+  });
+  return new Promise((resolve, reject) => {
+    staticServer.on("error", reject);
+    staticServer.listen(PORT, "127.0.0.1", resolve);
+  });
+}
 
 async function startServer() {
   if (baseArg) return;
+  if (!useSsr) return startStatic();
   child = spawn(
     process.execPath,
     ["node_modules/@react-router/serve/bin.cjs", "./build/server/index.js"],
@@ -68,6 +138,7 @@ async function startServer() {
 
 function stopServer() {
   if (child && child.exitCode === null) child.kill("SIGTERM");
+  if (staticServer) staticServer.close();
 }
 
 /* -------------------------------------------------------------------------- */

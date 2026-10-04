@@ -1,0 +1,5 @@
+# The build runs on Vercel; nothing local needs uploading.
+node_modules
+build
+.react-router
+.cache
