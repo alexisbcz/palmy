@@ -253,18 +253,37 @@ slider :: proc(ctx: ^Ctx, value: ^f32, low, high: f32, class: string = "") -> bo
 
 // progress draws a determinate bar; `frac` is 0..1.
 progress :: proc(ctx: ^Ctx, frac: f32, class: string = "") -> int {
-	idx := push_styled(ctx, .Box, "h-2 w-full rounded-full bg-slate-800 overflow-hidden", class)
+	// Same reasoning as FIELD_BASE: a built-in fallback, then theme tokens that
+	// win where they are defined. The track was `bg-slate-800` and the bar
+	// `bg-indigo-500`, both invisible-to-wrong on a light theme.
+	idx := push_styled(
+		ctx,
+		.Box,
+		"h-2 w-full rounded-full overflow-hidden bg-slate-300 bg-secondary",
+		class,
+	)
 	append(&ctx.stack, idx)
-	bar := push_styled(ctx, .Box, "h-full rounded-full bg-indigo-500 transition", "")
+	bar := push_styled(ctx, .Box, "h-full rounded-full transition bg-indigo-500 bg-primary", "")
 	ctx.nodes[bar].style.w = pct(clamp(frac, 0, 1) * 100)
 	end(ctx)
 	return idx
 }
 
+// The built-in palette classes come first as a fallback for an app that
+// registers no theme at all; the tokens after them win wherever a theme
+// defines them, and are simply skipped where it does not (parse_color reports
+// an unknown token as not-ok and the class is dropped, so a partial palette
+// degrades to the fallback rather than to an invisible field).
+//
+// These were `bg-slate-900 border-slate-700 focus:border-indigo-400`, which
+// hardcoded a dark palette: on a light theme the field rendered as a navy box
+// with near-black text in it. shadcn's own input (`sc.input`) is the reference
+// here -- transparent fill, `border-input`, `border-ring` on focus.
 @(private)
-FIELD_BASE :: "flex-row items-center h-10 px-3 rounded-lg bg-slate-900 cursor-text " +
-	"border border-slate-700 hover:border-slate-600 focus:border-indigo-400 " +
-	"overflow-hidden text-sm transition"
+FIELD_BASE :: "flex-row items-center h-10 px-3 rounded-lg cursor-text " +
+	"overflow-hidden text-sm transition border " +
+	"bg-transparent border-slate-400 hover:border-slate-500 focus:border-indigo-400 " +
+	"border-input hover:border-ring focus:border-ring"
 
 // text_field edits a byte buffer in place. It returns whether the text changed
 // this frame and whether Enter was pressed.
