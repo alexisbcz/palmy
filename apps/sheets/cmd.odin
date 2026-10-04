@@ -49,6 +49,8 @@ Cmd :: enum u8 {
 	Save_As,
 	Export_CSV,
 	Import_CSV,
+	Export_XLSX,
+	Import_XLSX,
 	Help,
 	Quit,
 }
@@ -100,6 +102,8 @@ COMMANDS := [?]Cmd_Row {
 	{.Save_As, "Save as", "Ctrl+Shift+S"},
 	{.Export_CSV, "Export CSV", "Ctrl+E"},
 	{.Import_CSV, "Import CSV", "Ctrl+Shift+O"},
+	{.Export_XLSX, "Export Excel workbook", "Alt+E"},
+	{.Import_XLSX, "Import Excel workbook", "Alt+O"},
 	{.Help, "Keyboard map", "F1"},
 	{.Quit, "Quit", "Ctrl+Q"},
 }
@@ -229,6 +233,10 @@ run_cmd :: proc(app: ^App, cmd: Cmd) {
 		open_prompt(app, .Export_CSV, default_path(app, ".csv"))
 	case .Import_CSV:
 		open_prompt(app, .Import_CSV, default_path(app, ".csv"))
+	case .Export_XLSX:
+		open_prompt(app, .Export_XLSX, default_path(app, ".xlsx"))
+	case .Import_XLSX:
+		open_prompt(app, .Import_XLSX, default_path(app, ".xlsx"))
 
 	case .Help:
 		app.mode = .Help
