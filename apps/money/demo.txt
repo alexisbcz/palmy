@@ -4,7 +4,7 @@
 # The dialog opens on this app's fixtures directory. Everything in it is
 # fictitious: invented names, IBANs on an unissued bank code, synthetic
 # amounts.
-wait 1.6
+wait 0.7
 
 # Import. Down picks the September statement, Return imports it.
 chord ctrl+o
@@ -12,35 +12,41 @@ wait 1.4
 key Down
 wait 0.6
 key Return
-wait 2.2
+wait 1.6
 
 # The rows arrive categorised by the rules; the status bar says how many.
 wait 1.4
 key Down
 key Down
 key Down
-wait 1.0
+wait 0.7
 
 # What the rules could not place.
 key u
-wait 1.8
+wait 1.4
 key u
 wait 0.8
 
 # Budgets: the envelopes for the month, one of them over.
 key 2
-wait 2.4
+wait 1.9
 
 # The recurring charges found in the history.
 key 3
-wait 2.6
+wait 2.1
 
 # Spend by category, then the balance over time.
 key 4
-wait 2.4
+wait 1.9
 key t
-wait 2.4
+wait 1.9
 
-# Reconciliation against the statement's own closing balance.
+# Reconciliation against the statement's own closing balance, which the CSV's
+# running-balance column supplied at import.
 key 5
-wait 2.6
+wait 2.1
+
+# And the mapping this bank's file taught the importer, kept for next time.
+key 1
+key p
+wait 2.1
