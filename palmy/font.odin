@@ -526,3 +526,87 @@ draw_text_fallback :: proc(c: ^Canvas, text: string, x, y, size: f32, col: Color
 	}
 	return f32(ef.width(text)) * s
 }
+
+// text_index_at maps a pixel offset back to a byte index in the string — which
+// is what every text cursor needs: clicking into a paragraph, dragging a
+// selection, or deciding where a caret lands after a vertical move.
+//
+// The returned index is always on a rune boundary, and is the *nearest*
+// boundary to `x` rather than the one before it, so clicking the right half of
+// a character puts the caret after it.
+text_index_at :: proc(
+	f: ^Fonts,
+	text: string,
+	size: f32,
+	x: f32,
+	fam := Font_Family.Sans,
+	wt := Font_Weight.Regular,
+	tracking: f32 = 0,
+) -> int {
+	if x <= 0 || len(text) == 0 {
+		return 0
+	}
+
+	face := &f.faces[fam][wt]
+	if !face.ok {
+		// Fallback metrics: the built-in font is fixed-advance enough that
+		// proportional placement would be a lie.
+		adv := fallback_scale(size) * 6
+		if adv <= 0 {
+			return 0
+		}
+		idx := int(x / adv + 0.5)
+		return clamp(idx, 0, len(text))
+	}
+
+	s := face_scale(face, size)
+	pen := f32(0)
+	prev := rune(0)
+	last_index := 0
+
+	for r, i in text {
+		adv, lsb: i32
+		tt.GetCodepointHMetrics(&face.info, r, &adv, &lsb)
+		step := f32(adv) * s + tracking
+		if prev != 0 && !f.no_kerning {
+			step += f32(tt.GetCodepointKernAdvance(&face.info, prev, r)) * s
+		}
+
+		// Past the midpoint of this glyph the caret belongs after it.
+		if x < pen + step/2 {
+			return i
+		}
+		pen += step
+		prev = r
+		last_index = i + rune_len(r)
+	}
+	return last_index
+}
+
+@(private)
+rune_len :: proc(r: rune) -> int {
+	switch {
+	case r < 0x80:
+		return 1
+	case r < 0x800:
+		return 2
+	case r < 0x10000:
+		return 3
+	}
+	return 4
+}
+
+// text_width_upto measures the string up to a byte index, which is where a
+// caret at that index sits. Pair it with `text_index_at` for round trips.
+text_width_upto :: proc(
+	f: ^Fonts,
+	text: string,
+	index: int,
+	size: f32,
+	fam := Font_Family.Sans,
+	wt := Font_Weight.Regular,
+	tracking: f32 = 0,
+) -> f32 {
+	i := clamp(index, 0, len(text))
+	return text_width(f, text[:i], size, fam, wt, tracking)
+}
