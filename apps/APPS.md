@@ -127,20 +127,38 @@ key Return
 ```
 
 ```sh
-bash /home/alex/Work/palmy/apps/tools/record-app.sh \
-  apps/<name>/<name>.bin apps/<name>/demo.mp4 apps/<name>/demo.txt
+bash /home/alex/Work/palmy/apps/tools/headless-record.sh \
+  apps/<name>/<name>.bin apps/<name>/demo.mp4 apps/<name>/demo.txt [w] [h]
 ```
 
-Steps: `key <X11name>`, `type <text>`, `move <x> <y>` (window-relative pointer),
-`wait <seconds>`.
+Steps: `key <X11name>`, `chord <mods>+<key>`, `type <text>`, `move <x> <y>`,
+`click [button]`, `wait <seconds>`.
 
-**Recordings serialise on a lock** (`/tmp/palmy-record.lock`). Every `wtype`
-attaches its own virtual keyboard to the seat, so two recordings running at
-once type into each other's windows and ruin both takes. The script waits its
-turn automatically — call it normally and never bypass it. Note this compositor build has **no click dispatcher**, so
-pointer clicks cannot be synthesized — drive activation from the keyboard, and
-use `move` to show hover states. Verify the result by extracting frames with
-`ffmpeg -ss <t> -i out.mp4 -frames:v 1 frame.png` and looking at them.
+**This records on a private headless compositor, not on the user's desktop.**
+It starts its own `sway` with its own Wayland socket, its own virtual output at
+the size you ask for, and its own seat. That matters more than it sounds:
+
+- Nothing appears on the user's screen, so a recording can never interrupt
+  them.
+- There is one window on that seat, so `wtype` cannot type into somebody
+  else's app and no focus can be stolen mid-take.
+- **No lock, and no queue.** Several of these run at once, which is the point.
+- The window is exactly the size you asked for rather than a tiling slot.
+
+The older `record-app.sh` drives the user's live compositor and is kept only
+for the rare case that needs the real session. Everything it went wrong at —
+capturing another agent's window, keystrokes landing elsewhere, crash toasts in
+frame, and a shared lock that one orphaned process could hold for half an hour
+— came from sharing one seat, and none of it survives here.
+
+Clicks **do** work on the headless seat (`swaymsg seat cursor`), unlike on the
+user's compositor build, which has no click dispatcher. Still verify the result
+by extracting frames with `ffmpeg -ss <t> -i out.mp4 -frames:v 1 frame.png` and
+looking at them.
+
+A private compositor is also the way to drive an app interactively without a
+recording — start one, point `WAYLAND_DISPLAY` at it, and use `grim` for
+stills.
 
 ## Rules
 

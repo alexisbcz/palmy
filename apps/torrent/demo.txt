@@ -1,0 +1,70 @@
+# The demo: a real transfer between two of this client's own instances.
+#
+# `--demo` has already started a tracker and a seeding client on 127.0.0.1,
+# both serving a payload this process generated from a seeded PRNG. The add
+# dialog opens pre-filled with that .torrent. Nothing here touches the network,
+# and nothing transferred came from anywhere but the generator.
+
+wait 1.2
+
+# --- Add the torrent -------------------------------------------------------
+# The dialog parses the file while you look at it: the name, size, piece count
+# and info-hash are read from disk, not fetched from anyone.
+key a
+wait 2.2
+key Return
+wait 1.0
+
+# --- Watch the pieces land -------------------------------------------------
+move 300 680
+wait 6.0
+
+# --- Peers: the seeder, its flags, its rate --------------------------------
+key 2
+wait 5.0
+move 500 660
+wait 1.0
+
+# --- Files: per-file progress, and "don't download" ------------------------
+key 3
+wait 2.0
+key j
+wait 0.6
+key j
+wait 0.6
+key Left
+wait 1.5
+key Left
+wait 1.5
+key Right
+wait 1.5
+
+# --- Pause mid-transfer, then resume ---------------------------------------
+key 1
+wait 1.5
+key p
+wait 4.5
+key p
+wait 5.0
+
+# --- The peer is back ------------------------------------------------------
+key 2
+wait 4.0
+
+# --- Trackers --------------------------------------------------------------
+key 4
+wait 3.0
+
+# --- The rate graph, with the pause visible as a trough --------------------
+key 5
+wait 6.0
+
+# --- Back to the pieces, and the finish ------------------------------------
+key 1
+wait 6.0
+
+# --- Removal asks first, names what it would delete, defaults to Cancel ----
+key Delete
+wait 3.5
+key Escape
+wait 1.2
