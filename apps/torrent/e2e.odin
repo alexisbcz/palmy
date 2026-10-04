@@ -1,0 +1,641 @@
+package main
+
+// The end-to-end test: a real transfer, between two instances of this binary.
+//
+// It does the whole thing:
+//
+//   1. generates a synthetic multi-file payload (seven files, including an
+//      empty one and one of seven bytes, so pieces straddle boundaries),
+//   2. starts the tracker on 127.0.0.1 on a port the kernel chooses,
+//   3. makes a .torrent from the payload, announcing to that tracker,
+//   4. starts one instance of `torrent --engine` pointed at the directory that
+//      already holds the payload, which rechecks and becomes a seeder,
+//   5. starts a second instance pointed at an empty directory,
+//   6. waits for the second one to finish,
+//   7. asserts the output is byte-for-byte the input, that every piece was
+//      verified, and that the TRACKER saw both of them announce.
+//
+// Every address involved is 127.0.0.1 and every byte transferred was generated
+// in step 1. Nothing is fetched from anywhere.
+
+import "core:fmt"
+import "core:os"
+import "core:strconv"
+import "core:strings"
+import "core:time"
+
+E2E :: struct {
+	bin:         string,
+	root:        string,
+	seed_dir:    string, // holds the complete payload
+	out_dir:     string, // starts empty
+	torrent:     string,
+	ports_file:  string,
+	stop_file:   string,
+	seed_status: string,
+	leech_status: string,
+	tracker_log: string,
+	seed_log:    string,
+	leech_log:   string,
+
+	tracker:     os.Process,
+	seeder:      os.Process,
+	leecher:     os.Process,
+	have_tracker: bool,
+	have_seeder: bool,
+	have_leecher: bool,
+
+	http_port:   int,
+	udp_port:    int,
+}
+
+E2E_TIMEOUT :: 120.0
+
+// find_self locates this binary, so the test can run two more copies of it.
+// It never searches $PATH: the binary under test is the one that is running.
+find_self :: proc() -> (path: string, ok: bool) {
+	self := os.args[0]
+	if strings.contains(self, "/") && os.exists(self) {
+		return self, true
+	}
+	for c in ([?]string {
+			"apps/torrent/torrent.bin",
+			"./torrent.bin",
+			"/home/alex/Work/palmy/apps/torrent/torrent.bin",
+		}) {
+		if os.exists(c) {
+			return c, true
+		}
+	}
+	return self, false
+}
+
+run_e2e :: proc(t: ^T) -> bool {
+	tsection(t, "end-to-end: a real transfer between two of our own clients")
+
+	e := E2E{}
+	bin, found := find_self()
+	if !tcheck(t, "the binary under test was found", found, bin) {
+		return false
+	}
+	e.bin = bin
+
+	stamp := time.to_unix_nanoseconds(time.now())
+	e.root = asprint("/tmp/palmy-torrent-e2e-%d", stamp)
+	e.seed_dir = path_join(e.root, "seed")
+	e.out_dir = path_join(e.root, "out")
+	e.torrent = path_join(e.root, "payload.torrent")
+	e.ports_file = path_join(e.root, "ports")
+	e.stop_file = path_join(e.root, "stop")
+	e.seed_status = path_join(e.root, "seed.status")
+	e.leech_status = path_join(e.root, "leech.status")
+	e.tracker_log = path_join(e.root, "tracker.log")
+	e.seed_log = path_join(e.root, "seeder.log")
+	e.leech_log = path_join(e.root, "leecher.log")
+	defer e2e_cleanup(&e)
+
+	if !tcheck(t, "the test directory is created", make_dirs(e.seed_dir) == "" && make_dirs(e.out_dir) == "") {
+		return false
+	}
+	fmt.printfln("  working in %s", e.root)
+
+	// 1. The payload. Generated here, from a deterministic generator.
+	if !tcheck(t, "the synthetic payload is generated", make_payload(e.seed_dir) == "") {
+		return false
+	}
+	total := payload_total()
+	fmt.printfln(
+		"  payload: %d files, %s, generated from a seeded xorshift (nothing was downloaded)",
+		len(PAYLOAD),
+		human_size(total, context.temp_allocator),
+	)
+	teq_i64(t, "the payload is the expected size", total, 2_656_658)
+
+	// 2. The tracker.
+	if !tcheck(t, "the tracker starts on loopback", e2e_start_tracker(&e) == "") {
+		e2e_dump(e.tracker_log, "tracker")
+		return false
+	}
+	tcheck(t, "...and reported its HTTP port", e.http_port > 0, asprint("%d", e.http_port))
+	tcheck(t, "...and its UDP port", e.udp_port > 0, asprint("%d", e.udp_port))
+	announce := asprint("http://127.0.0.1:%d/announce", e.http_port)
+	fmt.printfln("  tracker: %s", announce)
+
+	// 3. The torrent, made from the payload we just generated.
+	data, cerr := metainfo_create(
+		path_join(e.seed_dir, PAYLOAD_NAME, allocator = context.temp_allocator),
+		Make_Opts {
+			piece_length = PAYLOAD_PIECE_LENGTH,
+			announce = announce,
+			comment = "synthetic payload, generated locally",
+		},
+		context.temp_allocator,
+	)
+	if !tcheck(t, "a .torrent is made from the payload", cerr == "", cerr) {
+		return false
+	}
+	if !tcheck(t, "...and written to disk", write_file(e.torrent, data) == "") {
+		return false
+	}
+	m, merr := metainfo_parse(clone_bytes(data, context.temp_allocator), context.temp_allocator)
+	if !tcheck(t, "...and parses back", merr == "", merr) {
+		return false
+	}
+	npieces := piece_count(&m)
+	fmt.printfln(
+		"  torrent: %s, %d pieces of %s, info-hash %s",
+		m.name,
+		npieces,
+		human_size(m.piece_length, context.temp_allocator),
+		hash20_hex(m.info_hash, context.temp_allocator),
+	)
+	teq_i64(t, "the torrent's total length is the payload's", m.total_length, total)
+	teq_int(t, "...over seven files", len(m.files), 7)
+	teq_int(t, "...in 82 pieces of 32 KiB", npieces, 82)
+
+	// 4 and 5. Two clients. The seeder's download directory already contains
+	// the payload, so its startup recheck finds every piece.
+	if !tcheck(t, "the seeder starts", e2e_start_seeder(&e) == "") {
+		e2e_dump(e.seed_log, "seeder")
+		return false
+	}
+	if !tcheck(t, "the leecher starts", e2e_start_leecher(&e) == "") {
+		e2e_dump(e.leech_log, "leecher")
+		return false
+	}
+
+	// The seeder must reach 100% from its recheck alone, before anything is
+	// transferred — otherwise the test would be measuring the wrong thing.
+	seed_ready := false
+	for i in 0 ..< 400 {
+		st := read_status(e.seed_status, context.temp_allocator)
+		if st.ok && st.state == "Seeding" && st.have == npieces {
+			seed_ready = true
+			break
+		}
+		time.sleep(50 * time.Millisecond)
+	}
+	if !tcheck(
+		t,
+		"the seeder rechecked the payload and holds all 82 pieces",
+		seed_ready,
+		"the seeder never reached 100% from its own files",
+	) {
+		e2e_dump(e.seed_log, "seeder")
+		e2e_dump(e.tracker_log, "tracker")
+		return false
+	}
+	sst := read_status(e.seed_status, context.temp_allocator)
+	teq_int(t, "...and it downloaded nothing to get there", int(sst.downloaded), 0)
+
+	// 6. The transfer.
+	fmt.println("  transferring…")
+	start := now_s()
+	finished := false
+	last_print := 0.0
+	peers_seen := 0
+	for now_s() - start < E2E_TIMEOUT {
+		st := read_status(e.leech_status, context.temp_allocator)
+		if st.ok {
+			peers_seen = max(peers_seen, st.peers)
+			if now_s() - last_print > 1.0 {
+				last_print = now_s()
+				fmt.printfln(
+					"    %.1f%%  %d/%d pieces  %s  %d peer(s)",
+					st.progress * 100,
+					st.have,
+					npieces,
+					human_rate(st.down_rate, context.temp_allocator),
+					st.peers,
+				)
+			}
+			if st.error != "" {
+				tcheck(t, "the leecher reported no error", false, st.error)
+				break
+			}
+			if st.have == npieces && st.state == "Seeding" {
+				finished = true
+				break
+			}
+		}
+		time.sleep(100 * time.Millisecond)
+	}
+	elapsed := now_s() - start
+
+	if !tcheck(
+		t,
+		asprint("the transfer completed in under %.0fs", E2E_TIMEOUT),
+		finished,
+		asprint("it did not finish; %.1fs elapsed", elapsed),
+	) {
+		e2e_dump(e.leech_log, "leecher")
+		e2e_dump(e.seed_log, "seeder")
+		e2e_dump(e.tracker_log, "tracker")
+		fmt.printfln("  last leecher status:\n%s", read_file_text(e.leech_status))
+		return false
+	}
+	fmt.printfln(
+		"  transfer finished in %.2fs (%s average)",
+		elapsed,
+		human_rate(f64(total) / max(elapsed, 0.001), context.temp_allocator),
+	)
+
+	lst := read_status(e.leech_status, context.temp_allocator)
+	teq_int(t, "the leecher holds every piece", lst.have, npieces)
+	teq_int(t, "every piece it holds passed SHA-1 before being written", lst.verified, npieces)
+	teq_i64(t, "it downloaded exactly the payload's worth of verified bytes", lst.downloaded, total)
+	teq_f32(t, "its progress is 100%", f32(lst.progress), 1.0, 0.0001)
+	teq(t, "its state is Seeding", lst.state, "Seeding")
+	tcheck(t, "it was connected to at least one peer", peers_seen >= 1, asprint("%d", peers_seen))
+	teq(t, "the leecher's info-hash is the torrent's", lst.info_hash, hash20_hex(m.info_hash, context.temp_allocator))
+
+	// The seeder's side of the story.
+	sst2 := read_status(e.seed_status, context.temp_allocator)
+	tcheck(
+		t,
+		"the seeder uploaded at least the payload",
+		sst2.uploaded >= total,
+		asprint("it uploaded %d of %d", sst2.uploaded, total),
+	)
+
+	// 7a. The tracker's own account of the exchange.
+	stats, serr := e2e_tracker_stats(&e)
+	if tcheck(t, "the tracker's /stats is readable", serr == "", serr) {
+		tcheck(t, "the tracker knows about one swarm", strings.contains(stats, "swarms 1"), stats)
+		tcheck(
+			t,
+			"...for our info-hash",
+			strings.contains(stats, hash20_hex(m.info_hash, context.temp_allocator)),
+			stats,
+		)
+		announces := strings.count(stats, "\nannounce ")
+		tcheck(
+			t,
+			"...having seen at least two announces",
+			announces >= 2,
+			asprint("it logged %d", announces),
+		)
+		// Both clients, identified by their distinct peer ids.
+		ids := make(map[string]bool, 4, context.temp_allocator)
+		lines := strings.split_lines(stats, context.temp_allocator)
+		for line in lines {
+			if !strings.has_prefix(line, "announce ") {
+				continue
+			}
+			f := strings.fields(line, context.temp_allocator)
+			if len(f) >= 3 {
+				ids[f[2]] = true
+			}
+		}
+		tcheck(
+			t,
+			"...from two distinct peers — the seeder and the leecher",
+			len(ids) >= 2,
+			asprint("it saw %d distinct peer id(s): %v", len(ids), ids),
+		)
+		tcheck(t, "...and recorded at least two `started` events", strings.contains(stats, "started 2") || strings.contains(stats, "started 3") || strings.contains(stats, "started 4"), stats)
+		if t.verbose {
+			fmt.printfln("  tracker /stats:\n%s", stats)
+		}
+	}
+
+	// 7b. THE VERDICT: byte for byte.
+	fmt.println("  comparing the leecher's output with the source, byte for byte…")
+	all_same := true
+	compared := 0
+	bytes_compared: i64 = 0
+	for f in m.files {
+		src := path_join(e.seed_dir, PAYLOAD_NAME, f.path, allocator = context.temp_allocator)
+		dst := path_join(e.out_dir, PAYLOAD_NAME, f.path, allocator = context.temp_allocator)
+		same, detail := files_identical(src, dst)
+		if !tcheck(t, asprint("%s is byte-for-byte identical", f.path), same, detail) {
+			all_same = false
+		}
+		compared += 1
+		bytes_compared += f.length
+	}
+	teq_int(t, "every file in the torrent was compared", compared, 7)
+	teq_i64(t, "...totalling the whole payload", bytes_compared, total)
+	tcheck(
+		t,
+		"THE LEECHER'S OUTPUT IS BYTE-FOR-BYTE THE SOURCE",
+		all_same,
+		"at least one file differs",
+	)
+
+	// And an independent check: re-hash the leecher's output against the
+	// torrent's piece hashes, from this process, using neither client.
+	out_store: Storage
+	if tcheck(t, "a storage over the leecher's output opens", storage_open(&out_store, &m, e.out_dir) == "") {
+		defer storage_destroy(&out_store)
+		have := bf_make(npieces, context.temp_allocator)
+		verified := storage_check_all(&out_store, &have)
+		teq_int(t, "every one of the 82 pieces re-hashes correctly", verified, npieces)
+		tcheck(t, "...so the output is complete", bf_complete(have))
+	}
+
+	// 8. Shut the children down cleanly, so the seeder announces `stopped`.
+	write_file_string(e.stop_file, "stop\n")
+	e2e_wait(&e, 10)
+	stats2, _ := e2e_tracker_stats(&e)
+	_ = stats2
+
+	fmt.printfln(
+		"\n  RESULT: %d files / %s transferred between two local clients in %.2fs, every piece verified, output identical to source.",
+		len(m.files),
+		human_size(total, context.temp_allocator),
+		elapsed,
+	)
+	return all_same && finished
+}
+
+// ---------------------------------------------------------------------------
+// Child processes
+// ---------------------------------------------------------------------------
+
+@(private = "file")
+spawn :: proc(bin: string, args: []string, log_path: string) -> (p: os.Process, err: string) {
+	logf, lerr := os.open(log_path, {.Write, .Create, .Trunc}, os.Permissions_Default_File)
+	if lerr != nil {
+		return {}, tsprint("cannot open %s: %v", log_path, lerr)
+	}
+	defer os.close(logf)
+	cmd := make([dynamic]string, 0, len(args) + 1, context.temp_allocator)
+	append(&cmd, bin)
+	append(&cmd, ..args)
+	proc_, perr := os.process_start(
+		os.Process_Desc{command = cmd[:], stdout = logf, stderr = logf},
+	)
+	if perr != nil {
+		return {}, tsprint("cannot start %s: %v", bin, perr)
+	}
+	return proc_, ""
+}
+
+@(private = "file")
+e2e_start_tracker :: proc(e: ^E2E) -> (err: string) {
+	os.remove(e.ports_file)
+	p, serr := spawn(
+		e.bin,
+		{
+			"--tracker",
+			"--http-port",
+			"0",
+			"--udp-port",
+			"0",
+			"--ports-file",
+			e.ports_file,
+			"--run-for",
+			"300",
+		},
+		e.tracker_log,
+	)
+	if serr != "" {
+		return serr
+	}
+	e.tracker = p
+	e.have_tracker = true
+	// The ports file is written only once both listeners are bound, so its
+	// appearance is the readiness signal.
+	for i in 0 ..< 200 {
+		if data, ok := read_file(e.ports_file, context.temp_allocator); ok && len(data) > 0 {
+			for line in strings.split_lines(string(data), context.temp_allocator) {
+				f := strings.fields(line, context.temp_allocator)
+				if len(f) < 2 {
+					continue
+				}
+				n, _ := strconv.parse_int(f[1], 10)
+				switch f[0] {
+				case "http":
+					e.http_port = n
+				case "udp":
+					e.udp_port = n
+				}
+			}
+			if e.http_port > 0 && e.udp_port > 0 {
+				return ""
+			}
+		}
+		time.sleep(25 * time.Millisecond)
+	}
+	return tsprint("the tracker never reported its ports; see %s", e.tracker_log)
+}
+
+@(private = "file")
+e2e_start_seeder :: proc(e: ^E2E) -> (err: string) {
+	p, serr := spawn(
+		e.bin,
+		{
+			"--engine",
+			"--torrent",
+			e.torrent,
+			"--dir",
+			e.seed_dir,
+			"--port",
+			"0",
+			"--status-file",
+			e.seed_status,
+			"--stop-file",
+			e.stop_file,
+			"--run-for",
+			"300",
+		},
+		e.seed_log,
+	)
+	if serr != "" {
+		return serr
+	}
+	e.seeder = p
+	e.have_seeder = true
+	return ""
+}
+
+@(private = "file")
+e2e_start_leecher :: proc(e: ^E2E) -> (err: string) {
+	p, serr := spawn(
+		e.bin,
+		{
+			"--engine",
+			"--torrent",
+			e.torrent,
+			"--dir",
+			e.out_dir,
+			"--port",
+			"0",
+			"--status-file",
+			e.leech_status,
+			"--stop-file",
+			e.stop_file,
+			"--run-for",
+			"300",
+		},
+		e.leech_log,
+	)
+	if serr != "" {
+		return serr
+	}
+	e.leecher = p
+	e.have_leecher = true
+	return ""
+}
+
+@(private = "file")
+e2e_wait :: proc(e: ^E2E, seconds: f64) {
+	deadline := now_s() + seconds
+	for now_s() < deadline {
+		alive := false
+		if e.have_leecher {
+			if st, err := os.process_wait(e.leecher, 0); err != nil || !st.exited {
+				alive = true
+			} else {
+				e.have_leecher = false
+			}
+		}
+		if e.have_seeder {
+			if st, err := os.process_wait(e.seeder, 0); err != nil || !st.exited {
+				alive = true
+			} else {
+				e.have_seeder = false
+			}
+		}
+		if !alive {
+			return
+		}
+		time.sleep(100 * time.Millisecond)
+	}
+}
+
+// e2e_cleanup leaves nothing listening and nothing on disk. It runs whether the
+// test passed or failed.
+@(private = "file")
+e2e_cleanup :: proc(e: ^E2E) {
+	if e.have_leecher {
+		_ = os.process_kill(e.leecher)
+		_, _ = os.process_wait(e.leecher)
+		e.have_leecher = false
+	}
+	if e.have_seeder {
+		_ = os.process_kill(e.seeder)
+		_, _ = os.process_wait(e.seeder)
+		e.have_seeder = false
+	}
+	if e.have_tracker {
+		_ = os.process_kill(e.tracker)
+		_, _ = os.process_wait(e.tracker)
+		e.have_tracker = false
+	}
+	rm_rf(e.root)
+}
+
+@(private = "file")
+e2e_tracker_stats :: proc(e: ^E2E) -> (text: string, err: string) {
+	status, body, gerr := http_get("127.0.0.1", e.http_port, "/stats", 3000, context.temp_allocator)
+	if gerr != "" {
+		return "", gerr
+	}
+	if status != 200 {
+		return "", tsprint("the tracker answered HTTP %d for /stats", status)
+	}
+	return string(body), ""
+}
+
+@(private = "file")
+e2e_dump :: proc(path, label: string) {
+	data, ok := read_file(path, context.temp_allocator)
+	if !ok {
+		fmt.printfln("  (no %s log at %s)", label, path)
+		return
+	}
+	fmt.printfln("  ---- %s log ----", label)
+	for line in strings.split_lines(string(data), context.temp_allocator) {
+		if strings.trim_space(line) == "" {
+			continue
+		}
+		fmt.printfln("  | %s", line)
+	}
+	fmt.printfln("  ---- end %s log ----", label)
+}
+
+// ---------------------------------------------------------------------------
+// Reading a client's status file
+// ---------------------------------------------------------------------------
+
+Status :: struct {
+	ok:         bool,
+	port:       int,
+	state:      string,
+	progress:   f64,
+	pieces:     int,
+	have:       int,
+	verified:   int,
+	downloaded: i64,
+	uploaded:   i64,
+	wasted:     i64,
+	down_rate:  f64,
+	up_rate:    f64,
+	peers:      int,
+	info_hash:  string,
+	error:      string,
+	elapsed:    f64,
+}
+
+read_status :: proc(path: string, allocator := context.allocator) -> (s: Status) {
+	data, ok := read_file(path, context.temp_allocator)
+	if !ok {
+		return s
+	}
+	s.ok = true
+	for line in strings.split_lines(string(data), context.temp_allocator) {
+		sp := strings.index_byte(line, ' ')
+		if sp < 0 {
+			continue
+		}
+		k := line[:sp]
+		v := strings.trim_space(line[sp + 1:])
+		switch k {
+		case "port":
+			s.port = parse_int_default(v, 0)
+		case "state":
+			s.state = strings.clone(v, allocator)
+		case "progress":
+			f, _ := strconv.parse_f64(v)
+			s.progress = f
+		case "pieces":
+			s.pieces = parse_int_default(v, 0)
+		case "have":
+			s.have = parse_int_default(v, 0)
+		case "verified":
+			s.verified = parse_int_default(v, 0)
+		case "downloaded":
+			s.downloaded = i64(parse_int_default(v, 0))
+		case "uploaded":
+			s.uploaded = i64(parse_int_default(v, 0))
+		case "wasted":
+			s.wasted = i64(parse_int_default(v, 0))
+		case "down_rate":
+			f, _ := strconv.parse_f64(v)
+			s.down_rate = f
+		case "up_rate":
+			f, _ := strconv.parse_f64(v)
+			s.up_rate = f
+		case "peers":
+			s.peers = parse_int_default(v, 0)
+		case "info_hash":
+			s.info_hash = strings.clone(v, allocator)
+		case "error":
+			s.error = strings.clone(v, allocator)
+		case "elapsed":
+			f, _ := strconv.parse_f64(v)
+			s.elapsed = f
+		}
+	}
+	return s
+}
+
+read_file_text :: proc(path: string) -> string {
+	data, ok := read_file(path, context.temp_allocator)
+	if !ok {
+		return "(no such file)"
+	}
+	return string(data)
+}
