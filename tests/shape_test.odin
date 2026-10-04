@@ -664,12 +664,33 @@ test_arabic_renders_narrower_when_shaped :: proc(t: ^testing.T) {
 
 	testing.expect(t, shaped_ink > 20, "the shaped line must actually draw something")
 	testing.expect(t, unshaped_ink > 20, "so must the unshaped one")
+	// The text path shapes on its own way to the glyphs now, so handing it the
+	// source word and handing it the pre-shaped string are the same request and
+	// have to measure the same. That is the wiring working, and it is also what
+	// makes shaping idempotent where it is visible.
 	testing.expectf(
 		t,
-		shaped_w < unshaped_w,
-		"shaped %.1fpx should be narrower than unshaped %.1fpx",
-		shaped_w,
+		abs(shaped_w - unshaped_w) < 0.01,
+		"the source word measures %.2fpx and the pre-shaped one %.2fpx; the text path should shape both",
 		unshaped_w,
+		shaped_w,
+	)
+	testing.expect_value(t, unshaped_ink, shaped_ink)
+	// What shaping buys is still measurable, against the letters standing
+	// alone: each one measured by itself gets its isolated form, which is what
+	// the toolkit drew for the whole word before any of this was wired in.
+	isolated := f32(0)
+	for r in word {
+		b := strings.builder_make(context.temp_allocator)
+		strings.write_rune(&b, r)
+		isolated += p.text_width(&off.fonts, strings.to_string(b), 30)
+	}
+	testing.expectf(
+		t,
+		shaped_w < isolated,
+		"the joined word is %.1fpx against %.1fpx for its letters standing alone",
+		shaped_w,
+		isolated,
 	)
 	testing.expect(t, first >= 0 && last < off.width, "the line must fit the canvas")
 
@@ -703,11 +724,23 @@ test_arabic_lam_alef_renders_as_one_glyph :: proc(t: ^testing.T) {
 	_, _, ink := ink_columns(off)
 	testing.expect(t, ink > 8, "the lam-alef ligature must draw")
 
-	// And it is narrower than the two letters side by side.
-	testing.expect(
+	// The text path forms the ligature itself, so measuring the source pair
+	// and measuring the pre-formed ligature are the same question.
+	testing.expectf(
 		t,
-		p.text_width(&off.fonts, lig, 30) < p.text_width(&off.fonts, "لا", 30),
-		"the ligature should be narrower than lam plus alef",
+		abs(p.text_width(&off.fonts, lig, 30) - p.text_width(&off.fonts, "لا", 30)) < 0.01,
+		"lam-alef measures %.2fpx pre-shaped and %.2fpx as source",
+		p.text_width(&off.fonts, lig, 30),
+		p.text_width(&off.fonts, "لا", 30),
+	)
+	// And it is narrower than the two letters standing alone.
+	apart := p.text_width(&off.fonts, "ل", 30) + p.text_width(&off.fonts, "ا", 30)
+	testing.expectf(
+		t,
+		p.text_width(&off.fonts, lig, 30) < apart,
+		"the ligature is %.1fpx against %.1fpx for lam plus alef apart",
+		p.text_width(&off.fonts, lig, 30),
+		apart,
 	)
 }
 
