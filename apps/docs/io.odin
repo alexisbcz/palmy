@@ -21,6 +21,7 @@
 //          there is.
 package main
 
+import "core:encoding/base64"
 import "core:encoding/json"
 import "core:fmt"
 import "core:os"
@@ -45,6 +46,10 @@ kind_name :: proc(k: Para_Kind) -> string {
 		return "quote"
 	case .Code:
 		return "code"
+	case .Table:
+		return "table"
+	case .Image:
+		return "image"
 	}
 	return "body"
 }
@@ -61,6 +66,10 @@ kind_from_name :: proc(s: string) -> Para_Kind {
 		return .Quote
 	case "code":
 		return .Code
+	case "table":
+		return .Table
+	case "image":
+		return .Image
 	}
 	return .Body
 }
@@ -143,6 +152,104 @@ json_escape :: proc(b: ^strings.Builder, s: string) {
 	strings.write_byte(b, '"')
 }
 
+// json_write_runs is the run array a paragraph or a cell paragraph writes.
+@(private = "file")
+json_write_runs :: proc(b: ^strings.Builder, pa: ^Paragraph) {
+	for &r, ri in pa.runs {
+		if ri > 0 {
+			strings.write_string(b, ", ")
+		}
+		strings.write_string(b, "{\"t\": ")
+		json_escape(b, string(r.text[:]))
+		cs := r.style
+		if cs.bold {strings.write_string(b, ", \"b\": true")}
+		if cs.italic {strings.write_string(b, ", \"i\": true")}
+		if cs.underline {strings.write_string(b, ", \"u\": true")}
+		if cs.mono {strings.write_string(b, ", \"m\": true")}
+		if cs.size != 0 {fmt.sbprintf(b, ", \"size\": %.1f", cs.size)}
+		if cs.color != 0 {fmt.sbprintf(b, ", \"color\": \"#%06x\"", cs.color & 0xffffff)}
+		strings.write_string(b, "}")
+	}
+}
+
+// json_write_para writes one paragraph inside a cell. Cell paragraphs carry
+// only the properties a cell can use — kind, alignment, list and depth — which
+// keeps a grid of plain text to one short line per cell.
+@(private = "file")
+json_write_para :: proc(b: ^strings.Builder, pa: ^Paragraph) {
+	strings.write_string(b, "{")
+	fmt.sbprintf(b, "\"kind\": \"%s\"", kind_name(pa.kind))
+	if pa.align != .Left {
+		fmt.sbprintf(b, ", \"align\": \"%s\"", align_name(pa.align))
+	}
+	if pa.list != .None {
+		fmt.sbprintf(b, ", \"list\": \"%s\"", list_name(pa.list))
+	}
+	if pa.depth != 0 {
+		fmt.sbprintf(b, ", \"depth\": %d", pa.depth)
+	}
+	strings.write_string(b, ", \"runs\": [")
+	json_write_runs(b, pa)
+	strings.write_string(b, "]}")
+}
+
+@(private = "file")
+json_write_table :: proc(b: ^strings.Builder, t: ^Table) {
+	strings.write_string(b, ", \"table\": {")
+	fmt.sbprintf(b, "\"header\": %s, \"borders\": %s", t.header ? "true" : "false", t.borders ? "true" : "false")
+	strings.write_string(b, ", \"widths\": [")
+	for c in 0 ..< table_cols(t) {
+		if c > 0 {
+			strings.write_string(b, ", ")
+		}
+		fmt.sbprintf(b, "%.1f", table_width(t, c))
+	}
+	strings.write_string(b, "], \"rows\": [")
+	for &row, ri in t.rows {
+		if ri > 0 {
+			strings.write_string(b, ", ")
+		}
+		strings.write_string(b, "[")
+		for &cl, ci in row.cells {
+			if ci > 0 {
+				strings.write_string(b, ", ")
+			}
+			strings.write_string(b, "[")
+			for &cp, pi in cl.paras {
+				if pi > 0 {
+					strings.write_string(b, ", ")
+				}
+				json_write_para(b, &cp)
+			}
+			strings.write_string(b, "]")
+		}
+		strings.write_string(b, "]")
+	}
+	strings.write_string(b, "]}")
+}
+
+// json_write_image carries the original file bytes base64'd. A path alone
+// would make the native format depend on a file that may not be on the next
+// machine, which is the one thing the native format must not do.
+@(private = "file")
+json_write_image :: proc(b: ^strings.Builder, im: ^Doc_Image) {
+	strings.write_string(b, ", \"image\": {")
+	fmt.sbprintf(b, "\"w\": %d, \"h\": %d, \"scale\": %.4f", im.w, im.h, im.scale)
+	strings.write_string(b, ", \"path\": ")
+	json_escape(b, im.path)
+	strings.write_string(b, ", \"alt\": ")
+	json_escape(b, im.alt)
+	if len(im.bytes) > 0 {
+		enc, err := base64.encode(im.bytes, base64.ENC_TABLE, context.temp_allocator)
+		if err == nil {
+			strings.write_string(b, ", \"data\": \"")
+			strings.write_string(b, enc)
+			strings.write_string(b, "\"")
+		}
+	}
+	strings.write_string(b, "}")
+}
+
 doc_to_json :: proc(d: ^Doc, alloc := context.allocator) -> string {
 	b := strings.builder_make(alloc)
 	strings.write_string(&b, "{\n  \"format\": \"palmy-docs\",\n  \"version\": 1,\n  \"page\": \"a4\",\n  \"paragraphs\": [\n")
@@ -167,22 +274,16 @@ doc_to_json :: proc(d: ^Doc, alloc := context.allocator) -> string {
 		if pa.break_before {
 			strings.write_string(&b, ", \"break\": true")
 		}
-		strings.write_string(&b, ", \"runs\": [")
-		for &r, ri in pa.runs {
-			if ri > 0 {
-				strings.write_string(&b, ", ")
-			}
-			strings.write_string(&b, "{\"t\": ")
-			json_escape(&b, string(r.text[:]))
-			cs := r.style
-			if cs.bold {strings.write_string(&b, ", \"b\": true")}
-			if cs.italic {strings.write_string(&b, ", \"i\": true")}
-			if cs.underline {strings.write_string(&b, ", \"u\": true")}
-			if cs.mono {strings.write_string(&b, ", \"m\": true")}
-			if cs.size != 0 {fmt.sbprintf(&b, ", \"size\": %.1f", cs.size)}
-			if cs.color != 0 {fmt.sbprintf(&b, ", \"color\": \"#%06x\"", cs.color & 0xffffff)}
-			strings.write_string(&b, "}")
+		// A table writes its grid; an image writes its bytes. Both go in before
+		// the runs, which for these two kinds are empty.
+		if pa.kind == .Table && pa.table != nil {
+			json_write_table(&b, pa.table)
 		}
+		if pa.kind == .Image && pa.img != nil {
+			json_write_image(&b, pa.img)
+		}
+		strings.write_string(&b, ", \"runs\": [")
+		json_write_runs(&b, &pa)
 		strings.write_string(&b, "]}")
 		if pi + 1 < len(d.paras) {
 			strings.write_string(&b, ",")
@@ -232,6 +333,146 @@ jbool :: proc(o: json.Object, key: string) -> bool {
 	return false
 }
 
+@(private = "file")
+json_read_runs :: proc(pa: ^Paragraph, po: json.Object) {
+	rv, hr := jget(po, "runs")
+	if !hr {
+		return
+	}
+	ra, ria := rv.(json.Array)
+	if !ria {
+		return
+	}
+	for rvv in ra {
+		ro, rois := rvv.(json.Object)
+		if !rois {
+			continue
+		}
+		cs := Char_Style {
+			bold      = jbool(ro, "b"),
+			italic    = jbool(ro, "i"),
+			underline = jbool(ro, "u"),
+			mono      = jbool(ro, "m"),
+			size      = f32(jnum(ro, "size", 0)),
+		}
+		if c := jstr(ro, "color"); len(c) == 7 && c[0] == '#' {
+			if v, pok := strconv.parse_u64_of_base(c[1:], 16); pok {
+				cs.color = 0xff000000 | u32(v & 0xffffff)
+			}
+		}
+		append(&pa.runs, run_make(cs, jstr(ro, "t")))
+	}
+}
+
+@(private = "file")
+json_read_cell_para :: proc(po: json.Object) -> Paragraph {
+	pa := Paragraph {
+		kind  = kind_from_name(jstr(po, "kind", "body")),
+		align = align_from_name(jstr(po, "align", "left")),
+		list  = list_from_name(jstr(po, "list", "none")),
+		depth = int(jnum(po, "depth", 0)),
+		runs  = make([dynamic]Run, 0, 2),
+	}
+	// A nested table or picture is not representable, so a hand-edited file
+	// that asks for one gets a body paragraph.
+	if !text_kind(pa.kind) {
+		pa.kind = .Body
+	}
+	json_read_runs(&pa, po)
+	if len(pa.runs) == 0 {
+		append(&pa.runs, run_make({}))
+	}
+	normalise(&pa)
+	return pa
+}
+
+@(private = "file")
+json_read_table :: proc(to: json.Object) -> Table {
+	t := Table {
+		rows    = make([dynamic]Row, 0, 4),
+		widths  = make([dynamic]f32, 0, 4),
+		header  = jbool(to, "header"),
+		borders = true,
+	}
+	if bv, hb := jget(to, "borders"); hb {
+		if bb, is := bv.(json.Boolean); is {
+			t.borders = bool(bb)
+		}
+	}
+	if rv, hr := jget(to, "rows"); hr {
+		if ra, is := rv.(json.Array); is {
+			for row_v in ra {
+				row_a, ria := row_v.(json.Array)
+				if !ria {
+					continue
+				}
+				row := Row {
+					cells = make([dynamic]Cell, 0, max(1, len(row_a))),
+				}
+				for cell_v in row_a {
+					cl := Cell {
+						paras = make([dynamic]Paragraph, 0, 1),
+					}
+					if cell_a, cis := cell_v.(json.Array); cis {
+						for pv in cell_a {
+							if po, pis := pv.(json.Object); pis {
+								append(&cl.paras, json_read_cell_para(po))
+							}
+						}
+					}
+					if len(cl.paras) == 0 {
+						append(&cl.paras, para_make())
+					}
+					append(&row.cells, cl)
+				}
+				if len(row.cells) == 0 {
+					append(&row.cells, cell_make())
+				}
+				append(&t.rows, row)
+			}
+		}
+	}
+	if len(t.rows) == 0 {
+		append(&t.rows, Row{cells = make([dynamic]Cell, 0, 1)})
+		append(&t.rows[0].cells, cell_make())
+	}
+	if wv, hw := jget(to, "widths"); hw {
+		if wa, is := wv.(json.Array); is {
+			for w in wa {
+				#partial switch n in w {
+				case json.Float:
+					append(&t.widths, f32(n))
+				case json.Integer:
+					append(&t.widths, f32(n))
+				}
+			}
+		}
+	}
+	table_fit_widths(&t)
+	return t
+}
+
+@(private = "file")
+json_read_image :: proc(io_: json.Object) -> (Doc_Image, bool) {
+	data := jstr(io_, "data")
+	scale := f32(jnum(io_, "scale", 1))
+	if len(data) > 0 {
+		if raw, err := base64.decode(data, base64.DEC_TABLE, nil, context.temp_allocator); err == nil {
+			if im, got := image_from_bytes(raw, jstr(io_, "path"), jstr(io_, "alt"), scale); got {
+				return im, true
+			}
+		}
+	}
+	// No bytes in the file: fall back to the path it came from, so a document
+	// written by hand can name a picture rather than inline it.
+	if path := jstr(io_, "path"); path != "" {
+		if im, got := image_load(path, scale); got {
+			return im, true
+		}
+	}
+	return {}, false
+}
+
 // doc_from_json parses the native format. Anything missing falls back to the
 // model's own default, so a hand-edited file with half the fields still loads.
 doc_from_json :: proc(src: string) -> (d: Doc, ok: bool) {
@@ -270,28 +511,29 @@ doc_from_json :: proc(src: string) -> (d: Doc, ok: bool) {
 			break_before = jbool(po, "break"),
 			runs   = make([dynamic]Run, 0, 2),
 		}
-		if rv, hr := jget(po, "runs"); hr {
-			if ra, ria := rv.(json.Array); ria {
-				for rvv in ra {
-					ro, rois := rvv.(json.Object)
-					if !rois {
-						continue
-					}
-					cs := Char_Style {
-						bold      = jbool(ro, "b"),
-						italic    = jbool(ro, "i"),
-						underline = jbool(ro, "u"),
-						mono      = jbool(ro, "m"),
-						size      = f32(jnum(ro, "size", 0)),
-					}
-					if c := jstr(ro, "color"); len(c) == 7 && c[0] == '#' {
-						if v, pok := strconv.parse_u64_of_base(c[1:], 16); pok {
-							cs.color = 0xff000000 | u32(v & 0xffffff)
-						}
-					}
-					append(&pa.runs, run_make(cs, jstr(ro, "t")))
+		json_read_runs(&pa, po)
+		if tv, ht := jget(po, "table"); ht {
+			if to, tis := tv.(json.Object); tis {
+				pa.kind = .Table
+				pa.table = new(Table)
+				pa.table^ = json_read_table(to)
+			}
+		}
+		if iv, hi := jget(po, "image"); hi {
+			if io_, iis := iv.(json.Object); iis {
+				if im, got := json_read_image(io_); got {
+					pa.kind = .Image
+					pa.img = new(Doc_Image)
+					pa.img^ = im
+				} else {
+					// The bytes would not decode: keep the paragraph as a
+					// placeholder rather than dropping the picture silently.
+					pa.kind = .Image
 				}
 			}
+		}
+		if pa.kind == .Table && pa.table == nil {
+			pa.kind = .Body
 		}
 		if len(pa.runs) == 0 {
 			append(&pa.runs, run_make({}))
@@ -380,6 +622,54 @@ md_write_inline :: proc(b: ^strings.Builder, pa: ^Paragraph) {
 	}
 }
 
+// md_write_table writes a GitHub pipe table. Every cell is one line — the
+// syntax has no way to say otherwise — so a cell with several paragraphs is
+// joined with spaces, and a pipe inside a cell is escaped.
+@(private = "file")
+md_write_table :: proc(b: ^strings.Builder, t: ^Table) {
+	ncols := table_cols(t)
+	cell_line :: proc(b: ^strings.Builder, cl: ^Cell) {
+		if cl == nil {
+			return
+		}
+		for &cp, i in cl.paras {
+			if i > 0 {
+				strings.write_byte(b, ' ')
+			}
+			for &r in cp.runs {
+				text := string(r.text[:])
+				for k in 0 ..< len(text) {
+					if text[k] == '|' {
+						strings.write_string(b, "\\|")
+					} else if text[k] == '\n' {
+						strings.write_byte(b, ' ')
+					} else {
+						strings.write_byte(b, text[k])
+					}
+				}
+			}
+		}
+	}
+	for r in 0 ..< len(t.rows) {
+		strings.write_string(b, "|")
+		for c in 0 ..< ncols {
+			strings.write_byte(b, ' ')
+			cell_line(b, table_cell(t, r, c))
+			strings.write_string(b, " |")
+		}
+		strings.write_byte(b, '\n')
+		// The delimiter row goes after the first row, always: a pipe table
+		// without one is not a table to any reader, header or no header.
+		if r == 0 {
+			strings.write_string(b, "|")
+			for _ in 0 ..< ncols {
+				strings.write_string(b, " --- |")
+			}
+			strings.write_byte(b, '\n')
+		}
+	}
+}
+
 doc_to_markdown :: proc(d: ^Doc, alloc := context.allocator) -> string {
 	b := strings.builder_make(alloc)
 	in_code := false
@@ -388,6 +678,29 @@ doc_to_markdown :: proc(d: ^Doc, alloc := context.allocator) -> string {
 
 	for &pa in d.paras {
 		is_list := pa.list != .None
+
+		// A table becomes a GitHub pipe table, and a picture becomes
+		// `![alt](path)`. Both need a blank line either side or the next
+		// reader folds them into the paragraph above.
+		if pa.kind == .Table || pa.kind == .Image {
+			if in_code {
+				strings.write_string(&b, "```\n")
+				in_code = false
+			}
+			if prev_block {
+				strings.write_string(&b, "\n")
+			}
+			if pa.kind == .Table && pa.table != nil {
+				md_write_table(&b, pa.table)
+			} else if pa.img != nil {
+				strings.write_string(&b, "![")
+				md_escape(&b, pa.img.alt)
+				fmt.sbprintf(&b, "](%s)\n", pa.img.path)
+			}
+			prev_block = true
+			prev_list = false
+			continue
+		}
 
 		if pa.kind == .Code {
 			if !in_code {
@@ -425,7 +738,7 @@ doc_to_markdown :: proc(d: ^Doc, alloc := context.allocator) -> string {
 			strings.write_string(&b, "### ")
 		case .Quote:
 			strings.write_string(&b, "> ")
-		case .Body, .Code:
+		case .Body, .Code, .Table, .Image:
 		}
 		if is_list {
 			for _ in 0 ..< pa.depth {
@@ -647,7 +960,9 @@ doc_from_markdown :: proc(src: string) -> Doc {
 	}
 
 	in_code := false
-	for raw in lines {
+	md_in_table := false
+	md_table_pending: [dynamic]string
+	for raw, raw_i in lines {
 		line := raw
 
 		if strings.has_prefix(strings.trim_left_space(line), "```") ||
@@ -679,6 +994,39 @@ doc_from_markdown :: proc(src: string) -> Doc {
 		}
 		body := trimmed[indent:]
 		depth := indent / 2
+
+		// A pipe table: a row of `|`-separated cells, and the row after it
+		// made only of dashes and colons. Both have to be present — a line
+		// with a pipe in it is not a table.
+		if md_is_table_row(body) && md_is_delim_row(raw_i + 1 < len(lines) ? lines[raw_i + 1] : "") {
+			flush(&out, &pending, &blk)
+			rows := make([dynamic]string, 0, 8, context.temp_allocator)
+			append(&rows, body)
+			md_table_pending = rows
+			md_in_table = true
+			continue
+		}
+		if md_in_table {
+			if md_is_delim_row(body) {
+				continue
+			}
+			if md_is_table_row(body) {
+				append(&md_table_pending, body)
+				continue
+			}
+			md_flush_table(&out, &md_table_pending)
+			md_in_table = false
+			// fall through: this line is ordinary content
+		}
+
+		// A picture on a line of its own: `![alt](path)`.
+		if strings.has_prefix(body, "![") {
+			if im_pa, got := md_parse_image(body); got {
+				flush(&out, &pending, &blk)
+				append(&out.paras, im_pa)
+				continue
+			}
+		}
 
 		// Headings are always one line of their own.
 		hashes := 0
@@ -741,11 +1089,139 @@ doc_from_markdown :: proc(src: string) -> Doc {
 		cont(&pending, &blk, body)
 	}
 	flush(&out, &pending, &blk)
+	if md_in_table {
+		md_flush_table(&out, &md_table_pending)
+	}
 
 	if len(out.paras) == 0 {
 		append(&out.paras, para_make())
 	}
 	return out
+}
+
+// ---------------------------------------------------------------------------
+// Markdown tables and pictures
+// ---------------------------------------------------------------------------
+
+// md_is_table_row is a line that starts and ends with a pipe, which is the
+// form every writer emits and the only one worth accepting — a bare
+// `a | b` line is far more often prose than a table.
+@(private = "file")
+md_is_table_row :: proc(s: string) -> bool {
+	t := strings.trim_space(s)
+	return len(t) >= 2 && t[0] == '|' && t[len(t) - 1] == '|'
+}
+
+// md_is_delim_row is the `| --- | --- |` line under a header.
+@(private = "file")
+md_is_delim_row :: proc(s: string) -> bool {
+	t := strings.trim_space(s)
+	if !md_is_table_row(t) {
+		return false
+	}
+	dashes := 0
+	for i in 1 ..< len(t) - 1 {
+		switch t[i] {
+		case '-':
+			dashes += 1
+		case ':', ' ', '|', '\t':
+		case:
+			return false
+		}
+	}
+	return dashes > 0
+}
+
+// md_split_row cuts a pipe row into cells, honouring `\|`.
+@(private = "file")
+md_split_row :: proc(s: string, alloc := context.temp_allocator) -> []string {
+	t := strings.trim_space(s)
+	if len(t) >= 2 && t[0] == '|' {
+		t = t[1:]
+	}
+	if len(t) >= 1 && t[len(t) - 1] == '|' {
+		t = t[:len(t) - 1]
+	}
+	out := make([dynamic]string, 0, 4, alloc)
+	cur := strings.builder_make(alloc)
+	i := 0
+	for i < len(t) {
+		if t[i] == '\\' && i + 1 < len(t) && t[i + 1] == '|' {
+			strings.write_byte(&cur, '|')
+			i += 2
+			continue
+		}
+		if t[i] == '|' {
+			append(&out, strings.clone(strings.trim_space(strings.to_string(cur)), alloc))
+			strings.builder_reset(&cur)
+			i += 1
+			continue
+		}
+		strings.write_byte(&cur, t[i])
+		i += 1
+	}
+	append(&out, strings.clone(strings.trim_space(strings.to_string(cur)), alloc))
+	return out[:]
+}
+
+// md_flush_table turns the collected pipe rows into a table paragraph. The
+// first row is the header, because a pipe table always has one.
+@(private = "file")
+md_flush_table :: proc(out: ^Doc, rows: ^[dynamic]string) {
+	if len(rows^) == 0 {
+		return
+	}
+	cols := 1
+	for r in rows^ {
+		cols = max(cols, len(md_split_row(r)))
+	}
+	pa := table_para_make(len(rows^), min(cols, TABLE_MAX_COLS), true)
+	for r, ri in rows^ {
+		cells := md_split_row(r)
+		for ci in 0 ..< min(len(cells), table_cols(pa.table)) {
+			cl := table_cell(pa.table, ri, ci)
+			if cl == nil {
+				continue
+			}
+			cp := &cl.paras[0]
+			clear(&cp.runs)
+			md_parse_inline(cp, cells[ci], {})
+		}
+	}
+	append(&out.paras, pa)
+	clear(rows)
+}
+
+// md_parse_image reads `![alt](path)`. The picture is loaded from disk if it
+// is there; if it is not, the paragraph is still created so the document keeps
+// its shape and the window shows a placeholder saying what is missing.
+@(private = "file")
+md_parse_image :: proc(s: string) -> (Paragraph, bool) {
+	t := strings.trim_space(s)
+	if !strings.has_prefix(t, "![") {
+		return {}, false
+	}
+	close := strings.index(t, "](")
+	if close < 0 || !strings.has_suffix(t, ")") {
+		return {}, false
+	}
+	alt := t[2:close]
+	path := t[close + 2:len(t) - 1]
+	if im, got := image_load(expand_home(path, context.temp_allocator)); got {
+		im2 := im
+		im2.alt = strings.clone(alt == "" ? base_name(path) : alt)
+		delete(im.alt)
+		return image_para_make(im2), true
+	}
+	pa := para_make(.Image)
+	pa.align = .Center
+	pa.img = new(Doc_Image)
+	pa.img^ = Doc_Image {
+		path  = strings.clone(path),
+		alt   = strings.clone(alt),
+		scale = 1,
+	}
+	return pa, true
 }
 
 export_markdown :: proc(d: ^Doc, path: string) -> bool {
@@ -793,7 +1269,11 @@ doc_to_html :: proc(d: ^Doc, title: string, alloc := context.allocator) -> strin
 		"p{font-size:15px;line-height:1.56;margin:0 0 11px}\n" +
 		"blockquote{margin:12px 0;padding-left:24px;border-left:3px solid #d4d4d4;font-style:italic}\n" +
 		"pre{margin:12px 0;padding:10px 14px;background:#f5f5f5;border-radius:6px;font-size:13px;overflow-x:auto}\n" +
-		"ul,ol{font-size:15px;line-height:1.56;padding-left:28px;margin:0 0 11px}\n</style></head>\n<body><div class=\"page\">\n",
+		"ul,ol{font-size:15px;line-height:1.56;padding-left:28px;margin:0 0 11px}\n" +
+		"table{border-collapse:collapse;width:100%;margin:14px 0;font-size:15px;line-height:1.45}\n" +
+		"th,td{border:1px solid #a8a8aa;padding:7px;vertical-align:top;text-align:left}\n" +
+		"th{background:#f1f1f2;font-weight:600}\n" +
+		"figure{margin:12px 0;text-align:center}figure img{max-width:100%;height:auto}\n</style></head>\n<body><div class=\"page\">\n",
 	)
 
 	emit_runs :: proc(b: ^strings.Builder, pa: ^Paragraph) {
@@ -822,9 +1302,101 @@ doc_to_html :: proc(d: ^Doc, title: string, alloc := context.allocator) -> strin
 		}
 	}
 
+	// emit_table writes a real <table>: a <thead> when the first row is a
+	// header, so the structure survives into whatever receives the HTML
+	// rather than being a grid of divs that merely looks like one.
+	emit_table :: proc(b: ^strings.Builder, t: ^Table) {
+		strings.write_string(b, "<table>\n")
+		if table_cols(t) > 0 {
+			strings.write_string(b, "<colgroup>")
+			for c in 0 ..< table_cols(t) {
+				fmt.sbprintf(b, "<col style=\"width:%.1f%%\">", table_width(t, c) / CONTENT_W * 100)
+			}
+			strings.write_string(b, "</colgroup>\n")
+		}
+		for r in 0 ..< len(t.rows) {
+			head := t.header && r == 0
+			if head {
+				strings.write_string(b, "<thead>")
+			} else if r == (t.header ? 1 : 0) {
+				strings.write_string(b, "<tbody>")
+			}
+			strings.write_string(b, "<tr>")
+			for c in 0 ..< table_cols(t) {
+				tag := head ? "th" : "td"
+				fmt.sbprintf(b, "<%s>", tag)
+				if cl := table_cell(t, r, c); cl != nil {
+					for &cp, i in cl.paras {
+						if i > 0 {
+							strings.write_string(b, "<br>")
+						}
+						emit_runs(b, &cp)
+					}
+				}
+				fmt.sbprintf(b, "</%s>", tag)
+			}
+			strings.write_string(b, "</tr>")
+			if head {
+				strings.write_string(b, "</thead>\n")
+			}
+		}
+		if len(t.rows) > (t.header ? 1 : 0) {
+			strings.write_string(b, "</tbody>\n")
+		}
+		strings.write_string(b, "</table>\n")
+	}
+
+	// emit_image inlines the picture as a data URI, so the exported page is
+	// one self-contained file rather than a document that breaks when the
+	// picture beside it is not copied too.
+	emit_image :: proc(b: ^strings.Builder, pa: ^Paragraph) {
+		im := pa.img
+		w, h := image_para_size(pa)
+		align := "center"
+		switch pa.align {
+		case .Left:
+			align = "left"
+		case .Right:
+			align = "right"
+		case .Center, .Justify:
+		}
+		fmt.sbprintf(b, "<figure style=\"text-align:%s\">", align)
+		if im != nil && len(im.bytes) > 0 {
+			enc, err := base64.encode(im.bytes, base64.ENC_TABLE, context.temp_allocator)
+			if err == nil {
+				fmt.sbprintf(b, "<img width=\"%.0f\" height=\"%.0f\" alt=\"", w, h)
+				html_escape(b, im == nil ? "" : im.alt)
+				fmt.sbprintf(b, "\" src=\"data:%s;base64,%s\">", image_mime(im.kind), enc)
+			}
+		} else if im != nil {
+			fmt.sbprintf(b, "<img width=\"%.0f\" height=\"%.0f\" alt=\"", w, h)
+			html_escape(b, im.alt)
+			strings.write_string(b, "\" src=\"")
+			html_escape(b, im.path)
+			strings.write_string(b, "\">")
+		}
+		strings.write_string(b, "</figure>\n")
+	}
+
 	list_open := List_Kind.None
 	in_pre := false
 	for &pa in d.paras {
+		if pa.kind == .Table || pa.kind == .Image {
+			if in_pre {
+				strings.write_string(&b, "</pre>\n")
+				in_pre = false
+			}
+			if list_open != .None {
+				strings.write_string(&b, list_open == .Bullet ? "</ul>\n" : "</ol>\n")
+				list_open = .None
+			}
+			if pa.kind == .Table && pa.table != nil {
+				emit_table(&b, pa.table)
+			} else if pa.kind == .Image {
+				emit_image(&b, &pa)
+			}
+			continue
+		}
 		if pa.kind == .Code {
 			if list_open != .None {
 				strings.write_string(&b, list_open == .Bullet ? "</ul>\n" : "</ol>\n")
@@ -882,7 +1454,7 @@ doc_to_html :: proc(d: ^Doc, title: string, alloc := context.allocator) -> strin
 			tag = "h3"
 		case .Quote:
 			tag = "blockquote"
-		case .Body, .Code:
+		case .Body, .Code, .Table, .Image:
 		}
 		fmt.sbprintf(&b, "<%s%s>", tag, style)
 		emit_runs(&b, &pa)

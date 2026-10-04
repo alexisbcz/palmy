@@ -190,6 +190,23 @@ pdf_text :: proc(b: ^strings.Builder, s: string) {
 	strings.write_byte(b, '>')
 }
 
+// pdf_utf16 writes a hex string holding UTF-16BE with a byte order mark, which
+// is the one string form a PDF reader always decodes as text. /ActualText
+// needs it; a literal string would be read as PDFDocEncoded.
+pdf_utf16 :: proc(b: ^strings.Builder, s: string) {
+	strings.write_string(b, "<FEFF")
+	for r in s {
+		c := u32(r)
+		if c > 0xffff {
+			c -= 0x10000
+			fmt.sbprintf(b, "%04X%04X", 0xd800 + (c >> 10), 0xdc00 + (c & 0x3ff))
+		} else {
+			fmt.sbprintf(b, "%04X", c)
+		}
+	}
+	strings.write_byte(b, '>')
+}
+
 // num writes a coordinate with two decimals and no trailing noise, which
 // keeps content streams readable and small.
 @(private = "file")
@@ -216,10 +233,30 @@ Pdf_Font :: struct {
 	italic: bool,
 }
 
+// Pdf_Image is one embedded picture.
+//
+// A JPEG goes in untouched under `/DCTDecode`: the filter *is* JPEG, so the
+// file's own bytes are already the stream and nothing is re-encoded. A PNG
+// cannot do the same — `/FlateDecode` would need a deflate compressor and
+// Odin's core has only inflate — so its pixels are written as raw RGB under
+// `/RunLengthDecode`, which is twenty lines of code (`run_length` in
+// apps/slides/pdf.odin, re-implemented here) and still halves a screenshot.
+Pdf_Image :: struct {
+	para:  int, // the image paragraph it belongs to
+	w, h:  int, // the pixel size of the stream, after any downscale
+	jpeg:  bool,
+	data:  []u8, // the stream bytes, filter applied
+	alpha: []u8, // an 8-bit soft mask, or nil when the picture is opaque
+	obj:   int,
+	sobj:  int, // the /SMask object, or 0
+	res:   string, // the resource name, "/Im0"
+}
+
 Pdf_Ctx :: struct {
 	st:     ^State,
 	fonts:  [dynamic]Pdf_Font,
 	by_key: map[u32]int, // family<<8 | weight → index into `fonts`
+	images: [dynamic]Pdf_Image,
 }
 
 @(private = "file")
@@ -281,6 +318,29 @@ pdf_need :: proc(cx: ^Pdf_Ctx, fi: int, s: string) {
 	}
 }
 
+// pdf_any_notdef reports whether any character of `s` is missing from the
+// face, in which case `pdf_show` will emit glyph 0 for it.
+//
+// That is not a drawing problem — the rasterizer has already decided what the
+// window shows — but it *is* an extraction problem: glyph 0's /ToUnicode entry
+// is U+FFFD, so a reader copies a replacement character out of the file and
+// the original text is gone. The answer is `/ActualText`, a marked-content
+// property that tells a reader what a span of glyphs *means* regardless of
+// what the glyphs are. Every PDF text extractor honours it, and it is the only
+// way to keep a character the embedded subset cannot represent.
+pdf_any_notdef :: proc(cx: ^Pdf_Ctx, fi: int, s: string) -> bool {
+	if fi < 0 {
+		return false
+	}
+	pf := &cx.fonts[fi]
+	for r in s {
+		if ttf_gid(&pf.ttf, r) == 0 {
+			return true
+		}
+	}
+	return false
+}
+
 // pdf_has reports whether a face can draw a rune at all. The bullet is the
 // one character this matters for: a UI sans may well not carry U+2022, and a
 // missing-glyph box in the middle of a list would be worse than drawing the
@@ -299,6 +359,127 @@ subset_tag :: proc(seed: u64) -> string {
 		h = h * 1099511628211 + 0xcbf29ce4
 	}
 	return strings.clone(strings.to_string(b))
+}
+
+// ---------------------------------------------------------------------------
+// Images
+// ---------------------------------------------------------------------------
+
+// PDF_IMAGE_MAX bounds an embedded picture's long side. A page is 602 px wide,
+// so anything past this is paying three uncompressed bytes a pixel for detail
+// no printer will resolve.
+PDF_IMAGE_MAX :: 1400
+
+// pdf_run_length encodes bytes the way PDF's /RunLengthDecode filter reads
+// them: a length byte 0..127 means "the next length+1 bytes are literal",
+// 129..255 means "repeat the next byte 257-length times", and 128 ends the
+// data.
+pdf_run_length :: proc(src: []u8, alloc := context.temp_allocator) -> []u8 {
+	out := make([dynamic]u8, alloc)
+	i := 0
+	for i < len(src) {
+		run := 1
+		for i + run < len(src) && src[i + run] == src[i] && run < 128 {
+			run += 1
+		}
+		if run >= 2 {
+			append(&out, u8(257 - run), src[i])
+			i += run
+			continue
+		}
+		start := i
+		for i < len(src) && i - start < 128 {
+			if i + 2 < len(src) && src[i] == src[i + 1] && src[i] == src[i + 2] {
+				break
+			}
+			i += 1
+		}
+		append(&out, u8(i - start - 1))
+		append(&out, ..src[start:i])
+	}
+	append(&out, 128) // end of data
+	return out[:]
+}
+
+// pdf_image_for finds or builds the XObject for one image paragraph.
+pdf_image_for :: proc(cx: ^Pdf_Ctx, pi: int) -> int {
+	for im, i in cx.images {
+		if im.para == pi {
+			return i
+		}
+	}
+	pa := &cx.st.doc.paras[pi]
+	if pa.img == nil {
+		return -1
+	}
+	src := pa.img
+
+	// A JPEG is handed over verbatim.
+	if src.kind == .JPEG && len(src.bytes) > 0 {
+		append(
+			&cx.images,
+			Pdf_Image{para = pi, w = src.w, h = src.h, jpeg = true, data = src.bytes},
+		)
+		return len(cx.images) - 1
+	}
+	if len(src.px) < src.w * src.h || src.w <= 0 || src.h <= 0 {
+		return -1
+	}
+
+	// Everything else goes in as RGB, box-filtered down to the embedding size.
+	// Box filtering rather than point sampling, because a downscaled
+	// screenshot that aliases is worse than no screenshot.
+	long := max(src.w, src.h)
+	step := 1
+	if long > PDF_IMAGE_MAX {
+		step = (long + PDF_IMAGE_MAX - 1) / PDF_IMAGE_MAX
+	}
+	w := max(src.w / step, 1)
+	h := max(src.h / step, 1)
+	rgb := make([]u8, w * h * 3, context.temp_allocator)
+	alpha := make([]u8, w * h, context.temp_allocator)
+	any_alpha := false
+	for y in 0 ..< h {
+		for x in 0 ..< w {
+			r, g, b, a, n := 0, 0, 0, 0, 0
+			for sy in y * step ..< min((y + 1) * step, src.h) {
+				for sx in x * step ..< min((x + 1) * step, src.w) {
+					v := src.px[sy * src.w + sx]
+					r += int(u8(v >> 16))
+					g += int(u8(v >> 8))
+					b += int(u8(v))
+					a += int(u8(v >> 24))
+					n += 1
+				}
+			}
+			if n == 0 {
+				n = 1
+			}
+			o := (y * w + x) * 3
+			rgb[o + 0] = u8(r / n)
+			rgb[o + 1] = u8(g / n)
+			rgb[o + 2] = u8(b / n)
+			av := u8(a / n)
+			alpha[y * w + x] = av
+			if av != 255 {
+				any_alpha = true
+			}
+		}
+	}
+	append(
+		&cx.images,
+		Pdf_Image {
+			para = pi,
+			w = w,
+			h = h,
+			jpeg = false,
+			data = pdf_run_length(rgb),
+			// A PNG with transparency needs an /SMask, or it arrives on a
+			// black background in every reader.
+			alpha = any_alpha ? pdf_run_length(alpha) : nil,
+		},
+	)
+	return len(cx.images) - 1
 }
 
 // ---------------------------------------------------------------------------
@@ -442,6 +623,14 @@ pdf_collect :: proc(cx: ^Pdf_Ctx) {
 	// The footer's page numbers, always in the regular sans.
 	fi := pdf_face(cx, .Sans, .Regular)
 	pdf_need(cx, fi, "0123456789")
+
+	// Every picture becomes an XObject, in document order, so the resource
+	// dictionary is complete before a content stream is written.
+	for pi in 0 ..< len(cx.st.doc.paras) {
+		if cx.st.doc.paras[pi].kind == .Image {
+			pdf_image_for(cx, pi)
+		}
+	}
 }
 
 // pdf_page_content renders one page into a content stream, mirroring
@@ -452,6 +641,42 @@ pdf_page_content :: proc(cx: ^Pdf_Ctx, pi: int, alloc := context.allocator) -> s
 	lay := &st.lay
 	b := strings.builder_make(alloc)
 	fill := u32(0xffffffff) // a value no colour can take, so the first set emits
+
+	// Table shading and rules first, from the layout's own cell boxes — the
+	// same list the window draws from, so a rule cannot be in one place on
+	// screen and another on paper.
+	{
+		clo, chi := page_cells(lay, pi)
+		if clo >= 0 {
+			for i in clo ..= chi {
+				cb := lay.cells[i]
+				if cb.para < 0 || cb.para >= len(st.doc.paras) {
+					continue
+				}
+				if cb.header {
+					set_fill(&b, &fill, COL_TABLE_HEAD)
+					rect(&b, MARGIN + cb.x, MARGIN + cb.y, cb.w, cb.h)
+				}
+			}
+			for i in clo ..= chi {
+				cb := lay.cells[i]
+				if cb.para < 0 || cb.para >= len(st.doc.paras) {
+					continue
+				}
+				t := st.doc.paras[cb.para].table
+				if t == nil || !t.borders {
+					continue
+				}
+				set_fill(&b, &fill, COL_TABLE_RULE)
+				x := MARGIN + cb.x
+				y := MARGIN + cb.y
+				rect(&b, x, y, cb.w, TABLE_RULE)
+				rect(&b, x, y + cb.h - TABLE_RULE, cb.w, TABLE_RULE)
+				rect(&b, x, y, TABLE_RULE, cb.h)
+				rect(&b, x + cb.w - TABLE_RULE, y, TABLE_RULE, cb.h)
+			}
+		}
+	}
 
 	lo, hi := page_lines(lay, pi)
 	if lo >= 0 {
@@ -468,7 +693,31 @@ pdf_page_content :: proc(cx: ^Pdf_Ctx, pi: int, alloc := context.allocator) -> s
 			case .Quote:
 				set_fill(&b, &fill, COL_RULE)
 				rect(&b, MARGIN + l.indent - 16, top, 3, l.h)
-			case .Body, .H1, .H2, .H3:
+			case .Image:
+				// `cm` places the picture: the matrix maps the unit square
+				// onto the box, and the height is negative because PDF puts
+				// an image's first row at the *top* of that square while this
+				// page's y axis has already been flipped.
+				if k := pdf_image_for(cx, l.para); k >= 0 {
+					strings.write_string(&b, "q\n")
+					num(&b, l.w * PT)
+					strings.write_string(&b, " 0 0 ")
+					num(&b, l.h * PT)
+					strings.write_byte(&b, ' ')
+					num(&b, (MARGIN + l.x) * PT)
+					strings.write_byte(&b, ' ')
+					num(&b, PDF_H - (MARGIN + l.y + l.h) * PT)
+					fmt.sbprintf(&b, " cm %s Do\nQ\n", cx.images[k].res)
+				} else {
+					// Nothing to draw: a framed placeholder, as the window
+					// draws it, so the page still says a picture belongs here.
+					set_fill(&b, &fill, COL_RULE)
+					rect(&b, MARGIN + l.x, top, l.w, TABLE_RULE)
+					rect(&b, MARGIN + l.x, top + l.h - TABLE_RULE, l.w, TABLE_RULE)
+					rect(&b, MARGIN + l.x, top, TABLE_RULE, l.h)
+					rect(&b, MARGIN + l.x + l.w - TABLE_RULE, top, TABLE_RULE, l.h)
+				}
+			case .Body, .H1, .H2, .H3, .Table:
 			}
 
 			// The list marker, right-aligned against the text's left edge the
@@ -522,8 +771,20 @@ pdf_page_content :: proc(cx: ^Pdf_Ctx, pi: int, alloc := context.allocator) -> s
 						strings.write_string(&b, " Tf\n")
 						cur_font, cur_size = fi, f.size
 					}
+					txt := frag_text(lay, l, f)
+					// A character the subset cannot carry still has to come
+					// back out of the file as itself. See pdf_any_notdef.
+					spanned := pdf_any_notdef(cx, fi, txt)
+					if spanned {
+						strings.write_string(&b, "/Span << /ActualText ")
+						pdf_utf16(&b, txt)
+						strings.write_string(&b, " >> BDC\n")
+					}
 					tm(&b, MARGIN + l.x + f.x, base)
-					pdf_show(&b, cx, fi, frag_text(lay, l, f), f.size, f.fam, f.wt)
+					pdf_show(&b, cx, fi, txt, f.size, f.fam, f.wt)
+					if spanned {
+						strings.write_string(&b, "EMC\n")
+					}
 				}
 				if started {
 					strings.write_string(&b, "ET\n")
@@ -600,6 +861,7 @@ export_pdf :: proc(st: ^State, path: string, title: string) -> bool {
 	cx := Pdf_Ctx {
 		fonts  = make([dynamic]Pdf_Font, 0, 6),
 		by_key = make(map[u32]int),
+		images = make([dynamic]Pdf_Image, 0, 4),
 		st     = st,
 	}
 	defer {
@@ -611,6 +873,10 @@ export_pdf :: proc(st: ^State, path: string, title: string) -> bool {
 		}
 		delete(cx.fonts)
 		delete(cx.by_key)
+		for &im in cx.images {
+			delete(im.res)
+		}
+		delete(cx.images)
 	}
 
 	pdf_collect(&cx)
@@ -619,6 +885,9 @@ export_pdf :: proc(st: ^State, path: string, title: string) -> bool {
 	}
 	for &f, i in cx.fonts {
 		f.res = fmt.aprintf("/F%d", i)
+	}
+	for &im, i in cx.images {
+		im.res = fmt.aprintf("/Im%d", i)
 	}
 
 	w: Pdf
@@ -751,13 +1020,54 @@ export_pdf :: proc(st: ^State, path: string, title: string) -> bool {
 		)
 	}
 
-	// --- the shared /Resources, naming every font once
+	// --- images, each an /XObject. A picture with transparency also needs an
+	// /SMask, which is itself an image: one 8-bit channel, /DeviceGray.
+	for &im in cx.images {
+		if len(im.alpha) > 0 {
+			im.sobj = pdf_reserve(&w)
+			pdf_set_stream(
+				&w,
+				im.sobj,
+				fmt.tprintf(
+					"/Type /XObject /Subtype /Image /Width %d /Height %d " +
+					"/ColorSpace /DeviceGray /BitsPerComponent 8 /Filter /RunLengthDecode",
+					im.w,
+					im.h,
+				),
+				im.alpha,
+			)
+		}
+		im.obj = pdf_reserve(&w)
+		extra := strings.builder_make(context.temp_allocator)
+		fmt.sbprintf(
+			&extra,
+			"/Type /XObject /Subtype /Image /Width %d /Height %d " +
+			"/ColorSpace /DeviceRGB /BitsPerComponent 8 /Filter /%s",
+			im.w,
+			im.h,
+			im.jpeg ? "DCTDecode" : "RunLengthDecode",
+		)
+		if im.sobj > 0 {
+			fmt.sbprintf(&extra, " /SMask %d 0 R", im.sobj)
+		}
+		pdf_set_stream(&w, im.obj, strings.to_string(extra), im.data)
+	}
+
+	// --- the shared /Resources, naming every font and every picture once
 	res := strings.builder_make(context.temp_allocator)
 	strings.write_string(&res, "<< /Font << ")
 	for f in cx.fonts {
 		fmt.sbprintf(&res, "%s %d 0 R ", f.res, f.obj)
 	}
-	strings.write_string(&res, ">> /ProcSet [/PDF /Text] >>")
+	strings.write_string(&res, ">>")
+	if len(cx.images) > 0 {
+		strings.write_string(&res, " /XObject << ")
+		for im in cx.images {
+			fmt.sbprintf(&res, "%s %d 0 R ", im.res, im.obj)
+		}
+		strings.write_string(&res, ">>")
+	}
+	strings.write_string(&res, len(cx.images) > 0 ? " /ProcSet [/PDF /Text /ImageC] >>" : " /ProcSet [/PDF /Text] >>")
 	res_obj := pdf_reserve(&w)
 	pdf_set(&w, res_obj, strings.to_string(res))
 
@@ -890,7 +1200,7 @@ pdf_outline :: proc(w: ^Pdf, st: ^State, page_objs: []int) -> int {
 			level = 2
 		case .H3:
 			level = 3
-		case .Body, .Quote, .Code:
+		case .Body, .Quote, .Code, .Table, .Image:
 			continue
 		}
 		t := para_text(pa, context.temp_allocator)

@@ -53,6 +53,13 @@ kind_metrics :: proc(k: Para_Kind) -> Kind_Metrics {
 		return {size = 15, weight = .Regular, line = 1.6, before = 12, after = 12, indent = 24, italic = true}
 	case .Code:
 		return {size = 13, weight = .Regular, line = 1.62, before = 12, after = 12, indent = 14, mono = true}
+	case .Table:
+		// A table has no type of its own; the numbers that matter are the space
+		// it reserves above and below, and the body size its empty run reports
+		// to anything that asks.
+		return {size = 15, weight = .Regular, line = 1.56, before = 14, after = 14}
+	case .Image:
+		return {size = 15, weight = .Regular, line = 1, before = 12, after = 12}
 	}
 	return {}
 }
@@ -71,6 +78,10 @@ kind_label :: proc(k: Para_Kind) -> string {
 		return "Quote"
 	case .Code:
 		return "Code"
+	case .Table:
+		return "Table"
+	case .Image:
+		return "Image"
 	}
 	return ""
 }
@@ -126,7 +137,18 @@ Frag :: struct {
 }
 
 Line :: struct {
-	para:       int,
+	para:       int, // the top-level paragraph, even for a line inside a cell
+	// The block this line's bytes live in — an index into `Layout.blocks`.
+	// Every text lookup goes through it, so a line inside a table cell reads
+	// exactly like a line of body text.
+	blk:        int,
+	// Where inside a table the line sits. All zero outside one.
+	row:        int,
+	col:        int,
+	cpara:      int,
+	// A line drawn as part of a repeated header row. It is painted, but it is
+	// not a place the caret can be, and stepping by visual line skips it.
+	repeat:     bool,
 	start, end: int, // paragraph-relative range; `end` includes trailing spaces
 	vis_end:    int, // end with trailing spaces removed — what is measured
 	fi, fc:     int, // range into Layout.frags
@@ -154,12 +176,20 @@ Seg :: struct {
 // The byte length and run count ride along with the hash, because a silent
 // collision here would show up as the wrong text on screen.
 Cache_Key :: struct {
-	hash:   u64,
-	nbytes: int,
-	nruns:  int,
-	kind:   Para_Kind,
-	list:   List_Kind,
-	depth:  int,
+	hash:    u64,
+	nbytes:  int,
+	nruns:   int,
+	kind:    Para_Kind,
+	list:    List_Kind,
+	depth:   int,
+	// A cell in a header row, which sets the type bold. It rides in the key
+	// because the weight changes the wrap.
+	head:    bool,
+	// The measure, in whole pixels. Before tables this was implied by
+	// kind/list/depth; a cell paragraph wraps to its column's width instead, so
+	// two paragraphs with identical text in differently sized columns must not
+	// share an entry.
+	measure: int,
 }
 
 Para_Cache :: struct {
@@ -168,13 +198,35 @@ Para_Cache :: struct {
 	seen:  u64,
 }
 
+// Blk_Span is one block's slice of `Layout.text`.
+Blk_Span :: struct {
+	at, n: int,
+}
+
+// Cell_Box is one cell's rectangle on one page, in text-area coordinates. The
+// window and the PDF both draw the rules and the header shading from this list
+// and nothing else, which is what keeps the two in agreement.
+Cell_Box :: struct {
+	para:   int, // the table paragraph
+	page:   int,
+	x, y:   f32,
+	w, h:   f32,
+	row:    int,
+	col:    int,
+	header: bool,
+	repeat: bool, // a header repeated at the top of a continuation page
+}
+
 Layout :: struct {
 	lines:   [dynamic]Line,
 	frags:   [dynamic]Frag,
-	// Every paragraph's text, concatenated once, so measurement and drawing
-	// both work on plain strings instead of walking runs.
+	// Every block's text, concatenated once, so measurement and drawing both
+	// work on plain strings instead of walking runs. Blocks are in reading
+	// order: a top-level paragraph, or a paragraph inside a table cell.
 	text:    [dynamic]u8,
-	para_at: [dynamic]int,
+	blocks:  [dynamic]Blk_Span,
+	blk_ids: [dynamic]Blk,
+	cells:   [dynamic]Cell_Box,
 	pages:   int,
 	height:  f32,
 	segs:    [dynamic]Seg, // scratch, one paragraph at a time
@@ -192,7 +244,9 @@ layout_destroy :: proc(lay: ^Layout) {
 	delete(lay.lines)
 	delete(lay.frags)
 	delete(lay.text)
-	delete(lay.para_at)
+	delete(lay.blocks)
+	delete(lay.blk_ids)
+	delete(lay.cells)
 	delete(lay.segs)
 	for _, &c in lay.cache {
 		delete(c.lines)
@@ -205,7 +259,7 @@ layout_destroy :: proc(lay: ^Layout) {
 // para_key hashes everything that affects how a paragraph wraps: FNV-1a over
 // the text bytes and the style of each run, plus the properties that set the
 // measure.
-para_key :: proc(pa: ^Paragraph) -> Cache_Key {
+para_key :: proc(pa: ^Paragraph, measure: f32, head := false) -> Cache_Key {
 	h := u64(0xcbf29ce484222325)
 	feed :: proc(h: u64, b: u8) -> u64 {
 		return (h ~ u64(b)) * 0x100000001b3
@@ -239,27 +293,52 @@ para_key :: proc(pa: ^Paragraph) -> Cache_Key {
 		kind = pa.kind,
 		list = pa.list,
 		depth = pa.depth,
+		head = head,
+		measure = int(measure + 0.5),
 	}
 }
 
-para_string :: proc(lay: ^Layout, pi: int) -> string {
-	if pi < 0 || pi >= len(lay.para_at) {
+// block_string is one block's bytes. Every text lookup in the layout, the
+// renderer and the PDF writer goes through it.
+block_string :: proc(lay: ^Layout, bi: int) -> string {
+	if bi < 0 || bi >= len(lay.blocks) {
 		return ""
 	}
-	a := lay.para_at[pi]
-	b := pi + 1 < len(lay.para_at) ? lay.para_at[pi + 1] : len(lay.text)
-	return string(lay.text[a:b])
+	sp := lay.blocks[bi]
+	return string(lay.text[sp.at:sp.at + sp.n])
+}
+
+// para_string keeps the old name for a top-level paragraph, by finding the
+// block that holds it. A table paragraph has no bytes of its own, so it
+// answers the empty string.
+para_string :: proc(lay: ^Layout, pi: int) -> string {
+	for b, i in lay.blk_ids {
+		if b.para == pi && b.row == 0 && b.col == 0 && b.cpara == 0 {
+			return block_string(lay, i)
+		}
+	}
+	return ""
 }
 
 line_text :: proc(lay: ^Layout, li: int) -> string {
 	l := lay.lines[li]
-	s := para_string(lay, l.para)
+	s := block_string(lay, l.blk)
 	return s[clamp(l.start, 0, len(s)):clamp(l.end, 0, len(s))]
 }
 
 frag_text :: proc(lay: ^Layout, l: Line, f: Frag) -> string {
-	s := para_string(lay, l.para)
+	s := block_string(lay, l.blk)
 	return s[clamp(f.start, 0, len(s)):clamp(f.end, 0, len(s))]
+}
+
+// line_pos is the position of a byte offset on a line, carrying the line's
+// table path along so the caret lands in the right cell.
+line_pos :: proc(l: Line, off: int) -> Pos {
+	return Pos{para = l.para, off = off, row = l.row, col = l.col, cpara = l.cpara}
+}
+
+line_blk :: proc(l: Line) -> Blk {
+	return Blk{l.para, l.row, l.col, l.cpara}
 }
 
 // ---------------------------------------------------------------------------
@@ -321,42 +400,98 @@ para_indent :: proc(pa: ^Paragraph, km: Kind_Metrics) -> f32 {
 // The layout pass
 // ---------------------------------------------------------------------------
 
+// block_is_header reports whether a block sits in a table's header row, which
+// is the one thing about a cell paragraph that is not in the paragraph itself.
+block_is_header :: proc(d: ^Doc, b: Blk) -> bool {
+	if b.para < 0 || b.para >= len(d.paras) {
+		return false
+	}
+	owner := &d.paras[b.para]
+	return owner.kind == .Table && owner.table != nil && owner.table.header && b.row == 0
+}
+
+// block_metrics is a block's paragraph style, with the one override a header
+// cell gets: bold type. The weight changes the measured width, so it has to be
+// settled before wrapping rather than at drawing time.
+block_metrics :: proc(d: ^Doc, b: Blk) -> Kind_Metrics {
+	pa := blk_para(d, b)
+	km := kind_metrics(pa == nil ? .Body : pa.kind)
+	if block_is_header(d, b) {
+		km.weight = .Bold
+	}
+	return km
+}
+
+// block_measure is the width a block wraps to: the content measure less its
+// indent for a top-level paragraph, and the column width less the cell padding
+// for one inside a table.
+block_measure :: proc(d: ^Doc, b: Blk) -> f32 {
+	pa := blk_para(d, b)
+	if pa == nil {
+		return CONTENT_W
+	}
+	km := kind_metrics(pa.kind)
+	ind := para_indent(pa, km)
+	if b.para >= 0 && b.para < len(d.paras) {
+		owner := &d.paras[b.para]
+		if owner.kind == .Table && owner.table != nil {
+			return max(20, table_width(owner.table, b.col) - 2 * CELL_PAD - ind)
+		}
+	}
+	return max(40, CONTENT_W - ind)
+}
+
 layout_doc :: proc(lay: ^Layout, d: ^Doc, fonts: ^p.Fonts) {
-	// One copy of the whole document's text, so every later lookup is a slice.
+	// One copy of every block's text, so every later lookup is a slice. The
+	// blocks are in reading order — a table paragraph contributes its cells'
+	// paragraphs rather than itself — which is the order the pagination pass
+	// walks them in, so a single forward cursor keeps the two in step.
 	clear(&lay.text)
-	clear(&lay.para_at)
-	for pi in 0 ..< len(d.paras) {
-		append(&lay.para_at, len(lay.text))
-		para_append_text(&d.paras[pi], &lay.text)
+	clear(&lay.blocks)
+	clear(&lay.blk_ids)
+	clear(&lay.cells)
+	bs := doc_blocks(d, context.temp_allocator)
+	for b in bs {
+		pa := blk_para(d, b)
+		at := len(lay.text)
+		if pa != nil {
+			para_append_text(pa, &lay.text)
+		}
+		append(&lay.blocks, Blk_Span{at, len(lay.text) - at})
+		append(&lay.blk_ids, b)
 	}
 
 	// Pass one: wrap whatever changed.
 	lay.gen += 1
 	lay.wrapped = 0
-	keys := make([]Cache_Key, len(d.paras), context.temp_allocator)
-	for pi in 0 ..< len(d.paras) {
-		pa := &d.paras[pi]
-		k := para_key(pa)
-		keys[pi] = k
+	keys := make([]Cache_Key, len(bs), context.temp_allocator)
+	for bi in 0 ..< len(bs) {
+		pa := blk_para(d, bs[bi])
+		if pa == nil {
+			continue
+		}
+		avail := block_measure(d, bs[bi])
+		head := block_is_header(d, bs[bi])
+		k := para_key(pa, avail, head)
+		keys[bi] = k
 		if c, hit := &lay.cache[k]; hit {
 			c.seen = lay.gen
 			continue
 		}
-		km := kind_metrics(pa.kind)
+		km := block_metrics(d, bs[bi])
 		build_segs(lay, pa)
-		avail := max(40, CONTENT_W - para_indent(pa, km))
 		c := Para_Cache {
 			lines = make([dynamic]Line, 0, 4),
 			frags = make([dynamic]Frag, 0, 16),
 			seen  = lay.gen,
 		}
-		wrap_paragraph(lay, &c, fonts, km, para_string(lay, pi), avail)
+		wrap_paragraph(lay, &c, fonts, km, block_string(lay, bi), avail)
 		lay.cache[k] = c
 		lay.wrapped += 1
 	}
 
-	// Pass two: pour the wrapped paragraphs onto pages. This is arithmetic
-	// only — no text is measured here, so it stays cheap over a long document.
+	// Pass two: pour the wrapped blocks onto pages. This is arithmetic only —
+	// no text is measured here, so it stays cheap over a long document.
 	clear(&lay.lines)
 	clear(&lay.frags)
 	page := 0
@@ -364,14 +499,11 @@ layout_doc :: proc(lay: ^Layout, d: ^Doc, fonts: ^p.Fonts) {
 	counters: [12]int
 	prev_list := List_Kind.None
 	prev_depth := -1
+	bi := 0 // the forward cursor into `bs` / `keys`
 
 	for pi in 0 ..< len(d.paras) {
 		pa := &d.paras[pi]
 		km := kind_metrics(pa.kind)
-		c, have := &lay.cache[keys[pi]]
-		if !have {
-			continue
-		}
 
 		// List numbering. A numbered item restarts whenever the run of list
 		// items at its depth is interrupted.
@@ -423,15 +555,45 @@ layout_doc :: proc(lay: ^Layout, d: ^Doc, fonts: ^p.Fonts) {
 			y = 0
 		}
 
-		// Two typographic rules that make the difference between a paginated
-		// document and a column of text chopped every 931 pixels:
-		//
-		//   keep with next — a heading never sits alone at the foot of a page
-		//   orphan control — a paragraph never leaves one line behind
-		//
-		// Both look ahead and break the page *early*. A block too tall to help
-		// is left alone, or the break would gain nothing and lose a page.
-		if y > 0 && len(c.lines) > 0 {
+		// --- a table: its own pagination, which is the only block that can
+		// span pages in pieces. See layout_table.
+		if pa.kind == .Table && pa.table != nil && len(pa.table.rows) > 0 {
+			n := table_block_count(pa.table)
+			layout_table(lay, d, pi, pa, bs[bi:bi + n], keys[bi:bi + n], bi, &page, &y)
+			bi += n
+			y += km.after + pa.after
+			continue
+		}
+
+		c, have := &lay.cache[keys[bi]]
+		if !have {
+			bi += 1
+			continue
+		}
+
+		// --- an image: one line box as tall as the picture, placed by the
+		// paragraph's own alignment. The generic "this line does not fit"
+		// rule below would move it down on its own; doing it here as well
+		// keeps the intent legible and handles a picture exactly as tall as
+		// the remaining space.
+		img_w, img_h := f32(0), f32(0)
+		if pa.kind == .Image {
+			img_w, img_h = image_para_size(pa)
+			if y > 0 && y + img_h > CONTENT_H {
+				page += 1
+				y = 0
+			}
+		} else if y > 0 && len(c.lines) > 0 {
+			// Two typographic rules that make the difference between a
+			// paginated document and a column of text chopped every 931
+			// pixels:
+			//
+			//   keep with next — a heading never sits alone at the foot of a page
+			//   orphan control — a paragraph never leaves one line behind
+			//
+			// Both look ahead and break the page *early*. A block too tall to
+			// help is left alone, or the break would gain nothing and lose a
+			// page.
 			need := c.lines[0].h
 			switch pa.kind {
 			case .H1, .H2, .H3:
@@ -439,8 +601,8 @@ layout_doc :: proc(lay: ^Layout, d: ^Doc, fonts: ^p.Fonts) {
 				for src in c.lines {
 					need += src.h
 				}
-				if pi + 1 < len(d.paras) {
-					if nc, okn := &lay.cache[keys[pi + 1]]; okn && len(nc.lines) > 0 {
+				if bi + 1 < len(bs) {
+					if nc, okn := &lay.cache[keys[bi + 1]]; okn && len(nc.lines) > 0 {
 						need += nc.lines[0].h
 					}
 				}
@@ -448,6 +610,7 @@ layout_doc :: proc(lay: ^Layout, d: ^Doc, fonts: ^p.Fonts) {
 				if len(c.lines) >= 2 {
 					need = c.lines[0].h + c.lines[1].h
 				}
+			case .Table, .Image:
 			}
 			if need <= CONTENT_H && y + need > CONTENT_H {
 				page += 1
@@ -461,7 +624,13 @@ layout_doc :: proc(lay: ^Layout, d: ^Doc, fonts: ^p.Fonts) {
 		for src in c.lines {
 			l := src
 			l.para = pi
+			l.blk = bi
 			l.fi = base_frag + src.fi
+			if pa.kind == .Image {
+				l.h = img_h
+				l.w = img_w
+				l.ascent = img_h
+			}
 			if y + l.h > CONTENT_H && y > 0 {
 				page += 1
 				y = 0
@@ -471,13 +640,18 @@ layout_doc :: proc(lay: ^Layout, d: ^Doc, fonts: ^p.Fonts) {
 			l.indent = indent
 			l.marker = l.first ? marker : -1
 
-			switch pa.align {
-			case .Left, .Justify:
-				l.x = indent
-			case .Center:
-				l.x = indent + max(0, (avail - l.w) / 2)
-			case .Right:
-				l.x = indent + max(0, avail - l.w)
+			if pa.kind == .Image {
+				l.x = image_x(pa, img_w)
+				l.indent = l.x
+			} else {
+				switch pa.align {
+				case .Left, .Justify:
+					l.x = indent
+				case .Center:
+					l.x = indent + max(0, (avail - l.w) / 2)
+				case .Right:
+					l.x = indent + max(0, avail - l.w)
+				}
 			}
 
 			l.gap = 0
@@ -520,6 +694,7 @@ layout_doc :: proc(lay: ^Layout, d: ^Doc, fonts: ^p.Fonts) {
 			}
 		}
 		y += sa
+		bi += 1
 	}
 
 	lay.pages = page + 1
@@ -527,7 +702,7 @@ layout_doc :: proc(lay: ^Layout, d: ^Doc, fonts: ^p.Fonts) {
 
 	// Drop entries nothing has asked for in a while. A few generations of
 	// slack means an undo straight after an edit still hits the cache.
-	if len(lay.cache) > 4 * len(d.paras) + 64 {
+	if len(lay.cache) > 4 * len(lay.blocks) + 64 {
 		stale := make([dynamic]Cache_Key, 0, 64, context.temp_allocator)
 		for k, c in lay.cache {
 			if lay.gen - c.seen > 4 {
@@ -541,6 +716,224 @@ layout_doc :: proc(lay: ^Layout, d: ^Doc, fonts: ^p.Fonts) {
 			}
 			delete_key(&lay.cache, k)
 		}
+	}
+}
+
+// table_block_count is how many blocks a table contributes, which is what the
+// pagination pass advances its cursor by.
+table_block_count :: proc(t: ^Table) -> int {
+	n := 0
+	for &row in t.rows {
+		for &c in row.cells {
+			n += len(c.paras)
+		}
+	}
+	return n
+}
+
+// ---------------------------------------------------------------------------
+// Tables
+// ---------------------------------------------------------------------------
+//
+// ## The pagination rule
+//
+// **A row is atomic, the table breaks between rows, and a header row is
+// repeated at the top of every continuation page.**
+//
+// That is the rule Word and LibreOffice both use by default, and it is the one
+// worth the work: the alternative — move the whole table to the next page —
+// cannot express a table longer than a page at all, which is most of the
+// tables anyone writes. The cost is that a single row taller than a whole page
+// has nowhere to go; such a row is placed at the top of a fresh page and
+// allowed to run past the bottom margin, which is the one case this does not
+// handle and is noted rather than hidden.
+//
+// Row heights are measured from the wrapped cell paragraphs, so they are exact
+// before a single row is placed — the same property the rest of the pagination
+// pass relies on.
+
+TABLE_MIN_ROW_H :: f32(26)
+
+// cell_content_h is the height of one cell's paragraphs stacked, without the
+// padding. Space-before is dropped inside a cell and only the space-after
+// between paragraphs is kept, so a one-paragraph cell is exactly its text.
+@(private = "file")
+cell_content_h :: proc(lay: ^Layout, d: ^Doc, cl: ^Cell, keys: []Cache_Key, at: int) -> f32 {
+	h := f32(0)
+	for j in 0 ..< len(cl.paras) {
+		pa := &cl.paras[j]
+		if c, have := &lay.cache[keys[at + j]]; have {
+			for src in c.lines {
+				h += src.h
+			}
+		}
+		if j + 1 < len(cl.paras) {
+			h += kind_metrics(pa.kind).after + pa.after
+		}
+	}
+	return h
+}
+
+// layout_table pours one table's rows onto pages and records a Cell_Box for
+// every cell on every page it appears on. `page` and `y` are advanced in place,
+// exactly as the paragraph loop advances them.
+layout_table :: proc(
+	lay: ^Layout,
+	d: ^Doc,
+	pi: int,
+	pa: ^Paragraph,
+	bs: []Blk,
+	keys: []Cache_Key,
+	base_bi: int,
+	page: ^int,
+	y: ^f32,
+) {
+	t := pa.table
+	ncols := table_cols(t)
+	nrows := len(t.rows)
+	if ncols == 0 || nrows == 0 {
+		return
+	}
+
+	// Where each cell's blocks start, so a cell can be found without walking.
+	starts := make([]int, nrows * ncols, context.temp_allocator)
+	at := 0
+	for r in 0 ..< nrows {
+		for c in 0 ..< ncols {
+			starts[r * ncols + c] = at
+			if cl := table_cell(t, r, c); cl != nil {
+				at += len(cl.paras)
+			}
+		}
+	}
+
+	// Row heights, measured once.
+	row_h := make([]f32, nrows, context.temp_allocator)
+	for r in 0 ..< nrows {
+		h := f32(0)
+		for c in 0 ..< ncols {
+			cl := table_cell(t, r, c)
+			if cl == nil {
+				continue
+			}
+			h = max(h, cell_content_h(lay, d, cl, keys, starts[r * ncols + c]))
+		}
+		row_h[r] = max(TABLE_MIN_ROW_H, h + 2 * CELL_PAD)
+	}
+
+	emit_row := proc(
+		lay: ^Layout,
+		d: ^Doc,
+		pi: int,
+		t: ^Table,
+		bs: []Blk,
+		keys: []Cache_Key,
+		base_bi: int,
+		starts: []int,
+		ncols: int,
+		r: int,
+		page: int,
+		top: f32,
+		h: f32,
+		repeat: bool,
+	) {
+		for c in 0 ..< ncols {
+			cx := table_col_x(t, c)
+			cw := table_width(t, c)
+			append(
+				&lay.cells,
+				Cell_Box {
+					para = pi,
+					page = page,
+					x = cx,
+					y = top,
+					w = cw,
+					h = h,
+					row = r,
+					col = c,
+					header = t.header && r == 0,
+					repeat = repeat,
+				},
+			)
+			cl := table_cell(t, r, c)
+			if cl == nil {
+				continue
+			}
+			cy := top + CELL_PAD
+			for j in 0 ..< len(cl.paras) {
+				cpa := &cl.paras[j]
+				km := kind_metrics(cpa.kind)
+				bidx := starts[r * ncols + c] + j
+				cc, have := &lay.cache[keys[bidx]]
+				if !have {
+					continue
+				}
+				ind := para_indent(cpa, km)
+				avail := max(20, cw - 2 * CELL_PAD - ind)
+				base_frag := len(lay.frags)
+				append(&lay.frags, ..cc.frags[:])
+				for src in cc.lines {
+					l := src
+					l.para = pi
+					l.blk = base_bi + bidx
+					l.row, l.col, l.cpara = r, c, j
+					l.repeat = repeat
+					l.fi = base_frag + src.fi
+					l.page = page
+					l.y = cy
+					l.indent = cx + CELL_PAD + ind
+					l.marker = l.first && cpa.list != .None ? (cpa.list == .Bullet ? 0 : 1) : -1
+					switch cpa.align {
+					case .Left, .Justify:
+						l.x = l.indent
+					case .Center:
+						l.x = l.indent + max(0, (avail - l.w) / 2)
+					case .Right:
+						l.x = l.indent + max(0, avail - l.w)
+					}
+					l.gap = 0
+					if cpa.align == .Justify && !l.last {
+						gaps := 0
+						for k in 0 ..< l.fc {
+							if lay.frags[l.fi + k].gap_after && k != l.fc - 1 {
+								gaps += 1
+							}
+						}
+						if gaps > 0 && l.w < avail {
+							l.gap = (avail - l.w) / f32(gaps)
+						}
+					}
+					x := f32(0)
+					for k in 0 ..< l.fc {
+						f := &lay.frags[l.fi + k]
+						f.x = x
+						x += f.w
+						if f.gap_after && k != l.fc - 1 {
+							x += l.gap
+						}
+					}
+					cy += l.h
+					append(&lay.lines, l)
+				}
+				if j + 1 < len(cl.paras) {
+					cy += km.after + cpa.after
+				}
+			}
+		}
+	}
+
+	for r in 0 ..< nrows {
+		// The row does not fit: break the page, and bring the header with it.
+		if y^ > 0 && y^ + row_h[r] > CONTENT_H {
+			page^ += 1
+			y^ = 0
+			if t.header && r > 0 {
+				emit_row(lay, d, pi, t, bs, keys, base_bi, starts, ncols, 0, page^, y^, row_h[0], true)
+				y^ += row_h[0]
+			}
+		}
+		emit_row(lay, d, pi, t, bs, keys, base_bi, starts, ncols, r, page^, y^, row_h[r], false)
+		y^ += row_h[r]
 	}
 }
 
@@ -756,10 +1149,13 @@ build_frags :: proc(
 // it the other way strands Down and Page Down, which then step onto the break
 // and are told they are still on the line above.
 line_of :: proc(lay: ^Layout, q: Pos) -> int {
+	want := Blk{q.para, q.row, q.col, q.cpara}
 	best := -1
 	for li in 0 ..< len(lay.lines) {
 		l := lay.lines[li]
-		if l.para != q.para {
+		// A repeated header row is painted but is not a place a caret can be:
+		// the caret belongs to the one occurrence the model has.
+		if l.repeat || line_blk(l) != want {
 			if best >= 0 {
 				break
 			}
@@ -771,6 +1167,28 @@ line_of :: proc(lay: ^Layout, q: Pos) -> int {
 		}
 	}
 	return best
+}
+
+// line_step walks visual lines, skipping the repeated header rows so Down
+// through a table that breaks across pages does not visit the header twice.
+line_step :: proc(lay: ^Layout, from, delta: int) -> int {
+	if len(lay.lines) == 0 {
+		return -1
+	}
+	dir := delta < 0 ? -1 : 1
+	n := abs(delta)
+	at := clamp(from, 0, len(lay.lines) - 1)
+	for _ in 0 ..< n {
+		k := at + dir
+		for k >= 0 && k < len(lay.lines) && lay.lines[k].repeat {
+			k += dir
+		}
+		if k < 0 || k >= len(lay.lines) {
+			break
+		}
+		at = k
+	}
+	return at
 }
 
 // caret_x is the x of a caret, in page text-area coordinates.
@@ -819,6 +1237,21 @@ off_at_x :: proc(lay: ^Layout, li: int, x: f32) -> int {
 		}
 	}
 	return l.vis_end
+}
+
+// page_cells gives the first and last cell-box index on a page. The boxes are
+// built in page order, so this is a scan rather than a search.
+page_cells :: proc(lay: ^Layout, page: int) -> (lo, hi: int) {
+	lo, hi = -1, -1
+	for i in 0 ..< len(lay.cells) {
+		if lay.cells[i].page == page {
+			if lo < 0 {
+				lo = i
+			}
+			hi = i
+		}
+	}
+	return
 }
 
 // page_lines gives the first and last line index on a page.

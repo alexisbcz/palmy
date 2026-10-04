@@ -30,6 +30,8 @@ Prompt_Kind :: enum u8 {
 	Export_Odt,
 	Export_Rtf,
 	Import_Docx,
+	Insert_Image,
+	Insert_Table,
 }
 
 ZOOMS := [?]f32{0.5, 0.75, 0.9, 1.0, 1.25, 1.5, 2.0}
@@ -75,6 +77,10 @@ State :: struct {
 	repl:       [dynamic]u8,
 	find_field: int, // 0 find, 1 replace
 	find_hits:  int,
+	// Find depth. Both default off, which is the behaviour the find box had
+	// before they existed.
+	find_case:  bool, // match case
+	find_word:  bool, // whole words only
 
 	prompt:     Prompt_Kind,
 	prompt_buf: [dynamic]u8,
@@ -136,16 +142,37 @@ selection_text :: proc(st: ^State, alloc := context.allocator) -> string {
 	if !has {
 		return strings.clone("", alloc)
 	}
+	// A selection can touch a block at a single point — the caret's own block
+	// when the range begins at its end — and such a block contributes nothing
+	// but would contribute a stray newline, so the empty ends are trimmed.
+	Piece :: struct {
+		blk:  Blk,
+		a, z: int,
+	}
+	pieces := make([dynamic]Piece, 0, 8, context.temp_allocator)
+	for blk in blocks_between(&st.doc, lo, hi) {
+		pa := blk_para(&st.doc, blk)
+		if pa == nil || !text_kind(pa.kind) {
+			continue
+		}
+		a, z := blk_range(&st.doc, blk, lo, hi)
+		append(&pieces, Piece{blk, a, z})
+	}
+	for len(pieces) > 1 && pieces[0].z <= pieces[0].a {
+		ordered_remove(&pieces, 0)
+	}
+	for len(pieces) > 1 && pieces[len(pieces) - 1].z <= pieces[len(pieces) - 1].a {
+		pop(&pieces)
+	}
+
 	b := strings.builder_make(alloc)
-	for pi in lo.para ..= hi.para {
-		pa := &st.doc.paras[pi]
-		t := para_text(pa, context.temp_allocator)
-		a := pi == lo.para ? lo.off : 0
-		z := pi == hi.para ? hi.off : len(t)
-		if pi > lo.para {
+	for pc, i in pieces {
+		if i > 0 {
 			strings.write_byte(&b, '\n')
 		}
-		strings.write_string(&b, t[clamp(a, 0, len(t)):clamp(z, 0, len(t))])
+		pa := blk_para(&st.doc, pc.blk)
+		t := para_text(pa, context.temp_allocator)
+		strings.write_string(&b, t[clamp(pc.a, 0, len(t)):clamp(pc.z, 0, len(t))])
 	}
 	return strings.to_string(b)
 }
@@ -161,40 +188,102 @@ selection_doc :: proc(st: ^State) -> Doc {
 		append(&out.paras, para_make())
 		return out
 	}
-	for pi in lo.para ..= hi.para {
-		src := &st.doc.paras[pi]
-		n := para_len(src)
-		a := pi == lo.para ? lo.off : 0
-		z := pi == hi.para ? hi.off : n
-		cp := para_clone(src)
-		// Trim the clone down to the selected span.
+
+	// clip trims a cloned paragraph down to [a, z).
+	clip :: proc(cp: ^Paragraph, a, z, n: int) {
 		if z < n {
-			k := split_at(&cp, z)
+			k := split_at(cp, z)
 			for i in k ..< len(cp.runs) {
 				delete(cp.runs[i].text)
 			}
 			resize(&cp.runs, k)
 		}
 		if a > 0 {
-			k := split_at(&cp, a)
+			k := split_at(cp, a)
 			for i in 0 ..< k {
 				delete(cp.runs[i].text)
 			}
 			remove_range(&cp.runs, 0, k)
 		}
-		normalise(&cp)
+		normalise(cp)
+	}
+
+	// Inside one scope the copy keeps the paragraph structure, and a table or a
+	// picture wholly inside the range is cloned whole — so copying a table and
+	// pasting it elsewhere gives back a table.
+	if same_scope(&st.doc, lo, hi) {
+		arr, i0 := pos_scope(&st.doc, lo)
+		_, i1 := pos_scope(&st.doc, hi)
+		for i in i0 ..= i1 {
+			src := &arr[i]
+			if !text_kind(src.kind) {
+				append(&out.paras, para_clone(src))
+				continue
+			}
+			n := para_len(src)
+			a := i == i0 ? lo.off : 0
+			z := i == i1 ? hi.off : n
+			cp := para_clone(src)
+			clip(&cp, a, z, n)
+			append(&out.paras, cp)
+		}
+		if len(out.paras) == 0 {
+			append(&out.paras, para_make())
+		}
+		return out
+	}
+
+	// Crossing a table boundary: every touched paragraph becomes a paragraph of
+	// its own, which is the only shape a flat clipboard has for a grid.
+	for blk in blocks_between(&st.doc, lo, hi) {
+		src := blk_para(&st.doc, blk)
+		if src == nil || !text_kind(src.kind) {
+			continue
+		}
+		n := para_len(src)
+		a, z := blk_range(&st.doc, blk, lo, hi)
+		if z <= a {
+			continue
+		}
+		cp := para_clone(src)
+		clip(&cp, a, z, n)
 		append(&out.paras, cp)
+	}
+	if len(out.paras) == 0 {
+		append(&out.paras, para_make())
 	}
 	return out
 }
 
 insert_doc :: proc(d: ^Doc, at: Pos, src: ^Doc) -> Pos {
 	q := at
+	nested := in_cell(d, at)
 	for pi in 0 ..< len(src.paras) {
 		sp := &src.paras[pi]
 		if pi > 0 {
 			q = break_para(d, q)
-			tp := &d.paras[q.para]
+		}
+		if !text_kind(sp.kind) {
+			// A table inside a table cell is not representable, so a paste of
+			// one into a cell drops it rather than producing a grid nothing
+			// will ever lay out.
+			if nested {
+				continue
+			}
+			arr, idx := pos_scope(d, q)
+			cl := para_clone(sp)
+			if text_kind(arr[idx].kind) && para_len(&arr[idx]) == 0 {
+				// Land on the empty paragraph the caret is sitting in rather
+				// than leaving a blank line above the picture.
+				para_destroy(&arr[idx])
+				arr[idx] = cl
+			} else {
+				inject_at(arr, idx + 1, cl)
+				q = pos_move_index(d, q, idx + 1, 0)
+			}
+			continue
+		}
+		if tp := pos_para(d, q); pi > 0 && tp != nil && text_kind(tp.kind) {
 			tp.kind, tp.align, tp.list, tp.depth = sp.kind, sp.align, sp.list, sp.depth
 		}
 		for &r in sp.runs {
@@ -247,6 +336,13 @@ type_text :: proc(st: ^State, s: string) {
 	} else {
 		edit_begin(st, .Typing)
 	}
+	// Typing against a table or a picture opens a body paragraph after it,
+	// rather than silently going nowhere.
+	if pa := pos_para(&st.doc, st.caret); pa != nil && !text_kind(pa.kind) {
+		st.caret = break_para(&st.doc, st.caret)
+		st.anchor = st.caret
+		cs = {}
+	}
 	st.caret = insert_text(&st.doc, st.caret, s, cs)
 	st.anchor = st.caret
 	st.goal_ok = false
@@ -288,31 +384,37 @@ backspace :: proc(st: ^State) {
 	}
 	if st.caret.off > 0 {
 		edit_begin(st, .Deleting)
-		t := para_text(&st.doc.paras[st.caret.para], context.temp_allocator)
+		t := pos_text(&st.doc, st.caret)
 		prev := rune_before(t, st.caret.off)
-		st.caret = delete_range(&st.doc, Pos{st.caret.para, prev}, st.caret)
+		from := st.caret
+		from.off = prev
+		st.caret = delete_range(&st.doc, from, st.caret)
 		st.anchor = st.caret
 	} else {
 		// At the head of a paragraph, Backspace peels off its formatting
 		// before it joins the paragraph above — the same order Word uses.
-		pa := &st.doc.paras[st.caret.para]
+		arr, idx := pos_scope(&st.doc, st.caret)
+		pa := &arr[idx]
 		if pa.break_before {
 			edit_begin(st, .Structural)
-			st.doc.paras[st.caret.para].break_before = false
+			pos_para(&st.doc, st.caret).break_before = false
 		} else if pa.list != .None || pa.depth > 0 {
 			edit_begin(st, .Structural)
-			pa = &st.doc.paras[st.caret.para]
+			pa = pos_para(&st.doc, st.caret)
 			if pa.depth > 0 {
 				pa.depth -= 1
 			} else {
 				pa.list = .None
 			}
-		} else if pa.kind != .Body {
+		} else if pa.kind != .Body && text_kind(pa.kind) {
 			edit_begin(st, .Structural)
-			st.doc.paras[st.caret.para].kind = .Body
-		} else if st.caret.para > 0 {
+			pos_para(&st.doc, st.caret).kind = .Body
+		} else if idx > 0 {
+			// Inside a cell this merges within the cell; at the top level it
+			// merges paragraphs, and against a table or a picture it removes
+			// the block.
 			edit_begin(st, .Structural)
-			st.caret = merge_para(&st.doc, st.caret.para - 1)
+			st.caret = merge_para(&st.doc, st.caret, idx - 1)
 			st.anchor = st.caret
 		}
 	}
@@ -327,17 +429,18 @@ delete_forward :: proc(st: ^State) {
 		scroll_to_caret(st)
 		return
 	}
-	pa := &st.doc.paras[st.caret.para]
-	n := para_len(pa)
+	arr, idx := pos_scope(&st.doc, st.caret)
+	n := para_len(&arr[idx])
 	if st.caret.off < n {
 		edit_begin(st, .Deleting)
-		t := para_text(&st.doc.paras[st.caret.para], context.temp_allocator)
-		next := rune_after(t, st.caret.off)
-		st.caret = delete_range(&st.doc, st.caret, Pos{st.caret.para, next})
+		t := pos_text(&st.doc, st.caret)
+		to := st.caret
+		to.off = rune_after(t, st.caret.off)
+		st.caret = delete_range(&st.doc, st.caret, to)
 		st.anchor = st.caret
-	} else if st.caret.para + 1 < len(st.doc.paras) {
+	} else if idx + 1 < len(arr^) {
 		edit_begin(st, .Structural)
-		st.caret = merge_para(&st.doc, st.caret.para)
+		st.caret = merge_para(&st.doc, st.caret, idx)
 		st.anchor = st.caret
 	}
 	st.goal_ok = false
@@ -358,6 +461,29 @@ place_caret :: proc(st: ^State, q: Pos, extend: bool) {
 	scroll_to_caret(st)
 }
 
+// pos_neighbour steps to the next or previous *block* in reading order, which
+// is how Left at the head of a paragraph and Right at its tail get out — and
+// the only thing that has to know a table cell is a place a caret can be.
+pos_neighbour :: proc(d: ^Doc, q: Pos, dir: int) -> (Pos, bool) {
+	bs := doc_blocks(d, context.temp_allocator)
+	at := -1
+	for b, i in bs {
+		if b == (Blk{q.para, q.row, q.col, q.cpara}) {
+			at = i
+			break
+		}
+	}
+	if at < 0 {
+		return q, false
+	}
+	k := at + dir
+	if k < 0 || k >= len(bs) {
+		return q, false
+	}
+	n := dir < 0 ? blk_len(d, bs[k]) : 0
+	return blk_pos(bs[k], n), true
+}
+
 move_h :: proc(st: ^State, dir: int, extend: bool, by_word := false) {
 	q := st.caret
 	// A plain left/right with a selection collapses to its edge.
@@ -367,7 +493,7 @@ move_h :: proc(st: ^State, dir: int, extend: bool, by_word := false) {
 		st.goal_ok = false
 		return
 	}
-	t := para_text(&st.doc.paras[q.para], context.temp_allocator)
+	t := pos_text(&st.doc, q)
 	if dir < 0 {
 		if q.off > 0 {
 			if by_word {
@@ -382,9 +508,8 @@ move_h :: proc(st: ^State, dir: int, extend: bool, by_word := false) {
 			} else {
 				q.off = rune_before(t, q.off)
 			}
-		} else if q.para > 0 {
-			q.para -= 1
-			q.off = para_len(&st.doc.paras[q.para])
+		} else if nq, got := pos_neighbour(&st.doc, q, -1); got {
+			q = nq
 		}
 	} else {
 		if q.off < len(t) {
@@ -400,9 +525,8 @@ move_h :: proc(st: ^State, dir: int, extend: bool, by_word := false) {
 			} else {
 				q.off = rune_after(t, q.off)
 			}
-		} else if q.para + 1 < len(st.doc.paras) {
-			q.para += 1
-			q.off = 0
+		} else if nq, got := pos_neighbour(&st.doc, q, 1); got {
+			q = nq
 		}
 	}
 	place_caret(st, q, extend)
@@ -423,16 +547,16 @@ move_v :: proc(st: ^State, delta: int, extend: bool) {
 		st.goal_x = caret_x(&st.lay, li, st.caret.off)
 		st.goal_ok = true
 	}
-	t := clamp(li + delta, 0, len(st.lay.lines) - 1)
+	t := line_step(&st.lay, li, delta)
 	if t == li {
 		// Already at the top or bottom: go to the very start or end.
-		q := delta < 0 ? Pos{0, 0} : doc_end(&st.doc)
+		q := delta < 0 ? Pos{} : doc_end(&st.doc)
 		place_caret(st, q, extend)
 		st.goal_ok = false
 		return
 	}
 	l := st.lay.lines[t]
-	q := Pos{l.para, off_at_x(&st.lay, t, st.goal_x)}
+	q := line_pos(l, off_at_x(&st.lay, t, st.goal_x))
 	goal := st.goal_x
 	place_caret(st, q, extend)
 	st.goal_x = goal
@@ -445,23 +569,24 @@ move_line_edge :: proc(st: ^State, to_end: bool, extend: bool) {
 		return
 	}
 	l := st.lay.lines[li]
-	q := Pos{l.para, to_end ? (l.last ? l.end : l.vis_end) : l.start}
+	q := line_pos(l, to_end ? (l.last ? l.end : l.vis_end) : l.start)
 	place_caret(st, q, extend)
 	st.goal_ok = false
 }
 
 select_all :: proc(st: ^State) {
-	st.anchor = Pos{0, 0}
+	st.anchor = Pos{}
 	st.caret = doc_end(&st.doc)
 	st.mark = false
 	history_break(&st.hist)
 }
 
 select_word :: proc(st: ^State) {
-	t := para_text(&st.doc.paras[st.caret.para], context.temp_allocator)
+	t := pos_text(&st.doc, st.caret)
 	lo, hi := word_bounds(t, st.caret.off)
-	st.anchor = Pos{st.caret.para, lo}
-	st.caret = Pos{st.caret.para, hi}
+	a, b := st.caret, st.caret
+	a.off, b.off = lo, hi
+	st.anchor, st.caret = a, b
 	history_break(&st.hist)
 }
 
@@ -581,68 +706,428 @@ effective_style :: proc(st: ^State) -> Char_Style {
 // Paragraph formatting
 // ---------------------------------------------------------------------------
 
-sel_paras :: proc(st: ^State) -> (lo, hi: int) {
-	a, b, _ := selection(st)
-	return a.para, b.para
+// sel_blocks is every paragraph the selection touches — the caret's own when
+// there is no selection. Every paragraph-level command loops over it, so a
+// command applies inside a table cell exactly as it does in the body.
+sel_blocks :: proc(st: ^State) -> []Blk {
+	lo, hi, _ := selection(st)
+	return blocks_between(&st.doc, lo, hi)
 }
 
+TEXT_KINDS :: 6 // Body, H1, H2, H3, Quote, Code — the kinds the cycle visits
+
 set_kind :: proc(st: ^State, k: Para_Kind) {
-	lo, hi := sel_paras(st)
+	if !text_kind(k) {
+		return
+	}
 	edit_begin(st, .Structural)
-	for i in lo ..= hi {
-		st.doc.paras[i].kind = k
+	for blk in sel_blocks(st) {
+		pa := blk_para(&st.doc, blk)
+		if pa == nil || !text_kind(pa.kind) {
+			continue
+		}
+		pa.kind = k
 		if k == .Code {
-			st.doc.paras[i].list = .None
+			pa.list = .None
 		}
 	}
 	history_break(&st.hist)
 }
 
 cycle_kind :: proc(st: ^State) {
-	cur := st.doc.paras[st.caret.para].kind
-	next := Para_Kind((int(cur) + 1) % len(Para_Kind))
+	pa := pos_para(&st.doc, st.caret)
+	if pa == nil || !text_kind(pa.kind) {
+		return
+	}
+	next := Para_Kind((int(pa.kind) + 1) % TEXT_KINDS)
 	set_kind(st, next)
 	note(st, fmt.tprintf("Style: %s", kind_label(next)))
 }
 
 set_align :: proc(st: ^State, a: Align) {
-	lo, hi := sel_paras(st)
 	edit_begin(st, .Structural)
-	for i in lo ..= hi {
-		st.doc.paras[i].align = a
+	for blk in sel_blocks(st) {
+		if pa := blk_para(&st.doc, blk); pa != nil {
+			pa.align = a
+		}
 	}
+	// An image paragraph's alignment is the picture's own placement, and the
+	// caret sits *in* the image paragraph rather than in a cell of it, so it is
+	// reached through the block list like everything else.
 	history_break(&st.hist)
 }
 
 cycle_align :: proc(st: ^State) {
-	cur := st.doc.paras[st.caret.para].align
+	pa := pos_para(&st.doc, st.caret)
+	cur := pa == nil ? Align.Left : pa.align
 	next := Align((int(cur) + 1) % len(Align))
 	set_align(st, next)
 	note(st, fmt.tprintf("Align: %v", next))
 }
 
 set_list :: proc(st: ^State, l: List_Kind) {
-	lo, hi := sel_paras(st)
 	edit_begin(st, .Structural)
-	on := st.doc.paras[st.caret.para].list == l
-	for i in lo ..= hi {
-		st.doc.paras[i].list = on ? .None : l
-		if !on && st.doc.paras[i].kind == .Code {
-			st.doc.paras[i].kind = .Body
+	cur := pos_para(&st.doc, st.caret)
+	on := cur != nil && cur.list == l
+	for blk in sel_blocks(st) {
+		pa := blk_para(&st.doc, blk)
+		if pa == nil || !text_kind(pa.kind) {
+			continue
+		}
+		pa.list = on ? .None : l
+		if !on && pa.kind == .Code {
+			pa.kind = .Body
 		}
 	}
 	history_break(&st.hist)
 }
 
 indent_paras :: proc(st: ^State, delta: int) {
-	lo, hi := sel_paras(st)
 	edit_begin(st, .Structural)
-	for i in lo ..= hi {
-		st.doc.paras[i].depth = clamp(st.doc.paras[i].depth + delta, 0, 6)
+	for blk in sel_blocks(st) {
+		if pa := blk_para(&st.doc, blk); pa != nil {
+			pa.depth = clamp(pa.depth + delta, 0, 6)
+		}
 	}
 	history_break(&st.hist)
 }
 
+// ---------------------------------------------------------------------------
+// Tables
+// ---------------------------------------------------------------------------
+
+// table_at is the table the caret is inside, or nil. Every table command goes
+// through it, so none of them can act on a document that has no table.
+table_at :: proc(st: ^State) -> ^Table {
+	if st.caret.para < 0 || st.caret.para >= len(st.doc.paras) {
+		return nil
+	}
+	pa := &st.doc.paras[st.caret.para]
+	return pa.kind == .Table ? pa.table : nil
+}
+
+in_table :: proc(st: ^State) -> bool {
+	return table_at(st) != nil
+}
+
+// insert_table drops a table in at the caret and parks the caret in its first
+// cell. An empty paragraph is replaced rather than left above the grid, and a
+// caret in the middle of a paragraph splits it first — a table is a block and
+// cannot sit inside a line.
+insert_table :: proc(st: ^State, rows, cols: int) {
+	if in_cell(&st.doc, st.caret) {
+		note(st, "A table cannot nest inside a cell")
+		return
+	}
+	edit_begin(st, .Structural)
+	drop_selection(st)
+
+	arr, idx := pos_scope(&st.doc, st.caret)
+	at := idx
+	if para_len(&arr[idx]) == 0 && text_kind(arr[idx].kind) {
+		para_destroy(&arr[idx])
+		arr[idx] = table_para_make(rows, cols)
+	} else {
+		if st.caret.off > 0 && st.caret.off < para_len(&arr[idx]) {
+			st.caret = break_para(&st.doc, st.caret)
+			arr, idx = pos_scope(&st.doc, st.caret)
+			at = idx
+			inject_at(arr, at, table_para_make(rows, cols))
+		} else if st.caret.off == 0 {
+			inject_at(arr, at, table_para_make(rows, cols))
+		} else {
+			at = idx + 1
+			inject_at(arr, at, table_para_make(rows, cols))
+		}
+	}
+	// A table needs a paragraph on each side of it, or the caret has nowhere
+	// to go when it leaves — a table at the very top of a document with
+	// nothing above it is a dead end, and Word keeps a paragraph there for
+	// exactly this reason.
+	if at == len(arr^) - 1 {
+		append(arr, para_make())
+	}
+	if at == 0 {
+		inject_at(arr, 0, para_make())
+		at = 1
+	}
+	st.caret = Pos {
+		para = at,
+	}
+	st.anchor = st.caret
+	st.pending_on = false
+	st.goal_ok = false
+	history_break(&st.hist)
+	note(st, fmt.tprintf("Inserted a %dx%d table", rows, cols))
+	st.dirty = true
+}
+
+// table_move_cell is Tab and Shift+Tab. Tab at the last cell grows the table
+// by a row, the way every word processor does; Shift+Tab out of the first cell
+// leaves the table.
+table_move_cell :: proc(st: ^State, dir: int) -> bool {
+	t := table_at(st)
+	if t == nil {
+		return false
+	}
+	nr, nc, ok := table_step_cell(t, st.caret.row, st.caret.col, dir)
+	if !ok {
+		if dir > 0 {
+			edit_begin(st, .Structural)
+			t = table_at(st)
+			table_insert_row(t, len(t.rows))
+			st.caret = Pos {
+				para = st.caret.para,
+				row  = len(t.rows) - 1,
+			}
+			st.anchor = st.caret
+			st.dirty = true
+			history_break(&st.hist)
+			scroll_to_caret(st)
+			return true
+		}
+		// Out of the top-left cell: step to the block before the table.
+		if q, got := pos_neighbour(&st.doc, Pos{para = st.caret.para}, -1); got {
+			place_caret(st, q, false)
+			return true
+		}
+		return false
+	}
+	q := Pos {
+		para = st.caret.para,
+		row  = nr,
+		col  = nc,
+	}
+	// Tab selects the cell's text, which is what makes "Tab, type" replace a
+	// cell rather than append to it.
+	cl := table_cell(t, nr, nc)
+	if cl != nil && len(cl.paras) > 0 {
+		st.anchor = q
+		st.caret = blk_pos(Blk{st.caret.para, nr, nc, len(cl.paras) - 1}, para_len(&cl.paras[len(cl.paras) - 1]))
+		st.mark = false
+		st.pending_on = false
+		st.goal_ok = false
+		history_break(&st.hist)
+		scroll_to_caret(st)
+		return true
+	}
+	place_caret(st, q, false)
+	return true
+}
+
+table_row_cmd :: proc(st: ^State, below: bool) {
+	t := table_at(st)
+	if t == nil {
+		note(st, "The caret is not in a table")
+		return
+	}
+	edit_begin(st, .Structural)
+	t = table_at(st)
+	at := table_insert_row(t, st.caret.row + (below ? 1 : 0))
+	st.caret = Pos {
+		para = st.caret.para,
+		row  = at,
+		col  = st.caret.col,
+	}
+	st.anchor = st.caret
+	st.dirty = true
+	history_break(&st.hist)
+	note(st, fmt.tprintf("Row inserted (%d rows)", len(t.rows)))
+}
+
+table_col_cmd :: proc(st: ^State, after: bool) {
+	t := table_at(st)
+	if t == nil {
+		note(st, "The caret is not in a table")
+		return
+	}
+	edit_begin(st, .Structural)
+	t = table_at(st)
+	at := table_insert_col(t, st.caret.col + (after ? 1 : 0))
+	st.caret = Pos {
+		para = st.caret.para,
+		row  = st.caret.row,
+		col  = at,
+	}
+	st.anchor = st.caret
+	st.dirty = true
+	history_break(&st.hist)
+	note(st, fmt.tprintf("Column inserted (%d columns)", table_cols(t)))
+}
+
+table_delete_row_cmd :: proc(st: ^State) {
+	t := table_at(st)
+	if t == nil {
+		return
+	}
+	if len(t.rows) <= 1 {
+		note(st, "A table keeps at least one row")
+		return
+	}
+	edit_begin(st, .Structural)
+	t = table_at(st)
+	table_delete_row(t, st.caret.row)
+	st.caret = pos_clamp(&st.doc, st.caret)
+	st.anchor = st.caret
+	st.dirty = true
+	history_break(&st.hist)
+	note(st, fmt.tprintf("Row deleted (%d rows)", len(t.rows)))
+}
+
+table_delete_col_cmd :: proc(st: ^State) {
+	t := table_at(st)
+	if t == nil {
+		return
+	}
+	if table_cols(t) <= 1 {
+		note(st, "A table keeps at least one column")
+		return
+	}
+	edit_begin(st, .Structural)
+	t = table_at(st)
+	table_delete_col(t, st.caret.col)
+	st.caret = pos_clamp(&st.doc, st.caret)
+	st.anchor = st.caret
+	st.dirty = true
+	history_break(&st.hist)
+	note(st, fmt.tprintf("Column deleted (%d columns)", table_cols(t)))
+}
+
+table_toggle_header :: proc(st: ^State) {
+	if table_at(st) == nil {
+		return
+	}
+	edit_begin(st, .Structural)
+	t := table_at(st)
+	t.header = !t.header
+	st.dirty = true
+	history_break(&st.hist)
+	note(st, t.header ? "Header row on" : "Header row off")
+}
+
+table_toggle_borders :: proc(st: ^State) {
+	if table_at(st) == nil {
+		return
+	}
+	edit_begin(st, .Structural)
+	t := table_at(st)
+	t.borders = !t.borders
+	st.dirty = true
+	history_break(&st.hist)
+	note(st, t.borders ? "Cell borders on" : "Cell borders off")
+}
+
+// table_nudge_width widens or narrows the caret's column by a fixed step, the
+// keyboard equivalent of dragging a column rule.
+table_nudge_width :: proc(st: ^State, delta: f32) {
+	if table_at(st) == nil {
+		return
+	}
+	edit_begin(st, .Structural)
+	t := table_at(st)
+	table_set_width(t, st.caret.col, table_width(t, st.caret.col) + delta)
+	st.dirty = true
+	history_break(&st.hist)
+	note(st, fmt.tprintf("Column %d: %.0f px", st.caret.col + 1, table_width(t, st.caret.col)))
+}
+
+// delete_block removes the table or picture the caret is in.
+//
+// It deliberately does *not* go through `pos_scope`: a caret inside a table
+// resolves to the cell's paragraph array, and this command is about the
+// top-level block that owns the cell, which is the paragraph `caret.para`
+// names.
+delete_block :: proc(st: ^State) {
+	if len(st.doc.paras) == 0 {
+		return
+	}
+	idx := clamp(st.caret.para, 0, len(st.doc.paras) - 1)
+	if text_kind(st.doc.paras[idx].kind) {
+		note(st, "The caret is not on a table or a picture")
+		return
+	}
+	edit_begin(st, .Structural)
+	label := st.doc.paras[idx].kind == .Table ? "Table deleted" : "Picture deleted"
+	para_destroy(&st.doc.paras[idx])
+	ordered_remove(&st.doc.paras, idx)
+	if len(st.doc.paras) == 0 {
+		append(&st.doc.paras, para_make())
+	}
+	st.caret = Pos {
+		para = clamp(idx, 0, len(st.doc.paras) - 1),
+	}
+	st.anchor = st.caret
+	st.dirty = true
+	history_break(&st.hist)
+	note(st, label)
+}
+
+// ---------------------------------------------------------------------------
+// Images
+// ---------------------------------------------------------------------------
+
+do_insert_image :: proc(st: ^State, path: string) {
+	full := expand_home(path, context.temp_allocator)
+	im, got := image_load(full)
+	if !got {
+		note(st, fmt.tprintf("Could not read %s", base_name(full)))
+		return
+	}
+	if in_cell(&st.doc, st.caret) {
+		// A picture in a cell would need the cell's measure rather than the
+		// page's, and the model has no place for that yet.
+		image_destroy(&im)
+		note(st, "A picture cannot go inside a cell yet")
+		return
+	}
+	edit_begin(st, .Structural)
+	drop_selection(st)
+	arr, idx := pos_scope(&st.doc, st.caret)
+	at := idx
+	if para_len(&arr[idx]) == 0 && text_kind(arr[idx].kind) {
+		para_destroy(&arr[idx])
+		arr[idx] = image_para_make(im)
+	} else {
+		at = idx + 1
+		inject_at(arr, at, image_para_make(im))
+	}
+	if at == len(arr^) - 1 {
+		append(arr, para_make())
+	}
+	st.caret = Pos {
+		para = at,
+	}
+	st.anchor = st.caret
+	st.dirty = true
+	history_break(&st.hist)
+	w, h := image_para_size(&arr[at])
+	note(st, fmt.tprintf("%s — %dx%d, drawn %.0fx%.0f", base_name(full), arr[at].img.w, arr[at].img.h, w, h))
+}
+
+image_at :: proc(st: ^State) -> ^Doc_Image {
+	pa := pos_para(&st.doc, st.caret)
+	if pa == nil || pa.kind != .Image {
+		return nil
+	}
+	return pa.img
+}
+
+image_nudge_scale :: proc(st: ^State, factor: f32) {
+	if image_at(st) == nil {
+		note(st, "The caret is not on a picture")
+		return
+	}
+	edit_begin(st, .Structural)
+	im := image_at(st)
+	image_set_scale(im, im.scale * factor)
+	st.dirty = true
+	history_break(&st.hist)
+	w, h := image_draw_size(im)
+	note(st, fmt.tprintf("Picture %d%% — %.0fx%.0f px", int(im.scale * 100 + 0.5), w, h))
+}
+
+// ---------------------------------------------------------------------------
+// Clipboard
 // ---------------------------------------------------------------------------
 // Clipboard
 // ---------------------------------------------------------------------------
@@ -736,41 +1221,123 @@ lower :: proc(c: u8) -> u8 {
 	return c >= 'A' && c <= 'Z' ? c + 32 : c
 }
 
-// index_fold is a case-insensitive substring search over ASCII, which is what
-// a find box wants by default.
-index_fold :: proc(hay, needle: string) -> int {
+// find_index is the one search primitive in the program. It is a plain
+// forward scan — the documents are kilobytes and the needle is a word, so
+// Boyer-Moore would be slower to write than to run — with the two options the
+// find box offers:
+//
+//   `fold`  compare case-insensitively (ASCII; a case-folded search outside
+//           ASCII needs a full case table, which is a real gap and is noted)
+//   `word`  the match must not be flanked by word characters, so "art" does
+//           not hit "start"
+//
+// Boundaries are tested against `hay` rather than against a slice of it, which
+// is why every caller passes the whole paragraph and a starting offset instead
+// of slicing.
+find_index :: proc(hay, needle: string, from: int, fold := true, word := false) -> int {
 	if len(needle) == 0 || len(needle) > len(hay) {
 		return -1
 	}
-	for i in 0 ..= len(hay) - len(needle) {
-		ok := true
+	last := len(hay) - len(needle)
+	for i in clamp(from, 0, len(hay)) ..= last {
+		hit := true
 		for j in 0 ..< len(needle) {
-			if lower(hay[i + j]) != lower(needle[j]) {
-				ok = false
+			a, b := hay[i + j], needle[j]
+			if fold {
+				a, b = lower(a), lower(b)
+			}
+			if a != b {
+				hit = false
 				break
 			}
 		}
-		if ok {
+		if !hit {
+			continue
+		}
+		if word {
+			if i > 0 && is_word_byte(hay[i - 1]) {
+				continue
+			}
+			e := i + len(needle)
+			if e < len(hay) && is_word_byte(hay[e]) {
+				continue
+			}
+		}
+		return i
+	}
+	return -1
+}
+
+// index_fold is the old name, kept because a case-insensitive substring search
+// with no word constraint is still the default.
+index_fold :: proc(hay, needle: string) -> int {
+	return find_index(hay, needle, 0, true, false)
+}
+
+// find_hit applies the find box's own options.
+find_hit :: proc(st: ^State, hay: string, from: int) -> int {
+	return find_index(hay, string(st.find[:]), from, !st.find_case, st.find_word)
+}
+
+find_mode_label :: proc(st: ^State) -> string {
+	switch {
+	case st.find_case && st.find_word:
+		return "Aa W"
+	case st.find_case:
+		return "Aa"
+	case st.find_word:
+		return "W"
+	}
+	return "—"
+}
+
+toggle_find_case :: proc(st: ^State) {
+	st.find_case = !st.find_case
+	st.find_hits = count_hits(st)
+	note(st, st.find_case ? "Match case on" : "Match case off")
+}
+
+toggle_find_word :: proc(st: ^State) {
+	st.find_word = !st.find_word
+	st.find_hits = count_hits(st)
+	note(st, st.find_word ? "Whole words only" : "Whole words off")
+}
+
+// blk_index_of locates a position's block in a block list.
+blk_index_of :: proc(bs: []Blk, q: Pos) -> int {
+	want := Blk{q.para, q.row, q.col, q.cpara}
+	for b, i in bs {
+		if b == want {
 			return i
 		}
 	}
 	return -1
 }
 
+// find_from searches forward from `from`, wrapping once. The walk is over
+// blocks, so a term inside a table cell is found like any other.
 find_from :: proc(st: ^State, from: Pos) -> (lo, hi: Pos, ok: bool) {
 	needle := string(st.find[:])
 	if len(needle) == 0 {
 		return {}, {}, false
 	}
-	n := len(st.doc.paras)
+	bs := doc_blocks(&st.doc, context.temp_allocator)
+	n := len(bs)
+	if n == 0 {
+		return {}, {}, false
+	}
+	start_i := max(0, blk_index_of(bs, from))
 	for step in 0 ..= n {
-		pi := (from.para + step) % n
-		t := para_text(&st.doc.paras[pi], context.temp_allocator)
+		bi := (start_i + step) % n
+		pa := blk_para(&st.doc, bs[bi])
+		if pa == nil || !text_kind(pa.kind) {
+			continue
+		}
+		t := para_text(pa, context.temp_allocator)
 		start := step == 0 ? clamp(from.off, 0, len(t)) : 0
-		i := index_fold(t[start:], needle)
+		i := find_hit(st, t, start)
 		if i >= 0 {
-			a := start + i
-			return Pos{pi, a}, Pos{pi, a + len(needle)}, true
+			return blk_pos(bs[bi], i), blk_pos(bs[bi], i + len(needle)), true
 		}
 	}
 	return {}, {}, false
@@ -782,19 +1349,20 @@ count_hits :: proc(st: ^State) -> int {
 		return 0
 	}
 	n := 0
-	for &pa in st.doc.paras {
-		t := para_text(&pa, context.temp_allocator)
+	for blk in doc_blocks(&st.doc) {
+		pa := blk_para(&st.doc, blk)
+		if pa == nil || !text_kind(pa.kind) {
+			continue
+		}
+		t := para_text(pa, context.temp_allocator)
 		at := 0
-		for {
-			i := index_fold(t[at:], needle)
+		for at <= len(t) {
+			i := find_hit(st, t, at)
 			if i < 0 {
 				break
 			}
 			n += 1
-			at += i + len(needle)
-			if at > len(t) {
-				break
-			}
+			at = i + max(1, len(needle))
 		}
 	}
 	return n
@@ -821,14 +1389,14 @@ find_next :: proc(st: ^State) -> bool {
 
 selection_is_match :: proc(st: ^State) -> bool {
 	lo, hi, has := selection(st)
-	if !has || lo.para != hi.para || len(st.find) == 0 {
+	if !has || !pos_same_block(lo, hi) || len(st.find) == 0 {
 		return false
 	}
-	t := para_text(&st.doc.paras[lo.para], context.temp_allocator)
+	t := pos_text(&st.doc, lo)
 	if hi.off > len(t) || hi.off - lo.off != len(st.find) {
 		return false
 	}
-	return index_fold(t[lo.off:hi.off], string(st.find[:])) == 0
+	return find_hit(st, t, lo.off) == lo.off
 }
 
 replace_one :: proc(st: ^State) {
@@ -851,32 +1419,41 @@ replace_one :: proc(st: ^State) {
 	note(st, "Replaced")
 }
 
+// replace_all is one undo step for the whole document, whatever it touches.
+//
+// That is the "undo-safe" part, and it is not free: `edit_begin` is called
+// exactly once, *before* the first mutation, and `history_break` once after
+// the last, so the entire sweep collapses into a single snapshot. Calling
+// `edit_begin` per replacement would make undo take the document back one word
+// at a time, which is both slower and wrong.
 replace_all :: proc(st: ^State) {
 	if len(st.find) == 0 {
 		return
 	}
-	needle := string(st.find[:])
+	needle := strings.clone(string(st.find[:]), context.temp_allocator)
 	repl := strings.clone(string(st.repl[:]), context.temp_allocator)
 	edit_begin(st, .Structural)
 	count := 0
-	for pi in 0 ..< len(st.doc.paras) {
+	// The block list is taken once: a replacement changes bytes, never the
+	// shape of the document, so the list stays valid for the whole sweep.
+	for blk in doc_blocks(&st.doc, context.temp_allocator) {
+		pa := blk_para(&st.doc, blk)
+		if pa == nil || !text_kind(pa.kind) {
+			continue
+		}
 		// Search forward from just past each replacement, so a replacement
 		// that contains the search term cannot be matched again.
 		at := 0
-		for {
-			t := para_text(&st.doc.paras[pi], context.temp_allocator)
-			if at > len(t) {
-				break
-			}
-			i := index_fold(t[at:], needle)
+		for at <= blk_len(&st.doc, blk) {
+			t := para_text(blk_para(&st.doc, blk), context.temp_allocator)
+			i := find_index(t, needle, at, !st.find_case, st.find_word)
 			if i < 0 {
 				break
 			}
-			abs := at + i
-			cs := style_after(&st.doc, Pos{pi, abs})
-			delete_range(&st.doc, Pos{pi, abs}, Pos{pi, abs + len(needle)})
-			insert_plain(&st.doc, Pos{pi, abs}, repl, cs)
-			at = abs + len(repl)
+			cs := style_after(&st.doc, blk_pos(blk, i))
+			delete_range(&st.doc, blk_pos(blk, i), blk_pos(blk, i + len(needle)))
+			insert_plain(&st.doc, blk_pos(blk, i), repl, cs)
+			at = i + max(1, len(repl))
 			count += 1
 		}
 	}

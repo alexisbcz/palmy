@@ -7,6 +7,7 @@
 // procedures.
 package main
 
+import "core:fmt"
 import "core:strings"
 import p "palmy:."
 
@@ -254,12 +255,19 @@ keys_commands :: proc(ui: ^p.Ctx, st: ^State) {
 	if p.shortcut(ui, 'e', {.Ctrl}) {set_align(st, .Center);fire(st)}
 	if p.shortcut(ui, 'r', {.Ctrl}) {set_align(st, .Right);fire(st)}
 	if p.shortcut(ui, 'j', {.Ctrl, .Shift}) {set_align(st, .Justify);fire(st)}
+	// Tab is the table key first and the indent key second: inside a grid it
+	// is how every word processor walks the cells, and Tab at the last cell
+	// grows the table by a row.
 	if plain(ui, p.KEY_TAB) {
-		indent_paras(st, 1)
+		if !table_move_cell(st, 1) {
+			indent_paras(st, 1)
+		}
 		fire(st)
 	}
 	if p.shortcut(ui, p.KEY_TAB, {.Shift}) {
-		indent_paras(st, -1)
+		if !table_move_cell(st, -1) {
+			indent_paras(st, -1)
+		}
 		fire(st)
 	}
 
@@ -281,6 +289,75 @@ keys_commands :: proc(ui: ^p.Ctx, st: ^State) {
 	if p.shortcut(ui, 'z', {.Ctrl}) {do_undo(st);fire(st)}
 	if p.shortcut(ui, 'y', {.Ctrl}) || p.shortcut(ui, 'z', {.Ctrl, .Shift}) {
 		do_redo(st)
+		fire(st)
+	}
+
+	// --- tables
+	//
+	// Every one of these also has a bare function key or an unmodified
+	// alternative where it can, because the recorder that drives the demo
+	// cannot hold a modifier down. The table keys are grouped on Alt, which
+	// `wtype` can send as a chord.
+	if p.shortcut(ui, 't', {.Ctrl, .Shift}) {
+		open_prompt(st, .Insert_Table)
+		fire(st)
+	}
+	if p.shortcut(ui, p.KEY_RETURN, {.Alt}) || p.shortcut(ui, 'r', {.Alt}) {
+		table_row_cmd(st, true)
+		fire(st)
+	}
+	if p.shortcut(ui, 'r', {.Alt, .Shift}) {
+		table_row_cmd(st, false)
+		fire(st)
+	}
+	if p.shortcut(ui, 'c', {.Alt}) {
+		table_col_cmd(st, true)
+		fire(st)
+	}
+	if p.shortcut(ui, 'c', {.Alt, .Shift}) {
+		table_col_cmd(st, false)
+		fire(st)
+	}
+	if p.shortcut(ui, p.KEY_BACKSPACE, {.Alt}) {
+		table_delete_row_cmd(st)
+		fire(st)
+	}
+	if p.shortcut(ui, p.KEY_DELETE, {.Alt}) {
+		table_delete_col_cmd(st)
+		fire(st)
+	}
+	if p.shortcut(ui, 'h', {.Alt}) {
+		table_toggle_header(st)
+		fire(st)
+	}
+	if p.shortcut(ui, 'b', {.Alt}) {
+		table_toggle_borders(st)
+		fire(st)
+	}
+	if p.shortcut(ui, p.KEY_RIGHT, {.Alt}) {
+		table_nudge_width(st, 24)
+		fire(st)
+	}
+	if p.shortcut(ui, p.KEY_LEFT, {.Alt}) {
+		table_nudge_width(st, -24)
+		fire(st)
+	}
+	if p.shortcut(ui, 'k', {.Alt}) {
+		delete_block(st)
+		fire(st)
+	}
+
+	// --- pictures
+	if p.shortcut(ui, 'i', {.Ctrl, .Shift}) {
+		open_prompt(st, .Insert_Image)
+		fire(st)
+	}
+	if p.shortcut(ui, p.KEY_UP, {.Alt}) {
+		image_nudge_scale(st, 1.25)
+		fire(st)
+	}
+	if p.shortcut(ui, p.KEY_DOWN, {.Alt}) {
+		image_nudge_scale(st, 0.8)
 		fire(st)
 	}
 
@@ -355,7 +432,7 @@ keys_motion :: proc(ui: ^p.Ctx, st: ^State) {
 	}
 	if n, sh, ct := nav(ui, p.KEY_HOME); n > 0 {
 		if ct {
-			place_caret(st, Pos{0, 0}, sh)
+			place_caret(st, pos(0, 0), sh)
 		} else {
 			move_line_edge(st, false, sh)
 		}
@@ -398,6 +475,15 @@ keys_find :: proc(ui: ^p.Ctx, st: ^State) {
 		st.find_field = 1 - st.find_field
 		return
 	}
+	// The two depth switches. Both are also buttons on the find bar.
+	if plain(ui, p.KEY_F5) || p.shortcut(ui, 'c', {.Alt}) {
+		toggle_find_case(st)
+		return
+	}
+	if plain(ui, KEY_F6) || p.shortcut(ui, 'w', {.Alt}) {
+		toggle_find_word(st)
+		return
+	}
 	if plain(ui, p.KEY_F11) {
 		replace_one(st)
 		st.find_hits = count_hits(st)
@@ -423,7 +509,7 @@ keys_find :: proc(ui: ^p.Ctx, st: ^State) {
 		if st.find_field == 0 && len(st.find) > 0 {
 			// Search from the top of the current paragraph so the view does
 			// not jump about while the term is still being typed.
-			if lo, hi, ok := find_from(st, Pos{st.caret.para, 0}); ok {
+			if lo, hi, ok := find_from(st, pos(st.caret.para, 0)); ok {
 				st.anchor = lo
 				st.caret = hi
 				scroll_to_caret(st)
@@ -458,6 +544,10 @@ open_prompt :: proc(st: ^State, kind: Prompt_Kind) {
 		def = default_path(st, ".odt")
 	case .Export_Rtf:
 		def = default_path(st, ".rtf")
+	case .Insert_Image:
+		def = fmt_image_default(st)
+	case .Insert_Table:
+		def = "3x3"
 	case .None:
 	}
 	append(&st.prompt_buf, ..transmute([]u8)def)
@@ -487,9 +577,51 @@ prompt_label :: proc(kind: Prompt_Kind) -> string {
 		return "Export RTF to"
 	case .Import_Docx:
 		return "Import Word .docx from"
+	case .Insert_Image:
+		return "Insert picture from"
+	case .Insert_Table:
+		return "Insert table, rows x columns"
 	case .None:
 	}
 	return ""
+}
+
+// fmt_image_default suggests the last picture's directory, or the home
+// directory, so the prompt starts somewhere useful.
+fmt_image_default :: proc(st: ^State) -> string {
+	for &pa in st.doc.paras {
+		if pa.kind == .Image && pa.img != nil && pa.img.path != "" {
+			return pa.img.path
+		}
+	}
+	return fmt.tprintf("%s/", kit_home())
+}
+
+// parse_table_spec reads "RxC", "R x C" or "R" from the prompt.
+parse_table_spec :: proc(s: string) -> (rows, cols: int) {
+	rows, cols = 0, 0
+	at := 0
+	for at < len(s) && (s[at] == ' ' || s[at] == '\t') {
+		at += 1
+	}
+	for at < len(s) && s[at] >= '0' && s[at] <= '9' {
+		rows = rows * 10 + int(s[at] - '0')
+		at += 1
+	}
+	for at < len(s) && (s[at] == ' ' || s[at] == 'x' || s[at] == 'X' || s[at] == '*' || s[at] == ',') {
+		at += 1
+	}
+	for at < len(s) && s[at] >= '0' && s[at] <= '9' {
+		cols = cols * 10 + int(s[at] - '0')
+		at += 1
+	}
+	if rows <= 0 {
+		rows = 3
+	}
+	if cols <= 0 {
+		cols = 3
+	}
+	return clamp(rows, 1, TABLE_MAX_ROWS), clamp(cols, 1, TABLE_MAX_COLS)
 }
 
 keys_prompt :: proc(ui: ^p.Ctx, st: ^State) {
@@ -571,6 +703,11 @@ run_prompt :: proc(st: ^State, kind: Prompt_Kind, path: string) {
 		} else {
 			note(st, "Import failed")
 		}
+	case .Insert_Image:
+		do_insert_image(st, full)
+	case .Insert_Table:
+		r, c := parse_table_spec(path)
+		insert_table(st, r, c)
 	case .None:
 	}
 }

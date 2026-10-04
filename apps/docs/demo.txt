@@ -1,89 +1,199 @@
 # Docs — a word processor on palmy.
 #
-# Every command here is a bare function key, because the recorder cannot hold
-# a modifier down. The same commands are on Ctrl shortcuts for a real user;
-# press F1 in the app for the whole table.
+# Most commands here are bare function keys, because that is what a recorder
+# can always send. The table and picture commands need a modifier, so they use
+# `chord`. Press F1 in the app for the whole table of shortcuts.
 
 wait 1.4
 move 590 520
-wait 1.2
+wait 1.0
 
 # Walk to the end of the document.
 key Next
-wait 0.5
+wait 0.4
 key Next
 wait 0.4
 key Next
-wait 1.0
+wait 0.4
+key Next
+wait 0.9
 
 # A new paragraph, promoted to a heading (F5 cycles Body, H1, H2, ...).
 key Return
 wait 0.4
 key F5
-wait 0.5
+wait 0.4
 key F5
-wait 0.9
-type Spilling onto sheet two
-wait 1.3
+wait 0.8
+type A table, and a picture
+wait 1.2
 
 # Return at the end of a heading starts body text.
 key Return
 wait 0.4
-type Pagination is the difference between a word processor and a text box: a line cannot be placed until its height is known, and a change up here moves everything down there onto another sheet of paper.
+type A table is a paragraph kind whose content is a grid of cells, and each cell holds ordinary paragraphs — so wrapping, styling and the caret all keep working inside one.
+wait 1.6
+key Return
+wait 0.5
+
+# ---------------------------------------------------------------------------
+# Insert a table. Ctrl+Shift+T opens a prompt that takes "rows x columns".
+# ---------------------------------------------------------------------------
+chord ctrl+shift+t
+wait 1.2
+chord ctrl+u
+wait 0.4
+type 4x3
+wait 1.0
+key Return
 wait 1.6
 
-# A bullet list (F6).
-key Return
+# The caret lands in the first cell and a table strip appears above the page.
+# Tab walks the grid; Tab at the last cell grows the table by a row.
+type Format
+wait 0.5
+key Tab
 wait 0.4
-key F6
+type Carries a table as
+wait 0.5
+key Tab
+wait 0.4
+type Carries a picture as
 wait 0.7
-type measured with p.text_width
-key Return
-wait 0.3
-type wrapped to a 602 pixel measure
-key Return
-wait 0.3
-type poured into A4 pages
-wait 1.4
-
-# Select the line just typed — F10 sets a mark, then Home and the arrows
-# extend — and restyle it. The pointer nudge ahead of it puts focus back on
-# the window if anything on the desktop has stolen it.
-move 590 860
-wait 0.6
-key F10
-wait 0.9
-key Home
-wait 1.1
-key F2
-wait 1.4
-key F3
-wait 1.4
-key F10
-wait 1.0
-
-# Find and replace across the whole document.
-key F9
-wait 0.9
-type page
-wait 1.4
 key Tab
 wait 0.6
-type sheet
+
+type PDF
+wait 0.4
+key Tab
+wait 0.3
+type lines and positioned text
+wait 0.4
+key Tab
+wait 0.3
+type an XObject stream
+wait 0.6
+key Tab
+wait 0.5
+
+type .docx
+wait 0.4
+key Tab
+wait 0.3
+type w:tbl with a tblGrid
+wait 0.4
+key Tab
+wait 0.3
+type w:drawing plus a relationship
+wait 0.6
+key Tab
+wait 0.5
+
+type .odt
+wait 0.4
+key Tab
+wait 0.3
+type table:table
+wait 0.4
+key Tab
+wait 0.3
+type draw:frame and draw:image
+wait 1.3
+
+# Tab at the last cell grows the table rather than leaving it.
+key Tab
+wait 0.8
+type .rtf
+wait 0.4
+key Tab
+wait 0.3
+type a run of \trowd rows
+wait 0.4
+key Tab
+wait 0.3
+type a \pict of hex bytes
+wait 1.6
+
+# Widen the middle column, then narrow it back (Alt+Left / Alt+Right).
+key Up
+wait 0.4
+chord alt+Right
+wait 0.7
+chord alt+Right
+wait 1.1
+chord alt+Left
+wait 1.2
+
+# Turn the header row off and on again — it is what repeats across a page
+# break, so it is worth seeing.
+chord alt+h
+wait 1.2
+chord alt+h
+wait 1.4
+
+# ---------------------------------------------------------------------------
+# Leave the table and insert a picture. Ctrl+Shift+I takes a path.
+# ---------------------------------------------------------------------------
+key Down
+wait 0.4
+key Down
+wait 0.4
+key Down
+wait 0.4
+key Down
+wait 0.4
+key Down
+wait 0.9
+key Return
+wait 0.4
+type And a picture, which participates in line layout and pagination:
+wait 1.2
+
+chord ctrl+shift+i
+wait 1.0
+chord ctrl+u
+wait 0.4
+type /home/alex/Work/palmy/apps/docs/demo-chart.png
+wait 1.2
+key Return
+wait 1.8
+
+# Alt+Up and Alt+Down scale it.
+chord alt+Up
+wait 1.3
+chord alt+Down
+wait 1.3
+
+# ---------------------------------------------------------------------------
+# Find and replace, with the two new depth switches.
+# ---------------------------------------------------------------------------
+key F9
+wait 0.9
+type cell
+wait 1.4
+key F6
+wait 1.5
+key F5
+wait 1.5
+key F6
+wait 1.0
+key F5
+wait 0.8
+key Tab
+wait 0.5
+type box
 wait 1.2
 key F12
 wait 1.8
 key Escape
 wait 1.2
 
-# Zoom out far enough to see both sheets at once.
+# Zoom out far enough to see the table and the picture on the page together.
 key KP_Subtract
-wait 0.9
+wait 0.8
 key KP_Subtract
 wait 1.0
-key KP_Subtract
-wait 1.4
-key Next
-wait 1.6
 key Prior
-wait 1.8
+wait 1.6
+key Next
+wait 2.0

@@ -54,9 +54,16 @@ section :: proc(name: string) {
 @(private = "file")
 text_of :: proc(d: ^Doc) -> string {
 	b := strings.builder_make(context.temp_allocator)
-	for &pa, i in d.paras {
+	// Blocks, not paragraphs: a table cell's text is document text, and a
+	// comparison that skipped it would pass on an exporter that dropped every
+	// grid in the file.
+	for blk, i in doc_blocks(d, context.temp_allocator) {
 		if i > 0 {
 			strings.write_byte(&b, '\n')
+		}
+		pa := blk_para(d, blk)
+		if pa == nil {
+			continue
 		}
 		for &r in pa.runs {
 			strings.write_bytes(&b, r.text[:])
@@ -104,6 +111,11 @@ run_selftest :: proc() -> bool {
 	test_markdown()
 	test_json()
 	test_find(&fonts)
+	test_find_modes(&fonts)
+	test_tables(&fonts)
+	test_grid_formats(&fonts)
+	test_images(&fonts)
+	test_cells(&fonts)
 	test_containers()
 	test_fontfile(&fonts)
 	test_export(&fonts)
@@ -146,29 +158,29 @@ test_runs :: proc() {
 	}
 	defer doc_destroy(&d)
 	append(&d.paras, para_make(.Body, "abcdef"))
-	q := insert_plain(&d, Pos{0, 3}, "XY", Char_Style{bold = true})
+	q := insert_plain(&d, pos(0, 3), "XY", Char_Style{bold = true})
 	eq_str(shape(&d.paras[0]), "abc/|XY/b|def/", "a differing style splits the run in three")
 	eq_int(q.off, 5, "the caret lands after the inserted text")
 
 	// Inserting with the same style as the run it lands in must not split.
-	insert_plain(&d, Pos{0, 1}, "..", Char_Style{})
+	insert_plain(&d, pos(0, 1), "..", Char_Style{})
 	eq_str(shape(&d.paras[0]), "a..bc/|XY/b|def/", "a matching style joins the run")
 	eq_int(len(d.paras[0].runs), 3, "still three runs")
 
 	// A caret on a boundary takes the style to its left, which is why typing
 	// after a bold word keeps bolding.
-	cs := style_at(&d, Pos{0, 7})
+	cs := style_at(&d, pos(0, 7))
 	ok(cs.bold, "style at the end of the bold run is bold")
-	cs2 := style_at(&d, Pos{0, 5})
+	cs2 := style_at(&d, pos(0, 5))
 	ok(!cs2.bold, "style at the start of the bold run is the run before it")
 
 	// Deleting the middle run merges the compatible neighbours.
-	delete_range(&d, Pos{0, 5}, Pos{0, 7})
+	delete_range(&d, pos(0, 5), pos(0, 7))
 	eq_str(shape(&d.paras[0]), "a..bcdef/", "deleting across runs merges the neighbours")
 	eq_int(len(d.paras[0].runs), 1, "one run again")
 
 	// Normalisation never leaves a paragraph with zero runs.
-	delete_range(&d, Pos{0, 0}, Pos{0, para_len(&d.paras[0])})
+	delete_range(&d, pos(0, 0), pos(0, para_len(&d.paras[0])))
 	eq_int(len(d.paras[0].runs), 1, "an emptied paragraph keeps one run")
 	eq_int(para_len(&d.paras[0]), 0, "and it is empty")
 }
@@ -189,7 +201,7 @@ test_boundaries :: proc() {
 	append(&d.paras, para_make(.Body, "second paragraph"))
 
 	// Enter in the middle of a paragraph.
-	q := break_para(&d, Pos{1, 5})
+	q := break_para(&d, pos(1, 5))
 	eq_int(len(d.paras), 4, "a break adds a paragraph")
 	eq_int(q.para, 2, "the caret moves to the new paragraph")
 	eq_int(q.off, 0, "at its start")
@@ -197,13 +209,13 @@ test_boundaries :: proc() {
 	ok(d.paras[2].kind == .Body, "the new paragraph inherits the kind")
 
 	// Enter at the end of a heading starts body text.
-	q2 := break_para(&d, Pos{0, 7})
+	q2 := break_para(&d, pos(0, 7))
 	ok(d.paras[1].kind == .Body, "Return at the end of a heading starts body text")
 	eq_int(q2.para, 1, "caret in the new paragraph")
 
 	// Backspace joining two paragraphs.
 	n := len(d.paras)
-	join := merge_para(&d, 2)
+	join := merge_para(&d, pos(2, 0), 2)
 	eq_int(len(d.paras), n - 1, "merging removes a paragraph")
 	eq_int(join.para, 2, "the caret stays in the surviving paragraph")
 	eq_str(text_of(&d), "Heading\n\nfirst paragraph\nsecond paragraph", "the join is seamless")
@@ -217,7 +229,7 @@ test_boundaries :: proc() {
 	append(&d2.paras, para_make(.H1, "AAAA"))
 	append(&d2.paras, para_make(.Body, "BBBB"))
 	append(&d2.paras, para_make(.Quote, "CCCC"))
-	caret := delete_range(&d2, Pos{0, 2}, Pos{2, 2})
+	caret := delete_range(&d2, pos(0, 2), pos(2, 2))
 	eq_int(len(d2.paras), 1, "three paragraphs collapse into one")
 	eq_str(text_of(&d2), "AACC", "only the ends survive")
 	ok(d2.paras[0].kind == .H1, "the first paragraph's properties win")
@@ -230,17 +242,17 @@ test_boundaries :: proc() {
 	}
 	defer doc_destroy(&d3)
 	append(&d3.paras, para_make(.Body, "keep"))
-	insert_plain(&d3, Pos{0, 4}, "BOLD", Char_Style{bold = true})
-	insert_plain(&d3, Pos{0, 8}, "keep", Char_Style{})
+	insert_plain(&d3, pos(0, 4), "BOLD", Char_Style{bold = true})
+	insert_plain(&d3, pos(0, 8), "keep", Char_Style{})
 	eq_str(shape(&d3.paras[0]), "keep/|BOLD/b|keep/", "three runs set up")
-	delete_range(&d3, Pos{0, 4}, Pos{0, 8})
+	delete_range(&d3, pos(0, 4), pos(0, 8))
 	eq_str(shape(&d3.paras[0]), "keepkeep/", "removing the middle run coalesces the rest")
 
 	// Multi-line insert: a paste of three lines becomes three paragraphs.
 	d4 := Doc{}
 	doc_init(&d4)
 	defer doc_destroy(&d4)
-	end := insert_text(&d4, Pos{0, 0}, "one\ntwo\nthree", Char_Style{})
+	end := insert_text(&d4, pos(0, 0), "one\ntwo\nthree", Char_Style{})
 	eq_int(len(d4.paras), 3, "newlines in an insert become paragraphs")
 	eq_str(text_of(&d4), "one\ntwo\nthree", "all three lines are there")
 	eq_int(end.para, 2, "the caret ends in the last one")
@@ -261,21 +273,21 @@ test_styles :: proc() {
 	append(&d.paras, para_make(.Body, "the quick brown fox"))
 
 	// Bold exactly "quick".
-	apply_patch(&d, Pos{0, 4}, Pos{0, 9}, {{.Bold}, Char_Style{bold = true}})
+	apply_patch(&d, pos(0, 4), pos(0, 9), {{.Bold}, Char_Style{bold = true}})
 	eq_str(shape(&d.paras[0]), "the /|quick/b| brown fox/", "the patch lands on the selection only")
-	ok(range_all_bold(&d, Pos{0, 4}, Pos{0, 9}), "the whole span reads as bold")
-	ok(!range_all_bold(&d, Pos{0, 0}, Pos{0, 9}), "a partly bold span does not")
+	ok(range_all_bold(&d, pos(0, 4), pos(0, 9)), "the whole span reads as bold")
+	ok(!range_all_bold(&d, pos(0, 0), pos(0, 9)), "a partly bold span does not")
 
 	// A second patch over a superset keeps one run, not three.
-	apply_patch(&d, Pos{0, 0}, Pos{0, 19}, {{.Bold}, Char_Style{bold = true}})
+	apply_patch(&d, pos(0, 0), pos(0, 19), {{.Bold}, Char_Style{bold = true}})
 	eq_str(shape(&d.paras[0]), "the quick brown fox/b", "bolding everything coalesces to one run")
 
 	// Patches are partial: adding italic must not clear bold.
-	apply_patch(&d, Pos{0, 4}, Pos{0, 9}, {{.Italic}, Char_Style{italic = true}})
+	apply_patch(&d, pos(0, 4), pos(0, 9), {{.Italic}, Char_Style{italic = true}})
 	eq_str(shape(&d.paras[0]), "the /b|quick/bi| brown fox/b", "italic is added without losing bold")
 
 	// Size and colour.
-	apply_patch(&d, Pos{0, 0}, Pos{0, 3}, {{.Size, .Color}, Char_Style{size = 24, color = 0xffe7000b}})
+	apply_patch(&d, pos(0, 0), pos(0, 3), {{.Size, .Color}, Char_Style{size = 24, color = 0xffe7000b}})
 	eq_str(
 		shape(&d.paras[0]),
 		"the/b24#e7000b| /b|quick/bi| brown fox/b",
@@ -285,15 +297,15 @@ test_styles :: proc() {
 	// Clearing every field returns the paragraph to a single plain run.
 	apply_patch(
 		&d,
-		Pos{0, 0},
-		Pos{0, 19},
+		pos(0, 0),
+		pos(0, 19),
 		{{.Bold, .Italic, .Underline, .Mono, .Size, .Color}, Char_Style{}},
 	)
 	eq_str(shape(&d.paras[0]), "the quick brown fox/", "clearing formatting collapses to one run")
 
 	// A patch across a paragraph boundary touches both.
 	append(&d.paras, para_make(.Body, "second"))
-	apply_patch(&d, Pos{0, 16}, Pos{1, 3}, {{.Underline}, Char_Style{underline = true}})
+	apply_patch(&d, pos(0, 16), pos(1, 3), {{.Underline}, Char_Style{underline = true}})
 	eq_str(shape(&d.paras[0]), "the quick brown /|fox/u", "the tail of the first paragraph")
 	eq_str(shape(&d.paras[1]), "sec/u|ond/", "and the head of the second")
 }
@@ -330,12 +342,12 @@ test_history :: proc(fonts: ^p.Fonts) {
 	ok(!history_can_redo(&st.hist), "nothing left to redo")
 
 	// A style change is its own step and never coalesces with typing.
-	st.anchor = Pos{0, 0}
-	st.caret = Pos{0, 5}
+	st.anchor = pos(0, 0)
+	st.caret = pos(0, 5)
 	toggle_bold(&st)
-	ok(range_all_bold(&st.doc, Pos{0, 0}, Pos{0, 5}), "the selection is bold")
+	ok(range_all_bold(&st.doc, pos(0, 0), pos(0, 5)), "the selection is bold")
 	do_undo(&st)
-	ok(!range_all_bold(&st.doc, Pos{0, 0}, Pos{0, 5}), "undo removes the bold")
+	ok(!range_all_bold(&st.doc, pos(0, 0), pos(0, 5)), "undo removes the bold")
 	eq_str(text_of(&st.doc), "hello world", "and leaves the text alone")
 
 	// A new edit after an undo discards the redo branch.
@@ -345,17 +357,17 @@ test_history :: proc(fonts: ^p.Fonts) {
 
 	// Moving the caret closes the group, so two typing bursts are two steps.
 	n := len(st.hist.undo)
-	place_caret(&st, Pos{0, 0}, false)
+	place_caret(&st, pos(0, 0), false)
 	type_text(&st, "A")
-	place_caret(&st, Pos{0, 3}, false)
+	place_caret(&st, pos(0, 3), false)
 	type_text(&st, "B")
 	eq_int(len(st.hist.undo), n + 2, "a caret move between bursts splits the group")
 
 	// Undo restores the caret and the selection, not just the text. (The cut
 	// is done by hand here so the test never talks to wl-copy.)
 	before := text_of(&st.doc)
-	st.anchor = Pos{0, 1}
-	st.caret = Pos{0, 4}
+	st.anchor = pos(0, 1)
+	st.caret = pos(0, 4)
 	clip := selection_doc(&st)
 	defer doc_destroy(&clip)
 	eq_int(para_len(&clip.paras[0]), 3, "the clipboard copy is three bytes")
@@ -364,17 +376,17 @@ test_history :: proc(fonts: ^p.Fonts) {
 	ok(text_of(&st.doc) != before, "the cut changed the text")
 	do_undo(&st)
 	eq_str(text_of(&st.doc), before, "undo restored it")
-	ok(st.anchor == Pos{0, 1} && st.caret == Pos{0, 4}, "and restored the selection")
+	ok(st.anchor == pos(0, 1) && st.caret == pos(0, 4), "and restored the selection")
 
 	// A styled copy pastes back with its runs intact.
 	src := Doc{paras = make([dynamic]Paragraph, 0, 2)}
 	defer doc_destroy(&src)
 	append(&src.paras, para_make(.Body, "plain"))
-	insert_plain(&src, Pos{0, 5}, "BOLD", Char_Style{bold = true})
+	insert_plain(&src, pos(0, 5), "BOLD", Char_Style{bold = true})
 	dst := Doc{}
 	doc_init(&dst)
 	defer doc_destroy(&dst)
-	insert_doc(&dst, Pos{0, 0}, &src)
+	insert_doc(&dst, pos(0, 0), &src)
 	eq_str(shape(&dst.paras[0]), "plain/|BOLD/b", "a styled paste keeps its runs")
 }
 
@@ -554,11 +566,11 @@ test_caret :: proc(fonts: ^p.Fonts) {
 	}
 
 	// Up and Down move by visual line and remember the column.
-	st.caret = Pos{0, 0}
+	st.caret = pos(0, 0)
 	st.anchor = st.caret
 	eq_int(line_of(&st.lay, st.caret), 0, "the caret starts on line 0")
 	mid := off_at_x(&st.lay, 0, 240)
-	st.caret = Pos{0, mid}
+	st.caret = pos(0, mid)
 	st.goal_ok = false
 	move_v(&st, 1, false)
 	eq_int(line_of(&st.lay, st.caret), 1, "Down moves one visual line")
@@ -575,16 +587,16 @@ test_caret :: proc(fonts: ^p.Fonts) {
 		brk := st.lay.lines[1].start
 		eq_int(brk, st.lay.lines[0].end, "line 1 starts where line 0 ends")
 		ok(brk > st.lay.lines[0].vis_end, "the break swallowed a space")
-		eq_int(line_of(&st.lay, Pos{0, brk}), 1, "a caret on the break is on the lower line")
+		eq_int(line_of(&st.lay, pos(0, brk)), 1, "a caret on the break is on the lower line")
 		eq_int(
-			line_of(&st.lay, Pos{0, st.lay.lines[0].vis_end}),
+			line_of(&st.lay, pos(0, st.lay.lines[0].vis_end)),
 			0,
 			"a caret before the break is on the upper line",
 		)
 
 		// Walking down with the arrow keys must reach every line and stop at
 		// the end, not stall part way.
-		st.caret = Pos{0, 0}
+		st.caret = pos(0, 0)
 		st.anchor = st.caret
 		st.goal_ok = false
 		seen := 0
@@ -602,7 +614,7 @@ test_caret :: proc(fonts: ^p.Fonts) {
 
 		// Page Down over a wrapped paragraph lands at the end rather than
 		// stalling on a break.
-		st.caret = Pos{0, 0}
+		st.caret = pos(0, 0)
 		st.anchor = st.caret
 		st.goal_ok = false
 		move_v(&st, 40, false)
@@ -611,7 +623,7 @@ test_caret :: proc(fonts: ^p.Fonts) {
 	}
 
 	// Home and End work on the visual line, not the paragraph.
-	st.caret = Pos{0, mid}
+	st.caret = pos(0, mid)
 	move_line_edge(&st, true, false)
 	eq_int(st.caret.off, st.lay.lines[0].vis_end, "End goes to the end of the visual line")
 	move_line_edge(&st, false, false)
@@ -767,7 +779,7 @@ test_markdown :: proc() {
 			found_quote = true
 		case .Code:
 			found_code = true
-		case .Body, .H1:
+		case .Body, .H1, .Table, .Image:
 		}
 		if pa.list == .Bullet {
 			bullets += 1
@@ -840,7 +852,7 @@ test_json :: proc() {
 	d := doc_from_markdown(MD_SOURCE)
 	defer doc_destroy(&d)
 	// Add things Markdown cannot carry, which the native format must.
-	apply_patch(&d, Pos{2, 0}, Pos{2, 5}, {{.Size, .Color}, Char_Style{size = 28, color = 0xff2563eb}})
+	apply_patch(&d, pos(2, 0), pos(2, 5), {{.Size, .Color}, Char_Style{size = 28, color = 0xff2563eb}})
 	d.paras[2].align = .Justify
 	d.paras[4].before = 7
 	d.paras[4].after = 3.5
@@ -904,7 +916,7 @@ test_find :: proc(fonts: ^p.Fonts) {
 	append(&st.find, ..transmute([]u8)string("cat"))
 	eq_int(count_hits(&st), 2, "case-insensitive search finds both")
 
-	st.caret = Pos{0, 0}
+	st.caret = pos(0, 0)
 	st.anchor = st.caret
 	ok(find_next(&st), "find jumps to the first match")
 	eq_int(st.anchor.off, 4, "selecting the match")
@@ -915,14 +927,14 @@ test_find :: proc(fonts: ^p.Fonts) {
 	eq_int(st.caret.para, 0, "back to the first paragraph")
 
 	// Replace keeps the style the match had.
-	apply_patch(&st.doc, Pos{0, 4}, Pos{0, 7}, {{.Bold}, Char_Style{bold = true}})
+	apply_patch(&st.doc, pos(0, 4), pos(0, 7), {{.Bold}, Char_Style{bold = true}})
 	clear(&st.repl)
 	append(&st.repl, ..transmute([]u8)string("dog"))
-	st.caret = Pos{0, 0}
+	st.caret = pos(0, 0)
 	st.anchor = st.caret
 	replace_one(&st)
 	ok(strings.contains(text_of(&st.doc), "the dog sat"), "the first match was replaced")
-	ok(range_all_bold(&st.doc, Pos{0, 4}, Pos{0, 7}), "the replacement inherited the style")
+	ok(range_all_bold(&st.doc, pos(0, 4), pos(0, 7)), "the replacement inherited the style")
 
 	replace_all(&st)
 	eq_int(count_hits(&st), 0, "replace all leaves no matches")
@@ -939,6 +951,1324 @@ test_find :: proc(fonts: ^p.Fonts) {
 	append(&st.repl, ..transmute([]u8)string("aa"))
 	replace_all(&st)
 	ok(count_hits(&st) > 0, "a growing replacement terminates")
+}
+
+
+
+// ---------------------------------------------------------------------------
+// 9a. Tables and pictures through the text formats
+// ---------------------------------------------------------------------------
+
+// grid_fixture is a document whose point is the two new things: a table with a
+// header, mixed character styles and a multi-paragraph cell, and a picture
+// with real bytes behind it. It is used by the format round trips and by the
+// export section's external validation.
+@(private = "file")
+grid_fixture :: proc() -> Doc {
+	d := Doc {
+		paras = make([dynamic]Paragraph, 0, 8),
+	}
+	append(&d.paras, para_make(.H1, "Grids and pictures"))
+	append(&d.paras, para_make(.Body, "A paragraph before the grid, so the space above it is real."))
+
+	tp := table_para_make(4, 3)
+	HEAD := [?]string{"Format", "Carries tables as", "Carries pictures as"}
+	BODY := [?][3]string {
+		{"PDF", "lines and positioned text", "an XObject stream"},
+		{"docx", "w:tbl with a tblGrid", "w:drawing and a relationship"},
+		{"odt", "table:table", "draw:frame and draw:image"},
+	}
+	for c in 0 ..< 3 {
+		cl := table_cell(tp.table, 0, c)
+		for &r in cl.paras[0].runs {
+			delete(r.text)
+		}
+		clear(&cl.paras[0].runs)
+		append(&cl.paras[0].runs, run_make({}, HEAD[c]))
+	}
+	for r in 0 ..< 3 {
+		for c in 0 ..< 3 {
+			cl := table_cell(tp.table, r + 1, c)
+			for &rr in cl.paras[0].runs {
+				delete(rr.text)
+			}
+			clear(&cl.paras[0].runs)
+			// The first column is monospace and the second carries a bold run,
+			// so a cell's character styles are exercised rather than assumed.
+			if c == 0 {
+				append(&cl.paras[0].runs, run_make({mono = true}, BODY[r][c]))
+			} else if c == 1 {
+				append(&cl.paras[0].runs, run_make({bold = true}, BODY[r][c]))
+			} else {
+				append(&cl.paras[0].runs, run_make({}, BODY[r][c]))
+			}
+			normalise(&cl.paras[0])
+		}
+	}
+	// One cell with two paragraphs, which is the thing a flat format cannot do.
+	{
+		cl := table_cell(tp.table, 3, 2)
+		append(&cl.paras, para_make(.Body, "and a second paragraph in the cell"))
+	}
+	tp.table.widths[0] = 140
+	tp.table.widths[1] = 240
+	tp.table.widths[2] = 222
+	table_fit_widths(tp.table)
+	append(&d.paras, tp)
+
+	append(&d.paras, para_make(.Body, "And a picture, centred under it:"))
+	if im, got := image_from_bytes(test_png(96, 64), "/tmp/fixture.png", "a generated test picture"); got {
+		append(&d.paras, image_para_make(im, .Center))
+	}
+	append(&d.paras, para_make(.Body, "Followed by ordinary body text that keeps flowing."))
+	return d
+}
+
+test_grid_formats :: proc(fonts: ^p.Fonts) {
+	section("tables and pictures: JSON, Markdown and HTML")
+
+	d := grid_fixture()
+	defer doc_destroy(&d)
+	eq_int(len(d.paras), 6, "the fixture has six paragraphs")
+	ok(d.paras[2].kind == .Table && d.paras[2].table != nil, "one of them is a table")
+	ok(d.paras[4].kind == .Image && d.paras[4].img != nil, "and one is a picture")
+
+	// --- the native format carries both, exactly
+	{
+		j := doc_to_json(&d, context.temp_allocator)
+		ok(strings.contains(j, "\"kind\": \"table\""), "the JSON names a table paragraph")
+		ok(strings.contains(j, "\"header\": true"), "with its header flag")
+		ok(strings.contains(j, "\"widths\": ["), "its column widths")
+		ok(strings.contains(j, "\"kind\": \"image\""), "and an image paragraph")
+		ok(strings.contains(j, "\"data\": \""), "whose bytes ride along base64'd")
+
+		back, got := doc_from_json(j)
+		ok(got, "the JSON parses back")
+		if !got {
+			return
+		}
+		defer doc_destroy(&back)
+		eq_int(len(back.paras), len(d.paras), "same paragraph count")
+
+		t0, t1 := d.paras[2].table, back.paras[2].table
+		ok(t1 != nil, "the table came back")
+		if t1 != nil {
+			eq_int(len(t1.rows), len(t0.rows), "same number of rows")
+			eq_int(table_cols(t1), table_cols(t0), "same number of columns")
+			ok(t1.header == t0.header, "the header flag survives")
+			ok(t1.borders == t0.borders, "and the borders flag")
+			wrong := 0
+			for c in 0 ..< table_cols(t0) {
+				if abs(table_width(t0, c) - table_width(t1, c)) > 0.2 {
+					wrong += 1
+				}
+			}
+			eq_int(wrong, 0, "every column width survives")
+			eq_int(len(table_cell(t1, 3, 2).paras), 2, "a two-paragraph cell is still two paragraphs")
+			bad := 0
+			for r in 0 ..< len(t0.rows) {
+				for c in 0 ..< table_cols(t0) {
+					a := table_cell(t0, r, c)
+					b := table_cell(t1, r, c)
+					if cell_text(a, context.temp_allocator) != cell_text(b, context.temp_allocator) {
+						bad += 1
+					}
+				}
+			}
+			eq_int(bad, 0, "and every cell's text")
+			eq_str(
+				shape(&table_cell(t1, 1, 0).paras[0]),
+				shape(&table_cell(t0, 1, 0).paras[0]),
+				"a monospace cell keeps its run shape",
+			)
+			eq_str(
+				shape(&table_cell(t1, 1, 1).paras[0]),
+				shape(&table_cell(t0, 1, 1).paras[0]),
+				"and a bold one keeps its",
+			)
+		}
+
+		i0, i1 := d.paras[4].img, back.paras[4].img
+		ok(i1 != nil, "the picture came back")
+		if i1 != nil {
+			eq_int(i1.w, i0.w, "its width")
+			eq_int(i1.h, i0.h, "its height")
+			eq_int(len(i1.bytes), len(i0.bytes), "every original byte")
+			eq_int(len(i1.px), i0.w * i0.h, "and it decoded again")
+			eq_str(i1.alt, i0.alt, "with its alternative text")
+			same := true
+			for k in 0 ..< len(i0.bytes) {
+				if i0.bytes[k] != i1.bytes[k] {
+					same = false
+					break
+				}
+			}
+			ok(same, "the bytes are identical, not merely the same length")
+		}
+
+		// And the whole thing is stable: writing it again gives the same file.
+		j2 := doc_to_json(&back, context.temp_allocator)
+		eq_str(j2, j, "a second write is byte-identical")
+	}
+
+	// --- Markdown: a GitHub pipe table, and ![alt](path)
+	{
+		md := doc_to_markdown(&d, context.temp_allocator)
+		ok(strings.contains(md, "| Format |"), "the Markdown has a pipe header row")
+		ok(strings.contains(md, "| --- | --- | --- |"), "and the delimiter row under it")
+		ok(strings.contains(md, "![a generated test picture]"), "and a picture with its alt text")
+
+		back := doc_from_markdown(md)
+		defer doc_destroy(&back)
+		tbl := 0
+		img := 0
+		for &pa in back.paras {
+			if pa.kind == .Table {
+				tbl += 1
+			}
+			if pa.kind == .Image {
+				img += 1
+			}
+		}
+		eq_int(tbl, 1, "reading it back gives one table")
+		eq_int(img, 1, "and one picture")
+		for &pa in back.paras {
+			if pa.kind != .Table {
+				continue
+			}
+			eq_int(len(pa.table.rows), 4, "with four rows")
+			eq_int(table_cols(pa.table), 3, "and three columns")
+			ok(pa.table.header, "the first row read as a header")
+			eq_str(
+				cell_text(table_cell(pa.table, 0, 0), context.temp_allocator),
+				"Format",
+				"the first cell",
+			)
+			eq_str(
+				cell_text(table_cell(pa.table, 3, 0), context.temp_allocator),
+				"odt",
+				"and the last row's first cell",
+			)
+		}
+	}
+
+	// --- a pipe table needs its delimiter row to be a table at all
+	{
+		no_delim := doc_from_markdown("| not | a | table |\n\njust prose\n")
+		defer doc_destroy(&no_delim)
+		tbl := 0
+		for &pa in no_delim.paras {
+			if pa.kind == .Table {
+				tbl += 1
+			}
+		}
+		eq_int(tbl, 0, "a pipe row with no delimiter under it is not a table")
+	}
+
+	// --- escaped pipes inside a cell
+	{
+		esc := doc_from_markdown("| a \\| b | c |\n| --- | --- |\n| d | e |\n")
+		defer doc_destroy(&esc)
+		found := false
+		for &pa in esc.paras {
+			if pa.kind != .Table {
+				continue
+			}
+			found = true
+			eq_int(table_cols(pa.table), 2, "an escaped pipe does not split the cell")
+			eq_str(
+				cell_text(table_cell(pa.table, 0, 0), context.temp_allocator),
+				"a | b",
+				"and comes back as a literal pipe",
+			)
+		}
+		ok(found, "the escaped table parsed")
+	}
+
+	// --- HTML: a real <table> and an inlined <img>
+	{
+		html := doc_to_html(&d, "grid", context.temp_allocator)
+		ok(strings.contains(html, "<table>"), "the HTML has a table element")
+		ok(strings.contains(html, "<thead>"), "with a thead for the header row")
+		ok(strings.contains(html, "<tbody>"), "and a tbody for the rest")
+		eq_int(strings.count(html, "<tr>"), 4, "four rows")
+		eq_int(strings.count(html, "<th>"), 3, "three header cells")
+		eq_int(strings.count(html, "<td>"), 9, "and nine body cells")
+		ok(strings.contains(html, "<colgroup>"), "the column widths are carried")
+		ok(strings.contains(html, "src=\"data:image/png;base64,"), "and the picture is inlined")
+		ok(strings.contains(html, "<figure"), "inside a figure")
+	}
+
+	// --- a cell's text is document text, so the counts include it
+	{
+		words, chars := doc_counts(&d)
+		ok(words > 30, "the fixture counts %d words, cells included", words)
+		ok(chars > 200, "and %d characters", chars)
+		plain := text_of(&d)
+		ok(strings.contains(plain, "Carries tables as"), "a header cell is in the document text")
+		ok(strings.contains(plain, "a second paragraph in the cell"), "and a cell's second paragraph")
+	}
+}
+
+// ---------------------------------------------------------------------------
+// 10a. Find depth: case, whole words, and one undo step for the lot
+// ---------------------------------------------------------------------------
+
+test_find_modes :: proc(fonts: ^p.Fonts) {
+	section("find: match case, whole words, and undo-safe replace all")
+
+	// --- the primitive, on its own, because every mode goes through it
+	HAY :: "Art started a restart; art is not part of start."
+	eq_int(find_index(HAY, "art", 0, true, false), 0, "a folded search finds Art at 0")
+	eq_int(find_index(HAY, "art", 0, false, false), 6, "an exact search skips it and finds the art inside started")
+	eq_int(find_index(HAY, "Art", 0, false, false), 0, "and finds Art where the case agrees")
+	eq_int(find_index(HAY, "art", 0, true, true), 0, "whole-word folded finds Art")
+	eq_int(find_index(HAY, "art", 1, true, true), 23, "and then the standalone art")
+	eq_int(find_index(HAY, "art", 24, true, true), -1, "and nothing after it, because the rest are inside words")
+	eq_int(find_index(HAY, "art", 0, false, true), 23, "exact and whole-word together")
+	eq_int(find_index(HAY, "", 0, true, false), -1, "an empty needle never matches")
+	eq_int(find_index(HAY, "nowhere", 0, true, false), -1, "nor one that is not there")
+	eq_int(find_index("art", "art", 0, true, true), 0, "a word that is the whole string is whole")
+	eq_int(find_index("art.", "art", 0, true, true), 0, "punctuation is a word boundary")
+	eq_int(find_index("_art", "art", 0, true, true), -1, "an underscore is not")
+	eq_int(find_index("3art", "art", 0, true, true), -1, "nor is a digit")
+
+	// --- the modes through the find box
+	st := State{}
+	state_init(&st, fonts)
+	defer state_destroy(&st)
+	st.view = {0, 0, 1200, 700}
+
+	doc_destroy(&st.doc)
+	st.doc = Doc {
+		paras = make([dynamic]Paragraph, 0, 4),
+	}
+	append(&st.doc.paras, para_make(.Body, "Art and art and restart and ART."))
+	append(&st.doc.paras, para_make(.Body, "A part of the start of the article."))
+	relayout(&st)
+
+	clear(&st.find)
+	append(&st.find, ..transmute([]u8)string("art"))
+
+	ok(!st.find_case && !st.find_word, "both modes start off, as the box behaved before")
+	eq_int(count_hits(&st), 7, "folded, anywhere: seven hits")
+
+	toggle_find_case(&st)
+	ok(st.find_case, "match case is on")
+	eq_int(count_hits(&st), 5, "exact case: five hits")
+	eq_str(find_mode_label(&st), "Aa", "and the label says so")
+
+	toggle_find_word(&st)
+	ok(st.find_word, "whole words is on too")
+	eq_int(count_hits(&st), 1, "exact and whole: one hit")
+	eq_str(find_mode_label(&st), "Aa W", "with both in the label")
+
+	toggle_find_case(&st)
+	eq_int(count_hits(&st), 3, "folded and whole: three hits")
+	eq_str(find_mode_label(&st), "W", "label")
+	toggle_find_word(&st)
+	eq_int(count_hits(&st), 7, "and back to seven with both off")
+	eq_str(find_mode_label(&st), "—", "and no label")
+
+	// --- find_next honours the modes
+	st.find_case, st.find_word = true, true
+	st.caret = pos(0, 0)
+	st.anchor = st.caret
+	ok(find_next(&st), "find jumps to the only exact whole-word match")
+	eq_int(st.anchor.off, 8, "which is the lower-case standalone art")
+	eq_int(st.caret.off, 11, "three bytes long")
+
+	// --- a term inside a table cell is found like any other
+	{
+		st2 := State{}
+		state_init(&st2, fonts)
+		defer state_destroy(&st2)
+		st2.view = {0, 0, 1200, 700}
+		insert_table(&st2, 2, 2)
+		relayout(&st2)
+		type_text(&st2, "needle in a cell")
+		relayout(&st2)
+		clear(&st2.find)
+		append(&st2.find, ..transmute([]u8)string("needle"))
+		eq_int(count_hits(&st2), 1, "a term inside a cell is counted")
+		st2.caret = Pos{}
+		st2.anchor = st2.caret
+		ok(find_next(&st2), "and found")
+		ok(in_cell(&st2.doc, st2.caret), "with the caret landing inside the cell")
+
+		clear(&st2.repl)
+		append(&st2.repl, ..transmute([]u8)string("pin"))
+		replace_all(&st2)
+		relayout(&st2)
+		eq_str(
+			cell_text(table_cell(table_at(&st2), 0, 0), context.temp_allocator),
+			"pin in a cell",
+			"and replace-all rewrites the cell",
+		)
+		do_undo(&st2)
+		relayout(&st2)
+		eq_str(
+			cell_text(table_cell(table_at(&st2), 0, 0), context.temp_allocator),
+			"needle in a cell",
+			"and one undo puts the cell back",
+		)
+	}
+
+	// --- undo-safe: replace all is exactly one history step, whatever it
+	//     touches, and one undo restores the document byte for byte.
+	{
+		st3 := State{}
+		state_init(&st3, fonts)
+		defer state_destroy(&st3)
+		st3.view = {0, 0, 1200, 700}
+		doc_destroy(&st3.doc)
+		st3.doc = Doc {
+			paras = make([dynamic]Paragraph, 0, 8),
+		}
+		for i in 0 ..< 12 {
+			append(
+				&st3.doc.paras,
+				para_make(.Body, fmt.tprintf("line %d: colour, colourful, discolour and Colour", i)),
+			)
+		}
+		relayout(&st3)
+		before := text_of(&st3.doc)
+		depth := len(st3.hist.undo)
+
+		clear(&st3.find)
+		append(&st3.find, ..transmute([]u8)string("colour"))
+		clear(&st3.repl)
+		append(&st3.repl, ..transmute([]u8)string("color"))
+		st3.find_case, st3.find_word = false, false
+		hits := count_hits(&st3)
+		eq_int(hits, 48, "48 occurrences across twelve paragraphs")
+
+		replace_all(&st3)
+		relayout(&st3)
+		eq_int(len(st3.hist.undo) - depth, 1, "replace-all pushed exactly one undo step")
+		eq_int(count_hits(&st3), 0, "and left nothing to find")
+		ok(strings.contains(text_of(&st3.doc), "color"), "the replacement is in the document")
+
+		do_undo(&st3)
+		relayout(&st3)
+		eq_str(text_of(&st3.doc), before, "one undo restores the document exactly")
+		eq_int(count_hits(&st3), hits, "and every occurrence is back")
+
+		do_redo(&st3)
+		relayout(&st3)
+		eq_int(count_hits(&st3), 0, "redo re-applies the whole sweep")
+		do_undo(&st3)
+		relayout(&st3)
+
+		// With the modes on, replace-all touches only what the modes name.
+		st3.find_case, st3.find_word = true, true
+		exact := count_hits(&st3)
+		eq_int(exact, 12, "exact, whole-word: one per line")
+		depth2 := len(st3.hist.undo)
+		replace_all(&st3)
+		relayout(&st3)
+		eq_int(len(st3.hist.undo) - depth2, 1, "still one undo step")
+		ok(
+			strings.contains(text_of(&st3.doc), "colourful"),
+			"a word the modes excluded is untouched",
+		)
+		ok(strings.contains(text_of(&st3.doc), "Colour"), "and so is the one with the wrong case")
+		do_undo(&st3)
+		relayout(&st3)
+		eq_str(text_of(&st3.doc), before, "and undo restores that one too")
+	}
+
+	// --- replace-one is also a single step, and the caret survives
+	{
+		st4 := State{}
+		state_init(&st4, fonts)
+		defer state_destroy(&st4)
+		st4.view = {0, 0, 1200, 700}
+		doc_destroy(&st4.doc)
+		st4.doc = Doc {
+			paras = make([dynamic]Paragraph, 0, 2),
+		}
+		append(&st4.doc.paras, para_make(.Body, "alpha beta alpha gamma"))
+		relayout(&st4)
+		before := text_of(&st4.doc)
+		clear(&st4.find)
+		append(&st4.find, ..transmute([]u8)string("alpha"))
+		clear(&st4.repl)
+		append(&st4.repl, ..transmute([]u8)string("OMEGA"))
+		st4.caret = pos(0, 0)
+		st4.anchor = st4.caret
+		depth := len(st4.hist.undo)
+		replace_one(&st4)
+		relayout(&st4)
+		eq_str(text_of(&st4.doc), "OMEGA beta alpha gamma", "replace-one rewrote the first match only")
+		eq_int(len(st4.hist.undo) - depth, 1, "in one undo step")
+		do_undo(&st4)
+		relayout(&st4)
+		eq_str(text_of(&st4.doc), before, "which undo takes back")
+	}
+}
+
+// ---------------------------------------------------------------------------
+// 11a. Tables: the model, the grid arithmetic, and the pagination rule
+// ---------------------------------------------------------------------------
+
+// st_doc_is_table answers whether a top-level paragraph index is a table,
+// which is how a line is attributed without hard-coding the fixture's shape.
+@(private = "file")
+st_doc_is_table :: proc(d: ^Doc, pi: int) -> bool {
+	return pi >= 0 && pi < len(d.paras) && d.paras[pi].kind == .Table
+}
+
+// insert_text_para is a self-test helper: put text into a bare paragraph.
+@(private = "file")
+set_para_text :: proc(pa: ^Paragraph, text: string) {
+	for &r in pa.runs {
+		delete(r.text)
+	}
+	clear(&pa.runs)
+	append(&pa.runs, run_make({}, text))
+	normalise(pa)
+}
+
+test_tables :: proc(fonts: ^p.Fonts) {
+	section("tables: model, widths, and pagination")
+
+	// --- the model
+	{
+		t := table_make(3, 4)
+		defer table_destroy(&t)
+		eq_int(len(t.rows), 3, "a 3x4 table has three rows")
+		eq_int(table_cols(&t), 4, "and four columns")
+		eq_int(len(t.rows[0].cells), 4, "every row has four cells")
+		eq_int(len(t.rows[0].cells[0].paras), 1, "a fresh cell holds one paragraph")
+		ok(t.header, "the first row is a header by default")
+		ok(t.borders, "and the cells have borders")
+
+		total := f32(0)
+		for c in 0 ..< table_cols(&t) {
+			total += table_width(&t, c)
+		}
+		ok(abs(total - CONTENT_W) < 0.01, "the columns sum to the content measure (%.2f)", total)
+		ok(abs(table_col_x(&t, 0)) < 0.01, "column 0 starts at the left edge")
+		ok(
+			abs(table_col_x(&t, 2) - (table_width(&t, 0) + table_width(&t, 1))) < 0.01,
+			"column 2 starts after columns 0 and 1",
+		)
+
+		// --- rows
+		table_insert_row(&t, 1)
+		eq_int(len(t.rows), 4, "a row inserted in the middle")
+		eq_int(len(t.rows[1].cells), 4, "with a cell per column")
+		ok(table_delete_row(&t, 1), "and deleted again")
+		eq_int(len(t.rows), 3, "back to three rows")
+		for len(t.rows) > 1 {
+			table_delete_row(&t, 0)
+		}
+		ok(!table_delete_row(&t, 0), "a table never loses its last row")
+
+		// --- columns
+		table_insert_row(&t, 1)
+		at := table_insert_col(&t, 2)
+		eq_int(at, 2, "a column inserted at 2")
+		eq_int(table_cols(&t), 5, "five columns now")
+		short := 0
+		for &row in t.rows {
+			if len(row.cells) != 5 {
+				short += 1
+			}
+		}
+		eq_int(short, 0, "every row grew a cell")
+		eq_int(len(t.widths), 5, "and there is a width per column")
+		total2 := f32(0)
+		for c in 0 ..< table_cols(&t) {
+			total2 += table_width(&t, c)
+		}
+		ok(abs(total2 - CONTENT_W) < 0.01, "the widths still sum to the measure (%.2f)", total2)
+		ok(table_delete_col(&t, 2), "the column is removed")
+		eq_int(table_cols(&t), 4, "four columns again")
+		for table_cols(&t) > 1 {
+			table_delete_col(&t, 0)
+		}
+		ok(!table_delete_col(&t, 0), "a table never loses its last column")
+	}
+
+	// --- column widths move as a pair, never off the measure
+	{
+		t := table_make(2, 3)
+		defer table_destroy(&t)
+		before := table_width(&t, 0)
+		table_set_width(&t, 0, before + 60)
+		ok(table_width(&t, 0) > before, "a column widens")
+		total := f32(0)
+		for c in 0 ..< 3 {
+			total += table_width(&t, c)
+		}
+		ok(abs(total - CONTENT_W) < 0.01, "and the table is still exactly the measure wide")
+		table_set_width(&t, 0, 1) // far below the minimum
+		ok(table_width(&t, 0) >= TABLE_MIN_COL - 0.01, "a column never goes below the minimum")
+	}
+
+	// --- cell navigation
+	{
+		t := table_make(2, 3)
+		defer table_destroy(&t)
+		r, c, moved := table_step_cell(&t, 0, 0, 1)
+		ok(moved && r == 0 && c == 1, "Tab from (0,0) goes to (0,1)")
+		r, c, moved = table_step_cell(&t, 0, 2, 1)
+		ok(moved && r == 1 && c == 0, "Tab wraps to the next row")
+		_, _, moved = table_step_cell(&t, 1, 2, 1)
+		ok(!moved, "Tab past the last cell runs out, which is the signal to grow")
+		_, _, moved = table_step_cell(&t, 0, 0, -1)
+		ok(!moved, "Shift+Tab out of the first cell leaves the table")
+		r, c, moved = table_step_cell(&t, 1, 0, -1)
+		ok(moved && r == 0 && c == 2, "Shift+Tab crosses back up a row")
+	}
+
+	// --- blocks, which is how everything above the model reaches a cell
+	{
+		d: Doc
+		doc_init(&d)
+		defer doc_destroy(&d)
+		append(&d.paras, table_para_make(2, 2))
+		append(&d.paras, para_make(.Body, "after"))
+
+		bs := doc_blocks(&d, context.temp_allocator)
+		// One for the empty first paragraph, four cells, one for "after".
+		eq_int(len(bs), 6, "a 2x2 table contributes four blocks")
+		eq_int(bs[1].row, 0, "the first cell block is row 0")
+		eq_int(bs[1].col, 0, "column 0")
+		eq_int(bs[4].row, 1, "and the fourth is row 1")
+		eq_int(bs[4].col, 1, "column 1")
+		ok(pos_less(blk_pos(bs[1], 0), blk_pos(bs[4], 0)), "cells are in reading order")
+
+		// Writing into a cell through the ordinary insert path.
+		q := blk_pos(bs[2], 0)
+		insert_text(&d, q, "hello", {})
+		eq_str(
+			string(d.paras[1].table.rows[0].cells[1].paras[0].runs[0].text[:]),
+			"hello",
+			"insert_text reaches the cell the position names",
+		)
+		eq_int(pos_para_len(&d, q), 5, "and the cell's paragraph is five bytes long")
+		eq_int(para_len(&d.paras[0]), 0, "the paragraph before the table is still empty")
+		eq_str(para_text(&d.paras[2], context.temp_allocator), "after", "and the one after it is intact")
+	}
+
+	// --- layout: a table on one page
+	{
+		d: Doc
+		doc_init(&d)
+		defer doc_destroy(&d)
+		tp := table_para_make(3, 3)
+		for r in 0 ..< 3 {
+			for c in 0 ..< 3 {
+				set_para_text(&table_cell(tp.table, r, c).paras[0], fmt.tprintf("r%dc%d", r, c))
+			}
+		}
+		append(&d.paras, tp)
+		append(&d.paras, para_make(.Body, "below"))
+
+		lay: Layout
+		defer layout_destroy(&lay)
+		layout_doc(&lay, &d, fonts)
+
+		eq_int(len(lay.cells), 9, "nine cell boxes for a 3x3 table")
+		eq_int(lay.pages, 1, "it fits on one page")
+
+		bad := 0
+		for cb in lay.cells {
+			if cb.x < -0.01 || cb.x + cb.w > CONTENT_W + 0.01 || cb.y < -0.01 || cb.y + cb.h > CONTENT_H + 0.01 {
+				bad += 1
+			}
+		}
+		eq_int(bad, 0, "every cell box sits inside the text area")
+
+		// The three boxes of row 0 abut exactly.
+		row0 := make([dynamic]Cell_Box, 0, 3, context.temp_allocator)
+		for cb in lay.cells {
+			if cb.row == 0 {
+				append(&row0, cb)
+			}
+		}
+		eq_int(len(row0), 3, "three boxes in row 0")
+		ok(abs(row0[0].x + row0[0].w - row0[1].x) < 0.01, "column 0 ends where column 1 begins")
+		ok(abs(row0[1].x + row0[1].w - row0[2].x) < 0.01, "column 1 ends where column 2 begins")
+		ok(abs(row0[2].x + row0[2].w - CONTENT_W) < 0.01, "the last column reaches the right margin")
+		ok(row0[0].header, "row 0 is the header")
+
+		// Every cell's lines land inside its own box — the assertion that
+		// catches text drawn outside the rules.
+		outside := 0
+		for l in lay.lines {
+			if l.para != 1 {
+				continue
+			}
+			for cb in lay.cells {
+				if cb.row != l.row || cb.col != l.col || cb.repeat {
+					continue
+				}
+				if l.x < cb.x - 0.01 || l.x + l.w > cb.x + cb.w + 0.01 {
+					outside += 1
+				}
+				if l.y < cb.y - 0.01 || l.y + l.h > cb.y + cb.h + 0.01 {
+					outside += 1
+				}
+			}
+		}
+		eq_int(outside, 0, "every line of every cell is inside its cell's box")
+
+		cells_with_text := 0
+		first_line := -1
+		for l, i in lay.lines {
+			if l.para == 1 && !l.repeat && l.fc > 0 && l.end > l.start {
+				cells_with_text += 1
+				if first_line < 0 {
+					first_line = i
+				}
+			}
+		}
+		eq_int(cells_with_text, 9, "every cell contributed a line of text")
+		if first_line >= 0 {
+			eq_str(line_text(&lay, first_line), "r0c0", "the first cell's line reads back")
+		}
+
+		// The paragraph after the table starts below every row.
+		last_bottom := f32(0)
+		for cb in lay.cells {
+			last_bottom = max(last_bottom, cb.y + cb.h)
+		}
+		after := -1
+		for l, i in lay.lines {
+			if l.para == 2 {
+				after = i
+				break
+			}
+		}
+		ok(after >= 0, "the paragraph after the table was laid out")
+		if after >= 0 {
+			ok(lay.lines[after].y >= last_bottom, "and it starts below the last row")
+		}
+	}
+
+	// --- pagination: a row is atomic, the table breaks between rows, and the
+	//     header is repeated. This is the rule, asserted.
+	{
+		d: Doc
+		doc_init(&d)
+		defer doc_destroy(&d)
+		FILL :: "a note long enough to wrap inside its own column and make the row taller than one line of type"
+		tp := table_para_make(40, 3)
+		for r in 0 ..< 40 {
+			for c in 0 ..< 3 {
+				set_para_text(
+					&table_cell(tp.table, r, c).paras[0],
+					r == 0 ? fmt.tprintf("Heading %d", c) : FILL,
+				)
+			}
+		}
+		append(&d.paras, tp)
+
+		lay: Layout
+		defer layout_destroy(&lay)
+		layout_doc(&lay, &d, fonts)
+
+		ok(lay.pages > 1, "a 40-row table needs more than one page (%d)", lay.pages)
+
+		// No row is split: every box of a row — leaving the repeated headers
+		// out, which are extra copies by design — lands on one page at one y.
+		split := 0
+		for a in lay.cells {
+			for b in lay.cells {
+				if a.repeat || b.repeat || a.row != b.row {
+					continue
+				}
+				if a.page != b.page || abs(a.y - b.y) > 0.01 || abs(a.h - b.h) > 0.01 {
+					split += 1
+				}
+			}
+		}
+		eq_int(split, 0, "no row is split across a page boundary")
+
+		// Every page the table reaches carries the header row.
+		heads := make(map[int]int, 8, context.temp_allocator)
+		pages_seen := make(map[int]bool, 8, context.temp_allocator)
+		repeats := 0
+		for cb in lay.cells {
+			pages_seen[cb.page] = true
+			if cb.header {
+				heads[cb.page] = (heads[cb.page] or_else 0) + 1
+			}
+			if cb.repeat {
+				repeats += 1
+			}
+		}
+		missing := 0
+		for pg in pages_seen {
+			if (heads[pg] or_else 0) != 3 {
+				missing += 1
+			}
+		}
+		eq_int(missing, 0, "every page of the table carries all three header cells")
+		eq_int(repeats, 3 * (len(pages_seen) - 1), "the header is repeated once per continuation page")
+
+		repeat_lines := 0
+		for l in lay.lines {
+			if l.repeat {
+				repeat_lines += 1
+			}
+		}
+		ok(repeat_lines > 0, "the repeated header rows are drawn (%d lines)", repeat_lines)
+		li := line_of(&lay, Pos{para = 1, row = 0, col = 0})
+		ok(li >= 0, "the header's own line is found")
+		if li >= 0 {
+			ok(!lay.lines[li].repeat, "the caret in the header lands on the real row, not a repeat")
+		}
+
+		not_top := 0
+		for cb in lay.cells {
+			if cb.repeat && cb.y > 0.01 {
+				not_top += 1
+			}
+		}
+		eq_int(not_top, 0, "a repeated header is flush with the top of its page")
+
+		// Rows never overlap on a page.
+		overlap := 0
+		for a in lay.cells {
+			for b in lay.cells {
+				if a.page != b.page || a.col != b.col || a.row == b.row || a.repeat || b.repeat {
+					continue
+				}
+				if a.y < b.y + b.h - 0.01 && b.y < a.y + a.h - 0.01 {
+					overlap += 1
+				}
+			}
+		}
+		eq_int(overlap, 0, "no two rows of a column overlap on a page")
+
+		// Nothing runs off the bottom of a page.
+		over := 0
+		for cb in lay.cells {
+			if cb.y + cb.h > CONTENT_H + 0.01 {
+				over += 1
+			}
+		}
+		eq_int(over, 0, "no row runs past the bottom margin")
+	}
+
+	// --- the one case the "rows are atomic" rule cannot serve: a single row
+	//     taller than a whole page. It is given a page of its own, starting at
+	//     the top so it gets every pixel there is, and what will not fit runs
+	//     past the bottom margin. That is stated rather than hidden, and it is
+	//     the same promise the exports make — the .docx writes <w:cantSplit/>
+	//     and the .rtf writes \trkeep, so a reader keeps the row whole too.
+	{
+		d: Doc
+		doc_init(&d)
+		defer doc_destroy(&d)
+		append(&d.paras, para_make(.Body, "before"))
+		tp := table_para_make(2, 2)
+		b := strings.builder_make(context.temp_allocator)
+		for i in 0 ..< 1200 {
+			if i > 0 {
+				strings.write_byte(&b, ' ')
+			}
+			fmt.sbprintf(&b, "word%d", i)
+		}
+		set_para_text(&table_cell(tp.table, 1, 0).paras[0], strings.to_string(b))
+		append(&d.paras, tp)
+
+		lay: Layout
+		defer layout_destroy(&lay)
+		layout_doc(&lay, &d, fonts)
+
+		tall := Cell_Box{}
+		for cb in lay.cells {
+			if cb.row == 1 && cb.col == 0 && !cb.repeat {
+				tall = cb
+			}
+		}
+		ok(tall.h > CONTENT_H, "the row is %.0f px tall, more than a page", tall.h)
+		ok(tall.page > 0, "so it is given a page of its own (page %d)", tall.page + 1)
+
+		// Nothing is above it on that page but the repeated header, so it has
+		// every pixel the rule can give it.
+		above := f32(0)
+		others := 0
+		for cb in lay.cells {
+			if cb.page != tall.page || (cb.row == 1 && !cb.repeat) {
+				continue
+			}
+			if cb.repeat {
+				above = max(above, cb.y + cb.h)
+			} else {
+				others += 1
+			}
+		}
+		eq_int(others, 0, "with no other row on it")
+		ok(above > 0, "below a repeated header %.0f px tall", above)
+		ok(abs(tall.y - above) < 0.01, "and starting immediately under it")
+
+		sib := 0
+		for cb in lay.cells {
+			if cb.page == tall.page && cb.row == 1 && !cb.repeat && abs(cb.y - tall.y) < 0.01 {
+				sib += 1
+			}
+		}
+		eq_int(sib, 2, "both of its cells at the same height")
+
+		// Nothing crashes and every wrapped line of the cell is still placed.
+		n := 0
+		for l in lay.lines {
+			if l.row == 1 && l.col == 0 && st_doc_is_table(&d, l.para) {
+				n += 1
+			}
+		}
+		ok(n > 40, "and all %d of its wrapped lines are placed", n)
+	}
+
+	// --- a cell's text wraps to its own column, not to the page
+	{
+		LONG :: "This sentence is far longer than one narrow column can hold on a single line."
+		d: Doc
+		doc_init(&d)
+		defer doc_destroy(&d)
+		tp := table_para_make(1, 4)
+		tp.table.header = false
+		set_para_text(&table_cell(tp.table, 0, 0).paras[0], LONG)
+		append(&d.paras, tp)
+
+		lay: Layout
+		defer layout_destroy(&lay)
+		layout_doc(&lay, &d, fonts)
+
+		n := 0
+		widest := f32(0)
+		for l in lay.lines {
+			if l.para == 1 && l.col == 0 && l.row == 0 {
+				n += 1
+				widest = max(widest, l.w)
+			}
+		}
+		ok(n > 1, "the sentence wrapped to %d lines inside its column", n)
+		col_w := table_width(tp.table, 0) - 2 * CELL_PAD
+		ok(widest <= col_w + 0.5, "no line is wider than the column (%.1f <= %.1f)", widest, col_w)
+
+		// The same text at full measure is fewer lines, which proves the
+		// measure really is the column's and not the page's.
+		d2: Doc
+		doc_init(&d2)
+		defer doc_destroy(&d2)
+		set_para_text(&d2.paras[0], LONG)
+		lay2: Layout
+		defer layout_destroy(&lay2)
+		layout_doc(&lay2, &d2, fonts)
+		ok(len(lay2.lines) < n, "the same text is %d lines at full measure", len(lay2.lines))
+	}
+}
+
+// ---------------------------------------------------------------------------
+// 11b. Images
+// ---------------------------------------------------------------------------
+
+// test_png builds a tiny PNG by hand. The pixel data goes in as *stored*
+// deflate blocks inside a zlib wrapper, which is legal and needs no
+// compressor — Odin's core has an inflate and no deflate, so this is the only
+// way the self-test can make a picture without shipping one.
+@(private = "file")
+test_png :: proc(w, h: int, alloc := context.temp_allocator) -> []u8 {
+	be32 :: proc(b: ^[dynamic]u8, v: u32) {
+		append(b, u8(v >> 24), u8(v >> 16), u8(v >> 8), u8(v))
+	}
+	chunk :: proc(b: ^[dynamic]u8, tag: string, data: []u8) {
+		be32(b, u32(len(data)))
+		start := len(b^)
+		append(b, ..transmute([]u8)tag)
+		append(b, ..data)
+		be32(b, crc32_bytes(b[start:]))
+	}
+	out := make([dynamic]u8, 0, 1024, alloc)
+	append(&out, 0x89, 'P', 'N', 'G', 0x0d, 0x0a, 0x1a, 0x0a)
+
+	ihdr := make([dynamic]u8, 0, 13, context.temp_allocator)
+	be32(&ihdr, u32(w))
+	be32(&ihdr, u32(h))
+	append(&ihdr, 8, 2, 0, 0, 0) // 8-bit, truecolour
+	chunk(&out, "IHDR", ihdr[:])
+
+	raw := make([dynamic]u8, 0, h * (1 + w * 3), context.temp_allocator)
+	for y in 0 ..< h {
+		append(&raw, 0) // filter: none
+		for x in 0 ..< w {
+			append(&raw, u8(x * 255 / max(1, w - 1)), u8(y * 255 / max(1, h - 1)), 0x40)
+		}
+	}
+	z := make([dynamic]u8, 0, len(raw) + 64, context.temp_allocator)
+	append(&z, 0x78, 0x01)
+	at := 0
+	for {
+		n := min(65535, len(raw) - at)
+		last := at + n >= len(raw) ? u8(1) : u8(0)
+		append(&z, last, u8(n), u8(n >> 8), u8(~u16(n)), u8(~u16(n) >> 8))
+		append(&z, ..raw[at:at + n])
+		at += n
+		if at >= len(raw) {
+			break
+		}
+	}
+	a, b := u32(1), u32(0)
+	for v in raw {
+		a = (a + u32(v)) % 65521
+		b = (b + a) % 65521
+	}
+	be32(&z, b << 16 | a)
+	chunk(&out, "IDAT", z[:])
+	chunk(&out, "IEND", nil)
+	return out[:]
+}
+
+test_images :: proc(fonts: ^p.Fonts) {
+	section("images: decoding, sizing, and pagination")
+
+	data := test_png(64, 40)
+	ok(image_sniff(data) == .PNG, "the PNG magic is recognised")
+	ok(image_sniff({0xff, 0xd8, 0xff, 0xe0}) == .JPEG, "and the JPEG magic")
+	ok(image_sniff({1, 2, 3, 4}) == .Unknown, "and anything else is unknown")
+	eq_str(image_mime(.PNG), "image/png", "the PNG media type")
+	eq_str(image_mime(.JPEG), "image/jpeg", "the JPEG media type")
+
+	im, got := image_from_bytes(data, "/tmp/test.png", "a test picture")
+	ok(got, "the hand-built PNG decodes")
+	if !got {
+		return
+	}
+	defer image_destroy(&im)
+	eq_int(im.w, 64, "its width")
+	eq_int(im.h, 40, "its height")
+	eq_int(len(im.px), 64 * 40, "every pixel decoded")
+	eq_int(len(im.bytes), len(data), "the original bytes are kept for export")
+	ok(im.scale == 1, "it starts at its intrinsic scale")
+	eq_str(im.alt, "a test picture", "and keeps its alternative text")
+
+	w, h := image_draw_size(&im)
+	ok(w == 64 && h == 40, "at scale 1 it draws at its pixel size (%.0fx%.0f)", w, h)
+	image_set_scale(&im, 2)
+	w, h = image_draw_size(&im)
+	ok(w == 128 && h == 80, "at scale 2 it doubles (%.0fx%.0f)", w, h)
+
+	// The two caps: never wider than the measure, never taller than a page.
+	image_set_scale(&im, 40)
+	w, h = image_draw_size(&im)
+	ok(w <= CONTENT_W + 0.01, "a picture is never wider than the measure (%.1f)", w)
+	ok(h <= CONTENT_H + 0.01, "nor taller than a page (%.1f)", h)
+	ok(abs(w / h - 64.0 / 40.0) < 0.01, "and the aspect ratio survives both caps")
+	image_set_scale(&im, 1)
+
+	{
+		c := image_clone(&im)
+		defer image_destroy(&c)
+		eq_int(c.w, im.w, "a clone keeps the size")
+		eq_int(len(c.bytes), len(im.bytes), "and the bytes")
+		ok(raw_data(c.bytes) != raw_data(im.bytes), "but owns its own copy")
+	}
+
+	// --- layout
+	{
+		d: Doc
+		doc_init(&d)
+		defer doc_destroy(&d)
+		cp, _ := image_from_bytes(data, "/tmp/test.png", "pic")
+		append(&d.paras, image_para_make(cp, .Center))
+		append(&d.paras, para_make(.Body, "after the picture"))
+
+		lay: Layout
+		defer layout_destroy(&lay)
+		layout_doc(&lay, &d, fonts)
+
+		li := -1
+		for l, i in lay.lines {
+			if l.para == 1 {
+				li = i
+				break
+			}
+		}
+		ok(li >= 0, "the image paragraph was laid out")
+		if li >= 0 {
+			l := lay.lines[li]
+			ok(abs(l.h - 40) < 0.01, "its line box is as tall as the picture (%.1f)", l.h)
+			ok(abs(l.w - 64) < 0.01, "and as wide (%.1f)", l.w)
+			ok(abs(l.x - (CONTENT_W - 64) / 2) < 0.01, "centred, because the paragraph is centred")
+		}
+
+		d.paras[1].align = .Left
+		layout_doc(&lay, &d, fonts)
+		for l in lay.lines {
+			if l.para == 1 {
+				ok(abs(l.x) < 0.01, "left-aligned it sits on the left margin")
+			}
+		}
+		d.paras[1].align = .Right
+		layout_doc(&lay, &d, fonts)
+		for l in lay.lines {
+			if l.para == 1 {
+				ok(abs(l.x - (CONTENT_W - 64)) < 0.01, "right-aligned it sits against the right margin")
+			}
+		}
+	}
+
+	// --- a picture taller than the space left moves to the next page
+	//
+	// The picture is sized from the space the filler actually leaves, so the
+	// test asserts the rule rather than a number that a change in the body
+	// metrics would quietly turn into a tautology.
+	{
+		d: Doc
+		doc_init(&d)
+		defer doc_destroy(&d)
+		lay: Layout
+		defer layout_destroy(&lay)
+
+		// Fill the last page until less than half of it is left, so there is
+		// room for a picture that is tall but not page-tall. Counting
+		// paragraphs instead would bake the body metrics into the test.
+		free_h := CONTENT_H
+		filler_page := 0
+		for i := 0; i < 400; i += 1 {
+			append(&d.paras, para_make(.Body, fmt.tprintf("Filler paragraph number %d.", i + 1)))
+			layout_doc(&lay, &d, fonts)
+			last := lay.lines[len(lay.lines) - 1]
+			filler_page = last.page
+			free_h = CONTENT_H - (last.y + last.h)
+			if free_h <= CONTENT_H / 2 {
+				break
+			}
+		}
+		ok(
+			free_h > 60 && free_h <= CONTENT_H / 2,
+			"the filler leaves %.0f px at the foot of page %d",
+			free_h,
+			filler_page + 1,
+		)
+
+		// A *portrait* picture, because a landscape one hits the width cap
+		// before it can get tall enough to overflow the foot of a page.
+		tall := test_png(40, 200)
+		cp, _ := image_from_bytes(tall, "/tmp/tall.png", "pic")
+		ip := image_para_make(cp, .Center)
+		// Taller than what is left, but comfortably shorter than a page, so
+		// the only correct answer is "move it down".
+		want_h := min(free_h + 120, CONTENT_H - 60)
+		ip.img.scale = want_h / 200
+		append(&d.paras, ip)
+		layout_doc(&lay, &d, fonts)
+
+		ipi := len(d.paras) - 1
+		img_line := -1
+		for l, i in lay.lines {
+			if l.para == ipi {
+				img_line = i
+			}
+		}
+		ok(img_line >= 0, "the tall picture was laid out")
+		if img_line >= 0 {
+			l := lay.lines[img_line]
+			ok(l.h > free_h, "the picture (%.0f px) is taller than the space left", l.h)
+			eq_int(l.page, filler_page + 1, "so it moved to the next page")
+			ok(abs(l.y) < 0.01, "and it starts at the top of that page")
+			ok(l.y + l.h <= CONTENT_H + 0.01, "and fits on it")
+		}
+	}
+}
+
+// ---------------------------------------------------------------------------
+// 11c. Editing inside a cell
+// ---------------------------------------------------------------------------
+
+test_cells :: proc(fonts: ^p.Fonts) {
+	section("cells: the caret, typing, styling and undo inside a table")
+
+	st := State{}
+	state_init(&st, fonts)
+	defer state_destroy(&st)
+	st.view = {0, 0, 1280, 760}
+
+	insert_table(&st, 2, 3)
+	relayout(&st)
+	ok(in_table(&st), "the caret is in the table it just inserted")
+	eq_int(st.caret.para, 1, "which never ends up first, so there is a line above it")
+	eq_int(st.caret.row, 0, "at row 0")
+	eq_int(st.caret.col, 0, "column 0")
+	ok(table_at(&st) != nil, "and table_at finds it")
+	eq_int(len(st.doc.paras), 3, "a paragraph either side of it, so the caret can always leave")
+
+	// --- typing lands in the cell
+	type_text(&st, "Name")
+	relayout(&st)
+	eq_str(
+		para_text(pos_para(&st.doc, st.caret), context.temp_allocator),
+		"Name",
+		"typing goes into the cell",
+	)
+	eq_int(para_len(&st.doc.paras[1]), 0, "and not into the table paragraph itself")
+
+	// --- Tab walks the grid
+	ok(table_move_cell(&st, 1), "Tab moves to the next cell")
+	eq_int(st.caret.col, 1, "which is column 1")
+	type_text(&st, "Role")
+	ok(table_move_cell(&st, 1), "Tab again")
+	type_text(&st, "Since")
+	ok(table_move_cell(&st, 1), "Tab wraps to the next row")
+	eq_int(st.caret.row, 1, "row 1")
+	eq_int(st.caret.col, 0, "column 0")
+	type_text(&st, "Ada")
+	relayout(&st)
+
+	eq_str(cell_text(table_cell(table_at(&st), 0, 0), context.temp_allocator), "Name", "cell (0,0)")
+	eq_str(cell_text(table_cell(table_at(&st), 0, 1), context.temp_allocator), "Role", "cell (0,1)")
+	eq_str(cell_text(table_cell(table_at(&st), 0, 2), context.temp_allocator), "Since", "cell (0,2)")
+	eq_str(cell_text(table_cell(table_at(&st), 1, 0), context.temp_allocator), "Ada", "cell (1,0)")
+
+	ok(table_move_cell(&st, -1), "Shift+Tab steps back")
+	eq_int(st.caret.row, 0, "to row 0")
+	eq_int(st.caret.col, 2, "column 2")
+
+	// --- Tab at the last cell grows the table
+	st.caret = Pos {
+		para = 1,
+		row  = 1,
+		col  = 2,
+	}
+	st.anchor = st.caret
+	before := len(table_at(&st).rows)
+	ok(table_move_cell(&st, 1), "Tab at the last cell is handled")
+	eq_int(len(table_at(&st).rows), before + 1, "and grows the table by a row")
+	eq_int(st.caret.row, before, "with the caret in the new row")
+
+	// --- styling reaches a cell through the ordinary command
+	st.caret = Pos {
+		para = 1,
+	}
+	st.anchor = st.caret
+	select_word(&st)
+	ok(has_selection(&st), "a word is selected inside the cell")
+	eq_str(selection_text(&st, context.temp_allocator), "Name", "and it is the cell's word")
+	toggle_bold(&st)
+	ok(range_all_bold(&st.doc, st.anchor, st.caret), "bold applied inside the cell")
+	ok(style_at(&st.doc, Pos{para = 1, off = 1}).bold, "and the run really carries it")
+
+	// --- undo takes it back, in one step
+	do_undo(&st)
+	relayout(&st)
+	ok(!style_at(&st.doc, Pos{para = 1, off = 1}).bold, "undo removes the bold from the cell")
+	eq_str(
+		cell_text(table_cell(table_at(&st), 0, 0), context.temp_allocator),
+		"Name",
+		"and the text survives",
+	)
+
+	// --- backspace inside a cell deletes a character, never the table
+	st.caret = Pos {
+		para = 1,
+		off  = 4,
+	}
+	st.anchor = st.caret
+	backspace(&st)
+	relayout(&st)
+	eq_str(
+		cell_text(table_cell(table_at(&st), 0, 0), context.temp_allocator),
+		"Nam",
+		"backspace deletes one character",
+	)
+	eq_int(len(st.doc.paras), 3, "and the document still has its three paragraphs")
+
+	st.caret = Pos {
+		para = 1,
+	}
+	st.anchor = st.caret
+	backspace(&st)
+	eq_str(
+		cell_text(table_cell(table_at(&st), 0, 0), context.temp_allocator),
+		"Nam",
+		"and at the head of the cell it is a no-op",
+	)
+	eq_int(len(table_at(&st).rows), before + 1, "the table is intact")
+
+	// --- Return inside a cell adds a paragraph to the cell, not to the body
+	st.caret = Pos {
+		para = 1,
+		off  = 3,
+	}
+	st.anchor = st.caret
+	split_line(&st)
+	relayout(&st)
+	eq_int(len(table_cell(table_at(&st), 0, 0).paras), 2, "Return splits inside the cell")
+	eq_int(len(st.doc.paras), 3, "and the document is unchanged")
+	eq_int(st.caret.cpara, 1, "with the caret in the cell's second paragraph")
+
+	// --- row and column commands
+	rows_before := len(table_at(&st).rows)
+	table_row_cmd(&st, true)
+	eq_int(len(table_at(&st).rows), rows_before + 1, "a row is added below")
+	table_delete_row_cmd(&st)
+	eq_int(len(table_at(&st).rows), rows_before, "and deleted again")
+	cols_before := table_cols(table_at(&st))
+	table_col_cmd(&st, true)
+	eq_int(table_cols(table_at(&st)), cols_before + 1, "a column is added")
+	table_delete_col_cmd(&st)
+	eq_int(table_cols(table_at(&st)), cols_before, "and deleted again")
+	table_toggle_header(&st)
+	ok(!table_at(&st).header, "the header row can be turned off")
+	table_toggle_header(&st)
+	ok(table_at(&st).header, "and back on")
+
+	// --- the caret can leave the table and come back
+	st.caret = Pos {
+		para = 1,
+	}
+	st.anchor = st.caret
+	relayout(&st)
+	move_h(&st, -1, false)
+	ok(!in_cell(&st.doc, st.caret), "Left out of the first cell leaves the table")
+	move_h(&st, 1, false)
+	ok(in_cell(&st.doc, st.caret), "and Right comes back into it")
+
+	// --- Down from the last row reaches the paragraph after the table
+	st.caret = Pos {
+		para = 1,
+		row  = len(table_at(&st).rows) - 1,
+	}
+	st.anchor = st.caret
+	relayout(&st)
+	for _ in 0 ..< 8 {
+		move_v(&st, 1, false)
+	}
+	eq_int(st.caret.para, 2, "Down eventually leaves the table")
+
+	// --- select-all covers the cells
+	select_all(&st)
+	txt := selection_text(&st, context.temp_allocator)
+	ok(strings.contains(txt, "Nam"), "select-all's text includes a cell")
+	ok(strings.contains(txt, "Ada"), "and another one")
+
+	// --- deleting the table leaves the document usable, and undo restores it
+	st.caret = Pos {
+		para = 1,
+	}
+	st.anchor = st.caret
+	delete_block(&st)
+	relayout(&st)
+	ok(table_at(&st) == nil, "the table is gone")
+	ok(len(st.doc.paras) >= 1, "and the document still has a paragraph")
+	do_undo(&st)
+	relayout(&st)
+	ok(table_at(&st) != nil, "undo brings the whole table back")
+	if table_at(&st) != nil {
+		eq_str(
+			cell_text(table_cell(table_at(&st), 1, 0), context.temp_allocator),
+			"Ada",
+			"with its contents",
+		)
+	}
 }
 
 // ---------------------------------------------------------------------------
@@ -1083,7 +2413,7 @@ SELFTEST_DIR :: "/tmp/palmy-docs-selftest"
 // LibreOffice is pointed at a profile of its own. Letting it touch the user's
 // would be rude at best and destructive at worst.
 @(private = "file")
-LO_PROFILE :: "-env:UserInstallation=file:///tmp/palmy-lo-profile"
+LO_PROFILE :: "-env:UserInstallation=file:///tmp/palmy-lo-docs2"
 
 @(private = "file")
 have_tool :: proc(name: string) -> bool {
@@ -1166,10 +2496,33 @@ subseq_miss :: proc(src, got: []string) -> int {
 @(private = "file")
 doc_words :: proc(d: ^Doc) -> []string {
 	b := strings.builder_make(context.temp_allocator)
-	for &pa in d.paras {
+	for blk in doc_blocks(d, context.temp_allocator) {
+		pa := blk_para(d, blk)
+		if pa == nil {
+			continue
+		}
 		for &r in pa.runs {
 			strings.write_bytes(&b, r.text[:])
 		}
+		strings.write_byte(&b, '\n')
+	}
+	return words_of(strings.to_string(b))
+}
+
+// layout_words is the words *as the page lays them out*, which is not the same
+// list as the document's words: a word too long for its measure is broken
+// between runes, so "unlockAndPost" in a narrow table column is two words on
+// paper. Any extractor working from a rendered page sees the broken pair, and
+// comparing it against the unbroken original would be comparing against
+// something that was never on the page.
+@(private = "file")
+layout_words :: proc(d: ^Doc, fonts: ^p.Fonts) -> []string {
+	lay: Layout
+	defer layout_destroy(&lay)
+	layout_doc(&lay, d, fonts)
+	b := strings.builder_make(context.temp_allocator)
+	for li in 0 ..< len(lay.lines) {
+		strings.write_string(&b, line_text(&lay, li))
 		strings.write_byte(&b, '\n')
 	}
 	return words_of(strings.to_string(b))
@@ -1198,6 +2551,45 @@ check_extracted :: proc(label: string, src: []string, text: string) {
 		miss < 0 ? "" : fmt.tprintf(", first missing %q at %d", src[miss], miss),
 	)
 	ok(len(got) >= len(src), "%s loses nothing (%d >= %d)", label, len(got), len(src))
+}
+
+// check_covers asserts that a tool's output contains every source word at
+// least as often as the source does, without caring about order.
+//
+// It is the right test for `pdftotext -layout`, which does not report a PDF's
+// reading order: it reconstructs the *visual* rows of a page, so a table whose
+// cells wrap comes out interleaved — "the surface to present | the input to
+// read" on one row and "into" on the next. That is a faithful picture of the
+// page and a useless sequence. Order is asserted against `-raw` instead, which
+// is the content stream itself.
+@(private = "file")
+check_covers :: proc(label: string, src: []string, text: string) {
+	got := words_of(text)
+	have := make(map[string]int, len(got) * 2, context.temp_allocator)
+	for w in got {
+		have[w] = (have[w] or_else 0) + 1
+	}
+	missing := 0
+	first := ""
+	for w in src {
+		n := have[w] or_else 0
+		if n <= 0 {
+			missing += 1
+			if first == "" {
+				first = w
+			}
+			continue
+		}
+		have[w] = n - 1
+	}
+	ok(
+		missing == 0,
+		"%s contains every word of the document (%d source, %d extracted%s)",
+		label,
+		len(src),
+		len(got),
+		missing == 0 ? "" : fmt.tprintf(", %d missing, first %q", missing, first),
+	)
 }
 
 // rich_fixture is a document that uses every feature the exporters have to
@@ -1291,6 +2683,37 @@ rich_fixture :: proc() -> Doc {
 Export_Case :: struct {
 	name: string,
 	doc:  Doc,
+	// What the document contains, so a format check can assert the exact
+	// structure rather than "something that looks like a table".
+	tables: int,
+	rows:   int, // across every table
+	cols:   int, // across every table, summed
+	cells:  int, // across every table
+	lists:  int,
+	images: int,
+}
+
+// case_shape counts what an exporter has to carry.
+@(private = "file")
+case_shape :: proc(c: ^Export_Case) {
+	c^ = Export_Case {
+		name = c.name,
+		doc  = c.doc,
+	}
+	for &pa in c.doc.paras {
+		if pa.kind == .Table && pa.table != nil {
+			c.tables += 1
+			c.rows += len(pa.table.rows)
+			c.cols += table_cols(pa.table)
+			c.cells += len(pa.table.rows) * table_cols(pa.table)
+		}
+		if pa.kind == .Image && pa.img != nil && len(pa.img.bytes) > 0 {
+			c.images += 1
+		}
+		if pa.list != .None {
+			c.lists += 1
+		}
+	}
 }
 
 @(private = "file")
@@ -1304,9 +2727,13 @@ test_export :: proc(fonts: ^p.Fonts) {
 		return
 	}
 
-	cases := make([dynamic]Export_Case, 0, 4, context.temp_allocator)
-	append(&cases, Export_Case{"fixture", rich_fixture()})
-	append(&cases, Export_Case{"seed", doc_from_markdown(SEED)})
+	cases := make([dynamic]Export_Case, 0, 5, context.temp_allocator)
+	append(&cases, Export_Case{name = "fixture", doc = rich_fixture()})
+	// The grid case is the one that exists for tables and pictures. It is
+	// first-class here: every structural check, every external tool and the
+	// LibreOffice round trip all see it.
+	append(&cases, Export_Case{name = "grid", doc = grid_fixture()})
+	append(&cases, Export_Case{name = "seed", doc = doc_from_markdown(SEED)})
 	// A document of real substance, not a three-line toy. Both of these live
 	// in the tree; whichever is readable from where the test was started is
 	// used, and a missing one is skipped rather than failed.
@@ -1326,13 +2753,29 @@ test_export :: proc(fonts: ^p.Fonts) {
 			continue
 		}
 		if nd, got := import_markdown(cand[1]); got {
-			append(&cases, Export_Case{cand[0], nd})
+			append(&cases, Export_Case{name = cand[0], doc = nd})
 		}
+	}
+	for &c in cases {
+		case_shape(&c)
 	}
 	defer for &c in cases {
 		doc_destroy(&c.doc)
 	}
-	ok(len(cases) >= 3, "%d documents under test", len(cases))
+	ok(len(cases) >= 4, "%d documents under test", len(cases))
+	{
+		with_tables, with_images := 0, 0
+		for &c in cases {
+			if c.tables > 0 {
+				with_tables += 1
+			}
+			if c.images > 0 {
+				with_images += 1
+			}
+		}
+		ok(with_tables >= 2, "%d of them carry tables", with_tables)
+		ok(with_images >= 1, "%d of them carry pictures", with_images)
+	}
 
 	office_paths := make([dynamic]string, 0, 16, context.temp_allocator)
 
@@ -1355,14 +2798,21 @@ test_export :: proc(fonts: ^p.Fonts) {
 		// re-flow, it is the pagination the window already computed.
 		pages := 0
 		lines := 0
+		markers := 0
 		{
 			lay: Layout
 			defer layout_destroy(&lay)
 			layout_doc(&lay, &c.doc, fonts)
 			pages, lines = lay.pages, len(lay.lines)
+			// A list marker opens a text object of its own, before the line's.
+			for l in lay.lines {
+				if l.marker >= 0 {
+					markers += 1
+				}
+			}
 		}
 		if raw, got := read_text(pdf_path); got {
-			check_pdf_structure(c.name, raw)
+			check_pdf_structure(c.name, raw, &c)
 			eq_int(
 				strings.count(raw, "/Type /Page /Parent"),
 				pages,
@@ -1373,7 +2823,14 @@ test_export :: proc(fonts: ^p.Fonts) {
 			// one opens none, so this bounds the content against the layout
 			// rather than merely checking that something was written.
 			bt := strings.count(raw, "\nBT\n")
-			ok(bt > 0 && bt <= lines + pages + 8, "%s: %d text objects for %d lines", c.name, bt, lines)
+			ok(
+				bt > 0 && bt <= lines + markers + pages + 8,
+				"%s: %d text objects for %d lines and %d list markers",
+				c.name,
+				bt,
+				lines,
+				markers,
+			)
 		} else {
 			ok(false, "%s: the PDF can be read back", c.name)
 		}
@@ -1384,7 +2841,7 @@ test_export :: proc(fonts: ^p.Fonts) {
 		docx_path := fmt.tprintf("%s-docx.docx", base)
 		ok(export_docx(&c.doc, docx_path, c.name), "%s: .docx written", c.name)
 		if raw, got := read_text(docx_path); got {
-			check_docx_structure(c.name, transmute([]u8)raw)
+			check_docx_structure(c.name, transmute([]u8)raw, &c)
 		}
 
 		// --- .odt
@@ -1393,7 +2850,7 @@ test_export :: proc(fonts: ^p.Fonts) {
 		odt_path := fmt.tprintf("%s-odt.odt", base)
 		ok(export_odt(&c.doc, odt_path, c.name), "%s: .odt written", c.name)
 		if raw, got := read_text(odt_path); got {
-			check_odt_structure(c.name, transmute([]u8)raw)
+			check_odt_structure(c.name, transmute([]u8)raw, &c)
 		}
 
 		// --- .rtf
@@ -1402,7 +2859,7 @@ test_export :: proc(fonts: ^p.Fonts) {
 		rtf_path := fmt.tprintf("%s-rtf.rtf", base)
 		ok(export_rtf(&c.doc, rtf_path, c.name), "%s: .rtf written", c.name)
 		if raw, got := read_text(rtf_path); got {
-			check_rtf_structure(c.name, raw)
+			check_rtf_structure(c.name, raw, &c)
 		}
 
 		append(&office_paths, docx_path, odt_path, rtf_path)
@@ -1425,6 +2882,60 @@ test_export :: proc(fonts: ^p.Fonts) {
 				}
 				eq_int(bad_kind, 0, "%s: .docx round-trips every paragraph kind", c.name)
 				eq_int(bad_list, 0, "%s: .docx round-trips every list kind", c.name)
+
+				// Tables and pictures, structurally, not just as text.
+				if c.tables > 0 {
+					t0, t1: ^Table
+					for i in 0 ..< len(nd.paras) {
+						if c.doc.paras[i].kind == .Table && t0 == nil {
+							t0 = c.doc.paras[i].table
+							t1 = nd.paras[i].table
+						}
+					}
+					ok(t1 != nil, "%s: the .docx reads its table back as a table", c.name)
+					if t0 != nil && t1 != nil {
+						eq_int(len(t1.rows), len(t0.rows), "%s: with the same row count", c.name)
+						eq_int(table_cols(t1), table_cols(t0), "%s: and column count", c.name)
+						ok(t1.header == t0.header, "%s: and the header flag", c.name)
+						wrong := 0
+						for col in 0 ..< table_cols(t0) {
+							// The width goes out in twips and comes back in
+							// pixels, so a pixel of rounding is expected.
+							if abs(table_width(t0, col) - table_width(t1, col)) > 1.2 {
+								wrong += 1
+							}
+						}
+						eq_int(wrong, 0, "%s: and every column width to within a pixel", c.name)
+						bad_cell := 0
+						for r in 0 ..< len(t0.rows) {
+							for col in 0 ..< table_cols(t0) {
+								a := cell_text(table_cell(t0, r, col), context.temp_allocator)
+								b := cell_text(table_cell(t1, r, col), context.temp_allocator)
+								if a != b {
+									bad_cell += 1
+								}
+							}
+						}
+						eq_int(bad_cell, 0, "%s: and every cell's text", c.name)
+					}
+				}
+				if c.images > 0 {
+					back_imgs := 0
+					bytes_ok := 0
+					for i in 0 ..< len(nd.paras) {
+						if nd.paras[i].kind != .Image || nd.paras[i].img == nil {
+							continue
+						}
+						back_imgs += 1
+						if c.doc.paras[i].kind == .Image &&
+						   c.doc.paras[i].img != nil &&
+						   len(nd.paras[i].img.bytes) == len(c.doc.paras[i].img.bytes) {
+							bytes_ok += 1
+						}
+					}
+					eq_int(back_imgs, c.images, "%s: the .docx reads its pictures back", c.name)
+					eq_int(bytes_ok, c.images, "%s: with their bytes intact", c.name)
+				}
 			}
 			check_extracted(fmt.tprintf("%s: .docx import", c.name), src, text_of(&nd))
 		} else {
@@ -1479,7 +2990,8 @@ test_export :: proc(fonts: ^p.Fonts) {
 		)
 	}
 
-	check_pdf_tools(cases[:])
+	check_pdf_tools(cases[:], fonts)
+	check_pdf_render(cases[:], fonts)
 	check_xml_parts(cases[:])
 	check_libreoffice(cases[:], office_paths[:])
 }
@@ -1488,7 +3000,7 @@ test_export :: proc(fonts: ^p.Fonts) {
 // PDF must have — before any external tool is consulted, so a failure points
 // at the writer rather than at the reader.
 @(private = "file")
-check_pdf_structure :: proc(name, raw: string) {
+check_pdf_structure :: proc(name, raw: string, c: ^Export_Case) {
 	ok(strings.has_prefix(raw, "%PDF-1.7"), "%s: PDF 1.7 header", name)
 	ok(strings.has_suffix(strings.trim_right_space(raw), "%%EOF"), "%s: ends with %%%%EOF", name)
 	for want in ([?]string {
@@ -1511,6 +3023,32 @@ check_pdf_structure :: proc(name, raw: string) {
 		"trailer",
 	}) {
 		ok(strings.contains(raw, want), "%s: PDF contains %s", name, want)
+	}
+
+	// Tables are lines and text, so the only thing to assert in the file is
+	// that the rules were actually emitted: a filled rectangle per cell edge.
+	if c.tables > 0 {
+		// Four edges per cell, at least — shared edges are drawn twice, which
+		// is what makes a grid of single-weight rules close up.
+		rects := strings.count(raw, " re f\n")
+		ok(rects >= 4 * c.cells, "%s: %d filled rectangles for %d cells", name, rects, c.cells)
+	}
+	// A picture is an XObject, drawn with `Do` under a placement matrix.
+	if c.images > 0 {
+		for want in ([?]string{"/Type /XObject", "/Subtype /Image", "/ColorSpace /DeviceRGB", "/XObject <<", " Do\n"}) {
+			ok(strings.contains(raw, want), "%s: PDF contains %s", name, want)
+		}
+		ok(
+			strings.contains(raw, "/Filter /RunLengthDecode") || strings.contains(raw, "/Filter /DCTDecode"),
+			"%s: the image stream names a filter the format defines",
+			name,
+		)
+		eq_int(
+			strings.count(raw, "/Subtype /Image"),
+			c.images,
+			"%s: one image XObject per picture",
+			name,
+		)
 	}
 
 	// The cross-reference table has to be where the trailer says it is, and
@@ -1553,7 +3091,7 @@ check_pdf_structure :: proc(name, raw: string) {
 }
 
 @(private = "file")
-check_docx_structure :: proc(name: string, archive: []u8) {
+check_docx_structure :: proc(name: string, archive: []u8, c: ^Export_Case) {
 	names := zip_names(archive, context.temp_allocator)
 	for want in ([?]string {
 		"[Content_Types].xml",
@@ -1577,10 +3115,72 @@ check_docx_structure :: proc(name: string, archive: []u8) {
 	if got {
 		s := string(doc)
 		ok(strings.contains(s, "<w:pStyle w:val=\"Heading1\"/>"), "%s: headings are a named style", name)
-		ok(strings.contains(s, "<w:numPr>"), "%s: list items carry numbering", name)
+		if c.lists > 0 {
+			ok(strings.contains(s, "<w:numPr>"), "%s: list items carry numbering", name)
+		}
 		ok(strings.contains(s, "xml:space=\"preserve\""), "%s: runs preserve their spaces", name)
 		ok(strings.contains(s, "<w:sectPr>"), "%s: a section with the page size", name)
 		ok(strings.contains(s, "w:w=\"11906\""), "%s: the page is A4", name)
+
+		if c.tables > 0 {
+			eq_int(strings.count(s, "<w:tbl>"), c.tables, "%s: one w:tbl per table", name)
+			eq_int(strings.count(s, "<w:tblGrid>"), c.tables, "%s: each with a tblGrid", name)
+			eq_int(strings.count(s, "<w:gridCol "), c.cols, "%s: one gridCol per column", name)
+			eq_int(strings.count(s, "<w:tr>"), c.rows, "%s: one w:tr per row", name)
+			eq_int(strings.count(s, "<w:tc>"), c.cells, "%s: one w:tc per cell", name)
+			ok(strings.contains(s, "<w:tblHeader/>"), "%s: the header row repeats across pages", name)
+			ok(strings.contains(s, "<w:tblLayout w:type=\"fixed\"/>"), "%s: the grid widths are binding", name)
+			ok(strings.contains(s, "<w:tcW "), "%s: and every cell declares its own width", name)
+			// Word rejects a w:tc with no paragraph in it.
+			ok(
+				!strings.contains(s, "<w:tc><w:tcPr></w:tcPr></w:tc>"),
+				"%s: no cell is left without a paragraph",
+				name,
+			)
+		}
+		if c.images > 0 {
+			eq_int(strings.count(s, "<w:drawing>"), c.images, "%s: one w:drawing per picture", name)
+			eq_int(strings.count(s, "<wp:inline "), c.images, "%s: anchored inline", name)
+			eq_int(strings.count(s, "<a:blip r:embed="), c.images, "%s: each naming a relationship", name)
+			ok(strings.contains(s, "<pic:pic "), "%s: inside a DrawingML picture", name)
+			ok(strings.contains(s, "<wp:extent cx="), "%s: with an extent", name)
+		}
+	}
+	if c.images > 0 {
+		names := zip_names(archive, context.temp_allocator)
+		media := 0
+		for n in names {
+			if strings.has_prefix(n, "word/media/") {
+				media += 1
+			}
+		}
+		eq_int(media, c.images, "%s: .docx carries one media part per picture", name)
+		if rels, got_r := zip_read_entry(archive, "word/_rels/document.xml.rels", context.temp_allocator);
+		   got_r {
+			eq_int(
+				strings.count(string(rels), "/relationships/image"),
+				c.images,
+				"%s: with an image relationship each",
+				name,
+			)
+		}
+		if ct, got_ct := zip_read_entry(archive, "[Content_Types].xml", context.temp_allocator); got_ct {
+			ok(
+				strings.contains(string(ct), "Extension=\"png\"") ||
+				strings.contains(string(ct), "Extension=\"jpeg\""),
+				"%s: and a content-type default for the picture's extension",
+				name,
+			)
+		}
+	}
+	if c.tables > 0 {
+		if st2, got2 := zip_read_entry(archive, "word/styles.xml", context.temp_allocator); got2 {
+			ok(
+				strings.contains(string(st2), "w:styleId=\"TableGrid\""),
+				"%s: styles.xml defines a real table style",
+				name,
+			)
+		}
 	}
 	st, got_st := zip_read_entry(archive, "word/styles.xml", context.temp_allocator)
 	if got_st {
@@ -1597,7 +3197,7 @@ check_docx_structure :: proc(name: string, archive: []u8) {
 }
 
 @(private = "file")
-check_odt_structure :: proc(name: string, archive: []u8) {
+check_odt_structure :: proc(name: string, archive: []u8, c: ^Export_Case) {
 	names := zip_names(archive, context.temp_allocator)
 	ok(len(names) >= 4, "%s: .odt has its parts", name)
 	if len(names) > 0 {
@@ -1618,8 +3218,48 @@ check_odt_structure :: proc(name: string, archive: []u8) {
 		s := string(content)
 		ok(strings.contains(s, "<text:h "), "%s: headings are text:h", name)
 		ok(strings.contains(s, "text:outline-level=\"1\""), "%s: with an outline level", name)
-		ok(strings.contains(s, "<text:list "), "%s: lists are text:list", name)
+		if c.lists > 0 {
+			ok(strings.contains(s, "<text:list "), "%s: lists are text:list", name)
+		}
 		ok(strings.contains(s, "office:version=\"1.3\""), "%s: declares its ODF version", name)
+
+		if c.tables > 0 {
+			eq_int(strings.count(s, "<table:table "), c.tables, "%s: one table:table per table", name)
+			eq_int(strings.count(s, "<table:table-column "), c.cols, "%s: one table-column per column", name)
+			eq_int(strings.count(s, "<table:table-row>"), c.rows, "%s: one table-row per row", name)
+			eq_int(strings.count(s, "<table:table-cell "), c.cells, "%s: one table-cell per cell", name)
+			ok(
+				strings.contains(s, "<table:table-header-rows>"),
+				"%s: the header row is inside table-header-rows, which is what repeats it",
+				name,
+			)
+			ok(strings.contains(s, "style:family=\"table-column\""), "%s: with real column styles", name)
+			ok(strings.contains(s, "style:family=\"table-cell\""), "%s: and cell styles", name)
+		}
+		if c.images > 0 {
+			eq_int(strings.count(s, "<draw:frame "), c.images, "%s: one draw:frame per picture", name)
+			eq_int(strings.count(s, "<draw:image "), c.images, "%s: each holding a draw:image", name)
+			ok(strings.contains(s, "xlink:href=\"Pictures/"), "%s: pointing into Pictures/", name)
+			ok(strings.contains(s, "text:anchor-type=\"as-char\""), "%s: anchored as a character", name)
+		}
+	}
+	if c.images > 0 {
+		names2 := zip_names(archive, context.temp_allocator)
+		pics := 0
+		for n in names2 {
+			if strings.has_prefix(n, "Pictures/") {
+				pics += 1
+			}
+		}
+		eq_int(pics, c.images, "%s: .odt carries one Pictures/ part per picture", name)
+		if man, got_m := zip_read_entry(archive, "META-INF/manifest.xml", context.temp_allocator); got_m {
+			eq_int(
+				strings.count(string(man), "manifest:full-path=\"Pictures/"),
+				c.images,
+				"%s: and the manifest declares each one",
+				name,
+			)
+		}
 	}
 	styles, got_s := zip_read_entry(archive, "styles.xml", context.temp_allocator)
 	if got_s {
@@ -1637,11 +3277,29 @@ check_odt_structure :: proc(name: string, archive: []u8) {
 }
 
 @(private = "file")
-check_rtf_structure :: proc(name, raw: string) {
+check_rtf_structure :: proc(name, raw: string, c: ^Export_Case) {
 	ok(strings.has_prefix(raw, "{\\rtf1\\ansi"), "%s: an RTF 1 header", name)
 	ok(strings.contains(raw, "{\\fonttbl"), "%s: a font table", name)
 	ok(strings.contains(raw, "{\\stylesheet"), "%s: a stylesheet", name)
 	ok(strings.contains(raw, "\\paperw11906"), "%s: the page is A4", name)
+
+	if c.tables > 0 {
+		eq_int(strings.count(raw, "\\trowd"), c.rows, "%s: one \\trowd per row", name)
+		eq_int(strings.count(raw, "\\row\n"), c.rows, "%s: and one \\row to close each", name)
+		eq_int(strings.count(raw, "\\cell\n"), c.cells, "%s: one \\cell per cell", name)
+		eq_int(strings.count(raw, "\\cellx"), c.cells, "%s: and one cumulative \\cellx per cell", name)
+		ok(strings.contains(raw, "\\trhdr"), "%s: the header row is marked to repeat", name)
+		ok(strings.contains(raw, "\\intbl"), "%s: cell paragraphs are marked in-table", name)
+	}
+	if c.images > 0 {
+		eq_int(strings.count(raw, "\\pict"), c.images, "%s: one \\pict per picture", name)
+		ok(
+			strings.contains(raw, "\\pngblip") || strings.contains(raw, "\\jpegblip"),
+			"%s: declaring what the hex bytes are",
+			name,
+		)
+		ok(strings.contains(raw, "\\picwgoal"), "%s: with a drawn size as well as a pixel size", name)
+	}
 
 	// Unbalanced braces are the one way an RTF file is simply unreadable, and
 	// a stray `{` from a format string is exactly how it happens.
@@ -1671,7 +3329,7 @@ check_rtf_structure :: proc(name, raw: string) {
 // ---------------------------------------------------------------------------
 
 @(private = "file")
-check_pdf_tools :: proc(cases: []Export_Case) {
+check_pdf_tools :: proc(cases: []Export_Case, fonts: ^p.Fonts) {
 	for tool in ([?]string{"qpdf", "pdftotext", "pdffonts"}) {
 		if !have_tool(tool) {
 			ok(false, "SKIPPED: %s is not installed, so its assertions did not run", tool)
@@ -1705,9 +3363,44 @@ check_pdf_tools :: proc(cases: []Export_Case) {
 				// This is the assertion the /ToUnicode CMap exists for: the
 				// glyphs in the file are ids, and only the CMap can turn them
 				// back into the document's words.
-				check_extracted(fmt.tprintf("%s: pdftotext", c.name), doc_words(&c.doc), text)
+				//
+				// Order is asserted for a document without tables, exactly as
+				// it always was. With a table it cannot be: `-layout` rebuilds
+				// the *visual* rows of a page, so a row whose cells wrap comes
+				// out interleaved — "the surface to present | the input to
+				// read" on one row and "into" on the next. That is a faithful
+				// picture of the page and a useless sequence, so what is
+				// asserted there is completeness, word for word, cells
+				// included — and the structure is asserted by the HTML pass in
+				// check_libreoffice and by the pixels in check_pdf_render.
+				if c.tables == 0 {
+					check_extracted(fmt.tprintf("%s: pdftotext", c.name), doc_words(&c.doc), text)
+				}
+				check_covers(
+					fmt.tprintf("%s: pdftotext", c.name),
+					layout_words(&c.doc, fonts),
+					text,
+				)
 			} else {
 				ok(false, "%s: pdftotext wrote something", c.name)
+			}
+		}
+
+		if c.images > 0 && have_tool("pdfimages") {
+			out, good := kit.run({"pdfimages", "-list", path})
+			ok(good, "%s: pdfimages runs", c.name)
+			n := 0
+			for line in strings.split_lines(out, context.temp_allocator) {
+				if strings.contains(line, " image ") {
+					n += 1
+				}
+			}
+			eq_int(n, c.images, "%s: pdfimages finds every embedded picture", c.name)
+			fmt.printf("    pdfimages -list %s.pdf:\n", c.name)
+			for line in strings.split_lines(out, context.temp_allocator) {
+				if len(strings.trim_space(line)) > 0 {
+					fmt.printf("      %s\n", line)
+				}
 			}
 		}
 
@@ -1760,6 +3453,215 @@ check_pdf_tools :: proc(cases: []Export_Case) {
 				}
 			}
 		}
+	}
+}
+
+// check_pdf_render rasterises a page of the PDF and looks at the pixels.
+//
+// Every check above this one is structural, and a table passes all of them
+// while having its rules drawn in the wrong place or its text outside its
+// cells — `<w:tbl>` says a table exists, not that it looks like one. So the
+// page is rendered with pdftoppm at the layout's own 96 dpi, read back through
+// palmy's decoder, and the ink is checked against the cell geometry the layout
+// computed: a dark row along every cell's top edge, a dark column down its
+// left edge, and colour inside the picture's box.
+@(private = "file")
+check_pdf_render :: proc(cases: []Export_Case, fonts: ^p.Fonts) {
+	if !have_tool("pdftoppm") {
+		ok(false, "SKIPPED: pdftoppm is not installed, so no page was rendered and inspected")
+		return
+	}
+	for &c in cases {
+		if c.tables == 0 && c.images == 0 {
+			continue
+		}
+		// The layout the PDF was written from, so the geometry compared
+		// against is the same arithmetic the file used.
+		lay: Layout
+		defer layout_destroy(&lay)
+		layout_doc(&lay, &c.doc, fonts)
+
+		// The page the table is on, which in a long document is not page 1.
+		want := -1
+		if c.tables > 0 {
+			for cb in lay.cells {
+				if want < 0 || cb.page < want {
+					want = cb.page
+				}
+			}
+		}
+		if want < 0 {
+			for l in lay.lines {
+				if c.doc.paras[l.para].kind == .Image {
+					want = l.page
+					break
+				}
+			}
+		}
+		if want < 0 {
+			continue
+		}
+		base := fmt.tprintf("%s/render-%s", SELFTEST_DIR, c.name)
+		pg := fmt.tprintf("%d", want + 1)
+		_, ran := kit.run(
+			{
+				"pdftoppm",
+				"-r",
+				"96",
+				"-f",
+				pg,
+				"-l",
+				pg,
+				"-singlefile",
+				"-png",
+				fmt.tprintf("%s/%s.pdf", SELFTEST_DIR, c.name),
+				base,
+			},
+		)
+		ok(ran, "%s: pdftoppm rendered page %s", c.name, pg)
+		// The default allocator, not the temp one: `image_destroy` frees the
+		// pixels through `delete`, which uses the context allocator.
+		img, loaded := p.load_image(fmt.tprintf("%s.png", base))
+		if !loaded {
+			ok(false, "%s: the rendered page reads back as an image", c.name)
+			continue
+		}
+		defer p.image_destroy(&img)
+		eq_int(img.w, int(PAGE_W), "%s: the rendered page is A4 wide at 96 dpi", c.name)
+		eq_int(img.h, int(PAGE_H), "%s: and A4 tall", c.name)
+
+		ink :: proc(img: p.Image, x, y: int) -> bool {
+			if x < 0 || y < 0 || x >= img.w || y >= img.h {
+				return false
+			}
+			v := img.px[y * img.w + x]
+			// Luminance, roughly. The rules are 0xa8a8aa; the page is white.
+			lum := (int(u8(v >> 16)) * 30 + int(u8(v >> 8)) * 59 + int(u8(v)) * 11) / 100
+			return lum < 215
+		}
+		// row_ink is the strongest coverage found within a pixel either side
+		// of `y`, because a one-pixel rule at 96 dpi can land on either row.
+		row_ink :: proc(img: p.Image, y, x0, x1: int) -> f32 {
+			best := f32(0)
+			for yy in y - 1 ..= y + 1 {
+				hit := 0
+				n := 0
+				for x in x0 ..= x1 {
+					n += 1
+					if ink(img, x, yy) {
+						hit += 1
+					}
+				}
+				if n > 0 {
+					best = max(best, f32(hit) / f32(n))
+				}
+			}
+			return best
+		}
+		col_ink :: proc(img: p.Image, x, y0, y1: int) -> f32 {
+			best := f32(0)
+			for xx in x - 1 ..= x + 1 {
+				hit := 0
+				n := 0
+				for y in y0 ..= y1 {
+					n += 1
+					if ink(img, xx, y) {
+						hit += 1
+					}
+				}
+				if n > 0 {
+					best = max(best, f32(hit) / f32(n))
+				}
+			}
+			return best
+		}
+
+		if c.tables > 0 {
+			checked := 0
+			weak_top := 0
+			weak_left := 0
+			worst := f32(1)
+			for cb in lay.cells {
+				if cb.page != want {
+					continue
+				}
+				checked += 1
+				x0 := int(MARGIN + cb.x) + 2
+				x1 := int(MARGIN + cb.x + cb.w) - 2
+				y0 := int(MARGIN + cb.y) + 2
+				y1 := int(MARGIN + cb.y + cb.h) - 2
+				top := row_ink(img, int(MARGIN + cb.y), x0, x1)
+				left := col_ink(img, int(MARGIN + cb.x), y0, y1)
+				worst = min(worst, min(top, left))
+				if top < 0.95 {
+					weak_top += 1
+				}
+				if left < 0.95 {
+					weak_left += 1
+				}
+			}
+			ok(checked > 0, "%s: %d cell boxes on page %s to check", c.name, checked, pg)
+			eq_int(weak_top, 0, "%s: every cell has a rule along its top edge in the render", c.name)
+			eq_int(weak_left, 0, "%s: and down its left edge", c.name)
+			ok(worst > 0.95, "%s: the weakest rule is %.0f%% covered", c.name, worst * 100)
+
+			// The inverse: a strip just inside the top-left of the first cell
+			// is *not* a rule, so the test cannot be passing on a page that is
+			// simply dark everywhere.
+			for cb in lay.cells {
+				if cb.page != want || cb.row != 0 || cb.col != 0 || cb.repeat {
+					continue
+				}
+				inside := row_ink(
+					img,
+					int(MARGIN + cb.y + cb.h / 2),
+					int(MARGIN + cb.x) + 3,
+					int(MARGIN + cb.x + cb.w) - 3,
+				)
+				ok(inside < 0.9, "%s: the inside of a cell is not a rule (%.0f%%)", c.name, inside * 100)
+				break
+			}
+		}
+
+		if c.images > 0 {
+			// The picture's box, from the layout, must hold colour in the
+			// render — a page that drew nothing would be white there.
+			found := 0
+			coloured := 0
+			for l in lay.lines {
+				if l.page != want || c.doc.paras[l.para].kind != .Image {
+					continue
+				}
+				found += 1
+				hits := 0
+				n := 0
+				for dy in 1 ..< 10 {
+					for dx in 1 ..< 10 {
+						x := int(MARGIN + l.x + l.w * f32(dx) / 10)
+						y := int(MARGIN + l.y + l.h * f32(dy) / 10)
+						n += 1
+						if x >= 0 && y >= 0 && x < img.w && y < img.h {
+							if img.px[y * img.w + x] & 0xffffff != 0xffffff {
+								hits += 1
+							}
+						}
+					}
+				}
+				if n > 0 && f32(hits) / f32(n) > 0.9 {
+					coloured += 1
+				}
+			}
+			if found > 0 {
+				eq_int(coloured, found, "%s: every picture's box is filled in the render", c.name)
+			}
+		}
+		fmt.printf(
+			"    pdftoppm %s.pdf page %s: %dx%d, rules and pictures checked against the layout\n",
+			c.name,
+			pg,
+			img.w,
+			img.h,
+		)
 	}
 }
 
@@ -1833,25 +3735,115 @@ check_libreoffice :: proc(cases: []Export_Case, paths: []string) {
 	}
 	lo := fmt.tprintf("%s/lo", SELFTEST_DIR)
 
-	// One invocation for every file: LibreOffice is slow to start and quick
+	// Two passes, one invocation each: LibreOffice is slow to start and quick
 	// to convert, and the exports all have distinct names.
-	argv := make([dynamic]string, 0, len(paths) + 8, context.temp_allocator)
-	append(&argv, "soffice", "--headless", LO_PROFILE, "--convert-to", "txt:Text", "--outdir", lo)
-	append(&argv, ..paths)
-	_, ran := kit.run(argv[:])
-	ok(ran, "LibreOffice converted %d files", len(paths))
+	//
+	//   txt   does every word survive, in reading order?
+	//   html  did the *structure* survive — a real table with the right number
+	//         of rows and cells, and the picture still in the file?
+	//
+	// The second question is the one that matters for this work. A .docx whose
+	// table arrives as a run of tab-separated paragraphs passes the first test
+	// and fails the second, and it is not a table.
+	for filter in ([?][2]string{{"txt:Text", "txt"}, {"html:HTML (StarWriter)", "html"}}) {
+		argv := make([dynamic]string, 0, len(paths) + 8, context.temp_allocator)
+		append(&argv, "soffice", "--headless", LO_PROFILE, "--convert-to", filter[0], "--outdir", lo)
+		append(&argv, ..paths)
+		_, ran := kit.run(argv[:])
+		ok(ran, "LibreOffice converted %d files to .%s", len(paths), filter[1])
+	}
 
 	for &c in cases {
 		src := doc_words(&c.doc)
 		for ext in ([?]string{"docx", "odt", "rtf"}) {
-			// Every export of one document lands on the same .txt name, so
+			// Every export of one document lands on the same output name, so
 			// the exports are named per format for this pass.
 			out := fmt.tprintf("%s/%s-%s.txt", lo, c.name, ext)
 			if text, got := read_text(out); got {
-				check_extracted(fmt.tprintf("%s: LibreOffice reading .%s", c.name, ext), src, text)
+				label := fmt.tprintf("%s: LibreOffice reading .%s", c.name, ext)
+				if c.tables > 0 {
+					// LibreOffice's text export writes a table row as one line
+					// with the cells separated, which re-orders a wrapped cell
+					// the same way pdftotext -layout does. Completeness is the
+					// claim here; the HTML pass below asserts the structure.
+					check_covers(label, src, text)
+				} else {
+					check_extracted(label, src, text)
+				}
 			} else {
 				ok(false, "%s: LibreOffice produced text from .%s", c.name, ext)
 			}
+
+			if c.tables == 0 && c.images == 0 {
+				continue
+			}
+			html, got_h := read_text(fmt.tprintf("%s/%s-%s.html", lo, c.name, ext))
+			if !got_h {
+				ok(false, "%s: LibreOffice produced HTML from .%s", c.name, ext)
+				continue
+			}
+			lower := strings.to_lower(html, context.temp_allocator)
+			if c.tables > 0 {
+				eq_int(
+					strings.count(lower, "<table"),
+					c.tables,
+					"%s: LibreOffice reads .%s back as %d real table(s)",
+					c.name,
+					ext,
+					c.tables,
+				)
+				eq_int(
+					strings.count(lower, "<tr"),
+					c.rows,
+					"%s: with every row, out of .%s",
+					c.name,
+					ext,
+				)
+				// `<thead` also begins with `<th`, so it has to come back out
+				// or every table reads as one cell too many.
+				eq_int(
+					strings.count(lower, "<td") + strings.count(lower, "<th") - strings.count(lower, "<thead"),
+					c.cells,
+					"%s: and every cell, out of .%s",
+					c.name,
+					ext,
+				)
+			}
+			if c.images > 0 {
+				eq_int(
+					strings.count(lower, "<img"),
+					c.images,
+					"%s: and the picture survives .%s",
+					c.name,
+					ext,
+				)
+			}
+		}
+	}
+	fmt.printf("    LibreOffice round trip, per format:\n")
+	for &c in cases {
+		if c.tables == 0 && c.images == 0 {
+			continue
+		}
+		for ext in ([?]string{"docx", "odt", "rtf"}) {
+			html, got_h := read_text(fmt.tprintf("%s/%s-%s.html", lo, c.name, ext))
+			if !got_h {
+				continue
+			}
+			lower := strings.to_lower(html, context.temp_allocator)
+			fmt.printf(
+				"      %-8s .%-4s  %d table, %d rows, %d cells, %d images   (source: %d/%d/%d/%d)\n",
+				c.name,
+				ext,
+				strings.count(lower, "<table"),
+				strings.count(lower, "<tr"),
+				strings.count(lower, "<td") + strings.count(lower, "<th") - strings.count(lower, "<thead"),
+				strings.count(lower, "<img"),
+				c.tables,
+				c.rows,
+				c.cells,
+				c.images,
+			)
 		}
 	}
 }

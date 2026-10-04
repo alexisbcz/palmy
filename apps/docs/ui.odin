@@ -10,11 +10,19 @@ import sc "shadcn:."
 
 TOP1 :: f32(40)
 TOP2 :: f32(38)
+TABLEBAR :: f32(36)
 FINDBAR :: f32(40)
 STATUS :: f32(26)
 
 chrome_top :: proc(st: ^State) -> f32 {
-	return TOP1 + TOP2 + 1 + (st.mode == .Find ? FINDBAR + 1 : 0)
+	h := TOP1 + TOP2 + 1
+	if in_table(st) {
+		h += TABLEBAR + 1
+	}
+	if st.mode == .Find {
+		h += FINDBAR + 1
+	}
+	return h
 }
 
 // measure fixes the workspace rectangle before anything is built, because the
@@ -33,6 +41,14 @@ frame :: proc(ui: ^p.Ctx, st: ^State) {
 	toolbar_top(ui, st)
 	toolbar_format(ui, st)
 	sc.separator(ui)
+
+	// The table strip only exists while the caret is in a grid, which is both
+	// how every word processor does it and the only way these nine commands
+	// fit on a 1280px window alongside everything else.
+	if in_table(st) {
+		toolbar_table(ui, st)
+		sc.separator(ui)
+	}
 
 	if st.mode == .Find {
 		find_bar(ui, st)
@@ -247,6 +263,19 @@ toolbar_format :: proc(ui: ^p.Ctx, st: ^State) {
 		set_kind(st, pa.kind == .Quote ? .Body : .Quote)
 	}
 
+	vrule(ui)
+
+	if tool_button(ui, "tbl", ICON_TABLE, in_table(st)) {
+		if in_table(st) {
+			delete_block(st)
+		} else {
+			open_prompt(st, .Insert_Table)
+		}
+	}
+	if tool_button(ui, "img", ICON_IMAGE, pa.kind == .Image) {
+		open_prompt(st, .Insert_Image)
+	}
+
 	p.spacer(ui)
 
 	// Zoom.
@@ -262,6 +291,66 @@ toolbar_format :: proc(ui: ^p.Ctx, st: ^State) {
 		set_zoom(st, st.zoom_i + 1)
 	}
 	p.end(ui)
+}
+
+// toolbar_table is the strip that appears while the caret is inside a grid.
+toolbar_table :: proc(ui: ^p.Ctx, st: ^State) {
+	t := table_at(st)
+	p.row(ui, tfmt("h-[%.0f] w-full shrink-0 items-center gap-1 px-3 bg-muted/35", TABLEBAR))
+	defer p.end(ui)
+	if t == nil {
+		return
+	}
+
+	p.text(
+		ui,
+		tfmt("Table %dx%d — cell %c%d", len(t.rows), table_cols(t), rune('A' + st.caret.col), st.caret.row + 1),
+		"text-[12] font-medium whitespace-nowrap",
+	)
+	p.style(ui).shrink = 0
+
+	vrule(ui)
+
+	if tool_button(ui, "rowa", ICON_ROWS) {table_row_cmd(st, false)}
+	p.text(ui, "row", "text-[11.5] text-muted-foreground whitespace-nowrap")
+	p.style(ui).shrink = 0
+	if tool_button(ui, "rowb", ICON_ROWS) {table_row_cmd(st, true)}
+	if tool_button(ui, "rowd", ICON_TRASH, false, len(t.rows) > 1) {table_delete_row_cmd(st)}
+
+	vrule(ui)
+
+	if tool_button(ui, "cola", ICON_COLUMNS) {table_col_cmd(st, false)}
+	p.text(ui, "column", "text-[11.5] text-muted-foreground whitespace-nowrap")
+	p.style(ui).shrink = 0
+	if tool_button(ui, "colb", ICON_COLUMNS) {table_col_cmd(st, true)}
+	if tool_button(ui, "cold", ICON_TRASH, false, table_cols(t) > 1) {table_delete_col_cmd(st)}
+
+	vrule(ui)
+
+	if tool_button(ui, "hdr", ICON_HEADING_1, t.header) {table_toggle_header(st)}
+	if tool_button(ui, "brd", ICON_SQUARE, t.borders) {table_toggle_borders(st)}
+
+	vrule(ui)
+
+	if tool_button(ui, "narrow", ICON_CHEVRON_RIGHT, false, table_cols(t) > 1) {
+		table_nudge_width(st, -24)
+	}
+	p.div(ui, "flex-row w-[52] items-center justify-center shrink-0")
+	p.text(
+		ui,
+		tfmt("%.0f px", table_width(t, st.caret.col)),
+		"text-[11.5] text-muted-foreground whitespace-nowrap",
+	)
+	p.style(ui).shrink = 0
+	p.end(ui)
+	if tool_button(ui, "wide", ICON_CHEVRON_RIGHT, false, table_cols(t) > 1) {
+		table_nudge_width(st, 24)
+	}
+
+	p.spacer(ui)
+
+	hint(ui, "Tab", "next cell")
+	if tool_button(ui, "tbldel", ICON_TRASH) {delete_block(st)}
 }
 
 // ---------------------------------------------------------------------------
@@ -313,10 +402,21 @@ find_bar :: proc(ui: ^p.Ctx, st: ^State) {
 	)
 	p.style(ui).shrink = 0
 
+	// The two depth switches, which is the whole difference between a find box
+	// and a find box you can trust on a word like "art".
+	if tool_button(ui, "mcase", ICON_CASE_SENSITIVE, st.find_case) {
+		toggle_find_case(st)
+	}
+	if tool_button(ui, "mword", ICON_WHOLE_WORD, st.find_word) {
+		toggle_find_word(st)
+	}
+
 	p.spacer(ui)
 
 	hint(ui, "Return", "next")
 	hint(ui, "Tab", "field")
+	hint(ui, "F5", "case")
+	hint(ui, "F6", "word")
 	hint(ui, "F11", "replace")
 	hint(ui, "F12", "all")
 	hint(ui, "Esc", "close")
@@ -360,6 +460,14 @@ status_bar :: proc(ui: ^p.Ctx, st: ^State) {
 	if st.mark {
 		dot(ui)
 		sc.badge(ui, "MARK", .Secondary)
+	}
+	if t := table_at(st); t != nil {
+		dot(ui)
+		sc.badge(ui, tfmt("TABLE %dx%d", len(t.rows), table_cols(t)), .Secondary)
+	}
+	if im := image_at(st); im != nil {
+		dot(ui)
+		sc.badge(ui, tfmt("IMAGE %dx%d @ %d%%", im.w, im.h, int(im.scale * 100 + 0.5)), .Secondary)
 	}
 
 	p.spacer(ui)
@@ -421,9 +529,24 @@ HELP_DEMO := [?]Shortcut {
 	{"F6 / F7", "Bullet list, numbered list"},
 	{"F8", "Cycle alignment"},
 	{"F9", "Find and replace bar"},
+	{"F5 / F6 in find", "Match case, whole words"},
 	{"F10", "Set mark, then arrows extend the selection"},
 	{"F11 / F12", "Replace, replace all"},
 	{"KP + / KP -", "Zoom in, zoom out"},
+}
+
+HELP_TABLE := [?]Shortcut {
+	{"Ctrl Shift T", "Insert a table (rows x columns)"},
+	{"Tab / Shift Tab", "Next cell, previous cell"},
+	{"Alt R / Alt Shift R", "Row below, row above"},
+	{"Alt C / Alt Shift C", "Column right, column left"},
+	{"Alt Backspace", "Delete the row"},
+	{"Alt Delete", "Delete the column"},
+	{"Alt H / Alt B", "Header row, cell borders"},
+	{"Alt Left / Alt Right", "Narrow, widen the column"},
+	{"Alt K", "Delete the table or picture"},
+	{"Ctrl Shift I", "Insert a picture"},
+	{"Alt Up / Alt Down", "Scale the picture"},
 }
 
 HELP_EDIT := [?]Shortcut {
@@ -456,7 +579,7 @@ help_overlay :: proc(ui: ^p.Ctx, st: ^State) {
 	p.div(ui, "absolute inset-0 z-50 flex-col items-center justify-center bg-black/45")
 	defer p.end(ui)
 
-	p.col(ui, "w-[880] gap-4 p-6 rounded-xl bg-popover border border-border shadow-2xl")
+	p.col(ui, "w-[1160] gap-4 p-6 rounded-xl bg-popover border border-border shadow-2xl")
 	defer p.end(ui)
 
 	p.row(ui, "items-center gap-2")
@@ -476,6 +599,7 @@ help_overlay :: proc(ui: ^p.Ctx, st: ^State) {
 	defer p.end(ui)
 	help_column(ui, "No modifiers", HELP_DEMO[:])
 	help_column(ui, "Editing", HELP_EDIT[:])
+	help_column(ui, "Tables and pictures", HELP_TABLE[:])
 	help_column(ui, "Files and view", HELP_FILE[:])
 }
 

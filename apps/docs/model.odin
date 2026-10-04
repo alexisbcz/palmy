@@ -38,6 +38,21 @@ Para_Kind :: enum u8 {
 	H3,
 	Quote,
 	Code,
+	// Two kinds whose content is not the paragraph's own runs.
+	//
+	// A Table paragraph's content is `table`: a grid of cells, each of which
+	// holds its own `[]Paragraph`. An Image paragraph's content is `img`. Both
+	// still carry exactly one (empty) run, so every invariant above and every
+	// procedure that walks runs keeps working unchanged — it simply finds
+	// nothing to walk.
+	Table,
+	Image,
+}
+
+// text_kind reports whether a paragraph kind's content is its own runs. The
+// style cycle, the find box and every exporter branch on it.
+text_kind :: proc(k: Para_Kind) -> bool {
+	return k != .Table && k != .Image
 }
 
 Align :: enum u8 {
@@ -69,6 +84,12 @@ Paragraph :: struct {
 	// lands, never how it wraps, so it stays out of the layout cache key.
 	break_before: bool,
 	runs:         [dynamic]Run,
+
+	// Content for the two non-text kinds. Pointers rather than values, so a
+	// Paragraph stays 16 bytes bigger rather than carrying a grid by value —
+	// and so the type is not recursive through itself.
+	table:        ^Table,
+	img:          ^Doc_Image,
 }
 
 Doc :: struct {
@@ -77,13 +98,43 @@ Doc :: struct {
 
 // Pos is a caret location: a paragraph and a byte offset into that paragraph's
 // text, counting across runs. Offsets are always on a rune boundary.
+// The field order matters: `off` stays second so every `pos(para, off)`
+// literal in the program still means what it did before tables existed.
+//
+// `row`, `col` and `cpara` address a paragraph *inside* a table cell and are
+// all zero for an ordinary paragraph, which is why the comparison below can
+// consult them unconditionally.
 Pos :: struct {
-	para: int,
-	off:  int,
+	para:  int,
+	off:   int,
+	row:   int,
+	col:   int,
+	cpara: int,
 }
 
+// pos_less is reading order. Inside a table that is row-major and then down
+// the cell's own paragraphs, which is exactly the order a selection, a find
+// and an export all want.
 pos_less :: proc(a, b: Pos) -> bool {
-	return a.para < b.para || (a.para == b.para && a.off < b.off)
+	if a.para != b.para {return a.para < b.para}
+	if a.row != b.row {return a.row < b.row}
+	if a.col != b.col {return a.col < b.col}
+	if a.cpara != b.cpara {return a.cpara < b.cpara}
+	return a.off < b.off
+}
+
+// pos_same_block reports whether two positions address the same paragraph —
+// the condition under which a range edit is a single splice rather than a
+// walk across cells.
+pos_same_block :: proc(a, b: Pos) -> bool {
+	return a.para == b.para && a.row == b.row && a.col == b.col && a.cpara == b.cpara
+}
+
+// pos is the two-field constructor every call site used before tables existed:
+// a top-level paragraph and a byte offset. Odin's positional struct literals
+// must name every field, so the shorthand is a procedure rather than `Pos{a,b}`.
+pos :: proc(para, off: int) -> Pos {
+	return Pos{para = para, off = off}
 }
 
 pos_order :: proc(a, b: Pos) -> (lo, hi: Pos) {
@@ -138,6 +189,16 @@ para_destroy :: proc(pa: ^Paragraph) {
 	}
 	delete(pa.runs)
 	pa.runs = nil
+	if pa.table != nil {
+		table_destroy(pa.table)
+		free(pa.table)
+		pa.table = nil
+	}
+	if pa.img != nil {
+		image_destroy(pa.img)
+		free(pa.img)
+		pa.img = nil
+	}
 }
 
 doc_init :: proc(d: ^Doc) {
@@ -158,6 +219,16 @@ para_clone :: proc(pa: ^Paragraph) -> Paragraph {
 	out.runs = make([dynamic]Run, 0, len(pa.runs))
 	for &r in pa.runs {
 		append(&out.runs, run_make(r.style, string(r.text[:])))
+	}
+	out.table = nil
+	out.img = nil
+	if pa.table != nil {
+		out.table = new(Table)
+		out.table^ = table_clone(pa.table)
+	}
+	if pa.img != nil {
+		out.img = new(Doc_Image)
+		out.img^ = image_clone(pa.img)
 	}
 	return out
 }
@@ -201,18 +272,212 @@ para_append_text :: proc(pa: ^Paragraph, dst: ^[dynamic]u8) {
 	}
 }
 
+// ---------------------------------------------------------------------------
+// Scopes and blocks
+// ---------------------------------------------------------------------------
+//
+// Once a table cell holds its own `[]Paragraph`, "the paragraph at `q`" is no
+// longer `d.paras[q.para]`. Two notions replace it, and between them every
+// edit in the program stays a single implementation rather than one for
+// paragraphs and a second for cells:
+//
+//   * a **scope** is the `[dynamic]Paragraph` that owns the position, plus the
+//     index within it. Splitting, merging and multi-paragraph deletion all
+//     happen inside one scope.
+//   * a **block** names one paragraph anywhere in the document, in reading
+//     order. Find, replace, restyling, counting and every export walk blocks.
+
+// in_cell reports whether `q` addresses a paragraph inside a table cell.
+in_cell :: proc(d: ^Doc, q: Pos) -> bool {
+	if q.para < 0 || q.para >= len(d.paras) {
+		return false
+	}
+	pa := &d.paras[q.para]
+	if pa.kind != .Table || pa.table == nil {
+		return false
+	}
+	cl := table_cell(pa.table, q.row, q.col)
+	return cl != nil && len(cl.paras) > 0
+}
+
+// pos_scope resolves a position to the paragraph array that owns it and the
+// index within that array.
+pos_scope :: proc(d: ^Doc, q: Pos) -> (arr: ^[dynamic]Paragraph, idx: int) {
+	if len(d.paras) == 0 {
+		return &d.paras, 0
+	}
+	pi := clamp(q.para, 0, len(d.paras) - 1)
+	pa := &d.paras[pi]
+	if pa.kind == .Table && pa.table != nil {
+		if cl := table_cell(pa.table, q.row, q.col); cl != nil && len(cl.paras) > 0 {
+			return &cl.paras, clamp(q.cpara, 0, len(cl.paras) - 1)
+		}
+	}
+	return &d.paras, pi
+}
+
+// pos_para is the paragraph a position sits in — the one every byte-level
+// operation works on.
+pos_para :: proc(d: ^Doc, q: Pos) -> ^Paragraph {
+	arr, i := pos_scope(d, q)
+	if len(arr^) == 0 {
+		return nil
+	}
+	return &arr[i]
+}
+
+// pos_text is that paragraph's bytes.
+pos_text :: proc(d: ^Doc, q: Pos, alloc := context.temp_allocator) -> string {
+	pa := pos_para(d, q)
+	return pa == nil ? "" : para_text(pa, alloc)
+}
+
+pos_para_len :: proc(d: ^Doc, q: Pos) -> int {
+	pa := pos_para(d, q)
+	return pa == nil ? 0 : para_len(pa)
+}
+
+// pos_move_index returns `q` moved to index `i` within its own scope, which is
+// what a split or a merge produces.
+pos_move_index :: proc(d: ^Doc, q: Pos, i, off: int) -> Pos {
+	out := q
+	out.off = off
+	if in_cell(d, q) {
+		out.cpara = i
+	} else {
+		out.para = i
+		out.row, out.col, out.cpara = 0, 0, 0
+	}
+	return out
+}
+
+// same_scope is the test that decides whether a range edit is one splice or a
+// walk. Two top-level positions share a scope; two positions in one cell share
+// a scope; anything else crosses a table boundary.
+same_scope :: proc(d: ^Doc, a, b: Pos) -> bool {
+	ac, bc := in_cell(d, a), in_cell(d, b)
+	if ac != bc {
+		return false
+	}
+	if !ac {
+		return true
+	}
+	return a.para == b.para && a.row == b.row && a.col == b.col
+}
+
+// Blk names one editable paragraph, including inside a table cell.
+Blk :: struct {
+	para:  int,
+	row:   int,
+	col:   int,
+	cpara: int,
+}
+
+blk_pos :: proc(b: Blk, off: int) -> Pos {
+	return Pos{para = b.para, off = off, row = b.row, col = b.col, cpara = b.cpara}
+}
+
+blk_para :: proc(d: ^Doc, b: Blk) -> ^Paragraph {
+	return pos_para(d, blk_pos(b, 0))
+}
+
+blk_len :: proc(d: ^Doc, b: Blk) -> int {
+	pa := blk_para(d, b)
+	return pa == nil ? 0 : para_len(pa)
+}
+
+// doc_blocks lists every paragraph in reading order: top-level paragraphs, and
+// for a table paragraph the cells row-major with each cell's own paragraphs in
+// order. A table paragraph itself is *not* listed — its runs are empty and
+// carry nothing.
+doc_blocks :: proc(d: ^Doc, alloc := context.temp_allocator) -> []Blk {
+	out := make([dynamic]Blk, 0, len(d.paras) + 16, alloc)
+	for pi in 0 ..< len(d.paras) {
+		pa := &d.paras[pi]
+		if pa.kind == .Table && pa.table != nil && len(pa.table.rows) > 0 {
+			t := pa.table
+			for r in 0 ..< len(t.rows) {
+				for c in 0 ..< len(t.rows[r].cells) {
+					cl := &t.rows[r].cells[c]
+					for j in 0 ..< len(cl.paras) {
+						append(&out, Blk{pi, r, c, j})
+					}
+				}
+			}
+			continue
+		}
+		append(&out, Blk{pi, 0, 0, 0})
+	}
+	return out[:]
+}
+
+// blocks_between keeps the blocks a range touches. A block is touched when the
+// range overlaps it at all, which includes a zero-width overlap at an edge —
+// that is what makes "bold this selection" reach the cell the caret is in.
+blocks_between :: proc(d: ^Doc, lo, hi: Pos, alloc := context.temp_allocator) -> []Blk {
+	all := doc_blocks(d, alloc)
+	out := make([dynamic]Blk, 0, len(all), alloc)
+	for b in all {
+		n := blk_len(d, b)
+		if pos_less(hi, blk_pos(b, 0)) || pos_less(blk_pos(b, n), lo) {
+			continue
+		}
+		append(&out, b)
+	}
+	return out[:]
+}
+
+// blk_range clips a range to one block, giving the byte offsets inside it.
+blk_range :: proc(d: ^Doc, b: Blk, lo, hi: Pos) -> (from, to: int) {
+	n := blk_len(d, b)
+	from = 0
+	to = n
+	if pos_same_block(lo, blk_pos(b, 0)) {
+		from = clamp(lo.off, 0, n)
+	}
+	if pos_same_block(hi, blk_pos(b, 0)) {
+		to = clamp(hi.off, 0, n)
+	}
+	return from, max(from, to)
+}
+
 doc_end :: proc(d: ^Doc) -> Pos {
-	n := len(d.paras) - 1
-	return {n, para_len(&d.paras[n])}
+	bs := doc_blocks(d, context.temp_allocator)
+	if len(bs) == 0 {
+		return {}
+	}
+	b := bs[len(bs) - 1]
+	return blk_pos(b, blk_len(d, b))
 }
 
 pos_clamp :: proc(d: ^Doc, q: Pos) -> Pos {
 	out := q
+	if len(d.paras) == 0 {
+		return {}
+	}
 	out.para = clamp(out.para, 0, len(d.paras) - 1)
-	out.off = clamp(out.off, 0, para_len(&d.paras[out.para]))
-	// Never leave an offset inside a UTF-8 sequence.
 	pa := &d.paras[out.para]
-	t := para_text(pa, context.temp_allocator)
+	if pa.kind == .Table && pa.table != nil && len(pa.table.rows) > 0 {
+		t := pa.table
+		out.row = clamp(out.row, 0, len(t.rows) - 1)
+		cells := len(t.rows[out.row].cells)
+		out.col = clamp(out.col, 0, max(0, cells - 1))
+		if cl := table_cell(t, out.row, out.col); cl != nil && len(cl.paras) > 0 {
+			out.cpara = clamp(out.cpara, 0, len(cl.paras) - 1)
+		} else {
+			out.cpara = 0
+		}
+	} else {
+		out.row, out.col, out.cpara = 0, 0, 0
+	}
+	target := pos_para(d, out)
+	if target == nil {
+		out.off = 0
+		return out
+	}
+	out.off = clamp(out.off, 0, para_len(target))
+	// Never leave an offset inside a UTF-8 sequence.
+	t := para_text(target, context.temp_allocator)
 	for out.off > 0 && out.off < len(t) && t[out.off] & 0xc0 == 0x80 {
 		out.off -= 1
 	}
@@ -240,10 +505,10 @@ locate :: proc(pa: ^Paragraph, off: int) -> (ri: int, within: int) {
 // one before it. A replacement should inherit the style of what it replaces,
 // which is the run starting at the match, not the run leading up to it.
 style_after :: proc(d: ^Doc, q: Pos) -> Char_Style {
-	if q.para < 0 || q.para >= len(d.paras) {
+	pa := pos_para(d, q)
+	if pa == nil || len(pa.runs) == 0 {
 		return {}
 	}
-	pa := &d.paras[q.para]
 	acc := 0
 	for &r in pa.runs {
 		l := len(r.text)
@@ -256,10 +521,10 @@ style_after :: proc(d: ^Doc, q: Pos) -> Char_Style {
 }
 
 style_at :: proc(d: ^Doc, q: Pos) -> Char_Style {
-	if q.para < 0 || q.para >= len(d.paras) {
+	pa := pos_para(d, q)
+	if pa == nil || len(pa.runs) == 0 {
 		return {}
 	}
-	pa := &d.paras[q.para]
 	ri, _ := locate(pa, q.off)
 	return pa.runs[ri].style
 }
@@ -348,7 +613,10 @@ insert_plain :: proc(d: ^Doc, at: Pos, s: string, cs: Char_Style) -> Pos {
 	if len(s) == 0 {
 		return at
 	}
-	pa := &d.paras[at.para]
+	pa := pos_para(d, at)
+	if pa == nil || !text_kind(pa.kind) {
+		return at
+	}
 	ri, within := locate(pa, at.off)
 	if pa.runs[ri].style == cs {
 		// The common case by far: the character joins the run it lands in.
@@ -364,14 +632,27 @@ insert_plain :: proc(d: ^Doc, at: Pos, s: string, cs: Char_Style) -> Pos {
 		}
 	}
 	normalise(pa)
-	return Pos{at.para, at.off + len(s)}
+	out := at
+	out.off = at.off + len(s)
+	return out
 }
 
 // break_para splits a paragraph in two at `at`. Pressing Return at the end of
 // a heading starts body text, the way Word does; splitting a heading in the
 // middle leaves two headings.
 break_para :: proc(d: ^Doc, at: Pos) -> Pos {
-	pa := &d.paras[at.para]
+	arr, idx := pos_scope(d, at)
+	if len(arr^) == 0 {
+		return at
+	}
+	pa := &arr[idx]
+	// A Return against a table or an image does not split it: it opens a fresh
+	// body paragraph after it, which is the only way to get a caret back out of
+	// a block that has no text of its own.
+	if !text_kind(pa.kind) {
+		inject_at(arr, idx + 1, para_make())
+		return pos_move_index(d, at, idx + 1, 0)
+	}
 	at_end := at.off >= para_len(pa)
 	carry := style_at(d, at)
 
@@ -401,28 +682,51 @@ break_para :: proc(d: ^Doc, at: Pos) -> Pos {
 	normalise(pa)
 	normalise(&np)
 
-	inject_at(&d.paras, at.para + 1, np)
-	return Pos{at.para + 1, 0}
+	inject_at(arr, idx + 1, np)
+	return pos_move_index(d, at, idx + 1, 0)
 }
 
 // merge_para joins paragraph i+1 onto paragraph i, which is what Backspace at
 // the start of a paragraph does. The surviving paragraph keeps i's properties.
-merge_para :: proc(d: ^Doc, i: int) -> Pos {
-	if i < 0 || i + 1 >= len(d.paras) {
-		return {i, 0}
+merge_para :: proc(d: ^Doc, scope: Pos, i: int) -> Pos {
+	arr, _ := pos_scope(d, scope)
+	if i < 0 || i + 1 >= len(arr^) {
+		return pos_move_index(d, scope, max(0, i), 0)
 	}
-	join := para_len(&d.paras[i])
-	tail := d.paras[i + 1].runs
-	d.paras[i + 1].runs = nil
-	ordered_remove(&d.paras, i + 1)
+	// A table or an image cannot absorb a paragraph, and a paragraph cannot
+	// absorb one: Backspace at the head of the paragraph after a block deletes
+	// the block instead, which is what every word processor does.
+	if !text_kind(arr[i].kind) || !text_kind(arr[i + 1].kind) {
+		if !text_kind(arr[i].kind) {
+			para_destroy(&arr[i])
+			ordered_remove(arr, i)
+			if len(arr^) == 0 {
+				append(arr, para_make())
+			}
+			return pos_move_index(d, scope, clamp(i, 0, len(arr^) - 1), 0)
+		}
+		para_destroy(&arr[i + 1])
+		ordered_remove(arr, i + 1)
+		if len(arr^) == 0 {
+			append(arr, para_make())
+		}
+		k := clamp(i, 0, len(arr^) - 1)
+		return pos_move_index(d, scope, k, para_len(&arr[k]))
+	}
 
-	pa := &d.paras[i]
+	join := para_len(&arr[i])
+	tail := arr[i + 1].runs
+	arr[i + 1].runs = nil
+	para_destroy(&arr[i + 1])
+	ordered_remove(arr, i + 1)
+
+	pa := &arr[i]
 	for r in tail {
 		append(&pa.runs, r)
 	}
 	delete(tail)
 	normalise(pa)
-	return Pos{i, join}
+	return pos_move_index(d, scope, i, join)
 }
 
 // delete_range removes everything between two positions, across any number of
@@ -433,8 +737,12 @@ delete_range :: proc(d: ^Doc, a, b: Pos) -> Pos {
 		return lo
 	}
 
-	if lo.para == hi.para {
-		pa := &d.paras[lo.para]
+	// --- one paragraph: a plain splice.
+	if pos_same_block(lo, hi) {
+		pa := pos_para(d, lo)
+		if pa == nil || !text_kind(pa.kind) {
+			return lo
+		}
 		i0 := split_at(pa, lo.off)
 		i1 := split_at(pa, hi.off)
 		for i in i0 ..< i1 {
@@ -445,11 +753,42 @@ delete_range :: proc(d: ^Doc, a, b: Pos) -> Pos {
 		return lo
 	}
 
-	// Trim the tail of the first paragraph and the head of the last, drop the
-	// paragraphs in between, then graft what is left of the last onto the
-	// first. The first paragraph's properties survive.
-	{
-		pa := &d.paras[lo.para]
+	// --- a range that crosses into or out of a table clears each paragraph it
+	// touches and leaves the structure alone. Merging a cell's text into the
+	// body would have to delete the table to do it, which is never what
+	// dragging a selection past the edge of a grid was asking for.
+	if !same_scope(d, lo, hi) {
+		for blk in blocks_between(d, lo, hi) {
+			pa := blk_para(d, blk)
+			if pa == nil || !text_kind(pa.kind) {
+				continue
+			}
+			from, to := blk_range(d, blk, lo, hi)
+			if to <= from {
+				continue
+			}
+			i0 := split_at(pa, from)
+			i1 := split_at(pa, to)
+			for i in i0 ..< i1 {
+				delete(pa.runs[i].text)
+			}
+			remove_range(&pa.runs, i0, i1)
+			normalise(pa)
+		}
+		return lo
+	}
+
+	// --- several paragraphs of one scope. Trim the tail of the first and the
+	// head of the last, drop the paragraphs in between, then graft what is left
+	// of the last onto the first. The first paragraph's properties survive.
+	arr, i_lo := pos_scope(d, lo)
+	_, i_hi := pos_scope(d, hi)
+	if i_hi <= i_lo {
+		return lo
+	}
+	first_text := text_kind(arr[i_lo].kind)
+	if first_text {
+		pa := &arr[i_lo]
 		i0 := split_at(pa, lo.off)
 		for i in i0 ..< len(pa.runs) {
 			delete(pa.runs[i].text)
@@ -457,8 +796,8 @@ delete_range :: proc(d: ^Doc, a, b: Pos) -> Pos {
 		resize(&pa.runs, i0)
 	}
 	tail: [dynamic]Run
-	{
-		pb := &d.paras[hi.para]
+	if text_kind(arr[i_hi].kind) {
+		pb := &arr[i_hi]
 		i1 := split_at(pb, hi.off)
 		for i in 0 ..< i1 {
 			delete(pb.runs[i].text)
@@ -467,18 +806,33 @@ delete_range :: proc(d: ^Doc, a, b: Pos) -> Pos {
 		tail = pb.runs
 		pb.runs = nil
 	}
-	for i in lo.para + 1 ..= hi.para {
-		para_destroy(&d.paras[i])
+	for i in i_lo + 1 ..= i_hi {
+		para_destroy(&arr[i])
 	}
-	remove_range(&d.paras, lo.para + 1, hi.para + 1)
+	remove_range(arr, i_lo + 1, i_hi + 1)
 
-	pa := &d.paras[lo.para]
-	for r in tail {
-		append(&pa.runs, r)
+	pa := &arr[i_lo]
+	if first_text {
+		for r in tail {
+			append(&pa.runs, r)
+		}
+		delete(tail)
+		normalise(pa)
+		return lo
 	}
-	delete(tail)
-	normalise(pa)
-	return lo
+	// The first paragraph was a table or an image: it is gone with the rest,
+	// and whatever survived of the last paragraph becomes a body paragraph in
+	// its place.
+	para_destroy(pa)
+	np := Paragraph {
+		runs = tail != nil ? tail : make([dynamic]Run, 0, 1),
+	}
+	if len(np.runs) == 0 {
+		append(&np.runs, run_make({}))
+	}
+	normalise(&np)
+	arr[i_lo] = np
+	return pos_move_index(d, lo, i_lo, 0)
 }
 
 // ---------------------------------------------------------------------------
@@ -518,11 +872,12 @@ apply_patch :: proc(d: ^Doc, a, b: Pos, patch: Style_Patch) {
 	if !pos_less(lo, hi) {
 		return
 	}
-	for pi in lo.para ..= hi.para {
-		pa := &d.paras[pi]
-		n := para_len(pa)
-		from := pi == lo.para ? lo.off : 0
-		to := pi == hi.para ? hi.off : n
+	for blk in blocks_between(d, lo, hi) {
+		pa := blk_para(d, blk)
+		if pa == nil || !text_kind(pa.kind) {
+			continue
+		}
+		from, to := blk_range(d, blk, lo, hi)
 		if to <= from {
 			continue
 		}
@@ -545,11 +900,12 @@ range_all_bold :: proc(d: ^Doc, a, b: Pos) -> bool {
 		return style_at(d, lo).bold
 	}
 	any := false
-	for pi in lo.para ..= hi.para {
-		pa := &d.paras[pi]
-		n := para_len(pa)
-		from := pi == lo.para ? lo.off : 0
-		to := pi == hi.para ? hi.off : n
+	for blk in blocks_between(d, lo, hi) {
+		pa := blk_para(d, blk)
+		if pa == nil || !text_kind(pa.kind) {
+			continue
+		}
+		from, to := blk_range(d, blk, lo, hi)
 		acc := 0
 		for &r in pa.runs {
 			l := len(r.text)
@@ -625,7 +981,11 @@ word_bounds :: proc(s: string, off: int) -> (lo, hi: int) {
 
 doc_counts :: proc(d: ^Doc) -> (words, chars: int) {
 	in_word := false
-	for &pa in d.paras {
+	for blk in doc_blocks(d) {
+		pa := blk_para(d, blk)
+		if pa == nil {
+			continue
+		}
 		for &r in pa.runs {
 			for b in r.text {
 				chars += 1 if b & 0xc0 != 0x80 else 0
