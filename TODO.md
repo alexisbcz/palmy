@@ -269,9 +269,13 @@ Listed with their source so the next agent does not have to rediscover why.
 | `p.theme_color` is private | `sheets` | `p.parse_color` works but is not documented as the route |
 | no `text-current` colour inheritance | `call` | a chip inside a filled button must restate its colour per variant |
 | no `xdg_popup` | several | menus and tooltips are drawn in-window; a real constraint, not a bug |
-| no bidi | picker | RTL filenames list and sort correctly but read in logical order |
+| no bidi | picker, reader | `palmy/bidi.odin` and `palmy/shape.odin` now exist as pure modules; neither is wired into `font.odin`, so RTL still reads in logical order |
 | ZWJ emoji sequences not composed | typography | needs GSUB; a skin-tone modifier renders as a swatch |
 | a client's keyboard re-bind is asynchronous | editor, mail, vault | see below — fixed in the recorder, still a latent toolkit issue |
+| `p.clone_frame` is private | reader | no public way to get a frame-lifetime string; the app used `p.concat` instead. A one-argument public clone is the obvious API |
+| no window size accessor outside a frame | reader | read `app.win.width`/`height` directly |
+| `p.offscreen_end` calls `free_all(context.temp_allocator)` | reader | so a `tprintf` string held across two offscreen frames dangles — this cost a confusing failure where only the first of 18 shots rendered. Worth a line in the `offscreen` doc comment at minimum |
+| rendering offscreen needs a `^p.App` purely for its font table | reader | the app constructs a stand-in `p.App` in `shot.odin`; an offscreen path taking `^p.Fonts` would remove the need |
 
 > **Prompt.** Clear the small toolkit gaps in the table in `TODO.md` section T6.
 >
@@ -291,9 +295,60 @@ Listed with their source so the next agent does not have to rediscover why.
 > deliberate constraint rather than something to fix.
 >
 > Every change is additive — no existing signature changes. Parity at 182 /
-> 2.953 with the metrics byte-identical, 44 unit tests, 42 apps building, and
+> 2.953 with the metrics byte-identical, the full `tests/` suite passing, 42 apps building, and
 > a reported assertion count. For `drop_shadow` and `p.image`, report the
 > measured frame time before and after, since that is the point of both.
+
+---
+
+## T7 — Wire bidi and shaping into the text path
+
+`palmy/bidi.odin` (UAX #9) and `palmy/shape.odin` (Arabic joining) both exist,
+are tested against libfribidi and harfbuzz respectively, and are **used by
+nothing**. Parity is unchanged at 182 / 2.953 precisely because they are not
+wired in. Until they are, every RTL string in the toolkit still renders as
+disconnected letters in logical order — the `reader` reports Arabic and Hebrew
+books are unreadable, and the file picker reports the same for filenames.
+
+The reason this is its own task rather than part of either module is that
+`font.odin` assumes **logical order equals visual order** in three places that
+have to agree, and a caret that disagrees with the glyphs is worse than no
+bidi at all:
+
+| | assumption to break |
+| --- | --- |
+| `draw_text` | emits runes in string order |
+| `text_width` | sums advances in string order |
+| `text_index_at` | maps an x to a byte offset by walking forward |
+
+> **Prompt.** Wire `palmy/bidi.odin` and `palmy/shape.odin` into `font.odin`
+> so that RTL and Arabic text renders correctly, and the caret still lands
+> where the glyph is.
+>
+> You own `palmy/font.odin` and may add to `bidi.odin`/`shape.odin`. Read both
+> modules' file headers first — each states what it does and does not do.
+>
+> The order of operations is the whole problem: resolve bidi levels over the
+> logical string, reorder into visual runs, then shape each run, then measure
+> and draw. **Shaping must happen before both `text_width` and `draw_text`
+> or the two will disagree** and every centred or wrapped line will be wrong
+> by a few pixels in a way parity will catch but not explain.
+>
+> Gate on `needs_arabic_shaping` and on a cheap "is any rune RTL" scan, so the
+> Latin path stays allocation-free. That is not an optimisation detail: text
+> measurement runs several times per frame per node.
+>
+> `text_index_at` needs `shape_arabic_runes`, not the shaped string — a
+> lam-alef ligature spans two source letters, so a byte offset cannot be
+> recovered from the output alone. Caret movement through a bidi run is the
+> part most likely to be subtly wrong; assert it explicitly, including a
+> caret crossing a direction boundary and a caret inside a ligature.
+>
+> **Parity must stay at 182 cases, mean mae 2.953, metrics byte-identical.**
+> Every parity case is Latin, so any movement at all means the fast path is
+> not actually bypassing the new code. That is the single most important
+> check in this task. Also: the full `tests/` suite, 42 apps building, and
+> screenshots of Arabic and Hebrew text read back and described.
 
 ---
 
