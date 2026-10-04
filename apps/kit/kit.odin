@@ -46,6 +46,19 @@ start :: proc(cfg: p.Config, dark := false) -> (app: ^p.App, err: string) {
 		p.load_font(&app.fonts, fmt.tprintf("%s/%s", FONT_DIR, pair.file), .Sans, pair.wt)
 	}
 
+	// Geist ships four upright weights and no italic, so after that swap the
+	// italic slots still hold whatever the system scan found -- measured here
+	// as NotoSans-Italic at regular and DejaVuSans-BoldOblique at semibold.
+	// Three typefaces in one paragraph reads as a bug, not as emphasis. A
+	// sheared Geist is the same letterforms at a slant, which is what the
+	// reader expects, so ask for the synthetic obliquing explicitly.
+	//
+	// Mono is deliberately left alone: the mono face loaded below ships a real
+	// italic of its own family, and a real italic always beats a shear.
+	for wt in p.Font_Weight {
+		p.use_synthetic_italic(&app.fonts, .Sans, wt)
+	}
+
 	// Without a mono face loaded, every `font-mono` class renders .notdef
 	// boxes rather than falling back, so load one.
 	for path in MONO_CANDIDATES {

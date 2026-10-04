@@ -96,6 +96,19 @@ Keymap :: struct {
 	text:    string,
 	// Fallback bookkeeping when libxkbcommon is unavailable.
 	fallback: bool,
+
+	// The X11 core keyboard mapping, filled in from GetKeyboardMapping and
+	// GetModifierMapping when the X11 backend is driving. It is that
+	// backend's equivalent of the XKB keymap a Wayland compositor hands over:
+	// the keysym values are the same XK_* constants either way, so nothing
+	// above this layer can tell the two apart.
+	x_syms:        []u32,
+	x_per:         int,
+	x_first:       u32,
+	x_alt_mask:    u32,
+	x_super_mask:  u32,
+	x_level3_mask: u32,
+	x_level3_active: bool,
 }
 
 // keymap_load consumes the keymap the compositor sent over the wire.
@@ -138,6 +151,9 @@ keymap_load :: proc(k: ^Keymap, fd: linux.Fd, size: int) {
 keymap_destroy :: proc(k: ^Keymap) {
 	delete(k.text)
 	k.text = ""
+	delete(k.x_syms)
+	k.x_syms = nil
+	k.x_per = 0
 	if !xkb_ok {
 		return
 	}
@@ -184,8 +200,12 @@ keymap_mods :: proc(k: ^Keymap) -> Modifiers {
 	return k.mods
 }
 
-// keymap_sym resolves a wayland keycode to a keysym.
+// keymap_sym resolves a keycode to a keysym. The argument is an evdev code,
+// which is the X11 keycode minus 8 — the offset both windowing systems share.
 keymap_sym :: proc(k: ^Keymap, code: u32) -> u32 {
+	if k.x_syms != nil {
+		return x_keymap_sym(k, code)
+	}
 	if k.state != nil {
 		return xkb_api.xkb_state_key_get_one_sym(k.state, code + 8)
 	}
@@ -194,6 +214,9 @@ keymap_sym :: proc(k: ^Keymap, code: u32) -> u32 {
 
 // keymap_utf8 writes the text produced by a keycode, if any.
 keymap_utf8 :: proc(k: ^Keymap, code: u32, buf: []u8) -> int {
+	if k.x_syms != nil {
+		return keysym_utf8(x_keymap_sym(k, code), buf)
+	}
 	if k.state != nil {
 		n := xkb_api.xkb_state_key_get_utf8(k.state, code + 8, raw_data(buf), uint(len(buf)))
 		return int(max(n, 0))
@@ -207,6 +230,11 @@ keymap_utf8 :: proc(k: ^Keymap, code: u32, buf: []u8) -> int {
 }
 
 keymap_repeats :: proc(k: ^Keymap, code: u32) -> bool {
+	if k.x_syms != nil {
+		// The X11 server generates its own repeats, so palmy never has to
+		// decide: the backend reports them as they arrive.
+		return false
+	}
 	if k.keymap != nil {
 		return xkb_api.xkb_keymap_key_repeats(k.keymap, code + 8) > 0
 	}
@@ -262,4 +290,261 @@ fallback_sym :: proc(code: u32, shift: bool) -> u32 {
 // so they interpret keycodes exactly as this one does.
 keymap_text :: proc(k: ^Keymap) -> string {
 	return k.text
+}
+
+
+// ---------------------------------------------------------------------------
+// The X11 core keyboard mapping.
+//
+// GetKeyboardMapping hands back `keysyms-per-keycode` keysyms for every
+// keycode, laid out as two groups of two levels. The protocol specifies how to
+// read a short or ragged list, and how Shift and Lock pick a level; this is
+// that rule, and nothing more. AltGr arrives as whichever modifier the server
+// bound Mode_switch or ISO_Level3_Shift to, which GetModifierMapping reveals.
+// ---------------------------------------------------------------------------
+
+// Keysyms used while reading the modifier map.
+@(private)
+XK_ALT_L :: 0xffe9
+@(private)
+XK_ALT_R :: 0xffea
+@(private)
+XK_META_L :: 0xffe7
+@(private)
+XK_META_R :: 0xffe8
+@(private)
+XK_SUPER_L :: 0xffeb
+@(private)
+XK_SUPER_R :: 0xffec
+@(private)
+XK_HYPER_L :: 0xffed
+@(private)
+XK_MODE_SWITCH :: 0xff7e
+@(private)
+XK_ISO_LEVEL3_SHIFT :: 0xfe03
+
+// X11 modifier mask bits, from the core protocol's SETofKEYMASK.
+@(private)
+X_MOD_SHIFT :: u32(1 << 0)
+@(private)
+X_MOD_LOCK :: u32(1 << 1)
+@(private)
+X_MOD_CONTROL :: u32(1 << 2)
+
+// keymap_set_x11 installs a keycode-to-keysym table read from the server.
+// `first` is the lowest X11 keycode the table covers.
+keymap_set_x11 :: proc(k: ^Keymap, first: u32, per: int, syms: []u32) {
+	delete(k.x_syms)
+	k.x_syms = slice_clone_u32(syms)
+	k.x_per = per
+	k.x_first = first
+}
+
+// keymap_set_x11_mods records which modifier masks the server bound Alt, Super
+// and the level-3 (AltGr) shift to.
+keymap_set_x11_mods :: proc(k: ^Keymap, alt, super, level3: u32) {
+	k.x_alt_mask = alt
+	k.x_super_mask = super
+	k.x_level3_mask = level3
+}
+
+// keymap_x11_state converts an X11 event's modifier mask into palmy's.
+keymap_x11_state :: proc(k: ^Keymap, state: u32) -> Modifiers {
+	m: Modifiers
+	if state & X_MOD_SHIFT != 0 {
+		m += {.Shift}
+	}
+	if state & X_MOD_LOCK != 0 {
+		m += {.Caps}
+	}
+	if state & X_MOD_CONTROL != 0 {
+		m += {.Ctrl}
+	}
+	if k.x_alt_mask != 0 && state & k.x_alt_mask != 0 {
+		m += {.Alt}
+	}
+	if k.x_super_mask != 0 && state & k.x_super_mask != 0 {
+		m += {.Super}
+	}
+	k.mods = m
+	// Keep the raw bits so the level-3 group survives into keysym lookup.
+	k.x_level3_active = k.x_level3_mask != 0 && state & k.x_level3_mask != 0
+	return m
+}
+
+// x_keymap_sym applies the core protocol's level selection. `code` is an evdev
+// code, so the X11 keycode is `code + 8`.
+@(private)
+x_keymap_sym :: proc(k: ^Keymap, code: u32) -> u32 {
+	kc := code + 8
+	if k.x_per <= 0 || kc < k.x_first {
+		return 0
+	}
+	row := int(kc - k.x_first) * k.x_per
+	if row + k.x_per > len(k.x_syms) {
+		return 0
+	}
+	list := k.x_syms[row:row + k.x_per]
+
+	// Trailing NoSymbol entries carry no information.
+	n := len(list)
+	for n > 0 && list[n - 1] == 0 {
+		n -= 1
+	}
+	if n == 0 {
+		return 0
+	}
+
+	// Widen a short list into two groups of two, as the protocol prescribes.
+	g: [4]u32
+	switch n {
+	case 1:
+		g = {list[0], 0, list[0], 0}
+	case 2:
+		g = {list[0], list[1], list[0], list[1]}
+	case 3:
+		g = {list[0], list[1], list[2], 0}
+	case:
+		g = {list[0], list[1], list[2], list[3]}
+	}
+
+	base := k.x_level3_active ? 2 : 0
+	lo, hi := g[base], g[base + 1]
+	if hi == 0 {
+		// A single keysym for the group means a cased pair when the keysym has
+		// one, and the same symbol at both levels when it does not.
+		u := keysym_upper(lo)
+		if u != lo {
+			lo, hi = keysym_lower(lo), u
+		} else {
+			hi = lo
+		}
+	}
+
+	shift := .Shift in k.mods
+	caps := .Caps in k.mods
+	sym := shift ? hi : lo
+	if caps {
+		// Caps Lock swaps the case of a cased keysym and leaves the rest be.
+		sym = shift ? keysym_lower(sym) : keysym_upper(sym)
+	}
+	return sym
+}
+
+@(private)
+keysym_upper :: proc(s: u32) -> u32 {
+	switch {
+	case s >= 'a' && s <= 'z':
+		return s - 0x20
+	case s >= 0xe0 && s <= 0xfe && s != 0xf7:
+		return s - 0x20
+	case s == 0xff: // y with diaeresis has its capital outside Latin-1
+		return 0x13be
+	}
+	return s
+}
+
+@(private)
+keysym_lower :: proc(s: u32) -> u32 {
+	switch {
+	case s >= 'A' && s <= 'Z':
+		return s + 0x20
+	case s >= 0xc0 && s <= 0xde && s != 0xd7:
+		return s + 0x20
+	}
+	return s
+}
+
+// keysym_utf8 encodes the character a keysym stands for, if it stands for one.
+// The three ranges that matter are Latin-1 (where keysym and codepoint
+// coincide), the 0x01000000-prefixed Unicode keysyms, and the keypad.
+keysym_utf8 :: proc(sym: u32, buf: []u8) -> int {
+	r := keysym_rune(sym)
+	if r == 0 {
+		return 0
+	}
+	return encode_rune_into(r, buf)
+}
+
+@(private)
+keysym_rune :: proc(sym: u32) -> rune {
+	switch {
+	case sym >= 0x20 && sym <= 0x7e:
+		return rune(sym)
+	case sym >= 0xa0 && sym <= 0xff:
+		return rune(sym)
+	case sym >= 0x01000100 && sym <= 0x0110ffff:
+		return rune(sym - 0x01000000)
+	}
+	// The keypad, which produces ordinary characters.
+	switch sym {
+	case 0xff80:
+		return ' '
+	case 0xff89:
+		return '\t'
+	case 0xffaa:
+		return '*'
+	case 0xffab:
+		return '+'
+	case 0xffac:
+		return ','
+	case 0xffad:
+		return '-'
+	case 0xffae:
+		return '.'
+	case 0xffaf:
+		return '/'
+	case 0xffbd:
+		return '='
+	}
+	if sym >= 0xffb0 && sym <= 0xffb9 {
+		return rune('0' + (sym - 0xffb0))
+	}
+	return 0
+}
+
+// encode_rune_into writes one codepoint as UTF-8 and returns its length.
+@(private)
+encode_rune_into :: proc(r: rune, buf: []u8) -> int {
+	c := u32(r)
+	switch {
+	case c < 0x80:
+		if len(buf) < 1 {
+			return 0
+		}
+		buf[0] = u8(c)
+		return 1
+	case c < 0x800:
+		if len(buf) < 2 {
+			return 0
+		}
+		buf[0] = 0xc0 | u8(c >> 6)
+		buf[1] = 0x80 | u8(c & 0x3f)
+		return 2
+	case c < 0x10000:
+		if len(buf) < 3 {
+			return 0
+		}
+		buf[0] = 0xe0 | u8(c >> 12)
+		buf[1] = 0x80 | u8((c >> 6) & 0x3f)
+		buf[2] = 0x80 | u8(c & 0x3f)
+		return 3
+	case c <= 0x10ffff:
+		if len(buf) < 4 {
+			return 0
+		}
+		buf[0] = 0xf0 | u8(c >> 18)
+		buf[1] = 0x80 | u8((c >> 12) & 0x3f)
+		buf[2] = 0x80 | u8((c >> 6) & 0x3f)
+		buf[3] = 0x80 | u8(c & 0x3f)
+		return 4
+	}
+	return 0
+}
+
+@(private)
+slice_clone_u32 :: proc(s: []u32) -> []u32 {
+	out := make([]u32, len(s))
+	copy(out, s)
+	return out
 }

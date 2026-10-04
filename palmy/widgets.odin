@@ -414,6 +414,8 @@ text_field :: proc(
 		s.family,
 		s.weight,
 		s.tracking_em * s.font_size,
+		s.slant,
+		s.tabular,
 	)
 	inner_w := max(0, rect_of(ctx, id).w - s.pad[LEFT] - s.pad[RIGHT] - 2)
 	if caret_x - w.scroll.x > inner_w {

@@ -114,12 +114,10 @@ display_path :: proc(allocator := context.allocator) -> (path: string, ok: bool)
 	return fmt.aprintf("%s/%s", runtime_dir, name, allocator = allocator), true
 }
 
-conn_open :: proc(c: ^Conn) -> (err: string) {
-	path, ok := display_path(context.temp_allocator)
-	if !ok {
-		return "XDG_RUNTIME_DIR is not set, so the Wayland socket cannot be located"
-	}
-
+// conn_open_unix connects a non-blocking SOCK_STREAM to a unix socket path.
+// Both backends reach their server this way: Wayland's compositor socket under
+// XDG_RUNTIME_DIR and X11's /tmp/.X11-unix/X<n> are the same kind of thing.
+conn_open_unix :: proc(c: ^Conn, path: string, who: string) -> (err: string) {
 	sock, serr := linux.socket(.UNIX, .STREAM, {.CLOEXEC, .NONBLOCK}, linux.Protocol(0))
 	if serr != .NONE {
 		return fmt.tprintf("socket() failed: %v", serr)
@@ -130,18 +128,29 @@ conn_open :: proc(c: ^Conn) -> (err: string) {
 	}
 	if len(path) >= len(addr.sun_path) {
 		linux.close(sock)
-		return "Wayland socket path is too long"
+		return fmt.tprintf("the %s socket path is too long", who)
 	}
 	copy(addr.sun_path[:], path)
 
 	if cerr := linux.connect(sock, &addr); cerr != .NONE {
 		linux.close(sock)
-		return fmt.tprintf("cannot connect to the Wayland compositor at %s: %v", path, cerr)
+		return fmt.tprintf("cannot connect to the %s at %s: %v", who, path, cerr)
 	}
 
 	c.fd = sock
 	c.out = make([dynamic]u8, 0, 4096)
 	c.rx = make([dynamic]u8, 0, 8192)
+	return ""
+}
+
+conn_open :: proc(c: ^Conn) -> (err: string) {
+	path, ok := display_path(context.temp_allocator)
+	if !ok {
+		return "XDG_RUNTIME_DIR is not set, so the Wayland socket cannot be located"
+	}
+	if e := conn_open_unix(c, path, "Wayland compositor"); e != "" {
+		return e
+	}
 	c.kinds = make([dynamic]Obj_Kind, 2)
 	c.kinds[DISPLAY_ID] = .Display
 	return ""
@@ -300,7 +309,7 @@ conn_flush :: proc(c: ^Conn) {
 			continue
 		}
 		if err != .NONE || n <= 0 {
-			c.fatal = fmt.tprintf("lost the connection to the compositor while writing: %v", err)
+			c.fatal = fmt.tprintf("lost the connection to the display server while writing: %v", err)
 			return
 		}
 		sent += n
@@ -334,11 +343,11 @@ conn_read :: proc(c: ^Conn) -> bool {
 			return true
 		}
 		if err != .NONE {
-			c.fatal = fmt.tprintf("lost the connection to the compositor while reading: %v", err)
+			c.fatal = fmt.tprintf("lost the connection to the display server while reading: %v", err)
 			return false
 		}
 		if n == 0 {
-			c.fatal = "the compositor closed the connection"
+			c.fatal = "the display server closed the connection"
 			return false
 		}
 
@@ -422,9 +431,9 @@ take_fd :: proc(c: ^Conn) -> (linux.Fd, bool) {
 	return fd, true
 }
 
-// dispatch_pending decodes every complete message in the receive buffer and
-// hands each one to `on_event`.
-dispatch_pending :: proc(c: ^Conn, w: ^Window) {
+// wl_dispatch_pending decodes every complete message in the receive buffer
+// and hands each one to `on_event`.
+wl_dispatch_pending :: proc(c: ^Conn, w: ^Window) {
 	consumed := 0
 	for {
 		avail := len(c.rx) - consumed
@@ -441,7 +450,7 @@ dispatch_pending :: proc(c: ^Conn, w: ^Window) {
 
 		body := c.rx[consumed + 8:consumed + size]
 		r := Reader{b = body}
-		on_event(w, id, opcode, &r)
+		wl_on_event(w, id, opcode, &r)
 		consumed += size
 	}
 

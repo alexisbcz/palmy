@@ -1,6 +1,7 @@
 package palmy_tests
 
 import "core:math"
+import "core:mem"
 import "core:fmt"
 import "core:strings"
 import "core:sys/linux"
@@ -848,4 +849,311 @@ test_text_hit_testing_is_rune_safe :: proc(t: ^testing.T) {
 			testing.expectf(t, text[i] & 0xc0 != 0x80, "index %d is a rune boundary", i)
 		}
 	}
+}
+
+// ---------------------------------------------------------------------------
+// Typography: the slant axis, tabular figures, outlines and colour emoji.
+//
+// The thing worth asserting about all four is metric agreement. A feature that
+// changes advances in `draw_text` but not in `text_width` puts every caret,
+// wrap point and centred label somewhere the glyphs are not, and the bug shows
+// up a long way from the code that caused it.
+// ---------------------------------------------------------------------------
+
+@(private)
+assert_metrics_agree :: proc(t: ^testing.T, off: ^p.Offscreen, text: string, what: string, size: f32 = 16, fam := p.Font_Family.Sans, wt := p.Font_Weight.Regular, sl := p.Font_Slant.Upright, tabular := false) {
+	measured := p.text_width(&off.fonts, text, size, fam, wt, 0, sl, tabular)
+	c := p.offscreen_canvas(off)
+	drawn := p.draw_text(c, &off.fonts, text, 0, 0, size, p.WHITE, fam, wt, 0, sl, tabular)
+	testing.expectf(
+		t,
+		near(measured, drawn, 0.01),
+		"%s: text_width %.4f but draw_text advanced %.4f",
+		what,
+		measured,
+		drawn,
+	)
+
+	// And the inverse: every rune boundary round-trips through the hit test.
+	for i in 0 ..= len(text) {
+		if i < len(text) && text[i] & 0xc0 == 0x80 {
+			continue // not a boundary
+		}
+		x := p.text_width_upto(&off.fonts, text, i, size, fam, wt, 0, sl, tabular)
+		back := p.text_index_at(&off.fonts, text, size, x, fam, wt, 0, sl, tabular)
+		testing.expectf(t, back == i, "%s: index %d measured at %.3f mapped back to %d", what, i, x, back)
+	}
+}
+
+@(test)
+test_italic_axis_resolves :: proc(t: ^testing.T) {
+	off := p.offscreen_create(10, 10)
+	defer p.offscreen_destroy(off)
+
+	// Every one of the sixteen slots must resolve to something that measures,
+	// whatever this machine happens to have installed. An italic request that
+	// finds no italic file falls back to upright; it never vanishes.
+	for fam in p.Font_Family {
+		for wt in p.Font_Weight {
+			for sl in p.Font_Slant {
+				w := p.text_width(&off.fonts, "Emphasis", 16, fam, wt, 0, sl)
+				testing.expectf(t, w > 0, "%v/%v/%v measures text", fam, wt, sl)
+				testing.expectf(t, p.font_path(&off.fonts, fam, wt, sl) != "", "%v/%v/%v has a file", fam, wt, sl)
+			}
+		}
+	}
+}
+
+@(test)
+test_synthetic_oblique_keeps_advances :: proc(t: ^testing.T) {
+	off := p.offscreen_create(10, 10)
+	defer p.offscreen_destroy(off)
+
+	// Forcing the synthetic path makes the italic slot a sheared copy of the
+	// upright face. Shearing moves coverage sideways; it must not move the pen,
+	// which is what keeps a synthesised italic laying out like its upright.
+	testing.expect(t, p.use_synthetic_italic(&off.fonts, .Sans, .Regular), "the upright face exists to shear")
+	_, oblique := p.font_is_synthetic(&off.fonts, .Sans, .Regular, .Italic)
+	testing.expect(t, oblique, "the slot reports itself as a fake")
+
+	up := p.text_width(&off.fonts, "Hamburgefonstiv", 24, .Sans, .Regular, 0, .Upright)
+	ob := p.text_width(&off.fonts, "Hamburgefonstiv", 24, .Sans, .Regular, 0, .Italic)
+	testing.expectf(t, near(up, ob, 0.001), "a shear leaves advances alone: %.4f vs %.4f", up, ob)
+
+	assert_metrics_agree(t, off, "Hamburgefonstiv", "synthetic italic", 24, .Sans, .Regular, .Italic)
+}
+
+@(test)
+test_italic_metrics_agree :: proc(t: ^testing.T) {
+	off := p.offscreen_create(10, 10)
+	defer p.offscreen_destroy(off)
+	assert_metrics_agree(t, off, "Emphasis, in running text.", "italic", 16, .Sans, .Regular, .Italic)
+	assert_metrics_agree(t, off, "Emphasis, in running text.", "bold italic", 16, .Sans, .Bold, .Italic)
+	assert_metrics_agree(t, off, "fn main() { }", "mono italic", 16, .Mono, .Regular, .Italic)
+}
+
+@(test)
+test_tabular_figures_are_uniform :: proc(t: ^testing.T) {
+	off := p.offscreen_create(10, 10)
+	defer p.offscreen_destroy(off)
+
+	// The whole point: every digit advances by the same amount, so two clock
+	// readings of the same length are the same width.
+	a := p.text_width(&off.fonts, "00000000", 24, .Sans, .Regular, 0, .Upright, true)
+	b := p.text_width(&off.fonts, "11111111", 24, .Sans, .Regular, 0, .Upright, true)
+	c := p.text_width(&off.fonts, "18:04:37", 24, .Sans, .Regular, 0, .Upright, true)
+	d := p.text_width(&off.fonts, "11:11:11", 24, .Sans, .Regular, 0, .Upright, true)
+	testing.expectf(t, near(a, b, 0.001), "every digit the same width: %.4f vs %.4f", a, b)
+	testing.expectf(t, near(c, d, 0.001), "two clock readings the same width: %.4f vs %.4f", c, d)
+
+	// And each digit is as wide as the widest, never narrower.
+	widest := f32(0)
+	for ch in "0123456789" {
+		s := utf8_string(ch)
+		widest = max(widest, p.text_width(&off.fonts, s, 24))
+	}
+	one := p.text_width(&off.fonts, "1", 24, .Sans, .Regular, 0, .Upright, true)
+	testing.expectf(t, near(one, widest, 0.001), "the slot is the widest digit: %.4f vs %.4f", one, widest)
+
+	// Switching it off restores proportional measurement.
+	prop := p.text_width(&off.fonts, "11111111", 24)
+	testing.expect(t, prop <= b + 0.001, "tabular is never narrower than proportional")
+}
+
+@(private)
+utf8_string :: proc(r: rune) -> string {
+	b := strings.builder_make(context.temp_allocator)
+	strings.write_rune(&b, r)
+	return strings.to_string(b)
+}
+
+@(test)
+test_tabular_metrics_agree :: proc(t: ^testing.T) {
+	off := p.offscreen_create(10, 10)
+	defer p.offscreen_destroy(off)
+	assert_metrics_agree(t, off, "18:04:37", "tabular clock", 24, .Sans, .Regular, .Upright, true)
+	assert_metrics_agree(t, off, "1,048,576 B/s", "tabular rate", 16, .Sans, .Regular, .Upright, true)
+	assert_metrics_agree(t, off, "0123456789", "tabular digits", 13, .Sans, .Medium, .Italic, true)
+}
+
+@(test)
+test_fallback_glyph_metrics_agree :: proc(t: ^testing.T) {
+	off := p.offscreen_create(10, 10)
+	defer p.offscreen_destroy(off)
+	// Mixed scripts: these runes come from fallback faces with different units
+	// per em, so the advance has to be taken from whichever face served each
+	// one. If it is not, this is where it shows.
+	assert_metrics_agree(t, off, "subject: 日本語 → ok", "cjk fallback")
+	assert_metrics_agree(t, off, "αβγ ± ∑ ✓", "symbol fallback")
+}
+
+@(test)
+test_tabular_column_does_not_jitter :: proc(t: ^testing.T) {
+	off := p.offscreen_create(10, 10)
+	defer p.offscreen_destroy(off)
+
+	// A running clock: the x of the last colon must not move between ticks.
+	prev := f32(-1)
+	for s in ([?]string{"10:00:01", "10:00:09", "10:11:19", "19:48:37", "10:10:10"}) {
+		x := p.text_width_upto(&off.fonts, s, 5, 20, .Sans, .Regular, 0, .Upright, true)
+		if prev >= 0 {
+			testing.expectf(t, near(x, prev, 0.001), "the second colon stays put: %.4f vs %.4f", x, prev)
+		}
+		prev = x
+	}
+}
+
+@(test)
+test_text_outline_does_not_change_advance :: proc(t: ^testing.T) {
+	off := p.offscreen_create(10, 10)
+	defer p.offscreen_destroy(off)
+	c := p.offscreen_canvas(off)
+
+	plain := p.draw_text(c, &off.fonts, "Subtitle", 0, 0, 20, p.WHITE)
+	lined := p.draw_text_outlined(c, &off.fonts, "Subtitle", 0, 0, 20, p.WHITE, p.BLACK, 2)
+	testing.expectf(t, near(plain, lined, 0.001), "a stroke is paint, not metrics: %.4f vs %.4f", plain, lined)
+}
+
+@(test)
+test_text_outline_surrounds_the_glyph :: proc(t: ^testing.T) {
+	// White text with a black stroke on a white page: with no outline the glyph
+	// is invisible, with one it is a black shape. Counting dark pixels is the
+	// cheapest way to say "the stroke is actually there, and it is outside".
+	dark :: proc(o: ^p.Offscreen) -> int {
+		n := 0
+		for v in p.offscreen_pixels(o) {
+			if (v >> 16) & 0xff < 120 {
+				n += 1
+			}
+		}
+		return n
+	}
+
+	bare := p.offscreen_create(160, 60, 1, "w-full h-full bg-white")
+	defer p.offscreen_destroy(bare)
+	ui := p.offscreen_begin(bare)
+	p.text(ui, "Wave", "text-3xl font-bold text-white")
+	p.end(ui)
+	p.offscreen_end(bare)
+
+	lined := p.offscreen_create(160, 60, 1, "w-full h-full bg-white")
+	defer p.offscreen_destroy(lined)
+	ui2 := p.offscreen_begin(lined)
+	p.text(ui2, "Wave", "text-3xl font-bold text-white text-outline-2 text-outline-black")
+	p.end(ui2)
+	p.offscreen_end(lined)
+
+	testing.expect(t, dark(bare) == 0, "white on white is invisible without a stroke")
+	testing.expect(t, dark(lined) > 200, "the stroke makes it a shape")
+}
+
+@(test)
+test_outline_classes_parse :: proc(t: ^testing.T) {
+	off := p.offscreen_create(60, 60)
+	defer p.offscreen_destroy(off)
+
+	ui := p.offscreen_begin(off)
+	a := p.div(ui, "text-outline-2 text-outline-black")
+	p.end(ui)
+	b := p.div(ui, "italic tabular-nums")
+	p.end(ui)
+	c := p.div(ui, "italic not-italic")
+	p.end(ui)
+	p.end(ui)
+	p.offscreen_end(off)
+
+	sa := p.node_style(ui, a)
+	testing.expect_value(t, sa.outline_w, f32(2))
+	testing.expect_value(t, sa.outline_col, p.Color{0, 0, 0, 255})
+
+	sb := p.node_style(ui, b)
+	testing.expect_value(t, sb.slant, p.Font_Slant.Italic)
+	testing.expect(t, sb.tabular, "tabular-nums sets the flag")
+
+	sc := p.node_style(ui, c)
+	testing.expect_value(t, sc.slant, p.Font_Slant.Upright)
+}
+
+@(test)
+test_emoji_and_ignorables :: proc(t: ^testing.T) {
+	off := p.offscreen_create(10, 10)
+	defer p.offscreen_destroy(off)
+
+	// Zero-width format controls are zero-width, whatever the fonts say. A
+	// variation selector that took a .notdef advance would push every emoji
+	// sequence sideways.
+	plain := p.text_width(&off.fonts, "ab", 16)
+	glued := p.text_width(&off.fonts, "a\u200db\u2060", 16)
+	testing.expectf(t, near(plain, glued, 0.001), "joiners measure nothing: %.4f vs %.4f", plain, glued)
+
+	if p.emoji_font_path(&off.fonts) == "" {
+		return // no colour emoji font installed; nothing more to check
+	}
+	testing.expect(t, p.emoji_strike_ppem(&off.fonts) > 0, "the strike has a pixel size")
+
+	e := p.text_width(&off.fonts, "\U0001f44d", 16)
+	testing.expect(t, e > 8, "an emoji advances roughly an em")
+	assert_metrics_agree(t, off, "ship it \U0001f680 now", "colour emoji")
+}
+
+@(test)
+test_emoji_renders_in_colour :: proc(t: ^testing.T) {
+	off := p.offscreen_create(80, 48, 1, "w-full h-full bg-white")
+	defer p.offscreen_destroy(off)
+	if p.emoji_font_path(&off.fonts) == "" {
+		return
+	}
+
+	ui := p.offscreen_begin(off)
+	p.text(ui, "\U0001f534", "text-3xl") // a large red circle
+	p.end(ui)
+	p.offscreen_end(off)
+
+	// Not grey: a CBDT strike is colour, and if the fallback chain had served a
+	// line-art copy of this codepoint instead, every pixel would be neutral.
+	coloured := 0
+	for y in 0 ..< 48 {
+		for x in 0 ..< 80 {
+			c := p.offscreen_pixel(off, x, y)
+			lo := min(c.r, min(c.g, c.b))
+			hi := max(c.r, max(c.g, c.b))
+			if int(hi) - int(lo) > 60 {
+				coloured += 1
+			}
+		}
+	}
+	testing.expectf(t, coloured > 100, "the strike is colour, not line art (%d coloured pixels)", coloured)
+}
+
+@(test)
+test_fonts_do_not_leak :: proc(t: ^testing.T) {
+	track: mem.Tracking_Allocator
+	mem.tracking_allocator_init(&track, context.allocator)
+	defer mem.tracking_allocator_destroy(&track)
+
+	{
+		context.allocator = mem.tracking_allocator(&track)
+		for _ in 0 ..< 3 {
+			f: p.Fonts
+			p.fonts_init(&f)
+			// Touch every cache: faces, glyphs, the shear, outlines, the
+			// tabular slots and an emoji bitmap all allocate.
+			off := p.offscreen_create(64, 32)
+			p.use_synthetic_italic(&off.fonts, .Sans, .Regular)
+			c := p.offscreen_canvas(off)
+			p.draw_text(c, &off.fonts, "12:04 \U0001f600", 0, 20, 16, p.WHITE, .Sans, .Regular, 0, .Italic, true)
+			p.draw_text_outlined(c, &off.fonts, "12:04", 0, 20, 16, p.WHITE, p.BLACK, 2)
+			p.offscreen_destroy(off)
+			p.fonts_destroy(&f)
+		}
+		free_all(context.temp_allocator)
+	}
+
+	testing.expectf(
+		t,
+		len(track.allocation_map) == 0,
+		"%d allocations still live after three font init/destroy cycles",
+		len(track.allocation_map),
+	)
+	testing.expectf(t, len(track.bad_free_array) == 0, "%d bad frees", len(track.bad_free_array))
 }
