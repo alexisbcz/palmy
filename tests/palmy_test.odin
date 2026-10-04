@@ -1,6 +1,9 @@
 package palmy_tests
 
 import "core:math"
+import "core:fmt"
+import "core:strings"
+import "core:sys/linux"
 import "core:testing"
 import p "../palmy"
 
@@ -612,4 +615,105 @@ test_image_draws_into_canvas :: proc(t: ^testing.T) {
 	p.draw_image(&c, img, p.fitted_rect(2, 2, {0, 0, 40, 40}, .Contain))
 	mid := p.get(&c, 20, 20)
 	testing.expect(t, mid.r > 200 && mid.g < 60 && mid.b < 60, "the red image landed")
+}
+
+@(test)
+test_keymap_text_survives_load :: proc(t: ^testing.T) {
+	// Regression: `keymap_load` used to clone the keymap text and then call
+	// `keymap_destroy`, which freed the clone one line later — so
+	// `host_keymap` always came back empty and a nested compositor silently
+	// fell back to a default layout.
+	KEYMAP :: `xkb_keymap {
+  xkb_keycodes { minimum = 8; maximum = 255; <esc> = 9; };
+  xkb_types { type "ONE_LEVEL" { modifiers = none; map[none] = 1; level_name[1] = "Any"; }; };
+  xkb_compat { };
+  xkb_symbols { key <esc> { [ Escape ] }; };
+};`
+
+	fd, err := linux.memfd_create("palmy-keymap-test", {.CLOEXEC})
+	testing.expect(t, err == .NONE, "memfd created")
+	defer linux.close(fd)
+
+	bytes := transmute([]u8)string(KEYMAP)
+	written, werr := linux.write(fd, bytes)
+	testing.expect(t, werr == .NONE && written == len(bytes), "keymap written")
+	// The protocol hands over a NUL-terminated mapping.
+	nul := [1]u8{0}
+	_, _ = linux.write(fd, nul[:])
+	_, _ = linux.lseek(fd, 0, .SET)
+
+	km: p.Keymap
+	defer p.keymap_destroy(&km)
+	p.keymap_load(&km, fd, len(bytes) + 1)
+
+	text := p.keymap_text(&km)
+	testing.expect(t, len(text) > 0, "the keymap text is retained after loading")
+	testing.expect(t, strings.contains(text, "xkb_keymap"), "and it is the keymap we handed over")
+}
+
+@(test)
+test_input_counts_and_repeat :: proc(t: ^testing.T) {
+	off := p.offscreen_create(100, 100)
+	defer p.offscreen_destroy(off)
+
+	ui := p.offscreen_begin(off)
+	// Two real presses plus one auto-repeat, all in one frame.
+	p.press_key(off, p.KEY_BACKSPACE)
+	p.press_key(off, p.KEY_BACKSPACE)
+	append(&off.input.keys, p.Key_Event{sym = p.KEY_BACKSPACE, repeat = true})
+
+	testing.expect_value(t, p.key_count(ui, p.KEY_BACKSPACE), 3)
+	testing.expect_value(t, p.key_count(ui, p.KEY_BACKSPACE, false), 2)
+	testing.expect(t, p.key_pressed(ui, p.KEY_BACKSPACE, false), "a real press is seen")
+
+	// A key that only arrived as auto-repeat must not read as a command press.
+	append(&off.input.keys, p.Key_Event{sym = p.KEY_DOWN, repeat = true})
+	testing.expect(t, p.key_pressed(ui, p.KEY_DOWN), "repeat counts for movement")
+	testing.expect(t, !p.key_pressed(ui, p.KEY_DOWN, false), "repeat excluded for commands")
+	p.offscreen_end(off)
+}
+
+@(test)
+test_scroll_into_view :: proc(t: ^testing.T) {
+	off := p.offscreen_create(200, 100)
+	defer p.offscreen_destroy(off)
+
+	list_id, row_id: u64
+	frame :: proc(off: ^p.Offscreen, list_id, row_id: ^u64) {
+		ui := p.offscreen_begin(off)
+		list := p.col(ui, "w-full h-full overflow-scroll")
+		list_id^ = p.node_id(ui, list)
+		for i in 0 ..< 20 {
+			p.key(ui, fmt.tprintf("row%d", i))
+			r := p.div(ui, "w-full h-[20] shrink-0")
+			if i == 15 {
+				row_id^ = p.node_id(ui, r)
+			}
+			p.end(ui)
+		}
+		p.end(ui)
+		p.offscreen_end(off)
+	}
+
+	frame(off, &list_id, &row_id)
+	frame(off, &list_id, &row_id) // geometry settled
+
+	testing.expect(t, p.scroll_extent(off_ctx(off), list_id).y > 0, "the list overflows")
+	testing.expect_value(t, p.scroll_of(off_ctx(off), list_id).y, f32(0))
+
+	// Row 15 sits at y=300 in a 100px viewport, so it must scroll down.
+	p.scroll_into_view(off_ctx(off), list_id, row_id, 0)
+	after := p.scroll_of(off_ctx(off), list_id).y
+	testing.expect(t, after > 0, "scrolled to reveal the row")
+	frame(off, &list_id, &row_id)
+
+	// Already visible: scrolling again must not move.
+	before := p.scroll_of(off_ctx(off), list_id).y
+	p.scroll_into_view(off_ctx(off), list_id, row_id, 0)
+	testing.expect_value(t, p.scroll_of(off_ctx(off), list_id).y, before)
+}
+
+@(private)
+off_ctx :: proc(off: ^p.Offscreen) -> ^p.Ctx {
+	return &off.ctx
 }

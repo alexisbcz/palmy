@@ -112,11 +112,15 @@ keymap_load :: proc(k: ^Keymap, fd: linux.Fd, size: int) {
 	}
 	defer linux.munmap(mem, uint(size))
 
-	// Keep a copy before the mapping goes away.
-	delete(k.text)
+	// Tear down the previous keymap first: `keymap_destroy` frees the retained
+	// text, so copying before this point would throw the copy away.
+	keymap_destroy(k)
+
+	// Retain the text before the mapping goes away, and before compiling, so a
+	// keymap this build of libxkbcommon cannot compile can still be forwarded
+	// verbatim by a nested compositor.
 	k.text = strings.clone(string(cstring(mem)))
 
-	keymap_destroy(k)
 	k.ctx = xkb_api.xkb_context_new(0)
 	if k.ctx == nil {
 		k.fallback = true

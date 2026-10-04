@@ -567,3 +567,80 @@ concat :: proc(ctx: ^Ctx, parts: ..string) -> string {
 	}
 	return string(out)
 }
+
+// ---------------------------------------------------------------------------
+// Scrolling
+//
+// A scroll container keeps its offset across frames, keyed by element id. These
+// expose it so a keyboard-driven list can keep its selection on screen, which
+// is otherwise impossible without reimplementing scrolling by hand.
+// ---------------------------------------------------------------------------
+
+// scroll_of reads a scroll container's current offset.
+scroll_of :: proc(ctx: ^Ctx, id: u64) -> [2]f32 {
+	if w, found := ctx.widgets[id]; found {
+		return w.scroll
+	}
+	return {}
+}
+
+// scroll_extent is how far a container can scroll on each axis.
+scroll_extent :: proc(ctx: ^Ctx, id: u64) -> [2]f32 {
+	if w, found := ctx.widgets[id]; found {
+		return w.over
+	}
+	return {}
+}
+
+// scroll_to sets a container's offset, clamped to what it can actually scroll.
+scroll_to :: proc(ctx: ^Ctx, id: u64, offset: [2]f32) {
+	w := widget_of(ctx, id)
+	w.scroll.x = clamp(offset.x, 0, max(w.over.x, 0))
+	w.scroll.y = clamp(offset.y, 0, max(w.over.y, 0))
+}
+
+// scroll_nudge moves a container by a delta. (`scroll_by` is the offscreen
+// renderer's synthetic wheel input, which is a different thing.)
+scroll_nudge :: proc(ctx: ^Ctx, id: u64, delta: [2]f32) {
+	scroll_to(ctx, id, scroll_of(ctx, id) + delta)
+}
+
+// scroll_into_view scrolls `container` the shortest distance that brings
+// `target` fully inside it, with `margin` pixels of breathing room. Both ids
+// come from `node_id`, and both must have been laid out at least once — so the
+// call takes effect on the frame after the target first appears.
+//
+//	list := palmy.col(ui, "flex-1 overflow-scroll")
+//	...
+//	palmy.scroll_into_view(ui, palmy.node_id(ui, list), palmy.node_id(ui, row), 8)
+scroll_into_view :: proc(ctx: ^Ctx, container, target: u64, margin: f32 = 0) {
+	cw, has_c := ctx.widgets[container]
+	tw, has_t := ctx.widgets[target]
+	if !has_c || !has_t || cw.rect.h <= 0 {
+		return
+	}
+
+	// Target position relative to the container's scrolled content.
+	top := tw.rect.y - cw.rect.y + cw.scroll.y
+	bottom := top + tw.rect.h
+	view_top := cw.scroll.y
+	view_bottom := view_top + cw.rect.h
+
+	next := cw.scroll.y
+	if top - margin < view_top {
+		next = top - margin
+	} else if bottom + margin > view_bottom {
+		next = bottom + margin - cw.rect.h
+	}
+
+	left := tw.rect.x - cw.rect.x + cw.scroll.x
+	right := left + tw.rect.w
+	next_x := cw.scroll.x
+	if left - margin < cw.scroll.x {
+		next_x = left - margin
+	} else if right + margin > cw.scroll.x + cw.rect.w {
+		next_x = right + margin - cw.rect.w
+	}
+
+	scroll_to(ctx, container, {next_x, next})
+}

@@ -108,3 +108,34 @@ launch :: proc(argv: []string) -> bool {
 OK_CLASS :: "text-emerald-600"
 WARN_CLASS :: "text-amber-600"
 BAD_CLASS :: "text-destructive"
+
+// ---------------------------------------------------------------------------
+// Clipboard
+//
+// palmy is a client and does not implement wl_data_device, so the clipboard
+// goes through wl-clipboard. Every app needs it and none of them should have to
+// discover this separately.
+// ---------------------------------------------------------------------------
+
+// clipboard_set copies text to the Wayland selection. Returns false when
+// wl-copy is not installed.
+clipboard_set :: proc(text: string) -> bool {
+	state, sout, serr, err := os.process_exec(
+		{command = {"wl-copy", "--", text}},
+		context.temp_allocator,
+	)
+	_, _ = sout, serr
+	return err == nil && state.exit_code == 0
+}
+
+// clipboard_get reads the current selection.
+clipboard_get :: proc(allocator := context.allocator) -> (text: string, ok: bool) {
+	return run({"wl-paste", "--no-newline"}, allocator)
+}
+
+// has_tool reports whether a command line tool is on PATH, so an app can
+// disable a menu item rather than fail when the user picks it.
+has_tool :: proc(name: string) -> bool {
+	_, ok := run({"sh", "-c", fmt.tprintf("command -v %s", name)}, context.temp_allocator)
+	return ok
+}
