@@ -1,0 +1,9 @@
+# Intermediates. Everything here is rebuilt by film/build.sh from the shot
+# list, the score sources and footage that is already in the tree, and it runs
+# to a couple of hundred megabytes, which does not belong in a git history.
+#
+# Scoped to this directory rather than added to the root .gitignore so the
+# film does not have to touch a file the rest of the repository shares.
+.work/
+.scan/
+__pycache__/

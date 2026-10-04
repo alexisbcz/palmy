@@ -4,6 +4,7 @@ import { SiteFooter, SiteHeader } from "~/components/shell";
 import { CodeBlock } from "~/components/code-block";
 import { Callout, StatusBadge } from "~/components/bits";
 import { Shot } from "~/components/shot";
+import { Film } from "~/components/film";
 import { COMPONENTS, PARITY_SUMMARY } from "~/content/components";
 import { APPS } from "~/content/apps";
 
@@ -132,6 +133,30 @@ export default function Home() {
                 aspect="16 / 10"
                 note="Gallery capture not generated yet"
               />
+            </div>
+          </div>
+        </section>
+
+        {/* The film -------------------------------------------------------- */}
+        <section className="border-t">
+          <div className="mx-auto grid max-w-[1600px] items-center gap-8 px-4 py-12 lg:grid-cols-[minmax(0,1.55fr)_minmax(0,1fr)] lg:px-6 lg:py-14">
+            <Film />
+            <div className="min-w-0">
+              <h2 className="text-2xl font-semibold tracking-tight">
+                Two minutes, in chapters
+              </h2>
+              <p className="mt-3 text-sm leading-7 text-muted-foreground">
+                Cut from the applications&rsquo; own demo recordings and from
+                the parity suite&rsquo;s comparison reel, to a score written
+                for it. Every figure on screen is one this repository
+                reproduces &mdash; including the chapter about what the toolkit{" "}
+                <em>cannot</em> do yet, which is the one the rest of it has to
+                earn.
+              </p>
+              <p className="mt-3 text-xs leading-6 text-muted-foreground">
+                Silent until you ask for sound, captioned throughout, and still
+                there if you would rather nothing moved.
+              </p>
             </div>
           </div>
         </section>
