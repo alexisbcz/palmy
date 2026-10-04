@@ -1,9 +1,20 @@
-# palmy
+# Palmframe
 
-A UI toolkit for Linux, written from scratch in Odin. It speaks Wayland and
-X11, both hand-rolled. Components are procedures, styling is Tailwind class
-strings, and the result is pixels written straight into the display server's
-shared memory.
+An experiment in rethinking a Linux distribution for a machine where AI is
+part of the system rather than a website you visit.
+
+**palmy** is its UI toolkit, and what most of this README describes: written
+from scratch in Odin, speaking Wayland and X11, both hand-rolled. Components
+are procedures, styling is Tailwind class strings, and the result is pixels
+written straight into the display server's shared memory.
+
+The toolkit came first because the rest is not worth attempting on a stack you
+cannot see the bottom of. What exists today is that toolkit and the
+applications built on it — a window manager, a login manager, a file browser,
+a mail client, an office suite, media players, a torrent client, a local-model
+chat client, and others. The distribution and everything under *Where this is
+going* below is a plan, not a shipped thing, and is written here so the
+direction is on the record rather than implied.
 
 ```odin
 for ui in palmy.frames(app) {
@@ -433,6 +444,82 @@ At the time of writing, geometry (size, padding, radius, colour) matches
 exactly on every implemented case, and the median pixel error is around 3/255 —
 the remainder being glyph antialiasing, which cannot reach zero against a hinted
 FreeType rasterizer. See `parity/README.md`.
+
+## Where this is going
+
+Everything in this section is a plan. None of it is built, and saying so
+plainly is the point: the toolkit above is measured against a browser and has
+a test suite, and this does not yet.
+
+### A distribution where AI is part of the system
+
+The assistant on most machines today is a browser tab. It cannot see your
+files, cannot act on your mail, and forgets you between sessions — so the work
+of connecting it to your life falls to you, by copying and pasting. The
+alternative usually offered is worse: hand everything to one vendor and hope.
+
+Palmframe is an attempt at a third shape. A model runs locally, as a user
+process, and the system's own applications are built to be addressed by it —
+the mail client, the file browser, the calendar, the notes. `apps/ai` and
+`apps/chatbot` are the first two pieces of that: a local-model client, and a
+model that joins a chat channel as a participant. Both talk to a loopback
+address and nothing else.
+
+The design constraint that makes this interesting is *scope*. An assistant
+that can read your work mail should not silently also read your personal mail,
+and the way to guarantee that is not to ask it nicely.
+
+### One account, several identities
+
+A person is not one identity. There is the work self, the personal self, the
+one that deals with public-facing accounts, sometimes one for a side project
+or a company. Today each lives in a separate browser profile, a separate mail
+client, a separate password store, and the separation is entirely manual — it
+holds right up until you paste the wrong thing into the wrong window.
+
+The plan is a single Palmframe account that owns several **sub-identities**,
+each with its own mail, files, credentials, browsing state, and its own
+assistant scope. Switching between them is a first-class operation, not a
+matter of remembering which window you are in. They can be **explicitly
+linked** where that is useful — the same person, with the same calendar
+availability across work and personal, able to move a file deliberately from
+one to another — and the link is explicit and auditable rather than ambient.
+
+### The cloud part
+
+Supabase is the intended backend: Postgres, auth, storage and row-level
+security. The last of those is the load-bearing piece, because separation
+between identities has to be **enforced by the database**, not by which panel
+the file browser happens to be showing. A boundary that exists only in the
+interface is not a boundary; it is a convention, and conventions fail at
+exactly the moment they matter.
+
+Files sync rather than live remotely — local-first, so the machine works
+unplugged and the cloud is where state converges, not where it is held
+hostage.
+
+### The parts that are genuinely hard
+
+Three tensions are worth naming now rather than discovering later.
+
+**A single account is a single point of compromise.** Consolidating a person's
+computing life into one login makes that login the most valuable credential
+they own. The standard to meet is a written threat model that states what is
+and is not protected — an attacker with the stored data and no password is a
+very different adversary from one who can read process memory — and an answer
+to *what happens when this is phished?* that is not a shrug.
+
+**Server-side AI and end-to-end encryption pull against each other.** If a
+model runs on a server and reasons over your mail, the server can read your
+mail — that is not a policy choice, it is arithmetic. Local models avoid it
+entirely, which is why the local one came first; anything that moves to a
+server has to be honest about which of the two it gave up.
+
+**Identity separation is easy to claim and hard to prove.** The useful version
+is testable: an assistant scoped to one identity, asked for something from
+another, should fail — and there should be an assertion somewhere that says so
+and runs. That is the standard the rest of this repo is held to, and it is the
+one that matters most here.
 
 ## Layout of the source
 
