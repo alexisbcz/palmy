@@ -717,3 +717,54 @@ test_scroll_into_view :: proc(t: ^testing.T) {
 off_ctx :: proc(off: ^p.Offscreen) -> ^p.Ctx {
 	return &off.ctx
 }
+
+@(test)
+test_text_field_masks_without_touching_the_buffer :: proc(t: ^testing.T) {
+	off := p.offscreen_create(300, 60, 1, "w-full h-full bg-white")
+	defer p.offscreen_destroy(off)
+
+	buf: [dynamic]u8
+	defer delete(buf)
+
+	draw :: proc(off: ^p.Offscreen, buf: ^[dynamic]u8, mask: rune) {
+		ui := p.offscreen_begin(off)
+		p.div(ui, "w-full h-full p-2")
+		p.text_field(ui, buf, "Password", "w-full", mask)
+		p.end(ui)
+		p.offscreen_end(off)
+	}
+
+	draw(off, &buf, '*')
+	// Focus the field, then type a secret into it.
+	r := p.Rect{8, 8, 200, 32}
+	p.move_pointer(off, r.x + 10, r.y + 10)
+	draw(off, &buf, '*')
+	p.press(off);draw(off, &buf, '*')
+	p.release(off);draw(off, &buf, '*')
+	p.type_text(off, "hunter2")
+	draw(off, &buf, '*')
+
+	// The buffer keeps the real bytes; only the drawing is substituted.
+	testing.expect_value(t, string(buf[:]), "hunter2")
+
+	// Masked and unmasked renders must differ, and the masked one must not
+	// contain the glyphs of the secret.
+	masked_ink := count_ink(off)
+	draw(off, &buf, 0)
+	plain_ink := count_ink(off)
+	testing.expect(t, masked_ink != plain_ink, "masking changes what is drawn")
+}
+
+@(private)
+count_ink :: proc(off: ^p.Offscreen) -> int {
+	n := 0
+	c := p.offscreen_canvas(off)
+	for y in 0 ..< c.h {
+		for x in 0 ..< c.w {
+			if p.offscreen_pixel(off, x, y).r < 200 {
+				n += 1
+			}
+		}
+	}
+	return n
+}

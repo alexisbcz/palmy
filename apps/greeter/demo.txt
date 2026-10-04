@@ -1,11 +1,12 @@
-# The greeter against the mock greetd in ./mock.
+# The greeter driven against the mock greetd in ./mock.
 # Keyboard only: Tab moves the focus ring, arrows change a selector,
-# Enter submits, Escape clears or cancels.
+# Enter submits, Escape clears or cancels the session.
 
 wait 2.2
 shot 01_rest
 
-# The session selector: real .desktop entries from /usr/share/wayland-sessions.
+# The session selector: real .desktop entries read from
+# /usr/share/wayland-sessions.
 key Tab
 wait 0.9
 key Down
@@ -16,15 +17,15 @@ key Up
 wait 1.0
 shot 02_session
 
-# The power actions are focusable. Enter calls a stub that only logs
-# what a real greeter would run.
+# The power actions are focusable. Enter calls a stub that only logs what a
+# real greeter would run; nothing is executed.
 key Tab
 wait 0.7
 key Return
 wait 1.8
 shot 03_power
 
-# Round the ring to the account selector and cycle the accounts.
+# Round the focus ring to the account selector and cycle the accounts.
 key Tab
 wait 0.4
 key Tab
@@ -39,19 +40,28 @@ key Right
 wait 1.2
 shot 04_users
 
-# Back to the password field. Get it wrong first.
+# Back to the password field. Enter with nothing typed opens a session and
+# stops at greetd's question; Escape cancels it.
 key Tab
-wait 0.8
+wait 0.7
+key Return
+wait 1.3
+shot 05_prompt
+key Escape
+wait 1.4
+shot 06_cancelled
+
+# Now get the password wrong.
 type hunter2
 wait 1.2
 key Return
 wait 2.2
-shot 05_failed
+shot 07_failed
 
-# And then right.
+# And right.
 type palmy
 wait 1.0
 key Return
 wait 3.0
-shot 06_signed_in
+shot 08_signed_in
 wait 1.0

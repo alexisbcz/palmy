@@ -334,6 +334,8 @@ window_open :: proc(w: ^Window, title, app_id: string, width, height: int, decor
 		request(c, w.surface, WL_SURFACE_COMMIT)
 		conn_flush(c)
 
+		// Size may legitimately be 0 here; the configure below supplies the
+		// real one before anything is drawn.
 		deadline_layer := time.time_add(time.now(), 2 * time.Second)
 		for !w.configured {
 			if !window_wait(w, 100) {
