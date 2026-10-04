@@ -306,52 +306,94 @@ Listed with their source so the next agent does not have to rediscover why.
 
 ## T7 — Wire bidi and shaping into the text path
 
-`palmy/bidi.odin` (UAX #9) and `palmy/shape.odin` (Arabic joining) both exist,
-are tested against libfribidi and harfbuzz respectively, and are **used by
-nothing**. Parity is unchanged at 182 / 2.953 precisely because they are not
-wired in. Until they are, every RTL string in the toolkit still renders as
-disconnected letters in logical order — the `reader` reports Arabic and Hebrew
+`palmy/bidi.odin` (UAX #9, two oracles, 452k fuzz cases) and `palmy/shape.odin`
+(Arabic joining, 5088 harfbuzz comparisons) both exist, are tested, and are
+**used by nothing**. Parity is unchanged at 182 / 2.953 precisely because they
+are not wired in. Until they are, every RTL string in the toolkit renders as
+disconnected letters in logical order — `reader` reports Arabic and Hebrew
 books are unreadable, and the file picker reports the same for filenames.
 
-The reason this is its own task rather than part of either module is that
-`font.odin` assumes **logical order equals visual order** in three places that
-have to agree, and a caret that disagrees with the glyphs is worse than no
-bidi at all:
+Neither module needs `font.odin` to change shape. The work is ordering, and
+the caret is the hard half.
 
-| | assumption to break |
-| --- | --- |
-| `draw_text` | emits runes in string order |
-| `text_width` | sums advances in string order |
-| `text_index_at` | maps an x to a byte offset by walking forward |
+### The ordering, which is where this goes wrong silently
 
-> **Prompt.** Wire `palmy/bidi.odin` and `palmy/shape.odin` into `font.odin`
-> so that RTL and Arabic text renders correctly, and the caret still lands
-> where the glyph is.
+1. **Base direction per paragraph, bidi per line.** L1 resets trailing
+   whitespace and L2 reorders *per line*, so every wrapped line needs its own
+   `bidi_resolve` — but with the base level taken from `bidi_base_level` over
+   the **whole paragraph**. Resolving each line `.Auto` lets a line that
+   happens to start with a Latin word flip direction mid-paragraph.
+2. **Shape in logical order, then reverse.** Arabic joining is a logical-order
+   property. Per run: shape first, then reverse the glyph sequence for display.
+   Reversing before shaping gives the wrong joining forms, and a shaped
+   presentation form must never then go through `bidi_mirror`.
+3. **Shaping must happen before both `text_width` and `draw_text`** or the two
+   disagree and every centred or wrapped line is off by a few pixels in a way
+   parity catches but does not explain.
+4. **Kern between visually adjacent glyphs, not logically adjacent ones.** The
+   current loop's `prev` would otherwise kern pairs that are not next to each
+   other on screen.
+5. **Skip `bidi_is_control` runes with zero advance** or they render as
+   .notdef boxes.
+6. **Keep the ASCII fast path exact.** A string whose bytes are all < 0x80 laid
+   out LTR cannot reorder, so the existing one-run path is already correct and
+   should skip bidi entirely. Gate on that and on `needs_arabic_shaping`: text
+   measurement runs several times per frame per node.
+
+### The caret, which needs an API change
+
+`text_index_at` and `text_width_upto` both assume logical order is visual
+order, and both assumptions break:
+
+- `text_width_upto(index)` **stops being a function of the prefix** —
+  measuring `text[:i]` measures characters that may be drawn to the *right* of
+  the caret. Caret x is the edge of the run containing the index, found by
+  walking the visual runs.
+- A logical index at a direction boundary has **two** valid visual positions,
+  and no amount of extra measurement picks between them, because the
+  information is not in the string. This needs a **caret affinity** carried
+  beside the index: `text_caret_x(text, index, affinity)`, with
+  `text_index_at(x) -> (index, affinity)` returning the affinity it inferred
+  from which run was hit.
+- **Inside an RTL run the logical index decreases as x increases**, so the
+  nearest-boundary midpoint test has to flip, and a hit on the right half of
+  an RTL character yields the index *before* it.
+- **Selection stops being one rectangle.** A logical range crosses runs, so
+  highlight drawing becomes a loop over intersected runs, one rect each.
+- **Arrow keys become a choice**: logical movement (index ± 1) or visual
+  (left arrow moves left on screen). Visual needs `bidi_visual_order`, which
+  is why it is exposed. Most toolkits use visual for arrows, logical for word
+  jumps.
+- **Truncation and ellipsis must happen visually.** Clipping the logical
+  prefix and then resolving changes the order of what remains.
+- **Alignment** for `start`/`end` and the line box origin follows
+  `layout.base_level`. An empty RTL field parks its caret on the right, which
+  is why `bidi_base_level("")` with `.RTL` returns 1.
+
+> **Prompt.** Wire `palmy/bidi.odin` and `palmy/shape.odin` into
+> `palmy/font.odin` so RTL and Arabic text render correctly and the caret
+> lands where the glyph is.
 >
-> You own `palmy/font.odin` and may add to `bidi.odin`/`shape.odin`. Read both
-> modules' file headers first — each states what it does and does not do.
+> You own `palmy/font.odin` and may add to `bidi.odin`/`shape.odin`. Do not
+> touch `apps/`, `shadcn/` or `parity/`. Read both modules' file headers and
+> the ordering list above first — every item on it is a bug someone already
+> traced, not a style preference.
 >
-> The order of operations is the whole problem: resolve bidi levels over the
-> logical string, reorder into visual runs, then shape each run, then measure
-> and draw. **Shaping must happen before both `text_width` and `draw_text`
-> or the two will disagree** and every centred or wrapped line will be wrong
-> by a few pixels in a way parity will catch but not explain.
+> Put one `Bidi_Scratch` on `Fonts` or `Ctx` and reuse it per text node per
+> line; a zeroed scratch self-initialises.
 >
-> Gate on `needs_arabic_shaping` and on a cheap "is any rune RTL" scan, so the
-> Latin path stays allocation-free. That is not an optimisation detail: text
-> measurement runs several times per frame per node.
->
-> `text_index_at` needs `shape_arabic_runes`, not the shaped string — a
-> lam-alef ligature spans two source letters, so a byte offset cannot be
-> recovered from the output alone. Caret movement through a bidi run is the
-> part most likely to be subtly wrong; assert it explicitly, including a
-> caret crossing a direction boundary and a caret inside a ligature.
+> Do the rendering first and get it looking right, then the caret, because the
+> caret needs an API addition and the rendering does not. Keep
+> `text_width_upto` working for callers that pass LTR text so apps do not
+> break in the same commit.
 >
 > **Parity must stay at 182 cases, mean mae 2.953, metrics byte-identical.**
 > Every parity case is Latin, so any movement at all means the fast path is
-> not actually bypassing the new code. That is the single most important
-> check in this task. Also: the full `tests/` suite, every app building, and
-> screenshots of Arabic and Hebrew text read back and described.
+> not actually bypassing the new code. That is the single most important check
+> in this task. Also: the full `tests/` suite, every app building, and
+> screenshots of Arabic, Hebrew and a mixed LTR/RTL line read back and
+> described — including a caret placed at a direction boundary and a selection
+> spanning one, since those are the two things assertions describe worst.
 
 ---
 
