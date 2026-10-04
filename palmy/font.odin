@@ -72,6 +72,12 @@ Fonts :: struct {
 	// turned off to match a renderer that has it disabled — CSS
 	// `font-kerning: none`, for instance.
 	no_kerning: bool,
+
+	// Faces consulted, in order, for a codepoint the chosen family does not
+	// cover. A text face carries a few hundred glyphs; a CJK subject line, a
+	// filename with a fullwidth colon or a stray arrow is outside all of them
+	// and would otherwise render as .notdef boxes.
+	fallbacks: [dynamic]Face,
 }
 
 // Metrics describes a font at one size, in pixels.
@@ -196,6 +202,36 @@ fonts_init :: proc(f: ^Fonts) {
 
 	fill_weight_gaps(f)
 	f.any = f.faces[.Sans][.Regular].ok
+
+	// Load every fallback that is present, not just the first: one family
+	// rarely covers CJK and Arabic and arrows at once.
+	f.fallbacks = make([dynamic]Face)
+	for cand in FALLBACK_CANDIDATES {
+		fb: Face
+		pick_face(&fb, files, {cand})
+		if !fb.ok {
+			continue
+		}
+		// Only skip a file already in the chain. Deliberately NOT skipping one
+		// that currently backs a primary face: an application replaces the
+		// primaries after fonts_init -- kit.start swaps in Geist -- so a
+		// fallback dropped because it matched the *system-picked* primary
+		// leaves a hole once that primary is gone. That cost accented Greek
+		// in the mail client, where DejaVuSans was both the initial primary
+		// and the only face carrying those codepoints.
+		dup := false
+		for &have in f.fallbacks {
+			if have.path == fb.path {
+				dup = true
+			}
+		}
+		if dup {
+			delete(fb.data)
+			delete(fb.path)
+			continue
+		}
+		append(&f.fallbacks, fb)
+	}
 }
 
 // fill_weight_gaps resolves every empty slot to the nearest available weight,
@@ -275,6 +311,14 @@ fonts_destroy :: proc(f: ^Fonts) {
 			face.data = nil
 		}
 	}
+	for &fb in f.fallbacks {
+		if fb.data != nil {
+			delete(fb.data)
+			delete(fb.path)
+			fb.data = nil
+		}
+	}
+	delete(f.fallbacks)
 }
 
 @(private)
@@ -311,7 +355,12 @@ scan_font_files :: proc() -> [dynamic]string {
 				continue
 			}
 			ext := strings.to_lower(filepath.ext(e.name), context.temp_allocator)
-			if ext == ".ttf" || ext == ".otf" {
+			// .ttc is a TrueType collection. It was excluded here, which meant
+			// the only CJK font on a typical Linux install -- shipped solely as
+			// NotoSansCJK-*.ttc -- was never even offered to the loader, and
+			// every CJK string rendered as .notdef boxes. face_load resolves
+			// the collection offset.
+			if ext == ".ttf" || ext == ".otf" || ext == ".ttc" {
 				append(out, strings.clone(e.fullpath))
 			}
 		}
@@ -347,13 +396,83 @@ pick_face :: proc(face: ^Face, files: [dynamic]string, candidates: []string) {
 	}
 }
 
+// Fallback faces, most preferred first. These are broad-coverage families
+// rather than text faces: what matters is that between them they cover the
+// scripts a desktop actually meets. Emoji are deliberately absent -- the only
+// emoji font usually installed is NotoColorEmoji, which is CBDT/CBLC colour
+// bitmaps with no `glyf` table, and stb_truetype cannot rasterize it.
+@(private)
+FALLBACK_CANDIDATES := [?]string {
+	"NotoSansCJK-Regular", // .ttc; needs the collection offset above
+	"NotoSansCJKjp-Regular",
+	"NotoSansCJKsc-Regular",
+	"NotoSerifCJK-Regular",
+	"NotoSansArabic-Regular",
+	"NotoSansHebrew-Regular",
+	"NotoSansThai-Regular",
+	"NotoSansDevanagari-Regular",
+	"NotoSansSymbols2-Regular",
+	"NotoSansMath-Regular",
+	"DejaVuSans", // arrows, box drawing, a lot of symbols
+	"FreeSerif",
+	"Symbola",
+}
+
+// load_fallback_font appends a face to the fallback chain. An application only
+// needs this for a script the automatic scan did not find a font for; the
+// chain is searched in the order faces are added.
+load_fallback_font :: proc(f: ^Fonts, path: string) -> bool {
+	face: Face
+	if !face_load(&face, path) {
+		return false
+	}
+	append(&f.fallbacks, face)
+	return true
+}
+
+// face_for_rune picks the face that will actually draw `r`: the requested one
+// when it has the glyph, otherwise the first fallback that does.
+//
+// Resolution is deterministic for a given codepoint, which is what lets the
+// glyph cache stay keyed on (family, weight, size, phase, codepoint) without
+// recording which face served it.
+@(private)
+face_for_rune :: proc(f: ^Fonts, fam: Font_Family, wt: Font_Weight, r: rune) -> ^Face {
+	face := &f.faces[fam][wt]
+	if !face.ok {
+		return face
+	}
+	if tt.FindGlyphIndex(&face.info, r) != 0 {
+		return face
+	}
+	// A space is not in every face and does not need to be: it draws nothing,
+	// and taking its advance from a fallback would change the metrics of text
+	// that is otherwise entirely in the primary face.
+	if r == ' ' || r == '\t' {
+		return face
+	}
+	for &fb in f.fallbacks {
+		if fb.ok && tt.FindGlyphIndex(&fb.info, r) != 0 {
+			return &fb
+		}
+	}
+	return face
+}
+
 @(private)
 face_load :: proc(face: ^Face, path: string) -> bool {
 	data, rerr := os.read_entire_file_from_path(path, context.allocator)
 	if rerr != nil {
 		return false
 	}
-	if !tt.InitFont(&face.info, raw_data(data), 0) {
+	// A TrueType *collection* (.ttc) packs several fonts into one file and
+	// begins with a header rather than a font, so offset 0 is not a font and
+	// InitFont refuses it. GetFontOffsetForIndex returns where font `index`
+	// actually starts, and for a plain .ttf it returns 0 -- so this is right
+	// for both. Without it the only CJK font on a typical Linux box,
+	// NotoSansCJK-*.ttc, simply cannot be loaded.
+	offset := tt.GetFontOffsetForIndex(raw_data(data), 0)
+	if offset < 0 || !tt.InitFont(&face.info, raw_data(data), offset) {
 		delete(data)
 		return false
 	}
@@ -398,7 +517,7 @@ glyph_for :: proc(f: ^Fonts, cp: rune, size: f32, fam: Font_Family, wt: Font_Wei
 		return g
 	}
 
-	face := &f.faces[fam][wt]
+	face := face_for_rune(f, fam, wt, cp)
 	g: Glyph
 	if face.ok {
 		exact := f32(key.size_q) / SIZE_STEPS
@@ -440,18 +559,23 @@ text_width :: proc(f: ^Fonts, text: string, size: f32, fam := Font_Family.Sans, 
 	if !face.ok {
 		return f32(ef.width(text)) * fallback_scale(size) + f32(len(text)) * tracking
 	}
-	s := face_scale(face, size)
 	total := f32(0)
 	prev := rune(0)
+	prev_face: ^Face = nil
 	for r in text {
+		// Must resolve exactly as draw_text does, or measured width and drawn
+		// width disagree and every caret, wrap point and centred label is off.
+		rf := face_for_rune(f, fam, wt, r)
+		s := face_scale(rf, size)
 		adv, lsb: i32
-		tt.GetCodepointHMetrics(&face.info, r, &adv, &lsb)
+		tt.GetCodepointHMetrics(&rf.info, r, &adv, &lsb)
 		total += f32(adv) * s
-		if prev != 0 && !f.no_kerning {
-			total += f32(tt.GetCodepointKernAdvance(&face.info, prev, r)) * s
+		if prev != 0 && !f.no_kerning && prev_face == rf {
+			total += f32(tt.GetCodepointKernAdvance(&rf.info, prev, r)) * s
 		}
 		total += tracking
 		prev = r
+		prev_face = rf
 	}
 	if face.synth_bold {
 		total += size * 0.02
@@ -481,13 +605,19 @@ draw_text :: proc(
 		return draw_text_fallback(c, text, x, y, size, col)
 	}
 
-	face_s := face_scale(face, size)
 	pen := x
 	prev := rune(0)
+	prev_face: ^Face = nil
 
 	for r in text {
-		if prev != 0 && !f.no_kerning {
-			pen += f32(tt.GetCodepointKernAdvance(&face.info, prev, r)) * face_s
+		// Each rune is drawn by whichever face actually has it, so the scale
+		// and the kern pair must both come from that face -- units per em
+		// differ between families, and a kern pair only means anything when
+		// both runes come from the same face.
+		rf := face_for_rune(f, fam, wt, r)
+		face_s := face_scale(rf, size)
+		if prev != 0 && !f.no_kerning && prev_face == rf {
+			pen += f32(tt.GetCodepointKernAdvance(&rf.info, prev, r)) * face_s
 		}
 
 		// Split the pen into a whole pixel and a subpixel phase.
@@ -500,13 +630,14 @@ draw_text :: proc(
 			px := int(base) + g.xoff
 			py := int(math.round(y)) + g.yoff
 			blit_mask(c, px, py, g.mask, g.w, g.h, col)
-			if face.synth_bold {
+			if rf.synth_bold {
 				// Emulate weight by overprinting one pixel to the right.
 				blit_mask(c, px + 1, py, g.mask, g.w, g.h, col)
 			}
 		}
 		pen += g.advance + tracking
 		prev = r
+		prev_face = rf
 	}
 	return pen - x
 }
@@ -559,17 +690,19 @@ text_index_at :: proc(
 		return clamp(idx, 0, len(text))
 	}
 
-	s := face_scale(face, size)
 	pen := f32(0)
 	prev := rune(0)
+	prev_face: ^Face = nil
 	last_index := 0
 
 	for r, i in text {
+		rf := face_for_rune(f, fam, wt, r)
+		s := face_scale(rf, size)
 		adv, lsb: i32
-		tt.GetCodepointHMetrics(&face.info, r, &adv, &lsb)
+		tt.GetCodepointHMetrics(&rf.info, r, &adv, &lsb)
 		step := f32(adv) * s + tracking
-		if prev != 0 && !f.no_kerning {
-			step += f32(tt.GetCodepointKernAdvance(&face.info, prev, r)) * s
+		if prev != 0 && !f.no_kerning && prev_face == rf {
+			step += f32(tt.GetCodepointKernAdvance(&rf.info, prev, r)) * s
 		}
 
 		// Past the midpoint of this glyph the caret belongs after it.
@@ -578,6 +711,7 @@ text_index_at :: proc(
 		}
 		pen += step
 		prev = r
+		prev_face = rf
 		last_index = i + rune_len(r)
 	}
 	return last_index
