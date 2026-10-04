@@ -213,6 +213,8 @@ wait_for_frame :: proc(app: ^App) -> bool {
 			return false
 		}
 
+		frame_watchdog(w)
+
 		want := app.first ||
 			app.direct ||
 			app.cfg.always ||
@@ -222,6 +224,17 @@ wait_for_frame :: proc(app: ^App) -> bool {
 			w.need_configure_ack
 
 		if want && !w.frame_pending && next_buffer(w) != nil {
+			// Wayland paces frames with a frame callback. The X11 core
+			// protocol has no vsync at all, so `frame_hold_ms` supplies the
+			// floor that keeps an animating app from repainting as fast as
+			// the server can swallow it.
+			if hold := frame_hold_ms(w); hold > 0 {
+				if !window_wait(w, hold) {
+					return false
+				}
+				pump_key_repeat(app)
+				continue
+			}
 			w.input_dirty = false
 			app.ctx.redraw = false
 			return true
@@ -738,7 +751,8 @@ host_keymap :: proc(app: ^App) -> string {
 // describe returns a one-line summary of the backend, for diagnostics.
 describe :: proc(app: ^App) -> string {
 	return fmt.tprintf(
-		"palmy: %dx%d @%dx, sans=%s mono=%s",
+		"palmy: %s, %dx%d @%dx, sans=%s mono=%s",
+		backend_name(app),
 		app.win.width,
 		app.win.height,
 		app.win.scale,

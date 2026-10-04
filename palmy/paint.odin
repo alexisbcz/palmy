@@ -318,7 +318,7 @@ paint_text :: proc(ctx: ^Ctx, c: ^Canvas, n: ^Node, col: Color) {
 	}
 
 	size := s.font_size * sc
-	m := font_metrics(ctx.fonts, size, s.family, s.weight)
+	m := font_metrics(ctx.fonts, size, s.family, s.weight, s.slant)
 	lh := line_height_of(s) * sc
 	tracking := s.tracking_em * size
 
@@ -339,7 +339,7 @@ paint_text :: proc(ctx: ^Ctx, c: ^Canvas, n: ^Node, col: Color) {
 		if s.truncate && w > inner.w * sc && len(str) > 0 {
 			str = truncate_to(ctx, str, inner.w * sc, size, s, tracking)
 			if s.text_align != .Left {
-				tw := text_width(ctx.fonts, str, size, s.family, s.weight, tracking)
+				tw := text_width(ctx.fonts, str, size, s.family, s.weight, tracking, s.slant, s.tabular)
 				x = inner.x * sc
 				if s.text_align == .Center {
 					x += (inner.w * sc - tw) / 2
@@ -349,7 +349,27 @@ paint_text :: proc(ctx: ^Ctx, c: ^Canvas, n: ^Node, col: Color) {
 			}
 		}
 
-		adv := draw_text(c, ctx.fonts, str, x, baseline, size, col, s.family, s.weight, tracking)
+		// An outline is a style, so it is drawn by the same call rather than by
+		// the caller painting the run again in another colour.
+		outline := Text_Outline{}
+		if s.outline_w > 0 && s.outline_col.a > 0 {
+			outline = {width = s.outline_w * sc, color = with_opacity(s.outline_col, s.opacity)}
+		}
+		adv := draw_text(
+			c,
+			ctx.fonts,
+			str,
+			x,
+			baseline,
+			size,
+			col,
+			s.family,
+			s.weight,
+			tracking,
+			s.slant,
+			s.tabular,
+			outline,
+		)
 
 		if s.strike || s.underline {
 			thickness := max(size * 0.07, 1)
@@ -370,7 +390,7 @@ paint_text :: proc(ctx: ^Ctx, c: ^Canvas, n: ^Node, col: Color) {
 @(private)
 truncate_to :: proc(ctx: ^Ctx, str: string, max_w, size: f32, s: Style, tracking: f32) -> string {
 	ell := "…"
-	ew := text_width(ctx.fonts, ell, size, s.family, s.weight, tracking)
+	ew := text_width(ctx.fonts, ell, size, s.family, s.weight, tracking, s.slant, s.tabular)
 	if ew >= max_w {
 		return ""
 	}
@@ -381,7 +401,7 @@ truncate_to :: proc(ctx: ^Ctx, str: string, max_w, size: f32, s: Style, tracking
 		if str[i] & 0xc0 == 0x80 {
 			continue
 		}
-		if text_width(ctx.fonts, str[:i], size, s.family, s.weight, tracking) > budget {
+		if text_width(ctx.fonts, str[:i], size, s.family, s.weight, tracking, s.slant, s.tabular) > budget {
 			break
 		}
 		end = i

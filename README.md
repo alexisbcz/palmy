@@ -1,8 +1,9 @@
 # palmy
 
-A UI toolkit for Wayland, written from scratch in Odin. Components are
-procedures, styling is Tailwind class strings, and the result is pixels written
-straight into the compositor's shared memory.
+A UI toolkit for Linux, written from scratch in Odin. It speaks Wayland and
+X11, both hand-rolled. Components are procedures, styling is Tailwind class
+strings, and the result is pixels written straight into the display server's
+shared memory.
 
 ```odin
 for ui in palmy.frames(app) {
@@ -32,9 +33,13 @@ libc.so.6
 That is the whole dependency list. There is no libwayland, no GTK or Qt, no
 GPU driver, no font library:
 
-- **The Wayland protocol is implemented directly** — messages are encoded onto
-  a unix socket by hand, with file descriptors passed in `SCM_RIGHTS` control
-  messages. `palmy/wire.odin` is the entire client library.
+- **Both display protocols are implemented directly** — Wayland messages are
+  encoded onto a unix socket by hand, with file descriptors passed in
+  `SCM_RIGHTS` control messages; the X11 core protocol is framed on the same
+  socket machinery, authenticated with a cookie read out of `~/.Xauthority`,
+  and presents through MIT-SHM. There is no libwayland, no libX11 and no
+  libxcb: `palmy/wire.odin`, `palmy/wayland.odin` and `palmy/x11.odin` are the
+  entire client library.
 - **Rendering is a software rasterizer** — antialiased rounded rectangles,
   borders, shadows, gradients and lines, computed from signed distance fields
   and written into the shared-memory buffer the compositor is about to show.
@@ -44,11 +49,35 @@ GPU driver, no font library:
   the real Tailwind palette, generated from `tailwindcss@3.4.17`, so
   `bg-slate-900` is `#0f172a` here too.
 - **Text is real TrueType** — glyphs are rasterized through stb_truetype from
-  whatever font is installed, with kerning, word wrap and a glyph cache.
+  whatever font is installed, with kerning, word wrap, a slant axis, tabular
+  figures, glyph outlines, colour-bitmap emoji and a glyph cache.
 
-It talks xdg-shell, follows HiDPI output scale, uses `cursor-shape-v1` for
-pointer shapes, loads libxkbcommon at runtime for correct keyboard layouts, and
-asks for server-side decorations when the compositor offers them.
+On Wayland it talks xdg-shell, follows HiDPI output scale, uses
+`cursor-shape-v1` for pointer shapes, loads libxkbcommon at runtime for correct
+keyboard layouts, and asks for server-side decorations when the compositor
+offers them. On X11 it talks the core protocol: MIT-SHM for presentation with a
+chunked `PutImage` fallback, `WM_PROTOCOLS`/`WM_DELETE_WINDOW` so a window
+manager asks instead of killing the process, `WM_CLASS` carrying the same app
+id, the cursor font for pointer shapes, and `GetKeyboardMapping` for layouts.
+
+### Which backend
+
+The same binary runs on either, and an application cannot tell which it is on:
+the public API is identical and the rasterizer is shared, so a window and an
+offscreen render of the same tree are the same pixels.
+
+```
+WAYLAND_DISPLAY set    ->  Wayland
+otherwise DISPLAY set  ->  X11
+PALMY_BACKEND=x11      ->  X11, whatever the environment says
+PALMY_BACKEND=wayland  ->  Wayland, likewise
+```
+
+The override matters because a Wayland session with XWayland exports `DISPLAY`
+too, so the environment alone cannot say "use X11". The one thing that does not
+cross over is a layer surface: `Config.layer` needs `wlr-layer-shell`, which
+X11 has no equivalent of, and `create` says so rather than opening an ordinary
+window in the wrong place.
 
 ## Running it
 
@@ -59,7 +88,11 @@ make test       # the headless test suite
 ```
 
 Built and tested with Odin `dev-2026-09` on Hyprland; any compositor with
-`xdg-shell` should work.
+`xdg-shell` should work, as should any X server with a TrueColor screen.
+`apps/tools/x11-selftest.sh` exercises the X11 backend end to end on a private
+Xvfb — window, properties, pixels against the offscreen renderer, keyboard,
+pointer, resize and the close handshake — without putting a window on your
+screen.
 
 | example | what it shows |
 | --- | --- |
@@ -235,7 +268,7 @@ apply when the element is in that state.
 | spacing | `p-*` `px-*` `py-*` `pt/pr/pb/pl-*`, the same for `m-*`, `mx-auto` |
 | color | `bg-*` `text-*` `border-*`, `bg-gradient-to-b` with `from-*`/`to-*`, opacity suffixes like `bg-white/10`, arbitrary values like `bg-[#1e293b]` |
 | border | `border` `border-2` `border-t-2` `rounded` `rounded-lg` `rounded-full` `rounded-t-xl` `rounded-[10]` |
-| text | `text-xs` … `text-9xl` `font-bold` `font-mono` `text-center` `leading-*` `tracking-*` `uppercase` `truncate` `whitespace-nowrap` `line-through` `underline` |
+| text | `text-xs` … `text-9xl` `font-bold` `font-mono` `italic` `not-italic` `tabular-nums` `text-center` `leading-*` `tracking-*` `uppercase` `truncate` `whitespace-nowrap` `line-through` `underline` `text-outline-2` `text-outline-black` |
 | effects | `shadow` `shadow-sm` … `shadow-2xl` `opacity-*` `transition` `duration-*` |
 | overflow | `overflow-hidden` `overflow-scroll` |
 | cursor | `cursor-pointer` `cursor-text` `cursor-crosshair` `cursor-grab` … |
@@ -246,6 +279,35 @@ and anything in brackets is exact pixels (`w-[260]`).
 `transition` eases background, text and border colors toward their target, so
 `hover:` states fade rather than snap. Only the frames that are actually
 animating get drawn.
+
+### Type features
+
+`italic` is a real axis, not a heavier weight: discovery looks for `*-Italic`
+and `*-Oblique` files alongside the upright ones, and an italic request with no
+italic file on the machine falls back to a real italic at a neighbouring weight
+before it will settle for a sheared upright. `palmy.font_is_synthetic` says
+which you got, and `palmy.use_synthetic_italic` forces the shear — which is
+what you want after swapping the primaries for a family that ships no italic,
+since a sheared Geist still reads as Geist.
+
+`tabular-nums` gives every digit the same advance, so a clock, a byte counter
+or a rate readout stops moving sideways as its digits change. There is no GSUB
+here to select the font's own `tnum` feature, so the slot is measured instead:
+the widest of the ten digits at that exact size, with each glyph centred in it.
+`text_width`, `draw_text` and `text_index_at` all apply it, so carets and
+centred labels stay where the glyphs are.
+
+`text-outline-2 text-outline-black` strokes every glyph, which is what a
+subtitle needs over a moving frame. The stroke is the glyph's own coverage mask
+dilated by the radius and cached, not the run drawn again at offsets, so it
+costs one rasterisation and the joins are round.
+
+Colour emoji come from `NotoColorEmoji` and its kin, which have no outlines at
+all — their glyphs are PNGs in the `CBDT`/`CBLC` tables. palmy reads those
+tables directly, box-filters each strike down to the text size once and caches
+it. A codepoint that defaults to the emoji presentation, or is followed by
+U+FE0F, goes to the colour font ahead of the outline fallbacks; one that
+defaults to text (`☀`, `❤`, `✔`) keeps its text glyph.
 
 When a class cannot express something, reach for the style directly:
 
@@ -338,15 +400,22 @@ costs about what a memset costs.
 
 Honest limitations, not a roadmap:
 
-- Linux and Wayland only. No X11, no macOS, no Windows.
+- Linux only. No macOS, no Windows.
+- The X11 backend needs a little-endian, 32-bits-per-pixel TrueColor screen —
+  every desktop X server since the 1990s, but it checks and says so rather than
+  drawing garbage. It does not follow output scale (X11 has no protocol for
+  it), has no layer-shell equivalent, and asks the window manager for
+  fullscreen through `_NET_WM_STATE` rather than being able to insist.
 - Software rendering. Fine for interfaces at any size; a per-pixel effect over
   a 4K window is CPU work and will show it.
 - One window per process. No popups, menus or tooltips — `xdg_popup` is not
   implemented, so anything overlaying is drawn inside the window.
 - No clipboard, drag and drop, or input methods. No preedit, so CJK input will
   not work.
-- Text is laid out left to right with simple word wrapping. No bidi, no complex
-  shaping, no font fallback for missing glyphs.
+- Text is laid out left to right with simple word wrapping. No bidi and no
+  complex shaping: missing glyphs come from a fallback chain, but there is no
+  GSUB, so Arabic and Indic scripts are unjoined and emoji ZWJ sequences render
+  as their parts rather than as one glyph.
 - Integer output scale only; no fractional scaling protocol.
 - Flexbox, not grid. No `align-content` for multi-line, no `min-content` or
   `max-content` keywords, no media queries.
@@ -369,11 +438,16 @@ FreeType rasterizer. See `parity/README.md`.
 
 | file | |
 | --- | --- |
-| `wire.odin` | Wayland wire protocol: connection, encoding, fd passing |
-| `window.odin` | registry, surfaces, shm buffers, xdg-shell, layer-shell, input |
-| `xkb.odin` | keymaps through libxkbcommon, loaded at runtime |
+| `wire.odin` | the shared socket: framing, Wayland encoding, fd passing |
+| `window.odin` | the backend seam: geometry, the pixel store, input, controls |
+| `wayland.odin` | registry, surfaces, shm pool, xdg-shell, layer-shell, seat |
+| `x11.odin` | X11 core protocol: setup, window, MIT-SHM, events, cursors |
+| `xauth.odin` | `~/.Xauthority` parsing for MIT-MAGIC-COOKIE-1 |
+| `xkb.odin` | keymaps: libxkbcommon on Wayland, GetKeyboardMapping on X11 |
 | `canvas.odin` | the rasterizer |
-| `font.odin` | font discovery, glyph cache, measurement, drawing |
+| `font.odin` | font discovery, the family x weight x slant axes, glyph cache, measurement, drawing |
+| `outline.odin` | dilating a glyph's coverage mask, for stroked text |
+| `emoji.odin` | CBDT/CBLC colour bitmaps, which no vector rasterizer can draw |
 | `color.odin`, `palette.odin` | colors and the Tailwind palette |
 | `class.odin` | the class parser |
 | `node.odin` | the element tree, identity, state |

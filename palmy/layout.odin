@@ -73,7 +73,7 @@ wrap_text :: proc(ctx: ^Ctx, n: ^Node, max_w: f32) -> [2]f32 {
 	lines := make([dynamic]Text_Line, ctx.alloc)
 
 	emit :: proc(ctx: ^Ctx, lines: ^[dynamic]Text_Line, str: string, s: Style, tracking: f32) {
-		w := text_width(ctx.fonts, str, s.font_size, s.family, s.weight, tracking)
+		w := text_width(ctx.fonts, str, s.font_size, s.family, s.weight, tracking, s.slant, s.tabular)
 		append(lines, Text_Line{text = str, width = w})
 	}
 
@@ -84,7 +84,7 @@ wrap_text :: proc(ctx: ^Ctx, n: ^Node, max_w: f32) -> [2]f32 {
 			emit(ctx, &lines, para, s, tracking)
 			continue
 		}
-		if text_width(ctx.fonts, para, s.font_size, s.family, s.weight, tracking) <= max_w {
+		if text_width(ctx.fonts, para, s.font_size, s.family, s.weight, tracking, s.slant, s.tabular) <= max_w {
 			emit(ctx, &lines, para, s, tracking)
 			continue
 		}
@@ -101,7 +101,7 @@ wrap_text :: proc(ctx: ^Ctx, n: ^Node, max_w: f32) -> [2]f32 {
 				continue
 			}
 			candidate := para[start:i]
-			w := text_width(ctx.fonts, candidate, s.font_size, s.family, s.weight, tracking)
+			w := text_width(ctx.fonts, candidate, s.font_size, s.family, s.weight, tracking, s.slant, s.tabular)
 			if w > max_w && last_break > start {
 				emit(ctx, &lines, para[start:last_break], s, tracking)
 				start = last_break + 1
@@ -268,7 +268,7 @@ baseline_of :: proc(ctx: ^Ctx, idx: int, height: f32) -> f32 {
 		s := n.style
 		offset += s.border_w[TOP] + s.pad[TOP]
 		if n.kind == .Text {
-			m := font_metrics(ctx.fonts, s.font_size, s.family, s.weight)
+			m := font_metrics(ctx.fonts, s.font_size, s.family, s.weight, s.slant)
 			lh := line_height_of(s)
 			return offset + (lh - (m.ascent + m.descent)) / 2 + m.ascent
 		}

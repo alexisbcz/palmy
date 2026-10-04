@@ -148,6 +148,15 @@ Style :: struct {
 	leading_px:    f32, // absolute override, 0 when unused
 	weight:        Font_Weight,
 	family:        Font_Family,
+	slant:         Font_Slant,
+	// tabular asks for `font-variant-numeric: tabular-nums`: every digit the
+	// same advance, so a clock, a byte counter or a rate readout stops moving
+	// sideways as its digits change.
+	tabular:       bool,
+	// A stroke around every glyph, which is what a subtitle needs over a busy
+	// frame. Zero width is no outline, so it costs nothing when unused.
+	outline_w:     f32,
+	outline_col:   Color,
 	text_align:    Text_Align,
 	tracking_em:   f32,
 	transform:     Text_Transform,
@@ -198,6 +207,10 @@ inherit :: proc(parent: Style) -> Style {
 	s.leading_px = parent.leading_px
 	s.weight = parent.weight
 	s.family = parent.family
+	s.slant = parent.slant
+	s.tabular = parent.tabular
+	s.outline_w = parent.outline_w
+	s.outline_col = parent.outline_col
 	s.text_align = parent.text_align
 	s.tracking_em = parent.tracking_em
 	s.transform = parent.transform
@@ -636,6 +649,27 @@ apply_token :: proc(s: ^Style, t: string) {
 	case "font-normal", "font-light", "font-thin":
 		s.weight = .Regular
 		return
+	case "italic":
+		s.slant = .Italic
+		return
+	case "not-italic":
+		s.slant = .Upright
+		return
+	case "tabular-nums":
+		s.tabular = true
+		return
+	case "proportional-nums", "normal-nums":
+		s.tabular = false
+		return
+	case "text-outline-none":
+		s.outline_w = 0
+		return
+	case "oldstyle-nums", "lining-nums", "diagonal-fractions", "stacked-fractions",
+	     "ordinal", "slashed-zero":
+		// The rest of font-variant-numeric needs OpenType feature substitution,
+		// which stb_truetype has no GSUB for. Accepted and ignored rather than
+		// treated as an unknown class.
+		return
 	case "text-left":
 		s.text_align = .Left
 		return
@@ -845,6 +879,26 @@ apply_token :: proc(s: ^Style, t: string) {
 		return
 	}
 
+	// `text-outline-*` is palmy's own, and has to be matched before the
+	// `text-` namespace below or `outline-2` is tried as a size and a colour
+	// and then silently dropped.
+	if v, ok := strip(t, "text-outline-"); ok {
+		if c, cok := parse_color(v); cok {
+			s.outline_col = c
+			if s.outline_w == 0 {
+				s.outline_w = 1
+			}
+			return
+		}
+		if n, nok := scale_px(v); nok {
+			s.outline_w = n
+			if s.outline_col.a == 0 {
+				s.outline_col = Color{0, 0, 0, 255}
+			}
+		}
+		return
+	}
+
 	// Text: size wins over color, matching Tailwind's own namespace split.
 	if v, ok := strip(t, "text-"); ok {
 		if size, lead, sok := font_size_of(v); sok {
@@ -959,6 +1013,16 @@ apply_token :: proc(s: ^Style, t: string) {
 		}
 		return
 	}
+}
+
+// scale_px reads a literal pixel count, the way Tailwind's border and ring
+// widths do, rather than a spacing step: `text-outline-2` is a 2px stroke.
+@(private)
+scale_px :: proc(t: string) -> (f32, bool) {
+	if len(t) >= 3 && t[0] == '[' && t[len(t) - 1] == ']' {
+		return scale(t)
+	}
+	return strconv.parse_f32(t)
 }
 
 @(private)
