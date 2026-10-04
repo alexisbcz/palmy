@@ -17,7 +17,9 @@ hex :: proc "contextless" (v: u32) -> Color {
 	return {u8(v >> 16), u8(v >> 8), u8(v), 255}
 }
 
-// hexa takes 0xRRGGBBAA.
+// hexa takes 0xRRGGBBAA -- alpha is the LOW byte, not the high one. A canvas
+// word is 0xAARRGGBB, so the two orders differ and reading one as the other is
+// silent: 0x08ffffff meant as 3% white comes back as opaque cyan.
 hexa :: proc "contextless" (v: u32) -> Color {
 	return {u8(v >> 24), u8(v >> 16), u8(v >> 8), u8(v)}
 }

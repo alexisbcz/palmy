@@ -1,9 +1,9 @@
 # The captions demo, driven from the keyboard.
 #
 # The recorder cannot synthesise pointer clicks, so every step here is a key —
-# which is also how the application is meant to be used. It is started from a
-# directory holding one clip, so the folder list on the right already has it
-# and `r` opens the highlighted file.
+# which is also how the application is meant to be used. It is started from the
+# directory holding the clip, so the folder list on the right has it; the path
+# is typed anyway, because that is the step worth showing.
 #
 # The clip is espeak-ng speech over a generated gradient. Nothing in this
 # recording came from the microphone.
@@ -11,7 +11,13 @@
 wait 1.2
 
 # --- open the clip: probe, 16 kHz extraction, waveform -----------------------
-type r
+# The path is typed rather than picked out of the folder list, so the take does
+# not depend on what else is in that directory.
+type o
+wait 0.8
+type /home/alex/.cache/palmy-captions/demo/talk.mp4
+wait 0.8
+key Return
 wait 5
 
 # --- transcribe with base.en, locally ---------------------------------------
