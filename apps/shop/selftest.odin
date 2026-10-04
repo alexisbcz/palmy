@@ -1299,6 +1299,27 @@ test_list_and_alerts :: proc() {
 	ok(cheap && len(st.vis) > 0, "the price ceiling holds: %d rows under 2,00 €", len(st.vis))
 	st.filter.price_max = 0
 
+	// The one-key "ma taille" toggle: on, off, and remembered in between.
+	ok(toggle_my_size(st), "ma taille turns on")
+	eq_str(st.filter.size_label, "38", "and defaults to a French 38")
+	ok(st.filter.size_chart == .Women_Tops, "on the womenswear chart")
+	with_size := len(st.vis)
+	ok(with_size > 0, "which finds garments: %d", with_size)
+	only_clothing := true
+	for i in st.vis {
+		if retailer_kind(st.cat.products[i].retailer) != .Clothing {
+			only_clothing = false
+		}
+	}
+	ok(only_clothing, "and only garments, since a yoghurt has no size")
+	ok(!toggle_my_size(st), "pressing it again turns it off")
+	eq_str(st.filter.size_label, "", "clearing the live filter")
+	eq_str(st.saved_size_label, "38", "but remembering the size")
+	ok(toggle_my_size(st), "so turning it back on restores it")
+	eq_int(i64(len(st.vis)), i64(with_size), "to exactly the same rows")
+	toggle_my_size(st)
+	st.filter.dept = .All
+
 	// My size, across chains that label differently.
 	st.filter.size_label = strings.clone("38")
 	st.filter.size_system = .FR
@@ -1492,7 +1513,7 @@ test_persistence :: proc() {
 		eq_money(st2.alerts[0].threshold, 123, "with its threshold")
 	}
 	ok(st2.sort == .Unit_Up, "and the chosen sort order")
-	eq_str(st2.filter.size_label, "38", "and the shopper's size")
+	eq_str(st2.saved_size_label, "38", "and the shopper's own size, remembered for next time")
 
 	// The file names products by retailer and feed id, so it survives a
 	// catalogue whose indices have moved.

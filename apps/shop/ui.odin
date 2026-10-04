@@ -350,8 +350,13 @@ sidebar :: proc(ui: ^p.Ctx, st: ^State) {
 		if p.clickable(ui, b) {
 			delete(st.filter.size_label)
 			st.filter.size_label = on ? "" : strings.clone(label)
-			if !on && st.filter.size_chart == .None {
-				st.filter.size_chart = chart
+			if !on {
+				if st.filter.size_chart == .None {
+					st.filter.size_chart = chart
+				}
+				delete(st.saved_size_label)
+				st.saved_size_label = strings.clone(label)
+				st.saved_size_chart = st.filter.size_chart
 			}
 			refilter(st)
 			save_state(st)
@@ -1568,6 +1573,7 @@ help_overlay :: proc(ui: ^p.Ctx, st: ^State) {
 		{"u", "trier par prix au kilo / au litre"},
 		{"x", "trier par prix affiché"},
 		{"s", "en stock seulement"},
+		{"m", "ma taille — seulement ce qui existe dans ma taille, chez toutes les enseignes"},
 		{"p", "promotions seulement"},
 		{"n", "plafond de Nutri-Score"},
 		{"e", "exporter le catalogue en flux Merchant (XML et CSV)"},

@@ -150,7 +150,14 @@ sleep 1.0
 argv=()
 flush_keys() {
   [ ${#argv[@]} -eq 0 ] && return
-  wtype "${argv[@]}"
+  # Lead with a shift press and release. The first event of an invocation is
+  # the one exposed to the re-bind window, and a bare `key` step that loses it
+  # loses the whole step; a modifier that is pressed and released produces no
+  # character whether it arrives or not, so it is the right thing to sacrifice.
+  # (`-M shift` is the modifier form; `-k shift` is a keysym lookup and fails,
+  # which is why an earlier attempt at this made things worse rather than
+  # better.)
+  wtype -M shift -m shift "${argv[@]}"
   argv=()
 }
 

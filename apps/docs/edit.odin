@@ -32,6 +32,7 @@ Prompt_Kind :: enum u8 {
 	Import_Docx,
 	Insert_Image,
 	Insert_Table,
+	Import_Odt,
 }
 
 ZOOMS := [?]f32{0.5, 0.75, 0.9, 1.0, 1.25, 1.5, 2.0}
@@ -1559,15 +1560,23 @@ do_open :: proc(st: ^State, path: string) {
 	for imported in ([?]struct {
 		ext:   string,
 		label: string,
-	}{{".md", "Markdown"}, {".markdown", "Markdown"}, {".docx", "Word document"}}) {
+	}{
+		{".md", "Markdown"},
+		{".markdown", "Markdown"},
+		{".docx", "Word document"},
+		{".odt", "OpenDocument text"},
+	}) {
 		if !strings.has_suffix(full, imported.ext) {
 			continue
 		}
 		nd: Doc
 		ok: bool
-		if imported.ext == ".docx" {
+		switch imported.ext {
+		case ".docx":
 			nd, ok = import_docx(full)
-		} else {
+		case ".odt":
+			nd, ok = import_odt(full)
+		case:
 			nd, ok = import_markdown(full)
 		}
 		if !ok {

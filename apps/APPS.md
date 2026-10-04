@@ -179,6 +179,13 @@ three consecutive nine-step runs landed 27 of 27.
 A step's text may not begin with `-`; the recorder refuses rather than typing a
 flag into your application.
 
+Each invocation is also led by a shift press and release. The first event of an
+invocation is the one exposed to the re-bind window, and a bare `key` step that
+loses it loses the **whole step** — where a `type` step only loses its first
+character. A modifier pressed and released produces nothing whether it arrives
+or not, so it is the right thing to sacrifice. With it, three runs of six bare
+`key` steps landed six of six each time.
+
 A private compositor is also the way to drive an app interactively without a
 recording — start one, point `WAYLAND_DISPLAY` at it, and use `grim` for
 stills.
