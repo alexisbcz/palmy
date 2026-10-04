@@ -1,6 +1,7 @@
 # palmy desktop apps
 
-Four real applications built on palmy (Odin, software rasterizer, Wayland) and
+Four real applications built on palmy (Odin, software rasterizer, Wayland or
+X11) and
 the shadcn widget layer in `../shadcn`.
 
 | app | what it is |
@@ -151,10 +152,22 @@ capturing another agent's window, keystrokes landing elsewhere, crash toasts in
 frame, and a shared lock that one orphaned process could hold for half an hour
 — came from sharing one seat, and none of it survives here.
 
-Clicks **do** work on the headless seat (`swaymsg seat cursor`), unlike on the
-user's compositor build, which has no click dispatcher. Still verify the result
-by extracting frames with `ffmpeg -ss <t> -i out.mp4 -frames:v 1 frame.png` and
-looking at them.
+Clicks and pointer moves go through `swaymsg seat cursor`, which needs
+`SWAYSOCK`. The script sets it; note that it only inherits automatically into
+sway's *children*, and this script is sway's parent — before that was fixed
+every `swaymsg` in it failed silently, so `move`, `click` and the fullscreen
+step were all no-ops and nothing said so, because each redirected its own
+errors away. If you copy this script, keep that line.
+
+Always verify the result by extracting frames with
+`ffmpeg -ss <t> -i out.mp4 -frames:v 1 frame.png` and looking at them.
+
+One residual: each `wtype` invocation attaches a fresh virtual keyboard and
+starts sending immediately, racing the compositor's delivery of focus, so an
+invocation's **first keystroke is occasionally dropped**. That is not a palmy
+bug — `foot` loses it the same way on the same seat — and a priming keypress
+made it worse rather than better. If a step must not lose its first character,
+put a throwaway key before it.
 
 A private compositor is also the way to drive an app interactively without a
 recording — start one, point `WAYLAND_DISPLAY` at it, and use `grim` for

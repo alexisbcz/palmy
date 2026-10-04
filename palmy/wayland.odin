@@ -70,6 +70,16 @@ XDG_TOPLEVEL_SET_FULLSCREEN :: 11
 @(private)
 XDG_TOPLEVEL_UNSET_FULLSCREEN :: 12
 @(private)
+// wl_pointer.release / wl_keyboard.release, both since interface version 3.
+// The seat is bound up to version 7, so these are always available.
+//
+// These are *request* opcodes, which are numbered separately from events:
+// wl_keyboard has exactly one request, so release is 0 even though `key` is
+// event 3. Sending 3 here is an invalid request and the compositor drops the
+// connection, which looks like the window simply vanishing.
+WL_POINTER_RELEASE :: 1
+WL_KEYBOARD_RELEASE :: 0
+
 WL_SEAT_GET_POINTER :: 0
 @(private)
 WL_SEAT_GET_KEYBOARD :: 1
@@ -478,6 +488,43 @@ wl_on_event :: proc(w: ^Window, id: u32, opcode: u16, r: ^Reader) {
 			if caps & 2 != 0 && w.wl.keyboard == 0 {
 				w.wl.keyboard = new_id(c, .Keyboard)
 				request(c, w.wl.seat, WL_SEAT_GET_KEYBOARD, Obj(w.wl.keyboard))
+			}
+
+			// A capability can also go *away*, and dropping that on the floor
+			// was a real bug: the object id stayed non-zero, so the `== 0`
+			// guards above skipped re-binding when the capability came back,
+			// and the window silently never received another key.
+			//
+			// It only shows up where the seat has no permanent keyboard. On a
+			// headless compositor with no input devices, every `wtype` adds a
+			// virtual keyboard and removes it again, so the capability
+			// genuinely toggles -- the first invocation was delivered and
+			// every one after it went nowhere, which broke multi-step
+			// recordings and any on-screen keyboard, IME or remote-input tool
+			// that attaches and detaches. On a machine with a real keyboard
+			// the capability never clears and nothing looked wrong.
+			if caps & 2 == 0 && w.wl.keyboard != 0 {
+				request(c, w.wl.keyboard, WL_KEYBOARD_RELEASE)
+				retire_id(c, w.wl.keyboard)
+				w.wl.keyboard = 0
+				// The seat is gone, so nothing will send a leave: clear the
+				// input state by hand or a held modifier sticks forever.
+				w.input.focused = false
+				w.input.mods = {}
+				w.repeat_key = 0
+				w.repeat_sym = 0
+			}
+			if caps & 1 == 0 && w.wl.pointer != 0 {
+				if w.wl.cursor_device != 0 {
+					request(c, w.wl.cursor_device, 0) // destroy
+					retire_id(c, w.wl.cursor_device)
+					w.wl.cursor_device = 0
+				}
+				request(c, w.wl.pointer, WL_POINTER_RELEASE)
+				retire_id(c, w.wl.pointer)
+				w.wl.pointer = 0
+				w.input.down = {}
+				w.input.over_surface = false
 			}
 			conn_flush(c)
 		}
