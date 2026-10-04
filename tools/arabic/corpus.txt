@@ -1,0 +1,116 @@
+# Arabic shaping corpus. One test string per line, verbatim, UTF-8.
+# A line starting with '#' is a comment; the line '~empty~' is the empty string.
+# Used by tools/arabic/hb-oracle.py to generate tests/arabic_oracle.odin.
+
+# --- the degenerate cases
+~empty~
+ 
+.
+# transparent marks only, no letter to attach to
+َُِ
+ّ
+
+# --- one letter of each joining type
+ب
+ا
+د
+و
+ز
+ء
+ـ
+ة
+ى
+ئ
+ٱ
+
+# --- one dual-joining letter in every position
+بب
+ببب
+بببب
+بابا
+بابب
+
+# --- right-joining letters start a new group after themselves
+دد
+ددد
+ارد
+ورد
+درب
+ربرب
+
+# --- real words
+بسم
+محمد
+كتاب
+مكتبة
+سلام
+العربية
+مرحبا
+أهلا وسهلا
+بسم الله الرحمن الرحيم
+مدرسة
+مؤمن
+على
+إلى
+شمس وقمر
+كيف حالك؟
+مرحبا، كيف حالك؟
+
+# --- lam-alef, isolated and mid-word
+لا
+لآ
+لأ
+لإ
+سلا
+لام
+الاسلام
+للا
+الله
+أهلا
+لاا
+# lam-alef with a harakat standing between the two letters
+لَا
+سلَام
+# lam followed by something that is not an alef
+لب
+لو
+
+# --- harakat between joining letters
+بَيت
+مُحَمَّد
+الْعَرَبِيَّة
+بِسْمِ
+سَلَام
+
+# --- tatweel and the zero-width joiners
+بـب
+بـــب
+ب‍
+‍ب
+ب‌ب
+می‌خواهم
+
+# --- mixed with Latin, digits and punctuation
+Hello مرحبا world
+مرحبا Hello
+عام 2024 م
+بب123بب
+١٢٣ عربي
+(مرحبا)
+مرحبا-بك
+eماil
+
+# --- Persian and Urdu, which need the Forms-A letters
+پارسی
+گفتگو
+چای
+ژاله
+پاکستان
+اردو
+ٹھیک
+کتاب
+
+# --- already shaped: must come out byte for byte identical
+ﺑﺴﻢ
+ﻻ
+ﺍﻟﻠﻪ
