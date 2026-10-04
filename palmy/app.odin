@@ -590,6 +590,13 @@ cycle_focus :: proc(ctx: ^Ctx, backwards: bool) {
 // movement key, where holding the key should keep moving; turn it off for a
 // command, where one press must mean one action — a held Backspace that walks
 // a file browser up three directories is this distinction going wrong.
+//
+// This answers "was it pressed", not "how many times". Several presses can
+// land in one frame, and they collapse to a single `true` — two taps of `j`
+// move one row, and synthetic input hits this immediately because a driver
+// script sends keys far faster than a human. When one press must equal one
+// step — navigation, a nudge, stepping a value — count with `key_count`
+// instead.
 key_pressed :: proc(ctx: ^Ctx, sym: u32, include_repeat := true) -> bool {
 	for k in ctx.input.keys {
 		if k.sym == sym && (include_repeat || !k.repeat) {

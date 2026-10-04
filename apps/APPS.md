@@ -59,8 +59,16 @@ p.focusable(ui)              // joins the Tab order
 if p.activated(ui, idx) { }  // click, or Enter/Space while focused
 hovered := p.is_hovered(ui, idx)
 if p.key_pressed(ui, p.KEY_DOWN) { }
+n := p.key_count(ui, p.KEY_DOWN)   // see below: not the same thing
 p.text_field(ui, &buf, "Search")
 ```
+
+`key_pressed` answers *was it pressed*, not *how many times*. Several presses
+can arrive in one frame and collapse to a single `true`, so two taps of `j`
+move one row. This bites immediately under synthetic input, because a driver
+script sends keys far faster than a human does. Where one press must equal one
+step -- navigation, a nudge, stepping a value -- use **`key_count`** and act
+that many times.
 
 There is no `xdg_popup`, so **menus are drawn inside the window** as absolutely
 positioned overlays with a `z-` class. That is a real constraint, not a bug to

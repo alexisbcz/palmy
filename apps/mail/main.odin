@@ -53,6 +53,12 @@ main :: proc() {
 				dir = arg[eq + 1:]
 			}
 			os.exit(run_uitest(dir))
+		case strings.has_prefix(arg, "--walkthrough"):
+			dir := "/tmp/palmy-mail-walkthrough"
+			if eq := strings.index_byte(arg, '='); eq > 0 {
+				dir = arg[eq + 1:]
+			}
+			os.exit(run_uitest(dir, true))
 		case arg == "--help" || arg == "-h":
 			print_usage()
 			os.exit(0)
@@ -98,6 +104,7 @@ print_usage :: proc() {
   mail --selftest      run the headless assertions, then exit
   mail --maildir=PATH  read one Maildir tree instead of the configured accounts
   mail --uitest=DIR    render the interface offscreen into PNGs and exit
+  mail --walkthrough=DIR  render the whole walkthrough as a PNG sequence
 
 This client has no network code. It reads a Maildir from disk; Send queues a
 message into the account's own local Outbox and transmits nothing.`,

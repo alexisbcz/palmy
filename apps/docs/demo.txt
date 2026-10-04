@@ -5,7 +5,7 @@
 # press F1 in the app for the whole table.
 
 wait 1.4
-move 760 520
+move 590 520
 wait 1.2
 
 # Walk to the end of the document.
@@ -49,7 +49,7 @@ wait 1.4
 # Select the line just typed — F10 sets a mark, then Home and the arrows
 # extend — and restyle it. The pointer nudge ahead of it puts focus back on
 # the window if anything on the desktop has stolen it.
-move 470 900
+move 590 860
 wait 0.6
 key F10
 wait 0.9

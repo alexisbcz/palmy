@@ -35,6 +35,13 @@ AVATAR_TINTS :: [?]string {
 	"bg-pink-500",
 }
 
+// account_kind is what the account is, said the same way everywhere: the
+// protocol when it was configured, and "Maildir" when it was found on disk and
+// the protocol is genuinely not knowable from the files.
+account_kind :: proc(a: Account) -> string {
+	return a.discovered ? "Maildir" : protocol_name(a.protocol)
+}
+
 plural :: proc(n: int) -> string {
 	return n == 1 ? "" : "s"
 }
@@ -912,8 +919,8 @@ reader_pane :: proc(ui: ^p.Ctx, st: ^State) {
 		a := st.accounts[f.account]
 		badge_pill(
 			ui,
-			tfmt("%s · %s · %s", a.name, protocol_name(a.protocol), f.name),
-			protocol_icon(a.protocol),
+			tfmt("%s · %s · %s", a.name, account_kind(a), f.name),
+			a.discovered ? ICON_FOLDER : protocol_icon(a.protocol),
 			"bg-muted text-muted-foreground",
 		)
 	}
@@ -1244,8 +1251,18 @@ composer :: proc(ui: ^p.Ctx, st: ^State) {
 
 	a := st.accounts[clamp(c.account, 0, max(0, len(st.accounts) - 1))]
 	p.div(ui, "flex-row h-5 shrink-0 items-center gap-1 px-1.5 rounded-full bg-muted")
-	p.icon(ui, protocol_icon(a.protocol), tfmt("size-2.5 shrink-0 %s", protocol_tint(a.protocol)))
-	p.text(ui, tfmt("%s · %s", a.name, a.address), "text-[10] text-muted-foreground whitespace-nowrap")
+	p.icon(
+		ui,
+		a.discovered ? ICON_FOLDER : protocol_icon(a.protocol),
+		a.discovered \
+		? "size-2.5 shrink-0 text-muted-foreground" \
+		: tfmt("size-2.5 shrink-0 %s", protocol_tint(a.protocol)),
+	)
+	p.text(
+		ui,
+		a.address == "" ? tfmt("%s · %s", a.name, account_kind(a)) : tfmt("%s · %s", a.name, a.address),
+		"text-[10] text-muted-foreground whitespace-nowrap",
+	)
 	p.style(ui).shrink = 0
 	p.end(ui)
 
