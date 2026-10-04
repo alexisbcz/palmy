@@ -38,21 +38,41 @@ animate :: proc(ctx: ^Ctx, n: ^Node) -> (bg: Paint, fg, border: Color) {
 
 	k := 1 - math.exp_f32(-6 * ctx.dt / s.transition)
 	k = clamp(k, 0, 1)
+
+	before := w.anim
 	w.anim.bg = mix(w.anim.bg, s.bg.color, k)
 	w.anim.bg2 = mix(w.anim.bg2, s.bg.color2, k)
 	w.anim.fg = mix(w.anim.fg, s.fg, k)
 	w.anim.border = mix(w.anim.border, s.border_col, k)
 
-	moving :: proc(a, b: Color) -> bool {
-		d :: proc(x, y: u8) -> int {return abs(int(x) - int(y))}
-		return d(a.r, b.r) + d(a.g, b.g) + d(a.b, b.b) + d(a.a, b.a) > 2
+	same :: proc(a, b: Color) -> bool {
+		return a.r == b.r && a.g == b.g && a.b == b.b && a.a == b.a
 	}
-	if moving(w.anim.bg, s.bg.color) ||
-	   moving(w.anim.bg2, s.bg.color2) ||
-	   moving(w.anim.fg, s.fg) ||
-	   moving(w.anim.border, s.border_col) {
+	// Did this frame actually move anything? `mix` rounds to a u8, so once a
+	// channel is one step from its target and k is small the result rounds
+	// back to where it started and the colour can never close the gap. The old
+	// test asked whether the gap was wider than two summed across RGBA, which
+	// a stalled transition sitting one step out on three channels fails
+	// forever: the element then repainted at vsync for as long as it was
+	// hovered, and never reached its colour. Asking whether progress was made
+	// is the question that terminates.
+	progressed :=
+		!same(before.bg, w.anim.bg) ||
+		!same(before.bg2, w.anim.bg2) ||
+		!same(before.fg, w.anim.fg) ||
+		!same(before.border, w.anim.border)
+
+	arrived :=
+		same(w.anim.bg, s.bg.color) &&
+		same(w.anim.bg2, s.bg.color2) &&
+		same(w.anim.fg, s.fg) &&
+		same(w.anim.border, s.border_col)
+
+	if !arrived && progressed {
 		ctx.animating = true
 	} else {
+		// Either it is there, or it cannot get closer: snap and stop asking
+		// for frames.
 		w.anim.bg, w.anim.bg2 = s.bg.color, s.bg.color2
 		w.anim.fg, w.anim.border = s.fg, s.border_col
 	}
