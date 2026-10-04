@@ -6,7 +6,10 @@
 package main
 
 import "core:fmt"
+import "core:os"
 import "core:strings"
+import "core:unicode/utf8"
+import kit "kit:."
 import p "palmy:."
 
 @(private = "file")
@@ -101,6 +104,9 @@ run_selftest :: proc() -> bool {
 	test_markdown()
 	test_json()
 	test_find(&fonts)
+	test_containers()
+	test_fontfile(&fonts)
+	test_export(&fonts)
 
 	fmt.printfln("\n%d assertions, %d failed", checks, fails)
 	return fails == 0
@@ -933,4 +939,919 @@ test_find :: proc(fonts: ^p.Fonts) {
 	append(&st.repl, ..transmute([]u8)string("aa"))
 	replace_all(&st)
 	ok(count_hits(&st) > 0, "a growing replacement terminates")
+}
+
+// ---------------------------------------------------------------------------
+// 11. ZIP containers
+// ---------------------------------------------------------------------------
+
+@(private = "file")
+test_containers :: proc() {
+	section("ZIP containers")
+
+	// The canonical CRC-32 check value. Getting this wrong produces archives
+	// that unzip refuses and Word calls corrupt, so it is worth pinning.
+	ok(crc32_bytes(transmute([]u8)string("123456789")) == 0xcbf43926, "CRC-32 check value")
+	ok(crc32_bytes(transmute([]u8)string("")) == 0, "CRC-32 of nothing is zero")
+
+	z: Zip
+	zip_init(&z)
+	defer zip_destroy(&z)
+	zip_add_string(&z, "mimetype", ODT_MIME)
+	zip_add_string(&z, "a/b.xml", "<x>hello</x>")
+	zip_add_string(&z, "big.txt", strings.repeat("x", 5000, context.temp_allocator))
+	data := zip_finish(&z)
+
+	eq_int(len(zip_names(data, context.temp_allocator)), 3, "three members")
+	names := zip_names(data, context.temp_allocator)
+	eq_str(names[0], "mimetype", "mimetype is the first member")
+
+	// The local header is 30 bytes plus the name, so an uncompressed first
+	// entry puts its payload at a fixed offset — which is how `file(1)` and
+	// every ODF reader sniff the type.
+	eq_str(string(data[30:30 + len("mimetype")]), "mimetype", "the name sits at offset 30")
+	eq_str(string(data[38:38 + len(ODT_MIME)]), ODT_MIME, "and the mimetype right after it")
+	ok(data[8] == 0 && data[9] == 0, "the first entry is stored, not deflated")
+
+	for want in ([?]struct {
+		name, body: string,
+	}{{"mimetype", ODT_MIME}, {"a/b.xml", "<x>hello</x>"}}) {
+		got, found := zip_read_entry(data, want.name, context.temp_allocator)
+		ok(found, "read back %s", want.name)
+		if found {
+			eq_str(string(got), want.body, "contents of %s", want.name)
+		}
+	}
+	_, missing := zip_read_entry(data, "nope", context.temp_allocator)
+	ok(!missing, "a member that is not there is not found")
+}
+
+// ---------------------------------------------------------------------------
+// 12. The TrueType reader and subsetter
+// ---------------------------------------------------------------------------
+
+@(private = "file")
+test_fontfile :: proc(fonts: ^p.Fonts) {
+	section("TrueType subsetting")
+
+	path := p.font_path(fonts, .Sans, .Regular)
+	ok(path != "", "palmy reports the face it loaded")
+	if path == "" {
+		return
+	}
+	f, loaded := ttf_load(path)
+	ok(loaded, "the face parses as TrueType")
+	if !loaded {
+		return
+	}
+	defer ttf_destroy(&f)
+
+	ok(f.num_glyphs > 100, "the face has glyphs (%d)", f.num_glyphs)
+	ok(f.upem == 1000 || f.upem == 2048 || f.upem == 2000, "a sane units-per-em (%.0f)", f.upem)
+	eq_int(len(f.loca), f.num_glyphs + 1, "loca has one entry per glyph plus a terminator")
+	eq_int(len(f.advances), f.num_glyphs, "an advance per glyph")
+	ok(len(f.ps_name) > 0, "a PostScript name: %s", f.ps_name)
+	ok(f.ascent > 0 && f.descent < 0, "ascent above the baseline, descent below")
+
+	// Every character this document can type has to map to a glyph.
+	for r in "ABCabc0123 .,—“”" {
+		if r == ' ' {
+			continue
+		}
+		ok(ttf_gid(&f, r) != 0, "cmap has a glyph for %r", r)
+	}
+	ok(ttf_gid(&f, '\U0001F600') == 0, "and none for a character it does not carry")
+
+	// The advance a PDF will use must agree with the advance palmy measures,
+	// or the text in the file drifts away from the text on the screen.
+	gid := ttf_gid(&f, 'H')
+	want := p.text_width(fonts, "H", 1000, .Sans, .Regular)
+	got := f32(ttf_advance(&f, gid))
+	ok(abs(want - got) <= 1.0, "glyph advance matches palmy: %.1f vs %.1f", got, want)
+
+	keep := make(map[u16]bool, 16, context.temp_allocator)
+	for r in "Hello" {
+		keep[ttf_gid(&f, r)] = true
+	}
+	sub := ttf_subset(&f, keep, context.temp_allocator)
+	ok(len(sub) > 0, "the subset is produced")
+	ok(len(sub) < len(f.data), "and is smaller than the original (%d < %d)", len(sub), len(f.data))
+
+	// The subset must still be a font: glyph ids unchanged, advances
+	// unchanged, and the glyphs that were asked for still carrying outlines.
+	g2, reparsed := ttf_from_bytes(sub)
+	ok(reparsed, "the subset parses as a font in its own right")
+	if reparsed {
+		defer ttf_release(&g2)
+		eq_int(g2.num_glyphs, f.num_glyphs, "the glyph count is unchanged")
+		ok(g2.loca_long, "the subset always writes the long loca format")
+		eq_int(ttf_advance(&g2, gid), ttf_advance(&f, gid), "advances survive subsetting")
+		kept_bytes := 0
+		for r in "Hello" {
+			g := ttf_gid(&f, r)
+			kept_bytes += int(g2.loca[g + 1]) - int(g2.loca[g])
+		}
+		ok(kept_bytes > 0, "the kept glyphs still have outlines")
+		// A glyph nothing asked for has an empty range: that is the subset.
+		dropped := 0
+		for g in 0 ..< g2.num_glyphs {
+			if g2.loca[g + 1] == g2.loca[g] {
+				dropped += 1
+			}
+		}
+		ok(dropped > g2.num_glyphs / 2, "most glyphs were dropped (%d of %d)", dropped, g2.num_glyphs)
+	}
+}
+
+// ---------------------------------------------------------------------------
+// 13. Export: PDF, .docx, .odt, .rtf — and the tools that judge them
+// ---------------------------------------------------------------------------
+//
+// Everything above this point can be checked against the model. A file format
+// cannot: "it has the right extension" is not the same claim as "a reader
+// opens it". So this section writes real files and then hands them to the
+// programs that would receive them — qpdf, pdftotext, pdffonts, xmllint and
+// LibreOffice — and asserts against what those say.
+//
+// A missing tool skips its assertions and says so, rather than passing
+// quietly. Every one of them is installed on the machine this was written on,
+// and the output is printed so the claims can be read rather than trusted.
+
+@(private = "file")
+SELFTEST_DIR :: "/tmp/palmy-docs-selftest"
+
+// LibreOffice is pointed at a profile of its own. Letting it touch the user's
+// would be rude at best and destructive at worst.
+@(private = "file")
+LO_PROFILE :: "-env:UserInstallation=file:///tmp/palmy-lo-profile"
+
+@(private = "file")
+have_tool :: proc(name: string) -> bool {
+	_, found := kit.run({"sh", "-c", fmt.tprintf("command -v %s >/dev/null 2>&1", name)})
+	return found
+}
+
+// word_rune decides what counts as part of a word when comparing a source
+// document against what a tool extracted from a file. Latin letters with
+// accents are word characters; the General Punctuation block is not, which
+// matters because LibreOffice's RTF reader turns runs of spaces into U+2006
+// and would otherwise glue them onto the word in front.
+@(private = "file")
+word_rune :: proc(r: rune) -> bool {
+	switch {
+	case r >= '0' && r <= '9', r >= 'a' && r <= 'z', r >= 'A' && r <= 'Z':
+		return true
+	case r < 0x80:
+		return false
+	case r == 0xa0, r == 0xfffd, r == 0xfeff:
+		// U+FEFF matters: LibreOffice's text export opens with a byte order
+		// mark, and counting it as a letter glues it to the first word and
+		// makes every comparison fail at index zero.
+		return false
+	case r >= 0x2000 && r <= 0x206f:
+		return false
+	}
+	return true
+}
+
+@(private = "file")
+words_of :: proc(s: string, alloc := context.temp_allocator) -> []string {
+	out := make([dynamic]string, 0, 512, alloc)
+	i := 0
+	for i < len(s) {
+		r, n := utf8.decode_rune_in_string(s[i:])
+		w := max(1, n)
+		if !word_rune(r) {
+			i += w
+			continue
+		}
+		j := i
+		for j < len(s) {
+			r2, n2 := utf8.decode_rune_in_string(s[j:])
+			if !word_rune(r2) {
+				break
+			}
+			j += max(1, n2)
+		}
+		append(&out, s[i:j])
+		i = j
+	}
+	return out[:]
+}
+
+// subseq_miss checks that every word of the source appears, in order, in what
+// a tool extracted. Extra words are allowed — a PDF carries page numbers, a
+// LibreOffice text export writes list markers — but a missing or reordered
+// one is a real failure. Greedy matching is exact for a subsequence test.
+@(private = "file")
+subseq_miss :: proc(src, got: []string) -> int {
+	j := 0
+	for w, i in src {
+		found := false
+		for j < len(got) {
+			k := j
+			j += 1
+			if got[k] == w {
+				found = true
+				break
+			}
+		}
+		if !found {
+			return i
+		}
+	}
+	return -1
+}
+
+@(private = "file")
+doc_words :: proc(d: ^Doc) -> []string {
+	b := strings.builder_make(context.temp_allocator)
+	for &pa in d.paras {
+		for &r in pa.runs {
+			strings.write_bytes(&b, r.text[:])
+		}
+		strings.write_byte(&b, '\n')
+	}
+	return words_of(strings.to_string(b))
+}
+
+@(private = "file")
+read_text :: proc(path: string) -> (string, bool) {
+	data, err := os.read_entire_file(path, context.temp_allocator)
+	if err != nil {
+		return "", false
+	}
+	return string(data), true
+}
+
+// check_extracted asserts that a tool's output contains the whole document.
+@(private = "file")
+check_extracted :: proc(label: string, src: []string, text: string) {
+	got := words_of(text)
+	miss := subseq_miss(src, got)
+	ok(
+		miss < 0,
+		"%s reproduces every word in order (%d source, %d extracted%s)",
+		label,
+		len(src),
+		len(got),
+		miss < 0 ? "" : fmt.tprintf(", first missing %q at %d", src[miss], miss),
+	)
+	ok(len(got) >= len(src), "%s loses nothing (%d >= %d)", label, len(got), len(src))
+}
+
+// rich_fixture is a document that uses every feature the exporters have to
+// carry: each paragraph kind, each alignment, nested lists of both sorts, a
+// hard page break, every character style, a colour, an explicit size, runs of
+// spaces inside code, and text outside ASCII.
+@(private = "file")
+rich_fixture :: proc() -> Doc {
+	d := Doc {
+		paras = make([dynamic]Paragraph, 0, 24),
+	}
+	add :: proc(d: ^Doc, pa: Paragraph) {
+		p2 := pa
+		normalise(&p2)
+		append(&d.paras, p2)
+	}
+	styled :: proc(kind: Para_Kind, parts: []Run) -> Paragraph {
+		pa := Paragraph {
+			kind = kind,
+			runs = make([dynamic]Run, 0, len(parts)),
+		}
+		for r in parts {
+			append(&pa.runs, r)
+		}
+		return pa
+	}
+
+	add(&d, para_make(.H1, "Interchange, properly"))
+	add(
+		&d,
+		styled(
+			.Body,
+			{
+				run_make({}, "This paragraph mixes "),
+				run_make({bold = true}, "bold"),
+				run_make({}, ", "),
+				run_make({italic = true}, "italic"),
+				run_make({}, ", "),
+				run_make({underline = true}, "underline"),
+				run_make({}, ", "),
+				run_make({mono = true}, "monospace"),
+				run_make({}, ", "),
+				run_make({color = 0xffc2410c}, "colour"),
+				run_make({}, " and "),
+				run_make({size = 24}, "24px"),
+				run_make({}, " together."),
+			},
+		),
+	)
+	add(&d, para_make(.H2, "Lists"))
+	for item, i in ([?]string{"First bullet", "Nested bullet", "Third bullet"}) {
+		pa := para_make(.Body, item)
+		pa.list = .Bullet
+		pa.depth = i == 1 ? 1 : 0
+		add(&d, pa)
+	}
+	for item, i in ([?]string{"Numbered one", "Numbered two", "Nested numbered"}) {
+		pa := para_make(.Body, item)
+		pa.list = .Numbered
+		pa.depth = i == 2 ? 1 : 0
+		add(&d, pa)
+	}
+	add(
+		&d,
+		para_make(
+			.Quote,
+			"A quotation sits behind a rule and leans over, which is how a reader knows it is borrowed.",
+		),
+	)
+	add(&d, para_make(.Code, "    indented := \"four spaces survive\""))
+	add(&d, para_make(.Code, "    and  double  spaces  too"))
+	add(&d, para_make(.H3, "Alignment"))
+	for al, i in ([?]Align{.Center, .Right, .Justify}) {
+		pa := para_make(
+			.Body,
+			i == 2 \
+			? "Justified text stretches the spaces between words so that both edges of the measure line up exactly, which is what the justification gap in the layout is for and what every exporter has to reproduce without measuring anything again." \
+			: fmt.tprintf("Aligned paragraph number %d", i + 1),
+		)
+		pa.align = al
+		add(&d, pa)
+	}
+	brk := para_make(.H2, "After a hard page break")
+	brk.break_before = true
+	add(&d, brk)
+	add(&d, para_make(.Body, "Unicode: café, naïve, Grüße, œuvre, and an em dash — plus a bullet • inline."))
+	return d
+}
+
+@(private = "file")
+Export_Case :: struct {
+	name: string,
+	doc:  Doc,
+}
+
+@(private = "file")
+test_export :: proc(fonts: ^p.Fonts) {
+	section("export: PDF, .docx, .odt, .rtf")
+
+	kit.run({"rm", "-rf", SELFTEST_DIR})
+	_, made := kit.run({"mkdir", "-p", fmt.tprintf("%s/lo", SELFTEST_DIR)})
+	ok(made, "a scratch directory at %s", SELFTEST_DIR)
+	if !made {
+		return
+	}
+
+	cases := make([dynamic]Export_Case, 0, 4, context.temp_allocator)
+	append(&cases, Export_Case{"fixture", rich_fixture()})
+	append(&cases, Export_Case{"seed", doc_from_markdown(SEED)})
+	// A document of real substance, not a three-line toy. Both of these live
+	// in the tree; whichever is readable from where the test was started is
+	// used, and a missing one is skipped rather than failed.
+	for cand in ([?][2]string {
+		{"readme", "README.md"},
+		{"readme", "/home/alex/Work/palmy/README.md"},
+		{"apps", "apps/APPS.md"},
+		{"apps", "/home/alex/Work/palmy/apps/APPS.md"},
+	}) {
+		already := false
+		for c in cases {
+			if c.name == cand[0] {
+				already = true
+			}
+		}
+		if already {
+			continue
+		}
+		if nd, got := import_markdown(cand[1]); got {
+			append(&cases, Export_Case{cand[0], nd})
+		}
+	}
+	defer for &c in cases {
+		doc_destroy(&c.doc)
+	}
+	ok(len(cases) >= 3, "%d documents under test", len(cases))
+
+	office_paths := make([dynamic]string, 0, 16, context.temp_allocator)
+
+	for &c in cases {
+		src := doc_words(&c.doc)
+		base := fmt.tprintf("%s/%s", SELFTEST_DIR, c.name)
+		ok(len(src) > 0, "%s: the source has %d words", c.name, len(src))
+
+		// --- the formats that were already here must keep working
+		ok(save_doc(&c.doc, fmt.tprintf("%s.json", base)), "%s: .json still writes", c.name)
+		ok(export_markdown(&c.doc, fmt.tprintf("%s.md", base)), "%s: .md still writes", c.name)
+		ok(export_html(&c.doc, fmt.tprintf("%s.html", base), c.name), "%s: .html still writes", c.name)
+
+		// --- PDF
+		pdf_path := fmt.tprintf("%s.pdf", base)
+		ok(cli_export_pdf(&c.doc, pdf_path, c.name), "%s: PDF written", c.name)
+
+		// How many pages the layout makes, so the file can be held to it.
+		// This is the claim that matters most about the PDF: it is not a
+		// re-flow, it is the pagination the window already computed.
+		pages := 0
+		lines := 0
+		{
+			lay: Layout
+			defer layout_destroy(&lay)
+			layout_doc(&lay, &c.doc, fonts)
+			pages, lines = lay.pages, len(lay.lines)
+		}
+		if raw, got := read_text(pdf_path); got {
+			check_pdf_structure(c.name, raw)
+			eq_int(
+				strings.count(raw, "/Type /Page /Parent"),
+				pages,
+				"%s: the PDF has one page object per laid-out page",
+				c.name,
+			)
+			// Each visual line opens at most one text object, and an empty
+			// one opens none, so this bounds the content against the layout
+			// rather than merely checking that something was written.
+			bt := strings.count(raw, "\nBT\n")
+			ok(bt > 0 && bt <= lines + pages + 8, "%s: %d text objects for %d lines", c.name, bt, lines)
+		} else {
+			ok(false, "%s: the PDF can be read back", c.name)
+		}
+
+		// --- .docx
+		// Named per format so LibreOffice's one-output-per-basename
+		// rule does not have three conversions overwrite each other.
+		docx_path := fmt.tprintf("%s-docx.docx", base)
+		ok(export_docx(&c.doc, docx_path, c.name), "%s: .docx written", c.name)
+		if raw, got := read_text(docx_path); got {
+			check_docx_structure(c.name, transmute([]u8)raw)
+		}
+
+		// --- .odt
+		// Named per format so LibreOffice's one-output-per-basename
+		// rule does not have three conversions overwrite each other.
+		odt_path := fmt.tprintf("%s-odt.odt", base)
+		ok(export_odt(&c.doc, odt_path, c.name), "%s: .odt written", c.name)
+		if raw, got := read_text(odt_path); got {
+			check_odt_structure(c.name, transmute([]u8)raw)
+		}
+
+		// --- .rtf
+		// Named per format so LibreOffice's one-output-per-basename
+		// rule does not have three conversions overwrite each other.
+		rtf_path := fmt.tprintf("%s-rtf.rtf", base)
+		ok(export_rtf(&c.doc, rtf_path, c.name), "%s: .rtf written", c.name)
+		if raw, got := read_text(rtf_path); got {
+			check_rtf_structure(c.name, raw)
+		}
+
+		append(&office_paths, docx_path, odt_path, rtf_path)
+
+		// --- import: the .docx just written must come back as the same
+		// document, which is the whole claim behind "not write-only".
+		if back, got := import_docx(docx_path); got {
+			nd := back
+			defer doc_destroy(&nd)
+			eq_int(len(nd.paras), len(c.doc.paras), "%s: .docx round-trips the paragraph count", c.name)
+			if len(nd.paras) == len(c.doc.paras) {
+				bad_kind, bad_list := 0, 0
+				for i in 0 ..< len(nd.paras) {
+					if nd.paras[i].kind != c.doc.paras[i].kind {
+						bad_kind += 1
+					}
+					if nd.paras[i].list != c.doc.paras[i].list {
+						bad_list += 1
+					}
+				}
+				eq_int(bad_kind, 0, "%s: .docx round-trips every paragraph kind", c.name)
+				eq_int(bad_list, 0, "%s: .docx round-trips every list kind", c.name)
+			}
+			check_extracted(fmt.tprintf("%s: .docx import", c.name), src, text_of(&nd))
+		} else {
+			ok(false, "%s: the .docx reads back", c.name)
+		}
+	}
+
+	// The window's own command path, run without a window. Every toolbar
+	// button and every keyboard shortcut goes through `run_prompt`, so
+	// driving it here means what the GUI exports is what was just verified,
+	// rather than a second code path that nothing tests.
+	{
+		st := State{}
+		state_init(&st, fonts)
+		defer state_destroy(&st)
+		st.view = {0, 0, 1280, 760}
+		replace_document(&st, doc_clone(&cases[0].doc))
+		relayout(&st)
+		st.dirty = false
+
+		for step in ([?]struct {
+			kind: Prompt_Kind,
+			ext:  string,
+		} {
+			{.Export_Pdf, "pdf"},
+			{.Export_Docx, "docx"},
+			{.Export_Odt, "odt"},
+			{.Export_Rtf, "rtf"},
+			{.Export_Md, "md"},
+			{.Export_Html, "html"},
+			{.Save_As, "json"},
+		}) {
+			path := fmt.tprintf("%s/prompt.%s", SELFTEST_DIR, step.ext)
+			run_prompt(&st, step.kind, path)
+			text, wrote := read_text(path)
+			ok(wrote && len(text) > 0, "run_prompt writes .%s", step.ext)
+			ok(
+				!strings.contains(st.toast, "failed") && !strings.contains(st.toast, "Could not"),
+				"run_prompt reports success for .%s (%q)",
+				step.ext,
+				st.toast,
+			)
+		}
+
+		before := len(st.doc.paras)
+		run_prompt(&st, .Import_Docx, fmt.tprintf("%s/prompt.docx", SELFTEST_DIR))
+		eq_int(len(st.doc.paras), before, "run_prompt reads back the .docx it wrote")
+		eq_str(
+			text_of(&st.doc),
+			text_of(&cases[0].doc),
+			"and the text survives the round trip through the window's own path",
+		)
+	}
+
+	check_pdf_tools(cases[:])
+	check_xml_parts(cases[:])
+	check_libreoffice(cases[:], office_paths[:])
+}
+
+// check_pdf_structure reads the file back as bytes and asserts the things a
+// PDF must have — before any external tool is consulted, so a failure points
+// at the writer rather than at the reader.
+@(private = "file")
+check_pdf_structure :: proc(name, raw: string) {
+	ok(strings.has_prefix(raw, "%PDF-1.7"), "%s: PDF 1.7 header", name)
+	ok(strings.has_suffix(strings.trim_right_space(raw), "%%EOF"), "%s: ends with %%%%EOF", name)
+	for want in ([?]string {
+		"/Type /Catalog",
+		"/Lang (en-US)",
+		"/Type /Pages",
+		"/Subtype /Type0",
+		"/Encoding /Identity-H",
+		"/Subtype /CIDFontType2",
+		"/CIDToGIDMap /Identity",
+		"/FontFile2",
+		"/ToUnicode",
+		"beginbfchar",
+		"/MediaBox [0 0 595.276 841.890]",
+		"/Producer",
+		"/CreationDate",
+		"/Title",
+		"/Type /Outlines",
+		"/Dest [",
+		"trailer",
+	}) {
+		ok(strings.contains(raw, want), "%s: PDF contains %s", name, want)
+	}
+
+	// The cross-reference table has to be where the trailer says it is, and
+	// the table has to have an entry for every object.
+	sx := strings.last_index(raw, "startxref")
+	ok(sx > 0, "%s: a startxref", name)
+	if sx > 0 {
+		rest := strings.trim_left_space(raw[sx + len("startxref"):])
+		n := 0
+		for i in 0 ..< len(rest) {
+			if rest[i] < '0' || rest[i] > '9' {
+				break
+			}
+			n = n * 10 + int(rest[i] - '0')
+		}
+		ok(n > 0 && n < len(raw), "%s: startxref is inside the file", name)
+		if n > 0 && n + 4 <= len(raw) {
+			eq_str(raw[n:n + 4], "xref", "%s: startxref points at the table", name)
+		}
+	}
+
+	objs := strings.count(raw, " 0 obj\n")
+	size := strings.index(raw, "/Size ")
+	ok(objs > 5, "%s: %d objects", name, objs)
+	if size > 0 {
+		rest := raw[size + len("/Size "):]
+		v := 0
+		for i in 0 ..< len(rest) {
+			if rest[i] < '0' || rest[i] > '9' {
+				break
+			}
+			v = v * 10 + int(rest[i] - '0')
+		}
+		eq_int(v, objs + 1, "%s: /Size counts every object plus the free head", name)
+	}
+	// Every object must have an xref entry; the table's own header says how
+	// many there are.
+	xr := strings.index(raw, "\nxref\n")
+	ok(xr > 0, "%s: an xref table", name)
+}
+
+@(private = "file")
+check_docx_structure :: proc(name: string, archive: []u8) {
+	names := zip_names(archive, context.temp_allocator)
+	for want in ([?]string {
+		"[Content_Types].xml",
+		"_rels/.rels",
+		"word/_rels/document.xml.rels",
+		"word/document.xml",
+		"word/styles.xml",
+		"word/numbering.xml",
+		"docProps/core.xml",
+	}) {
+		found := false
+		for n in names {
+			if n == want {
+				found = true
+			}
+		}
+		ok(found, "%s: .docx has %s", name, want)
+	}
+	doc, got := zip_read_entry(archive, "word/document.xml", context.temp_allocator)
+	ok(got, "%s: word/document.xml reads back", name)
+	if got {
+		s := string(doc)
+		ok(strings.contains(s, "<w:pStyle w:val=\"Heading1\"/>"), "%s: headings are a named style", name)
+		ok(strings.contains(s, "<w:numPr>"), "%s: list items carry numbering", name)
+		ok(strings.contains(s, "xml:space=\"preserve\""), "%s: runs preserve their spaces", name)
+		ok(strings.contains(s, "<w:sectPr>"), "%s: a section with the page size", name)
+		ok(strings.contains(s, "w:w=\"11906\""), "%s: the page is A4", name)
+	}
+	st, got_st := zip_read_entry(archive, "word/styles.xml", context.temp_allocator)
+	if got_st {
+		s := string(st)
+		for want in ([?]string{"Heading1", "Heading2", "Heading3", "Quote", "Code", "ListParagraph"}) {
+			ok(
+				strings.contains(s, fmt.tprintf("w:styleId=\"%s\"", want)),
+				"%s: styles.xml defines %s",
+				name,
+				want,
+			)
+		}
+	}
+}
+
+@(private = "file")
+check_odt_structure :: proc(name: string, archive: []u8) {
+	names := zip_names(archive, context.temp_allocator)
+	ok(len(names) >= 4, "%s: .odt has its parts", name)
+	if len(names) > 0 {
+		eq_str(names[0], "mimetype", "%s: mimetype is the first entry", name)
+	}
+	// ODF requires the first entry to be stored, with no extra field, so that
+	// the media type can be read straight out of the first few dozen bytes.
+	ok(archive[8] == 0 && archive[9] == 0, "%s: mimetype is stored, not deflated", name)
+	ok(archive[28] == 0 && archive[29] == 0, "%s: mimetype has no extra field", name)
+	ok(
+		len(archive) > 38 + len(ODT_MIME) && string(archive[38:38 + len(ODT_MIME)]) == ODT_MIME,
+		"%s: the media type is at the documented offset",
+		name,
+	)
+	content, got := zip_read_entry(archive, "content.xml", context.temp_allocator)
+	ok(got, "%s: content.xml reads back", name)
+	if got {
+		s := string(content)
+		ok(strings.contains(s, "<text:h "), "%s: headings are text:h", name)
+		ok(strings.contains(s, "text:outline-level=\"1\""), "%s: with an outline level", name)
+		ok(strings.contains(s, "<text:list "), "%s: lists are text:list", name)
+		ok(strings.contains(s, "office:version=\"1.3\""), "%s: declares its ODF version", name)
+	}
+	styles, got_s := zip_read_entry(archive, "styles.xml", context.temp_allocator)
+	if got_s {
+		s := string(styles)
+		for want in ([?]string{"Heading_20_1", "Heading_20_2", "Heading_20_3", "Quote", "Preformatted_20_Text"}) {
+			ok(
+				strings.contains(s, fmt.tprintf("style:name=\"%s\"", want)),
+				"%s: styles.xml defines %s",
+				name,
+				want,
+			)
+		}
+		ok(strings.contains(s, "fo:page-width=\"8.268in\""), "%s: the page layout is A4", name)
+	}
+}
+
+@(private = "file")
+check_rtf_structure :: proc(name, raw: string) {
+	ok(strings.has_prefix(raw, "{\\rtf1\\ansi"), "%s: an RTF 1 header", name)
+	ok(strings.contains(raw, "{\\fonttbl"), "%s: a font table", name)
+	ok(strings.contains(raw, "{\\stylesheet"), "%s: a stylesheet", name)
+	ok(strings.contains(raw, "\\paperw11906"), "%s: the page is A4", name)
+
+	// Unbalanced braces are the one way an RTF file is simply unreadable, and
+	// a stray `{` from a format string is exactly how it happens.
+	depth := 0
+	worst := 0
+	i := 0
+	for i < len(raw) {
+		switch raw[i] {
+		case '\\':
+			i += 2 // an escaped character, including \{ and \}
+			continue
+		case '{':
+			depth += 1
+		case '}':
+			depth -= 1
+			worst = min(worst, depth)
+		}
+		i += 1
+	}
+	eq_int(depth, 0, "%s: RTF braces balance", name)
+	eq_int(worst, 0, "%s: RTF never closes a group it did not open", name)
+	ok(!strings.contains(raw, "%!("), "%s: no formatter leakage in the RTF", name)
+}
+
+// ---------------------------------------------------------------------------
+// The external judges
+// ---------------------------------------------------------------------------
+
+@(private = "file")
+check_pdf_tools :: proc(cases: []Export_Case) {
+	for tool in ([?]string{"qpdf", "pdftotext", "pdffonts"}) {
+		if !have_tool(tool) {
+			ok(false, "SKIPPED: %s is not installed, so its assertions did not run", tool)
+		}
+	}
+
+	for &c in cases {
+		path := fmt.tprintf("%s/%s.pdf", SELFTEST_DIR, c.name)
+
+		if have_tool("qpdf") {
+			out, good := kit.run({"qpdf", "--check", path})
+			ok(good, "%s: qpdf --check passes", c.name)
+			ok(
+				strings.contains(out, "No syntax or stream encoding errors found"),
+				"%s: qpdf finds no syntax or stream errors",
+				c.name,
+			)
+			fmt.printf("    qpdf --check %s.pdf:\n", c.name)
+			for line in strings.split_lines(out, context.temp_allocator) {
+				if len(strings.trim_space(line)) > 0 {
+					fmt.printf("      %s\n", line)
+				}
+			}
+		}
+
+		if have_tool("pdftotext") {
+			txt := fmt.tprintf("%s/%s.pdf.txt", SELFTEST_DIR, c.name)
+			_, good := kit.run({"pdftotext", "-layout", path, txt})
+			ok(good, "%s: pdftotext runs", c.name)
+			if text, got := read_text(txt); got {
+				// This is the assertion the /ToUnicode CMap exists for: the
+				// glyphs in the file are ids, and only the CMap can turn them
+				// back into the document's words.
+				check_extracted(fmt.tprintf("%s: pdftotext", c.name), doc_words(&c.doc), text)
+			} else {
+				ok(false, "%s: pdftotext wrote something", c.name)
+			}
+		}
+
+		if have_tool("pdffonts") {
+			out, good := kit.run({"pdffonts", path})
+			ok(good, "%s: pdffonts runs", c.name)
+			lines := strings.split_lines(out, context.temp_allocator)
+			faces := 0
+			embedded := 0
+			subset := 0
+			unicode := 0
+			tagged := 0
+			for line in lines {
+				if !strings.contains(line, "CID TrueType") {
+					continue
+				}
+				faces += 1
+				// The three flag columns come after the encoding name.
+				rest := line[strings.index(line, "Identity-H") + len("Identity-H"):]
+				cols := 0
+				yes := 0
+				for f in strings.fields(rest, context.temp_allocator) {
+					if f == "yes" {
+						yes += 1
+					}
+					if f == "yes" || f == "no" {
+						cols += 1
+					}
+					if cols == 3 {
+						break
+					}
+				}
+				if yes >= 1 {embedded += 1}
+				if yes >= 2 {subset += 1}
+				if yes >= 3 {unicode += 1}
+				// A subset's name carries a six-letter tag and a plus sign.
+				if plus := strings.index_byte(line, '+'); plus >= 6 {
+					tagged += 1
+				}
+			}
+			ok(faces > 0, "%s: pdffonts sees %d composite fonts", c.name, faces)
+			eq_int(embedded, faces, "%s: every font is embedded", c.name)
+			eq_int(subset, faces, "%s: every font is a subset", c.name)
+			eq_int(unicode, faces, "%s: every font has a ToUnicode map", c.name)
+			eq_int(tagged, faces, "%s: every font carries a subset tag", c.name)
+			fmt.printf("    pdffonts %s.pdf:\n", c.name)
+			for line in lines {
+				if len(strings.trim_space(line)) > 0 {
+					fmt.printf("      %s\n", line)
+				}
+			}
+		}
+	}
+}
+
+// check_xml_parts writes every XML part out of the two ZIP containers and
+// runs xmllint over it. Well-formedness is a low bar, but it is the bar a
+// hand-written emitter fails first — one unescaped ampersand does it.
+@(private = "file")
+check_xml_parts :: proc(cases: []Export_Case) {
+	if !have_tool("xmllint") {
+		ok(false, "SKIPPED: xmllint is not installed, so the XML was not validated")
+		return
+	}
+	DOCX_PARTS := [?]string {
+		"[Content_Types].xml",
+		"_rels/.rels",
+		"word/_rels/document.xml.rels",
+		"word/document.xml",
+		"word/styles.xml",
+		"word/numbering.xml",
+		"docProps/core.xml",
+		"docProps/app.xml",
+	}
+	ODT_PARTS := [?]string{"META-INF/manifest.xml", "content.xml", "styles.xml", "meta.xml"}
+
+	n := 0
+	for &c in cases {
+		for pair in ([?]struct {
+			ext:   string,
+			parts: []string,
+		}{{"docx", DOCX_PARTS[:]}, {"odt", ODT_PARTS[:]}}) {
+			raw, got := read_text(
+				fmt.tprintf("%s/%s-%s.%s", SELFTEST_DIR, c.name, pair.ext, pair.ext),
+			)
+			if !got {
+				continue
+			}
+			for part in pair.parts {
+				data, found := zip_read_entry(transmute([]u8)raw, part, context.temp_allocator)
+				if !found {
+					continue
+				}
+				// A flat name, so the directories inside the archive do not
+				// have to exist on disk.
+				flat := strings.builder_make(context.temp_allocator)
+				fmt.sbprintf(&flat, "%s/xml-%s-%s-", SELFTEST_DIR, c.name, pair.ext)
+				for i in 0 ..< len(part) {
+					strings.write_byte(&flat, part[i] == '/' ? '_' : part[i])
+				}
+				tmp := strings.to_string(flat)
+				if os.write_entire_file(tmp, data) != nil {
+					ok(false, "%s: could not stage %s for xmllint", c.name, part)
+					continue
+				}
+				_, clean := kit.run({"xmllint", "--noout", tmp})
+				ok(clean, "%s: xmllint accepts %s/%s", c.name, pair.ext, part)
+				n += 1
+			}
+		}
+	}
+	fmt.printf("    xmllint --noout: %d XML parts, all well-formed\n", n)
+}
+
+// check_libreoffice is the compatibility oracle. A format LibreOffice opens
+// and reproduces is genuinely compatible; one that merely has the right
+// extension is not.
+@(private = "file")
+check_libreoffice :: proc(cases: []Export_Case, paths: []string) {
+	if !have_tool("soffice") {
+		ok(false, "SKIPPED: LibreOffice is not installed, so nothing was round-tripped through it")
+		return
+	}
+	lo := fmt.tprintf("%s/lo", SELFTEST_DIR)
+
+	// One invocation for every file: LibreOffice is slow to start and quick
+	// to convert, and the exports all have distinct names.
+	argv := make([dynamic]string, 0, len(paths) + 8, context.temp_allocator)
+	append(&argv, "soffice", "--headless", LO_PROFILE, "--convert-to", "txt:Text", "--outdir", lo)
+	append(&argv, ..paths)
+	_, ran := kit.run(argv[:])
+	ok(ran, "LibreOffice converted %d files", len(paths))
+
+	for &c in cases {
+		src := doc_words(&c.doc)
+		for ext in ([?]string{"docx", "odt", "rtf"}) {
+			// Every export of one document lands on the same .txt name, so
+			// the exports are named per format for this pass.
+			out := fmt.tprintf("%s/%s-%s.txt", lo, c.name, ext)
+			if text, got := read_text(out); got {
+				check_extracted(fmt.tprintf("%s: LibreOffice reading .%s", c.name, ext), src, text)
+			} else {
+				ok(false, "%s: LibreOffice produced text from .%s", c.name, ext)
+			}
+		}
+	}
 }

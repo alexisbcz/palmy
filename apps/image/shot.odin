@@ -91,6 +91,9 @@ run_shot :: proc(st: ^St, out: string, seconds: f64, keys: string) {
 		case .Grid:
 			build_grid(ui, st)
 		}
+		// The same last step the real frame loop takes, so a shot of the file
+		// dialog is a shot of what the window would show.
+		pick_overlay(ui, st)
 		p.offscreen_end(off)
 		paint_ms += time.duration_milliseconds(time.since(pt))
 		spent := time.duration_milliseconds(time.since(pt))
@@ -156,6 +159,10 @@ apply_keys :: proc(st: ^St, keys: string) {
 			st.lib_sel = min(st.lib_sel + 1, max(0, len(st.rows) - 1))
 		case key == "open":
 			open_row(st)
+		case key == "pick":
+			begin_pick(st, .File)
+		case key == "pickdir":
+			begin_pick(st, .Folder)
 		case strings.has_prefix(key, "sel"):
 			if v, ok := strconv.parse_int(key[3:]); ok {
 				st.sel = clamp(v, 0, max(0, len(st.shots) - 1))

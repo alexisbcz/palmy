@@ -152,6 +152,9 @@ toolbar_top :: proc(ui: ^p.Ctx, st: ^State) {
 	if tool_button(ui, "md", ICON_DOWNLOAD) {
 		open_prompt(st, .Export_Md)
 	}
+	if tool_button(ui, "pdf", ICON_PRINTER) {
+		open_prompt(st, .Export_Pdf)
+	}
 	if tool_button(ui, "png", ICON_IMAGE) {
 		open_prompt(st, .Export_Png)
 	}
@@ -440,7 +443,11 @@ HELP_FILE := [?]Shortcut {
 	{"Ctrl Shift S", "Save as"},
 	{"Ctrl M / Ctrl Shift M", "Export, import Markdown"},
 	{"Ctrl Shift H", "Export HTML"},
-	{"Ctrl P", "Export every page as PNG"},
+	{"Ctrl P", "Export PDF (embedded, searchable)"},
+	{"Ctrl D / Ctrl Shift D", "Export .docx, .odt"},
+	{"Ctrl T", "Export .rtf"},
+	{"Ctrl Shift O", "Import .docx"},
+	{"Ctrl Shift P", "Export every page as PNG"},
 	{"Ctrl = / Ctrl -", "Zoom"},
 	{"Ctrl Q", "Quit"},
 }

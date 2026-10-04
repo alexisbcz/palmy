@@ -25,6 +25,11 @@ Prompt_Kind :: enum u8 {
 	Import_Md,
 	Export_Html,
 	Export_Png,
+	Export_Pdf,
+	Export_Docx,
+	Export_Odt,
+	Export_Rtf,
+	Import_Docx,
 }
 
 ZOOMS := [?]f32{0.5, 0.75, 0.9, 1.0, 1.25, 1.5, 2.0}
@@ -971,8 +976,23 @@ do_save :: proc(st: ^State, path: string) {
 
 do_open :: proc(st: ^State, path: string) {
 	full := expand_home(path, context.temp_allocator)
-	if strings.has_suffix(full, ".md") || strings.has_suffix(full, ".markdown") {
-		nd, ok := import_markdown(full)
+	// The two formats that are read but not written in place: opening one
+	// imports it and leaves the document pointing at a .json of the same
+	// name, so a later Ctrl+S does not quietly overwrite the original.
+	for imported in ([?]struct {
+		ext:   string,
+		label: string,
+	}{{".md", "Markdown"}, {".markdown", "Markdown"}, {".docx", "Word document"}}) {
+		if !strings.has_suffix(full, imported.ext) {
+			continue
+		}
+		nd: Doc
+		ok: bool
+		if imported.ext == ".docx" {
+			nd, ok = import_docx(full)
+		} else {
+			nd, ok = import_markdown(full)
+		}
 		if !ok {
 			note(st, fmt.tprintf("Could not read %s", full))
 			return
@@ -980,7 +1000,7 @@ do_open :: proc(st: ^State, path: string) {
 		replace_document(st, nd)
 		set_path(st, swap_ext(full, ".json", context.temp_allocator))
 		st.modified = true
-		note(st, "Imported Markdown")
+		note(st, fmt.tprintf("Imported %s", imported.label))
 		return
 	}
 	nd, ok := load_doc(full)

@@ -15,6 +15,7 @@ package main
 import "core:fmt"
 import "core:math"
 import "core:strings"
+import kit "kit:."
 import p "palmy:."
 import sc "shadcn:."
 
@@ -42,6 +43,18 @@ timeline_height :: proc(ed: ^Editor) -> f32 {
 }
 
 draw_ui :: proc(ed: ^Editor, ui: ^p.Ctx) {
+	// Nothing behind the file dialog may hold the keyboard. The inspector's
+	// three path fields are palmy `text_field`s built during this draw, and
+	// `text_field` reads the frame's typed text whenever it holds focus — so
+	// a field left focused from a click would eat the name being typed into
+	// the dialog, which is built after it. Taking focus away here is enough:
+	// the dialog does its own text editing and never asks palmy for focus.
+	if kit.pick_active(&ed.pick) {
+		p.set_focus(ui, 0)
+		ed.mode = .Normal
+		ed.field = .None
+	}
+
 	p.col(ui, "relative w-full h-full bg-background text-foreground")
 	defer p.end(ui)
 
@@ -68,6 +81,9 @@ draw_ui :: proc(ed: ^Editor, ui: ^p.Ctx) {
 	if ed.mode == .Help {
 		help_overlay(ed, ui)
 	}
+
+	// Last, over everything, inside the root that is already `relative`.
+	pick_overlay(ed, ui)
 }
 
 // ---------------------------------------------------------------------------
@@ -545,6 +561,9 @@ inspector :: proc(ed: ^Editor, ui: ^p.Ctx) {
 	p.end(ui)
 	field_row(ed, ui, "SRT / VTT / ASS file", &ed.buf_caption, .Caption_Path)
 	p.row(ui, "gap-2 w-full")
+	if tool_button(ui, "Choose…", "^C") {
+		begin_pick(ed, .Caption)
+	}
 	if tool_button(ui, "Import captions", "c") {
 		load_caption_file(ed, ui)
 	}
@@ -569,6 +588,9 @@ inspector :: proc(ed: ^Editor, ui: ^p.Ctx) {
 	p.text(ui, "Export", "text-xs font-semibold uppercase tracking-wide")
 	field_row(ed, ui, "output file", &ed.buf_export, .Export_Path)
 	p.row(ui, "gap-2 w-full")
+	if tool_button(ui, "Choose…", "^E") {
+		begin_pick(ed, .Export)
+	}
 	if tool_button(ui, "Draft 640x360", "p") {
 		start_export(ed, ui, .Draft)
 	}
@@ -622,6 +644,11 @@ inspector :: proc(ed: ^Editor, ui: ^p.Ctx) {
 	sc.separator(ui, .Horizontal, "my-1")
 	p.text(ui, "Project", "text-xs font-semibold uppercase tracking-wide")
 	field_row(ed, ui, "project file", &ed.buf_project, .Project_Path)
+	p.row(ui, "gap-2 w-full")
+	if tool_button(ui, "Choose…", "^P") {
+		begin_pick(ed, .Project)
+	}
+	p.end(ui)
 	p.row(ui, "gap-2 w-full")
 	if tool_button(ui, "Save", "^S") {
 		ok := project_save(pr, buf_str(&ed.buf_project), ed.playhead, ed.zoom)

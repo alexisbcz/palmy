@@ -73,6 +73,10 @@ Notes :: struct {
 	tz:         i64,
 	space_w:    f32,
 	want_quit:  bool,
+
+	// Import and export, through the shared file dialog. See pick.odin.
+	pick:        kit.Pick,
+	pick_use:    Pick_Use,
 }
 
 // ---------------------------------------------------------------------------
@@ -116,6 +120,8 @@ main :: proc() {
 		reload(&nt)
 	}
 	open_sel(&nt)
+
+	defer kit.pick_destroy(&nt.pick)
 
 	for ui in p.frames(app) {
 		nt.now = time.now()

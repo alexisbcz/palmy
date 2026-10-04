@@ -53,6 +53,12 @@ field_edit :: proc(ui: ^p.Ctx, buf: ^[dynamic]u8, swallow: bool) -> bool {
 }
 
 keys :: proc(ui: ^p.Ctx, nt: ^Notes, app: ^p.App) {
+	// The file dialog owns the keyboard while it is up; it reads its own input
+	// in `pick_overlay`, during the draw pass.
+	if kit.pick_active(&nt.pick) {
+		return
+	}
+
 	swallow := nt.swallow
 	nt.swallow = false
 
@@ -157,6 +163,15 @@ keys :: proc(ui: ^p.Ctx, nt: ^Notes, app: ^p.App) {
 		flush(nt)
 		reload(nt)
 		note(nt, tfmt("%d notes", len(nt.all)))
+		return
+	}
+	if p.shortcut(ui, 'o', {.Ctrl}) {
+		begin_pick(nt, .Import)
+		return
+	}
+	if p.shortcut(ui, 's', {.Ctrl, .Shift}) || p.shortcut(ui, 'S', {.Ctrl, .Shift}) {
+		flush(nt)
+		begin_pick(nt, .Export)
 		return
 	}
 	if p.shortcut(ui, 's', {.Ctrl}) {

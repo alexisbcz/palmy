@@ -10,6 +10,7 @@ package main
 import "core:fmt"
 import "core:math"
 import "core:strings"
+import kit "kit:."
 import p "palmy:."
 
 FRAME_STEP :: 1.0 / 30.0
@@ -28,6 +29,27 @@ edited :: proc(ed: ^Editor) {
 }
 
 handle_keys :: proc(ed: ^Editor, ui: ^p.Ctx) {
+	// The file dialog owns the keyboard while it is up; it reads its own
+	// input in `pick_overlay`, during the draw pass.
+	if kit.pick_active(&ed.pick) {
+		return
+	}
+	if p.shortcut(ui, 'i', {.Ctrl}) {
+		begin_pick(ed, .Import)
+		return
+	}
+	if p.shortcut(ui, 'e', {.Ctrl}) {
+		begin_pick(ed, .Export)
+		return
+	}
+	if p.shortcut(ui, 'c', {.Ctrl, .Shift}) || p.shortcut(ui, 'C', {.Ctrl, .Shift}) {
+		begin_pick(ed, .Caption)
+		return
+	}
+	if p.shortcut(ui, 'p', {.Ctrl, .Shift}) || p.shortcut(ui, 'P', {.Ctrl, .Shift}) {
+		begin_pick(ed, .Project)
+		return
+	}
 	if p.key_pressed(ui, p.KEY_ESCAPE, false) {
 		if ed.mode != .Normal {
 			ed.mode = .Normal

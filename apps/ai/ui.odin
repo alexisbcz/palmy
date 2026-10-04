@@ -1520,6 +1520,7 @@ help_overlay :: proc(ui: ^p.Ctx, st: ^St) {
 		{"Ctrl+D", "delete this conversation"},
 		{"Ctrl+M", "model picker"},
 		{"Ctrl+O", "pull a model"},
+		{"Ctrl+Shift+O", "attach a file to the message"},
 		{"Ctrl+T  /  F3", "thinking on or off"},
 		{"Ctrl+R  /  F4", "show or hide reasoning"},
 		{"Ctrl+B", "collapse the newest reasoning block"},

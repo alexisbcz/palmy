@@ -1,6 +1,7 @@
 // Reading and writing documents.
 //
-// Three formats:
+// This file owns the three text formats; the three binary-ish ones live next
+// door, because each of them is a program in its own right:
 //
 //   .json  the native format — a direct serialisation of the model, so a
 //          document round-trips byte-for-byte through it. Written by hand so
@@ -9,6 +10,15 @@
 //          (<u>, which Markdown has no syntax for), inline code, fenced code
 //          blocks, bullet and numbered lists with nesting, and quotes.
 //   .html  export only, for pasting into something else.
+//
+//   .pdf   pdf.odin — a real PDF, with the fonts embedded and subset and the
+//          text positioned from the layout, so it is searchable and
+//          selectable rather than a picture of each page.
+//   .docx  office.odin — WordprocessingML in a ZIP written by zip.odin, and
+//          the one format this app also *reads*.
+//   .odt   office.odin — OpenDocument, likewise.
+//   .rtf   office.odin — plain text, and the cheapest broad compatibility
+//          there is.
 package main
 
 import "core:encoding/json"
@@ -896,6 +906,30 @@ export_html :: proc(d: ^Doc, path, title: string) -> bool {
 // ---------------------------------------------------------------------------
 // Paths
 // ---------------------------------------------------------------------------
+
+// base_name is the last path component, which is what a title defaults to.
+base_name :: proc(path: string) -> string {
+	if i := strings.last_index_byte(path, '/'); i >= 0 {
+		return path[i + 1:]
+	}
+	return path
+}
+
+// doc_display_title is the document's own title where it has one — the text of
+// its first heading — and the file name otherwise. It is what goes into a
+// PDF's /Title, a .docx's dc:title and an .odt's office:meta.
+doc_display_title :: proc(d: ^Doc, fallback: string) -> string {
+	for &pa in d.paras {
+		if pa.kind != .H1 {
+			continue
+		}
+		t := strings.trim_space(para_text(&pa, context.temp_allocator))
+		if len(t) > 0 {
+			return t
+		}
+	}
+	return fallback
+}
 
 swap_ext :: proc(path, ext: string, alloc := context.allocator) -> string {
 	dot := strings.last_index_byte(path, '.')

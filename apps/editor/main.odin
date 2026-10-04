@@ -85,6 +85,10 @@ Editor :: struct {
 	matches:    int,
 	scroll_acc: f32,
 	want_quit:  bool,
+
+	// The shared Open/Save dialog, and what it was opened for. See pick.odin.
+	pick:       kit.Pick,
+	pick_use:   Pick_Use,
 }
 
 // ---------------------------------------------------------------------------
@@ -187,6 +191,8 @@ main :: proc() {
 	}
 	ed.odin = strings.has_suffix(ed.buf.path, ".odin")
 	retitle(app, &ed)
+
+	defer kit.pick_destroy(&ed.pick)
 
 	for ui in p.frames(app) {
 		measure(ui, &ed)
@@ -329,6 +335,7 @@ ensure_visible :: proc(ed: ^Editor) {
 
 Cmd :: enum {
 	None,
+	Open,
 	Save,
 	Save_As,
 	Find,
@@ -362,6 +369,7 @@ Command :: struct {
 }
 
 COMMANDS := [?]Command {
+	{.Open, "Open…", "Ctrl O", ICON_FOLDER},
 	{.Save, "Save", "Ctrl S", ICON_SAVE},
 	{.Save_As, "Save As…", "Ctrl Shift S", ICON_SAVE},
 	{.Find, "Find…", "Ctrl F", ICON_SEARCH},
@@ -403,7 +411,9 @@ open_prompt :: proc(ed: ^Editor, kind: Prompt_Kind) {
 
 do_save :: proc(ed: ^Editor, path: string) {
 	if path == "" {
-		open_prompt(ed, .Save_As)
+		// Nowhere to write it yet, so ask — through the file dialog now,
+		// rather than making the user type a path from memory.
+		begin_pick(ed, .Save_As)
 		note(ed, "This buffer has no name yet")
 		return
 	}
@@ -454,10 +464,12 @@ do_find_step :: proc(ed: ^Editor, backwards: bool) {
 run_cmd :: proc(ed: ^Editor, c: Cmd) {
 	switch c {
 	case .None:
+	case .Open:
+		begin_pick(ed, .Open)
 	case .Save:
 		do_save(ed, ed.buf.path)
 	case .Save_As:
-		open_prompt(ed, .Save_As)
+		begin_pick(ed, .Save_As)
 	case .Find:
 		open_prompt(ed, .Find)
 	case .Replace:
@@ -614,6 +626,13 @@ field_edit :: proc(ui: ^p.Ctx, buf: ^[dynamic]u8, swallow: bool) -> bool {
 }
 
 keys :: proc(ui: ^p.Ctx, ed: ^Editor, app: ^p.App) {
+	// The file dialog owns the keyboard while it is up, and it reads its own
+	// input inside `pick_overlay` during the draw pass. Nothing here may
+	// consume a key before it gets there.
+	if kit.pick_active(&ed.pick) {
+		return
+	}
+
 	swallow := ed.swallow
 	ed.swallow = false
 
@@ -692,6 +711,10 @@ keys :: proc(ui: ^p.Ctx, ed: ^Editor, app: ^p.App) {
 	}
 	if plain(ui, p.KEY_F1) {
 		run_cmd(ed, .Help)
+		return
+	}
+	if p.shortcut(ui, 'o', {.Ctrl}) {
+		run_cmd(ed, .Open)
 		return
 	}
 	if p.shortcut(ui, 's', {.Ctrl}) {

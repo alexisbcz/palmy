@@ -94,6 +94,10 @@ Editor :: struct {
 	verified:     bool,
 	still:        p.Image,
 	still_ok:     bool,
+
+	// The shared file dialog, and what it was opened for. See pick.odin.
+	pick:         kit.Pick,
+	pick_use:     Pick_Use,
 }
 
 GUTTER :: f32(64) // track-name column inside the timeline
@@ -135,6 +139,7 @@ main :: proc() {
 	importer_start(&ed.im)
 	preview_start(&ed.pv)
 	exporter_start(&ed.ex)
+	defer kit.pick_destroy(&ed.pick)
 	defer {
 		importer_stop(&ed.im)
 		preview_stop(&ed.pv)
@@ -215,7 +220,12 @@ main :: proc() {
 			ed.tl = p.rect_of(ui, ed.tl_id)
 		}
 		handle_keys(ed, ui)
-		handle_timeline_mouse(ed, ui)
+		// The timeline reads the raw pointer against its own rectangle rather
+		// than through palmy's hit testing, so it has to be told when the
+		// file dialog is in front of it.
+		if !kit.pick_active(&ed.pick) {
+			handle_timeline_mouse(ed, ui)
+		}
 		if ed.drag != .Scrub {
 			follow_playhead(ed)
 		}

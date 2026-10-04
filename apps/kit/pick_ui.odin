@@ -607,10 +607,15 @@ pick_panel :: proc(ui: ^p.Ctx, st: ^Pick) {
 
 @(private = "file")
 pick_header :: proc(ui: ^p.Ctx, st: ^Pick) {
+	// `bg-muted`, not `bg-sidebar`. An application is free to register its own
+	// palette — apps/image registers a dark one of its own — and the one token
+	// such a palette reliably forgets is `sidebar`, because it has no sidebar.
+	// A shared component may only lean on tokens every theme defines, or it
+	// renders white-on-white in somebody else's window.
 	p.row(
 		ui,
 		fmt.tprintf(
-			"h-[%d] shrink-0 w-full items-center gap-2 px-3.5 border-b border-border bg-sidebar",
+			"h-[%d] shrink-0 w-full items-center gap-2 px-3.5 border-b border-border bg-muted/60",
 			int(PICK_HEAD_H),
 		),
 	)
@@ -760,7 +765,7 @@ pick_sidebar :: proc(ui: ^p.Ctx, st: ^Pick) {
 	p.col(
 		ui,
 		fmt.tprintf(
-			"w-[%d] shrink-0 h-full bg-sidebar border-r border-border px-2 py-2 gap-px overflow-hidden",
+			"w-[%d] shrink-0 h-full bg-muted/60 border-r border-border px-2 py-2 gap-px overflow-hidden",
 			int(PICK_SIDE_W),
 		),
 	)
@@ -1064,7 +1069,7 @@ pick_row :: proc(ui: ^p.Ctx, st: ^Pick, row: int) {
 
 @(private = "file")
 pick_status :: proc(ui: ^p.Ctx, st: ^Pick) {
-	p.row(ui, "h-[22] shrink-0 w-full items-center gap-2 px-3 border-t border-border bg-sidebar overflow-hidden")
+	p.row(ui, "h-[22] shrink-0 w-full items-center gap-2 px-3 border-t border-border bg-muted/60 overflow-hidden")
 	defer p.end(ui)
 
 	shown := len(st.vis)
@@ -1121,7 +1126,7 @@ pick_empty :: proc(ui: ^p.Ctx, ic: p.Icon, title, body: string) {
 
 @(private = "file")
 pick_footer :: proc(ui: ^p.Ctx, st: ^Pick) {
-	p.col(ui, "shrink-0 w-full border-t border-border bg-sidebar")
+	p.col(ui, "shrink-0 w-full border-t border-border bg-muted/60")
 	defer p.end(ui)
 
 	if st.mode == .Save_File {

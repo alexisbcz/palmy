@@ -135,6 +135,12 @@ St :: struct {
 	files:        []Entry,
 	files_dir:    string,
 
+	// The shared Open/Save dialog, and what it was opened for. See pick.odin.
+	// Named apart from the colour `pick_*` fields above, which are a different
+	// kind of picking entirely.
+	fpick:        kit.Pick,
+	fpick_use:    File_Pick,
+
 	// Panel thumbnails, one draw context per pool slot (`p.pixels` holds the
 	// pointer until paint, so it cannot live in the frame arena).
 	thumbs:    [MAX_LAYERS]Thumb_View,
@@ -177,6 +183,7 @@ st_init :: proc(st: ^St) {
 	}
 	st.fill_stack = make([dynamic][2]int, 0, 1024)
 	st.path_buf = make([dynamic]u8, 0, 256)
+	defer kit.pick_destroy(&st.fpick)
 	st.name_buf = make([dynamic]u8, 0, 64)
 	hist_init(&st.hist)
 	sync_picker_from(st, st.fg)
@@ -247,6 +254,7 @@ main :: proc() {
 		refresh_preview(&st)
 
 		build_ui(ui, &st)
+		pick_overlay(ui, &st)
 
 		// The composite is folded here, at the end of the build, because the
 		// canvas element's draw procedure does not run until palmy paints — so
@@ -668,6 +676,11 @@ toast_clear :: proc(st: ^St) {
 // ---------------------------------------------------------------------------
 
 handle_keys :: proc(ui: ^p.Ctx, app: ^p.App, st: ^St) {
+	// The file dialog owns the keyboard while it is up; it reads its own
+	// input in `pick_overlay`, during the draw pass.
+	if kit.pick_active(&st.fpick) {
+		return
+	}
 	st.toast_at = min(st.toast_at, f64(p.elapsed(ui)))
 	if st.toast_len > 0 && st.toast_at == 0 {
 		st.toast_at = f64(p.elapsed(ui))
@@ -714,19 +727,15 @@ handle_keys :: proc(ui: ^p.Ctx, app: ^p.App, st: ^St) {
 		return
 	}
 	if p.shortcut(ui, 'o', {.Ctrl}) {
-		open_overlay(st, .Open)
+		begin_pick(st, .Open)
 		return
 	}
 	if p.shortcut(ui, 's', {.Ctrl}) {
-		if st.doc.path == "" {
-			open_overlay(st, .Save_As)
-		} else {
-			save_to(st, st.doc.path)
-		}
+		save_or_ask(st)
 		return
 	}
 	if p.shortcut(ui, 'S', {.Ctrl, .Shift}) || p.shortcut(ui, 's', {.Ctrl, .Shift}) {
-		open_overlay(st, .Save_As)
+		begin_pick(st, .Save_As)
 		return
 	}
 	if p.shortcut(ui, 'q', {.Ctrl}) {
@@ -879,7 +888,7 @@ handle_keys :: proc(ui: ^p.Ctx, app: ^p.App, st: ^St) {
 		return
 	}
 	if p.key_pressed(ui, 'o', false) {
-		open_overlay(st, .Open)
+		begin_pick(st, .Open)
 		return
 	}
 	if p.key_pressed(ui, 'r', false) {

@@ -110,6 +110,10 @@ St :: struct {
 	moved:       bool,
 	started:     bool,
 	scale_px:    f32,
+
+	// The shared Open dialog, and what it was opened for. See pick.odin.
+	pick:        kit.Pick,
+	pick_use:    Pick_Use,
 }
 
 main :: proc() {
@@ -195,6 +199,7 @@ main :: proc() {
 		build_library(&st)
 	}
 	defer loader_destroy(&st.ld)
+	defer kit.pick_destroy(&st.pick)
 
 	if want_shot {
 		st.view_rect = {
@@ -227,6 +232,7 @@ main :: proc() {
 		case .Grid:
 			build_grid(ui, &st)
 		}
+		pick_overlay(ui, &st)
 
 		if st.toast != "" {
 			if ui.now > st.toast_t {
@@ -469,6 +475,21 @@ toast :: proc(st: ^St, ui: ^p.Ctx, msg: string) {
 // ---------------------------------------------------------------------------
 
 handle_keys :: proc(ui: ^p.Ctx, app: ^p.App, st: ^St) {
+	// The file dialog owns the keyboard while it is up; it reads its own
+	// input in `pick_overlay`, during the draw pass.
+	if kit.pick_active(&st.pick) {
+		return
+	}
+	// Open works from all three screens, which is the point of having it.
+	if p.shortcut(ui, 'o', {.Ctrl}) {
+		begin_pick(st, .File)
+		return
+	}
+	if p.shortcut(ui, 'o', {.Ctrl, .Shift}) || p.shortcut(ui, 'O', {.Ctrl, .Shift}) {
+		begin_pick(st, .Folder)
+		return
+	}
+
 	switch st.view {
 	case .Library:
 		library_keys(ui, app, st)

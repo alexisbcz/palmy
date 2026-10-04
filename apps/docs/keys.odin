@@ -326,7 +326,12 @@ keys_commands :: proc(ui: ^p.Ctx, st: ^State) {
 	if p.shortcut(ui, 'm', {.Ctrl}) {open_prompt(st, .Export_Md);fire(st)}
 	if p.shortcut(ui, 'm', {.Ctrl, .Shift}) {open_prompt(st, .Import_Md);fire(st)}
 	if p.shortcut(ui, 'h', {.Ctrl, .Shift}) {open_prompt(st, .Export_Html);fire(st)}
-	if p.shortcut(ui, 'p', {.Ctrl}) {open_prompt(st, .Export_Png);fire(st)}
+	if p.shortcut(ui, 'p', {.Ctrl}) {open_prompt(st, .Export_Pdf);fire(st)}
+	if p.shortcut(ui, 'p', {.Ctrl, .Shift}) {open_prompt(st, .Export_Png);fire(st)}
+	if p.shortcut(ui, 'd', {.Ctrl}) {open_prompt(st, .Export_Docx);fire(st)}
+	if p.shortcut(ui, 'd', {.Ctrl, .Shift}) {open_prompt(st, .Export_Odt);fire(st)}
+	if p.shortcut(ui, 't', {.Ctrl}) {open_prompt(st, .Export_Rtf);fire(st)}
+	if p.shortcut(ui, 'o', {.Ctrl, .Shift}) {open_prompt(st, .Import_Docx);fire(st)}
 }
 
 // ---------------------------------------------------------------------------
@@ -445,6 +450,14 @@ open_prompt :: proc(st: ^State, kind: Prompt_Kind) {
 		def = default_path(st, ".html")
 	case .Export_Png:
 		def = default_path(st, "")
+	case .Export_Pdf:
+		def = default_path(st, ".pdf")
+	case .Export_Docx, .Import_Docx:
+		def = default_path(st, ".docx")
+	case .Export_Odt:
+		def = default_path(st, ".odt")
+	case .Export_Rtf:
+		def = default_path(st, ".rtf")
 	case .None:
 	}
 	append(&st.prompt_buf, ..transmute([]u8)def)
@@ -464,6 +477,16 @@ prompt_label :: proc(kind: Prompt_Kind) -> string {
 		return "Export HTML to"
 	case .Export_Png:
 		return "Export pages as PNG, base name"
+	case .Export_Pdf:
+		return "Export PDF to"
+	case .Export_Docx:
+		return "Export Word .docx to"
+	case .Export_Odt:
+		return "Export OpenDocument .odt to"
+	case .Export_Rtf:
+		return "Export RTF to"
+	case .Import_Docx:
+		return "Import Word .docx from"
 	case .None:
 	}
 	return ""
@@ -509,6 +532,45 @@ run_prompt :: proc(st: ^State, kind: Prompt_Kind, path: string) {
 	case .Export_Png:
 		n := export_all_pages_png(st, full)
 		note(st, n > 0 ? tfmt("Wrote %d page image%s", n, n == 1 ? "" : "s") : "PNG export failed")
+	case .Export_Pdf:
+		// The PDF is written from the live layout, so it needs one that is
+		// current — the same object the window is drawing from.
+		if st.dirty {
+			relayout(st)
+			st.dirty = false
+		}
+		ok := export_pdf(st, full, doc_display_title(&st.doc, doc_title(st)))
+		note(st, ok ? tfmt("Exported %d page PDF", st.lay.pages) : "PDF export failed")
+	case .Export_Docx:
+		note(
+			st,
+			export_docx(&st.doc, full, doc_display_title(&st.doc, doc_title(st))) \
+			? "Exported .docx" \
+			: "Export failed",
+		)
+	case .Export_Odt:
+		note(
+			st,
+			export_odt(&st.doc, full, doc_display_title(&st.doc, doc_title(st))) \
+			? "Exported .odt" \
+			: "Export failed",
+		)
+	case .Export_Rtf:
+		note(
+			st,
+			export_rtf(&st.doc, full, doc_display_title(&st.doc, doc_title(st))) \
+			? "Exported .rtf" \
+			: "Export failed",
+		)
+	case .Import_Docx:
+		nd, ok := import_docx(full)
+		if ok {
+			replace_document(st, nd)
+			st.modified = true
+			note(st, tfmt("Imported %d paragraphs", len(st.doc.paras)))
+		} else {
+			note(st, "Import failed")
+		}
 	case .None:
 	}
 }

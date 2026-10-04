@@ -6,9 +6,10 @@
 // coalescing. See model.odin for the model, layout.odin for the measurement,
 // render.odin for the pixels.
 //
-//	docs [file.json | file.md]
+//	docs [file.json | file.md | file.docx]
 //	docs --selftest                      headless assertions over the model
-//	docs --convert <in> <out>            between .json, .md and .html
+//	docs --convert <in> <out>            .json .md .docx in; those plus
+//	                                     .html .pdf .odt .rtf out
 //	docs --export-png <file> <base>      render every page to <base>-pN.png
 //	docs --bench [paragraphs]            layout and typing throughput
 package main
@@ -94,8 +95,12 @@ main :: proc() {
 			os.exit(cli_export_png(os.args[2], os.args[3]) ? 0 : 1)
 		case "--help", "-h":
 			fmt.println(
-				"docs [file]\n  --selftest\n  --bench [paragraphs]\n" +
-					"  --convert <in> <out>\n  --export-png <file> <base>",
+				"docs [file.json | file.md | file.docx]\n" +
+				"  --selftest                 headless assertions\n" +
+				"  --bench [paragraphs]       layout and typing throughput\n" +
+				"  --convert <in> <out>       in: .json .md .docx\n" +
+				"                             out: .json .md .html .pdf .docx .odt .rtf\n" +
+				"  --export-png <file> <base>",
 			)
 			return
 		}
@@ -196,8 +201,11 @@ int_arg :: proc(s: string, def: int) -> int {
 
 // cli_load reads either format, picked by extension.
 cli_load :: proc(path: string) -> (Doc, bool) {
-	if strings.has_suffix(path, ".md") || strings.has_suffix(path, ".markdown") {
+	switch {
+	case strings.has_suffix(path, ".md"), strings.has_suffix(path, ".markdown"):
 		return import_markdown(path)
+	case strings.has_suffix(path, ".docx"):
+		return import_docx(path)
 	}
 	return load_doc(path)
 }
@@ -210,16 +218,23 @@ cli_convert :: proc(in_path, out_path: string) -> bool {
 	}
 	defer doc_destroy(&d)
 
+	title := doc_display_title(&d, base_name(in_path))
 	wrote := false
 	switch {
 	case strings.has_suffix(out_path, ".md"), strings.has_suffix(out_path, ".markdown"):
 		wrote = export_markdown(&d, out_path)
 	case strings.has_suffix(out_path, ".html"), strings.has_suffix(out_path, ".htm"):
-		base := out_path
-		if i := strings.last_index_byte(base, '/'); i >= 0 {
-			base = base[i + 1:]
-		}
-		wrote = export_html(&d, out_path, base)
+		wrote = export_html(&d, out_path, base_name(out_path))
+	case strings.has_suffix(out_path, ".pdf"):
+		// A PDF is positioned from the layout, so this one conversion has to
+		// measure the document rather than just re-serialise it.
+		wrote = cli_export_pdf(&d, out_path, title)
+	case strings.has_suffix(out_path, ".docx"):
+		wrote = export_docx(&d, out_path, title)
+	case strings.has_suffix(out_path, ".odt"):
+		wrote = export_odt(&d, out_path, title)
+	case strings.has_suffix(out_path, ".rtf"):
+		wrote = export_rtf(&d, out_path, title)
 	case:
 		wrote = save_doc(&d, out_path)
 	}
@@ -229,6 +244,22 @@ cli_convert :: proc(in_path, out_path: string) -> bool {
 	}
 	fmt.printfln("%s -> %s (%d paragraphs)", in_path, out_path, len(d.paras))
 	return true
+}
+
+// cli_export_pdf lays the document out headlessly, with the same font table
+// the window would use, and writes the PDF from it. Nothing about the result
+// depends on a window ever having existed.
+cli_export_pdf :: proc(d: ^Doc, out_path, title: string) -> bool {
+	fonts: p.Fonts
+	headless_fonts(&fonts)
+	layout_fonts = &fonts
+
+	st := State{}
+	state_init(&st, &fonts)
+	defer state_destroy(&st)
+	replace_document(&st, doc_clone(d))
+	relayout(&st)
+	return export_pdf(&st, out_path, title)
 }
 
 cli_export_png :: proc(in_path, base: string) -> bool {
