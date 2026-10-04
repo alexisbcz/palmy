@@ -311,6 +311,23 @@ nm_do :: proc(argv: []string) -> bool {
 	return ok
 }
 
+// nm_intent_only is the gate every connectivity-changing command goes through.
+//
+// Switching the radio off, or joining a different network, drops this machine's
+// connection. There is no undo from inside a GUI that has just lost the
+// network, and a demo script driving this window with synthetic input must not
+// be able to take the host offline. So those commands are logged and not run,
+// the same way the power applet treats suspend and reboot. Read-only
+// monitoring -- every `nmcli -t -f ...` query and the rescan -- is untouched,
+// which is all this applet needs to do its job.
+//
+// Turning the radio back ON is deliberately not gated: it can only restore
+// connectivity, never remove it.
+nm_intent_only :: proc(argv: []string, why: string) {
+	cmd := strings.join(argv, " ", context.temp_allocator)
+	fmt.eprintfln("[network] INTENT ONLY, not executed: %s   (%s)", cmd, why)
+}
+
 // nm_free is `delete` that tolerates kit.run's "" on a failed spawn, which is
 // a literal rather than an allocation.
 nm_free :: proc(s: string) {
@@ -563,11 +580,16 @@ wifi_list :: proc(rescan: bool) -> ([]string, bool) {
 }
 
 do_radio :: proc(s: ^Store, on: bool) {
-	ok := nm_do({"nmcli", "radio", "wifi", on ? "on" : "off"})
-	if !ok {
+	if !on {
+		nm_intent_only(
+			{"nmcli", "radio", "wifi", "off"},
+			"switching the radio off would take this machine offline",
+		)
+		set_message(s, .Info, "Turning the radio off is disabled: it would take this machine offline")
+	} else if !nm_do({"nmcli", "radio", "wifi", "on"}) {
 		set_message(s, .Bad, "nmcli refused to change the radio state")
 	} else {
-		set_message(s, .Info, on ? "Wi-Fi radio enabled" : "Wi-Fi radio disabled")
+		set_message(s, .Good, "Wi-Fi radio enabled")
 	}
 	// Read the state back rather than assuming the write took.
 	back, _ := nm_text({"nmcli", "radio", "wifi"})
@@ -589,22 +611,15 @@ do_radio :: proc(s: ^Store, on: bool) {
 }
 
 do_connect :: proc(s: ^Store, ssid, pw: string) {
-	argv := make([dynamic]string, context.temp_allocator)
-	append(&argv, "nmcli", "device", "wifi", "connect", ssid)
-	if pw != "" {
-		append(&argv, "password", pw)
-	}
-	out, ok := nm_text(argv[:])
-	defer nm_free(out)
-	if ok {
-		set_message(s, .Good, fmt.tprintf("Connected to %s", ssid))
-	} else {
-		text := strings.trim_space(out)
-		if text == "" {
-			text = "connection failed"
-		}
-		set_message(s, .Bad, text)
-	}
+	// Joining a network drops whatever connection is currently up, so this is a
+	// logged intent rather than a command. The password is deliberately not part
+	// of the logged argv -- a secret does not belong in a log line.
+	_ = pw
+	nm_intent_only(
+		{"nmcli", "device", "wifi", "connect", ssid},
+		"joining a network would drop the connection this machine is using",
+	)
+	set_message(s, .Info, fmt.tprintf("Joining %s is disabled: it would drop the current connection", ssid))
 	do_refresh(s)
 	do_wifi(s, false)
 }

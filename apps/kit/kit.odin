@@ -119,13 +119,26 @@ BAD_CLASS :: "text-destructive"
 
 // clipboard_set copies text to the Wayland selection. Returns false when
 // wl-copy is not installed.
+//
+// This must not capture wl-copy's output. wl-copy daemonises -- it keeps
+// running to serve the selection until some other program takes it -- and the
+// daemon inherits whatever stdio it was given. process_exec creates pipes and
+// reads them to EOF, so the EOF never arrives and the call blocks until the
+// *next* program copies something: measured at 45.9 seconds here, during which
+// any app calling this from its frame loop is frozen.
+//
+// So spawn it with no pipes, the way `launch` does, and wait only on the
+// direct child, which exits as soon as it has forked the daemon. That keeps
+// the exit status (so a missing wl-copy is still reported) without inheriting
+// the daemon's lifetime, and reaps the child (process_wait does that) rather than leaving
+// a zombie per copy.
 clipboard_set :: proc(text: string) -> bool {
-	state, sout, serr, err := os.process_exec(
-		{command = {"wl-copy", "--", text}},
-		context.temp_allocator,
-	)
-	_, _ = sout, serr
-	return err == nil && state.exit_code == 0
+	child, err := os.process_start({command = {"wl-copy", "--", text}})
+	if err != nil {
+		return false
+	}
+	state, werr := os.process_wait(child)
+	return werr == nil && state.exit_code == 0
 }
 
 // clipboard_get reads the current selection.
