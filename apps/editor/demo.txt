@@ -1,83 +1,114 @@
-# Editor — a real text editor on palmy.
-wait 1.4
-key Down
-key Down
-key Down
-key Down
-key Down
-key Down
-key Down
-key Down
-key Down
-key Down
-key Down
-key Down
-key Down
-key Down
-key Down
-key Down
-key Down
-key Down
-key Down
-key Down
-key Down
-key Down
-key Down
-key Down
-key Down
-key Down
-key Down
-key Down
-key Down
-key Down
-wait 1.0
+# palmy editor — soft wrap, brackets, six languages and several cursors.
+wait 2.0
 
-# Escape opens the command palette: every command, filtered as you type.
-key Escape
-wait 1.2
-type fin
-wait 1.2
-key Return
-wait 0.8
+# Soft wrap. The long comment at the top is one logical line; Alt-Z makes it
+# readable, and the gutter marks the continuation rows so it is still obvious
+# that it is one line.
+chord alt+z
+wait 3.0
 
-# Find highlights every match in the file and walks them with Enter.
-type cursor
-wait 1.4
-key Return
-wait 0.9
-key Return
-wait 0.9
-key Return
-wait 1.2
-key Escape
-wait 0.6
-
-# Typing, with the undo stack behind it.
-key End
-key Return
-type // a line typed into the buffer, with syntax highlighting
+# The caret survives the two coordinate systems: down the wrapped rows and
+# back up again lands where it started.
+key Down
+key Down
+key Down
+key Down
 wait 1.6
-key Escape
-wait 0.9
-type undo
-wait 1.0
-key Return
+key Up
+key Up
+key Up
+key Up
+wait 1.8
+chord alt+z
 wait 1.4
 
-# The keyboard reference.
-key Escape
+# Auto-close, and the two behaviours that make it bearable rather than
+# infuriating: the typed closer steps over the one already there, and Return
+# between an empty pair opens the block.
+chord ctrl+End
 wait 0.8
-type keyb
+key Return
+key Return
+type measure :: proc(ctx: ^Ctx, n: int) -> (w: f32, h: f32) {
 wait 1.0
 key Return
+type total := sum(len(ctx.items), cap(ctx.items))
+wait 2.0
+
+# Bracket matching: Ctrl-M jumps to the partner, and both ends are marked.
+key Home
+key Right
+key Right
+key Right
+key Right
+key Right
+key Right
+key Right
+key Right
+key Right
+key Right
+key Right
+key Right
+wait 1.4
+chord ctrl+m
+wait 2.0
+
+# Several cursors. Ctrl-Shift-L puts one on every `ctx` in the file and
+# renames all of them in a single keystroke — and a single undo.
+chord ctrl+Home
+key Down
+key Down
+key Down
+key Down
+key Down
+key Down
+key Down
+key Down
+key Down
+key Down
+key Down
+key Down
+key Down
+key Down
+key Right
+key Right
+key Right
+key Right
+key Right
+key Right
+key Right
+key Right
+key Right
+key Right
+key Right
+key Right
+key Right
+wait 1.2
+chord ctrl,shift+l
+wait 2.2
+type widget
+wait 2.4
+
+# One undo takes the whole rename back, because the edits were one group:
+# twelve replacements, one Ctrl-Z. (Undo also puts the cursors away, since
+# "undo at twelve places" has no single answer.)
+chord ctrl+z
+wait 3.0
+
+# The command palette, which is where every one of these lives by name.
+key Escape
+wait 1.2
+type curs
 wait 2.4
 key Escape
-wait 0.6
-
-# And saving.
-key Escape
-wait 0.8
-type save
 wait 1.0
+
+# And the keyboard reference, which lists every one of them.
+key Escape
+wait 1.0
+type keyb
+wait 1.2
 key Return
-wait 2.0
+wait 3.6
+key Escape
+wait 1.2

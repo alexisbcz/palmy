@@ -29,6 +29,12 @@ build_player :: proc(ui: ^p.Ctx, st: ^St) {
 		{
 			p.col(ui, "w-full flex-1 min-h-0 relative overflow-hidden bg-black")
 			p.pixels(ui, "w-full flex-1 min-h-0", st, draw_video)
+			// The cue is looked up against the clock, not against the frame
+			// that happens to be on screen: a dropped frame must not take the
+			// subtitle with it.
+			if cue, has := subs_text_at(&st.subs, st.open ? engine_clock(&st.e) : 0); has {
+				subtitle_overlay(ui, st, cue)
+			}
 			if st.pending {
 				badge_overlay(ui, "Re-opening at the new size…")
 			} else if !st.e.first_frame {
@@ -38,6 +44,9 @@ build_player :: proc(ui: ^p.Ctx, st: ^St) {
 			}
 			if st.stats {
 				stats_overlay(ui, st)
+			}
+			if st.subs.panel {
+				subs_panel(ui, st)
 			}
 			p.end(ui)
 
@@ -97,6 +106,172 @@ draw_video :: proc(c: ^p.Canvas, r: p.Rect, st: ^St) {
 	p.draw_image(c, img, dst)
 }
 
+// speed_label is "0.5x", "1x", "1.75x" — never "1.8x". `%g` rounds a quarter
+// step to two significant digits and turns 1.75 into 1.8, which is a different
+// speed from the one the keys just set.
+speed_label :: proc(s: f64) -> string {
+	t := fmt.tprintf("%.2f", s)
+	t = strings.trim_right(t, "0")
+	t = strings.trim_right(t, ".")
+	return fmt.tprintf("%sx", t)
+}
+
+// subtitle_overlay draws the active cue over the picture.
+//
+// Two things make it legible on any frame rather than most of them. It sits
+// inside the *picture*, not inside the video box — the letterbox bars are
+// subtracted, so a 4:3 clip in a 16:9 window does not put its subtitles on the
+// black below the image. And it carries its own plate, because white text alone
+// disappears the moment the shot cuts to snow or a white wall.
+SUB_SIZE :: f32(17)
+SUB_PAD :: f32(28) // px-3.5 on both sides
+
+subtitle_overlay :: proc(ui: ^p.Ctx, st: ^St, text: string) {
+	// The cue is inset from the edges of the *picture*, so the letterbox bars
+	// around a clip that does not match the window's aspect are not used.
+	margin := f32(28)
+	side := margin
+	bottom := f32(24)
+	avail := st.vrect.w - 2 * margin
+	if st.e.w > 0 && st.e.h > 0 && st.vrect.w > 8 && st.vrect.h > 8 {
+		r := p.fitted_rect(f32(st.e.w), f32(st.e.h), st.vrect, .Contain)
+		side = margin + max(0, r.x - st.vrect.x)
+		bottom = 24 + max(0, p.rect_bottom(st.vrect) - p.rect_bottom(r))
+		avail = r.w - 2 * margin
+	}
+	avail = max(80, avail)
+
+	lines := strings.split(text, "\n", context.temp_allocator)
+
+	// The plate is sized from the text rather than left to the layout. A column
+	// with `items-center` shrink-wraps its children, and a shrink-wrapped text
+	// node has no width to wrap against until it has one — so left alone it
+	// collapses to roughly one word per line. Measuring with the same font the
+	// text will be drawn in and setting the width explicitly is the fix: under
+	// the available width the plate is exactly as wide as its longest line and
+	// nothing wraps, over it the plate takes the full width and the line wraps
+	// where it should.
+	widest := f32(0)
+	nlines := 0
+	for line in lines {
+		t := strings.trim_space(line)
+		if t == "" {
+			continue
+		}
+		nlines += 1
+		if ui.fonts != nil {
+			widest = max(widest, p.text_width(ui.fonts, t, SUB_SIZE, .Sans, .Medium))
+		} else {
+			widest = max(widest, f32(len(t)) * SUB_SIZE * 0.52)
+		}
+	}
+	if nlines == 0 {
+		return
+	}
+	plate_w := min(widest + SUB_PAD, avail)
+
+	wrap := p.col(ui, "absolute items-center justify-end z-10")
+	ws := p.style(ui, wrap)
+	ws.inset[p.LEFT] = p.px(side)
+	ws.inset[p.RIGHT] = p.px(side)
+	ws.inset[p.BOTTOM] = p.px(bottom)
+	ws.no_hit = true
+	defer p.end(ui)
+
+	plate := p.col(ui, "items-center gap-0.5 px-3.5 py-2 rounded-lg bg-black/70")
+	ps := p.style(ui, plate)
+	ps.w = p.px(plate_w)
+	ps.shrink = 0
+	ps.no_hit = true
+	defer p.end(ui)
+
+	// A cue is one or more lines and they have to stay separate lines: a two
+	// line cue joined into one would overflow the plate and read wrong.
+	for line in lines {
+		t := strings.trim_space(line)
+		if t == "" {
+			continue
+		}
+		p.text(ui, t, "w-full text-[17] font-medium text-white text-center leading-snug")
+		p.style(ui).no_hit = true
+	}
+}
+
+// subs_panel lists every track that was found, including the ones that cannot
+// be shown. A bitmap track silently doing nothing is the failure this avoids.
+subs_panel :: proc(ui: ^p.Ctx, st: ^St) {
+	box := p.col(
+		ui,
+		"absolute gap-1.5 p-3 rounded-lg bg-background/92 border border-border z-30 w-[320]",
+	)
+	bs := p.style(ui, box)
+	bs.inset[p.LEFT] = p.px(14)
+	// Top left, not bottom left: the cue plate lives at the bottom and a track
+	// list covering the subtitle you are choosing a track for is no use.
+	bs.inset[p.TOP] = p.px(14)
+	defer p.end(ui)
+
+	p.row(ui, "w-full items-center gap-2")
+	p.icon(ui, IC_CAPTIONS, "size-3.5 shrink-0 text-muted-foreground")
+	p.text(ui, "SUBTITLE TRACKS", "flex-1 text-[10] font-semibold uppercase tracking-widest text-muted-foreground/70")
+	sc.kbd(ui, "t")
+	p.end(ui)
+
+	if len(st.subs.tracks) == 0 {
+		p.text(
+			ui,
+			"No sidecar file and no subtitle stream in this container.",
+			"text-[11] text-muted-foreground",
+		)
+		return
+	}
+
+	for tr, i in st.subs.tracks {
+		on := i == st.subs.active
+		row := p.row(ui, "w-full items-center gap-2 px-2 py-1.5 rounded-md border")
+		p.apply(ui, on ? "bg-accent border-border" : "border-transparent hover:bg-muted/60", row)
+		if p.clickable(ui, row) {
+			subs_select(&st.subs, i)
+		}
+		p.icon(
+			ui,
+			on ? IC_CHECK : (tr.bitmap ? IC_TRIANGLE_ALERT : IC_CAPTIONS),
+			tr.bitmap ? "size-3.5 shrink-0 text-destructive" : "size-3.5 shrink-0 text-muted-foreground",
+		)
+		p.col(ui, "flex-1 min-w-0 gap-px")
+		p.text(ui, tr.label, "text-[11] font-medium truncate")
+		detail := ""
+		switch {
+		case tr.bitmap:
+			detail = fmt.tprintf("%s — bitmap, cannot be shown as text", tr.codec)
+		case tr.err != "":
+			detail = tr.err
+		case len(tr.cues) > 0:
+			detail = fmt.tprintf(
+				"%s · %d cues · %s",
+				sub_format_name(tr.format),
+				len(tr.cues),
+				tr.src == .Sidecar ? base_of(tr.path) : fmt.tprintf("stream %d · %s", tr.index, tr.codec),
+			)
+		case:
+			detail = tr.src == .Sidecar ? base_of(tr.path) : fmt.tprintf("stream %d · %s", tr.index, tr.codec)
+		}
+		p.text(ui, detail, tr.bitmap || tr.err != "" ? "text-[10] text-destructive truncate" : "text-[10] text-muted-foreground truncate")
+		p.end(ui)
+		p.end(ui)
+	}
+
+	p.row(ui, "w-full items-center gap-1.5 pt-1 border-t border-border")
+	sc.kbd(ui, "c")
+	p.text(ui, "cycle", "text-[10] text-muted-foreground whitespace-nowrap")
+	sc.kbd(ui, "v")
+	p.text(ui, "show/hide", "text-[10] text-muted-foreground whitespace-nowrap")
+	sc.kbd(ui, "-")
+	sc.kbd(ui, "=")
+	p.textf(ui, "text-[10] text-muted-foreground whitespace-nowrap", "delay %+.1fs", st.subs.offset)
+	p.end(ui)
+}
+
 badge_overlay :: proc(ui: ^p.Ctx, label: string) {
 	box := p.div(
 		ui,
@@ -124,6 +299,12 @@ stats_overlay :: proc(ui: ^p.Ctx, st: ^St) {
 
 	p.text(ui, "PIPELINE", "text-[10] font-semibold uppercase tracking-widest text-muted-foreground/70")
 	stat(ui, "Decode", fmt.tprintf("%d × %d @ %.3f fps", st.e.w, st.e.h, st.e.fps))
+	sp := engine_speed(&st.e)
+	stat(
+		ui,
+		"Speed",
+		fmt.tprintf("%s · needs %.1f fps", speed_label(sp), st.e.fps * sp),
+	)
 	stat(ui, "Delivered", fmt.tprintf("%.1f fps", engine_decode_fps(&st.e)))
 	stat(ui, "Frames", fmt.tprintf("%d shown · %d dropped", shown, dropped))
 	stat(ui, "Queue", fmt.tprintf("%d / %d", queued, RING))
@@ -140,6 +321,10 @@ stats_overlay :: proc(ui: ^p.Ctx, st: ^St) {
 		stat(ui, "Frame error", fmt.tprintf("%+.1f ms", last * 1000))
 		stat(ui, "Mean |error|", fmt.tprintf("%.1f ms", avg * 1000))
 		stat(ui, "Worst", fmt.tprintf("%.1f ms", mx * 1000))
+		_, _, _, lavg, lmx, ln := engine_sync_stats(&st.e)
+		if ln > 0 {
+			stat(ui, "Since lock", fmt.tprintf("%.1f ms mean · %.1f ms worst", lavg * 1000, lmx * 1000))
+		}
 	} else {
 		stat(ui, "Clock", "wall clock (no audio)")
 		stat(ui, "Mean |error|", fmt.tprintf("%.1f ms", avg * 1000))
@@ -211,7 +396,27 @@ transport :: proc(ui: ^p.Ctx, st: ^St) {
 		timecode(max(0, dur - now)),
 	)
 
+	// The chapter the clock is in, named, because a mark on the bar alone does
+	// not tell you which one you are watching.
+	if len(st.e.m.chapters) > 0 {
+		if ci := chapter_at(st.e.m.chapters, now); ci >= 0 {
+			p.div(ui, "w-2 shrink-0")
+			p.end(ui)
+			p.icon(ui, IC_LIST, "size-3.5 shrink-0 text-muted-foreground")
+			p.textf(
+				ui,
+				"shrink-0 text-[11] text-muted-foreground whitespace-nowrap max-w-[200] truncate",
+				"%d/%d %s",
+				ci + 1,
+				len(st.e.m.chapters),
+				st.e.m.chapters[ci].title,
+			)
+		}
+	}
+
 	p.spacer(ui)
+
+	speed_control(ui, st)
 
 	// Volume.
 	p.row(ui, "shrink-0 items-center gap-2")
@@ -233,6 +438,45 @@ transport :: proc(ui: ^p.Ctx, st: ^St) {
 		int(st.e.volume * 100 + 0.5),
 	)
 	p.end(ui)
+}
+
+// speed_control is the speed, the two keys that change it and a click target on
+// each. The number is always on screen when it is not 1x, because a player
+// running at 1.5x with nothing to say so is a bug report waiting to happen.
+speed_control :: proc(ui: ^p.Ctx, st: ^St) {
+	sp := engine_speed(&st.e)
+	p.row(ui, "shrink-0 items-center gap-1 mr-2")
+	defer p.end(ui)
+
+	step :: proc(ui: ^p.Ctx, st: ^St, ic: p.Icon, d: f64, enabled: bool) {
+		idx := p.div(ui, "size-7 shrink-0 flex-row items-center justify-center rounded-md transition cursor-pointer")
+		p.apply(
+			ui,
+			enabled ? "text-muted-foreground hover:bg-muted hover:text-foreground" : "text-muted-foreground/25",
+			idx,
+		)
+		if enabled && p.clickable(ui, idx) {
+			engine_set_speed(&st.e, engine_speed(&st.e) + d)
+		}
+		p.icon(ui, ic, "size-3.5")
+		p.end(ui)
+	}
+
+	p.icon(ui, IC_GAUGE, "size-3.5 shrink-0 text-muted-foreground")
+	step(ui, st, IC_MINUS, -SPEED_STEP, sp > SPEED_MIN + 1e-9)
+	// Clicking the number resets it, which is the gesture people try first.
+	lab := p.div(ui, "w-[56] shrink-0 flex-row items-center justify-center h-7 rounded-md border transition cursor-pointer")
+	p.apply(
+		ui,
+		abs(sp - 1) > 1e-9 ? "bg-accent border-border text-foreground" : "border-transparent text-muted-foreground hover:bg-muted",
+		lab,
+	)
+	if p.clickable(ui, lab) {
+		engine_set_speed(&st.e, 1)
+	}
+	p.text(ui, speed_label(sp), "text-[11] font-medium tabular-nums whitespace-nowrap")
+	p.end(ui)
+	step(ui, st, IC_PLUS, SPEED_STEP, sp < SPEED_MAX - 1e-9)
 }
 
 Ctrl_Act :: enum u8 {
@@ -329,6 +573,37 @@ scrub_bar :: proc(ui: ^p.Ctx, st: ^St, now, dur: f64) {
 	}
 	p.end(ui)
 
+	// Chapter marks. Drawn over the track and under the thumb, so the mark the
+	// playhead sits on is not hidden by it.
+	//
+	// They go inside a full-size positioned box rather than straight into the
+	// bar, for the same reason the thumb does: a percentage inset resolves
+	// against a parent with a width, and this bar's own width is `flex-1` and
+	// not known where the children are declared.
+	if len(st.e.m.chapters) > 0 {
+		p.div(ui, "absolute w-full h-full")
+		cs := p.style(ui)
+		cs.inset[p.LEFT] = p.px(0)
+		cs.inset[p.RIGHT] = p.px(0)
+		cs.inset[p.TOP] = p.px(0)
+		cs.no_hit = true
+		for ch, ci in st.e.m.chapters {
+			if ch.start <= 0.001 || ch.start >= dur {
+				continue
+			}
+			p.key(ui, fmt.tprintf("chmark%d", ci))
+			p.div(ui, "absolute w-[2] rounded-full bg-muted-foreground")
+			ms := p.style(ui)
+			ms.inset[p.LEFT] = p.pct(f32(ch.start / dur) * 100)
+			ms.margin[p.LEFT] = -1
+			ms.inset[p.TOP] = p.px(2)
+			ms.h = p.px(12)
+			ms.no_hit = true
+			p.end(ui)
+		}
+		p.end(ui)
+	}
+
 	// Thumb.
 	p.div(ui, "absolute w-full h-full")
 	hs := p.style(ui)
@@ -424,6 +699,14 @@ player_bar :: proc(ui: ^p.Ctx, st: ^St) {
 	} else if m.has_audio {
 		sc.badge(ui, "silent", .Destructive)
 	}
+	if sp := engine_speed(&st.e); abs(sp - 1) > 1e-9 {
+		sc.badge(ui, speed_label(sp), .Default)
+	}
+	if tr := subs_active(&st.subs); tr != nil && st.subs.show && len(tr.cues) > 0 {
+		sc.badge(ui, tr.lang != "" ? fmt.tprintf("CC %s", strings.to_upper(tr.lang, context.temp_allocator)) : "CC", .Secondary)
+	} else if len(st.subs.tracks) > 0 {
+		sc.badge(ui, "CC off", .Outline)
+	}
 
 	p.row(ui, "shrink-0 items-center gap-1")
 	chrome_toggle(ui, IC_GAUGE, st.stats, &st.stats)
@@ -463,7 +746,9 @@ status_bar :: proc(ui: ^p.Ctx, st: ^St) {
 	hint(ui, "Left", "Right", "±5s")
 	hint(ui, ",", ".", "Frame")
 	hint(ui, "Up", "Down", "Volume")
-	hint(ui, "0-9", "", "Jump")
+	hint(ui, "[", "]", "Speed")
+	hint(ui, "c", "t", "Subs")
+	hint(ui, "PgUp", "PgDn", "Chapter")
 	hint(ui, "s", "", "Stats")
 	hint(ui, "Esc", "", "Library")
 	p.spacer(ui)
@@ -473,7 +758,8 @@ status_bar :: proc(ui: ^p.Ctx, st: ^St) {
 		p.textf(
 			ui,
 			"shrink-0 text-[11] text-muted-foreground tabular-nums whitespace-nowrap",
-			"%.1f fps in · queue %d · %d dropped · |err| %.0f ms",
+			"%s · %.1f fps in · queue %d · %d dropped · |err| %.0f ms",
+			speed_label(engine_speed(&st.e)),
 			engine_decode_fps(&st.e),
 			queued,
 			dropped,
@@ -506,35 +792,77 @@ info_panel :: proc(ui: ^p.Ctx, st: ^St) {
 	sc.kbd(ui, "i")
 	p.end(ui)
 
-	p.col(ui, "flex-1 min-h-0 p-3.5 gap-4 overflow-hidden")
+	// The order is what the file is, then the two things you steer with — the
+	// subtitle track and the chapters — then the decoder details. A 300 px
+	// column at 800 px tall has room for about twenty rows, so the sections
+	// below the fold are the ones also shown elsewhere: the codecs are badges
+	// in the title bar and the pipeline numbers are behind `s`.
+	p.col(ui, "flex-1 min-h-0 p-3.5 gap-3 overflow-hidden")
 	defer p.end(ui)
 
 	group(ui, "File")
 	stat(ui, "Name", m.name)
-	stat(ui, "Folder", home_relative(dir_of(m.path)))
 	stat(ui, "Size", human_bytes(m.size))
-	stat(ui, "Container", m.container)
 	stat(ui, "Duration", timecode_ms(m.duration))
-	stat(ui, "Bitrate", human_rate(m.bitrate))
+	stat(ui, "Container", m.container)
+
+	group(ui, "Subtitles")
+	if len(st.subs.tracks) == 0 {
+		p.text(ui, "No sidecar file, no embedded track.", "text-[11] text-muted-foreground")
+	} else {
+		stat(ui, "Active", st.subs.show ? subs_summary(&st.subs) : "hidden — v to show")
+		if tr := subs_active(&st.subs); tr != nil {
+			stat(
+				ui,
+				"Source",
+				tr.src == .Sidecar \
+				? fmt.tprintf("%s · sidecar", base_of(tr.path)) \
+				: fmt.tprintf("stream %d · %s", tr.index, tr.codec),
+			)
+			if tr.err != "" {
+				p.text(ui, tr.err, "text-[11] text-destructive")
+			}
+		}
+		nbitmap := 0
+		for tr in st.subs.tracks {
+			if tr.bitmap {
+				nbitmap += 1
+			}
+		}
+		if nbitmap > 0 {
+			p.textf(
+				ui,
+				"text-[11] text-destructive",
+				"%d of %d track%s is a bitmap format and cannot be shown as text",
+				nbitmap,
+				len(st.subs.tracks),
+				nbitmap == 1 ? "" : "s",
+			)
+		} else {
+			stat(ui, "Tracks", fmt.tprintf("%d · c cycles, t lists", len(st.subs.tracks)))
+		}
+		if abs(st.subs.offset) > 1e-9 {
+			stat(ui, "Delay", fmt.tprintf("%+.1f s", st.subs.offset))
+		}
+	}
+
+	if len(st.e.m.chapters) > 0 {
+		chapter_list(ui, st)
+	}
 
 	if m.has_video {
 		group(ui, "Video")
 		stat(ui, "Codec", m.vcodec)
 		stat(ui, "Resolution", fmt.tprintf("%d × %d", m.width, m.height))
 		stat(ui, "Frame rate", fmt.tprintf("%.4g fps", m.fps))
-		stat(ui, "Pixel format", m.pix_fmt)
-		if m.frames > 0 {
-			stat(ui, "Frames", fmt.tprintf("%d", m.frames))
-		}
 		stat(ui, "Decoding at", fmt.tprintf("%d × %d", st.e.w, st.e.h))
 	}
 
 	if m.has_audio {
 		group(ui, "Audio")
 		stat(ui, "Codec", m.acodec)
-		stat(ui, "Channels", fmt.tprintf("%d", m.channels))
-		stat(ui, "Sample rate", fmt.tprintf("%d Hz", m.sample_rate))
-		stat(ui, "Output", st.e.have_audio ? "pw-cat · s16 48 kHz stereo" : "unavailable")
+		stat(ui, "Sample rate", fmt.tprintf("%d Hz · %d ch", m.sample_rate, m.channels))
+		stat(ui, "Output", st.e.have_audio ? "pw-cat · s16 48 kHz" : "unavailable")
 		if !st.e.have_audio && st.e.audio_err != "" {
 			p.text(ui, st.e.audio_err, "text-[11] text-destructive")
 		}
@@ -549,6 +877,46 @@ info_panel :: proc(ui: ^p.Ctx, st: ^St) {
 	p.text(ui, "pipeline and sync numbers", "text-[11] text-muted-foreground whitespace-nowrap")
 	p.style(ui).shrink = 0
 	p.end(ui)
+}
+
+// chapter_list is the one place the container's chapter marks are readable as
+// a list, with the current one marked and the keys that jump between them.
+chapter_list :: proc(ui: ^p.Ctx, st: ^St) {
+	chs := st.e.m.chapters
+	now := st.open ? engine_clock(&st.e) : 0
+	cur := chapter_at(chs, now)
+
+	p.row(ui, "w-full items-center gap-2 pt-1")
+	p.text(
+		ui,
+		"CHAPTERS",
+		"flex-1 text-[10] font-semibold uppercase tracking-widest text-muted-foreground/70",
+	)
+	sc.kbd(ui, "PgUp")
+	sc.kbd(ui, "PgDn")
+	p.end(ui)
+
+	p.col(ui, "w-full gap-px overflow-hidden")
+	p.style(ui).shrink = 0
+	defer p.end(ui)
+	for ch, i in chs {
+		p.key(ui, fmt.tprintf("chrow%d", i))
+		row := p.row(ui, "w-full items-center gap-2 px-1.5 py-1 rounded-md border transition cursor-pointer")
+		p.apply(ui, i == cur ? "bg-accent border-border" : "border-transparent hover:bg-muted/60", row)
+		if p.clickable(ui, row) {
+			seek_to(st, ch.start)
+		}
+		p.textf(
+			ui,
+			i == cur \
+			? "w-[42] shrink-0 text-[11] font-medium tabular-nums text-foreground whitespace-nowrap" \
+			: "w-[42] shrink-0 text-[11] tabular-nums text-muted-foreground whitespace-nowrap",
+			"%s",
+			timecode(ch.start),
+		)
+		p.text(ui, ch.title, i == cur ? "flex-1 min-w-0 text-[11] font-medium truncate" : "flex-1 min-w-0 text-[11] truncate")
+		p.end(ui)
+	}
 }
 
 group :: proc(ui: ^p.Ctx, label: string) {

@@ -24,9 +24,9 @@ build_disp :: proc(ed: ^Editor, li: int) -> Disp {
 	src := buf_line(&ed.buf, li)
 
 	kinds := make([]Tok, len(src), context.temp_allocator)
-	if ed.syntax && ed.odin {
+	if ed.syntax && lang_highlights(ed.lang) {
 		toks := make([dynamic]Token, 0, 48, context.temp_allocator)
-		lex_line(src, lex_state_at(&ed.buf, li), &toks)
+		lex_line(src, lex_state_at(&ed.buf, li, ed.lang), &toks, ed.lang)
 		for t in toks {
 			for i in t.from ..< min(t.to, len(src)) {
 				kinds[i] = t.kind
@@ -118,7 +118,11 @@ title_bar :: proc(ui: ^p.Ctx, ed: ^Editor) {
 		ui,
 		"flex-row size-7 shrink-0 items-center justify-center rounded-md bg-background border border-border",
 	)
-	p.icon(ui, ed.odin ? ICON_CODE : ICON_FILE_TEXT, "size-3.5 text-muted-foreground")
+	p.icon(
+		ui,
+		lang_highlights(ed.lang) ? ICON_CODE : ICON_FILE_TEXT,
+		"size-3.5 text-muted-foreground",
+	)
 	p.end(ui)
 
 	name := ed.buf.path == "" ? "Untitled" : base_of(ed.buf.path)
@@ -139,8 +143,14 @@ title_bar :: proc(ui: ^p.Ctx, ed: ^Editor) {
 	)
 	p.end(ui)
 
-	if ed.odin {
-		sc.badge(ui, "Odin", .Secondary)
+	if lang_highlights(ed.lang) {
+		sc.badge(ui, lang_name(ed.lang), .Secondary)
+	}
+	if ed.wrap {
+		sc.badge(ui, "Wrap", .Outline)
+	}
+	if carets_multi(ed) {
+		sc.badge(ui, tfmt("%d cursors", carets_count(ed)), .Default)
 	}
 	sc.badge(ui, ed.buf.encoding, .Outline)
 
@@ -168,22 +178,25 @@ gutter_pane :: proc(ui: ^p.Ctx, ed: ^Editor) {
 	if !ed.numbers {
 		return
 	}
-	n := buf_lines(&ed.buf)
-	for row in 0 ..< ed.rows {
-		li := ed.top + row
-		if li >= n {
-			break
-		}
-		here := li == ed.cur.line
+	// One number per logical line. A wrapped continuation row gets a dot
+	// instead, which is what tells you at a glance that the line below is the
+	// same line and not the next one.
+	for v, row in ed.vis {
+		here := v.line == ed.cur.line
+		p.key(ui, tfmt("g:%d:%d", v.line, row))
 		p.row(ui, tfmt("h-[%d] w-full shrink-0 items-center justify-end pr-2", LINE_H))
-		p.textf(
-			ui,
-			here \
-			? tfmt("%s text-foreground font-medium", MONO) \
-			: tfmt("%s text-muted-foreground/70", MONO),
-			"%d",
-			li + 1,
-		)
+		if v.c0 == 0 {
+			p.textf(
+				ui,
+				here \
+				? tfmt("%s text-foreground font-medium", MONO) \
+				: tfmt("%s text-muted-foreground/70", MONO),
+				"%d",
+				v.line + 1,
+			)
+		} else {
+			p.text(ui, "·", tfmt("%s text-muted-foreground/40", MONO))
+		}
 		p.end(ui)
 	}
 }
@@ -191,36 +204,62 @@ gutter_pane :: proc(ui: ^p.Ctx, ed: ^Editor) {
 text_pane :: proc(ui: ^p.Ctx, ed: ^Editor) {
 	idx := p.col(ui, "flex-1 min-w-0 h-full relative overflow-hidden pl-2")
 	defer p.end(ui)
-	if p.clickable(ui, idx) {
+	if p.clickable(ui, idx) && len(ed.vis) > 0 {
 		// A click puts the caret where it landed, which is the one pointer
-		// gesture a text editor cannot do without.
+		// gesture a text editor cannot do without. With wrap on it lands in a
+		// visual row, and `col_at` is what turns that back into a byte.
 		r := p.rect_of(ui, p.node_id(ui, idx))
 		m := p.mouse_pos(ui)
-		li := clamp(ed.top + int((m.y - r.y) / LINE_H), 0, max(0, buf_lines(&ed.buf) - 1))
-		dc := ed.left + int((m.x - r.x) / ed.cw + 0.5)
-		ed.cur = pos_clamp(&ed.buf, {li, byte_of(buf_line(&ed.buf, li), max(0, dc))})
-		ed.goal = disp_of(buf_line(&ed.buf, ed.cur.line), ed.cur.col)
+		row := clamp(int((m.y - r.y) / LINE_H), 0, len(ed.vis) - 1)
+		v := ed.vis[row]
+		origin := ed.wrap ? v.c0 : ed.left
+		dx := max(0, int((m.x - r.x) / ed.cw + 0.5) + origin - v.c0)
+		ed.cur = col_at(ed, v.line, v.sub, dx)
+		goal_set(ed)
 		clear_sel(ed)
 	}
 
 	needle := ed.prompt == .Find || ed.prompt == .Replace ? string(ed.find[:]) : ""
 	sel_lo, sel_hi, has_sel := sel_range(ed)
-	n := buf_lines(&ed.buf)
 	caret_on := math.mod(f64(p.elapsed(ui)), 1.06) < 0.62
 	if ed.mode == .Edit {
 		p.redraw(ui)
 	}
 
-	for row in 0 ..< ed.rows {
-		li := ed.top + row
-		if li >= n {
-			break
-		}
+	// Where the caret is in visual coordinates, and the bracket pair it is on.
+	// Both are computed once rather than per row.
+	csub, cdx := caret_vis(ed, ed.cur)
+	bra, brb, br_ok := bracket_pair_at_caret(ed)
+
+	// Every other caret, resolved into visual coordinates once rather than
+	// once per row: with a hundred carets on screen the difference is a
+	// hundred line wraps a frame and ten thousand.
+	Extra_Vis :: struct {
+		c:   Caret,
+		sub: int,
+		dx:  int,
+	}
+	extras := make([dynamic]Extra_Vis, 0, len(ed.extra), context.temp_allocator)
+	for c in ed.extra {
+		sub, dx := caret_vis(ed, c.cur)
+		append(&extras, Extra_Vis{c, sub, dx})
+	}
+
+	for v, row in ed.vis {
+		li := v.line
 		src := buf_line(&ed.buf, li)
 		d := build_disp(ed, li)
 		ncells := len(d.kind)
 
-		p.key(ui, tfmt("ln:%d", li))
+		// The window of display cells this row shows. Wrapped, it is the row
+		// itself; unwrapped, it is whatever the horizontal scroll exposes.
+		origin := ed.wrap ? v.c0 : ed.left
+		text_to := min(v.c1, origin + ed.cols + 1)
+		// Bands may run one cell past the text, which is how a selection shows
+		// that it swallowed the line ending.
+		band_to := min(v.c1 + 1, origin + ed.cols + 1)
+
+		p.key(ui, tfmt("ln:%d:%d", li, row))
 		lr := p.row(ui, tfmt("h-[%d] w-full shrink-0 relative items-center", LINE_H))
 		if li == ed.cur.line && ed.mode != .Palette {
 			p.apply(ui, "bg-muted/70", lr)
@@ -234,7 +273,15 @@ text_pane :: proc(ui: ^p.Ctx, ed: ^Editor) {
 				if f < 0 {
 					break
 				}
-				band(ui, ed, disp_of(src, f), disp_of(src, f + len(needle)), "bg-amber-300/70")
+				band(
+					ui,
+					ed,
+					origin,
+					band_to,
+					disp_of(src, f),
+					disp_of(src, f + len(needle)),
+					"bg-amber-300/70",
+				)
 				at = f + max(1, len(needle))
 			}
 		}
@@ -244,14 +291,41 @@ text_pane :: proc(ui: ^p.Ctx, ed: ^Editor) {
 		if has_sel && li >= sel_lo.line && li <= sel_hi.line {
 			c0 := li == sel_lo.line ? disp_of(src, sel_lo.col) : 0
 			c1 := li == sel_hi.line ? disp_of(src, sel_hi.col) : ncells + 1
-			band(ui, ed, c0, c1, "bg-selection/30")
+			band(ui, ed, origin, band_to, c0, c1, "bg-selection/30")
+		}
+
+		// The other carets' selections, under the primary one's so the caret
+		// you are driving still reads as the one in charge.
+		for e in extras {
+			if !e.c.has_sel {
+				continue
+			}
+			lo, hi := pos_order(e.c.anchor, e.c.cur)
+			if li < lo.line || li > hi.line {
+				continue
+			}
+			c0 := li == lo.line ? disp_of(src, lo.col) : 0
+			c1 := li == hi.line ? disp_of(src, hi.col) : ncells + 1
+			band(ui, ed, origin, band_to, c0, c1, "bg-selection/20")
+		}
+
+		// The bracket under the caret and its partner, both marked the same
+		// so the eye pairs them without being told which is which.
+		if br_ok {
+			for bp in ([?]Pos{bra, brb}) {
+				if bp.line != li {
+					continue
+				}
+				c := disp_of(src, bp.col)
+				band(ui, ed, origin, band_to, c, c + 1, "bg-amber-400/45 ring-1 ring-amber-600/60")
+			}
 		}
 
 		// The text itself, sliced to the visible cells and coalesced into one
 		// node per run of a single token kind.
 		p.row(ui, "h-full items-center shrink-0")
-		from := min(ed.left, ncells)
-		to := min(ed.left + ed.cols + 1, ncells)
+		from := clamp(origin, 0, ncells)
+		to := clamp(text_to, from, ncells)
 		i := from
 		for i < to {
 			k := d.kind[i]
@@ -264,23 +338,56 @@ text_pane :: proc(ui: ^p.Ctx, ed: ^Editor) {
 		}
 		p.end(ui)
 
-		// The caret.
-		if li == ed.cur.line && caret_on && ed.mode == .Edit {
-			dc := disp_of(src, ed.cur.col)
-			if dc >= ed.left && dc <= ed.left + ed.cols {
+		// The caret, on the one visual row that owns it.
+		if li == ed.cur.line && v.sub == csub && caret_on && ed.mode == .Edit {
+			x := cdx + v.c0 - origin
+			if x >= 0 && x <= ed.cols {
 				cb := p.div(ui, "absolute w-[2] bg-selection rounded-[1]")
 				cs := p.style(ui, cb)
-				cs.inset[p.LEFT] = p.px(f32(dc - ed.left) * ed.cw)
+				cs.inset[p.LEFT] = p.px(f32(x) * ed.cw)
 				cs.inset[p.TOP] = p.px(1)
 				cs.h = p.px(LINE_H - 2)
 				p.end(ui)
 			}
+		}
+
+		// And the other carets. They do not blink: a field of blinking bars is
+		// unreadable, and a steady one says "this is also live" without
+		// competing with the caret you are actually driving.
+		for e in extras {
+			if e.c.cur.line != li || e.sub != v.sub {
+				continue
+			}
+			x := e.dx + v.c0 - origin
+			if x < 0 || x > ed.cols {
+				continue
+			}
+			eb := p.div(ui, "absolute w-[2] bg-selection/70 rounded-[1]")
+			es := p.style(ui, eb)
+			es.inset[p.LEFT] = p.px(f32(x) * ed.cw)
+			es.inset[p.TOP] = p.px(1)
+			es.h = p.px(LINE_H - 2)
+			es.no_hit = true
+			p.end(ui)
+		}
+
+		// A wrapped row that continues gets a mark in the right margin, so a
+		// line that ends and a line that goes on do not look the same.
+		if ed.wrap && !v.last {
+			ct := p.div(ui, "absolute right-[12] w-[4] h-[4] rounded-full bg-muted-foreground/35")
+			cts := p.style(ui, ct)
+			cts.inset[p.TOP] = p.px(LINE_H / 2 - 2)
+			cts.no_hit = true
+			p.end(ui)
 		}
 		p.end(ui)
 	}
 
 	// The vertical scroll indicator. The list is virtual, so palmy's own
 	// scroll container never sees the full height and this is drawn by hand.
+	// It is indexed by logical line even when wrapping, because the number of
+	// visual rows in the whole file is exactly the thing never computed.
+	n := buf_lines(&ed.buf)
 	if n > ed.rows {
 		view_h := f32(ed.rows * LINE_H)
 		frac := f32(ed.rows) / f32(n)
@@ -294,16 +401,18 @@ text_pane :: proc(ui: ^p.Ctx, ed: ^Editor) {
 	}
 }
 
-// band draws one highlighted run of cells on the current line.
-band :: proc(ui: ^p.Ctx, ed: ^Editor, c0, c1: int, class: string) {
-	a := clamp(c0, ed.left, ed.left + ed.cols + 1)
-	b := clamp(c1, ed.left, ed.left + ed.cols + 1)
+// band draws one highlighted run of cells on the current visual row. `origin`
+// is the display cell the row starts drawing at and `limit` the cell it stops
+// at, which is all the clipping either coordinate system needs.
+band :: proc(ui: ^p.Ctx, ed: ^Editor, origin, limit, c0, c1: int, class: string) {
+	a := clamp(c0, origin, limit)
+	b := clamp(c1, origin, limit)
 	if b <= a {
 		return
 	}
 	idx := p.div(ui, tfmt("absolute rounded-[2] %s", class))
 	s := p.style(ui, idx)
-	s.inset[p.LEFT] = p.px(f32(a - ed.left) * ed.cw)
+	s.inset[p.LEFT] = p.px(f32(a - origin) * ed.cw)
 	s.inset[p.TOP] = p.px(0)
 	s.w = p.px(f32(b - a) * ed.cw)
 	s.h = p.px(LINE_H)
@@ -427,6 +536,14 @@ status_bar :: proc(ui: ^p.Ctx, ed: ^Editor) {
 	line := buf_line(&ed.buf, ed.cur.line)
 	seg(ui, tfmt("Ln %d, Col %d", ed.cur.line + 1, disp_of(line, ed.cur.col) + 1))
 
+	if carets_multi(ed) {
+		p.text(
+			ui,
+			tfmt("%d cursors", carets_count(ed)),
+			"text-[11.5] text-selection font-medium whitespace-nowrap shrink-0",
+		)
+	}
+
 	if lo, hi, ok := sel_range(ed); ok {
 		n := len(buf_text(&ed.buf, lo, hi, context.temp_allocator))
 		lines := hi.line - lo.line + 1
@@ -446,7 +563,8 @@ status_bar :: proc(ui: ^p.Ctx, ed: ^Editor) {
 	seg(ui, ed.buf.encoding)
 	seg(ui, ed.buf.eol == .CRLF ? "CRLF" : "LF")
 	seg(ui, tfmt("Tab %d", TAB_W))
-	seg(ui, ed.odin && ed.syntax ? "Odin" : "Plain Text")
+	seg(ui, ed.wrap ? "Wrap" : "No wrap")
+	seg(ui, ed.syntax ? lang_name(ed.lang) : "Plain Text")
 }
 
 seg :: proc(ui: ^p.Ctx, s: string) {
@@ -582,6 +700,14 @@ HELP := [?][2]string {
 	{"Ctrl Home / End", "file start, file end"},
 	{"PgUp / PgDn", "page up, page down"},
 	{"Tab / Shift Tab", "indent, outdent"},
+	{"Alt Z", "soft wrap on or off"},
+	{"Ctrl M", "jump to the matching bracket"},
+	{"Ctrl Shift M", "select to the matching bracket"},
+	{"Ctrl G", "change the language"},
+	{"Ctrl Alt Up/Down", "add a cursor above or below"},
+	{"Ctrl Shift D", "add a cursor at the next match"},
+	{"Ctrl Shift L", "a cursor on every match"},
+	{"Esc", "back to one cursor"},
 	{"F5", "reload from disk"},
 	{"F1", "this list"},
 	{"Ctrl Q", "quit"},

@@ -42,11 +42,28 @@ Payload_Type :: enum u8 {
 	Audio_Opus = 1,
 	Audio_PCM  = 2,
 	Video_JPEG = 3,
+	Video_H264 = 4,
+}
+
+is_video :: proc(t: Payload_Type) -> bool {
+	return t == .Video_JPEG || t == .Video_H264
 }
 
 // FLAG_MARKER is RTP's marker bit: set on the last fragment of a frame, so a
 // receiver knows a frame is complete without waiting for the next one.
 FLAG_MARKER :: u8(0x01)
+
+// FLAG_KEYFRAME says this frame can be decoded with no reference to any
+// earlier frame. It is set on *every* fragment of the frame rather than only
+// the first, so a receiver that lost the first fragment still knows what it
+// lost.
+//
+// It is in the generic header rather than in a codec-specific descriptor
+// because it is the one thing a codec-agnostic receiver genuinely needs to
+// know: whether it may resume decoding after a gap. MJPEG sets it on every
+// frame, which is the literal truth about MJPEG and is why the loss logic
+// below needs no special case for it.
+FLAG_KEYFRAME :: u8(0x02)
 
 Header :: struct {
 	ptype: Payload_Type,
@@ -60,6 +77,59 @@ Header :: struct {
 
 marked :: proc(h: Header) -> bool {
 	return h.flags & FLAG_MARKER != 0
+}
+
+keyframed :: proc(h: Header) -> bool {
+	return h.flags & FLAG_KEYFRAME != 0
+}
+
+// ---------------------------------------------------------------------------
+// Video codecs, and how two instances agree on one.
+//
+// The offer is a bitmask, not a list, because there are two codecs and a
+// bitmask intersects in one instruction. MJPEG is bit 0 and is
+// mandatory-to-implement: every instance decodes it, so the intersection is
+// never empty and negotiation can never fail into "no video".
+//
+// Both ends run the same `negotiate_video` over the same two bitmasks and
+// therefore reach the same answer with no extra round trip and no answer
+// message. That is the whole protocol: an offer that rides every control
+// message, and a pure function.
+// ---------------------------------------------------------------------------
+
+Video_Codec :: enum u8 {
+	MJPEG = 0,
+	H264  = 1,
+}
+
+CODEC_MJPEG :: u8(0x01)
+CODEC_H264 :: u8(0x02)
+CODEC_ALL :: CODEC_MJPEG | CODEC_H264
+
+video_codec_name :: proc(c: Video_Codec) -> string {
+	switch c {
+	case .MJPEG:
+		return "MJPEG"
+	case .H264:
+		return "H.264"
+	}
+	return "?"
+}
+
+video_codec_payload :: proc(c: Video_Codec) -> Payload_Type {
+	return c == .H264 ? .Video_H264 : .Video_JPEG
+}
+
+// negotiate_video picks the best codec both ends offer. Preference order is
+// H.264 then MJPEG; an empty intersection falls back to MJPEG, which every
+// implementation is required to carry, so a peer that offers nothing
+// recognisable still gets a picture rather than a black rectangle.
+negotiate_video :: proc(mine, theirs: u8) -> Video_Codec {
+	both := mine & theirs
+	if both & CODEC_H264 != 0 {
+		return .H264
+	}
+	return .MJPEG
 }
 
 // ---------------------------------------------------------------------------
@@ -131,7 +201,7 @@ parse :: proc(b: []u8) -> (h: Header, payload: []u8, ok: bool) {
 	if b[0] != 'P' || b[1] != 'C' || b[2] != 'P' || b[3] != '1' {
 		return {}, nil, false
 	}
-	if b[4] > u8(Payload_Type.Video_JPEG) {
+	if b[4] > u8(Payload_Type.Video_H264) {
 		return {}, nil, false
 	}
 	h.ptype = Payload_Type(b[4])
@@ -175,6 +245,7 @@ fragment_into :: proc(
 	seq: u16,
 	ts_us: u64,
 	frame: u32,
+	extra_flags: u8 = 0,
 ) -> []u8 {
 	n := fragment_count(len(data))
 	lo := i * MTU_PAYLOAD
@@ -184,6 +255,7 @@ fragment_into :: proc(
 	}
 	h := Header {
 		ptype = ptype,
+		flags = extra_flags &~ FLAG_MARKER,
 		seq   = seq,
 		ts_us = ts_us,
 		frame = frame,
@@ -372,22 +444,24 @@ reasm_push :: proc(r: ^Reassembler, h: Header, payload: []u8) -> (frame: []u8, t
 // ---------------------------------------------------------------------------
 
 Control_Kind :: enum u8 {
-	Hello   = 0,
-	Invite  = 1,
-	Ringing = 2,
-	Accept  = 3,
-	Decline = 4,
-	Bye     = 5,
-	State   = 6,
+	Hello    = 0,
+	Invite   = 1,
+	Ringing  = 2,
+	Accept   = 3,
+	Decline  = 4,
+	Bye      = 5,
+	State    = 6,
+	Keyframe = 7,
 }
 
 CTRL_MUTED :: u8(0x01)
 CTRL_CAM_OFF :: u8(0x02)
 
 Control :: struct {
-	kind:  Control_Kind,
-	flags: u8,
-	name:  string, // the peer's display name; borrows the receive buffer
+	kind:   Control_Kind,
+	flags:  u8,
+	name:   string, // the peer's display name; borrows the receive buffer
+	codecs: u8, // video codecs this peer can decode, as a CODEC_* bitmask
 }
 
 // write_control serialises into `out` and returns the used prefix.
@@ -395,23 +469,33 @@ Control :: struct {
 //   1      flags
 //   2..3   name length
 //   4..    name, UTF-8
+//   4+n    video codec offer, a CODEC_* bitmask    <- optional extension
+//
+// The codec offer is appended *after* the variable-length name rather than
+// given a fixed slot, so a receiver that has never heard of it reads the same
+// message it always did and simply ignores a byte it did not consume. That is
+// what makes it safe to add: `read_control` below validates only that the name
+// fits, so the old parser accepts the new message, and the new parser reads a
+// missing offer as "MJPEG only" — which is the correct reading of silence,
+// because MJPEG is the one codec every version has carried.
 write_control :: proc(out: []u8, c: Control) -> []u8 {
 	n := min(len(c.name), 64)
-	if len(out) < 4 + n {
+	if len(out) < 5 + n {
 		return nil
 	}
 	out[0] = u8(c.kind)
 	out[1] = c.flags
 	put_u16(out[2:4], u16(n))
 	copy(out[4:4 + n], c.name[:n])
-	return out[:4 + n]
+	out[4 + n] = c.codecs
+	return out[:5 + n]
 }
 
 read_control :: proc(b: []u8) -> (c: Control, ok: bool) {
 	if len(b) < 4 {
 		return {}, false
 	}
-	if b[0] > u8(Control_Kind.State) {
+	if b[0] > u8(Control_Kind.Keyframe) {
 		return {}, false
 	}
 	c.kind = Control_Kind(b[0])
@@ -421,5 +505,10 @@ read_control :: proc(b: []u8) -> (c: Control, ok: bool) {
 		return {}, false
 	}
 	c.name = string(b[4:4 + n])
+	// A peer that sends no offer is a peer that only speaks MJPEG.
+	c.codecs = CODEC_MJPEG
+	if 4 + n < len(b) {
+		c.codecs = b[4 + n]
+	}
 	return c, true
 }

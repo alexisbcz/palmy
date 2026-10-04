@@ -91,8 +91,8 @@ pick_overlay :: proc(ui: ^p.Ctx, ed: ^Editor) {
 		}
 		ed.cur, ed.anchor = Pos{0, 0}, Pos{0, 0}
 		ed.has_sel = false
-		ed.top, ed.left = 0, 0
-		ed.odin = strings.has_suffix(ed.buf.path, ".odin")
+		ed.top, ed.left, ed.top_sub = 0, 0, 0
+		relang(ed)
 		note(ed, tfmt("Opened %s", base_of(ed.buf.path)))
 	case .Save_As:
 		// The dialog has already asked about an overwrite, and `res.overwrite`

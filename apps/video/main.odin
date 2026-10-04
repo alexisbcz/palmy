@@ -63,6 +63,9 @@ St :: struct {
 	resize_at:   f64,
 	pending:     bool,
 
+	// Subtitles.
+	subs:        Subs,
+
 	// Chrome.
 	info:        bool,
 	stats:       bool,
@@ -85,6 +88,21 @@ main :: proc() {
 			run_selftest()
 			os.exit(failures == 0 ? 0 : 1)
 		}
+	}
+
+	if mspeed, msecs, mpoll, want_measure := measure_requested(); want_measure {
+		target := ""
+		for a in measure_strip(os.args[1:]) {
+			if !strings.has_prefix(a, "-") {
+				target = a
+				break
+			}
+		}
+		if target == "" {
+			fmt.eprintln("measure: give a media file before --measure")
+			os.exit(2)
+		}
+		os.exit(run_measure(absolute(target), mspeed, msecs, mpoll))
 	}
 
 	shot_out, shot_secs, shot_keys, want_shot := shot_requested()
@@ -121,7 +139,7 @@ main :: proc() {
 	}
 
 	target := ""
-	for a in shot_strip(os.args[1:]) {
+	for a in shot_strip(measure_strip(os.args[1:])) {
 		if !strings.has_prefix(a, "-") {
 			target = a
 			break
@@ -155,6 +173,7 @@ main :: proc() {
 		st.view = .Library
 	}
 	defer engine_destroy(&st.e)
+	defer subs_free(&st.subs)
 
 	if want_shot {
 		run_shot(&st, shot_out, shot_secs, shot_keys)
@@ -406,6 +425,10 @@ start_playing :: proc(st: ^St) {
 	st.ended = false
 	st.pending = false
 	st.want_w, st.want_h = 0, 0
+	// Sidecars and embedded tracks are discovered once per file; the cues of
+	// whichever track wins are read here too, which is the only blocking work
+	// on open and is measured in milliseconds for a file of any length.
+	subs_build(&st.subs, en.m)
 }
 
 // decode_size is the size the picture will be drawn at, which is the size worth
@@ -466,13 +489,24 @@ seek_to :: proc(st: ^St, t: f64) {
 	if !st.open {
 		return
 	}
-	was := engine_paused(&st.e)
+	// A seek out of a finished file resumes it. Landing on a chapter and
+	// staying frozen on the last frame is never what was meant.
+	was := engine_paused(&st.e) && !st.ended
 	t0 := time.now()
 	engine_open(&st.e, clamp(t, 0, max(0, st.e.m.duration - 0.1)), st.e.w, st.e.h)
 	engine_pause(&st.e, was)
 	st.ended = false
 	st.seek_count += 1
 	st.seek_ms_sum += time.duration_milliseconds(time.since(t0))
+}
+
+// chapter_label names the chapter a seek landed in, for the toast.
+chapter_label :: proc(chs: []Chapter, t: f64) -> string {
+	i := chapter_at(chs, t)
+	if i < 0 || i >= len(chs) {
+		return "Start"
+	}
+	return fmt.tprintf("Chapter %d/%d · %s", i + 1, len(chs), chs[i].title)
 }
 
 seek_by :: proc(st: ^St, d: f64) {
@@ -516,7 +550,7 @@ library_keys :: proc(ui: ^p.Ctx, app: ^p.App, st: ^St) {
 	if p.key_pressed(ui, p.KEY_HOME) {st.sel = 0}
 	if p.key_pressed(ui, p.KEY_END) {st.sel = n - 1}
 	if p.key_pressed(ui, p.KEY_RETURN) || p.key_pressed(ui, p.KEY_KP_ENTER) ||
-	   p.key_pressed(ui, p.KEY_SPACE) {
+	   p.key_pressed(ui, p.KEY_SPACE, false) {
 		start_playing(st)
 	}
 	if sc := ui.input.scroll.y; sc != 0 {
@@ -528,12 +562,13 @@ player_keys :: proc(ui: ^p.Ctx, app: ^p.App, st: ^St) {
 	if p.key_pressed(ui, p.KEY_ESCAPE) || p.key_pressed(ui, 'q') {
 		engine_destroy(&st.e)
 		st.e = {}
+		subs_free(&st.subs)
 		st.open = false
 		st.view = .Library
 		return
 	}
 
-	if p.key_pressed(ui, p.KEY_SPACE) || p.key_pressed(ui, 'k') {
+	if p.key_pressed(ui, p.KEY_SPACE, false) || p.key_pressed(ui, 'k', false) {
 		if st.ended {
 			seek_to(st, 0)
 			engine_pause(&st.e, false)
@@ -585,14 +620,77 @@ player_keys :: proc(ui: ^p.Ctx, app: ^p.App, st: ^St) {
 		engine_set_volume(&st.e, st.e.volume - 0.05)
 		toast(st, ui, fmt.tprintf("Volume %d%%", int(st.e.volume * 100 + 0.5)))
 	}
-	if p.key_pressed(ui, 'm') {
+	if p.key_pressed(ui, 'm', false) {
 		engine_mute(&st.e, !st.e.muted)
 		toast(st, ui, st.e.muted ? "Muted" : "Unmuted")
 	}
-	if p.key_pressed(ui, 'i') {
+	// Speed. `key_count` rather than `key_pressed`, because one press has to
+	// mean one step of 0.25 even when a driver script sends three in a frame.
+	if n := p.key_count(ui, ']'); n > 0 {
+		if engine_set_speed(&st.e, engine_speed(&st.e) + SPEED_STEP * f64(n)) {
+			toast(st, ui, fmt.tprintf("Speed %s", speed_label(engine_speed(&st.e))))
+		}
+	}
+	if n := p.key_count(ui, '['); n > 0 {
+		if engine_set_speed(&st.e, engine_speed(&st.e) - SPEED_STEP * f64(n)) {
+			toast(st, ui, fmt.tprintf("Speed %s", speed_label(engine_speed(&st.e))))
+		}
+	}
+	if p.key_pressed(ui, '\\', false) {
+		if engine_set_speed(&st.e, 1) {
+			toast(st, ui, "Speed 1x (reset)")
+		}
+	}
+
+	// Subtitles.
+	//
+	// Every toggle below passes `include_repeat = false`. palmy's key_pressed
+	// counts auto-repeats by default, and a toggle driven by one flips twice
+	// when the key is held long enough to repeat — which looks exactly like
+	// the key having done nothing at all. It cost a demo take to find: `t`
+	// opened the track list and closed it again inside the same press.
+	if n := p.key_count(ui, 'c'); n > 0 {
+		subs_cycle(&st.subs, n)
+		toast(st, ui, fmt.tprintf("Subtitles: %s", subs_summary(&st.subs)))
+	}
+	// `t` for the track list as well as Shift+C: a shifted letter is the one
+	// thing synthetic input on this machine cannot deliver — wtype's `-M shift`
+	// reaches palmy as the unshifted key — so the demo would have no way to open
+	// this panel, and neither would anything else driving the app by script.
+	if p.key_pressed(ui, 'C', false) || p.key_pressed(ui, 't', false) {
+		st.subs.panel = !st.subs.panel
+	}
+	if p.key_pressed(ui, 'v', false) {
+		st.subs.show = !st.subs.show
+		toast(st, ui, st.subs.show ? "Subtitles shown" : "Subtitles hidden")
+	}
+	if n := p.key_count(ui, '='); n > 0 {
+		st.subs.offset += 0.1 * f64(n)
+		toast(st, ui, fmt.tprintf("Subtitle delay %+.1f s", st.subs.offset))
+	}
+	if n := p.key_count(ui, '-'); n > 0 {
+		st.subs.offset -= 0.1 * f64(n)
+		toast(st, ui, fmt.tprintf("Subtitle delay %+.1f s", st.subs.offset))
+	}
+
+	// Chapters.
+	if p.key_pressed(ui, p.KEY_PAGE_DOWN) {
+		if t, ok := chapter_seek_target(st.e.m.chapters, engine_clock(&st.e), 1); ok {
+			seek_to(st, t)
+			toast(st, ui, chapter_label(st.e.m.chapters, t))
+		}
+	}
+	if p.key_pressed(ui, p.KEY_PAGE_UP) {
+		if t, ok := chapter_seek_target(st.e.m.chapters, engine_clock(&st.e), -1); ok {
+			seek_to(st, t)
+			toast(st, ui, chapter_label(st.e.m.chapters, t))
+		}
+	}
+
+	if p.key_pressed(ui, 'i', false) {
 		st.info = !st.info
 	}
-	if p.key_pressed(ui, 's') {
+	if p.key_pressed(ui, 's', false) {
 		st.stats = !st.stats
 	}
 	if p.key_pressed(ui, 'n') && st.sel + 1 < len(st.lib) {

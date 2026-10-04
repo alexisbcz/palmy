@@ -308,13 +308,19 @@ draw_stage :: proc(app: ^App, ui: ^p.Ctx) {
 	p.end(ui)
 	if v.has_remote && !s.peer_cam_off {
 		p.div(ui, "flex-row items-center gap-1.5 px-2 py-1 rounded-lg bg-black/60")
+		// The codec belongs on the picture, not only in the statistics panel.
+		// It is the single most consequential thing about the stream — 300
+		// kbit/s or 3.9 Mbit/s for the same rectangle — and the panel it would
+		// otherwise live in is below the fold on a tall, narrow window.
 		p.textf(
 			ui,
 			"text-[11] font-mono text-white/70",
-			"%dx%d  %.1f fps",
+			"%s  %dx%d  %.1f fps  %.0f kbit/s",
+			video_codec_name(v.codec),
 			v.remote.w,
 			v.remote.h,
 			v.fps_rx,
+			s.rx_kbps,
 		)
 		p.end(ui)
 	}
@@ -583,7 +589,18 @@ draw_stats :: proc(app: ^App, ui: ^p.Ctx) {
 	)
 
 	section_title(ui, "Video")
-	stat_row(ui, "Codec", fmt.tprintf("MJPEG q%s", V_QUALITY))
+	stat_row(
+		ui,
+		"Codec",
+		v.codec == .H264 \
+		? fmt.tprintf("H.264 baseline · %d kbit/s", v_bitrate_kbps) \
+		: fmt.tprintf("MJPEG q%s", V_QUALITY),
+	)
+	stat_row(
+		ui,
+		"Negotiated",
+		fmt.tprintf("ours %s · peer %s", codec_offer_label(v.offer), codec_offer_label(v.peer_offer)),
+	)
 	stat_row(ui, "Configured", fmt.tprintf("%dx%d · %d fps", v_width, v_height, v_fps))
 	stat_row(
 		ui,
@@ -600,7 +617,11 @@ draw_stats :: proc(app: ^App, ui: ^p.Ctx) {
 	if v.has_remote {
 		stat_row(ui, "Decoded size", fmt.tprintf("%dx%d", v.remote.w, v.remote.h))
 	}
-	stat_row(ui, "JPEG size", fmt.tprintf("%.1f KB", f32(v.last_jpeg_bytes) / 1024))
+	stat_row(
+		ui,
+		"Frame size",
+		fmt.tprintf("%.2f KB · mean %.2f", f32(v.last_frame_bytes) / 1024, video_mean_frame_bytes(v) / 1024),
+	)
 	stat_row(ui, "Decode cost", fmt.tprintf("%.2f ms", v.decode_ms))
 	if v.latency_n > 0 {
 		stat_row(
@@ -620,6 +641,25 @@ draw_stats :: proc(app: ^App, ui: ^p.Ctx) {
 		fmt.tprintf("%d", v.frames_failed),
 		v.frames_failed > 0 ? "text-destructive" : "text-muted-foreground",
 	)
+	if v.codec == .H264 {
+		stat_row(
+			ui,
+			"Keyframes",
+			fmt.tprintf("%d out · %d in · every %d s", v.keyframes_sent, v.keyframes_rx, V_GOP_SECONDS),
+		)
+		stat_row(
+			ui,
+			"Loss recovery",
+			fmt.tprintf(
+				"%d gap · %d asked · %d forced · %d skipped",
+				v.loss_events,
+				v.pli_sent,
+				v.keyframes_forced,
+				v.frames_skipped,
+			),
+			v.loss_events > 0 ? "text-amber-400" : "text-muted-foreground",
+		)
+	}
 
 	section_title(ui, "Window")
 	stat_row(ui, "UI", fmt.tprintf("%.0f fps", p.frames_per_second(ui)))

@@ -13,8 +13,10 @@ package main
 // or online, the sidebar says which, and the composer refuses to pretend a
 // message was sent when it was not.
 
+import "core:encoding/base64"
 import "core:encoding/json"
 import "core:fmt"
+import "core:os"
 import "core:net"
 import "core:strings"
 import "core:time"
@@ -45,6 +47,21 @@ net_connect :: proc(a: ^App) {
 	a.retry_in = 0.4
 	clear(&a.rd.buf)
 	a.rd.bad = false
+
+	// Everything that arrived while the link was down is missing from every
+	// channel, so nothing loaded before this connection can be trusted to be
+	// complete. Marking the channels unloaded is what makes `switch_to` and
+	// `apply_channels` ask again; without it a reconnecting client shows a
+	// stale timeline and — now that the server owns the cursor — an unread
+	// badge it can never clear, because the messages it would have to display
+	// to clear it never arrive.
+	for &c in a.chans {
+		c.loaded = false
+	}
+	if cur := current(a); cur != nil {
+		req_history(a, cur.name, 0)
+		a.want_bottom = true
+	}
 
 	e: w.Enc
 	w.enc_begin(&e, "hello")
@@ -162,7 +179,7 @@ req_history :: proc(a: ^App, ch: string, before: i64) {
 	net_send(a, w.enc_done(&e))
 }
 
-send_post :: proc(a: ^App, ch, text: string, reply_to: i64) {
+send_post :: proc(a: ^App, ch, text: string, reply_to: i64, thread: i64 = 0) {
 	e: w.Enc
 	w.enc_begin(&e, "post")
 	w.kv_str(&e, "ch", ch)
@@ -170,7 +187,83 @@ send_post :: proc(a: ^App, ch, text: string, reply_to: i64) {
 	if reply_to != 0 {
 		w.kv_int(&e, "reply_to", reply_to)
 	}
+	if thread != 0 {
+		w.kv_int(&e, "thread", thread)
+	}
 	net_send(a, w.enc_done(&e))
+}
+
+// send_read moves this user's server-side read cursor. It is the only thing
+// that makes a message read: nothing is inferred from a connection existing,
+// which is exactly why the count survives one going away.
+send_read :: proc(a: ^App, ch: string, id: i64) {
+	e: w.Enc
+	w.enc_begin(&e, "read")
+	w.kv_str(&e, "ch", ch)
+	w.kv_int(&e, "id", id)
+	net_send(a, w.enc_done(&e))
+}
+
+req_thread :: proc(a: ^App, id: i64) {
+	e: w.Enc
+	w.enc_begin(&e, "thread")
+	w.kv_int(&e, "rq", next_rq(a))
+	w.kv_int(&e, "id", id)
+	net_send(a, w.enc_done(&e))
+}
+
+// send_attach uploads a file over the same socket as everything else. The
+// bytes are base64'd into one frame; the server stores them under a path it
+// builds itself and answers with an ordinary message carrying the metadata.
+send_attach :: proc(a: ^App, ch, path: string, thread: i64) -> (ok: bool, why: string) {
+	data, rerr := os.read_entire_file_from_path(path, context.temp_allocator)
+	if rerr != nil {
+		return false, fmt.tprintf("cannot read %s", path)
+	}
+	if len(data) == 0 {
+		return false, "that file is empty"
+	}
+	if len(data) > w.MAX_ATTACH {
+		return false, fmt.tprintf("%s is larger than the %d KiB limit", pick_name(path), w.MAX_ATTACH / 1024)
+	}
+	b64, eerr := base64.encode(data, allocator = context.temp_allocator)
+	if eerr != nil {
+		return false, "could not encode the file"
+	}
+	e: w.Enc
+	w.enc_begin(&e, "attach")
+	w.kv_str(&e, "ch", ch)
+	w.kv_str(&e, "name", w.safe_filename(pick_name(path), context.temp_allocator))
+	w.kv_str(&e, "mime", mime_of(path))
+	if thread != 0 {
+		w.kv_int(&e, "thread", thread)
+	}
+	w.kv_str(&e, "data", b64)
+	if !net_send(a, w.enc_done(&e)) {
+		return false, "not connected"
+	}
+	return true, ""
+}
+
+// send_fetch asks for an attachment's bytes back. `save_to` is where the
+// reply will be written, remembered until it arrives.
+send_fetch :: proc(a: ^App, id: i64, save_to: string) -> bool {
+	rq := next_rq(a)
+	e: w.Enc
+	w.enc_begin(&e, "fetch")
+	w.kv_int(&e, "rq", rq)
+	w.kv_int(&e, "id", id)
+	if !net_send(a, w.enc_done(&e)) {
+		return false
+	}
+	// Only remember a destination for a request that actually went out, and
+	// key it by `rq`, so an unrelated `file` frame cannot be written to it.
+	if a.saving != "" {
+		delete(a.saving, context.allocator)
+	}
+	a.saving = strings.clone(save_to, context.allocator)
+	a.saving_rq = rq
+	return true
 }
 
 send_edit :: proc(a: ^App, id: i64, text: string) {
@@ -282,6 +375,39 @@ apply :: proc(a: ^App, o: json.Object) {
 	case "history":
 		apply_history(a, o)
 
+	case "reads":
+		apply_reads(a, o)
+
+	case "read":
+		if i := find_chan(a, w.ostr(o, "ch")); i >= 0 {
+			c := &a.chans[i]
+			c.read_id = max(c.read_id, w.oint(o, "id"))
+			c.unread = int(w.oint(o, "unread"))
+			c.threads = int(w.oint(o, "threads"))
+			c.mention = w.obool(o, "mention")
+		}
+
+	case "thread":
+		apply_thread(a, o)
+
+	case "replies":
+		// The count update always follows the reply it counts, inside the one
+		// order the server committed, so applying it here can never show a
+		// count for a message that has not arrived.
+		n := int(w.oint(o, "n"))
+		if m := locate(a, w.ostr(o, "ch"), w.oint(o, "id")); m != nil {
+			m.replies = n
+			m.last_reply = w.oint(o, "last_reply")
+		}
+		if a.thread_root == w.oint(o, "id") {
+			a.troot.replies = n
+			a.troot.last_reply = w.oint(o, "last_reply")
+			a.treplies = n
+		}
+
+	case "file":
+		apply_file(a, o)
+
 	case "edit":
 		if m := locate(a, w.ostr(o, "ch"), w.oint(o, "id")); m != nil {
 			m.text = strings.clone(w.ostr(o, "text"))
@@ -342,6 +468,9 @@ apply_channels :: proc(a: ^App, o: json.Object) {
 		if i := find_chan(a, name); i >= 0 {
 			a.chans[i].kind = kind
 			a.chans[i].topic = strings.clone(w.ostr(co, "topic"))
+			if i == a.cur && !a.chans[i].loaded {
+				req_history(a, name, 0)
+			}
 			continue
 		}
 		append(
@@ -373,6 +502,82 @@ apply_channels :: proc(a: ^App, o: json.Object) {
 	}
 }
 
+// apply_reads is the whole reconnect story. The server says where each cursor
+// is and what is behind it; the client adopts that rather than deciding for
+// itself. The one exception is a cursor the user moved while the link was
+// down: that is pushed back up, so reading offline is not silently undone.
+apply_reads :: proc(a: ^App, o: json.Object) {
+	for rv in w.oarr(o, "list") {
+		ro, ok := w.as_obj(rv)
+		if !ok {
+			continue
+		}
+		i := find_chan(a, w.ostr(ro, "ch"))
+		if i < 0 {
+			continue
+		}
+		c := &a.chans[i]
+		server_id := w.oint(ro, "id")
+		if c.read_id > server_id {
+			send_read(a, c.name, c.read_id)
+			continue
+		}
+		c.read_id = server_id
+		c.unread = int(w.oint(ro, "unread"))
+		c.threads = int(w.oint(ro, "threads"))
+		c.mention = w.obool(ro, "mention")
+	}
+}
+
+apply_thread :: proc(a: ^App, o: json.Object) {
+	id := w.oint(o, "id")
+	if id != a.thread_root {
+		return // a stale answer for a thread the user has already left
+	}
+	if ro, ok := w.as_obj(o["root"] or_else nil); ok {
+		w.msg_destroy(&a.troot)
+		a.troot = w.msg_from(ro, context.allocator)
+	}
+	w.msgs_destroy(&a.tmsgs)
+	for mv in w.oarr(o, "msgs") {
+		mo, ok := w.as_obj(mv)
+		if !ok {
+			continue
+		}
+		append(&a.tmsgs, w.msg_from(mo, context.allocator))
+	}
+	// The server caps a thread page, so the count it reports is the truth and
+	// `len(a.tmsgs)` may be short of it.
+	a.treplies = int(w.oint(o, "replies", i64(len(a.tmsgs))))
+	a.tmore = w.obool(o, "more")
+	a.tloaded = true
+}
+
+apply_file :: proc(a: ^App, o: json.Object) {
+	name := w.safe_filename(w.ostr(o, "name"), context.temp_allocator)
+	if a.saving == "" || w.oint(o, "rq") != a.saving_rq {
+		// Either nothing asked for this, or an earlier fetch already claimed
+		// the destination. Writing it anyway would put one file's bytes under
+		// another file's name.
+		toast(a, fmt.tprintf("%s arrived with nowhere to go", name))
+		return
+	}
+	dest := a.saving
+	defer delete(dest, context.allocator)
+	a.saving = ""
+	a.saving_rq = 0
+	data, derr := base64.decode(w.ostr(o, "data"), allocator = context.temp_allocator)
+	if derr != nil {
+		toast(a, "the attachment did not decode")
+		return
+	}
+	if werr := os.write_entire_file(dest, data); werr != nil {
+		toast(a, fmt.tprintf("could not write %s", dest))
+		return
+	}
+	toast(a, fmt.tprintf("Saved %s (%d bytes) to %s", name, len(data), dest))
+}
+
 apply_history :: proc(a: ^App, o: json.Object) {
 	name := w.ostr(o, "ch")
 	i := find_chan(a, name)
@@ -389,10 +594,10 @@ apply_history :: proc(a: ^App, o: json.Object) {
 		}
 		insert_sorted(c, w.msg_from(mo, context.allocator))
 	}
-	// History is the user's own doing, so it never counts as unread.
+	// History is the user's own doing, so reaching the newest message through
+	// it moves the cursor — on the server, which is the only place that counts.
 	if len(c.msgs) > 0 && i == a.cur && a.pinned {
-		c.seen = c.msgs[len(c.msgs) - 1].id
-		c.unread = 0
+		mark_read(a)
 	}
 }
 
@@ -421,16 +626,37 @@ take_message :: proc(a: ^App, m: w.Msg) {
 		return
 	}
 	c := &a.chans[i]
+
+	// A thread reply is not a row in the channel. It goes to the open thread
+	// if that is the one it belongs to, and otherwise only bumps the
+	// channel's thread marker; the parent's count arrives separately.
+	if m.thread != 0 {
+		open := a.thread_root != 0 && m.thread == a.thread_root && i == a.cur
+		if open {
+			insert_sorted_at(&a.tmsgs, m)
+		}
+		if m.nick != a.nick && m.id > c.read_id && !open {
+			c.threads += 1
+		}
+		if open && a.pinned {
+			// It is on screen, so it is read. Moving the cursor past it is
+			// also the only thing that can ever clear this channel's thread
+			// marker: the cursor is one number, and `mark_read` otherwise
+			// only ever advances it to the newest *timeline* message.
+			mark_read(a)
+		}
+		return
+	}
+
 	if msg_at(c, m.id) != nil {
 		return
 	}
 	insert_sorted(c, m)
 
 	if i == a.cur && a.pinned {
-		c.seen = m.id
-		c.unread = 0
 		a.new_below = 0
-	} else if m.nick != a.nick {
+		mark_read(a)
+	} else if m.nick != a.nick && m.id > c.read_id {
 		c.unread += 1
 		if strings.contains(strings.to_lower(m.text, context.temp_allocator), strings.to_lower(a.nick, context.temp_allocator)) {
 			c.mention = true
@@ -439,6 +665,20 @@ take_message :: proc(a: ^App, m: w.Msg) {
 			a.new_below += 1
 		}
 	}
+}
+
+// insert_sorted_at is insert_sorted for a bare list: the thread view.
+insert_sorted_at :: proc(list: ^[dynamic]w.Msg, m: w.Msg) {
+	for x, i in list {
+		if x.id == m.id {
+			return
+		}
+		if x.id > m.id {
+			inject_at(list, i, m)
+			return
+		}
+	}
+	append(list, m)
 }
 
 insert_sorted :: proc(c: ^Channel, m: w.Msg) {
@@ -459,14 +699,30 @@ insert_sorted :: proc(c: ^Channel, m: w.Msg) {
 }
 
 locate :: proc(a: ^App, ch: string, id: i64) -> ^w.Msg {
+	// Fall through rather than return: every broadcast names a channel the
+	// client knows, and a thread reply is deliberately *not* in that
+	// channel's timeline, so returning `msg_at`'s nil here would make the
+	// edit, delete and react handlers silently skip anything shown in the
+	// thread panel or in the search results.
 	if i := find_chan(a, ch); i >= 0 {
-		return msg_at(&a.chans[i], id)
+		if m := msg_at(&a.chans[i], id); m != nil {
+			return m
+		}
 	}
-	// Search results hold their own copies; keep them in step too.
+	// Search results and the open thread hold their own copies; keep them in
+	// step too.
 	for &m in a.results {
 		if m.id == id {
 			return &m
 		}
+	}
+	for &m in a.tmsgs {
+		if m.id == id {
+			return &m
+		}
+	}
+	if a.troot.id == id {
+		return &a.troot
 	}
 	return nil
 }
@@ -498,13 +754,14 @@ member_before :: proc(x, y: Member) -> bool {
 // ---------------------------------------------------------------------------
 
 post_once :: proc(args: Args) -> int {
+	ch := args.post_ch != "" ? args.post_ch : args.att_ch
 	sock, err := net.dial_tcp(net.Endpoint{address = net.IP4_Loopback, port = args.port})
 	if err != nil {
 		fmt.eprintfln("chat: cannot reach 127.0.0.1:%d: %v", args.port, err)
 		return 1
 	}
 	defer net.close(sock)
-	_ = net.set_option(sock, .Receive_Timeout, 3 * time.Second)
+	_ = net.set_option(sock, .Receive_Timeout, 5 * time.Second)
 
 	e: w.Enc
 	w.enc_begin(&e, "hello", context.allocator)
@@ -515,13 +772,42 @@ post_once :: proc(args: Args) -> int {
 
 	j: w.Enc
 	w.enc_begin(&j, "join", context.allocator)
-	w.kv_str(&j, "ch", args.post_ch)
+	w.kv_str(&j, "ch", ch)
 	w.send_frame(sock, w.enc_done(&j))
 
 	m: w.Enc
-	w.enc_begin(&m, "post", context.allocator)
-	w.kv_str(&m, "ch", args.post_ch)
-	w.kv_str(&m, "text", args.post_txt)
+	if args.att_ch != "" {
+		data, rerr := os.read_entire_file_from_path(args.att_path, context.allocator)
+		if rerr != nil {
+			fmt.eprintfln("chat: cannot read %s: %v", args.att_path, rerr)
+			return 1
+		}
+		if len(data) > w.MAX_ATTACH {
+			fmt.eprintfln("chat: %s is larger than the %d byte limit", args.att_path, w.MAX_ATTACH)
+			return 1
+		}
+		b64, eerr := base64.encode(data, allocator = context.allocator)
+		if eerr != nil {
+			fmt.eprintln("chat: could not encode the file")
+			return 1
+		}
+		w.enc_begin(&m, "attach", context.allocator)
+		w.kv_str(&m, "ch", ch)
+		w.kv_str(&m, "name", w.safe_filename(pick_name(args.att_path), context.allocator))
+		w.kv_str(&m, "mime", mime_of(args.att_path))
+		w.kv_str(&m, "text", args.post_txt)
+		if args.thread != 0 {
+			w.kv_int(&m, "thread", args.thread)
+		}
+		w.kv_str(&m, "data", b64)
+	} else {
+		w.enc_begin(&m, "post", context.allocator)
+		w.kv_str(&m, "ch", ch)
+		w.kv_str(&m, "text", args.post_txt)
+		if args.thread != 0 {
+			w.kv_int(&m, "thread", args.thread)
+		}
+	}
 	if !w.send_frame(sock, w.enc_done(&m)) {
 		return 1
 	}
@@ -548,7 +834,7 @@ post_once :: proc(args: Args) -> int {
 			if w.ostr(o, "t") == "message" {
 				if mo, is := w.as_obj(o["msg"] or_else nil); is {
 					if w.ostr(mo, "nick") == args.nick {
-						fmt.printfln("posted #%d to %s", w.oint(mo, "id"), args.post_ch)
+						fmt.printfln("posted #%d to %s", w.oint(mo, "id"), ch)
 						return 0
 					}
 				}

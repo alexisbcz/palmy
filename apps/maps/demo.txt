@@ -1,0 +1,153 @@
+# A tour of the map, at 1500x940.
+#
+# Two things shape this script.
+#
+# Almost everything is driven by the pointer. palmy on a headless compositor
+# currently receives only the first `wtype` invocation — the seat advertises
+# and withdraws its keyboard capability around each one and the client does not
+# re-bind — so the script spends its one reliable burst of keystrokes on the
+# search query and does the rest with clicks. The zoom buttons, the fly-to
+# animation from a search result and the route tool between them cover panning,
+# zooming, searching, routing and markers without needing a second one.
+#
+# And the pointer keeps moving between actions rather than the script simply
+# waiting. An idle palmy window blocks in poll and commits no frames, so a
+# `wait 2` with nothing happening records as nothing at all — the capture ends
+# at the last commit. Moving the pointer over the map updates the coordinate
+# read-out, which asks for a frame, so the recording stays continuous.
+
+wait 1.2
+move 900 400
+wait 0.3
+move 1000 500
+wait 0.3
+
+# --- search ------------------------------------------------------------
+# Click into the search field and type a street name.
+move 230 24
+click
+wait 0.4
+type Harbour
+wait 0.5
+move 700 300
+wait 0.3
+move 800 420
+wait 0.4
+
+# The first result. Clicking it flies the view there: a pan and a zoom in one
+# eased move, which is the pan this demo shows.
+move 160 104
+click
+wait 0.3
+move 700 400
+wait 0.3
+move 760 450
+wait 0.3
+move 820 500
+wait 0.3
+move 880 430
+wait 0.4
+
+# --- zoom --------------------------------------------------------------
+# In three levels with the on-map control, then back out two.
+move 1470 76
+click
+wait 0.5
+click
+wait 0.5
+click
+wait 0.5
+move 900 500
+wait 0.3
+move 820 430
+wait 0.4
+move 1470 113
+click
+wait 0.5
+click
+wait 0.5
+move 760 380
+wait 0.3
+move 900 460
+wait 0.4
+
+# --- routing -----------------------------------------------------------
+# Pick the route tool, then click a start and a destination on the map.
+move 690 24
+click
+wait 0.5
+move 620 300
+click
+wait 0.5
+move 900 500
+wait 0.3
+move 1180 760
+click
+wait 0.6
+move 1000 600
+wait 0.3
+move 900 450
+wait 0.3
+move 800 380
+wait 0.4
+
+# Look at a step: clicking one flies the view to that turn.
+move 160 240
+click
+wait 0.4
+move 800 420
+wait 0.3
+move 880 480
+wait 0.3
+move 950 400
+wait 0.4
+
+# Switch the cost from travel time to distance and watch the route change.
+move 1167 24
+click
+wait 0.5
+move 820 420
+wait 0.3
+move 900 520
+wait 0.3
+move 980 440
+wait 0.4
+
+# --- markers -----------------------------------------------------------
+move 545 24
+click
+wait 0.4
+move 860 420
+click
+wait 0.4
+move 1010 560
+click
+wait 0.5
+move 900 480
+wait 0.3
+move 820 400
+wait 0.4
+
+# --- what was loaded ---------------------------------------------------
+move 181 66
+click
+wait 0.5
+move 700 400
+wait 0.3
+move 800 460
+wait 0.3
+move 900 520
+wait 0.4
+
+# Back to the directions.
+move 114 66
+click
+wait 0.5
+move 760 420
+wait 0.3
+move 860 500
+wait 0.3
+move 960 420
+wait 0.5
+move 700 350
+wait 0.5

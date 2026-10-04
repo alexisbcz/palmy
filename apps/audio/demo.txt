@@ -1,34 +1,24 @@
-# palmy audio — a real spectrum and waveform from the track's own samples.
+# palmy audio — gapless playback, and a spectrum that reaches 8 kHz.
+#
+# Two files holding one continuous frequency sweep. If the join were not
+# gapless the climb would stutter; it does not. The sweep also runs straight
+# through 4 kHz, which is where the old 8 kHz analysis rate stopped.
 wait 1.6
-move 620 700
-wait 3.6
+key Return
+wait 4.0
+key 8
+wait 4.2
+wait 3.5
 key v
-wait 3.6
+wait 3.0
 key v
-wait 2.2
-key Right
-wait 1.4
-key Right
-wait 2.0
+wait 1.6
 key n
 wait 4.5
-key Down
-wait 0.6
-key Down
-wait 0.6
-key Return
+key 9
 wait 4.5
-key s
-wait 1.6
+wait 3.0
 key r
-wait 1.6
-key r
-wait 1.0
-key minus
-wait 0.5
-key minus
-wait 1.6
-key space
-wait 1.6
-key space
-wait 2.2
+wait 1.2
+key 9
+wait 5.0

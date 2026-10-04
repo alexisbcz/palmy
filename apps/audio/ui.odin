@@ -95,7 +95,7 @@ now_playing :: proc(ui: ^p.Ctx, st: ^St) {
 }
 
 vis_label :: proc(ui: ^p.Ctx, st: ^St) {
-	ready, ok, ms, n := analysis_ready(&st.a)
+	ready, ok, ms, n := analysis_ready(ana(st))
 	box := p.row(
 		ui,
 		"absolute items-center gap-2 h-7 px-2.5 rounded-lg bg-background/90 border border-border z-20",
@@ -135,9 +135,11 @@ vis_label :: proc(ui: ^p.Ctx, st: ^St) {
 	p.textf(
 		ui,
 		"text-[11] text-muted-foreground whitespace-nowrap",
-		"%s · %d samples @ 8 kHz · decoded in %.0f ms",
-		st.vis_mode == .Spectrum ? "512-point FFT" : "Oscilloscope",
+		"%s · %d samples @ %d kHz · 0–%d kHz · decoded in %.0f ms",
+		st.vis_mode == .Spectrum ? fmt.tprintf("%d-point FFT", FFT_N) : "Oscilloscope",
 		n,
+		WAVE_RATE / 1000,
+		WAVE_RATE / 2000,
 		ms,
 	)
 	p.style(ui).shrink = 0
@@ -380,8 +382,10 @@ tbutton :: proc(ui: ^p.Ctx, st: ^St, ic: p.Icon, act: TAct, on: bool) {
 		case .Shuffle:
 			st.shuffle = !st.shuffle
 			rebuild_order(st)
+			rethink_next(st)
 		case .Repeat:
 			st.repeat = !st.repeat
+			rethink_next(st)
 		case .Vis:
 			st.vis_mode = st.vis_mode == .Spectrum ? .Scope : .Spectrum
 		}
@@ -572,6 +576,10 @@ top_bar :: proc(ui: ^p.Ctx, st: ^St) {
 			.Outline,
 		)
 	}
+	if nt, armed := engine_prefetched(&st.e); armed {
+		name := nt >= 0 && nt < len(st.list) ? track_title(&st.list[nt]) : "next"
+		sc.badge(ui, fmt.tprintf("Next ready: %s", name), .Secondary)
+	}
 	if st.shuffle {
 		sc.badge(ui, "Shuffle", .Secondary)
 	}
@@ -601,11 +609,14 @@ status_bar :: proc(ui: ^p.Ctx, st: ^St) {
 	p.spacer(ui)
 
 	if st.e.live {
+		written, joins := engine_stats(&st.e)
 		p.textf(
 			ui,
 			"shrink-0 text-[11] text-muted-foreground tabular-nums whitespace-nowrap",
-			"pw-cat · s16 48 kHz stereo · %.2f s written",
-			f64(st.e.bytes) / f64(BPS),
+			"pw-cat · s16 48 kHz stereo · %.2f s written · %d gapless %s",
+			written,
+			joins,
+			joins == 1 ? "join" : "joins",
 		)
 		p.style(ui).shrink = 0
 	}

@@ -64,8 +64,14 @@ Channel :: struct {
 	msgs:    [dynamic]w.Msg,
 	loaded:  bool,
 	more:    bool, // older history exists server-side
-	seen:    i64,  // highest id the user has actually had on screen
-	unread:  int,
+
+	// The read cursor, and the three numbers derived from it. All four come
+	// from the server: `read_id` is the highest id this *person* has read,
+	// persisted there, so closing the client and opening it again finds the
+	// same unread count rather than zero.
+	read_id: i64,
+	unread:  int,  // new messages in the timeline
+	threads: int,  // new replies inside threads, which are not timeline rows
 	mention: bool,
 }
 
@@ -88,6 +94,9 @@ Args :: struct {
 	server:   string,
 	post_ch:  string,
 	post_txt: string,
+	att_ch:   string,
+	att_path: string,
+	thread:   i64,
 	full:     bool,
 }
 
@@ -125,6 +134,22 @@ App :: struct {
 	compose_w:   f32,
 	body_w:      f32,
 	vlines:      [dynamic]Vline,
+
+	// Thread view. `thread_root` is the root message id of the open thread, 0
+	// when none is open. While it is open the composer posts *into* the thread
+	// instead of the channel.
+	thread_root: i64,
+	thread_ch:   string,
+	troot:       w.Msg,
+	tmsgs:       [dynamic]w.Msg,
+	tloaded:     bool,
+	treplies:    int,  // the server's count, which a capped page may fall short of
+	tmore:       bool, // older replies exist that this page does not hold
+
+	// Attachments.
+	pick:        kit.Pick,
+	saving:      string, // where the `file` frame for `saving_rq` should be written
+	saving_rq:   i64,
 
 	// Search.
 	query:       [dynamic]u8,
@@ -165,7 +190,7 @@ main :: proc() {
 	if a.args.selftest {
 		os.exit(selftest(a.args))
 	}
-	if a.args.post_ch != "" {
+	if a.args.post_ch != "" || a.args.att_ch != "" {
 		os.exit(post_once(a.args))
 	}
 	run_ui(a)
@@ -211,6 +236,19 @@ parse_args :: proc() -> Args {
 				out.post_txt = args[i + 2]
 				i += 2
 			}
+		case "--attach":
+			if i + 2 < len(args) {
+				out.att_ch = args[i + 1]
+				out.att_path = args[i + 2]
+				i += 2
+			}
+		case "--thread":
+			if i + 1 < len(args) {
+				i += 1
+				if n, ok := strconv.parse_i64(args[i]); ok {
+					out.thread = n
+				}
+			}
 		case "--help", "-h":
 			fmt.println("palmy-chat client")
 			fmt.println("  --nick NAME      nickname to join as (default $USER)")
@@ -218,6 +256,8 @@ parse_args :: proc() -> Args {
 			fmt.println("  --light          light theme")
 			fmt.println("  --fullscreen     open fullscreen (handy for screenshots)")
 			fmt.println("  --post CH TEXT   post one message and exit")
+			fmt.println("  --attach CH PATH upload one file and exit")
+			fmt.println("  --thread ID      with --post or --attach: reply inside that thread")
 			fmt.println("  --selftest       headless protocol test, no UI")
 			fmt.println("  --server PATH    server binary for --selftest to spawn")
 			os.exit(0)
@@ -272,6 +312,7 @@ run_ui :: proc(a: ^App) {
 	a.query = make([dynamic]u8)
 	a.results = make([dynamic]w.Msg)
 	a.vlines = make([dynamic]Vline)
+	a.tmsgs = make([dynamic]w.Msg)
 	a.pinned = true
 	a.retry_in = 0.4
 	a.tz = tz_offset()
@@ -293,7 +334,11 @@ run_ui :: proc(a: ^App) {
 
 		net_pump(a)
 		expire_typers(a)
-		update_pin(a, ui)
+		// The attach dialog is modal, so the list behind it must not react to
+		// a wheel aimed at the dialog.
+		if !kit.pick_active(&a.pick) {
+			update_pin(a, ui)
+		}
 		handle_keys(ui, app, a)
 		build(ui, a)
 		pin_to_bottom(a, ui)
@@ -368,8 +413,24 @@ msg_at :: proc(c: ^Channel, id: i64) -> ^w.Msg {
 	return nil
 }
 
+// selected resolves the browse cursor. It looks in the open thread as well,
+// because a thread reply is never in the channel timeline and a selection
+// that cannot be resolved silently disables every browse-mode action.
 selected :: proc(a: ^App) -> ^w.Msg {
-	return msg_at(current(a), a.sel_msg)
+	if m := msg_at(current(a), a.sel_msg); m != nil {
+		return m
+	}
+	if a.thread_root != 0 {
+		if a.troot.id == a.sel_msg {
+			return &a.troot
+		}
+		for &m in a.tmsgs {
+			if m.id == a.sel_msg {
+				return &m
+			}
+		}
+	}
+	return nil
 }
 
 switch_to :: proc(a: ^App, i: int) {
@@ -378,6 +439,7 @@ switch_to :: proc(a: ^App, i: int) {
 	}
 	a.cur = i
 	a.sel_msg = 0
+	close_thread(a)
 	a.pinned = true
 	a.new_below = 0
 	a.want_bottom = true
@@ -395,18 +457,44 @@ step_channel :: proc(a: ^App, d: int) {
 	switch_to(a, clamp(a.cur + d, 0, len(a.chans) - 1))
 }
 
-// mark_read is the unread model: a channel is read up to the newest message it
-// holds, and only while the user is actually looking at the bottom of it.
+// mark_read moves the server-side cursor to the newest message on screen, and
+// only while the user is actually looking at the bottom of the channel.
+//
+// The important part is where the number lives. Marking read is a request, not
+// a local assignment: the server stores the cursor against the nickname and
+// echoes back the count it derives from it. So the count a reconnecting client
+// shows is the server's, which is the same one it had before — the old model,
+// "the highest id seen while connected", reset to zero on every reconnect, and
+// that is exactly what this replaces.
 mark_read :: proc(a: ^App) {
 	c := current(a)
 	if c == nil || !a.pinned {
 		return
 	}
+	newest: i64 = 0
 	if len(c.msgs) > 0 {
-		c.seen = max(c.seen, c.msgs[len(c.msgs) - 1].id)
+		newest = c.msgs[len(c.msgs) - 1].id
 	}
+	// A thread reply is not a timeline row, but it shares the one cursor. If
+	// its thread is open and loaded the user is looking at it, so the cursor
+	// may move past it — and that is the only thing that can ever clear this
+	// channel's thread marker.
+	if a.thread_root != 0 && a.tloaded && a.thread_ch == c.name {
+		for m in a.tmsgs {
+			newest = max(newest, m.id)
+		}
+	}
+	if newest <= c.read_id {
+		// The cursor cannot move, so there is nothing to tell the server.
+		// Announcing it anyway would be a round trip per frame that comes
+		// back with the same count — which is how a stale badge becomes a
+		// permanent one.
+		return
+	}
+	c.read_id = newest
 	c.unread = 0
 	c.mention = false
+	send_read(a, c.name, c.read_id)
 }
 
 expire_typers :: proc(a: ^App) {
@@ -507,6 +595,12 @@ jump_to_latest :: proc(a: ^App) {
 // ---------------------------------------------------------------------------
 
 handle_keys :: proc(ui: ^p.Ctx, app: ^p.App, a: ^App) {
+	// The attach dialog owns the keyboard while it is up — it reads its own
+	// input inside `pick_draw`, during the draw pass. Without this early
+	// return an Escape would both cancel the dialog and leave browse mode.
+	if kit.pick_active(&a.pick) {
+		return
+	}
 	if len(ui.input.keys) > 0 || len(p.typed_text(ui)) > 0 {
 		a.last_key = a.now
 		if a.away {
@@ -565,6 +659,18 @@ handle_keys :: proc(ui: ^p.Ctx, app: ^p.App, a: ^App) {
 		jump_to_latest(a)
 		return
 	}
+	if p.shortcut(ui, 't', {.Ctrl}) {
+		if a.thread_root != 0 {
+			close_thread(a)
+		} else {
+			open_thread(a)
+		}
+		return
+	}
+	if p.shortcut(ui, 'o', {.Ctrl}) {
+		begin_attach(a)
+		return
+	}
 	if p.shortcut(ui, 'g', {.Ctrl}) {
 		a.away = !a.away
 		send_presence(a, a.away ? .Away : .Online)
@@ -589,6 +695,8 @@ keys_compose :: proc(ui: ^p.Ctx, a: ^App) {
 	if p.key_pressed(ui, p.KEY_ESCAPE) {
 		if a.editing != 0 || a.replying != 0 {
 			cancel_draft(a)
+		} else if a.thread_root != 0 {
+			close_thread(a)
 		} else {
 			a.mode = .Browse
 			if a.sel_msg == 0 {
@@ -673,7 +781,11 @@ keys_browse :: proc(ui: ^p.Ctx, app: ^p.App, a: ^App) {
 		return
 	}
 	if p.key_pressed(ui, p.KEY_RETURN) || p.key_pressed(ui, p.KEY_KP_ENTER) {
-		a.mode = .Compose
+		if m := selected(a); m != nil && m.replies > 0 && a.thread_root != m.id {
+			open_thread(a)
+		} else {
+			a.mode = .Compose
+		}
 		return
 	}
 	if p.key_pressed(ui, p.KEY_DELETE) {
@@ -694,6 +806,10 @@ keys_browse :: proc(ui: ^p.Ctx, app: ^p.App, a: ^App) {
 			a.mode = .Compose
 		case 'r':
 			begin_reply(a)
+		case 't':
+			open_thread(a)
+		case 'o':
+			save_attachment(a)
 		case 'e':
 			begin_edit(a)
 		case 'd':
@@ -893,6 +1009,184 @@ begin_reply :: proc(a: ^App) {
 	a.mode = .Compose
 }
 
+// ---------------------------------------------------------------------------
+// Threads
+//
+// A thread is a first-class place, not a decoration on a reply. Its root is a
+// message id; its replies carry `thread = <root>` and never appear in the
+// channel timeline. Opening one asks the server for it rather than filtering
+// what happens to be loaded, so a thread is complete even when its replies
+// are older than the history on screen.
+// ---------------------------------------------------------------------------
+
+open_thread :: proc(a: ^App) {
+	c := current(a)
+	m := selected(a)
+	if c == nil {
+		return
+	}
+	if m == nil {
+		// No selection yet: the newest message is the sensible root.
+		select_last(a)
+		m = selected(a)
+		if m == nil {
+			return
+		}
+	}
+	root := m.thread != 0 ? m.thread : m.id
+	if a.thread_root == root {
+		return
+	}
+	a.thread_root = root
+	if a.thread_ch != "" {
+		delete(a.thread_ch, context.allocator)
+	}
+	a.thread_ch = strings.clone(c.name, context.allocator)
+	thread_clear(a)
+	req_thread(a, root)
+	a.mode = .Compose
+}
+
+close_thread :: proc(a: ^App) {
+	if a.thread_root == 0 {
+		return
+	}
+	a.thread_root = 0
+	thread_clear(a)
+}
+
+// thread_clear drops the loaded thread and frees it. The messages in it are
+// clones, and a thread is opened and closed on a keystroke, so clearing the
+// list without freeing leaks a little every time.
+thread_clear :: proc(a: ^App) {
+	a.tloaded = false
+	a.treplies = 0
+	a.tmore = false
+	w.msgs_destroy(&a.tmsgs)
+	w.msg_destroy(&a.troot)
+}
+
+thread_reply_count :: proc(a: ^App) -> int {
+	return max(a.treplies, a.troot.replies)
+}
+
+// ---------------------------------------------------------------------------
+// Attachments
+// ---------------------------------------------------------------------------
+
+begin_attach :: proc(a: ^App) {
+	if a.link != .Online {
+		toast(a, "Not connected — nothing can be uploaded")
+		return
+	}
+	if current(a) == nil {
+		return
+	}
+	kit.pick_begin(
+		&a.pick,
+		.Open_File,
+		{
+			title = "Attach a file",
+			confirm = "Attach",
+			filters = ATTACH_FILTERS[:],
+			dir = os.get_env("PALMY_CHAT_ATTACH_DIR", context.temp_allocator),
+		},
+	)
+}
+
+finish_attach :: proc(a: ^App, path: string) {
+	c := current(a)
+	if c == nil {
+		return
+	}
+	ok, why := send_attach(a, c.name, path, a.thread_root)
+	if !ok {
+		toast(a, why)
+		return
+	}
+	toast(a, fmt.tprintf("Uploading %s…", pick_name(path)))
+	jump_to_latest(a)
+}
+
+// save_attachment asks the server for the selected message's file and writes
+// it next to the user's other downloads. The client never learns the server's
+// path and never asks for one: it asks by message id.
+// save_attachment takes the message it was asked about rather than looking it
+// up again. A thread reply lives in `a.tmsgs`, not in the channel timeline, so
+// re-resolving through `selected()` would fail for exactly the attachment the
+// user just clicked on.
+save_attachment :: proc(a: ^App, msg: ^w.Msg = nil) {
+	m := msg if msg != nil else selected(a)
+	if m == nil || m.file.id == 0 {
+		toast(a, "That message has no attachment")
+		return
+	}
+	dir := download_dir()
+	if err := os.make_directory_all(dir); err != nil && !os.exists(dir) {
+		toast(a, fmt.tprintf("cannot create %s", dir))
+		return
+	}
+	// The name is the server's, so it is sanitised again here: nothing a peer
+	// sends may decide where this process writes.
+	name := w.safe_filename(m.file.name, context.temp_allocator)
+	if !send_fetch(a, m.file.id, fmt.tprintf("%s/%s", dir, name)) {
+		toast(a, "Not connected — nothing was fetched")
+		return
+	}
+	toast(a, fmt.tprintf("Fetching %s…", name))
+}
+
+// download_dir is where a fetched attachment lands. `PALMY_CHAT_DOWNLOADS`
+// exists so the demo recording can point it at a scratch directory instead of
+// dropping files into the user's own ~/Downloads.
+download_dir :: proc() -> string {
+	if v := os.get_env("PALMY_CHAT_DOWNLOADS", context.temp_allocator); v != "" {
+		return v
+	}
+	home, err := os.user_home_dir(context.temp_allocator)
+	if err != nil {
+		return "/tmp"
+	}
+	return fmt.tprintf("%s/Downloads", home)
+}
+
+pick_name :: proc(path: string) -> string {
+	if i := strings.last_index_byte(path, '/'); i >= 0 {
+		return path[i + 1:]
+	}
+	return path
+}
+
+mime_of :: proc(path: string) -> string {
+	lower := strings.to_lower(pick_name(path), context.temp_allocator)
+	switch {
+	case strings.has_suffix(lower, ".png"):
+		return "image/png"
+	case strings.has_suffix(lower, ".jpg"), strings.has_suffix(lower, ".jpeg"):
+		return "image/jpeg"
+	case strings.has_suffix(lower, ".gif"):
+		return "image/gif"
+	case strings.has_suffix(lower, ".webp"):
+		return "image/webp"
+	case strings.has_suffix(lower, ".svg"):
+		return "image/svg+xml"
+	case strings.has_suffix(lower, ".pdf"):
+		return "application/pdf"
+	case strings.has_suffix(lower, ".json"):
+		return "application/json"
+	case strings.has_suffix(lower, ".md"), strings.has_suffix(lower, ".txt"),
+	     strings.has_suffix(lower, ".odin"), strings.has_suffix(lower, ".log"):
+		return "text/plain"
+	}
+	return "application/octet-stream"
+}
+
+ATTACH_FILTERS := [?]kit.Pick_Filter {
+	{label = "Everything", exts = nil},
+	{label = "Images", exts = []string{"png", "jpg", "jpeg", "gif", "webp"}},
+	{label = "Text", exts = []string{"txt", "md", "odin", "json", "log"}},
+}
+
 begin_edit :: proc(a: ^App) {
 	m := selected(a)
 	if m == nil {
@@ -964,7 +1258,10 @@ send_draft :: proc(a: ^App) {
 	if a.editing != 0 {
 		send_edit(a, a.editing, text)
 	} else {
-		send_post(a, c.name, text, a.replying)
+		// With a thread open the composer posts *into* it. That is the whole
+		// difference between a thread and a quoted reply: this never appears
+		// in the channel timeline.
+		send_post(a, c.name, text, a.replying, a.thread_root)
 	}
 	clear(&a.buf)
 	a.caret = 0

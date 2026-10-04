@@ -631,14 +631,44 @@ keys_prompt :: proc(ui: ^p.Ctx, st: ^State) {
 		return
 	}
 	if plain(ui, p.KEY_RETURN) || plain(ui, p.KEY_KP_ENTER) {
-		path := strings.clone(string(st.prompt_buf[:]), context.temp_allocator)
-		kind := st.prompt
-		st.mode = .Doc
-		st.prompt = .None
-		run_prompt(st, kind, path)
+		commit_prompt(st)
 		return
 	}
 	field_edit(ui, &st.prompt_buf, &st.swallow)
+}
+
+// commit_prompt and cancel_prompt are what Return and Escape do, as
+// procedures, so the overlay's own buttons run exactly the same path.
+commit_prompt :: proc(st: ^State) {
+	if st.mode != .Prompt {
+		return
+	}
+	path := strings.clone(string(st.prompt_buf[:]), context.temp_allocator)
+	kind := st.prompt
+	st.mode = .Doc
+	st.prompt = .None
+	run_prompt(st, kind, path)
+}
+
+cancel_prompt :: proc(st: ^State) {
+	st.mode = .Doc
+	st.prompt = .None
+}
+
+// prompt_verb is the word on the overlay's confirm button.
+prompt_verb :: proc(kind: Prompt_Kind) -> string {
+	switch kind {
+	case .Open, .Import_Md, .Import_Docx:
+		return "Open"
+	case .Save_As:
+		return "Save"
+	case .Export_Md, .Export_Html, .Export_Png, .Export_Pdf, .Export_Docx, .Export_Odt, .Export_Rtf:
+		return "Export"
+	case .Insert_Image, .Insert_Table:
+		return "Insert"
+	case .None:
+	}
+	return "OK"
 }
 
 run_prompt :: proc(st: ^State, kind: Prompt_Kind, path: string) {

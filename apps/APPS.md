@@ -152,22 +152,32 @@ capturing another agent's window, keystrokes landing elsewhere, crash toasts in
 frame, and a shared lock that one orphaned process could hold for half an hour
 — came from sharing one seat, and none of it survives here.
 
-Clicks and pointer moves go through `swaymsg seat cursor`, which needs
-`SWAYSOCK`. The script sets it; note that it only inherits automatically into
-sway's *children*, and this script is sway's parent — before that was fixed
-every `swaymsg` in it failed silently, so `move`, `click` and the fullscreen
-step were all no-ops and nothing said so, because each redirected its own
-errors away. If you copy this script, keep that line.
+**Pointer steps do not work on this seat, and demos must be keyboard-driven.**
+The compositor runs with no input devices, so the seat never gains a pointer
+capability and no client is ever sent motion or button. `swaymsg seat cursor`
+reports success anyway — it moves sway's own cursor — which is why this looked
+like it worked for a long time. `wlrctl` speaks the right protocol but its move
+is relative and a click still reaches nobody. Verified by clicking a calculator
+keypad and watching nothing happen. The recorder warns once if a steps file
+uses `move` or `click`.
 
-Always verify the result by extracting frames with
+Every application here is keyboard-usable, which is what makes that acceptable.
+
+Always verify a take by extracting frames with
 `ffmpeg -ss <t> -i out.mp4 -frames:v 1 frame.png` and looking at them.
 
-One residual: each `wtype` invocation attaches a fresh virtual keyboard and
-starts sending immediately, racing the compositor's delivery of focus, so an
-invocation's **first keystroke is occasionally dropped**. That is not a palmy
-bug — `foot` loses it the same way on the same seat — and a priming keypress
-made it worse rather than better. If a step must not lose its first character,
-put a throwaway key before it.
+**The whole take is driven through one `wtype` process.** Running it per step
+cycles the seat's keyboard capability for every keystroke, and a client's
+re-bind is asynchronous — it asks for a keyboard and the keymap and focus
+arrive afterwards, so a key pressed in that window is gone. Two agents measured
+the loss independently at roughly **one key in five**, which is worse than it
+sounds: a dropped key does not merely omit a step, it redirects the ones after
+it, and one take left a mail demo deleting the wrong conversation. Batched,
+three consecutive nine-step runs landed 27 of 27.
+
+`wait` becomes wtype's own `-s`, so waits happen inside that single process.
+A step's text may not begin with `-`; the recorder refuses rather than typing a
+flag into your application.
 
 A private compositor is also the way to drive an app interactively without a
 recording — start one, point `WAYLAND_DISPLAY` at it, and use `grim` for

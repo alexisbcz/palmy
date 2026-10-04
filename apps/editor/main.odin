@@ -59,7 +59,10 @@ Editor :: struct {
 	cur:        Pos,
 	anchor:     Pos,
 	has_sel:    bool,
-	goal:       int, // display column kept across vertical motion
+	// The column vertical motion aims for, measured in display cells from the
+	// start of the caret's *visual* row. With wrap off a row starts at cell 0,
+	// so this is the plain display column and nothing changes.
+	goal:       int,
 	top:        int,
 	left:       int,
 	rows:       int,
@@ -68,8 +71,25 @@ Editor :: struct {
 	gutter:     f32,
 	numbers:    bool,
 	syntax:     bool,
-	odin:       bool, // the file is Odin, so highlighting applies
+	lang:       Lang, // picked from the file name, or cycled by hand
 	stats:      bool,
+
+	// Soft wrap. The top of the window is a logical line plus a sub-row
+	// inside it, because a file too long to wrap is a file too long to count
+	// the visual rows of. `vis` is the rows on screen, rebuilt once a frame so
+	// the gutter and the text iterate the same list; `scratch` is the one
+	// reusable buffer `wrap_count` wraps into.
+	wrap:       bool,
+	top_sub:    int,
+	vis:        [dynamic]Vis,
+	scratch:    [dynamic]Vis,
+
+	// Every caret but the primary one, which stays in `cur`/`anchor` above.
+	// See carets.odin. `type_run` is the undo group a run of multi-caret
+	// typing is accumulating into, so that one Ctrl-Z takes back the word
+	// rather than one letter in every place at once.
+	extra:      [dynamic]Caret,
+	type_run:   int,
 	mode:       Mode,
 	prompt:     Prompt_Kind,
 	field:      Field,
@@ -189,7 +209,7 @@ main :: proc() {
 	} else {
 		buf_init_empty(&ed.buf)
 	}
-	ed.odin = strings.has_suffix(ed.buf.path, ".odin")
+	relang(&ed)
 	retitle(app, &ed)
 
 	defer kit.pick_destroy(&ed.pick)
@@ -197,6 +217,7 @@ main :: proc() {
 	for ui in p.frames(app) {
 		measure(ui, &ed)
 		keys(ui, &ed, app)
+		build_visible(&ed)
 		frame(ui, &ed)
 		retitle(app, &ed)
 		if ed.want_quit {
@@ -232,6 +253,15 @@ dir_of :: proc(path: string) -> string {
 	return ""
 }
 
+// relang re-detects the language and throws away the highlighter's per-line
+// state cache, which was computed under the old grammar.
+relang :: proc(ed: ^Editor) {
+	ed.lang = lang_detect(ed.buf.path, buf_line(&ed.buf, 0))
+	ed.buf.valid = 0
+	clear(&ed.extra)
+	ed.type_run = 0
+}
+
 note :: proc(ed: ^Editor, msg: string) {
 	delete(ed.toast)
 	ed.toast = strings.clone(msg)
@@ -255,6 +285,11 @@ measure :: proc(ui: ^p.Ctx, ed: ^Editor) {
 	ed.rows = max(1, int(body / LINE_H))
 	ed.cols = max(8, int((win.x - ed.gutter - 16) / ed.cw))
 	ed.top = clamp(ed.top, 0, max(0, buf_lines(&ed.buf) - 1))
+	if ed.wrap {
+		// Nothing is off the right edge any more, so there is nothing to
+		// scroll to. Leaving `left` behind would shift every row.
+		ed.left = 0
+	}
 }
 
 // ---------------------------------------------------------------------------
@@ -306,25 +341,49 @@ insert :: proc(ed: ^Editor, text: string, coalesce := Coalesce.No) {
 		ed.cur = buf_apply(&ed.buf, ed.cur, ed.cur, text, ed.cur, coalesce)
 	}
 	clear_sel(ed)
-	ed.goal = disp_of(buf_line(&ed.buf, ed.cur.line), ed.cur.col)
+	goal_set(ed)
+}
+
+// goal_set records where vertical motion should aim, in cells from the start
+// of the caret's visual row.
+goal_set :: proc(ed: ^Editor) {
+	_, dx := caret_vis(ed, ed.cur)
+	ed.goal = dx
+}
+
+// move_vert moves the caret `d` **visual** rows, keeping the goal column. With
+// wrap off a visual row is a logical line and this is the ordinary Up/Down; with
+// wrap on, down-then-up returns to the same place because both directions go
+// through the same pair of conversions.
+move_vert :: proc(ed: ^Editor, d: int) {
+	sub, _ := caret_vis(ed, ed.cur)
+	nl, ns := vis_advance(ed, ed.cur.line, sub, d)
+	if nl == ed.cur.line && ns == sub {
+		return
+	}
+	ed.cur = col_at(ed, nl, ns, ed.goal)
 }
 
 ensure_visible :: proc(ed: ^Editor) {
 	ed.cur = pos_clamp(&ed.buf, ed.cur)
-	if ed.cur.line < ed.top {
-		ed.top = ed.cur.line
-	}
-	if ed.cur.line >= ed.top + ed.rows {
-		ed.top = ed.cur.line - ed.rows + 1
-	}
 	ed.top = clamp(ed.top, 0, max(0, buf_lines(&ed.buf) - 1))
 
-	d := disp_of(buf_line(&ed.buf, ed.cur.line), ed.cur.col)
-	if d < ed.left {
-		ed.left = d
+	sub, dx := caret_vis(ed, ed.cur)
+	if vis_before(ed.cur.line, sub, ed.top, ed.top_sub) {
+		ed.top, ed.top_sub = ed.cur.line, sub
+	} else if vis_gap(ed, ed.top, ed.top_sub, ed.cur.line, sub, ed.rows) >= ed.rows {
+		ed.top, ed.top_sub = vis_advance(ed, ed.cur.line, sub, -(ed.rows - 1))
 	}
-	if d >= ed.left + ed.cols - 1 {
-		ed.left = d - ed.cols + 2
+
+	if ed.wrap {
+		ed.left = 0
+		return
+	}
+	if dx < ed.left {
+		ed.left = dx
+	}
+	if dx >= ed.left + ed.cols - 1 {
+		ed.left = dx - ed.cols + 2
 	}
 	ed.left = max(0, ed.left)
 }
@@ -355,7 +414,16 @@ Cmd :: enum {
 	Bottom,
 	Toggle_Numbers,
 	Toggle_Syntax,
+	Toggle_Wrap,
 	Toggle_Stats,
+	Match_Bracket,
+	Select_Bracket,
+	Cycle_Lang,
+	Cursor_Below,
+	Cursor_Above,
+	Cursor_Next,
+	Cursor_All,
+	Cursor_One,
 	Reload,
 	Help,
 	Quit,
@@ -387,6 +455,15 @@ COMMANDS := [?]Command {
 	{.Del_Line, "Delete Line", "Ctrl K", ICON_TRASH},
 	{.Top, "Go to Start of File", "Ctrl Home", ICON_ARROW_UP},
 	{.Bottom, "Go to End of File", "Ctrl End", ICON_ARROW_DOWN},
+	{.Cursor_Below, "Add Cursor Below", "Ctrl Alt Down", ICON_ARROW_DOWN},
+	{.Cursor_Above, "Add Cursor Above", "Ctrl Alt Up", ICON_ARROW_UP},
+	{.Cursor_Next, "Add Cursor at Next Match", "Ctrl Shift D", ICON_SQUARE_PEN},
+	{.Cursor_All, "Add Cursor at Every Match", "Ctrl Shift L", ICON_SQUARE_PEN},
+	{.Cursor_One, "Back to One Cursor", "Esc", ICON_DOT},
+	{.Match_Bracket, "Go to Matching Bracket", "Ctrl M", ICON_BRACES},
+	{.Select_Bracket, "Select to Matching Bracket", "Ctrl Shift M", ICON_BRACES},
+	{.Toggle_Wrap, "Toggle Soft Wrap", "Alt Z", ICON_CORNER_DOWN_LEFT},
+	{.Cycle_Lang, "Change Language", "Ctrl G", ICON_CODE},
 	{.Toggle_Numbers, "Toggle Line Numbers", "", ICON_LIST_ORDERED},
 	{.Toggle_Syntax, "Toggle Syntax Highlighting", "", ICON_CODE},
 	{.Toggle_Stats, "Toggle Frame Stats", "", ICON_SPARKLES},
@@ -425,6 +502,17 @@ do_save :: proc(ed: ^Editor, path: string) {
 }
 
 do_copy :: proc(ed: ^Editor) {
+	if carets_multi(ed) {
+		// One line per caret, in document order — which is what pasting it
+		// back into the same carets would need.
+		text := carets_text(ed)
+		if kit.clipboard_set(text) {
+			note(ed, tfmt("Copied %d cursors", carets_count(ed)))
+		} else {
+			note(ed, "wl-copy is not installed")
+		}
+		return
+	}
 	lo, hi, ok := sel_range(ed)
 	if !ok {
 		// No selection: copy the whole line, which is what every editor does.
@@ -457,11 +545,20 @@ do_find_step :: proc(ed: ^Editor, backwards: bool) {
 	ed.cur = at
 	ed.anchor = Pos{at.line, at.col + len(needle)}
 	ed.has_sel = true
-	ed.goal = disp_of(buf_line(&ed.buf, at.line), at.col)
+	goal_set(ed)
 	ensure_visible(ed)
 }
 
 run_cmd :: proc(ed: ^Editor, c: Cmd) {
+	// Anything that moves the caret somewhere definite, replaces the buffer,
+	// or rewinds history has one answer, not N. Those collapse to one cursor
+	// rather than doing something arbitrary with the rest.
+	#partial switch c {
+	case .Undo, .Redo, .Select_All, .Goto_Line, .Reload, .Open, .Save_As, .Find,
+	     .Find_Next, .Find_Prev, .Replace, .Top, .Bottom, .Match_Bracket, .Select_Bracket:
+		clear(&ed.extra)
+		ed.type_run = 0
+	}
 	switch c {
 	case .None:
 	case .Open:
@@ -545,8 +642,54 @@ run_cmd :: proc(ed: ^Editor, c: Cmd) {
 		ed.numbers = !ed.numbers
 	case .Toggle_Syntax:
 		ed.syntax = !ed.syntax
+	case .Toggle_Wrap:
+		ed.wrap = !ed.wrap
+		// The caret keeps its place; the goal column is now measured from a
+		// different row start, so it has to be taken again.
+		ed.top_sub = 0
+		ed.left = 0
+		goal_set(ed)
+		ensure_visible(ed)
+		note(ed, ed.wrap ? "Soft wrap on" : "Soft wrap off")
 	case .Toggle_Stats:
 		ed.stats = !ed.stats
+	case .Match_Bracket:
+		at, m, ok := bracket_pair_at_caret(ed)
+		if !ok {
+			note(ed, "No matching bracket here")
+			break
+		}
+		_ = at
+		ed.cur = m
+		clear_sel(ed)
+		goal_set(ed)
+		ensure_visible(ed)
+	case .Select_Bracket:
+		at, m, ok := bracket_pair_at_caret(ed)
+		if !ok {
+			note(ed, "No matching bracket here")
+			break
+		}
+		lo, hi := pos_order(at, m)
+		ed.anchor = lo
+		ed.cur = Pos{hi.line, hi.col + 1}
+		ed.has_sel = true
+		goal_set(ed)
+		ensure_visible(ed)
+	case .Cycle_Lang:
+		ed.lang = Lang((int(ed.lang) + 1) % (int(max(Lang)) + 1))
+		ed.buf.valid = 0
+		note(ed, tfmt("Language: %s", lang_name(ed.lang)))
+	case .Cursor_Below:
+		caret_add_vert(ed, 1)
+	case .Cursor_Above:
+		caret_add_vert(ed, -1)
+	case .Cursor_Next:
+		caret_add_next(ed)
+	case .Cursor_All:
+		caret_add_all(ed)
+	case .Cursor_One:
+		carets_collapse(ed)
 	case .Reload:
 		if ed.buf.path == "" {
 			note(ed, "Nothing to reload")
@@ -555,7 +698,8 @@ run_cmd :: proc(ed: ^Editor, c: Cmd) {
 		path := strings.clone(ed.buf.path, context.temp_allocator)
 		buf_load(&ed.buf, path)
 		ed.cur = {0, 0}
-		ed.top, ed.left = 0, 0
+		ed.top, ed.left, ed.top_sub = 0, 0, 0
+		relang(ed)
 		clear_sel(ed)
 		note(ed, tfmt("Reloaded %s", base_of(path)))
 	case .Help:
@@ -638,12 +782,23 @@ keys :: proc(ui: ^p.Ctx, ed: ^Editor, app: ^p.App) {
 
 	switch ed.mode {
 	case .Help:
+		// The keystroke that opened this sheet can still be in flight — a
+		// press and its release do not always land in the same frame — and
+		// without the guard the Return that chose "Keyboard Shortcuts" in the
+		// palette closes the sheet again before it has been seen. `swallow`
+		// is set by whatever opened it and spends exactly one frame.
+		if swallow {
+			return
+		}
 		if plain(ui, p.KEY_ESCAPE) || plain(ui, p.KEY_RETURN) || plain(ui, p.KEY_F1) {
 			ed.mode = .Edit
 		}
 		return
 
 	case .Confirm_Quit:
+		if swallow {
+			return
+		}
 		if plain(ui, p.KEY_ESCAPE) {
 			ed.mode = .Edit
 			return
@@ -702,6 +857,16 @@ keys :: proc(ui: ^p.Ctx, ed: ^Editor, app: ^p.App) {
 	}
 
 	// ---- Commands -------------------------------------------------------
+	// Escape has two jobs, and the more urgent one wins: with several cursors
+	// up, it puts them away. Only then does it open the palette.
+	if plain(ui, p.KEY_ESCAPE) && carets_multi(ed) {
+		carets_collapse(ed)
+		return
+	}
+	if p.shortcut(ui, p.KEY_ESCAPE, {.Shift}) && carets_multi(ed) {
+		carets_collapse(ed)
+		return
+	}
 	if plain(ui, p.KEY_ESCAPE) || p.shortcut(ui, 'p', {.Ctrl}) {
 		ed.mode = .Palette
 		ed.pal_sel = 0
@@ -765,6 +930,38 @@ keys :: proc(ui: ^p.Ctx, ed: ^Editor, app: ^p.App) {
 		run_cmd(ed, .Quit)
 		return
 	}
+	if p.shortcut(ui, 'z', {.Alt}) || p.shortcut(ui, 'Z', {.Alt}) {
+		run_cmd(ed, .Toggle_Wrap)
+		return
+	}
+	if p.shortcut(ui, 'm', {.Ctrl}) {
+		run_cmd(ed, .Match_Bracket)
+		return
+	}
+	if p.shortcut(ui, 'm', {.Ctrl, .Shift}) || p.shortcut(ui, 'M', {.Ctrl, .Shift}) {
+		run_cmd(ed, .Select_Bracket)
+		return
+	}
+	if p.shortcut(ui, 'g', {.Ctrl}) {
+		run_cmd(ed, .Cycle_Lang)
+		return
+	}
+	if p.shortcut(ui, p.KEY_DOWN, {.Ctrl, .Alt}) {
+		run_cmd(ed, .Cursor_Below)
+		return
+	}
+	if p.shortcut(ui, p.KEY_UP, {.Ctrl, .Alt}) {
+		run_cmd(ed, .Cursor_Above)
+		return
+	}
+	if p.shortcut(ui, 'd', {.Ctrl, .Shift}) || p.shortcut(ui, 'D', {.Ctrl, .Shift}) {
+		run_cmd(ed, .Cursor_Next)
+		return
+	}
+	if p.shortcut(ui, 'l', {.Ctrl, .Shift}) || p.shortcut(ui, 'L', {.Ctrl, .Shift}) {
+		run_cmd(ed, .Cursor_All)
+		return
+	}
 	if plain(ui, p.KEY_F5) {
 		run_cmd(ed, .Reload)
 		return
@@ -782,7 +979,7 @@ keys :: proc(ui: ^p.Ctx, ed: ^Editor, app: ^p.App) {
 		step := int(ed.scroll_acc)
 		if step != 0 {
 			ed.scroll_acc -= f32(step)
-			ed.top = clamp(ed.top - step, 0, max(0, buf_lines(&ed.buf) - 1))
+			ed.top, ed.top_sub = vis_advance(ed, ed.top, ed.top_sub, -step)
 		}
 	}
 
@@ -790,6 +987,16 @@ keys :: proc(ui: ^p.Ctx, ed: ^Editor, app: ^p.App) {
 	//
 	// Horizontal motion rewrites the goal column; vertical motion keeps it, so
 	// walking down past a short line and back up returns to the same column.
+	// With several cursors up, motion and editing both go through the
+	// multi-caret path and nothing falls through to the single-caret one —
+	// otherwise a key it did not handle would move the primary caret and
+	// leave the rest behind, which looks exactly like the editor losing them.
+	if carets_multi(ed) {
+		multi_motion(ui, ed)
+		multi_edit(ui, ed, swallow)
+		return
+	}
+
 	moved_h := false
 	moved_v := false
 	for k in ui.input.keys {
@@ -824,49 +1031,49 @@ keys :: proc(ui: ^p.Ctx, ed: ^Editor, app: ^p.App) {
 			moved_h = true
 		case p.KEY_UP:
 			begin_sel(ed, shift)
-			if ed.cur.line > 0 {
-				ed.cur.line -= 1
-				ed.cur.col = byte_of(buf_line(&ed.buf, ed.cur.line), ed.goal)
-			}
+			move_vert(ed, -1)
 			moved_v = true
 		case p.KEY_DOWN:
 			begin_sel(ed, shift)
-			if ed.cur.line + 1 < buf_lines(&ed.buf) {
-				ed.cur.line += 1
-				ed.cur.col = byte_of(buf_line(&ed.buf, ed.cur.line), ed.goal)
-			}
+			move_vert(ed, 1)
 			moved_v = true
 		case p.KEY_PAGE_UP:
 			begin_sel(ed, shift)
-			ed.cur.line = max(0, ed.cur.line - ed.rows)
-			ed.cur.col = byte_of(buf_line(&ed.buf, ed.cur.line), ed.goal)
-			ed.top = max(0, ed.top - ed.rows)
+			move_vert(ed, -ed.rows)
+			ed.top, ed.top_sub = vis_advance(ed, ed.top, ed.top_sub, -ed.rows)
 			moved_v = true
 		case p.KEY_PAGE_DOWN:
 			begin_sel(ed, shift)
-			ed.cur.line = min(buf_lines(&ed.buf) - 1, ed.cur.line + ed.rows)
-			ed.cur.col = byte_of(buf_line(&ed.buf, ed.cur.line), ed.goal)
-			ed.top = min(max(0, buf_lines(&ed.buf) - 1), ed.top + ed.rows)
+			move_vert(ed, ed.rows)
+			ed.top, ed.top_sub = vis_advance(ed, ed.top, ed.top_sub, ed.rows)
 			moved_v = true
 		case p.KEY_HOME:
 			begin_sel(ed, shift)
-			if ctrl {
+			switch {
+			case ctrl:
 				ed.cur = {0, 0}
-			} else {
-				// First press goes to the first non-blank, like a real editor.
-				l := buf_line(&ed.buf, ed.cur.line)
-				i := 0
-				for i < len(l) && (l[i] == ' ' || l[i] == '\t') {
-					i += 1
+			case ed.wrap:
+				// Wrapped, Home means the start of the visual row; on the
+				// first row of a line that is still the first non-blank.
+				sub, _ := caret_vis(ed, ed.cur)
+				if sub > 0 {
+					ed.cur = col_at(ed, ed.cur.line, sub, 0)
+				} else {
+					ed.cur.col = home_col(ed)
 				}
-				ed.cur.col = ed.cur.col == i ? 0 : i
+			case:
+				ed.cur.col = home_col(ed)
 			}
 			moved_h = true
 		case p.KEY_END:
 			begin_sel(ed, shift)
-			if ctrl {
+			switch {
+			case ctrl:
 				ed.cur = buf_end(&ed.buf)
-			} else {
+			case ed.wrap:
+				sub, _ := caret_vis(ed, ed.cur)
+				ed.cur = col_at(ed, ed.cur.line, sub, max(int))
+			case:
 				ed.cur.col = len(buf_line(&ed.buf, ed.cur.line))
 			}
 			moved_h = true
@@ -875,7 +1082,7 @@ keys :: proc(ui: ^p.Ctx, ed: ^Editor, app: ^p.App) {
 	if moved_h || moved_v {
 		ed.cur = pos_clamp(&ed.buf, ed.cur)
 		if moved_h {
-			ed.goal = disp_of(buf_line(&ed.buf, ed.cur.line), ed.cur.col)
+			goal_set(ed)
 		}
 		ensure_visible(ed)
 	}
@@ -883,6 +1090,11 @@ keys :: proc(ui: ^p.Ctx, ed: ^Editor, app: ^p.App) {
 	// ---- Editing --------------------------------------------------------
 	for _ in 0 ..< p.key_count(ui, p.KEY_BACKSPACE) {
 		if delete_sel(ed) {
+			continue
+		}
+		// The pair appeared in one keystroke, so it goes in one keystroke.
+		if backspace_pair(ed) {
+			ensure_visible(ed)
 			continue
 		}
 		if ed.cur.col > 0 {
@@ -900,7 +1112,7 @@ keys :: proc(ui: ^p.Ctx, ed: ^Editor, app: ^p.App) {
 				.Back,
 			)
 		}
-		ed.goal = disp_of(buf_line(&ed.buf, ed.cur.line), ed.cur.col)
+		goal_set(ed)
 		ensure_visible(ed)
 	}
 	for _ in 0 ..< p.key_count(ui, p.KEY_DELETE) {
@@ -917,6 +1129,12 @@ keys :: proc(ui: ^p.Ctx, ed: ^Editor, app: ^p.App) {
 		ensure_visible(ed)
 	}
 	for _ in 0 ..< p.key_count(ui, p.KEY_RETURN) {
+		// Return between an empty pair opens a block rather than leaving the
+		// closing half stranded at the end of the new line.
+		if return_in_pair(ed) {
+			ensure_visible(ed)
+			continue
+		}
 		// Auto-indent: carry the leading whitespace of the current line.
 		l := buf_line(&ed.buf, ed.cur.line)
 		i := 0
@@ -937,6 +1155,107 @@ keys :: proc(ui: ^p.Ctx, ed: ^Editor, app: ^p.App) {
 		ensure_visible(ed)
 	}
 	if typed := p.typed_text(ui); len(typed) > 0 && !swallow {
+		type_text(ed, typed)
+	}
+}
+
+// type_text is the path every printable keystroke takes.
+//
+// Plain characters are still batched into one insert — a paste or a fast
+// burst must not become one edit per byte — but a character that might open or
+// close a pair is handled on its own, so the pending run is flushed first.
+// Every pair character is ASCII, so scanning bytes can never split a rune.
+type_text :: proc(ed: ^Editor, typed: string) {
+	pending := make([dynamic]u8, 0, len(typed), context.temp_allocator)
+
+	flush :: proc(ed: ^Editor, pending: ^[dynamic]u8) {
+		if len(pending) == 0 {
+			return
+		}
+		insert(ed, string(pending[:]), .Type)
+		clear(pending)
+		ensure_visible(ed)
+	}
+
+	for b in transmute([]u8)typed {
+		if b < 0x20 || b == 0x7f {
+			continue
+		}
+		_, opens := auto_pair_open(b)
+		_, closes := auto_pair_close(b)
+		if opens || closes {
+			flush(ed, &pending)
+			if type_bracket(ed, b) {
+				ensure_visible(ed)
+				continue
+			}
+		}
+		append(&pending, b)
+	}
+	flush(ed, &pending)
+}
+
+// home_col is the first non-blank, or 0 if the caret is already there — the
+// two-step Home every real editor has.
+home_col :: proc(ed: ^Editor) -> int {
+	l := buf_line(&ed.buf, ed.cur.line)
+	i := 0
+	for i < len(l) && (l[i] == ' ' || l[i] == '\t') {
+		i += 1
+	}
+	return ed.cur.col == i ? 0 : i
+}
+
+// multi_motion moves every caret. A key it does not recognise is ignored
+// rather than handed on: with several cursors up there is no single-caret
+// path to hand it to.
+multi_motion :: proc(ui: ^p.Ctx, ed: ^Editor) {
+	for k in ui.input.keys {
+		if .Alt in k.mods || .Super in k.mods {
+			continue
+		}
+		shift := .Shift in k.mods
+		ctrl := .Ctrl in k.mods
+		m: Caret_Motion
+		switch k.sym {
+		case p.KEY_LEFT:
+			m = ctrl ? .Word_Left : .Left
+		case p.KEY_RIGHT:
+			m = ctrl ? .Word_Right : .Right
+		case p.KEY_UP:
+			m = .Up
+		case p.KEY_DOWN:
+			m = .Down
+		case p.KEY_HOME:
+			m = .Home
+		case p.KEY_END:
+			m = .End
+		case p.KEY_PAGE_UP, p.KEY_PAGE_DOWN:
+			// Paging with a dozen cursors means nothing, so it means one.
+			carets_collapse(ed)
+			continue
+		case:
+			continue
+		}
+		carets_move(ed, m, shift)
+	}
+}
+
+// multi_edit is the editing half: one keystroke, every caret, one undo step.
+multi_edit :: proc(ui: ^p.Ctx, ed: ^Editor, swallow: bool) {
+	for _ in 0 ..< p.key_count(ui, p.KEY_BACKSPACE) {
+		carets_edit(ed, .Backspace)
+	}
+	for _ in 0 ..< p.key_count(ui, p.KEY_DELETE) {
+		carets_edit(ed, .Delete)
+	}
+	for _ in 0 ..< p.key_count(ui, p.KEY_RETURN) {
+		carets_edit(ed, .Newline)
+	}
+	if n, _, _ := held(ui, p.KEY_TAB); n > 0 {
+		carets_edit(ed, .Tab)
+	}
+	if typed := p.typed_text(ui); len(typed) > 0 && !swallow {
 		keep := make([dynamic]u8, 0, len(typed), context.temp_allocator)
 		for b in transmute([]u8)typed {
 			if b >= 0x20 && b != 0x7f {
@@ -944,8 +1263,10 @@ keys :: proc(ui: ^p.Ctx, ed: ^Editor, app: ^p.App) {
 			}
 		}
 		if len(keep) > 0 {
-			insert(ed, string(keep[:]), .Type)
-			ensure_visible(ed)
+			// Auto-close is deliberately not applied at every caret: a pair
+			// inserted in five places where only one of them was in front of
+			// whitespace would be five different results from one keystroke.
+			carets_edit(ed, .Insert, string(keep[:]))
 		}
 	}
 }
@@ -1055,7 +1376,7 @@ prompt_keys :: proc(ui: ^p.Ctx, ed: ^Editor, swallow: bool) {
 			}
 		case .Save_As:
 			do_save(ed, string(ed.target[:]))
-			ed.odin = strings.has_suffix(ed.buf.path, ".odin")
+			relang(ed)
 			ed.mode = .Edit
 			ed.prompt = .None
 		case .None:

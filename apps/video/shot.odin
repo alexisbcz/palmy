@@ -179,6 +179,28 @@ apply_keys :: proc(st: ^St, keys: string) {
 			start_playing(st)
 		case key == "mute":
 			engine_mute(&st.e, !st.e.muted)
+		case key == "subs":
+			subs_cycle(&st.subs, 1)
+		case key == "panel":
+			st.subs.panel = !st.subs.panel
+		case key == "hide":
+			st.subs.show = !st.subs.show
+		case key == "faster":
+			engine_set_speed(&st.e, engine_speed(&st.e) + SPEED_STEP)
+		case key == "slower":
+			engine_set_speed(&st.e, engine_speed(&st.e) - SPEED_STEP)
+		case key == "chapnext":
+			if t, ok := chapter_seek_target(st.e.m.chapters, engine_clock(&st.e), 1); ok {
+				seek_to(st, t)
+			}
+		case key == "chapprev":
+			if t, ok := chapter_seek_target(st.e.m.chapters, engine_clock(&st.e), -1); ok {
+				seek_to(st, t)
+			}
+		case strings.has_prefix(key, "speed"):
+			if v, ok := strconv.parse_f64(key[5:]); ok {
+				engine_set_speed(&st.e, v)
+			}
 		case strings.has_prefix(key, "seek"):
 			if v, ok := strconv.parse_f64(key[4:]); ok {
 				seek_to(st, v)

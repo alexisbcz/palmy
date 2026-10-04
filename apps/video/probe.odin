@@ -44,6 +44,25 @@ Media :: struct {
 	album:       string,
 	date:        string,
 	has_cover:   bool,
+
+	// Subtitle streams inside the container, and the chapter marks.
+	subs:        []Sub_Stream,
+	chapters:    []Chapter,
+}
+
+// Sub_Stream is one `codec_type == "subtitle"` entry: enough to name it in a
+// picker and to ask ffmpeg for it by index.
+Sub_Stream :: struct {
+	index:  int,
+	codec:  string,
+	lang:   string,
+	title:  string,
+	bitmap: bool, // a picture codec, so there is no text to extract
+}
+
+Chapter :: struct {
+	start, end: f64,
+	title:      string,
 }
 
 // probe_file runs ffprobe and reads the answer.
@@ -57,6 +76,7 @@ probe_file :: proc(path: string) -> Media {
 			"json",
 			"-show_format",
 			"-show_streams",
+			"-show_chapters",
 			path,
 		},
 		context.temp_allocator,
@@ -106,6 +126,7 @@ parse_probe :: proc(out: string, path: string) -> Media {
 		}
 	}
 
+	subs := make([dynamic]Sub_Stream)
 	if s, has := obj["streams"]; has {
 		if arr, a := s.(json.Array); a {
 			for v in arr {
@@ -162,10 +183,31 @@ parse_probe :: proc(out: string, path: string) -> Media {
 					if d := jnum(so["duration"]); d > m.duration {
 						m.duration = d
 					}
+				case "subtitle":
+					codec := jstr(so["codec_name"])
+					lang, title := "", ""
+					if t, th := so["tags"]; th {
+						if to, o2 := t.(json.Object); o2 {
+							lang = tag(to, "language", "LANGUAGE")
+							title = tag(to, "title", "TITLE")
+						}
+					}
+					append(
+						&subs,
+						Sub_Stream {
+							index = int(jnum(so["index"])),
+							codec = strings.clone(codec),
+							lang = strings.clone(lang),
+							title = strings.clone(title),
+							bitmap = is_bitmap_sub(codec),
+						},
+					)
 				}
 			}
 		}
 	}
+	m.subs = subs[:]
+	m.chapters = parse_chapters_obj(obj)
 
 	if !m.has_video && !m.has_audio {
 		m.err = "no audio or video stream in this file"
@@ -186,6 +228,127 @@ parse_probe :: proc(out: string, path: string) -> Media {
 	m.album = strings.clone(m.album)
 	m.date = strings.clone(m.date)
 	return m
+}
+
+// parse_chapters reads `ffprobe -show_chapters` out of a whole document, which
+// is how the selftest feeds it one without running ffprobe.
+parse_chapters :: proc(out: string) -> []Chapter {
+	root, jerr := json.parse_string(out, .JSON, false, context.temp_allocator)
+	if jerr != .None {
+		return nil
+	}
+	obj, is_obj := root.(json.Object)
+	if !is_obj {
+		return nil
+	}
+	return parse_chapters_obj(obj)
+}
+
+// parse_chapters_obj turns the `chapters` array into a sorted, usable list.
+// ffprobe gives `start`/`end` in the chapter's own time base and
+// `start_time`/`end_time` in seconds; the seconds are what a player wants, and
+// the time base is the fallback when a build omits them.
+@(private)
+parse_chapters_obj :: proc(obj: json.Object) -> []Chapter {
+	out := make([dynamic]Chapter)
+	arr_v, has := obj["chapters"]
+	if !has {
+		return out[:]
+	}
+	arr, a := arr_v.(json.Array)
+	if !a {
+		return out[:]
+	}
+	for v in arr {
+		co, o := v.(json.Object)
+		if !o {
+			continue
+		}
+		start := jnum(co["start_time"])
+		end := jnum(co["end_time"])
+		if co["start_time"] == nil || co["end_time"] == nil {
+			tb := parse_rate(jstr(co["time_base"]))
+			if tb > 0 {
+				start = jnum(co["start"]) * tb
+				end = jnum(co["end"]) * tb
+			}
+		}
+		if end < start {
+			start, end = end, start
+		}
+		title := ""
+		if t, th := co["tags"]; th {
+			if to, o2 := t.(json.Object); o2 {
+				title = tag(to, "title", "TITLE")
+			}
+		}
+		append(
+			&out,
+			Chapter{start = start, end = end, title = title == "" ? "" : strings.clone(title)},
+		)
+	}
+	// Chapter order is not guaranteed by the container, and the UI binary
+	// searches it.
+	for i in 1 ..< len(out) {
+		c := out[i]
+		j := i - 1
+		for j >= 0 && out[j].start > c.start {
+			out[j + 1] = out[j]
+			j -= 1
+		}
+		out[j + 1] = c
+	}
+	// An untitled chapter is numbered by where it ends up, not by where it sat
+	// in the document: the number a player shows has to match the list.
+	for i in 0 ..< len(out) {
+		if out[i].title == "" {
+			out[i].title = fmt.aprintf("Chapter %d", i + 1)
+		}
+	}
+	return out[:]
+}
+
+// chapter_at is the chapter covering a media time, or -1 before the first one.
+// `end_time` is trusted where it is sane and the next chapter's start is used
+// where it is not, because a container is free to leave gaps.
+chapter_at :: proc(chs: []Chapter, t: f64) -> int {
+	for c, i in chs {
+		if t < c.start - 1e-9 {
+			return i - 1
+		}
+		next := i + 1 < len(chs) ? chs[i + 1].start : max(c.end, c.start)
+		limit := c.end > c.start ? max(c.end, next) : next
+		if t < limit || i == len(chs) - 1 {
+			return i
+		}
+	}
+	return len(chs) - 1
+}
+
+// chapter_seek_target is where next/previous should land. Previous rewinds to
+// the start of the current chapter unless we only just entered it, which is
+// what every player does and what makes the key usable twice in a row.
+chapter_seek_target :: proc(chs: []Chapter, t: f64, d: int) -> (f64, bool) {
+	if len(chs) == 0 {
+		return 0, false
+	}
+	i := chapter_at(chs, t)
+	if d > 0 {
+		if i + 1 < len(chs) {
+			return chs[i + 1].start, true
+		}
+		return 0, false
+	}
+	if i < 0 {
+		return 0, false
+	}
+	if t - chs[i].start > 3.0 {
+		return chs[i].start, true
+	}
+	if i > 0 {
+		return chs[i - 1].start, true
+	}
+	return chs[i].start, true
 }
 
 @(private)

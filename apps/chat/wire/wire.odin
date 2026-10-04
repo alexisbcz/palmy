@@ -68,16 +68,77 @@ React :: struct {
 	nicks: [dynamic]string,
 }
 
+// Attach is the metadata half of an attachment: the bytes live in the
+// server's own store and are fetched by id, never inlined into history.
+Attach :: struct {
+	id:   i64, // 0 when the message carries no file
+	name: string,
+	mime: string,
+	size: int,
+}
+
 Msg :: struct {
-	id:       i64,
-	ch:       string,
-	nick:     string,
-	text:     string,
-	ts:       i64, // unix seconds
-	edited:   i64, // unix seconds, 0 when never edited
-	deleted:  bool,
-	reply_to: i64, // 0 when not a reply
-	reacts:   [dynamic]React,
+	id:         i64,
+	ch:         string,
+	nick:       string,
+	text:       string,
+	ts:         i64, // unix seconds
+	edited:     i64, // unix seconds, 0 when never edited
+	deleted:    bool,
+	reply_to:   i64, // 0 when not a reply: a quoted stub in the channel
+	reacts:     [dynamic]React,
+
+	// Threads. `thread` is the id of the root message this is a reply *inside*
+	// of, and a message with `thread != 0` never appears in the channel
+	// timeline. A root carries the count of its replies and when the last one
+	// landed, so a timeline row can show "4 replies" without loading them.
+	thread:     i64,
+	replies:    int,
+	last_reply: i64,
+
+	file:       Attach,
+}
+
+// Threads are exactly one level deep: a reply inside a thread belongs to the
+// same root, never to the reply it answers, so the server normalises a
+// requested root to the real one before it stores anything.
+
+// An attachment is capped well below MAX_FRAME, because it travels base64'd
+// inside one JSON frame: 512 KiB of bytes is 699 KiB of base64, which still
+// leaves room for the envelope.
+MAX_ATTACH :: 512 * 1024
+
+// safe_filename reduces whatever a client claims to a single path component
+// that cannot escape a directory: no separators, no dots at the front, and a
+// closed character set. It is the only name the server will ever join onto its
+// store path, and it is applied on both ends so a malicious name is refused
+// before it is sent as well as after it arrives.
+safe_filename :: proc(raw: string, allocator := context.temp_allocator) -> string {
+	b := strings.builder_make(allocator)
+	for i in 0 ..< len(raw) {
+		c := raw[i]
+		switch {
+		case c >= 'a' && c <= 'z', c >= 'A' && c <= 'Z', c >= '0' && c <= '9':
+			strings.write_byte(&b, c)
+		case c == '.' || c == '-' || c == '_':
+			// A leading dot would make a hidden file, and "..", so only ever
+			// after something else has been written.
+			if strings.builder_len(b) > 0 {
+				strings.write_byte(&b, c)
+			}
+		case c == ' ':
+			if strings.builder_len(b) > 0 {
+				strings.write_byte(&b, '_')
+			}
+		}
+		if strings.builder_len(b) >= 60 {
+			break
+		}
+	}
+	if strings.builder_len(b) == 0 {
+		strings.write_string(&b, "file")
+	}
+	return strings.to_string(b)
 }
 
 // The reaction vocabulary is fixed, and deliberately not emoji: the UI font
@@ -289,6 +350,26 @@ msg_json :: proc(m: Msg, allocator := context.temp_allocator) -> string {
 	if m.reply_to != 0 {
 		kv_int(&e, "reply_to", m.reply_to)
 	}
+	if m.thread != 0 {
+		kv_int(&e, "thread", m.thread)
+	}
+	if m.replies > 0 {
+		kv_int(&e, "replies", i64(m.replies))
+		kv_int(&e, "last_reply", m.last_reply)
+	}
+	if m.file.id != 0 {
+		fb := strings.builder_make(allocator)
+		strings.write_string(&fb, "{\"id\":")
+		fmt.sbprintf(&fb, "%d", m.file.id)
+		strings.write_string(&fb, ",\"name\":")
+		write_json_string(&fb, m.file.name)
+		strings.write_string(&fb, ",\"mime\":")
+		write_json_string(&fb, m.file.mime)
+		strings.write_string(&fb, ",\"size\":")
+		fmt.sbprintf(&fb, "%d", m.file.size)
+		strings.write_byte(&fb, '}')
+		kv_raw(&e, "file", strings.to_string(fb))
+	}
 	if len(m.reacts) > 0 {
 		rb := strings.builder_make(allocator)
 		strings.write_byte(&rb, '[')
@@ -396,14 +477,25 @@ as_str :: proc(v: json.Value) -> string {
 // msg_from decodes a message object, cloning every string into `allocator`.
 msg_from :: proc(o: json.Object, allocator := context.allocator) -> Msg {
 	m := Msg {
-		id       = oint(o, "id"),
-		ch       = strings.clone(ostr(o, "ch"), allocator),
-		nick     = strings.clone(ostr(o, "nick"), allocator),
-		text     = strings.clone(ostr(o, "text"), allocator),
-		ts       = oint(o, "ts"),
-		edited   = oint(o, "edited"),
-		deleted  = obool(o, "deleted"),
-		reply_to = oint(o, "reply_to"),
+		id         = oint(o, "id"),
+		ch         = strings.clone(ostr(o, "ch"), allocator),
+		nick       = strings.clone(ostr(o, "nick"), allocator),
+		text       = strings.clone(ostr(o, "text"), allocator),
+		ts         = oint(o, "ts"),
+		edited     = oint(o, "edited"),
+		deleted    = obool(o, "deleted"),
+		reply_to   = oint(o, "reply_to"),
+		thread     = oint(o, "thread"),
+		replies    = int(oint(o, "replies")),
+		last_reply = oint(o, "last_reply"),
+	}
+	if fo, has := as_obj(o["file"] or_else nil); has {
+		m.file = Attach {
+			id   = oint(fo, "id"),
+			name = strings.clone(ostr(fo, "name"), allocator),
+			mime = strings.clone(ostr(fo, "mime"), allocator),
+			size = int(oint(fo, "size")),
+		}
 	}
 	m.reacts = make([dynamic]React, allocator)
 	for rv in oarr(o, "reacts") {
@@ -421,6 +513,35 @@ msg_from :: proc(o: json.Object, allocator := context.allocator) -> Msg {
 		append(&m.reacts, r)
 	}
 	return m
+}
+
+// msg_destroy frees everything `msg_from` cloned. The client holds copies of
+// messages in three places — a channel, the search results and the open
+// thread — and the thread is cleared and refilled on a keystroke, so dropping
+// them without this leaks a little every time a thread is opened.
+msg_destroy :: proc(m: ^Msg, allocator := context.allocator) {
+	delete(m.ch, allocator)
+	delete(m.nick, allocator)
+	delete(m.text, allocator)
+	delete(m.file.name, allocator)
+	delete(m.file.mime, allocator)
+	for &r in m.reacts {
+		for n in r.nicks {
+			delete(n, allocator)
+		}
+		delete(r.nicks)
+		delete(r.key, allocator)
+	}
+	delete(m.reacts)
+	m^ = Msg{}
+}
+
+// msgs_destroy empties a list and frees what was in it.
+msgs_destroy :: proc(list: ^[dynamic]Msg, allocator := context.allocator) {
+	for &m in list {
+		msg_destroy(&m, allocator)
+	}
+	clear(list)
 }
 
 // react_add / react_remove keep the reaction list canonical: one entry per

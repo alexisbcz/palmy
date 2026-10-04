@@ -1,0 +1,90 @@
+# A walk through the shop, recorded at 1440x900 on a private headless
+# compositor:
+#
+#   rm -f ~/.local/share/palmy-shop/state.txt
+#   SHOP_DEMO=1 bash apps/tools/headless-record.sh \
+#       apps/shop/shop.bin apps/shop/demo.mp4 apps/shop/demo.txt 1440 900
+#
+# This script is entirely keyboard-driven, and that is not a stylistic choice.
+# On the headless seat the pointer never reaches the window at all: with the
+# app logging every input event, `swaymsg seat seat0 cursor set/press/release`
+# produced zero motion events and zero button events, while both `wtype`
+# invocations in the same run were delivered. So `move`/`click` steps are no
+# use here — see the report — and every step below is a key the application
+# binds anyway, because it is meant to be usable without a mouse.
+#
+# The first step is a throwaway: the recorder notes that an invocation's first
+# keystroke is occasionally dropped while the compositor is still delivering
+# the keymap, and Escape on the opening screen does nothing.
+
+wait 2.0
+key Escape
+wait 0.6
+
+# Search. Accent-insensitive: "creme fraiche" finds "Crème fraîche épaisse".
+key slash
+wait 0.4
+type creme fraiche
+wait 2.6
+
+# Walk down the results. The arrows work while the search box still has the
+# keyboard, which is what a shopper does without thinking.
+key Down
+wait 0.5
+key Down
+wait 1.6
+
+# Enter compares that product across the chains, ordered on the price per kilo
+# rather than on the sticker price.
+key Return
+wait 4.0
+
+# Put it in the basket.
+key a
+wait 1.6
+
+# The basket: per-chain subtotals and the TVA broken down by rate.
+key 3
+wait 4.0
+
+# Back to the catalogue, and sort the whole thing on the prix au kilo.
+key 1
+wait 1.2
+key u
+wait 3.0
+
+# Narrow to what is graded A or B on the Nutri-Score: n steps the ceiling.
+key n
+wait 1.6
+key n
+wait 3.0
+
+# Take one of those and put it on the shopping list.
+key Down
+wait 0.8
+key l
+wait 1.0
+key Down
+wait 0.6
+key l
+wait 1.0
+key Down
+wait 0.6
+key l
+wait 1.2
+
+# The list, grouped by rayon, with what it costs at the cheapest chain.
+key 4
+wait 4.0
+
+# Arm a price alert and look at the price history.
+key 1
+wait 1.0
+key b
+wait 1.2
+key 5
+wait 4.0
+
+# The keyboard map.
+key question
+wait 4.0
