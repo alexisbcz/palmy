@@ -1,0 +1,6 @@
+# Spelling, against vale's built-in en_US dictionary plus the accept list in
+# config/vocabularies/Palm. No network and no `vale sync` is involved: the
+# dictionary ships inside the vale binary.
+extends: spelling
+message: "'%s' is not a word this document has declared."
+level: error

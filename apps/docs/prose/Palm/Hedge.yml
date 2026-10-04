@@ -1,0 +1,28 @@
+# Intensifiers and hedges that carry no information: delete one and the
+# sentence means exactly what it did before, which is the test for being on
+# this list. `suggestion`, because a few of them are load-bearing in the right
+# sentence and the writer is the one who can tell.
+extends: existence
+message: "'%s' adds length, not meaning."
+level: suggestion
+ignorecase: true
+tokens:
+  - very
+  - really
+  - quite
+  - rather
+  - somewhat
+  - fairly
+  - basically
+  - actually
+  - essentially
+  - virtually
+  - literally
+  - extremely
+  - incredibly
+  - totally
+  - definitely
+  - obviously
+  - clearly
+  - arguably
+  - simply

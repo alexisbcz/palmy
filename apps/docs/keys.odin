@@ -283,6 +283,16 @@ keys_commands :: proc(ui: ^p.Ctx, st: ^State) {
 		fire(st)
 	}
 
+	// --- prose. Ctrl+G opens the problems panel and checks; the four Alt keys
+	// work the alert the caret is sitting in, so the panel never has to be
+	// clicked to use the feature from the keyboard.
+	if p.shortcut(ui, 'g', {.Ctrl}) {prose_toggle(st);fire(st)}
+	if p.shortcut(ui, 'n', {.Alt}) {prose_step(st, 1);fire(st)}
+	if p.shortcut(ui, 'p', {.Alt}) {prose_step(st, -1);fire(st)}
+	if p.shortcut(ui, 'y', {.Alt}) {prose_accept(st);fire(st)}
+	if p.shortcut(ui, 'x', {.Alt}) {prose_ignore(st);fire(st)}
+	if p.shortcut(ui, 'x', {.Alt, .Shift}) {prose_restore_rules(st);fire(st)}
+
 	if p.shortcut(ui, 'a', {.Ctrl}) {select_all(st);fire(st)}
 	if plain(ui, KEY_F10) {
 		toggle_mark(st)

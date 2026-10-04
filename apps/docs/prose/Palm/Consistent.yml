@@ -1,0 +1,14 @@
+# Pairs where both spellings are correct and only one of them can be this
+# document's. It fires only when both appear, so a document that picked one and
+# stayed with it never sees this rule at all.
+extends: consistency
+message: "'%s' is inconsistent with the other spelling used here."
+level: warning
+ignorecase: true
+either:
+  advisor: adviser
+  judgement: judgment
+  organise: organize
+  colour: color
+  centre: center
+  analyse: analyze

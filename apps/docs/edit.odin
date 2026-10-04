@@ -102,6 +102,10 @@ State :: struct {
 	// keeps the runs here and a paste uses them when the text still matches.
 	clip_doc:   Doc,
 	clip_text:  string,
+
+	// The prose checker: alerts mapped back into this model, the panel, and
+	// the rules switched off for this document. See prose.odin.
+	prose:      Prose,
 }
 
 state_init :: proc(st: ^State, fonts: ^p.Fonts) {
@@ -117,6 +121,7 @@ state_init :: proc(st: ^State, fonts: ^p.Fonts) {
 	st.focus_doc = true
 	st.caret_on = true
 	st.dirty = true
+	prose_init(&st.prose)
 }
 
 note :: proc(st: ^State, msg: string) {
@@ -302,6 +307,10 @@ edit_begin :: proc(st: ^State, kind: Edit_Kind) {
 	history_begin(&st.hist, &st.doc, st.caret, st.anchor, kind)
 	st.modified = true
 	st.dirty = true
+	// The single hook the prose checker needs: every edit in the program goes
+	// through here, and all it does is note that the alerts are now about an
+	// older document. Nothing runs until the typing stops -- see prose_tick.
+	prose_mark_stale(st)
 }
 
 drop_selection :: proc(st: ^State) -> bool {
@@ -1539,6 +1548,11 @@ replace_document :: proc(st: ^State, nd: Doc) {
 	st.hscroll = 0
 	st.dirty = true
 	st.modified = false
+	// The alerts belonged to the document that is gone. Keeping them would
+	// draw squiggles over whatever text now happens to sit at those offsets.
+	prose_clear_alerts(&st.prose)
+	st.prose.ran = false
+	st.prose.stale = true
 }
 
 do_save :: proc(st: ^State, path: string) {

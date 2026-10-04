@@ -1,0 +1,22 @@
+# Sentence-style capitalization in headings, which is the house choice and the
+# one a document cannot be half-way through. Proper nouns that would otherwise
+# trip it go in `exceptions`, and anything longer-lived belongs in the accept
+# vocabulary instead.
+extends: capitalization
+scope: heading
+match: $sentence
+level: suggestion
+message: "'%s' should read as a sentence, not a Title."
+exceptions:
+  - Odin
+  - Markdown
+  - Palmframe
+  - Unicode
+  - Wayland
+  - A4
+  - PDF
+  - June
+  - July
+  - August
+  - September
+  - October

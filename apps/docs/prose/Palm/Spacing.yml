@@ -1,0 +1,9 @@
+# Whitespace before punctuation that closes a clause. Mechanical, not stylistic:
+# no English sentence wants a space there, and it survives a paste out of a PDF
+# or a line-wrapped email, which is where it almost always comes from.
+extends: existence
+message: "Remove the space before '%s'."
+level: error
+nonword: true
+raw:
+  - ' +[,.;:!?](?:\s|$)'
