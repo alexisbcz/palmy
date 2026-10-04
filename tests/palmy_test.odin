@@ -768,3 +768,41 @@ count_ink :: proc(off: ^p.Offscreen) -> int {
 	}
 	return n
 }
+
+@(test)
+test_icon_rotation :: proc(t: ^testing.T) {
+	// A horizontal bar rotated a quarter turn must become vertical. This is
+	// what lets a spinner actually spin — palmy has no transform, so rotation
+	// is applied to the flattened path before stroking.
+	bar := p.Icon{name = "test-bar", d = "M4 12 L20 12", view = 24, stroke = 2}
+
+	render :: proc(bar: p.Icon, turns: f32) -> (wide, tall: int) {
+		off := p.offscreen_create(48, 48, 1, "w-full h-full bg-white")
+		defer p.offscreen_destroy(off)
+		for _ in 0 ..< 2 {
+			ui := p.offscreen_begin(off)
+			p.div(ui, "w-full h-full items-center justify-center")
+			p.icon(ui, bar, "size-10 text-black", turns)
+			p.end(ui)
+			p.offscreen_end(off)
+		}
+		// Count ink along the middle row and the middle column.
+		for x in 0 ..< 48 {
+			if p.offscreen_pixel(off, x, 24).r < 128 {wide += 1}
+		}
+		for y in 0 ..< 48 {
+			if p.offscreen_pixel(off, 24, y).r < 128 {tall += 1}
+		}
+		return
+	}
+
+	w0, h0 := render(bar, 0)
+	testing.expect(t, w0 > h0 * 2, "unrotated, the bar is wide and not tall")
+
+	w90, h90 := render(bar, 0.25)
+	testing.expect(t, h90 > w90 * 2, "a quarter turn makes it tall and not wide")
+
+	// A full turn is the same as none.
+	w360, h360 := render(bar, 1.0)
+	testing.expect(t, abs(w360 - w0) <= 1 && abs(h360 - h0) <= 1, "a whole turn is a no-op")
+}

@@ -214,6 +214,7 @@ paint_node :: proc(ctx: ^Ctx, c: ^Canvas, idx: int) {
 			inner.y + (inner.h - side) / 2,
 			side,
 			with_opacity(fg, o),
+			n.icon_turns,
 		)
 
 	case .Text:

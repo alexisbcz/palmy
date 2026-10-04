@@ -677,6 +677,13 @@ on_event :: proc(w: ^Window, id: u32, opcode: u16, r: ^Reader) {
 				}
 				linux.close(fd)
 			}
+			// Drop any repeat in flight: it was captured under the previous
+			// keymap, and resolving its keycode against the new one would
+			// deliver a different character. Virtual keyboards (wtype, remote
+			// input) attach and detach constantly, re-sending the keymap each
+			// time, so this is not a rare path.
+			w.repeat_key = 0
+			w.repeat_sym = 0
 		case 1:
 			w.input.focused = true
 		case 2:
