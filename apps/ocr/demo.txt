@@ -1,0 +1,39 @@
+# palmy ocr — a five-page generated scan becomes an EPUB.
+#
+# Keyboard only: pointer events do not reach a client on the recorder's seat.
+# Nothing here is a document of the user's, and nothing here touches a network.
+
+wait 1.4
+
+# Convert. Five pages of 1-bit scan through tesseract.
+key c
+wait 7.0
+
+# What the geometry said about every block: page, column, size, confidence.
+key 2
+wait 3.2
+
+# Why it did what it did — the running header and footer it removed, the
+# columns it found, which paragraph signal the document uses.
+key 3
+wait 4.0
+
+# Back to the readable result.
+key 1
+wait 2.6
+
+# Ask for the hosted recogniser. There is no API key on this machine, so it
+# refuses and says so, and the badge in the corner stays local.
+key b
+wait 3.4
+
+# Write the EPUB. It goes to ~/.local/share/palmy-ocr, which is the only
+# directory this program writes.
+key e
+wait 3.0
+
+# The keys.
+key question
+wait 3.0
+key Escape
+wait 1.2
