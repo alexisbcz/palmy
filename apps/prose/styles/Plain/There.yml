@@ -1,0 +1,12 @@
+extends: existence
+message: "'%s' delays the subject."
+description: |
+  "There are three reasons why..." spends four words before the sentence has a
+  subject. The repair is mechanical: find the real subject further along and
+  put it first.
+level: suggestion
+ignorecase: true
+tokens:
+  - there (?:is|are|was|were) (?:a |an |the |some |no |several |many |two |three )?\w+ (?:that|which|who)
+  - it is (?:important|necessary|possible|clear|evident|worth noting) that
+  - what (?:is|was) (?:important|needed|required) (?:is|was)

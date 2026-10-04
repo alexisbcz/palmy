@@ -1,0 +1,13 @@
+extends: repetition
+message: "'%s' is written twice in a row."
+description: |
+  A doubled word survives a dozen readings of your own draft and is caught
+  instantly by everyone else.
+level: error
+ignorecase: true
+alpha: true
+tokens:
+  # Two letters at least. `\w+` is what Vale's own examples use, and it
+  # flags the "R. R" of "J. R. R. Tolkien" — correct by the rule and wrong
+  # as advice, so the shipped packs ask for a word rather than a letter.
+  - '\b(\w{2,})\b'

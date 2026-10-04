@@ -1,0 +1,24 @@
+extends: substitution
+message: "'%s' is the clearer term as well as the better one; '%s' is not."
+description: |
+  Each of these replacements is also more precise about what the thing does.
+  "Allowlist" says what is on it; "whitelist" says only what colour it is.
+level: suggestion
+ignorecase: true
+swap:
+  whitelist: allowlist
+  whitelisted: allowlisted
+  blacklist: blocklist
+  blacklisted: blocklisted
+  master branch: main branch
+  master/slave: primary/replica
+  master node: primary node
+  slave node: replica node
+  sanity check: coherence check
+  dummy value: placeholder value
+  grandfathered: legacy
+  man in the middle: on-path
+  native speaker: fluent speaker
+  cakewalk: easy
+  gyp(?:ped)?: cheated
+  grandfather clause: legacy clause

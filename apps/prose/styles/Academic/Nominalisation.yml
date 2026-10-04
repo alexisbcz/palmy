@@ -1,0 +1,16 @@
+extends: existence
+message: "'%s' buries the verb in a noun."
+description: |
+  Academic prose is the natural home of the nominalisation, and the cost is
+  specific: "the investigation of the correlation" cannot say who investigated
+  or what they found, so the methods section loses its agent.
+level: suggestion
+ignorecase: true
+tokens:
+  - (?:the|an?) (?:investigation|examination|evaluation|determination|identification|characteri[sz]ation|quantification|utili[sz]ation|implementation|optimi[sz]ation) of
+  - (?:perform|performs|performed|performing) (?:an? )?(?:analysis|measurement|calculation|comparison|evaluation)
+  - (?:conduct|conducts|conducted|conducting) (?:an? )?(?:analysis|investigation|examination|assessment)
+  - (?:make|makes|made|making) (?:an? )?(?:comparison|assessment|determination|observation)
+  - is suggestive of
+  - is indicative of
+  - is reflective of

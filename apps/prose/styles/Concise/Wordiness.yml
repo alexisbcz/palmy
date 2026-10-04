@@ -1,0 +1,31 @@
+extends: substitution
+message: "'%s' does the work of '%s'."
+description: |
+  One word for several, where the several were never carrying anything extra.
+level: error
+ignorecase: true
+swap:
+  in order to: to
+  so as to: to
+  for the reason that: because
+  due to the fact that: because
+  in spite of the fact that: although
+  on the grounds that: because
+  in the final analysis: finally
+  a majority of: most
+  a sufficient amount of: enough
+  at this juncture: now
+  during the course of: during
+  for the duration of: during
+  in the vicinity of: near
+  is of the view that: thinks
+  has the capability to: can
+  in the absence of: without
+  on a daily basis: daily
+  with the result that: so
+  in excess of: over
+  not later than: by
+  until such time as: until
+  by means of: by
+  in connection with: about
+  as a consequence of: because of

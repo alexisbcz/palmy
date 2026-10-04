@@ -1,0 +1,24 @@
+extends: substitution
+message: "'%s', not '%s'."
+description: |
+  A column inch is finite and a reader's attention more so. These are the
+  substitutions a wire desk makes without thinking about them.
+level: warning
+ignorecase: true
+swap:
+  in order to: to
+  at the present time: now
+  in the event that: if
+  due to the fact that: because
+  despite the fact that: although
+  prior to: before
+  subsequent to: after
+  a number of: several
+  in close proximity to: near
+  came to the conclusion: concluded
+  is of the opinion that: thinks
+  made the announcement: announced
+  gave an indication: indicated
+  police officials: police
+  fire officials: firefighters
+  weather event: storm

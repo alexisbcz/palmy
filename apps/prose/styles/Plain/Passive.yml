@@ -1,0 +1,11 @@
+extends: existence
+message: "Passive voice: '%s'. Name who does it."
+description: |
+  The passive is not wrong, and English needs it — when the actor is unknown,
+  irrelevant, or deliberately withheld. It is a problem when it hides the
+  actor by accident, because the reader then cannot tell who is supposed to do
+  the thing. "The form must be signed" never says by whom.
+level: suggestion
+ignorecase: true
+tokens:
+  - \b(?:am|are|is|was|were|be|been|being)\s+(?:\w+ed|awoken|beaten|become|begun|bent|bitten|blown|broken|brought|built|burnt|bought|caught|chosen|come|cut|dealt|done|drawn|driven|drunk|eaten|fallen|fed|felt|fought|found|flown|forbidden|forgotten|forgiven|frozen|given|gone|grown|heard|held|hidden|hit|hurt|kept|known|laid|led|left|lent|let|lain|lost|made|meant|met|paid|put|read|ridden|rung|risen|run|said|seen|sold|sent|set|shaken|shone|shot|shown|shut|sung|sunk|sat|slept|slid|sown|spoken|spent|spun|spread|stood|stolen|struck|sworn|swept|swum|swung|taken|taught|torn|told|thought|thrown|understood|woken|worn|won|written)\b

@@ -1,0 +1,40 @@
+extends: substitution
+message: "'%s' is shorter than '%s'."
+description: |
+  These are phrases that take four words to do one word's work. Replacing them
+  does not simplify the idea — it stops the sentence spending its first third
+  on nothing.
+level: warning
+ignorecase: true
+swap:
+  in order to: to
+  in the event that: if
+  in the event of: if
+  for the purpose of: to
+  with regard to: about
+  with reference to: about
+  in regard to: about
+  in relation to: about
+  with the exception of: except
+  due to the fact that: because
+  owing to the fact that: because
+  in spite of the fact that: although
+  despite the fact that: although
+  at this point in time: now
+  at the present time: now
+  in the near future: soon
+  on a regular basis: regularly
+  in the majority of cases: usually
+  a large number of: many
+  a small number of: a few
+  the vast majority of: most
+  prior to: before
+  subsequent to: after
+  in close proximity to: near
+  has the ability to: can
+  is able to: can
+  make a decision: decide
+  take into consideration: consider
+  give consideration to: consider
+  conduct an investigation: investigate
+  provide assistance to: help

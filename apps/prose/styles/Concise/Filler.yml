@@ -1,0 +1,25 @@
+extends: existence
+message: "'%s' can go without loss."
+description: |
+  Delete the phrase and read the sentence again. If the meaning is identical,
+  the phrase was doing nothing except delaying it.
+level: warning
+ignorecase: true
+tokens:
+  - it (?:is|was) (?:important|worth|interesting) to note that
+  - needless to say
+  - as a matter of fact
+  - the fact (?:is|of the matter is) that
+  - for what it(?:'| i)s worth
+  - in my(?:\s+\w+)? opinion
+  - i (?:think|believe|feel) that
+  - it (?:seems|appears) that
+  - when all is said and done
+  - at the end of the day
+  - last but not least
+  - in conclusion
+  - first of all
+  - with that (?:being )?said
+  - that (?:being|said) said
+  - the thing is
+  - you see

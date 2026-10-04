@@ -1,0 +1,33 @@
+extends: substitution
+message: "'%s' says it without borrowing a disability as an insult; '%s' does not."
+description: |
+  These are words whose literal meaning is a medical condition and whose
+  figurative meaning is "bad". Using them that way is a small cost to the
+  writer and a repeated one to anyone who has the condition.
+level: warning
+ignorecase: true
+swap:
+  crazy: unreasonable
+  insane: extreme
+  lame: weak
+  dumb: pointless
+  retarded: delayed
+  crippled: hampered
+  blind to: unaware of
+  deaf to: unresponsive to
+  tone[- ]deaf: careless
+  spazzed: panicked
+  psychotic: erratic
+  schizophrenic: inconsistent
+  bipolar: inconsistent
+  OCD about: meticulous about
+  committed suicide: died by suicide
+  wheelchair[- ]bound: wheelchair user
+  confined to a wheelchair: a wheelchair user
+  the disabled: disabled people
+  the blind: blind people
+  the deaf: deaf people
+  suffers from: has
+  afflicted with: has
+  victim of: person with
+  normal person: person without the condition

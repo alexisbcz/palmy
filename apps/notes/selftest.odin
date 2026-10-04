@@ -12,6 +12,7 @@ import "core:fmt"
 import "core:os"
 import "core:strings"
 import p "palmy:."
+import prose "../prose"
 
 checks: int
 failures: int
@@ -21,6 +22,14 @@ check :: proc(ok: bool, what: string) {
 	if !ok {
 		failures += 1
 		fmt.printfln("  FAIL  %s", what)
+	}
+}
+
+check_int :: proc(got, want: int, what: string) {
+	checks += 1
+	if got != want {
+		failures += 1
+		fmt.printfln("  FAIL  %s: got %d, want %d", what, got, want)
 	}
 }
 
@@ -60,6 +69,7 @@ run_selftest :: proc() {
 	test_list_continue()
 	test_buffer()
 	test_wrap()
+	test_prose()
 
 	if failures == 0 {
 		fmt.printfln("notes selftest: %d checks passed", checks)
@@ -391,4 +401,292 @@ test_wrap :: proc() {
 	check(len(w.rows) < n, "a wider column needs fewer rows")
 
 	p.offscreen_end(off)
+}
+
+
+// ---------------------------------------------------------------------------
+// The writing coach
+// ---------------------------------------------------------------------------
+//
+// The engine has its own suite (`prose --selftest`, 380 checks). What is
+// asserted here is only what the *application* adds: that an alert's offsets
+// land on the right bytes of the line-array buffer, that accepting a
+// suggestion goes through the undo stack rather than around it, and that
+// picking a different style changes what is flagged.
+
+PROSE_SAMPLE :: `# Quarterly update
+
+We will utilize the synergy going forward in order to leverage our core
+competencies, and it is my understanding that a decision was taken.
+
+- Obviously we should just run the migration
+- The the plan is clearly very simple
+
+` + "```" + `
+utilize(very, really);
+` + "```" + `
+
+See http://example.com/utilize/very for the proposal.
+`
+
+test_prose :: proc() {
+	// Text measurement is not needed, but `touch` and `prose_touch` want a
+	// context for the clock, and the offscreen renderer provides one with no
+	// compositor involved.
+	off := p.offscreen_create(900, 600)
+	defer p.offscreen_destroy(off)
+	ui := p.offscreen_begin(off)
+	defer p.offscreen_end(off)
+
+	nt := Notes{}
+	nt.dir = strings.clone("/tmp/palmy-notes-selftest-prose")
+	defer delete(nt.dir)
+	if !os.is_dir(nt.dir) {
+		os.make_directory(nt.dir)
+	}
+	// Start from a clean slate so a previous run's prose.conf cannot change
+	// what this one sees.
+	os.remove(fmt.tprintf("%s/%s", nt.dir, PROSE_CONF))
+	buf_init_empty(&nt.buf)
+	load_text(&nt.buf, PROSE_SAMPLE)
+	nt.open_path = strings.clone(fmt.tprintf("%s/quarterly-update.md", nt.dir))
+	defer delete(nt.open_path)
+
+	prose_init(&nt)
+	defer prose_destroy(&nt)
+	check(nt.pr.ready, "the engine loaded")
+	check(len(nt.pr.eng.errors) == 0, "every shipped rule file compiled")
+	check(len(nt.pr.eng.packs) == 6, "six style packs are available")
+
+	// --- offsets ---------------------------------------------------------
+	check_int(doc_offset(&nt, Pos{0, 0}), 0, "the first position is offset zero")
+	for li in 0 ..< buf_lines(&nt.buf) {
+		off2 := doc_offset(&nt, Pos{li, 0})
+		back := doc_pos(&nt, off2)
+		checks += 1
+		if back.line != li || back.col != 0 {
+			failures += 1
+			fmt.printfln("  FAIL  doc_pos(doc_offset(line %d)) = %v", li, back)
+		}
+	}
+
+	// --- a full pass -----------------------------------------------------
+	set_style :: proc(nt: ^Notes, name: string) -> int {
+		i := prose.pack_index(&nt.pr.eng, name)
+		nt.pr.style = max(0, i)
+		prose_invalidate(nil, nt)
+		prose_force(nt)
+		return len(nt.pr.alerts)
+	}
+
+	n_business := set_style(&nt, "Business")
+	check(n_business > 3, "Business finds several issues in the sample")
+
+	// Every alert's span has to name the bytes it claims to, or the marks sit
+	// under the wrong words and an accepted suggestion eats the wrong text.
+	text := note_text(&nt, context.temp_allocator)
+	bad := 0
+	for a in nt.pr.alerts {
+		if a.from < 0 || a.to > len(text) || a.to <= a.from {
+			bad += 1
+			continue
+		}
+		if a.match != text[a.from:a.to] {
+			bad += 1
+			fmt.printfln("  FAIL  %s claims %q but the note has %q", a.rule, a.match, text[a.from:a.to])
+		}
+	}
+	check_int(bad, 0, "every alert's span is exactly the text it reports")
+
+	// --- nothing fires in code or a URL ----------------------------------
+	fence := strings.index(text, "```")
+	url := strings.index(text, "http://")
+	check(fence > 0 && url > 0, "the sample has a code fence and a URL")
+	fence_end := strings.index(text[fence + 3:], "```") + fence + 6
+	for pack in ([?]string{"Plain", "Business", "Academic", "Journalistic", "Inclusive", "Concise"}) {
+		set_style(&nt, pack)
+		inside := 0
+		for a in nt.pr.alerts {
+			if a.from >= fence && a.to <= fence_end {
+				inside += 1
+				fmt.printfln("  FAIL  %s fired inside the code fence: %q", a.rule, a.match)
+			}
+			if a.from >= url && a.from < url + 36 {
+				inside += 1
+				fmt.printfln("  FAIL  %s fired inside the URL: %q", a.rule, a.match)
+			}
+		}
+		check_int(inside, 0, fmt.tprintf("%s fires nothing in code or a URL", pack))
+	}
+
+	// --- picking a style changes what is flagged -------------------------
+	names_for :: proc(nt: ^Notes, allocator := context.temp_allocator) -> string {
+		sb := strings.builder_make(allocator)
+		for a in nt.pr.alerts {
+			strings.write_string(&sb, a.rule)
+			strings.write_byte(&sb, ' ')
+		}
+		return strings.to_string(sb)
+	}
+	set_style(&nt, "Business")
+	biz := strings.clone(names_for(&nt), context.temp_allocator)
+	nbiz := len(nt.pr.alerts)
+	set_style(&nt, "Concise")
+	con := strings.clone(names_for(&nt), context.temp_allocator)
+	ncon := len(nt.pr.alerts)
+	check(nbiz > 0 && ncon > 0, "both packs flag something")
+	check(biz != con, "switching style packs changes the alert set")
+	check(
+		strings.contains(biz, "Business.Buzzwords") && !strings.contains(con, "Business"),
+		"and the rules that fired come from the pack that was picked",
+	)
+	set_style(&nt, "Inclusive")
+	check(len(nt.pr.alerts) != nbiz || names_for(&nt) != biz, "a third pack differs again")
+
+	// --- accepting a suggestion goes through the undo stack --------------
+	set_style(&nt, "Business")
+	before := strings.clone(note_text(&nt, context.temp_allocator), context.temp_allocator)
+	undo_before := len(nt.buf.undo)
+
+	pick := -1
+	for a, i in nt.pr.alerts {
+		if a.has_fix && a.fix != "" {
+			pick = i
+			break
+		}
+	}
+	check(pick >= 0, "at least one issue offers a concrete rewrite")
+	if pick >= 0 {
+		a := nt.pr.alerts[pick]
+		nt.pr.mark = pick
+		nt.cur = doc_pos(&nt, a.from)
+		prose_apply(ui, &nt)
+
+		after := note_text(&nt, context.temp_allocator)
+		check(after != before, "applying the suggestion changed the note")
+		check(strings.contains(after, a.fix), "the replacement is in the text")
+		check_int(len(nt.buf.undo), undo_before + 1, "it added exactly one undo entry")
+
+		cur, ok := buf_undo(&nt.buf)
+		check(ok, "and Ctrl-Z has something to undo")
+		_ = cur
+		check_eq(
+			note_text(&nt, context.temp_allocator),
+			before,
+			"undo restores the note byte for byte",
+		)
+		// Redo puts it back, which is the other half of being on the stack.
+		cur2, ok2 := buf_redo(&nt.buf)
+		check(ok2, "and redo has something to redo")
+		_ = cur2
+		check(strings.contains(note_text(&nt, context.temp_allocator), a.fix), "redo re-applies it")
+		buf_undo(&nt.buf)
+	}
+
+	// --- the paragraph pass agrees with the full pass ---------------------
+	// This is the whole basis for re-reading one paragraph per keystroke.
+	set_style(&nt, "Concise")
+	full_names := strings.clone(names_for(&nt), context.temp_allocator)
+	full_n := len(nt.pr.alerts)
+	para := strings.index(text, "- Obviously")
+	nt.pr.doc_len = len(note_text(&nt, context.temp_allocator))
+	nt.pr.win_from = para
+	nt.pr.win_to = para + 10
+	nt.pr.dirty = true
+	prose_tick_now(&nt)
+	check_int(len(nt.pr.alerts), full_n, "a window pass leaves the alert count unchanged")
+	check_eq(names_for(&nt), full_names, "and the same rules in the same order")
+
+	// --- dismissing ------------------------------------------------------
+	set_style(&nt, "Concise")
+	n_all := len(nt.pr.alerts)
+	if n_all > 0 {
+		nt.pr.mark = 0
+		dropped := strings.clone(nt.pr.alerts[0].rule, context.temp_allocator)
+		prose_dismiss(ui, &nt, true)
+		check(len(nt.pr.alerts) < n_all, "dismissing a rule removes its marks")
+		still := false
+		for a in nt.pr.alerts {
+			if a.rule == dropped {
+				still = true
+			}
+		}
+		check(!still, "and it stops firing")
+
+		// It survives a restart: the settings live beside the notes.
+		nt2 := Notes{}
+		nt2.dir = strings.clone(nt.dir)
+		defer delete(nt2.dir)
+		nt2.open_path = strings.clone(nt.open_path)
+		defer delete(nt2.open_path)
+		buf_init_empty(&nt2.buf)
+		load_text(&nt2.buf, PROSE_SAMPLE)
+		prose_init(&nt2)
+		defer prose_destroy(&nt2)
+		found := false
+		for d in nt2.pr.dismissed {
+			if d == dropped {
+				found = true
+			}
+		}
+		check(found, "the dismissal is still there after a restart")
+
+		prose_undismiss_all(ui, &nt)
+		check_int(len(nt.pr.alerts), n_all, "restoring brings every rule back")
+
+		// The same, for one note only.
+		nt.pr.mark = 0
+		only_here := strings.clone(nt.pr.alerts[0].rule, context.temp_allocator)
+		prose_dismiss(ui, &nt, false)
+		check(len(nt.pr.alerts) < n_all, "a note-local dismissal removes its marks too")
+		prose_conf_apply_note(&nt)
+		found_local := false
+		for d in nt.pr.note_dismissed {
+			if d == only_here {
+				found_local = true
+			}
+		}
+		check(found_local, "and is written against this note's file name")
+		prose_undismiss_all(ui, &nt)
+	}
+
+	// --- a per-note style overrides the global one, and only for that note -
+	{
+		prose_set_style(ui, &nt, prose.pack_index(&nt.pr.eng, "Plain"), false)
+		check_eq(prose_style_name(&nt), "Plain", "the global style is Plain")
+		prose_set_style(ui, &nt, prose.pack_index(&nt.pr.eng, "Academic"), true)
+		check_eq(prose_style_name(&nt), "Academic", "this note is Academic")
+		// Opening a note with no style of its own falls back to the global
+		// one rather than inheriting the previous note's.
+		other := strings.clone(nt.open_path, context.temp_allocator)
+		delete(nt.open_path)
+		nt.open_path = strings.clone(fmt.tprintf("%s/another.md", nt.dir))
+		prose_conf_apply_note(&nt)
+		check_eq(prose_style_name(&nt), "Plain", "another note falls back to the global style")
+		delete(nt.open_path)
+		nt.open_path = strings.clone(other)
+		prose_conf_apply_note(&nt)
+		check_eq(prose_style_name(&nt), "Academic", "and the first note keeps its own")
+		prose_set_style(ui, &nt, prose.pack_index(&nt.pr.eng, "Business"), false)
+	}
+
+	// --- the report ------------------------------------------------------
+	set_style(&nt, "Business")
+	check(nt.pr.have_report, "a full pass produces a report")
+	rp := &nt.pr.report
+	check(rp.words > 40, "which counts the words")
+	check(rp.sentences > 2, "and the sentences")
+	check(rp.grade_ok, "and produces a grade")
+	check(strings.contains(prose.band(rp.grade_mean), " "), "a grade always arrives with a band")
+	check(rp.caveat != "", "and the caveat travels with it")
+	check(len(rp.issues) > 0, "the recurring-issue tally is not empty")
+
+	// --- off means off ---------------------------------------------------
+	prose_toggle(ui, &nt)
+	check(!nt.pr.on, "the checks can be switched off")
+	check_int(len(nt.pr.alerts), 0, "and every mark goes with them")
+	prose_toggle(ui, &nt)
+	check(nt.pr.on && len(nt.pr.alerts) > 0, "and come back")
+
+	os.remove(fmt.tprintf("%s/%s", nt.dir, PROSE_CONF))
 }

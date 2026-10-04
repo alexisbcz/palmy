@@ -1,0 +1,27 @@
+extends: existence
+message: "'%s' is conversational. Say it plainly instead."
+description: |
+  An informal phrase in a formal argument reads as a lapse rather than a
+  choice, and the reader starts attending to the writing instead of the claim.
+level: warning
+ignorecase: true
+tokens:
+  - a lot of
+  - lots of
+  - kind of
+  - sort of
+  - stuff
+  - things like that
+  - and so on and so forth
+  - you know
+  - pretty much
+  - a bit
+  - big time
+  - get rid of
+  - come up with
+  - figure out
+  - look into
+  - deal with
+  - a couple of
+  - nowadays
+  - these days

@@ -6,6 +6,15 @@ import "core:strings"
 import kit "kit:."
 import p "palmy:."
 
+// palmy names F1..F5 and F11; the rest are perfectly ordinary keysyms that
+// libxkbcommon hands over, so they are named here rather than in the toolkit.
+// Each one also has a Ctrl-letter twin, because when libxkbcommon is missing
+// palmy falls back to a scancode table that stops at F5 — and because the
+// offscreen harness drives text, not function keys.
+KEY_F6 :: 0xffc3
+KEY_F7 :: 0xffc4
+KEY_F8 :: 0xffc5
+
 plain :: proc(ui: ^p.Ctx, sym: u32) -> bool {
 	for k in ui.input.keys {
 		if k.sym == sym && !k.repeat && k.mods & {.Shift, .Ctrl, .Alt, .Super} == {} {
@@ -103,6 +112,44 @@ keys :: proc(ui: ^p.Ctx, nt: ^Notes, app: ^p.App) {
 		}
 		return
 
+	case .Styles:
+		if plain(ui, p.KEY_ESCAPE) || plain(ui, KEY_F7) || p.shortcut(ui, 'p', {.Ctrl}) {
+			nt.mode = .Normal
+			return
+		}
+		if n := times(ui, p.KEY_DOWN); n > 0 {
+			nt.pr.pick_sel = min(nt.pr.pick_sel + n, max(0, len(nt.pr.eng.packs) - 1))
+		}
+		if n := times(ui, p.KEY_UP); n > 0 {
+			nt.pr.pick_sel = max(nt.pr.pick_sel - n, 0)
+		}
+		if plain(ui, p.KEY_RETURN) {
+			prose_set_style(ui, nt, nt.pr.pick_sel, false)
+			nt.mode = .Normal
+			return
+		}
+		// A style can belong to one note: a letter to the bank is not a diary
+		// entry, and neither wants the other's rules.
+		if plain(ui, 'n') || plain(ui, 'N') {
+			prose_set_style(ui, nt, nt.pr.pick_sel, true)
+			nt.mode = .Normal
+			return
+		}
+		if plain(ui, 'r') || plain(ui, 'R') {
+			prose_undismiss_all(ui, nt)
+			return
+		}
+		if plain(ui, '0') {
+			nt.pr.on = false
+			prose_clear(nt)
+			nt.pr.show_report = false
+			prose_conf_save(nt)
+			nt.mode = .Normal
+			note(nt, "Writing checks off")
+			return
+		}
+		return
+
 	case .Search:
 		if plain(ui, p.KEY_ESCAPE) {
 			if len(nt.query) > 0 {
@@ -165,6 +212,39 @@ keys :: proc(ui: ^p.Ctx, nt: ^Notes, app: ^p.App) {
 		note(nt, tfmt("%d notes", len(nt.all)))
 		return
 	}
+	// ---- The writing coach ----------------------------------------------
+	if plain(ui, KEY_F6) || p.shortcut(ui, 'e', {.Ctrl}) {
+		prose_show_report(nt, !nt.pr.show_report)
+		return
+	}
+	if plain(ui, KEY_F7) || p.shortcut(ui, 'p', {.Ctrl}) {
+		nt.mode = .Styles
+		nt.pr.pick_sel = nt.pr.style
+		nt.swallow = true
+		return
+	}
+	if p.shortcut(ui, KEY_F8, {.Shift}) || p.shortcut(ui, 'g', {.Ctrl, .Shift}) ||
+	   p.shortcut(ui, 'G', {.Ctrl, .Shift}) {
+		prose_goto(ui, nt, false)
+		return
+	}
+	if plain(ui, KEY_F8) || p.shortcut(ui, 'g', {.Ctrl}) {
+		prose_goto(ui, nt, true)
+		return
+	}
+	if p.shortcut(ui, '.', {.Ctrl}) || p.shortcut(ui, '>', {.Ctrl, .Shift}) {
+		prose_apply(ui, nt)
+		return
+	}
+	if p.shortcut(ui, 'd', {.Ctrl, .Shift}) || p.shortcut(ui, 'D', {.Ctrl, .Shift}) {
+		prose_dismiss(ui, nt, true)
+		return
+	}
+	if p.shortcut(ui, 'd', {.Ctrl}) {
+		prose_dismiss(ui, nt, false)
+		return
+	}
+
 	if p.shortcut(ui, 'o', {.Ctrl}) {
 		begin_pick(nt, .Import)
 		return
@@ -436,6 +516,9 @@ editor_keys :: proc(ui: ^p.Ctx, nt: ^Notes, swallow: bool) {
 			nt.goal_x = caret_x(&nt.wrap, ui, &nt.buf, nt.cur)
 		}
 		ed_visible(ui, nt)
+		// Moving the caret onto a mark selects it, which is what makes the
+		// explanation reachable from the keyboard alone.
+		prose_select_at(nt)
 	}
 
 	// ---- Editing --------------------------------------------------------

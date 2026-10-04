@@ -1,0 +1,17 @@
+extends: existence
+message: "Hedge: '%s'. A recommendation has to recommend."
+description: |
+  A memo exists to make a recommendation, and a hedged recommendation is not
+  one. Stacking two hedges — "we would probably suggest that it may be worth"
+  — reliably means the author has not decided.
+level: warning
+ignorecase: true
+tokens:
+  - we would (?:suggest|recommend|propose)
+  - (?:it|this) may be worth
+  - perhaps we (?:should|could|might)
+  - one option (?:could|would|might) be
+  - not necessarily
+  - to a certain extent
+  - more or less
+  - if you will

@@ -1,0 +1,35 @@
+extends: substitution
+message: "'%s' says it once; '%s' says it twice."
+description: |
+  Each of these pairs a word with its own meaning. "Advance planning" is
+  planning; "past history" is history. They are not emphasis, they are the
+  sentence saying the same thing twice and hoping it sounds thorough.
+level: warning
+ignorecase: true
+swap:
+  advance planning: planning
+  past history: history
+  future plans: plans
+  end result: result
+  final outcome: outcome
+  completely eliminate: eliminate
+  totally destroyed: destroyed
+  absolutely essential: essential
+  basic fundamentals: fundamentals
+  close proximity: proximity
+  each and every: every
+  first and foremost: first
+  free gift: gift
+  joint collaboration: collaboration
+  mutual cooperation: cooperation
+  new innovation: innovation
+  unexpected surprise: surprise
+  very unique: unique
+  added bonus: bonus
+  revert back: revert
+  repeat again: repeat
+  return back: return
+  rise up: rise
+  merge together: merge
+  combine together: combine
+  plan ahead: plan

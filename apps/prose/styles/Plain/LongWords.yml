@@ -1,0 +1,34 @@
+extends: substitution
+message: "'%s' is the plainer word for '%s'."
+description: |
+  The longer word is not more precise here — it is the same meaning in more
+  syllables. Every readability formula counts syllables, but that is not the
+  reason: the shorter word is the one the reader already knows.
+level: suggestion
+ignorecase: true
+swap:
+  utili[sz]e: use
+  utili[sz]ation: use
+  commence: start
+  terminate: end
+  endeavour: try
+  endeavor: try
+  ascertain: find out
+  facilitate: help
+  necessitate: require
+  demonstrate: show
+  approximately: about
+  additional: more
+  numerous: many
+  sufficient: enough
+  initiate: start
+  purchase: buy
+  obtain: get
+  reside: live
+  remainder: rest
+  component: part
+  individual: person
+  methodology: method
+  functionality: features
+  leverage: use
+  operationali[sz]e: carry out

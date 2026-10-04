@@ -1,0 +1,12 @@
+extends: readability
+message: "Reading grade around %s — high even for a journal."
+description: |
+  A grade is an estimate from sentence length and syllable count, nothing
+  more, and an academic audience reads happily above grade 14. This fires only
+  past 18, which is where the number usually means one paragraph has a sixty
+  word sentence in it rather than that the subject is difficult.
+level: suggestion
+grade: 18
+metrics:
+  - Flesch-Kincaid
+  - Gunning Fog

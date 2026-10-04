@@ -1,0 +1,102 @@
+extends: existence
+message: "Adverb: '%s'. A stronger verb would not need it."
+description: |
+  An -ly adverb propped against a weak verb is usually one word doing the job
+  of a better one: "walked slowly" against "ambled", "said loudly" against
+  "shouted". Not every adverb is removable, but a page with twenty of them is
+  a page of weak verbs.
+level: warning
+ignorecase: true
+tokens:
+  - \b\w{4,}ly\b
+exceptions:
+  - only
+  - early
+  - family
+  - supply
+  - apply
+  - reply
+  - imply
+  - multiply
+  - rely
+  - likely
+  - ugly
+  - holy
+  - italy
+  - july
+  - lovely
+  - silly
+  - jolly
+  - fully
+  - daily
+  - weekly
+  - monthly
+  - yearly
+  - hourly
+  - costly
+  - deadly
+  - friendly
+  - lonely
+  - orderly
+  - timely
+  - unlikely
+  - quarterly
+  - biweekly
+  - assembly
+  - anomaly
+  - monopoly
+  - panoply
+  - melancholy
+  - homily
+  - bodily
+  - measly
+  - portly
+  - worldly
+  - chilly
+  - prickly
+  - wriggly
+  - squiggly
+  - sparkly
+  - crinkly
+  - wobbly
+  - bubbly
+  - grisly
+  - gristly
+  - bristly
+  - gnarly
+  - burly
+  - surly
+  - curly
+  - unruly
+  - stately
+  - steely
+  - scholarly
+  - elderly
+  - motherly
+  - fatherly
+  - brotherly
+  - sisterly
+  - miserly
+  - northerly
+  - southerly
+  - easterly
+  - westerly
+  - leisurely
+  - comely
+  - homely
+  - seemly
+  - unseemly
+  - untimely
+  - disorderly
+  - ghastly
+  - ghostly
+  - womanly
+  - saintly
+  - princely
+  - queenly
+  - courtly
+  - knightly
+  - nightly
+  - comply
+  - multiply
+  - oversupply

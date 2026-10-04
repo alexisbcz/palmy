@@ -1,0 +1,32 @@
+extends: existence
+message: "'%s' adds no information."
+description: |
+  An intensifier borrows force it cannot supply. "Very tired" is weaker than
+  "exhausted" because the reader has to do the arithmetic, and "literally" in
+  front of a figure of speech reverses its own meaning.
+level: error
+ignorecase: true
+tokens:
+  - very
+  - really
+  - quite
+  - rather
+  - extremely
+  - incredibly
+  - totally
+  - absolutely
+  - completely
+  - utterly
+  - highly
+  - truly
+  - literally
+  - actually
+  - basically
+  - essentially
+  - definitely
+  - certainly
+  - particularly
+  - especially
+  - somewhat
+  - pretty much
+  - a lot

@@ -1,0 +1,16 @@
+extends: existence
+message: "Two hedges in a row: '%s'. One is enough."
+description: |
+  Academic writing is right to hedge — the claim really is provisional. But
+  "it may possibly suggest that" hedges three times, and the reader cannot
+  tell how uncertain the author actually is. One hedge, placed accurately,
+  carries more information than three stacked.
+level: suggestion
+ignorecase: true
+tokens:
+  - (?:may|might|could) (?:possibly|perhaps|potentially|conceivably)
+  - (?:seems|appears) to (?:possibly|perhaps) (?:suggest|indicate|imply)
+  - it (?:may|might|could) be (?:possible|argued|suggested) that
+  - (?:somewhat|rather|fairly) (?:more|less) (?:likely|probable)
+  - (?:tends|tend) to (?:somewhat|rather|slightly)
+  - (?:relatively|somewhat) (?:more|less) (?:significant|important)

@@ -22,10 +22,12 @@ frame :: proc(ui: ^p.Ctx, nt: ^Notes) {
 		} else {
 			writing_pane(ui, nt)
 		}
+		prose_explain_strip(ui, nt)
 	} else {
 		empty_editor(ui, nt)
 	}
 	p.end(ui)
+	prose_report_panel(ui, nt)
 	p.end(ui)
 
 	status(ui, nt)
@@ -37,6 +39,8 @@ frame :: proc(ui: ^p.Ctx, nt: ^Notes) {
 		rename_dialog(ui, nt)
 	case .Confirm_Delete:
 		delete_dialog(ui, nt)
+	case .Styles:
+		prose_styles_sheet(ui, nt)
 	case .Normal, .Search:
 	}
 	toast(ui, nt)
@@ -78,6 +82,8 @@ header :: proc(ui: ^p.Ctx, nt: ^Notes) {
 	p.spacer(ui, "flex-1")
 	search_field(ui, nt)
 
+	prose_header_button(ui, nt)
+	prose_report_button(ui, nt)
 	toolbar_button(ui, "new", ICON_PLUS, "New", nt)
 	toolbar_mode(ui, nt)
 
@@ -348,6 +354,7 @@ writing_pane :: proc(ui: ^p.Ctx, nt: ^Notes) {
 		nt.goal_x = caret_x(&nt.wrap, ui, &nt.buf, nt.cur)
 		ed_clear_sel(nt)
 		nt.pane = .Editor
+		prose_select_at(nt)
 	}
 
 	wrap_rebuild(&nt.wrap, ui, &nt.buf, nt.body_w, nt.rev)
@@ -362,10 +369,20 @@ writing_pane :: proc(ui: ^p.Ctx, nt: ^Notes) {
 	}
 
 	last := min(nt.top + nt.rows, len(rows))
+	// One walk down the buffer for the line offsets, so the marks (which the
+	// engine reports as document offsets) can be placed without a per-row
+	// rescan of the whole note.
+	line_off := line_offset(nt, rows[nt.top].line)
+	prev_line := rows[nt.top].line
+
 	for ri := nt.top; ri < last; ri += 1 {
 		r := rows[ri]
 		src := buf_line(&nt.buf, r.line)
 		seg := src[r.from:r.to]
+		for l in prev_line ..< r.line {
+			line_off += len(buf_line(&nt.buf, l)) + 1
+		}
+		prev_line = r.line
 
 		p.key(ui, tfmt("r%d", ri))
 		p.row(ui, tfmt("h-[%d] w-full shrink-0 relative items-center", BODY_LH))
@@ -389,6 +406,9 @@ writing_pane :: proc(ui: ^p.Ctx, nt: ^Notes) {
 				band(ui, x0, x1 - x0)
 			}
 		}
+
+		// Marks under the text, caret over it.
+		prose_marks_for_row(ui, nt, r, line_off)
 
 		p.text(ui, seg, "text-[14] leading-[23] text-foreground whitespace-nowrap shrink-0")
 
@@ -501,7 +521,8 @@ status :: proc(ui: ^p.Ctx, nt: ^Notes) {
 		hint(ui, "Delete", "remove")
 	case:
 		hint(ui, "F3", "read")
-		hint(ui, "Esc", "list")
+		hint(ui, "F8", "next issue")
+		hint(ui, "F6", "report")
 		hint(ui, "Ctrl Z", "undo")
 	}
 
@@ -525,6 +546,19 @@ status :: proc(ui: ^p.Ctx, nt: ^Notes) {
 			n.words,
 		)
 		p.text(ui, "·", "text-[11.5] text-muted-foreground/50 shrink-0")
+		if nt.pr.on {
+			p.textf(
+				ui,
+				len(nt.pr.alerts) == 0 \
+				? "text-[11.5] text-muted-foreground whitespace-nowrap shrink-0" \
+				: "text-[11.5] text-foreground whitespace-nowrap shrink-0",
+				"%s · %d issue%s",
+				prose_style_name(nt),
+				len(nt.pr.alerts),
+				len(nt.pr.alerts) == 1 ? "" : "s",
+			)
+			p.text(ui, "·", "text-[11.5] text-muted-foreground/50 shrink-0")
+		}
 	}
 	p.text(
 		ui,
@@ -680,6 +714,13 @@ HELP_ROWS := [?][2]string {
 	{"F3", "switch writing and reading"},
 	{"F4", "new note"},
 	{"F5", "re-read the folder"},
+	{"F6  or  Ctrl E", "the writing report"},
+	{"F7  or  Ctrl P", "pick a writing style"},
+	{"F8  or  Ctrl G", "go to the next issue"},
+	{"Shift F8", "the previous issue"},
+	{"Ctrl .", "accept the suggested rewrite"},
+	{"Ctrl D", "stop that rule in this note"},
+	{"Ctrl Shift D", "stop that rule everywhere"},
 	{"Delete", "delete the selected note"},
 	{"Ctrl F  or  /", "search every note's body"},
 	{"Ctrl S", "save now (it also saves itself)"},
