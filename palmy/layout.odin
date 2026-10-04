@@ -72,20 +72,54 @@ wrap_text :: proc(ctx: ^Ctx, n: ^Node, max_w: f32) -> [2]f32 {
 
 	lines := make([dynamic]Text_Line, ctx.alloc)
 
-	emit :: proc(ctx: ^Ctx, lines: ^[dynamic]Text_Line, str: string, s: Style, tracking: f32) {
-		w := text_width(ctx.fonts, str, s.font_size, s.family, s.weight, tracking, s.slant, s.tabular)
-		append(lines, Text_Line{text = str, width = w})
+	emit :: proc(
+		ctx: ^Ctx,
+		lines: ^[dynamic]Text_Line,
+		str: string,
+		s: Style,
+		tracking: f32,
+		dir: Bidi_Direction,
+	) {
+		w := text_width(
+			ctx.fonts,
+			str,
+			s.font_size,
+			s.family,
+			s.weight,
+			tracking,
+			s.slant,
+			s.tabular,
+			dir,
+		)
+		append(lines, Text_Line{text = str, width = w, dir = dir})
 	}
 
 	widest := f32(0)
 	paragraphs := strings.split(n.text, "\n", ctx.alloc)
 	for para in paragraphs {
+		// Once per paragraph, over the whole paragraph. Every line of it is
+		// then measured and drawn with this direction, which is what keeps a
+		// wrapped right-to-left paragraph from flipping on the line that
+		// happens to start with a Latin word. It is also why the width a line
+		// is measured at is the width it is drawn at: both go through `dir`.
+		dir := text_base_dir(para)
 		if max_w < 0 || s.nowrap {
-			emit(ctx, &lines, para, s, tracking)
+			emit(ctx, &lines, para, s, tracking, dir)
 			continue
 		}
-		if text_width(ctx.fonts, para, s.font_size, s.family, s.weight, tracking, s.slant, s.tabular) <= max_w {
-			emit(ctx, &lines, para, s, tracking)
+		if text_width(
+			   ctx.fonts,
+			   para,
+			   s.font_size,
+			   s.family,
+			   s.weight,
+			   tracking,
+			   s.slant,
+			   s.tabular,
+			   dir,
+		   ) <=
+		   max_w {
+			emit(ctx, &lines, para, s, tracking, dir)
 			continue
 		}
 
@@ -101,16 +135,26 @@ wrap_text :: proc(ctx: ^Ctx, n: ^Node, max_w: f32) -> [2]f32 {
 				continue
 			}
 			candidate := para[start:i]
-			w := text_width(ctx.fonts, candidate, s.font_size, s.family, s.weight, tracking, s.slant, s.tabular)
+			w := text_width(
+				ctx.fonts,
+				candidate,
+				s.font_size,
+				s.family,
+				s.weight,
+				tracking,
+				s.slant,
+				s.tabular,
+				dir,
+			)
 			if w > max_w && last_break > start {
-				emit(ctx, &lines, para[start:last_break], s, tracking)
+				emit(ctx, &lines, para[start:last_break], s, tracking, dir)
 				start = last_break + 1
 				last_break = -1
 				i = start
 				continue
 			}
 			if at_end {
-				emit(ctx, &lines, candidate, s, tracking)
+				emit(ctx, &lines, candidate, s, tracking, dir)
 				break
 			}
 			last_break = i

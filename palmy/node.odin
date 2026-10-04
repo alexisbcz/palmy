@@ -20,6 +20,12 @@ Custom_Fn :: proc(c: ^Canvas, r: Rect, user: rawptr)
 Text_Line :: struct {
 	text:  string,
 	width: f32,
+	// The base direction of the paragraph this line came from, not of the line
+	// itself. A line is resolved with its paragraph's direction so that a
+	// right-to-left paragraph whose line happens to begin with a Latin word
+	// does not flip direction halfway down. Resolving each line .Auto is the
+	// bug this field exists to prevent.
+	dir:   Bidi_Direction,
 }
 
 Node :: struct {
@@ -63,6 +69,11 @@ Widget :: struct {
 	anim:      Anim,
 	cursor:    int,
 	sel:       int,
+	// Which side of `cursor` the caret is on. A byte offset at a direction
+	// boundary has two valid screen positions and the string does not say
+	// which was meant, so the choice has to be carried alongside the offset.
+	// For text that cannot reorder both answers agree and this is inert.
+	affinity:  Caret_Affinity,
 	drag:      [2]f32,
 	seen:      u64,
 }
@@ -543,6 +554,36 @@ node_kind :: proc(ctx: ^Ctx, idx: int) -> Node_Kind {
 
 node_text :: proc(ctx: ^Ctx, idx: int) -> string {
 	return idx >= 0 && idx < len(ctx.nodes) ? ctx.nodes[idx].text : ""
+}
+
+// widget_caret exposes a text field's caret: the byte offset it sits at and
+// which side of that offset it is on. The affinity is not redundant -- at a
+// direction boundary one offset has two screen positions, so a test that only
+// read the offset could not tell a correct caret from a wrong one.
+widget_caret :: proc(ctx: ^Ctx, idx: int) -> (cursor: int, affinity: Caret_Affinity) {
+	if idx < 0 || idx >= len(ctx.nodes) {
+		return 0, .Downstream
+	}
+	if w, found := ctx.widgets[ctx.nodes[idx].id]; found {
+		return w.cursor, w.affinity
+	}
+	return 0, .Downstream
+}
+
+// widget_cursor is widget_caret's offset alone, for callers that do not care
+// which edge the caret is drawn on.
+widget_cursor :: proc(ctx: ^Ctx, idx: int) -> int {
+	c, _ := widget_caret(ctx, idx)
+	return c
+}
+
+// node_lines exposes the wrapped lines of a text node: the string each line
+// holds, the width it measured, and the base direction it was resolved with.
+// The direction is the interesting one -- it is per paragraph, not per line,
+// and a test asserting that a wrapped right-to-left paragraph did not change
+// direction partway down needs to see it.
+node_lines :: proc(ctx: ^Ctx, idx: int) -> []Text_Line {
+	return idx >= 0 && idx < len(ctx.nodes) ? ctx.nodes[idx].lines : nil
 }
 
 node_style :: proc(ctx: ^Ctx, idx: int) -> Style {

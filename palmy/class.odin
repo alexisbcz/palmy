@@ -32,6 +32,14 @@ Position :: enum u8 {
 }
 
 Text_Align :: enum u8 {
+	// Start is the default, and the only value that depends on the text: it
+	// resolves to the side the paragraph's base direction begins from, so
+	// Hebrew and Arabic align right without anything being set. `text-left`
+	// still means left for everything, which is what a caller asking for it
+	// wants. Start must stay first so that it is the zero value.
+	Start,
+	// End is Start's opposite: the side the base direction finishes at.
+	End,
 	Left,
 	Center,
 	Right,
@@ -669,6 +677,12 @@ apply_token :: proc(s: ^Style, t: string) {
 		// The rest of font-variant-numeric needs OpenType feature substitution,
 		// which stb_truetype has no GSUB for. Accepted and ignored rather than
 		// treated as an unknown class.
+		return
+	case "text-start":
+		s.text_align = .Start
+		return
+	case "text-end":
+		s.text_align = .End
 		return
 	case "text-left":
 		s.text_align = .Left

@@ -346,27 +346,44 @@ paint_text :: proc(ctx: ^Ctx, c: ^Canvas, n: ^Node, col: Color) {
 	for line, i in n.lines {
 		baseline := y + (lh - (m.ascent + m.descent)) / 2 + m.ascent
 		w := line.width * sc
-		x := inner.x * sc
-		switch s.text_align {
-		case .Center:
-			x += (inner.w * sc - w) / 2
-		case .Right:
-			x += inner.w * sc - w
-		case .Left:
+
+		// Start and End are the only alignments that depend on the text: they
+		// resolve against the paragraph's base direction, so a Hebrew or
+		// Arabic paragraph sits on the right without anything being set.
+		align_x :: proc(s: Style, inner_w, w: f32, rtl: bool) -> f32 {
+			switch s.text_align {
+			case .Center:
+				return (inner_w - w) / 2
+			case .Right:
+				return inner_w - w
+			case .Left:
+				return 0
+			case .Start:
+				return rtl ? inner_w - w : 0
+			case .End:
+				return rtl ? 0 : inner_w - w
+			}
+			return 0
 		}
+
+		rtl := line.dir == .RTL
+		x := inner.x * sc + align_x(s, inner.w * sc, w, rtl)
 
 		str := line.text
 		if s.truncate && w > inner.w * sc && len(str) > 0 {
-			str = truncate_to(ctx, str, inner.w * sc, size, s, tracking)
-			if s.text_align != .Left {
-				tw := text_width(ctx.fonts, str, size, s.family, s.weight, tracking, s.slant, s.tabular)
-				x = inner.x * sc
-				if s.text_align == .Center {
-					x += (inner.w * sc - tw) / 2
-				} else {
-					x += inner.w * sc - tw
-				}
-			}
+			str = truncate_to(ctx, str, inner.w * sc, size, s, tracking, line.dir)
+			tw := text_width(
+				ctx.fonts,
+				str,
+				size,
+				s.family,
+				s.weight,
+				tracking,
+				s.slant,
+				s.tabular,
+				line.dir,
+			)
+			x = inner.x * sc + align_x(s, inner.w * sc, tw, rtl)
 		}
 
 		// An outline is a style, so it is drawn by the same call rather than by
@@ -389,6 +406,7 @@ paint_text :: proc(ctx: ^Ctx, c: ^Canvas, n: ^Node, col: Color) {
 			s.slant,
 			s.tabular,
 			outline,
+			line.dir,
 		)
 
 		if s.strike || s.underline {
@@ -408,9 +426,38 @@ paint_text :: proc(ctx: ^Ctx, c: ^Canvas, n: ^Node, col: Color) {
 
 // truncate_to shortens a string so that it fits, with a trailing ellipsis.
 @(private)
-truncate_to :: proc(ctx: ^Ctx, str: string, max_w, size: f32, s: Style, tracking: f32) -> string {
+// The `dir` is the paragraph's, not the substring's. Measuring str[:i] with
+// .Auto re-infers a direction from whatever the prefix happens to contain, so
+// a Latin prefix of a Hebrew paragraph would be measured as a left-to-right
+// run and budgeted wrongly. Passing the paragraph's direction keeps every
+// measurement here in the same frame of reference as the line it belongs to.
+//
+// Known limit: this cuts the *logical* prefix. For a wholly right-to-left
+// paragraph that is right, since the logical prefix is the visual right-hand
+// side and the neutral ellipsis resolves to the paragraph level on the left.
+// For a line mixing directions it is not: the kept prefix can reorder once the
+// ellipsis is appended and re-resolved. Truncating over text_glyphs visually
+// is the correct fix and is not done here.
+truncate_to :: proc(
+	ctx: ^Ctx,
+	str: string,
+	max_w, size: f32,
+	s: Style,
+	tracking: f32,
+	dir := Bidi_Direction.Auto,
+) -> string {
 	ell := "…"
-	ew := text_width(ctx.fonts, ell, size, s.family, s.weight, tracking, s.slant, s.tabular)
+	ew := text_width(
+		ctx.fonts,
+		ell,
+		size,
+		s.family,
+		s.weight,
+		tracking,
+		s.slant,
+		s.tabular,
+		dir,
+	)
 	if ew >= max_w {
 		return ""
 	}
@@ -421,7 +468,18 @@ truncate_to :: proc(ctx: ^Ctx, str: string, max_w, size: f32, s: Style, tracking
 		if str[i] & 0xc0 == 0x80 {
 			continue
 		}
-		if text_width(ctx.fonts, str[:i], size, s.family, s.weight, tracking, s.slant, s.tabular) > budget {
+		if text_width(
+			   ctx.fonts,
+			   str[:i],
+			   size,
+			   s.family,
+			   s.weight,
+			   tracking,
+			   s.slant,
+			   s.tabular,
+			   dir,
+		   ) >
+		   budget {
 			break
 		}
 		end = i
