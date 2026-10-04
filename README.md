@@ -498,6 +498,71 @@ Files sync rather than live remotely — local-first, so the machine works
 unplugged and the cloud is where state converges, not where it is held
 hostage.
 
+### One command surface
+
+Every application here should be fully operable from the command line — not a
+reduced version of the GUI, but the same core driven a different way, so a
+coding agent can do anything a person sitting at the window can. `palm` is the
+single front door to that, and `docs/PALM-CLI.md` is the design: the
+convention each application implements, the machine-readable schema an agent
+plans from, the side-effect classes that say what is safe to retry, and the
+scope rule that makes identity separation enforceable rather than merely
+claimed.
+
+### Beyond Linux
+
+The intention is that all of this software runs on Windows, macOS, Android and
+iOS as well, and the X11 work has already paid part of the cost: `window.odin`
+is a backend seam now, with `wayland.odin` and `x11.odin` behind it and the
+input model, frame pacing and resize handling shared rather than duplicated.
+Adding a third backend is adding a file, not restructuring.
+
+The toolkit is the tractable half. Everything above the seam — the rasterizer,
+flexbox, the class parser, text shaping, the glyph cache, the widget set — is
+ordinary arithmetic over a pixel buffer and has no idea what a compositor is.
+What each platform has to supply is small and well understood: a window, a
+buffer to blit into, and an input stream.
+
+| | the surface to present into | the input to read |
+| --- | --- | --- |
+| Windows | Win32 window, `StretchDIBits` | the message loop |
+| macOS | `NSWindow` with a `CGImage` layer | AppKit events |
+| Android | `ANativeWindow_lock`/`unlockAndPost` | `NativeActivity` |
+| iOS | `UIView` backed by a bitmap `CALayer` | UIKit events |
+
+None of those needs a GPU, which is the whole reason a software rasterizer was
+worth writing.
+
+**The applications are the harder half, and the reason is worth stating now
+rather than discovering during a port.** Many of them reach for a Unix
+subprocess: ffmpeg for media, `bsdtar` for archives, `wpctl` for audio,
+`nmcli` for networking, `grim` for capture, poppler and djvulibre for
+documents. On Windows and macOS those are a packaging problem. On iOS and
+Android they are not available at all — a sandboxed application cannot spawn a
+process, so anything built that way simply does not run.
+
+That turns an abstract portability goal into a concrete discipline for work
+happening now: **keep each application's core free of subprocess assumptions,
+and put the shelling-out behind a seam of its own.** `apps/mailcore` is
+already the right shape — it parses MIME and speaks IMAP in pure Odin, and the
+GUI is a separate program. `apps/docs` writes PDF, `.docx`, `.odt` and `.rtf`
+itself. Those port. An application whose only way to decode a video is to pipe
+through ffmpeg needs a decoding seam before it can move, and the time to
+notice that is while the code is being written.
+
+Three further things that a port makes unavoidable rather than optional, and
+which are better faced early:
+
+- **Touch is not a mouse.** Hit targets, scrolling, text selection and the
+  absence of hover all differ. The responsive-layout work already done helps;
+  the input model needs more than a rename.
+- **Mobile lifecycle is not desktop lifecycle.** An application is suspended,
+  resumed and killed by the system, so state has to survive being stopped at
+  any moment — which is a better discipline on the desktop too.
+- **Font discovery is per-platform.** The current scan walks Linux font
+  directories; DirectWrite and CoreText answer the same question differently,
+  and the fallback chain added for CJK needs an equivalent on each.
+
 ### The parts that are genuinely hard
 
 Three tensions are worth naming now rather than discovering later.
