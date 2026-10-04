@@ -61,11 +61,17 @@ App :: struct {
 create :: proc(cfg: Config) -> (app: ^App, err: string) {
 	app = new(App)
 	app.cfg = cfg
-	if app.cfg.width <= 0 {
-		app.cfg.width = 960
-	}
-	if app.cfg.height <= 0 {
-		app.cfg.height = 640
+	// A layer surface uses 0 to mean "whatever the compositor gives me" — that
+	// is how you ask to fill the output when anchored to opposing edges, and
+	// the compositor answers with the real size in its configure. Only an
+	// ordinary window needs a default.
+	if !cfg.layer {
+		if app.cfg.width <= 0 {
+			app.cfg.width = 960
+		}
+		if app.cfg.height <= 0 {
+			app.cfg.height = 640
+		}
 	}
 	if app.cfg.title == "" {
 		app.cfg.title = "palmy"
@@ -640,6 +646,10 @@ focus_id :: proc(ctx: ^Ctx) -> u64 {
 
 // typed_text returns the characters produced this frame, after the keymap has
 // had its say. Valid until the end of the frame.
+//
+// Order matters in a form: take the text *before* acting on keys. A password
+// and the Return that submits it can arrive in the same frame, and handling
+// Return first submits a truncated value.
 typed_text :: proc(ctx: ^Ctx) -> string {
 	return strings.to_string(ctx.input.text)
 }

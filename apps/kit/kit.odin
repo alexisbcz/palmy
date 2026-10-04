@@ -20,7 +20,7 @@ MONO_CANDIDATES := [?]string {
 
 // start opens a window with the shadcn theme registered and the Geist faces
 // loaded, calibrated the same way the parity renderer is.
-start :: proc(cfg: p.Config) -> (app: ^p.App, err: string) {
+start :: proc(cfg: p.Config, dark := false) -> (app: ^p.App, err: string) {
 	c := cfg
 	if c.app_id == "" {
 		c.app_id = "palmy"
@@ -57,7 +57,7 @@ start :: proc(cfg: p.Config) -> (app: ^p.App, err: string) {
 		}
 	}
 
-	sc.register_shadcn_theme()
+	sc.register_shadcn_theme(dark)
 	p.set_text_gamma(1.8)
 	return app, ""
 }

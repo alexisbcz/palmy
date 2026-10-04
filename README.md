@@ -168,6 +168,10 @@ app, err := palmy.create({
 })
 ```
 
+Leave `width`/`height` at 0 to fill whatever the compositor gives you — that is
+how a fullscreen greeter or a bar anchored to opposing edges asks for its size,
+and the compositor answers with the real one in its configure.
+
 Anchor it to edges to build a bar, and reserve space so other windows tile
 around it:
 

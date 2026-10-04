@@ -271,11 +271,15 @@ FIELD_BASE :: "flex-row items-center h-10 px-3 rounded-lg bg-slate-900 cursor-te
 //
 //	buf := palmy.state(ui, "name", [dynamic]u8{})
 //	changed, submitted := palmy.text_field(ui, buf, "Your name")
+// `mask` replaces every rune on screen when set, for a password field. The
+// buffer still holds the real bytes; only the drawing is substituted, and the
+// caret is positioned from the masked text so it tracks correctly.
 text_field :: proc(
 	ctx: ^Ctx,
 	buf: ^[dynamic]u8,
 	placeholder: string = "",
 	class: string = "",
+	mask: rune = 0,
 ) -> (changed: bool, submitted: bool) {
 	idx := push_styled(ctx, .Box, FIELD_BASE, class)
 	id := ctx.nodes[idx].id
@@ -350,12 +354,35 @@ text_field :: proc(
 	}
 
 	content := string(buf[:])
+	if mask != 0 && len(content) > 0 {
+		runes := 0
+		for _ in content {
+			runes += 1
+		}
+		masked := strings.builder_make(ctx.alloc)
+		for _ in 0 ..< runes {
+			strings.write_rune(&masked, mask)
+		}
+		content = strings.to_string(masked)
+	}
 	show_placeholder := len(content) == 0 && placeholder != ""
 
 	// Keep the caret in view by sliding the text inside the clipped field.
+	caret_prefix := string(buf[:w.cursor])
+	if mask != 0 {
+		runes := 0
+		for _ in caret_prefix {
+			runes += 1
+		}
+		mb := strings.builder_make(ctx.alloc)
+		for _ in 0 ..< runes {
+			strings.write_rune(&mb, mask)
+		}
+		caret_prefix = strings.to_string(mb)
+	}
 	caret_x := text_width(
 		ctx.fonts,
-		string(buf[:w.cursor]),
+		caret_prefix,
 		s.font_size,
 		s.family,
 		s.weight,
@@ -422,6 +449,7 @@ text_field_string :: proc(
 	b: ^strings.Builder,
 	placeholder := "",
 	class := "",
+	mask: rune = 0,
 ) -> (changed: bool, submitted: bool) {
-	return text_field(ctx, &b.buf, placeholder, class)
+	return text_field(ctx, &b.buf, placeholder, class, mask)
 }

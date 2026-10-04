@@ -530,7 +530,11 @@ battery_chip :: proc(ui: ^p.Ctx, pct: int, selected: bool) {
 // ---------------------------------------------------------------------------
 
 detail_pane :: proc(ui: ^p.Ctx, m: ^Model, v: View) {
-	p.col(ui, "w-[392] shrink-0 h-full bg-sidebar overflow-hidden")
+	// The inspector keeps its proportion on a wide window rather than leaving
+	// the device rows stretched across the whole display.
+	vp := p.size(ui)
+	idx := p.col(ui, "shrink-0 h-full bg-sidebar overflow-hidden")
+	p.style(ui, idx).w = p.px(clamp(vp.x * 0.32, 392, 560))
 	defer p.end(ui)
 
 	if v.sel < 0 {
@@ -669,6 +673,28 @@ detail_pane :: proc(ui: ^p.Ctx, m: ^Model, v: View) {
 	p.div(ui, "flex-1 min-h-0")
 	p.end(ui)
 
+	// A tall window has room for the activity feed. Every line in it was
+	// executed against the real adapter, in that order.
+	if m.tall {
+		recent := log_recent(5)
+		if len(recent) > 0 {
+			sc.separator(ui)
+			panel_label(ui, "Recent commands")
+			p.col(ui, "w-full shrink-0 gap-1")
+			defer p.end(ui)
+			for e, i in recent {
+				p.key(ui, fmt.tprintf("rc%d", i))
+				p.row(ui, "w-full shrink-0 items-center gap-1.5")
+				p.icon(
+					ui,
+					e.ok ? IC_CHECK : IC_X,
+					p.concat(ui, "size-3 shrink-0 ", e.ok ? "text-emerald-600" : "text-destructive"),
+				)
+				p.text(ui, e.cmd, "flex-1 min-w-0 text-[11] font-mono text-muted-foreground truncate")
+				p.end(ui)
+			}
+		}
+	}
 }
 
 panel_label :: proc(ui: ^p.Ctx, s: string) {
