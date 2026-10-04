@@ -563,6 +563,80 @@ which are better faced early:
   directories; DirectWrite and CoreText answer the same question differently,
   and the fallback chain added for CJK needs an equivalent on each.
 
+### The web as another backend
+
+There should be a web application too, and the shape of it is already decided
+by the shape of everything else. `window.odin` is a seam with `wayland.odin`
+and `x11.odin` behind it; a browser is a third entry in that table. Odin
+targets WebAssembly, a `<canvas>` gives you an `ImageData` buffer, and writing
+pixels into that buffer is the same operation the rasterizer already performs
+against shared memory. The layout engine, the class parser, the text shaping,
+the glyph cache and the widget set do not change at all.
+
+That makes the web version of an application *the application*, not a
+reimplementation of it in another language that slowly disagrees with the
+original.
+
+The constraints are the same ones mobile imposes, which is convenient: no
+subprocess, a sandboxed filesystem, a different lifecycle. Two are specific to
+the browser — fonts cannot be discovered by scanning a directory, so they have
+to be shipped and fetched, and threads need Web Workers with
+`SharedArrayBuffer`, which needs the cross-origin isolation headers. Neither
+is novel, and both reinforce the same discipline: keep the core free of
+assumptions about having a Unix underneath it.
+
+### Devices that actually share one computing life
+
+AirDrop moves a file between two machines that happen to be near each other.
+That is a useful trick and it is not the interesting problem. The interesting
+problem is that a person's devices are, between them, one computing life, and
+every operating system still treats them as strangers that occasionally
+exchange parcels.
+
+What should move between devices, beyond files:
+
+- **Clipboard**, continuously, scoped to an identity.
+- **Application state.** A document with a cursor position, a video with a
+  playhead, a half-written mail, a search you were in the middle of. Pick the
+  phone up and it is there, at the same place.
+- **Notifications**, once, on the device you are actually looking at, rather
+  than on all of them.
+- **Input.** One keyboard and pointer reaching across whatever screens are in
+  front of you.
+- **Media sessions**, so a call or a track moves to another device without
+  stopping.
+- **Agent context.** A conversation with the local model, and what it was
+  working on, following you — which is the part none of the existing systems
+  do at all, and the reason this is worth building rather than adopting.
+
+The transport has prior art in this repository already. `apps/call` defines
+its own protocol over UDP with a 24-byte header, a microsecond timestamp taken
+from the same monotonic clock on both ends so one-way delay is a subtraction
+rather than a guess, and a jitter buffer measured at 33 ms end to end. `apps/chat`
+runs a length-prefixed JSON protocol over TCP with a broadcast ordering
+guarantee. Device-to-device is the same kind of problem with harder
+discovery.
+
+The shape: every device holds its own keypair and is enrolled into the
+account; discovery is mDNS on a shared network and the account registry
+otherwise; the transport is direct when the devices can reach each other and
+relayed when they cannot; and it is **end-to-end encrypted in both cases**.
+That last point is worth being precise about, because it is where this differs
+from the cloud paragraph above: a relay that only forwards opaque bytes needs
+no ability to read them, so device-to-device can be genuinely end-to-end even
+though a *server-side model* reasoning over your mail cannot be.
+
+Two things to get right rather than discover:
+
+**Identity scoping applies to devices too.** A work document handing itself to
+a personal phone is a leak with a friendly animation. Crossing between
+identities should be a deliberate act, not an ambient convenience.
+
+**Ambient state flow is a larger attack surface than file transfer.** Every
+one of those bullets is a channel; each needs to be authenticated per device,
+revocable when a device is lost, and inspectable — *what has this device sent
+and received* should be a question with an answer.
+
 ### The parts that are genuinely hard
 
 Three tensions are worth naming now rather than discovering later.
@@ -585,6 +659,14 @@ is testable: an assistant scoped to one identity, asked for something from
 another, should fail — and there should be an assertion somewhere that says so
 and runs. That is the standard the rest of this repo is held to, and it is the
 one that matters most here.
+
+**Convenience between devices is indistinguishable from leakage until you can
+say which is which.** Everything in the section above makes data move with
+less friction, and friction is doing some of the security work today. The
+answer is not less capability; it is that every channel is authenticated per
+device, revocable the moment one is lost, scoped to an identity, and logged
+well enough that *what did this device send* has an answer rather than a
+shrug.
 
 ## Layout of the source
 
