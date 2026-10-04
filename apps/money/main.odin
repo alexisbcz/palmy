@@ -34,38 +34,44 @@ USAGE :: `money — comptes et budget, pour palmy
   money --help`
 
 main :: proc() {
+	// Flags are read in a loop rather than only at args[0]: `--start-dir` is
+	// a setting and not a mode, so whatever follows it — including `--help`
+	// — still has to be honoured. Reading only the first argument meant
+	// `money --start-dir X --help` silently opened a window, which is the
+	// one thing a tool should never do when it was asked a question.
 	args := os.args[1:]
 	start_dir := ""
-	if len(args) > 0 {
-		switch args[0] {
+	files := make([dynamic]string, context.temp_allocator)
+	for i := 0; i < len(args); i += 1 {
+		a := args[i]
+		switch a {
 		case "--help", "-h":
 			fmt.println(USAGE)
 			return
 		case "--selftest":
 			os.exit(selftest_mode())
 		case "--shot":
-			os.exit(shot_mode(args[1:]))
+			os.exit(shot_mode(args[i + 1:]))
 		case "--bench":
-			os.exit(bench_mode(args[1:]))
+			os.exit(bench_mode(args[i + 1:]))
 		case "--fixtures":
-			os.exit(fixtures_mode(args[1:]))
+			os.exit(fixtures_mode(args[i + 1:]))
 		case "--import":
-			os.exit(import_mode(args[1:]))
+			os.exit(import_mode(args[i + 1:]))
 		case "--start-dir":
 			// Only where the dialog opens; nothing is read from it until the
 			// user picks a file.
-			if len(args) > 1 {
-				start_dir = args[1]
-				args = args[2:]
-			} else {
-				args = args[1:]
+			if i + 1 < len(args) {
+				start_dir = args[i + 1]
+				i += 1
 			}
 		case:
-			if strings.has_prefix(args[0], "-") {
-				fmt.eprintfln("money: unknown flag %s", args[0])
+			if strings.has_prefix(a, "-") {
+				fmt.eprintfln("money: unknown flag %s", a)
 				fmt.eprintln(USAGE)
 				os.exit(2)
 			}
+			append(&files, a)
 		}
 	}
 
@@ -91,12 +97,8 @@ main :: proc() {
 	}
 	// A file named on the command line is an explicit request to import it,
 	// which is the only other way a file reaches this program.
-	for a in args {
-		if strings.has_prefix(a, "-") {
-			continue
-		}
-		do_import(app, a)
-		break
+	for f in files {
+		do_import(app, f)
 	}
 	ensure_categories(app)
 	refilter(app)
