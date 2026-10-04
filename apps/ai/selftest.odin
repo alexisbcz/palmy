@@ -15,7 +15,18 @@ package main
 
 import "core:fmt"
 import "core:mem/virtual"
+import p "palmy:."
+import sc "shadcn:."
 import "core:strings"
+
+// sc_register applies the same theme the window does, so a headless frame
+// measures with the same radii and type scale.
+sc_register :: proc() {
+	sc.register_shadcn_theme(true)
+	p.set_text_gamma(1.8)
+	fonts := [?]string{"Geist-400.ttf", "Geist-500.ttf", "Geist-600.ttf", "Geist-700.ttf"}
+	_ = fonts
+}
 
 // bytes_of exists because Odin will not transmute an untyped string literal.
 bytes_of :: proc(s: string) -> []u8 {
@@ -63,6 +74,7 @@ run_selftest :: proc() -> int {
 	test_markdown()
 	test_persistence()
 	test_request_bodies()
+	test_layout()
 
 	fmt.println()
 	fmt.printfln("%d assertions, %d failed", PASSED + FAILED, FAILED)
@@ -755,4 +767,195 @@ test_request_bodies :: proc() {
 	check_eq_s(human_bytes(522653767, context.temp_allocator), "498 MB", "bytes are human-readable")
 	check_eq_s(human_bytes(1018534295, context.temp_allocator), "971 MB", "the resident footprint ollama reports")
 	check_eq_s(human_bytes(3 << 30, context.temp_allocator), "3.0 GB", "and so are gigabytes")
+}
+
+// ---------------------------------------------------------------------------
+// 7. Layout, headless
+//
+// A chat window is three fixed bands around one scrolling region, and the way
+// that goes wrong is silent: the transcript's content height leaks into the
+// sizing of its siblings and the composer slides off the bottom of the window.
+// palmy renders without a compositor, so the whole frame can be built here and
+// the bands measured — with a transcript ten times taller than the window, and
+// again with an empty one.
+// ---------------------------------------------------------------------------
+
+LOREM ::
+	"A software rasteriser can keep a desktop interface at sixty frames a " +
+	"second because almost every pixel it writes is a flat span, and a flat " +
+	"span costs what a memset costs. The expensive part is the edges, and the " +
+	"edges are a vanishing fraction of the area.\n\n" +
+	"- memory bandwidth is the budget\n" +
+	"- a 1080p frame is eight megabytes\n" +
+	"- `fill_round_rect` is a span loop with a signed distance field at the ends\n\n" +
+	"```odin\nfor y in 0 ..< h {\n\trow := px[y * w:][:w]\n}\n```\n\n" +
+	"That is the whole trick, and it is why **the window stays responsive**.\n"
+
+layout_state :: proc(messages: int) -> ^St {
+	st := new(St)
+	probe_init(&st.probe)
+	stream_init(&st.chat)
+	stream_init(&st.pull)
+	st.input = make([dynamic]u8)
+	st.pull_name = make([dynamic]u8)
+	st.sys_buf = make([dynamic]u8)
+	st.think_open = make(map[int]bool)
+	st.prompts = make([dynamic]Prompt)
+	st.model = "qwen3:0.6b"
+	st.pinned = true
+	st.show_think = true
+	st.pr = Params{temperature = 0.7, top_p = 0.9, num_predict = 512}
+
+	st.convs = make([dynamic]Conversation)
+	c := Conversation {
+		id      = "test-0001",
+		title   = "A headless conversation",
+		model   = "qwen3:0.6b",
+		created = 1,
+		msgs    = make([dynamic]Message),
+	}
+	for i in 0 ..< messages {
+		append(&c.msgs, Message{role = .User, text = "Why is a software rasteriser fast?"})
+		append(
+			&c.msgs,
+			Message {
+				role = .Assistant,
+				model = "qwen3:0.6b",
+				text = LOREM,
+				think = "Let me think about bandwidth first.",
+				ttft = 0.09,
+				tps = 88.8,
+				in_n = 40,
+				out_n = 220,
+			},
+		)
+	}
+	append(&st.convs, c)
+	return st
+}
+
+test_layout :: proc() {
+	fmt.println("layout, headless")
+
+	WIN_W :: 1280
+	WIN_H :: 820
+
+	sc_register()
+	off := p.offscreen_create(
+		WIN_W,
+		WIN_H,
+		1,
+		"w-full h-full flex-row bg-background text-foreground overflow-hidden",
+	)
+	defer p.offscreen_destroy(off)
+
+	for messages in ([?]int{0, 1, 12}) {
+		st := layout_state(messages)
+
+		// Three frames: palmy's hit testing and text wrapping run against the
+		// previous frame, so a layout is only settled once it has repeated.
+		rc, rf, rm: p.Rect
+		for _ in 0 ..< 3 {
+			ui := p.offscreen_begin(off)
+			build(ui, st)
+			p.offscreen_end(off)
+			rc = p.rect_of(&off.ctx, st.composer_id)
+			rf = p.rect_of(&off.ctx, st.footer_id)
+			rm = p.rect_of(&off.ctx, st.main_id)
+		}
+
+		label := fmt.tprintf("with %d exchanges", messages)
+
+		check(
+			rm.h > WIN_H - 1 && rm.h < WIN_H + 1,
+			"%s: the workspace column is the window's height, not its content's (%.1f)",
+			label,
+			rm.h,
+		)
+		check(
+			rf.y + rf.h > WIN_H - 1 && rf.y + rf.h < WIN_H + 1,
+			"%s: the footer sits on the bottom edge (bottom %.1f, want %d)",
+			label,
+			rf.y + rf.h,
+			WIN_H,
+		)
+		check(
+			rf.h > FOOTER_H - 1 && rf.h < FOOTER_H + 1,
+			"%s: the footer keeps its %dpx height (%.1f)",
+			label,
+			FOOTER_H,
+			rf.h,
+		)
+		check(
+			rc.y + rc.h < rf.y + 1 && rc.y + rc.h > rf.y - 20,
+			"%s: the composer sits directly above the footer (composer bottom %.1f, footer top %.1f)",
+			label,
+			rc.y + rc.h,
+			rf.y,
+		)
+		check(
+			rc.y > TOPBAR_H && rc.y < WIN_H,
+			"%s: the composer is inside the window (y %.1f)",
+			label,
+			rc.y,
+		)
+		check(
+			rc.w > 400,
+			"%s: the composer spans the workspace (%.1f wide)",
+			label,
+			rc.w,
+		)
+
+		// The transcript must be a window onto its content, not as tall as it.
+		tr := p.rect_of(&off.ctx, st.tr_id)
+		over := p.scroll_extent(&off.ctx, st.tr_id)
+		check(
+			tr.h > 100 && tr.h < WIN_H,
+			"%s: the transcript is a viewport (%.1f tall)",
+			label,
+			tr.h,
+		)
+		if messages >= 12 {
+			check(
+				over.y > 0,
+				"%s: a transcript taller than the window actually overflows (%.1f)",
+				label,
+				over.y,
+			)
+		}
+	}
+
+	// And with the parameter panel open, which takes 268px off the workspace.
+	st := layout_state(6)
+	st.show_params = true
+	rc, rf: p.Rect
+	for _ in 0 ..< 3 {
+		ui := p.offscreen_begin(off)
+		build(ui, st)
+		p.offscreen_end(off)
+		rc = p.rect_of(&off.ctx, st.composer_id)
+		rf = p.rect_of(&off.ctx, st.footer_id)
+	}
+	check(
+		rf.y + rf.h > WIN_H - 1 && rf.y + rf.h < WIN_H + 1,
+		"with the parameter panel open the footer is still on the bottom edge (%.1f)",
+		rf.y + rf.h,
+	)
+	check(
+		rc.w > 300 && rc.w < WIN_W - SIDEBAR_W - PARAMS_W,
+		"the composer narrows for the parameter panel (%.1f wide)",
+		rc.w,
+	)
+
+	// Finally, render one and keep it: a frame that can be looked at is worth
+	// more than an assertion about it.
+	st2 := layout_state(3)
+	for _ in 0 ..< 3 {
+		ui := p.offscreen_begin(off)
+		build(ui, st2)
+		p.offscreen_end(off)
+	}
+	if p.offscreen_write_png(off, "/tmp/palmy-ai-layout.png") {
+		fmt.println("  (wrote /tmp/palmy-ai-layout.png)")
+	}
 }

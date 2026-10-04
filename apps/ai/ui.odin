@@ -22,7 +22,8 @@ build :: proc(ui: ^p.Ctx, st: ^St) {
 
 	sidebar(ui, st, pv)
 
-	p.col(ui, "flex-1 min-w-0 h-full overflow-hidden")
+	main_col := p.col(ui, "flex-1 min-w-0 h-full overflow-hidden")
+	st.main_id = p.node_id(ui, main_col)
 	topbar(ui, st, pv)
 	transcript(ui, st, pv)
 	stats_strip(ui, st, pv)
@@ -737,6 +738,7 @@ composer :: proc(ui: ^p.Ctx, st: ^St) {
 	defer p.end(ui)
 
 	box := p.row(ui, "w-full items-end gap-2 rounded-xl border bg-background px-3 py-2.5 transition")
+	st.composer_id = p.node_id(ui, box)
 	p.apply(ui, focused ? "border-ring ring-3 ring-ring/40" : "border-input", box)
 	if p.clickable(ui, box) {
 		st.zone = .Composer
@@ -791,7 +793,7 @@ composer :: proc(ui: ^p.Ctx, st: ^St) {
 			seg := vis[li]
 			p.row(ui, "w-full items-center")
 			p.style(ui).h = p.px(20)
-			p.text(ui, text[seg.start:seg.end], "text-sm whitespace-nowrap")
+			p.text(ui, expand_tabs(text[seg.start:seg.end]), "text-sm whitespace-nowrap")
 			p.style(ui).shrink = 0
 			if focused && st.caret >= seg.start && st.caret <= seg.end {
 				// Placed by measuring the prefix, the same measurement that
@@ -926,7 +928,8 @@ caret_line :: proc(vis: []Seg, caret: int) -> int {
 // ---------------------------------------------------------------------------
 
 footer :: proc(ui: ^p.Ctx, st: ^St) {
-	p.row(ui, "w-full shrink-0 items-center gap-3 px-4 border-t border-border")
+	f := p.row(ui, "w-full shrink-0 items-center gap-3 px-4 border-t border-border")
+	st.footer_id = p.node_id(ui, f)
 	p.style(ui).h = p.px(FOOTER_H)
 	defer p.end(ui)
 

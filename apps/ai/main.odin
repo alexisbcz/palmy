@@ -84,6 +84,14 @@ St :: struct {
 	tr_id:        u64,
 	end_id:       u64,
 
+	// Element ids the headless layout test reads back after a frame. They
+	// cost one assignment each and they are the only way to assert that a
+	// chat window's fixed bands stay put when the transcript is ten times
+	// taller than the window.
+	composer_id:  u64,
+	footer_id:    u64,
+	main_id:      u64,
+
 	zone:         Zone,
 	overlay:      Overlay,
 	ov_sel:       int,
