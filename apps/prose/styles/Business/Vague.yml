@@ -1,0 +1,20 @@
+extends: existence
+message: "'%s' names no one. Who, and by when?"
+description: |
+  A sentence that says something "will be addressed" has no owner and no date,
+  so nothing in it can be tracked, chased or missed. Business writing earns
+  its keep when every commitment has a name and a day attached.
+level: warning
+ignorecase: true
+tokens:
+  - will be (?:addressed|reviewed|considered|explored|evaluated|looked into|actioned)
+  - (?:is|are) being (?:addressed|reviewed|considered|explored|evaluated)
+  - we (?:are|will be) working (?:on|towards|toward)
+  - (?:going|moving) forward
+  - as soon as possible
+  - in due course
+  - at some point
+  - in the coming (?:weeks|months)
+  - shortly thereafter
+  - someone (?:should|needs to|will)
+  - it (?:has|had) been decided

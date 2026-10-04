@@ -1,0 +1,11 @@
+extends: occurrence
+message: "%s words. Twenty is the ceiling here."
+description: |
+  This is the strictest threshold of any pack, and it is a style choice rather
+  than a finding: short sentences read faster and are harder to write. A
+  document that trips this on every line is not wrong, it is in a different
+  register.
+level: warning
+scope: sentence
+max: 20
+token: '\b\w+\b'

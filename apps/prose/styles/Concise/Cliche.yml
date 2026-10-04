@@ -1,0 +1,45 @@
+extends: existence
+message: "Cliché: '%s'."
+description: |
+  A cliché was a good image once, and the reader's eye now slides over it
+  without forming any picture at all. That is the cost: not that it is
+  inelegant, but that it conveys nothing.
+level: warning
+ignorecase: true
+tokens:
+  - a (?:level|whole new) playing field
+  - at the drop of a hat
+  - avoid like the plague
+  - back to square one
+  - beat(?:ing)? around the bush
+  - bite the bullet
+  - burn(?:ing)? the midnight oil
+  - cry over spilt milk
+  - dead as a doornail
+  - easier said than done
+  - few and far between
+  - food for thought
+  - in the nick of time
+  - last but not least
+  - leave no stone unturned
+  - light at the end of the tunnel
+  - make a long story short
+  - needle in a haystack
+  - only time will tell
+  - par for the course
+  - plain as day
+  - pushing the envelope
+  - raining cats and dogs
+  - read between the lines
+  - sick and tired
+  - take the bull by the horns
+  - the tip of the iceberg
+  - think outside the box
+  - time will tell
+  - tried and true
+  - under the weather
+  - when push comes to shove
+  - win[- ]win
+  - the best of both worlds
+  - every cloud has a silver lining
+  - the bottom line is

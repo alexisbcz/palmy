@@ -1,0 +1,9 @@
+extends: existence
+message: "Passive: '%s'. Who did it?"
+description: |
+  The passive moves the actor behind the verb or deletes them. In terse prose
+  it is almost always the wrong trade: it costs two words and loses a fact.
+level: error
+ignorecase: true
+tokens:
+  - \b(?:am|are|is|was|were|be|been|being)\s+(?:\w+ed|beaten|become|begun|bitten|blown|broken|brought|built|bought|caught|chosen|come|cut|dealt|done|drawn|driven|drunk|eaten|fallen|fed|felt|fought|found|flown|forgotten|frozen|given|gone|grown|heard|held|hidden|hit|hurt|kept|known|laid|led|left|lent|let|lost|made|meant|met|paid|put|read|ridden|rung|risen|run|said|seen|sold|sent|set|shaken|shot|shown|shut|sung|sunk|sat|slept|slid|spoken|spent|spun|spread|stood|stolen|struck|sworn|swept|swum|swung|taken|taught|torn|told|thought|thrown|understood|woken|worn|won|written)\b

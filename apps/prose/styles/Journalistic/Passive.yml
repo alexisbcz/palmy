@@ -1,0 +1,10 @@
+extends: existence
+message: "Passive: '%s'. Put the actor first."
+description: |
+  News writing puts the actor in front of the verb because that is the order
+  the reader needs: who did what. "Three were arrested" withholds the one fact
+  the sentence exists to deliver.
+level: error
+ignorecase: true
+tokens:
+  - \b(?:was|were|is|are|been|being)\s+(?:\w+ed|arrested|charged|killed|injured|found|seen|told|given|taken|held|sent|made|shot|struck|hit|brought|built|chosen|known|shown|left|put|set)\b

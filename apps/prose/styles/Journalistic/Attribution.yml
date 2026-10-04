@@ -1,0 +1,21 @@
+extends: substitution
+message: "Prefer '%s' to '%s' — it does not editorialise."
+description: |
+  "Claimed", "admitted" and "refused to deny" each carry a judgement about
+  whether the speaker is telling the truth. "Said" carries none, which is why
+  wire style uses it for almost everything.
+level: warning
+ignorecase: true
+swap:
+  claimed: said
+  claims: says
+  admitted: said
+  admits: says
+  confessed: said
+  insisted: said
+  asserted: said
+  boasted: said
+  conceded: said
+  revealed: said
+  pointed out: said
+  noted that: said

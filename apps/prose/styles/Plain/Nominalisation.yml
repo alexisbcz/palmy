@@ -1,0 +1,18 @@
+extends: existence
+message: "'%s' hides a verb. Use the verb."
+description: |
+  A nominalisation is a verb turned into a noun: "make an assessment of"
+  instead of "assess". The action disappears into a noun and needs a weak verb
+  propped under it, which is how a sentence ends up with "provide",
+  "undertake" or "carry out" doing all the work.
+level: suggestion
+ignorecase: true
+tokens:
+  - (?:make|made|makes|making) (?:an? )?(?:assessment|decision|determination|recommendation|assumption|statement|comparison)
+  - (?:undertake|undertakes|undertaking|undertook) (?:an? )?(?:review|analysis|assessment|examination)
+  - (?:carry|carries|carried) out (?:an? )?(?:review|analysis|assessment|investigation|examination)
+  - (?:provide|provides|provided) (?:an? )?(?:explanation|description|summary|indication)
+  - (?:give|gives|gave) (?:an? )?(?:indication|explanation|description)
+  - (?:perform|performs|performed) (?:an? )?(?:analysis|calculation|evaluation)
+  - is in receipt of
+  - take(?:s|n)? action

@@ -1,0 +1,23 @@
+extends: existence
+message: "'%s' is an absolute claim. Can it be supported?"
+description: |
+  "Obviously", "clearly" and "it is well known that" assert that no evidence
+  is needed. Sometimes that is true. Far more often it marks the one step in
+  the argument the author could not find a citation for, and a reviewer knows
+  to look there first.
+level: warning
+ignorecase: true
+tokens:
+  - obviously
+  - clearly
+  - undoubtedly
+  - without a doubt
+  - it is well known that
+  - everyone (?:knows|agrees)
+  - it goes without saying
+  - needless to say
+  - of course
+  - always the case
+  - never the case
+  - proves that
+  - proven fact

@@ -1,0 +1,11 @@
+extends: occurrence
+message: "This sentence runs to %s words. Split it."
+description: |
+  Nothing is wrong with a long sentence; the problem is a document made only
+  of them, because every one asks the reader to hold more open at once. The
+  threshold here is 30 words, which is where comprehension measurably starts
+  to fall for a general audience — not a rule, a warning light.
+level: warning
+scope: sentence
+max: 30
+token: '\b\w+\b'

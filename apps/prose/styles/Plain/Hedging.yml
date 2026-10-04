@@ -1,0 +1,23 @@
+extends: existence
+message: "Hedge: '%s'. Say it, or cut it."
+description: |
+  A hedge makes a sentence sound careful without making it more accurate. If
+  the claim is uncertain, say what the uncertainty is; if it is not, the hedge
+  only invites the reader to discount everything around it.
+level: warning
+ignorecase: true
+tokens:
+  - I would argue that
+  - it could be argued
+  - it seems (?:likely|possible|clear)
+  - more or less
+  - kind of
+  - sort of
+  - fairly certain
+  - somewhat
+  - arguably
+  - presumably
+  - seemingly
+  - relatively speaking
+  - to some extent
+  - in a sense

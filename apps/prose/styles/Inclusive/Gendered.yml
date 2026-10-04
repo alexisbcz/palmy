@@ -1,0 +1,37 @@
+extends: substitution
+message: "'%s' includes everyone; '%s' does not."
+description: |
+  A gendered default tells part of the audience the text was not written with
+  them in mind. The neutral form costs nothing and is almost always shorter or
+  the same length.
+level: warning
+ignorecase: true
+swap:
+  chairman: chair
+  chairmen: chairs
+  spokesman: spokesperson
+  spokesmen: spokespeople
+  businessman: businessperson
+  businessmen: businesspeople
+  policeman: police officer
+  policemen: police officers
+  fireman: firefighter
+  firemen: firefighters
+  mailman: letter carrier
+  salesman: salesperson
+  salesmen: salespeople
+  stewardess: flight attendant
+  waitress: server
+  manpower: staffing
+  man-hours: person-hours
+  manmade: artificial
+  man-made: artificial
+  mankind: humanity
+  the common man: the average person
+  freshman: first-year student
+  forefathers: ancestors
+  he or she: they
+  his or her: their
+  s/he: they
+  guys: everyone
+  you guys: everyone

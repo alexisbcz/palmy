@@ -1,0 +1,22 @@
+extends: existence
+message: "'%s' has a history worth avoiding."
+description: |
+  These idioms are in common use and most people who write them intend nothing
+  by them. They each have an origin — in slavery, in anti-Roma prejudice, in
+  colonial violence — that some readers know and cannot unhear.
+level: suggestion
+ignorecase: true
+tokens:
+  - sold down the river
+  - low man on the totem pole
+  - off the reservation
+  - circle the wagons
+  - open the floodgates
+  - peanut gallery
+  - no can do
+  - long time no see
+  - rule of thumb
+  - basket case
+  - hold down the fort
+  - call a spade a spade
+  - more than one way to skin a cat

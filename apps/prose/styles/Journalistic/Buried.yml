@@ -1,0 +1,12 @@
+extends: existence
+message: "'%s' is a throat-clearing opener. Start with the news."
+description: |
+  A sentence that begins with a subordinate clause makes the reader wait for
+  the subject. In a lede that is fatal: the first six words are the only ones
+  most readers will see.
+level: warning
+ignorecase: true
+nonword: true
+tokens:
+  - ^(?:In|On|At|After|Following|Despite|Although|While|Amid|Because|Since|Having|As) [a-z]+(?:,|ing)
+  - ^(?:It|There) (?:is|was|are|were)\b

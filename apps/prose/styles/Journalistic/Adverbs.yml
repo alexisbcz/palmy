@@ -1,0 +1,22 @@
+extends: existence
+message: "'%s' tells the reader what to feel."
+description: |
+  An intensifier in a news sentence is the reporter's opinion wearing the
+  grammar of a fact. If a crowd was large, give the number; "incredibly large"
+  is unverifiable and will be the line that is challenged.
+level: warning
+ignorecase: true
+tokens:
+  - very
+  - really
+  - incredibly
+  - extremely
+  - tragically
+  - shockingly
+  - remarkably
+  - stunningly
+  - devastatingly
+  - allegedly very
+  - totally
+  - absolutely
+  - literally

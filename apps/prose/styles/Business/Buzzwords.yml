@@ -1,0 +1,39 @@
+extends: existence
+message: "Buzzword: '%s'. What actually happens?"
+description: |
+  A buzzword survives because it cannot be checked. "Synergy" commits nobody
+  to anything, which is why it appears in writing whose author does not yet
+  know what they are proposing. Replace it with the thing that happens, and
+  if nothing happens, that is the finding.
+level: error
+ignorecase: true
+tokens:
+  - synergy
+  - synergi[sz]e
+  - synergies
+  - paradigm shift
+  - value[- ]add
+  - core competenc(?:y|ies)
+  - best practice
+  - low[- ]hanging fruit
+  - move the needle
+  - boil the ocean
+  - circle back
+  - touch base
+  - deep dive
+  - thought leader(?:ship)?
+  - growth hacking
+  - disrupt(?:ive|ion)? innovation
+  - holistic approach
+  - mission[- ]critical
+  - game[- ]chang(?:er|ing)
+  - double[- ]click on
+  - drill down into
+  - at the end of the day
+  - net[- ]net
+  - take it offline
+  - bandwidth to
+  - learnings
+  - actionable insights
+  - ideate
+  - operationali[sz]e

@@ -1,0 +1,10 @@
+extends: occurrence
+message: "%s words in one sentence. A reader skimming will miss it."
+description: |
+  Business writing is read in a hurry, usually on a phone, usually by somebody
+  looking for the one line that concerns them. Past about 25 words a sentence
+  stops being skimmable, and the point in it stops being found.
+level: warning
+scope: sentence
+max: 25
+token: '\b\w+\b'

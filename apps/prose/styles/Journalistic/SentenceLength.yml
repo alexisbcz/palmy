@@ -1,0 +1,10 @@
+extends: occurrence
+message: "%s words. A news sentence carries one idea."
+description: |
+  Wire style keeps the average near 20 words and the maximum near 30, not
+  because longer sentences are bad English but because a reader scanning a
+  page will not finish them.
+level: error
+scope: sentence
+max: 28
+token: '\b\w+\b'

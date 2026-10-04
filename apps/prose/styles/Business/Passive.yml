@@ -1,0 +1,13 @@
+extends: existence
+message: "Passive voice: '%s'. Name the owner."
+description: |
+  In a memo the passive is usually load-bearing: "the decision was taken"
+  exists precisely so that nobody has to be named as having taken it. If the
+  actor is deliberately withheld, say so; if not, name them.
+level: warning
+ignorecase: true
+tokens:
+  - \b(?:was|were|be|been|being|is|are)\s+(?:\w+ed|taken|made|given|sent|held|drawn|found|known|seen|shown|told|put|set|dealt|brought|built|chosen|done)\s+by\b
+  - \b(?:a |the )?decision (?:was|has been) (?:taken|made|reached)
+  - \bit (?:was|has been) (?:agreed|decided|determined|concluded|noted)
+  - \b(?:action|steps|measures) (?:will be|were|have been) taken

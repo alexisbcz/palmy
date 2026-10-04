@@ -1,0 +1,17 @@
+extends: existence
+message: "'%s' assumes something about the reader."
+description: |
+  "Obviously", "simply" and "just" tell a reader who is stuck that they should
+  not be. In documentation that is the single most common reason somebody
+  gives up and does not ask.
+level: warning
+ignorecase: true
+tokens:
+  - (?:it(?:'| i)s|that(?:'| i)s) (?:easy|simple|straightforward|trivial|obvious)
+  - just (?:run|type|click|add|install|use|set)
+  - simply (?:run|type|click|add|install|use|set)
+  - obviously
+  - as (?:you|everyone) (?:know|knows)
+  - any(?:one|body) (?:can|could) see
+  - of course you
+  - needless to say

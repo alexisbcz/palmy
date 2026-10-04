@@ -1,0 +1,16 @@
+extends: existence
+message: "'%s' hides the verb."
+description: |
+  "Provide clarification" instead of "clarify" needs a weak verb to prop up
+  the noun, and the weak verb is what makes a memo read as though nobody in it
+  does anything.
+level: suggestion
+ignorecase: true
+tokens:
+  - (?:provide|provides|provided|providing) (?:clarification|confirmation|notification|authori[sz]ation|validation)
+  - (?:conduct|conducts|conducted|conducting) (?:an? )?(?:review|audit|assessment|analysis)
+  - (?:effect|effects|effected) (?:an? )?(?:change|improvement)
+  - (?:achieve|achieves|achieved) (?:an? )?(?:reduction|increase|improvement)
+  - (?:reach|reaches|reached) (?:an? )?(?:decision|agreement|conclusion)
+  - (?:hold|holds|held) (?:an? )?discussion
+  - in the process of \w+ing

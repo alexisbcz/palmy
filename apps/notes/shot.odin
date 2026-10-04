@@ -12,6 +12,7 @@ import "core:strings"
 import "core:time"
 import kit "kit:."
 import p "palmy:."
+import prose "../prose"
 import sc "shadcn:."
 
 SHOT_W :: 1150
@@ -49,6 +50,7 @@ shot_fonts :: proc(off: ^p.Offscreen) {
 	sc.register_shadcn_theme(false)
 	p.set_text_gamma(1.8)
 	p.register_color("accent-blue", p.hex(ACCENT))
+	prose_register_colors()
 }
 
 // shot_fixture writes the notebook the shots show. Invented entirely: no file
@@ -135,6 +137,28 @@ was wetter. Keep it at 22 C and stop chasing hydration.
 `,
 		},
 		{
+			"quarterly-update",
+			`# Quarterly update
+
+We will utilize the synergy going forward in order to leverage our core
+competencies, and it is my understanding that a decision was taken to
+commence the project prior to the end of the quarter.
+
+It is important to note that the implementation of the comprehensive
+methodological framework necessitates substantial deliberation. The
+chairman will circle back with the team at the end of the day.
+
+- Obviously we should just run the migration
+- The the plan is clearly very simple
+
+` + "```" + `
+utilize(very, really);   // a code sample is not prose
+` + "```" + `
+
+See http://example.com/utilize/very for the original proposal.
+`,
+		},
+		{
 			"meeting-tuesday",
 			`# Meeting, Tuesday
 
@@ -182,6 +206,10 @@ shots :: proc(dir: string) -> int {
 	nt.tz = 0
 	nt.now = time.now()
 	buf_init_empty(&nt.buf)
+	// The writing coach is part of the application, so the pictures get it
+	// exactly as a window would: the same engine, the same packs.
+	prose_init(&nt)
+	defer prose_destroy(&nt)
 	reload(&nt)
 	// The Markdown-heavy note, so the picture shows headings, a quote, a code
 	// span and task boxes rather than three plain paragraphs.
@@ -250,6 +278,69 @@ shots :: proc(dir: string) -> int {
 	nt.mode = .Help
 	settle(off, &nt, 3)
 	shot(off, dir, "04-notes-keys.png", &n)
+	nt.mode = .Normal
+
+	// ---- the writing coach ---------------------------------------------
+	// A note with something wrong with it, under two different style packs,
+	// with one mark selected and the report open. Every alert in these
+	// pictures was produced by the engine over the fixture above.
+	for row, i in nt.vis {
+		if nt.all[row].title == "Quarterly update" {
+			nt.sel = i
+		}
+	}
+	open_sel(&nt)
+	nt.pane = .Editor
+	nt.preview = false
+	nt.pr.on = true
+
+	shot_style :: proc(nt: ^Notes, name: string) {
+		if i := prose.pack_index(&nt.pr.eng, name); i >= 0 {
+			nt.pr.style = i
+		}
+		prose_invalidate(nil, nt)
+		prose_force(nt)
+	}
+
+	// Business: the pack for a memo.
+	shot_style(&nt, "Business")
+	nt.pr.mark = -1
+	settle(off, &nt, 3)
+	shot(off, dir, "05-notes-prose-business.png", &n)
+
+	// One mark selected, with its explanation and the rewrite it offers. The
+	// first alert that has a fix is chosen, because a panel that says "no
+	// mechanical rewrite" is the less interesting half of the feature.
+	nt.pr.mark = 0
+	for a, i in nt.pr.alerts {
+		if a.has_fix {
+			nt.pr.mark = i
+			break
+		}
+	}
+	if a, ok := prose_mark(&nt); ok {
+		nt.cur = doc_pos(&nt, a.from)
+	}
+	settle(off, &nt, 3)
+	shot(off, dir, "06-notes-prose-explain.png", &n)
+
+	// The writing report.
+	nt.pr.show_report = true
+	settle(off, &nt, 4)
+	shot(off, dir, "07-notes-prose-report.png", &n)
+	nt.pr.show_report = false
+
+	// The same note under Concise, which flags a different set entirely.
+	shot_style(&nt, "Concise")
+	nt.pr.mark = -1
+	settle(off, &nt, 3)
+	shot(off, dir, "08-notes-prose-concise.png", &n)
+
+	// The style picker, which is where the feature starts.
+	nt.mode = .Styles
+	nt.pr.pick_sel = 1
+	settle(off, &nt, 3)
+	shot(off, dir, "09-notes-prose-styles.png", &n)
 	nt.mode = .Normal
 
 	fmt.printfln("notes --shots: %d PNGs in %s", n, dir)

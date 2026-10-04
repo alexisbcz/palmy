@@ -1,0 +1,33 @@
+extends: substitution
+message: "Write '%s' rather than '%s'."
+description: |
+  Contractions are correct English and are not a mistake. They are simply not
+  the register of a journal article, and a reviewer reads one as a sign the
+  draft has not been through a formal pass.
+level: warning
+ignorecase: true
+swap:
+  can't: cannot
+  won't: will not
+  don't: do not
+  doesn't: does not
+  didn't: did not
+  isn't: is not
+  aren't: are not
+  wasn't: was not
+  weren't: were not
+  hasn't: has not
+  haven't: have not
+  hadn't: had not
+  shouldn't: should not
+  wouldn't: would not
+  couldn't: could not
+  it's: it is
+  that's: that is
+  there's: there is
+  they're: they are
+  we're: we are
+  you're: you are
+  we've: we have
+  i've: I have
+  let's: let us

@@ -1,0 +1,25 @@
+extends: substitution
+message: "Use '%s' for '%s'."
+description: |
+  Business prose accretes these: each one was once a hedge or a courtesy and
+  is now padding. The shorter form does not sound blunter to a reader who
+  wanted the answer.
+level: warning
+ignorecase: true
+swap:
+  please be advised that: ""
+  please find attached: "here is"
+  as per (?:our|your): "following our"
+  at your earliest convenience: soon
+  in receipt of: have
+  with all due respect: ""
+  i(?:'| a)m reaching out to: "I am writing to"
+  touch base (?:with|on): discuss
+  circle back (?:with|on|to): follow up on
+  per my last email: "as I wrote"
+  going forward: "from now on"
+  in terms of: for
+  on the basis of: from
+  in the context of: for
+  for all intents and purposes: effectively
+  it is my understanding that: "I understand"

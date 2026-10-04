@@ -37,6 +37,7 @@ Mode :: enum {
 	Rename,
 	Confirm_Delete,
 	Help,
+	Styles, // the writing-style picker
 }
 
 Notes :: struct {
@@ -77,6 +78,10 @@ Notes :: struct {
 	// Import and export, through the shared file dialog. See pick.odin.
 	pick:        kit.Pick,
 	pick_use:    Pick_Use,
+
+	// The writing coach. See prose_state.odin and prose_ui.odin; the engine
+	// itself is apps/prose, which `prose lint` is the other front end of.
+	pr:          Prose,
 }
 
 // ---------------------------------------------------------------------------
@@ -123,6 +128,7 @@ main :: proc() {
 	}
 	defer p.destroy(app)
 	p.register_color("accent-blue", p.hex(ACCENT))
+	prose_register_colors()
 
 	nt := Notes{}
 	nt.dir = store_dir()
@@ -130,12 +136,16 @@ main :: proc() {
 	nt.now = time.now()
 	buf_init_empty(&nt.buf)
 
+	prose_init(&nt)
+	defer prose_destroy(&nt)
+
 	reload(&nt)
 	if len(nt.all) == 0 {
 		seed(&nt)
 		reload(&nt)
 	}
 	open_sel(&nt)
+	prose_force(&nt)
 
 	defer kit.pick_destroy(&nt.pick)
 
@@ -144,6 +154,7 @@ main :: proc() {
 		measure(ui, &nt)
 		keys(ui, &nt, app)
 		autosave(ui, &nt)
+		prose_tick(ui, &nt)
 		frame(ui, &nt)
 		if nt.want_quit {
 			break
@@ -200,8 +211,12 @@ note :: proc(nt: ^Notes, msg: string) {
 measure :: proc(ui: ^p.Ctx, nt: ^Notes) {
 	win := p.size(ui)
 	nt.space_w = p.text_width(ui.fonts, " ", BODY_SIZE, .Sans, .Regular)
-	nt.body_w = max(200, win.x - LIST_W - 96)
-	nt.rows = max(3, int((win.y - HEADER_H - STATUS_H - 108) / BODY_LH))
+	panel := nt.pr.show_report ? f32(PROSE_PANEL_W) : 0
+	nt.body_w = max(200, win.x - LIST_W - panel - 96)
+	// The explanation strip eats rows when it is up, so the caret arithmetic
+	// has to know about it or Page Down overshoots.
+	strip := f32(nt.pr.on && !nt.preview ? (nt.pr.mark >= 0 ? 92 : 34) : 0)
+	nt.rows = max(3, int((win.y - HEADER_H - STATUS_H - 108 - strip) / BODY_LH))
 }
 
 // ---------------------------------------------------------------------------
@@ -254,6 +269,8 @@ open_sel :: proc(nt: ^Notes) {
 	nt.top = 0
 	nt.rev += 1
 	nt.pending = false
+	prose_conf_apply_note(nt)
+	prose_invalidate(nil, nt)
 }
 
 // flush writes the open note if it has unsaved edits.
@@ -319,6 +336,9 @@ touch :: proc(ui: ^p.Ctx, nt: ^Notes) {
 	nt.pending = true
 	nt.dirty_since = f64(p.elapsed(ui))
 	nt.rev += 1
+	// The coach is told the line, not the document: that is what lets it
+	// re-read one paragraph instead of the note. See prose_state.odin.
+	prose_touch(ui, nt, nt.cur.line)
 }
 
 autosave :: proc(ui: ^p.Ctx, nt: ^Notes) {
