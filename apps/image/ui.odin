@@ -33,17 +33,25 @@ build_viewer :: proc(ui: ^p.Ctx, st: ^St) {
 
 	p.row(ui, "w-full flex-1 min-h-0 overflow-hidden")
 	{
-		p.col(ui, "flex-1 min-w-0 min-h-0 relative overflow-hidden bg-[#0c0c0e]")
-		if st.cur_ok && st.shown.w > 0 {
-			idx := p.pixels(ui, "w-full h-full cursor-grab", st, draw_canvas)
-			pointer_pan(ui, st, idx)
-			zoom_hud(ui, st)
-		} else if s := current_shot(st); s == nil {
-			viewer_empty(ui, st)
-		} else if st.cur_idx != st.sel {
-			decoding_state(ui, st, s)
-		} else {
-			broken_state(ui, st, s)
+		p.col(ui, "flex-1 min-w-0 min-h-0 overflow-hidden")
+		{
+			p.col(ui, "w-full flex-1 min-h-0 relative overflow-hidden bg-[#0c0c0e]")
+			if st.cur_ok && st.shown.w > 0 {
+				idx := p.pixels(ui, "w-full flex-1 min-h-0 cursor-grab", st, draw_canvas)
+				pointer_pan(ui, st, idx)
+				zoom_hud(ui, st)
+			} else if s := current_shot(st); s == nil {
+				viewer_empty(ui, st)
+			} else if st.cur_idx != st.sel {
+				decoding_state(ui, st, s)
+			} else {
+				broken_state(ui, st, s)
+			}
+			p.end(ui)
+
+			if show_strip {
+				thumb_strip(ui, st)
+			}
 		}
 		p.end(ui)
 
@@ -53,9 +61,6 @@ build_viewer :: proc(ui: ^p.Ctx, st: ^St) {
 	}
 	p.end(ui)
 
-	if show_strip {
-		thumb_strip(ui, st)
-	}
 	status_bar(ui, st)
 }
 
@@ -228,7 +233,7 @@ broken_state :: proc(ui: ^p.Ctx, st: ^St, s: ^Shot) {
 	p.end(ui)
 
 	p.row(ui, "items-center gap-1.5 pt-1")
-	sc.kbd(ui, "→")
+	sc.kbd(ui, "Right")
 	p.text(ui, "skip to the next picture", "text-[11] text-muted-foreground whitespace-nowrap")
 	p.style(ui).shrink = 0
 	p.end(ui)
@@ -252,12 +257,12 @@ top_bar :: proc(ui: ^p.Ctx, st: ^St) {
 	p.col(ui, "flex-1 min-w-0 gap-px overflow-hidden")
 	if s != nil {
 		p.text(ui, s.name, "text-sm font-medium truncate")
-		p.row(ui, "items-center gap-2")
+		p.row(ui, "w-full min-w-0 items-center gap-2 overflow-hidden")
 		if s.w > 0 {
 			p.textf(ui, "text-[11] text-muted-foreground whitespace-nowrap", "%d × %d", s.w, s.h)
 			p.style(ui).shrink = 0
 		}
-		p.text(ui, home_relative(st.dir), "text-[11] text-muted-foreground truncate")
+		p.text(ui, home_relative(st.dir), "flex-1 min-w-0 text-[11] text-muted-foreground truncate")
 		p.end(ui)
 	} else {
 		p.text(ui, "No image", "text-sm font-medium")
@@ -351,10 +356,10 @@ status_bar :: proc(ui: ^p.Ctx, st: ^St) {
 	}
 
 	if pannable(st) {
-		hint(ui, "←→↑↓", "", "Pan")
+		hint(ui, "Arrows", "", "Pan")
 		hint(ui, "n", "p", "Next / prev")
 	} else {
-		hint(ui, "←", "→", "Browse")
+		hint(ui, "Left", "Right", "Browse")
 	}
 	hint(ui, "+", "−", "Zoom")
 	hint(ui, "0", "", "Fit")
@@ -575,6 +580,9 @@ build_grid :: proc(ui: ^p.Ctx, st: ^St) {
 	cell_h := math.round(cell_w * 0.74) + 26
 	avail_h := size.y - TOPBAR_H - STATUS_H - 2 * GRID_PAD
 	rows := max(1, int((avail_h + GRID_GAP) / (cell_h + GRID_GAP)))
+	// Spread the slack over the rows that fit rather than leaving a band of
+	// empty background under the last one.
+	cell_h = min(cell_h * 1.6, (avail_h - f32(rows - 1) * GRID_GAP) / f32(rows))
 	st.grid_cols = cols
 	st.grid_rows = rows
 	keep_grid_visible(st)
@@ -699,7 +707,7 @@ status_bar_grid :: proc(ui: ^p.Ctx, st: ^St) {
 	p.style(ui).h = p.px(STATUS_H)
 	defer p.end(ui)
 
-	hint(ui, "←→↑↓", "", "Move")
+	hint(ui, "Arrows", "", "Move")
 	hint(ui, "Enter", "", "Open")
 	hint(ui, "i", "", "Info")
 	hint(ui, "Esc", "", "Library")

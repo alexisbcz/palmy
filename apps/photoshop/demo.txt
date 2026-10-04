@@ -1,0 +1,224 @@
+# palmy photoshop — a raster image editor on the palmy toolkit.
+#
+# Driven entirely from the keyboard. This compositor build has no click
+# dispatcher and wtype cannot send a modifier chord through the recorder, so
+# every step below is a plain key the app really binds; `move` is only ever
+# used to show a hover state.
+
+wait 1.8
+move 620 420
+wait 1.0
+move 1200 370
+wait 0.9
+move 1200 470
+wait 0.9
+
+# --- the shortcut sheet -----------------------------------------------------
+type ?
+wait 3.4
+key Escape
+wait 0.7
+
+# --- a new layer to paint on, from the layer menu ---------------------------
+type l
+wait 1.4
+key Return
+wait 1.0
+
+# --- a bigger brush ---------------------------------------------------------
+type ]
+wait 0.3
+type ]
+wait 0.3
+type ]
+wait 0.7
+
+# --- paint: Return puts the brush down, arrows draw -------------------------
+key Return
+wait 0.8
+key Left
+wait 0.14
+key Left
+wait 0.14
+key Left
+wait 0.2
+key Down
+wait 0.14
+key Right
+wait 0.14
+key Down
+wait 0.14
+key Right
+wait 0.14
+key Up
+wait 0.14
+key Right
+wait 0.14
+key Up
+wait 0.14
+key Right
+wait 0.14
+key Down
+wait 0.14
+key Right
+wait 0.14
+key Down
+wait 0.14
+key Right
+wait 0.3
+key Return
+wait 1.4
+
+# --- undo takes the whole stroke, not a dab ---------------------------------
+type u
+wait 1.8
+type y
+wait 1.6
+
+# --- blend modes on the layer below -----------------------------------------
+key Page_Down
+wait 1.0
+type .
+wait 1.3
+type .
+wait 1.3
+type .
+wait 1.3
+
+# --- and its opacity --------------------------------------------------------
+type ;
+wait 0.45
+type ;
+wait 1.1
+type '
+wait 1.0
+
+# --- an adjustment on the disc layer, with a live preview -------------------
+key Page_Down
+wait 0.9
+type a
+wait 1.3
+key Down
+wait 0.8
+key Return
+wait 1.1
+key Page_Up
+wait 0.16
+key Page_Up
+wait 0.16
+key Page_Up
+wait 0.16
+key Page_Up
+wait 0.16
+key Page_Up
+wait 0.16
+key Page_Up
+wait 0.16
+key Page_Up
+wait 0.16
+key Page_Up
+wait 0.6
+key Down
+wait 0.6
+key Page_Up
+wait 0.2
+key Page_Up
+wait 0.2
+key Page_Up
+wait 1.0
+key Return
+wait 1.4
+
+# --- a filter on the painted layer ------------------------------------------
+key Page_Up
+wait 0.4
+key Page_Up
+wait 0.8
+type f
+wait 1.4
+key Return
+wait 1.2
+key Page_Up
+wait 0.5
+key Page_Up
+wait 1.3
+key Return
+wait 1.5
+
+# --- the colour picker ------------------------------------------------------
+type c
+wait 1.6
+key Page_Up
+wait 0.3
+key Page_Up
+wait 0.3
+key Page_Up
+wait 0.3
+key Page_Up
+wait 0.3
+key Page_Up
+wait 0.6
+key Up
+wait 0.2
+key Up
+wait 0.2
+key Up
+wait 1.2
+key Return
+wait 1.2
+
+# --- the bucket, on the background layer ------------------------------------
+type g
+wait 0.9
+key Page_Down
+wait 0.4
+key Page_Down
+wait 0.4
+key Page_Down
+wait 0.8
+key Up
+wait 0.15
+key Up
+wait 0.15
+key Up
+wait 0.15
+key Up
+wait 0.4
+key Return
+wait 1.8
+
+# --- eyedropper: samples the composite --------------------------------------
+type i
+wait 0.8
+key Return
+wait 1.4
+
+# --- zoom in far enough that real pixels show --------------------------------
+type +
+wait 0.4
+type +
+wait 0.4
+type +
+wait 0.4
+type +
+wait 1.6
+type -
+wait 0.25
+type -
+wait 0.25
+type -
+wait 0.25
+type -
+wait 0.4
+move 700 430
+wait 1.6
+
+# --- the file list, then back ------------------------------------------------
+type o
+wait 2.0
+key Down
+wait 0.5
+key Down
+wait 1.0
+key Escape
+wait 1.4

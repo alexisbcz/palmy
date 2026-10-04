@@ -401,8 +401,8 @@ buf_load :: proc(b: ^Buffer, path: string) -> (ok: bool) {
 	buf_init_empty(b)
 	b.path = strings.clone(path)
 
-	data, read_ok := os.read_entire_file(path)
-	if !read_ok {
+	data, rerr := os.read_entire_file_from_path(path, context.allocator)
+	if rerr != nil {
 		b.open_ok = false
 		return false
 	}
@@ -458,7 +458,7 @@ buf_save :: proc(b: ^Buffer, path: string) -> (ok: bool) {
 	if b.final_nl && len(b.lines) > 0 && len(b.lines[len(b.lines) - 1].b) > 0 {
 		strings.write_string(&sb, nl)
 	}
-	if !os.write_entire_file(path, transmute([]u8)strings.to_string(sb)) {
+	if werr := os.write_entire_file(path, transmute([]u8)strings.to_string(sb)); werr != nil {
 		return false
 	}
 	if b.path != path {

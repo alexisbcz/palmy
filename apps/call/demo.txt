@@ -1,0 +1,68 @@
+# Driven against the Alice instance, which is dialing Bob on 127.0.0.1:47812.
+# Bob is launched alongside by demo.sh with --autoanswer, so the call connects
+# on its own and this script shows what you can do once it is up.
+#
+# Synthetic sources only: a 440 Hz tone modulated at 0.4 Hz, and ffmpeg's
+# testsrc2 pattern. Nothing here opens the camera or the microphone.
+
+wait 3.0
+
+# Connected: remote video on the stage, self-view in the corner, level meters
+# moving with the tone. Let it run so the frame counter in the pattern is
+# visibly advancing.
+wait 3.5
+
+# Mute: the meter drops, the badge appears here and on the other end.
+key m
+wait 2.5
+key m
+wait 2.0
+
+# Camera off: the far side shows the camera-off placeholder.
+key v
+wait 2.5
+key v
+wait 2.5
+
+# The device panel: the real microphone and camera, enumerated from wpctl and
+# v4l2-ctl, listed and locked.
+key d
+wait 3.0
+key Down
+wait 0.9
+key Right
+wait 1.6
+key Down
+wait 0.9
+key Right
+wait 1.6
+
+# Back to the live statistics: measured latency, jitter buffer depth, measured
+# frame rate, packet counters.
+key s
+wait 4.0
+
+# Volume.
+key bracketright
+wait 0.4
+key bracketright
+wait 0.4
+key bracketright
+wait 1.2
+key bracketleft
+wait 0.4
+key bracketleft
+wait 1.5
+
+# Hang up, then dismiss.
+key h
+wait 2.5
+key h
+wait 1.5
+
+# And call again, to show the dialing state.
+key c
+wait 2.5
+
+# End on a live call, so the last frame of the recording is media flowing.
+wait 4.0

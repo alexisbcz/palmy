@@ -16,6 +16,7 @@ import "core:os"
 import "core:strings"
 import kit "kit:."
 import p "palmy:."
+import sc "shadcn:."
 
 WIN_W :: 1240
 WIN_H :: 800
@@ -112,20 +113,28 @@ St :: struct {
 }
 
 main :: proc() {
-	app, err := kit.start(
-		{
-			title = "Images",
-			app_id = "palmy",
-			width = WIN_W,
-			height = WIN_H,
-			root_class = "w-full h-full flex-col bg-background text-foreground overflow-hidden",
-		},
-	)
-	if err != "" {
-		fmt.eprintfln("image: %s", err)
-		os.exit(1)
+	shot_out, shot_secs, shot_keys, want_shot := shot_requested()
+
+	app: ^p.App
+	if !want_shot {
+		err: string
+		app, err = kit.start(
+			{
+				title = "Images",
+				app_id = "palmy",
+				width = WIN_W,
+				height = WIN_H,
+				root_class = "w-full h-full flex-col bg-background text-foreground overflow-hidden",
+			},
+		)
+		if err != "" {
+			fmt.eprintfln("image: %s", err)
+			os.exit(1)
+		}
+	} else {
+		sc.register_shadcn_theme()
 	}
-	defer p.destroy(app)
+	defer if app != nil {p.destroy(app)}
 	register_dark_theme()
 
 	st := St {
@@ -142,7 +151,7 @@ main :: proc() {
 
 	// Argv decides where we land: a file opens in the viewer, a folder in the
 	// grid, nothing at all in the library.
-	args := os.args[1:]
+	args := shot_strip(os.args[1:])
 	target := ""
 	for a in args {
 		if !strings.has_prefix(a, "-") {
@@ -178,7 +187,18 @@ main :: proc() {
 	} else {
 		build_library(&st)
 	}
-	defer loader_stop(&st.ld)
+	defer loader_destroy(&st.ld)
+
+	if want_shot {
+		st.view_rect = {
+			0,
+			TOPBAR_H,
+			f32(WIN_W) - PANEL_W - 1,
+			f32(WIN_H) - TOPBAR_H - STATUS_H - STRIP_H - 1,
+		}
+		run_shot(&st, shot_out, shot_secs, shot_keys)
+		return
+	}
 
 	for ui in p.frames(app) {
 		free_all(context.temp_allocator)
@@ -254,8 +274,7 @@ absolute :: proc(path: string) -> string {
 // ---------------------------------------------------------------------------
 
 open_folder :: proc(st: ^St, dir: string, select_path: string) {
-	loader_stop(&st.ld)
-	st.ld = {}
+	loader_destroy(&st.ld)
 	drop_current(st)
 
 	st.dir = strings.clone(dir)

@@ -1,0 +1,65 @@
+# Power and session demo.
+#
+# Nothing in this script can change the machine. The five session actions are
+# wired to a stub: confirming one writes the command it would have issued to
+# the applet's log and to stderr, and runs nothing. The window says so on every
+# row, in the panel header, and again in the confirmation dialog.
+
+wait 2.0
+# What is genuinely there: two logind sessions, the cpufreq policy with its
+# per-core clocks, hwmon read off the frame thread, and the empty
+# /sys/class/power_supply that is the reason there is no battery gauge.
+move 380 200
+wait 3.5
+move 380 440
+wait 3.5
+move 380 680
+wait 3.5
+move 950 200
+wait 4.0
+
+# The session actions. Each row prints the command it stands for.
+key Down
+wait 1.0
+key Down
+wait 1.0
+key Down
+wait 1.0
+key Down
+wait 1.5
+
+# The confirmation for the most destructive one. Note what it says.
+key Return
+wait 5.0
+
+# Cancel is the default; Escape also cancels.
+key Escape
+wait 2.0
+
+# Lock screen, confirmed this time. Right moves to the action button.
+key l
+wait 3.0
+key Right
+wait 1.5
+key Return
+wait 4.0
+
+# Shut down, confirmed. Still nothing happens.
+key p
+wait 3.5
+key Right
+wait 1.2
+key Return
+wait 4.0
+
+# The log of everything this applet intended and did not do.
+key c
+wait 5.0
+key Escape
+wait 1.5
+
+# Every key.
+key question
+wait 4.5
+key Escape
+wait 1.5

@@ -1,0 +1,667 @@
+package main
+
+// Export: turning the timeline into one ffmpeg invocation.
+//
+// The graph
+// ---------
+// Video starts from a black `color` source the length of the timeline, and
+// every video clip is `trim`med out of its source, scaled and padded into the
+// output frame, shifted to its timeline position with `setpts=PTS+START/TB`
+// and `overlay`ed onto whatever is below it. Tracks are walked bottom to top,
+// so the last overlay is the topmost track — the same order the preview draws
+// in. An `enable='between(t,A,B)'` on each overlay is what keeps a clip from
+// smearing its last frame over the rest of the timeline.
+//
+// A cross-dissolve is not a separate filter: the incoming clip is overlapped
+// with the outgoing one on the timeline and its alpha is ramped up with
+// `fade=t=in:alpha=1`. Because overlay already composites it over the clip
+// below, that *is* a dissolve, and it needs no `xfade` (which would force the
+// whole timeline through a concat).
+//
+// Titles become `drawtext`, captions become `subtitles` reading a copy of the
+// cue list with the user's nudge baked in, and audio is `atrim` + `adelay` +
+// `amix`. This whole file produces an argv; `exporter_run` is the only part
+// that starts a process.
+
+import "core:fmt"
+import "core:math"
+import "core:os"
+import "core:strconv"
+import "core:strings"
+import "core:sync"
+import "core:thread"
+import p "palmy:."
+
+TITLE_FONT :: "/home/alex/Work/palmy/parity/web/public/fonts/Geist-600.ttf"
+
+Export_Quality :: enum u8 {
+	Draft,
+	Final,
+}
+
+Export_Settings :: struct {
+	quality:  Export_Quality,
+	out_path: string,
+}
+
+export_dims :: proc(pr: ^Project, q: Export_Quality) -> (w, h: int) {
+	if q == .Final {
+		return pr.out_w, pr.out_h
+	}
+	// A draft is half-height, rounded to even so yuv420p is happy.
+	w = pr.out_w / 2
+	h = pr.out_h / 2
+	w -= w % 2
+	h -= h % 2
+	return max(w, 2), max(h, 2)
+}
+
+// ---------------------------------------------------------------------------
+// Escaping, and how it is avoided
+//
+// A filtergraph is unescaped twice — once splitting the graph on `, ; [ ]`,
+// once splitting a filter's options on `:` and `=` — and a `drawtext` value is
+// then run through its own expansion pass for `%` and `{}`. Getting a user's
+// title through all three correctly is a losing game: a title of
+// `50% 'off': now, really` is enough to break a hand-rolled escaper, and when
+// it breaks, ffmpeg does not write a file at all.
+//
+// So user text never goes into the graph. Each title is written to a temporary
+// file and read back with `textfile=`, with `expansion=none` to switch off the
+// `%` pass, and the captions were already a file. What is left in the graph is
+// paths this program generated itself, which contain nothing but
+// `[A-Za-z0-9/._-]`; `quote_path` wraps those in single quotes and handles an
+// embedded quote the way ffmpeg documents, so a surprising TMPDIR cannot break
+// the graph either.
+// ---------------------------------------------------------------------------
+
+quote_path :: proc(s: string, alloc := context.temp_allocator) -> string {
+	sb := strings.builder_make(alloc)
+	strings.write_byte(&sb, '\'')
+	for i in 0 ..< len(s) {
+		if s[i] == '\'' {
+			// Close the quote, emit an escaped quote, reopen: ffmpeg's own
+			// documented form, the same trick a shell uses.
+			strings.write_string(&sb, "'\\''")
+			continue
+		}
+		strings.write_byte(&sb, s[i])
+	}
+	strings.write_byte(&sb, '\'')
+	return strings.to_string(sb)
+}
+
+// ---------------------------------------------------------------------------
+// Building the command
+// ---------------------------------------------------------------------------
+
+Export_Plan :: struct {
+	argv:       []string,
+	progress:   string, // path ffmpeg writes progress to
+	sub_path:   string, // temp SRT written for burn-in, "" if none
+	temps:      []string, // every temporary file the run should delete
+	duration:   f64,
+	width:      int,
+	height:     int,
+	video_srcs: int,
+	audio_srcs: int,
+	err:        string,
+}
+
+// build_export assembles the whole invocation. It allocates into the given
+// allocator and never starts anything.
+build_export :: proc(
+	pr: ^Project,
+	set: Export_Settings,
+	alloc := context.allocator,
+) -> Export_Plan {
+	context.allocator = alloc
+	plan := Export_Plan{}
+	total := project_duration(pr)
+	if total <= 0.02 {
+		plan.err = strings.clone("the timeline is empty")
+		return plan
+	}
+	ow, oh := export_dims(pr, set.quality)
+	fps := pr.out_fps > 0 ? pr.out_fps : 30
+	plan.duration = total
+	plan.width, plan.height = ow, oh
+
+	// Refuse to write over a source. The user picks the path, so this is the
+	// one check that has to be here rather than in the file dialog.
+	for m in pr.media {
+		if same_path(m.path, set.out_path) {
+			plan.err = fmt.aprintf("refusing to overwrite the source media %s", m.name)
+			return plan
+		}
+	}
+
+	// One -i per distinct media path, in first-use order.
+	inputs := make([dynamic]string, context.temp_allocator)
+	input_of :: proc(inputs: ^[dynamic]string, path: string) -> int {
+		for s, i in inputs {
+			if s == path {
+				return i
+			}
+		}
+		append(inputs, path)
+		return len(inputs) - 1
+	}
+
+	temps := make([dynamic]string)
+	g := strings.builder_make(context.temp_allocator)
+	fmt.sbprintf(&g, "color=c=black:s=%dx%d:r=%g:d=%.4f[vbase];", ow, oh, fps, total)
+
+	// --- video ---------------------------------------------------------
+	cur := "vbase"
+	n := 0
+	titles := make([dynamic]Clip, context.temp_allocator)
+
+	// Bottom track first: the last overlay ends up on top.
+	#reverse for &t, ti in pr.tracks {
+		if t.kind != .Video || !track_enabled(pr, ti) {
+			continue
+		}
+		for c in t.clips {
+			if c.media < 0 {
+				append(&titles, c)
+				continue
+			}
+			if c.media >= len(pr.media) || !pr.media[c.media].has_video {
+				continue
+			}
+			if clip_len(c) <= 1.0 / fps {
+				continue
+			}
+			ii := input_of(&inputs, pr.media[c.media].path)
+			start := c.start
+			end := clip_end(c)
+			fmt.sbprintf(
+				&g,
+				"[%d:v]trim=start=%.4f:end=%.4f,setpts=PTS-STARTPTS," +
+				"scale=%d:%d:force_original_aspect_ratio=decrease," +
+				"pad=%d:%d:(ow-iw)/2:(oh-ih)/2,setsar=1,fps=%g",
+				ii,
+				c.src_in,
+				c.src_out,
+				ow,
+				oh,
+				ow,
+				oh,
+				fps,
+			)
+			if c.trans == .Dissolve && c.xfade > 0.01 {
+				// Ramp alpha in over the overlap with the clip underneath.
+				fmt.sbprintf(&g, ",format=yuva420p,fade=t=in:st=0:d=%.4f:alpha=1", c.xfade)
+			}
+			fmt.sbprintf(&g, "[c%d];", n)
+			fmt.sbprintf(&g, "[c%d]setpts=PTS+%.4f/TB[s%d];", n, start, n)
+			fmt.sbprintf(
+				&g,
+				"[%s][s%d]overlay=eof_action=pass:enable='between(t\\,%.4f\\,%.4f)'[o%d];",
+				cur,
+				n,
+				start,
+				end,
+				n,
+			)
+			cur = fmt.tprintf("o%d", n)
+			n += 1
+			plan.video_srcs += 1
+		}
+	}
+
+	// --- captions, burned in ------------------------------------------
+	if len(pr.captions) > 0 {
+		sub := fmt.aprintf("%s/videoedit-burn-%d.srt", tmp_dir(), os.get_pid())
+		if write_shifted_srt(pr, sub) {
+			plan.sub_path = sub
+			append(&temps, strings.clone(sub))
+			fmt.sbprintf(
+				&g,
+				"[%s]subtitles=filename=%s:force_style='FontSize=%d'[vsub];",
+				cur,
+				quote_path(sub),
+				set.quality == .Draft ? 14 : 22,
+			)
+			cur = "vsub"
+		}
+	}
+
+	// --- titles, as drawtext on top -----------------------------------
+	for c, i in titles {
+		if c.title == "" {
+			continue
+		}
+		size := int(f64(c.font_size) * f64(oh) / f64(math.max(1, pr.out_h)))
+		// The title's text goes through a file, never through the graph.
+		tf := fmt.aprintf("%s/videoedit-title-%d-%d.txt", tmp_dir(), os.get_pid(), i)
+		if os.write_entire_file(tf, transmute([]u8)c.title) != nil {
+			delete(tf)
+			continue
+		}
+		append(&temps, tf)
+		fmt.sbprintf(
+			&g,
+			"[%s]drawtext=fontfile=%s:textfile=%s:expansion=none:fontsize=%d:fontcolor=0x%06x:" +
+			"x='max(12\\,min(w-text_w-12\\,w*%.4f-text_w/2))':" +
+			"y='max(12\\,min(h-text_h-12\\,h*%.4f-text_h/2))':" +
+			"box=1:boxcolor=black@0.45:boxborderw=10:" +
+			"enable='between(t\\,%.4f\\,%.4f)'[t%d];",
+			cur,
+			quote_path(TITLE_FONT),
+			quote_path(tf),
+			max(8, size),
+			c.color & 0xffffff,
+			c.pos_x,
+			c.pos_y,
+			c.start,
+			clip_end(c),
+			i,
+		)
+		cur = fmt.tprintf("t%d", i)
+	}
+	fmt.sbprintf(&g, "[%s]format=yuv420p[vout];", cur)
+
+	// --- audio ---------------------------------------------------------
+	// Sound comes from the audio tracks and nowhere else. A video clip and its
+	// audio are placed as a pair, so counting a video clip's audio too would
+	// mix every take twice — which is exactly what it did before this rule was
+	// written down. One clip, one contribution.
+	alabels := make([dynamic]string, context.temp_allocator)
+	for &t, ti in pr.tracks {
+		if t.kind != .Audio || !track_enabled(pr, ti) {
+			continue
+		}
+		for c in t.clips {
+			if c.media < 0 || c.media >= len(pr.media) || !pr.media[c.media].has_audio {
+				continue
+			}
+			if clip_len(c) <= 0.01 {
+				continue
+			}
+			ii := input_of(&inputs, pr.media[c.media].path)
+			k := len(alabels)
+			fmt.sbprintf(
+				&g,
+				"[%d:a]atrim=start=%.4f:end=%.4f,asetpts=PTS-STARTPTS,volume=%.4f," +
+				"aresample=44100,aformat=sample_fmts=fltp:channel_layouts=stereo," +
+				"adelay=%d:all=1[a%d];",
+				ii,
+				c.src_in,
+				c.src_out,
+				c.gain,
+				int(c.start * 1000 + 0.5),
+				k,
+			)
+			append(&alabels, fmt.tprintf("a%d", k))
+		}
+	}
+	switch len(alabels) {
+	case 0:
+		fmt.sbprintf(&g, "anullsrc=channel_layout=stereo:sample_rate=44100[aout];")
+	case 1:
+		fmt.sbprintf(&g, "[%s]anull[aout];", alabels[0])
+	case:
+		for l in alabels {
+			fmt.sbprintf(&g, "[%s]", l)
+		}
+		fmt.sbprintf(&g, "amix=inputs=%d:normalize=0:dropout_transition=0[aout];", len(alabels))
+	}
+	plan.audio_srcs = len(alabels)
+
+	graph := strings.trim_suffix(strings.to_string(g), ";")
+
+	// --- argv ------------------------------------------------------------
+	plan.progress = fmt.aprintf("%s/videoedit-progress-%d.txt", tmp_dir(), os.get_pid())
+	os.remove(plan.progress)
+	plan.temps = temps[:]
+
+	// Every element is cloned, so `export_plan_destroy` can free the lot
+	// without having to know which ones were literals.
+	argv := make([dynamic]string)
+	arg :: proc(argv: ^[dynamic]string, items: ..string) {
+		for s in items {
+			append(argv, strings.clone(s))
+		}
+	}
+	arg(&argv, "ffmpeg", "-y", "-v", "error", "-nostdin", "-nostats")
+	arg(&argv, "-progress", plan.progress)
+	for in_path in inputs {
+		arg(&argv, "-i", in_path)
+	}
+	arg(&argv, "-filter_complex", graph)
+	arg(&argv, "-map", "[vout]", "-map", "[aout]")
+	arg(&argv, "-c:v", "libx264", "-pix_fmt", "yuv420p")
+	if set.quality == .Draft {
+		arg(&argv, "-preset", "ultrafast", "-crf", "30", "-b:a", "96k")
+	} else {
+		arg(&argv, "-preset", "medium", "-crf", "18", "-b:a", "192k")
+	}
+	arg(&argv, "-c:a", "aac", "-ar", "44100", "-ac", "2")
+	arg(&argv, "-r", fmt.tprintf("%g", fps))
+	arg(&argv, "-t", fmt.tprintf("%.4f", total))
+	arg(&argv, "-movflags", "+faststart")
+	arg(&argv, set.out_path)
+	plan.argv = argv[:]
+	return plan
+}
+
+// tmp_dir is $TMPDIR or /tmp, as a plain string — os.temp_dir returns an
+// error too, and every caller here wants a path or the default.
+tmp_dir :: proc() -> string {
+	d, err := os.temp_dir(context.temp_allocator)
+	if err != nil || d == "" {
+		return "/tmp"
+	}
+	return strings.trim_suffix(d, "/")
+}
+
+same_path :: proc(a, b: string) -> bool {
+	if a == b {
+		return true
+	}
+	ra, ea := os.get_absolute_path(a, context.temp_allocator)
+	rb, eb := os.get_absolute_path(b, context.temp_allocator)
+	if ea != nil || eb != nil {
+		return false
+	}
+	return ra == rb
+}
+
+// ---------------------------------------------------------------------------
+// Running it
+//
+// Locking (one mutex, `Exporter.mu`): the UI thread writes `req` and reads
+// `progress`/`state`/`message`; the worker reads `req` once and then only
+// writes progress fields. ffmpeg's own progress file is polled by the worker
+// between its timed waits, so the UI thread never does file I/O for it.
+// ---------------------------------------------------------------------------
+
+Export_State :: enum u8 {
+	Idle,
+	Running,
+	Done,
+	Failed,
+}
+
+Exporter :: struct {
+	mu:       sync.Mutex,
+	sem:      sync.Sema,
+	quit:     bool,
+	worker:   ^thread.Thread,
+
+	// Request, written by the UI before posting the semaphore.
+	req:      Export_Plan,
+	has_req:  bool,
+
+	// Progress, written by the worker.
+	state:    Export_State,
+	progress: f32,
+	message:  string, // owned by the exporter
+	out_path: string, // owned by the exporter
+	elapsed:  f64,
+}
+
+exporter_start :: proc(ex: ^Exporter) {
+	ex.worker = thread.create(exporter_main)
+	ex.worker.data = rawptr(ex)
+	thread.start(ex.worker)
+}
+
+exporter_stop :: proc(ex: ^Exporter) {
+	sync.lock(&ex.mu)
+	ex.quit = true
+	sync.unlock(&ex.mu)
+	sync.sema_post(&ex.sem)
+	if ex.worker != nil {
+		thread.join(ex.worker)
+		thread.destroy(ex.worker)
+		ex.worker = nil
+	}
+	delete(ex.message)
+	delete(ex.out_path)
+}
+
+// exporter_submit hands over a built plan. The exporter owns it from here.
+exporter_submit :: proc(ex: ^Exporter, plan: Export_Plan, out_path: string) -> bool {
+	sync.lock(&ex.mu)
+	if ex.state == .Running || ex.has_req {
+		sync.unlock(&ex.mu)
+		return false
+	}
+	ex.req = plan
+	ex.has_req = true
+	ex.state = .Running
+	ex.progress = 0
+	delete(ex.message)
+	ex.message = strings.clone("starting ffmpeg")
+	delete(ex.out_path)
+	ex.out_path = strings.clone(out_path)
+	sync.unlock(&ex.mu)
+	sync.sema_post(&ex.sem)
+	return true
+}
+
+Export_Status :: struct {
+	state:    Export_State,
+	progress: f32,
+	message:  string, // valid until the next call; cloned into temp
+	out_path: string,
+	elapsed:  f64,
+}
+
+exporter_status :: proc(ex: ^Exporter) -> Export_Status {
+	sync.lock(&ex.mu)
+	defer sync.unlock(&ex.mu)
+	return Export_Status {
+		state = ex.state,
+		progress = ex.progress,
+		message = strings.clone(ex.message, context.temp_allocator),
+		out_path = strings.clone(ex.out_path, context.temp_allocator),
+		elapsed = ex.elapsed,
+	}
+}
+
+exporter_clear :: proc(ex: ^Exporter) {
+	sync.lock(&ex.mu)
+	if ex.state == .Done || ex.state == .Failed {
+		ex.state = .Idle
+	}
+	sync.unlock(&ex.mu)
+}
+
+@(private)
+exporter_set :: proc(ex: ^Exporter, st: Export_State, prog: f32, msg: string, elapsed: f64) {
+	cloned := strings.clone(msg)
+	sync.lock(&ex.mu)
+	ex.state = st
+	ex.progress = prog
+	old := ex.message
+	ex.message = cloned
+	ex.elapsed = elapsed
+	sync.unlock(&ex.mu)
+	delete(old)
+}
+
+@(private)
+exporter_main :: proc(th: ^thread.Thread) {
+	ex := (^Exporter)(th.data)
+	for {
+		free_all(context.temp_allocator)
+		sync.lock(&ex.mu)
+		if ex.quit {
+			sync.unlock(&ex.mu)
+			return
+		}
+		if !ex.has_req {
+			sync.unlock(&ex.mu)
+			sync.sema_wait(&ex.sem)
+			continue
+		}
+		plan := ex.req
+		ex.req = {}
+		ex.has_req = false
+		sync.unlock(&ex.mu)
+
+		run_export(ex, plan)
+		export_plan_destroy(&plan)
+	}
+}
+
+export_plan_destroy :: proc(plan: ^Export_Plan) {
+	for s in plan.argv {
+		delete(s)
+	}
+	delete(plan.argv)
+	delete(plan.progress)
+	delete(plan.sub_path)
+	for t in plan.temps {
+		delete(t)
+	}
+	delete(plan.temps)
+	delete(plan.err)
+	plan^ = {}
+}
+
+// run_export starts ffmpeg, then alternates a short timed wait with a read of
+// the progress file. Nothing here blocks the UI: this is the worker thread,
+// and the UI only ever reads the numbers this writes.
+@(private)
+run_export :: proc(ex: ^Exporter, plan: Export_Plan) {
+	if plan.err != "" {
+		exporter_set(ex, .Failed, 0, plan.err, 0)
+		return
+	}
+	// ffmpeg's diagnostics go to a file so a failure can be reported with its
+	// real reason rather than "exit 1".
+	logp := fmt.tprintf("%s/videoedit-ffmpeg-%d.log", tmp_dir(), os.get_pid())
+	logf, lerr := os.open(logp, {.Write, .Create, .Trunc})
+	if lerr != nil {
+		logf = nil
+	}
+
+	pr_, perr := os.process_start({command = plan.argv, stdout = nil, stderr = logf, stdin = nil})
+	if logf != nil {
+		os.close(logf)
+	}
+	if perr != nil {
+		exporter_set(ex, .Failed, 0, fmt.tprintf("could not start ffmpeg: %v", perr), 0)
+		return
+	}
+	exporter_set(ex, .Running, 0, "encoding", 0)
+
+	secs := f64(0)
+	for {
+		state, werr := os.process_wait(pr_, 120 * 1_000_000) // 120 ms
+		if werr == nil && state.exited {
+			dt := read_progress(plan.progress)
+			if state.exit_code == 0 {
+				exporter_set(ex, .Done, 1, "export finished", max(dt, secs))
+			} else {
+				msg := tail_of(logp, 400)
+				if msg == "" {
+					msg = fmt.tprintf("ffmpeg exited with %d", state.exit_code)
+				}
+				exporter_set(ex, .Failed, 0, msg, max(dt, secs))
+			}
+			break
+		}
+		secs = read_progress(plan.progress)
+		pct := f32(0)
+		if plan.duration > 0 {
+			pct = f32(math.clamp(secs / plan.duration, 0, 0.999))
+		}
+		exporter_set(
+			ex,
+			.Running,
+			pct,
+			fmt.tprintf("encoding %.1fs of %.1fs", secs, plan.duration),
+			secs,
+		)
+		if sync.guard(&ex.mu) {
+			if ex.quit {
+				_ = os.process_kill(pr_)
+			}
+		}
+	}
+	for t in plan.temps {
+		os.remove(t)
+	}
+	os.remove(plan.progress)
+	os.remove(logp)
+}
+
+// read_progress returns the latest encoded timestamp in seconds. ffmpeg
+// appends a block of key=value lines per update, so the last `out_time_us` in
+// the file is the current position. `out_time_ms` is really microseconds in
+// some builds, so `out_time_us` is read first and `out_time` parsed as a
+// timecode as the fallback.
+read_progress :: proc(path: string) -> f64 {
+	data, err := os.read_entire_file_from_path(path, context.temp_allocator)
+	if err != nil {
+		return 0
+	}
+	body := string(data)
+	best := f64(0)
+	for line in strings.split_lines_iterator(&body) {
+		if v, ok := strings.has_prefix(line, "out_time_us="), true; v && ok {
+			if n, good := strconv.parse_f64(strings.trim_space(line[len("out_time_us="):])); good {
+				best = n / 1_000_000
+			}
+		} else if strings.has_prefix(line, "out_time=") {
+			if n, good := parse_timecode(line[len("out_time="):]); good {
+				best = max(best, n)
+			}
+		}
+	}
+	return best
+}
+
+tail_of :: proc(path: string, n: int) -> string {
+	data, err := os.read_entire_file_from_path(path, context.temp_allocator)
+	if err != nil || len(data) == 0 {
+		return ""
+	}
+	s := strings.trim_space(string(data))
+	if len(s) > n {
+		s = s[len(s) - n:]
+	}
+	return strings.clone(s, context.temp_allocator)
+}
+
+// verify_output is the honesty check: after an export, read the file back.
+Verify :: struct {
+	ok:       bool,
+	duration: f64,
+	width:    int,
+	height:   int,
+	streams:  int,
+	vcodec:   string,
+	acodec:   string,
+}
+
+verify_output :: proc(path: string, alloc := context.allocator) -> Verify {
+	pb := probe_media(path, alloc)
+	v := Verify {
+		ok       = pb.ok,
+		duration = pb.duration,
+		width    = pb.width,
+		height   = pb.height,
+		vcodec   = pb.vcodec,
+		acodec   = pb.acodec,
+	}
+	if pb.has_video {
+		v.streams += 1
+	}
+	if pb.has_audio {
+		v.streams += 1
+	}
+	return v
+}
+
+// export_still pulls one frame out of a finished export so the result can be
+// looked at rather than taken on trust.
+export_still :: proc(path: string, at: f64) -> (p.Image, bool) {
+	return extract_thumb(path, at, 320)
+}

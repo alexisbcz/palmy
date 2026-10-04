@@ -1,0 +1,83 @@
+# Editor — a real text editor on palmy.
+wait 1.4
+key Down
+key Down
+key Down
+key Down
+key Down
+key Down
+key Down
+key Down
+key Down
+key Down
+key Down
+key Down
+key Down
+key Down
+key Down
+key Down
+key Down
+key Down
+key Down
+key Down
+key Down
+key Down
+key Down
+key Down
+key Down
+key Down
+key Down
+key Down
+key Down
+key Down
+wait 1.0
+
+# Escape opens the command palette: every command, filtered as you type.
+key Escape
+wait 1.2
+type fin
+wait 1.2
+key Return
+wait 0.8
+
+# Find highlights every match in the file and walks them with Enter.
+type cursor
+wait 1.4
+key Return
+wait 0.9
+key Return
+wait 0.9
+key Return
+wait 1.2
+key Escape
+wait 0.6
+
+# Typing, with the undo stack behind it.
+key End
+key Return
+type // a line typed into the buffer, with syntax highlighting
+wait 1.6
+key Escape
+wait 0.9
+type undo
+wait 1.0
+key Return
+wait 1.4
+
+# The keyboard reference.
+key Escape
+wait 0.8
+type keyb
+wait 1.0
+key Return
+wait 2.4
+key Escape
+wait 0.6
+
+# And saving.
+key Escape
+wait 0.8
+type save
+wait 1.0
+key Return
+wait 2.0

@@ -1,0 +1,83 @@
+# The captions demo, driven from the keyboard.
+#
+# The recorder cannot synthesise pointer clicks, so every step here is a key —
+# which is also how the application is meant to be used. It is started from a
+# directory holding one clip, so the folder list on the right already has it
+# and `r` opens the highlighted file.
+#
+# The clip is espeak-ng speech over a generated gradient. Nothing in this
+# recording came from the microphone.
+
+wait 1.2
+
+# --- open the clip: probe, 16 kHz extraction, waveform -----------------------
+type r
+wait 5
+
+# --- transcribe with base.en, locally ---------------------------------------
+type t
+wait 11
+
+# --- the captions, with their timecodes -------------------------------------
+key Down
+wait 0.7
+key Down
+wait 0.7
+key Down
+wait 1.2
+
+# --- play, and watch the active caption follow the playhead ------------------
+key space
+wait 5
+key space
+wait 1.0
+
+# --- edit one in place -------------------------------------------------------
+key Return
+wait 1.0
+key End
+type  — edited live
+wait 1.6
+key Escape
+wait 1.0
+
+# --- split it at a word boundary ---------------------------------------------
+type s
+wait 1.6
+
+# --- nudge the out point ------------------------------------------------------
+type .
+type .
+type .
+wait 1.2
+
+# --- restyle, previewed on a real video frame --------------------------------
+type 3
+wait 1.0
+type l
+type l
+type l
+type l
+type l
+wait 1.2
+type c
+wait 1.4
+type r
+type r
+wait 1.2
+type x
+wait 1.8
+type x
+wait 1.0
+
+# --- export SubRip -----------------------------------------------------------
+type 4
+wait 1.4
+type e
+wait 2.0
+
+# --- and the keyboard map -----------------------------------------------------
+type ?
+wait 2.5
+key Escape
+wait 1.0

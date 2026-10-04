@@ -1,0 +1,64 @@
+# The colour picker: take a colour off the screen, then edit it in every
+# notation. Only unmodified keys exist in the recorder's vocabulary, so this
+# drives the parts of the app that need no chords.
+wait 1.2
+# F2 captures the whole screen with grim and opens the magnifier.
+key F2
+wait 1.6
+key Right
+key Right
+key Right
+key Right
+key Right
+key Right
+key Right
+key Right
+wait 0.5
+key Down
+key Down
+key Down
+key Down
+wait 0.9
+key plus
+key plus
+key plus
+wait 1.0
+# Enter takes the pixel under the cross, returns to the editor and keeps it.
+key Return
+wait 1.6
+# Down walks the fields: hex, then R G B, then H S L, then OKLCH.
+key Down
+wait 0.5
+key Right
+key Right
+key Right
+key Right
+wait 0.8
+key Down
+key Down
+key Down
+wait 0.7
+key Right
+key Right
+key Right
+key Right
+key Right
+key Right
+wait 1.0
+key Down
+key Down
+key Down
+key Down
+wait 0.8
+key Right
+key Right
+key Right
+key Right
+key Right
+key Right
+key Right
+key Right
+wait 1.4
+# Enter commits the field and saves the colour to the palette.
+key Return
+wait 1.6

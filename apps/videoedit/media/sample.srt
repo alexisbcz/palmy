@@ -1,0 +1,11 @@
+1
+00:00:00,400 --> 00:00:02,600
+Imported from the captioning app
+
+2
+00:00:03,000 --> 00:00:05,400
+SRT, WebVTT and ASS all land here
+
+3
+00:00:06,000 --> 00:00:09,000
+Nudge the timing, then burn it in

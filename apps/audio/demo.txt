@@ -1,0 +1,34 @@
+# palmy audio — a real spectrum and waveform from the track's own samples.
+wait 1.6
+move 620 700
+wait 3.6
+key v
+wait 3.6
+key v
+wait 2.2
+key Right
+wait 1.4
+key Right
+wait 2.0
+key n
+wait 4.5
+key Down
+wait 0.6
+key Down
+wait 0.6
+key Return
+wait 4.5
+key s
+wait 1.6
+key r
+wait 1.6
+key r
+wait 1.0
+key minus
+wait 0.5
+key minus
+wait 1.6
+key space
+wait 1.6
+key space
+wait 2.2

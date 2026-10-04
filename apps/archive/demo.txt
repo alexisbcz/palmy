@@ -1,0 +1,40 @@
+# The archive manager. The first archive is a deliberately hostile one built
+# for this demo: it contains ../.. entries, an absolute path and a symlink.
+# Nothing in it is extracted.
+wait 1.2
+type /tmp/hostile-sample.zip
+wait 0.8
+key Return
+wait 1.8
+key Down
+wait 0.6
+key Down
+wait 1.6
+key Down
+wait 1.8
+# Now an ordinary archive, built with zip in a scratch directory for this demo.
+key o
+wait 0.9
+type /tmp/palmy-demo.zip
+wait 0.8
+key Return
+wait 1.8
+key Return
+wait 1.2
+key Down
+wait 0.6
+key Down
+wait 1.0
+key space
+wait 0.6
+key Down
+key space
+wait 1.4
+# e stages the extraction: destination, entry count, what already exists and
+# what was refused. Nothing has been written yet.
+key e
+wait 2.2
+key Return
+wait 2.6
+key Return
+wait 1.2

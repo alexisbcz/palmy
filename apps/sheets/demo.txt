@@ -1,0 +1,152 @@
+# Sheets — a spreadsheet for palmy.
+# Every step here is an unmodified key or typed text: the palette (F10) is how
+# copy, paste, go-to and export are reached without a modifier.
+wait 1.8
+
+# --- entering data: a target for each region ---
+key Right
+key Right
+key Right
+key Right
+key Right
+wait 0.5
+type Target
+key Return
+wait 0.3
+type 600
+key Return
+type 400
+key Return
+type 850
+key Return
+type 700
+key Return
+wait 1.0
+
+# --- a formula over a range ---
+key Down
+wait 0.4
+type =SUM(F2:F5)
+wait 1.0
+key Return
+wait 1.4
+
+# --- change one input; the total recalculates ---
+key Up
+key Up
+key Up
+key Up
+key Up
+wait 0.6
+type 1200
+key Return
+wait 1.8
+
+# --- a formula worth copying: revenue against target ---
+key Up
+key Up
+key Right
+wait 0.5
+type =D2/F2
+wait 0.8
+key Return
+wait 1.0
+key Up
+wait 0.8
+
+# --- copy it down, and watch the references move with it ---
+key F10
+wait 0.7
+type copy
+wait 0.8
+key Return
+wait 0.9
+key F10
+wait 0.5
+type go to
+wait 0.7
+key Return
+wait 0.5
+type G3:G5
+wait 0.6
+key Return
+wait 0.7
+key F10
+wait 0.5
+type paste
+wait 0.8
+key Return
+wait 1.6
+
+# --- format the column as percentages ---
+key F10
+wait 0.4
+type go to
+key Return
+wait 0.4
+type G2:G5
+key Return
+wait 0.6
+key F10
+wait 0.5
+type percent
+wait 0.7
+key Return
+wait 1.6
+
+# --- G5 now reads =D5/F5: the copy moved the rows, not the columns ---
+key F10
+wait 0.4
+type go to
+key Return
+wait 0.4
+type G5
+key Return
+wait 2.2
+
+# --- a deliberate circular reference ---
+key F10
+wait 0.4
+type go to
+key Return
+wait 0.4
+type I2
+key Return
+wait 0.6
+type =I3+1
+wait 0.7
+key Return
+wait 0.6
+type =I2+1
+wait 0.7
+key Return
+wait 2.2
+key Up
+key Up
+wait 1.8
+
+# --- undo both of them ---
+key F10
+wait 0.4
+type undo
+wait 0.6
+key Return
+wait 0.7
+key F10
+wait 0.4
+type undo
+wait 0.6
+key Return
+wait 1.6
+
+# --- export the sheet as CSV ---
+key F10
+wait 0.5
+type export
+wait 0.8
+key Return
+wait 1.0
+type /tmp/sheets-demo.csv
+wait 1.0
+key Return
+wait 2.6

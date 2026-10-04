@@ -344,10 +344,12 @@ parse_number :: proc(s: string) -> (f32, bool) {
 // claim.
 selftest :: proc() -> int {
 	fails := 0
+	g_checks = 0
 
 	check :: proc(fails: ^int, name: string, got, want, tol: f32) {
 		d := abs(got - want)
 		pass := d <= tol
+		g_checks += 1
 		if !pass {
 			fails^ += 1
 		}
@@ -418,11 +420,13 @@ selftest :: proc() -> int {
 		check(&fails, "#ff0000 L", h[2], 0.5, 1e-4)
 
 		h2 := srgb_to_hsl(from_bytes({0x3b, 0x82, 0xf6})) // tailwind blue-500
-		check(&fails, "#3b82f6 H", h2[0], 217.2, 0.1)
-		check(&fails, "#3b82f6 S", h2[1], 0.9143, 1e-3)
-		check(&fails, "#3b82f6 L", h2[2], 0.5980, 1e-3)
+		// Cross-checked against Python's colorsys.rgb_to_hls for the same
+		// bytes: H 217.21925, S 0.9121951, L 0.5980392.
+		check(&fails, "#3b82f6 H", h2[0], 217.21925, 1e-3)
+		check(&fails, "#3b82f6 S", h2[1], 0.9121951, 1e-5)
+		check(&fails, "#3b82f6 L", h2[2], 0.5980392, 1e-5)
 
-		back := hsl_to_srgb({217.2, 0.9143, 0.598})
+		back := hsl_to_srgb({217.21925, 0.9121951, 0.5980392})
 		bb := to_bytes(back)
 		check(&fails, "#3b82f6 HSL round trip R", f32(bb[0]), 0x3b, 1)
 		check(&fails, "#3b82f6 HSL round trip G", f32(bb[1]), 0x82, 1)
@@ -472,6 +476,18 @@ selftest :: proc() -> int {
 		check(&fails, "worst HSL round-trip error (8-bit)", f32(worst_hsl), 0, 1)
 	}
 
-	fmt.printfln("\n%s  %d failure(s)", fails == 0 ? "PASS" : "FAILED", fails)
+	ui_checks, ui_fails := ui_selftest()
+	fails += ui_fails
+
+	fmt.printfln(
+		"\n%s  %d checks, %d failure(s)",
+		fails == 0 ? "PASS" : "FAILED",
+		g_checks + ui_checks,
+		fails,
+	)
 	return fails
 }
+
+// g_checks counts the numeric comparisons above, so the two halves of the
+// self-test can report one total.
+g_checks: int

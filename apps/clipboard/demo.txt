@@ -1,0 +1,35 @@
+# The clipboard manager. The history was collected by the watcher thread from
+# real selections; the two images are real thumbnails decoded by palmy.
+wait 1.4
+key Down
+wait 0.7
+key Down
+wait 1.2
+key Down
+wait 1.4
+key Down
+wait 1.4
+type sel
+wait 1.6
+key BackSpace
+key BackSpace
+key BackSpace
+wait 0.8
+# Tab walks the filters: All, Text, Images, Pinned.
+key Tab
+wait 1.2
+key Tab
+wait 1.4
+key Down
+wait 1.4
+key Tab
+wait 1.0
+key Tab
+wait 1.0
+key Down
+key Down
+wait 1.0
+# Enter puts the entry back on the clipboard; the watcher sees it a moment
+# later and folds it back to the top of the list.
+key Return
+wait 2.4

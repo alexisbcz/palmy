@@ -27,6 +27,10 @@ parity/out/diff/*.png
 *.raw
 apps/*/fixtures/
 apps/*/test-media/
+# Synthetic source clips an app keeps beside itself to edit or play.
+# Only the video files: fixtures like sample.srt are the interface
+# between two apps and must stay.
+apps/*/media/*.mp4
 apps/*/out/
 apps/*/tmp/
 

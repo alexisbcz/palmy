@@ -1,0 +1,104 @@
+# palmy slides — the demo recording.
+#
+# Only steps the recorder can actually send: no modifiers, so the command menu
+# and saving are driven through their F2/F3 aliases.
+
+wait 1.2
+
+# The sorter: step through the deck, thumbnails following.
+type j
+wait 0.7
+type j
+wait 0.9
+move 480 520
+wait 0.7
+
+# Select an element and move it. Guides appear as edges line up.
+key Tab
+wait 0.8
+key Tab
+wait 0.8
+key Down
+key Down
+key Down
+wait 0.5
+key Right
+key Right
+wait 0.9
+
+# Edit its text in place.
+key Return
+wait 0.6
+key End
+type  — and snapping
+wait 1.2
+key Escape
+wait 0.8
+
+# Add a shape, recolour it, rotate it from the inspector.
+type r
+wait 0.9
+key Left
+key Left
+key Up
+wait 0.6
+type c
+wait 0.7
+type .
+type .
+type .
+type .
+type .
+type .
+wait 0.6
+type +
+type +
+type +
+type +
+wait 1.4
+
+# Switch this slide to another layout: the text reflows into the new slots.
+type 3
+wait 1.4
+type 2
+wait 1.2
+
+# Speaker notes.
+type n
+wait 0.6
+type  Remember to breathe.
+wait 1.0
+key Escape
+wait 0.6
+
+# The command menu, which is the whole application in one list.
+key F2
+wait 1.2
+key Down
+key Down
+key Down
+wait 0.9
+key Escape
+wait 0.6
+
+# Save the deck, then present it.
+key F3
+wait 1.2
+key Home
+wait 0.8
+key F5
+wait 2.0
+key Right
+wait 1.3
+key Right
+wait 1.3
+key Right
+wait 1.3
+key Tab
+wait 2.2
+key Right
+wait 1.6
+key Tab
+wait 1.2
+key Escape
+wait 2.0
