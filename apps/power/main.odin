@@ -135,6 +135,26 @@ Model :: struct {
 g_now: f64
 
 main :: proc() {
+	args := os.args[1:]
+	for a, i in args {
+		if a == "--selftest" {
+			selftest()
+			return
+		}
+		// `--shot out.png [key ...]` renders one frame offscreen, with any
+		// keys given after the path pressed first. No compositor involved.
+		if a == "--shot" && i + 1 < len(args) {
+			keys_wanted := make([dynamic]u32, context.allocator)
+			for extra in args[i + 2:] {
+				if len(extra) > 0 {
+					append(&keys_wanted, u32(extra[0]))
+				}
+			}
+			shot(args[i + 1], keys_wanted[:])
+			return
+		}
+	}
+
 	app, err := start_window()
 	if err != "" {
 		fmt.eprintfln("power: %s", err)

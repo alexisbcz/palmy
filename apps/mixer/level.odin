@@ -71,12 +71,38 @@ level_start :: proc(l: ^Level, source: string) -> bool {
 		return false
 	}
 	l.proc_ = p
+	watch_parec(l, p.pid)
 	l.on = true
 	l.err = ""
 	l.have = false
 	l.n, l.at = 0, 0
 	log_cmd(level_cmd(l), true)
 	return true
+}
+
+// watch_parec makes it impossible for the capture to outlive this window.
+//
+// `exec parec` means l.proc_ is parec itself, so level_stop kills it directly
+// — but level_stop only runs when the window closes in an orderly way. A
+// SIGKILL, a crash, or the demo recorder killing the application would leave
+// parec writing into /tmp forever with nothing left to stop it. This watchdog
+// waits for *this process* to go away and then kills the capture, checking the
+// name first so that a recycled pid is never the one that gets the signal.
+@(private = "file")
+watch_parec :: proc(l: ^Level, parec_pid: int) {
+	script := fmt.tprintf(
+		"while kill -0 %d 2>/dev/null; do sleep 1; done; " +
+		"[ \"$(cat /proc/%d/comm 2>/dev/null)\" = parec ] && kill %d 2>/dev/null; " +
+		"rm -f %s; exit 0",
+		os.get_pid(),
+		parec_pid,
+		parec_pid,
+		l.path,
+	)
+	_, err := os.process_start({command = {"sh", "-c", script}})
+	if err != nil {
+		fmt.eprintfln("[mixer] warning: could not start the parec watchdog")
+	}
 }
 
 level_stop :: proc(l: ^Level) {

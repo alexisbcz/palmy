@@ -34,6 +34,8 @@ Shot :: struct {
 	saved:  string, // where it was copied to, "" until saved
 	mode:   Mode,
 	out:    string, // the output name, for a per-output capture
+	region:     Rect, // the rectangle, for a region capture
+	has_region: bool,
 	w, h:   int,
 	bytes:  i64,
 	when_:  string, // wall clock, for the list
@@ -51,6 +53,12 @@ Model :: struct {
 	phase:        Phase,
 	count_until:  f64,
 	status:       string,
+
+	// The last rectangle slurp came back with, in compositor coordinates.
+	// Region capture runs slurp and grim as two separate jobs precisely so
+	// this number exists: A repeats it without asking for another drag.
+	region:       Rect,
+	have_region:  bool,
 
 	shots:        [MAX_SHOTS]Shot,
 	n_shots:      int,
@@ -81,6 +89,26 @@ Model :: struct {
 g_now: f64
 
 main :: proc() {
+	args := os.args[1:]
+	for a, i in args {
+		if a == "--selftest" {
+			selftest()
+			return
+		}
+		// `--shot out.png [key ...]` renders one frame offscreen, with any
+		// keys given after the path pressed first. No compositor involved.
+		if a == "--shot" && i + 1 < len(args) {
+			keys_wanted := make([dynamic]u32, context.allocator)
+			for extra in args[i + 2:] {
+				if len(extra) > 0 {
+					append(&keys_wanted, u32(extra[0]))
+				}
+			}
+			shot(args[i + 1], keys_wanted[:])
+			return
+		}
+	}
+
 	app, err := start_window()
 	if err != "" {
 		fmt.eprintfln("screenshot: %s", err)
@@ -211,21 +239,59 @@ fire :: proc(m: ^Model) {
 		m.status = fmt.tprintf("grim is reading %s", o.name)
 		job_start(.Capture, path, argv_own("grim", "-o", o.name, path))
 	case .Region:
-		// slurp draws an overlay and blocks until a rectangle is dragged, so
-		// the two run together in one shell and the whole thing waits on the
-		// worker thread.
+		// slurp draws an overlay and blocks until a rectangle is dragged.
+		// It is its own job, so its answer is a rectangle this program holds
+		// rather than a string a shell passed straight to grim.
+		delete(path)
 		m.status = "Drag a rectangle — slurp is waiting"
-		job_start(
-			.Capture,
-			path,
-			argv_own("sh", "-c", fmt.tprintf("grim -g \"$(slurp -d)\" %s", path)),
-		)
+		job_start(.Pick, "", argv_own("slurp", "-d"))
 	}
+}
+
+// fire_region captures a rectangle that is already known, with no overlay and
+// no drag. The rectangle is confined to the desktop first: a saved region can
+// outlive the monitor it was drawn on, and grim -g past the edge of the
+// output layout fails with a message nobody can act on.
+fire_region :: proc(m: ^Model, r: Rect) {
+	want := r
+	if b, ok := outputs_bounds(m.outputs); ok {
+		clamped, inside := rect_clamp(r, b)
+		if !inside {
+			note(m, fmt.tprintf("%s is not on any output any more", geom_arg(r)), true)
+			m.phase = .Idle
+			m.status = ""
+			return
+		}
+		want = clamped
+	}
+	m.region = want
+	m.have_region = true
+	path := temp_path(m.seq)
+	m.seq += 1
+	m.phase = .Working
+	m.status = fmt.tprintf("grim is reading %s", geom_arg(want))
+	job_start(.Capture, path, argv_own("grim", "-g", geom_arg(want), path))
 }
 
 finish_job :: proc(m: ^Model, kind: Job_Kind, path, out: string, ok: bool) {
 	m.phase = .Idle
 	m.status = ""
+
+	if kind == .Pick {
+		// slurp exits non-zero when the drag is cancelled with Escape, which
+		// is a perfectly ordinary thing to do and not an error.
+		if !ok {
+			note(m, "Region selection cancelled")
+			return
+		}
+		r, got := parse_geom(out)
+		if !got {
+			note(m, fmt.tprintf("could not read slurp's answer: %q", strings.trim_space(out)), true)
+			return
+		}
+		fire_region(m, r)
+		return
+	}
 
 	if kind == .Copy {
 		if ok {
@@ -263,6 +329,10 @@ finish_job :: proc(m: ^Model, kind: Job_Kind, path, out: string, ok: bool) {
 	}
 	if m.mode == .Output && len(m.outputs) > 0 {
 		s.out = m.outputs[m.out_at % len(m.outputs)].name
+	}
+	if m.mode == .Region && m.have_region {
+		s.region = m.region
+		s.has_region = true
 	}
 	push_shot(m, s)
 	note(m, fmt.tprintf("Captured %d x %d · %s", s.w, s.h, human_bytes(s.bytes)))
@@ -342,7 +412,9 @@ save_selected :: proc(m: ^Model) {
 	}
 	name := stamp("screenshot")
 	defer delete(name)
-	dst := fmt.aprintf("%s/%s", dir, name)
+	// Never replace a file that is already there, even inside this tool's own
+	// output directory.
+	dst := unique_path(dir, name)
 	ok, err := save_copy(s.path, dst)
 	log_cmd(fmt.tprintf("write %s", dst), ok)
 	if !ok {
@@ -369,10 +441,21 @@ copy_selected :: proc(m: ^Model) {
 	s := m.shots[m.sel]
 	m.phase = .Working
 	m.status = "Putting the image on the clipboard"
+	// The redirection is not decoration. wl-copy forks a server that holds the
+	// selection until something else takes it, and that server inherits
+	// whatever stdout and stderr it was given — so with the pipe that
+	// `os.process_exec` sets up, the read side never sees EOF and the worker
+	// thread waits for a process that has already exited. Sending both to
+	// /dev/null closes the pipe with the shell. The exit status still says
+	// whether wl-copy took the selection.
 	job_start(
 		.Copy,
 		"",
-		argv_own("sh", "-c", fmt.tprintf("wl-copy --type image/png < %s", s.path)),
+		argv_own(
+			"sh",
+			"-c",
+			fmt.tprintf("wl-copy --type image/png < %s >/dev/null 2>&1", s.path),
+		),
 	)
 }
 
@@ -473,6 +556,21 @@ keys :: proc(ui: ^p.Ctx, app: ^p.App, m: ^Model) {
 	if p.key_pressed(ui, p.KEY_UP) && m.n_shots > 0 {
 		m.sel = clamp(m.sel - 1, 0, m.n_shots - 1)
 		m.zoom = 1
+	}
+
+	// A repeats the last rectangle. No overlay, no drag — which is also the
+	// only region capture a synthetic-input demo can actually complete.
+	if p.key_pressed(ui, 'a') {
+		if !m.have_region {
+			note(m, "No region chosen yet — press 3 and drag one first", true)
+		} else if m.phase != .Idle {
+			// something already in flight
+		} else if !m.have_grim {
+			note(m, "grim is not installed", true)
+		} else {
+			m.mode = .Region
+			fire_region(m, m.region)
+		}
 	}
 
 	if p.key_pressed(ui, 's') {save_selected(m)}

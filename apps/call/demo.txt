@@ -1,68 +1,63 @@
-# Driven against the Alice instance, which is dialing Bob on 127.0.0.1:47812.
-# Bob is launched alongside by demo.sh with --autoanswer, so the call connects
-# on its own and this script shows what you can do once it is up.
+# Driven against the left window (Alice), which dials Bob on 127.0.0.1:47812.
+# Bob is the right window and answers by itself, so the call is up before the
+# recording starts and both windows show the other one's picture.
 #
-# Synthetic sources only: a 440 Hz tone modulated at 0.4 Hz, and ffmpeg's
-# testsrc2 pattern. Nothing here opens the camera or the microphone.
+# Synthetic sources only: a 440 Hz tone modulated at 0.4 Hz, ffmpeg's testsrc2
+# on the left and SMPTE bars on the right. Nothing here opens the camera or
+# the microphone; see record.sh and start_media() in main.odin.
 
-wait 3.0
-
-# Connected: remote video on the stage, self-view in the corner, level meters
-# moving with the tone. Let it run so the frame counter in the pattern is
-# visibly advancing.
 wait 3.5
 
-# Mute: the meter drops, the badge appears here and on the other end.
+# Mute: the left meter falls to silence, and the badge appears on the right
+# window's tile for Alice, because mute travels in the STATE control message.
+key m
+wait 3.0
 key m
 wait 2.5
-key m
-wait 2.0
 
-# Camera off: the far side shows the camera-off placeholder.
+# Camera off: the right window shows the camera-off placeholder where Alice's
+# video was, and the left window's self-view says so too.
 key v
-wait 2.5
+wait 3.0
 key v
-wait 2.5
+wait 3.0
 
-# The device panel: the real microphone and camera, enumerated from wpctl and
-# v4l2-ctl, listed and locked.
+# The device picker: the real microphone and camera, enumerated from wpctl and
+# v4l2-ctl, listed and refused.
 key d
 wait 3.0
 key Down
-wait 0.9
+wait 1.0
 key Right
-wait 1.6
+wait 2.0
 key Down
-wait 0.9
+wait 1.0
 key Right
-wait 1.6
+wait 2.0
 
-# Back to the live statistics: measured latency, jitter buffer depth, measured
-# frame rate, packet counters.
+# Back to the live numbers: measured latency, jitter buffer, measured frame
+# rate, packet counters both ways.
 key s
-wait 4.0
+wait 4.5
 
 # Volume.
 key bracketright
-wait 0.4
+wait 0.5
 key bracketright
-wait 0.4
+wait 0.5
 key bracketright
-wait 1.2
+wait 1.5
 key bracketleft
-wait 0.4
+wait 0.5
 key bracketleft
 wait 1.5
 
-# Hang up, then dismiss.
+# Hang up from the left: the right window goes to "Peer hung up".
 key h
-wait 2.5
+wait 3.0
 key h
-wait 1.5
+wait 2.0
 
-# And call again, to show the dialing state.
+# And call again, which the right window answers.
 key c
-wait 2.5
-
-# End on a live call, so the last frame of the recording is media flowing.
 wait 4.0

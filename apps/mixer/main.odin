@@ -67,6 +67,7 @@ Model :: struct {
 
 	// What the default sink was when this window opened, so it can be put back.
 	orig_name:    string,
+	orig_default: string, // the node *name* of the default sink at launch
 	orig_node:    int,
 	orig_vol:     f32,
 	orig_mute:    bool,
@@ -82,6 +83,26 @@ Model :: struct {
 g_now: f64
 
 main :: proc() {
+	args := os.args[1:]
+	for a, i in args {
+		if a == "--selftest" {
+			selftest()
+			return
+		}
+		// `--shot out.png [key ...]` renders one frame offscreen, with any
+		// keys given after the path pressed first. No compositor involved.
+		if a == "--shot" && i + 1 < len(args) {
+			keys_wanted := make([dynamic]u32, context.allocator)
+			for extra in args[i + 2:] {
+				if len(extra) > 0 {
+					append(&keys_wanted, u32(extra[0]))
+				}
+			}
+			shot(args[i + 1], keys_wanted[:])
+			return
+		}
+	}
+
 	app, err := start_window()
 	if err != "" {
 		fmt.eprintfln("mixer: %s", err)
@@ -164,6 +185,7 @@ capture_original :: proc(m: ^Model) {
 		}
 		v, mute, ok := read_back(d.node)
 		m.orig_name = strings.clone(d.desc)
+		m.orig_default = strings.clone(d.name)
 		m.orig_node = d.node
 		m.orig_vol = ok ? v : d.vol
 		m.orig_mute = ok ? mute : d.mute
@@ -185,6 +207,17 @@ restore_original :: proc(m: ^Model) {
 	}
 	set_volume(m.orig_node, m.orig_vol)
 	set_mute(m.orig_node, m.orig_mute)
+	// Making another device the default is the one change this applet makes
+	// that a volume slider cannot undo, so U puts that back too.
+	moved := false
+	for d in m.a.outs {
+		if d.default && d.name != m.orig_default {
+			moved = true
+		}
+	}
+	if moved && m.orig_node >= 0 {
+		set_default(m.orig_node)
+	}
 	v, mute, ok := read_back(m.orig_node)
 	refresh(m)
 	m.touched = false
@@ -192,10 +225,11 @@ restore_original :: proc(m: ^Model) {
 		note(
 			m,
 			fmt.tprintf(
-				"%s restored to %.0f%%%s",
+				"%s restored to %.0f%%%s%s",
 				m.orig_name,
 				v * 100,
 				mute ? " (muted, as it was)" : "",
+				moved ? " and made the default again" : "",
 			),
 		)
 	} else {
@@ -302,7 +336,7 @@ nudge :: proc(m: ^Model, delta: f32) {
 	// `refresh` throws the arena away, and the device description lives in it.
 	// Everything printed after a refresh has to be copied out first.
 	label := strings.clone(label0, context.temp_allocator)
-	target := clamp(vol + delta, 0, VOL_CEILING)
+	target := nudge_target(vol, delta)
 	if abs(target - vol) < 0.001 {
 		if target >= VOL_CEILING {
 			note(m, "100% is the ceiling this mixer will set", true)

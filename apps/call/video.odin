@@ -74,6 +74,10 @@ Video :: struct {
 	local_n:   int,
 
 	camera_off: bool,
+	// What the peer says about its own camera, mirrored here so the draw
+	// procedure — which runs after the tree is built and has only this struct
+	// — can tell "no video yet" from "they turned it off".
+	peer_cam_off: bool,
 
 	// Measured, not configured.
 	frames_captured: int,
@@ -235,7 +239,9 @@ video_pump_capture :: proc(v: ^Video, s: ^Session, t: f64) {
 			append(&v.accum, ..chunk[:n])
 		}
 		if eof {
-			v.cap_error = "capture ended"
+			v.cap_error = v.cap.last_errno == .NONE \
+				? "capture process exited" \
+				: fmt.aprintf("capture read failed: %v", v.cap.last_errno)
 			child_stop(&v.cap)
 			break
 		}

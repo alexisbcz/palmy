@@ -395,7 +395,9 @@ audio_pump_capture :: proc(a: ^Audio, s: ^Session, dt: f32) {
 		n, eof := child_read(&a.cap, a.acc[a.acc_n:])
 		a.acc_n += n
 		if eof {
-			a.cap_error = "capture ended"
+			a.cap_error = a.cap.last_errno == .NONE \
+				? "capture process exited" \
+				: fmt.aprintf("capture read failed: %v", a.cap.last_errno)
 			child_stop(&a.cap)
 			break
 		}

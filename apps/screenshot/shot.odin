@@ -52,82 +52,324 @@ read_outputs :: proc(al := context.allocator) -> []Output {
 	if !ok || text == "" {
 		return nil
 	}
+	return parse_outputs(text, al)
+}
+
+// parse_outputs is read_outputs with the subprocess taken out, so the
+// self-test can hand it hyprctl documents — including a truncated one, which
+// is what a compositor restarting mid-read produces.
+//
+// It walks the document rather than unmarshalling it, but it walks it with a
+// brace counter rather than by searching for `"name":`. That distinction is
+// not pedantry: every monitor object contains an `activeWorkspace` which has a
+// `"name"` of its own, and a reader that searches for the next `"name":` stops
+// the first monitor's fields at the workspace — which is three keys before
+// `scale` and `focused`. Both came back zero and false for every monitor on
+// this machine until this was counted properly.
+parse_outputs :: proc(text: string, al := context.allocator) -> []Output {
 	out := make([dynamic]Output, 0, 4, al)
-	// A deliberately small reader: the five fields wanted out of hyprctl's
-	// monitor objects are all flat, so the JSON is walked rather than parsed.
 	rest := text
-	for {
-		i := strings.index(rest, "\"name\":")
-		if i < 0 {
-			break
-		}
-		rest = rest[i + 7:]
-		name := json_string(&rest)
+	for obj in next_object(&rest) {
 		o := Output {
-			name = strings.clone(name, al),
+			name = strings.clone(obj_str(obj, "name"), al),
+			desc = strings.clone(obj_str(obj, "description"), al),
+			w    = obj_int(obj, "width"),
+			h    = obj_int(obj, "height"),
+			x    = obj_int(obj, "x"),
+			y    = obj_int(obj, "y"),
+			scale = obj_f32(obj, "scale"),
+			focused = obj_bool(obj, "focused"),
 		}
-		block := rest
-		if nxt := strings.index(block, "\"name\":"); nxt > 0 {
-			block = block[:nxt]
+		// A monitor with no name or no size is not something that can be
+		// captured, whatever else the document said about it.
+		if o.name == "" || o.w <= 0 || o.h <= 0 {
+			delete(o.name, al)
+			delete(o.desc, al)
+			continue
 		}
-		o.desc = strings.clone(json_str_field(block, "description"), al)
-		o.w = json_int_field(block, "width")
-		o.h = json_int_field(block, "height")
-		o.x = json_int_field(block, "x")
-		o.y = json_int_field(block, "y")
-		o.scale = f32(json_int_field(block, "scale"))
-		o.focused = strings.index(block, "\"focused\": true") >= 0
-		if o.name != "" && o.w > 0 {
-			append(&out, o)
+		if o.scale <= 0 {
+			o.scale = 1
 		}
+		append(&out, o)
 	}
 	return out[:]
 }
 
+// next_object yields the text of each top-level `{...}` in a JSON array,
+// braces included, advancing `rest`. A final object that never closes — a
+// truncated read — is yielded as far as it got, and parse_outputs's own
+// filter is what throws it away.
 @(private)
-json_string :: proc(rest: ^string) -> string {
+next_object :: proc(rest: ^string) -> (obj: string, ok: bool) {
 	s := rest^
-	q := strings.index_byte(s, '"')
-	if q < 0 {
-		rest^ = ""
-		return ""
+	i := 0
+	for i < len(s) && s[i] != '{' {
+		if s[i] == '"' {
+			i = skip_string(s, i)
+			continue
+		}
+		i += 1
 	}
-	s = s[q + 1:]
-	e := strings.index_byte(s, '"')
-	if e < 0 {
+	if i >= len(s) {
 		rest^ = ""
-		return ""
+		return "", false
 	}
-	val := s[:e]
-	rest^ = s[e + 1:]
-	return val
+	start := i
+	depth := 0
+	for i < len(s) {
+		switch s[i] {
+		case '"':
+			i = skip_string(s, i)
+			continue
+		case '{':
+			depth += 1
+		case '}':
+			depth -= 1
+			if depth == 0 {
+				rest^ = s[i + 1:]
+				return s[start:i + 1], true
+			}
+		}
+		i += 1
+	}
+	rest^ = ""
+	return s[start:], true
+}
+
+// skip_string returns the index just past the string literal starting at `i`.
+@(private)
+skip_string :: proc(s: string, i: int) -> int {
+	j := i + 1
+	for j < len(s) {
+		if s[j] == '\\' {
+			j += 2
+			continue
+		}
+		if s[j] == '"' {
+			return j + 1
+		}
+		j += 1
+	}
+	return len(s)
+}
+
+// obj_value returns the raw text of `key`'s value, but only when `key` is a
+// member of this object rather than of something nested inside it.
+@(private)
+obj_value :: proc(obj, key: string) -> (val: string, ok: bool) {
+	depth := 0
+	i := 0
+	for i < len(obj) {
+		switch obj[i] {
+		case '{', '[':
+			depth += 1
+			i += 1
+			continue
+		case '}', ']':
+			depth -= 1
+			i += 1
+			continue
+		case '"':
+			end := skip_string(obj, i)
+			name := obj[i + 1:max(i + 1, end - 1)]
+			// Is this a key? A colon follows a key, and only a key.
+			j := end
+			for j < len(obj) && (obj[j] == ' ' || obj[j] == '\t' || obj[j] == '\n' || obj[j] == '\r') {
+				j += 1
+			}
+			if j < len(obj) && obj[j] == ':' {
+				j += 1
+				for j < len(obj) &&
+				    (obj[j] == ' ' || obj[j] == '\t' || obj[j] == '\n' || obj[j] == '\r') {
+					j += 1
+				}
+				if depth == 1 && name == key {
+					return obj[j:value_end(obj, j)], true
+				}
+				i = value_end(obj, j)
+				continue
+			}
+			i = end
+			continue
+		}
+		i += 1
+	}
+	return "", false
+}
+
+// value_end is the index just past the value starting at `i`.
+@(private)
+value_end :: proc(obj: string, i: int) -> int {
+	if i >= len(obj) {
+		return len(obj)
+	}
+	if obj[i] == '"' {
+		return skip_string(obj, i)
+	}
+	if obj[i] == '{' || obj[i] == '[' {
+		depth := 0
+		j := i
+		for j < len(obj) {
+			switch obj[j] {
+			case '"':
+				j = skip_string(obj, j)
+				continue
+			case '{', '[':
+				depth += 1
+			case '}', ']':
+				depth -= 1
+				if depth == 0 {
+					return j + 1
+				}
+			}
+			j += 1
+		}
+		return len(obj)
+	}
+	j := i
+	for j < len(obj) && obj[j] != ',' && obj[j] != '}' && obj[j] != ']' {
+		j += 1
+	}
+	return j
 }
 
 @(private)
-json_str_field :: proc(block, key: string) -> string {
-	needle := fmt.tprintf("\"%s\":", key)
-	i := strings.index(block, needle)
-	if i < 0 {
+obj_str :: proc(obj, key: string) -> string {
+	v, ok := obj_value(obj, key)
+	if !ok || len(v) < 2 || v[0] != '"' {
 		return ""
 	}
-	r := block[i + len(needle):]
-	return json_string(&r)
+	return v[1:len(v) - 1]
 }
 
 @(private)
-json_int_field :: proc(block, key: string) -> int {
-	needle := fmt.tprintf("\"%s\":", key)
-	i := strings.index(block, needle)
-	if i < 0 {
+obj_int :: proc(obj, key: string) -> int {
+	v, ok := obj_value(obj, key)
+	if !ok {
 		return 0
 	}
-	r := strings.trim_space(block[i + len(needle):])
+	n, _ := strconv.parse_int(number_prefix(strings.trim_space(v)))
+	return n
+}
+
+@(private)
+obj_f32 :: proc(obj, key: string) -> f32 {
+	v, ok := obj_value(obj, key)
+	if !ok {
+		return 0
+	}
+	f, _ := strconv.parse_f32(strings.trim_space(v))
+	return f32(f)
+}
+
+@(private)
+obj_bool :: proc(obj, key: string) -> bool {
+	v, ok := obj_value(obj, key)
+	return ok && strings.trim_space(v) == "true"
+}
+
+// number_prefix is the leading integer of a number that may be a float: scale
+// is "1" on one compositor build and "1.000000" on the next.
+@(private)
+number_prefix :: proc(s: string) -> string {
 	n := 0
-	for n < len(r) && (r[n] == '-' || (r[n] >= '0' && r[n] <= '9')) {
+	for n < len(s) && (s[n] == '-' || (s[n] >= '0' && s[n] <= '9')) {
 		n += 1
 	}
-	v, _ := strconv.parse_int(r[:n])
-	return v
+	return s[:n]
+}
+
+// ---------------------------------------------------------------------------
+// Geometry
+//
+// slurp and grim agree on one spelling for a rectangle, "X,Y WxH", and this is
+// both ends of it. Region capture runs the two tools separately rather than
+// piping one into the other, so the chosen rectangle is a number this program
+// holds: it can be shown, confined to the desktop, and used again without
+// asking for another drag.
+// ---------------------------------------------------------------------------
+
+Rect :: struct {
+	x, y, w, h: int,
+}
+
+geom_arg :: proc(r: Rect, al := context.temp_allocator) -> string {
+	return fmt.aprintf("%d,%d %dx%d", r.x, r.y, r.w, r.h, allocator = al)
+}
+
+// parse_geom reads what slurp prints. It refuses a non-positive extent: grim
+// -g on a zero-width rectangle writes a file with no pixels in it.
+parse_geom :: proc(s: string) -> (r: Rect, ok: bool) {
+	t := strings.trim_space(s)
+	// Take the first line only; slurp is quiet but a shell wrapper is not.
+	if nl := strings.index_byte(t, '\n'); nl >= 0 {
+		t = strings.trim_space(t[:nl])
+	}
+	comma := strings.index_byte(t, ',')
+	space := strings.index_byte(t, ' ')
+	if comma <= 0 || space <= comma {
+		return {}, false
+	}
+	x, xo := strconv.parse_int(strings.trim_space(t[:comma]))
+	y, yo := strconv.parse_int(strings.trim_space(t[comma + 1:space]))
+	size := strings.trim_space(t[space + 1:])
+	ex := strings.index_byte(size, 'x')
+	if ex <= 0 {
+		return {}, false
+	}
+	w, wo := strconv.parse_int(strings.trim_space(size[:ex]))
+	h, ho := strconv.parse_int(strings.trim_space(size[ex + 1:]))
+	if !xo || !yo || !wo || !ho || w <= 0 || h <= 0 {
+		return {}, false
+	}
+	return Rect{x, y, w, h}, true
+}
+
+output_rect :: proc(o: Output) -> Rect {
+	return Rect{o.x, o.y, o.w, o.h}
+}
+
+// outputs_bounds is the union of every output: the whole desktop, which is
+// what `grim` with no -o captures.
+outputs_bounds :: proc(outs: []Output) -> (b: Rect, ok: bool) {
+	if len(outs) == 0 {
+		return {}, false
+	}
+	x0, y0 := max(int), max(int)
+	x1, y1 := min(int), min(int)
+	for o in outs {
+		x0 = min(x0, o.x)
+		y0 = min(y0, o.y)
+		x1 = max(x1, o.x + o.w)
+		y1 = max(y1, o.y + o.h)
+	}
+	return Rect{x0, y0, x1 - x0, y1 - y0}, true
+}
+
+// rect_clamp keeps the part of `r` that lies inside `b`. False means the two
+// do not overlap at all, which is what a stale saved region looks like after a
+// monitor has been unplugged.
+rect_clamp :: proc(r, b: Rect) -> (Rect, bool) {
+	x0 := max(r.x, b.x)
+	y0 := max(r.y, b.y)
+	x1 := min(r.x + r.w, b.x + b.w)
+	y1 := min(r.y + r.h, b.y + b.h)
+	if x1 <= x0 || y1 <= y0 {
+		return {}, false
+	}
+	return Rect{x0, y0, x1 - x0, y1 - y0}, true
+}
+
+// output_containing is the output a rectangle's centre sits on, or -1.
+output_containing :: proc(outs: []Output, r: Rect) -> int {
+	cx := r.x + r.w / 2
+	cy := r.y + r.h / 2
+	for o, i in outs {
+		if cx >= o.x && cx < o.x + o.w && cy >= o.y && cy < o.y + o.h {
+			return i
+		}
+	}
+	return -1
 }
 
 // ---------------------------------------------------------------------------
@@ -138,6 +380,7 @@ Job_Kind :: enum {
 	None,
 	Capture,
 	Copy,
+	Pick, // slurp, waiting for a rectangle to be dragged
 }
 
 Job :: struct {
@@ -261,6 +504,32 @@ file_bytes :: proc(path: string) -> i64 {
 		return 0
 	}
 	return n
+}
+
+// unique_path never names a file that already exists. This tool writes only
+// into its own output directory, and even there it will not silently replace
+// somebody else's file: screenshot-2026-10-04_12-27-03.png becomes
+// ...-2.png, ...-3.png and so on. Overwriting is possible only by being told
+// to, which nothing in this program currently does.
+unique_path :: proc(dir, name: string, al := context.allocator) -> string {
+	first := fmt.aprintf("%s/%s", dir, name, allocator = al)
+	if !os.exists(first) {
+		return first
+	}
+	stem := name
+	ext := ""
+	if dot := strings.last_index_byte(name, '.'); dot > 0 {
+		stem, ext = name[:dot], name[dot:]
+	}
+	for n in 2 ..= 999 {
+		cand := fmt.aprintf("%s/%s-%d%s", dir, stem, n, ext, allocator = al)
+		if !os.exists(cand) {
+			delete(first, al)
+			return cand
+		}
+		delete(cand, al)
+	}
+	return first
 }
 
 // save_copy writes the capture into ~/Pictures. The bytes are copied rather
