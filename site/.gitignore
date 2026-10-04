@@ -2,3 +2,4 @@ node_modules
 build
 .react-router
 .cache
+.vercel

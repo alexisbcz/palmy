@@ -214,9 +214,14 @@ shot :: proc(out_path: string, at: f64) {
 	ed.sel = -1
 	ed.cur_track = 1
 	project_init(&ed.pr)
-	set_str(&ed.buf_export, DEFAULT_EXPORT)
-	set_str(&ed.buf_project, DEFAULT_PROJECT)
-	set_str(&ed.buf_caption, default_caption_path())
+	// DEFAULT_EXPORT and DEFAULT_PROJECT are this development tree's own
+	// paths, and the export and project fields render them in full. A frame
+	// that goes into the documentation must not carry the name of whoever
+	// built the binary, so a screenshot run can point them somewhere
+	// innocuous. Unset, which is the normal case, nothing changes.
+	set_str(&ed.buf_export, shot_path_env("PALMY_VIDEOEDIT_EXPORT", DEFAULT_EXPORT))
+	set_str(&ed.buf_project, shot_path_env("PALMY_VIDEOEDIT_PROJECT", DEFAULT_PROJECT))
+	set_str(&ed.buf_caption, shot_path_env("PALMY_VIDEOEDIT_CAPTION", default_caption_path()))
 	set_str(&ed.buf_title, "VIDEOEDIT")
 
 	importer_start(&ed.im)
@@ -363,4 +368,13 @@ shot :: proc(out_path: string, at: f64) {
 		os.exit(1)
 	}
 	_ = strings.has_prefix
+}
+
+// shot_path_env reads an override for a path that is otherwise baked into the
+// binary, falling back to the built-in default.
+shot_path_env :: proc(name, fallback: string) -> string {
+	if v := os.get_env(name, context.temp_allocator); v != "" {
+		return v
+	}
+	return fallback
 }

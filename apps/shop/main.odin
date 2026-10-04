@@ -46,8 +46,22 @@ MONO_FONTS :: [?]string {
 main :: proc() {
 	// The modes that need no window, handled before one is opened.
 	import_arg := ""
-	for arg in os.args[1:] {
+	args := os.args[1:]
+	for arg, i in args {
 		switch {
+		case arg == "--shots" || strings.has_prefix(arg, "--shots="):
+			// Render the interface offscreen and write PNGs. See shot.odin.
+			dir := ""
+			if eq := strings.index_byte(arg, '='); eq > 0 {
+				dir = arg[eq + 1:]
+			} else if i + 1 < len(args) {
+				dir = args[i + 1]
+			}
+			if dir == "" {
+				fmt.eprintln("shop --shots <dossier>")
+				os.exit(2)
+			}
+			os.exit(run_shots(dir))
 		case arg == "--selftest":
 			os.exit(run_selftest())
 		case arg == "--help" || arg == "-h":
@@ -137,6 +151,7 @@ usage :: proc() {
   shop --export             écrit le catalogue en flux Merchant (XML + CSV)
   shop --check=<fichier>    lit un flux et dit ce qu'il contient et ce qu'il refuse
   shop --selftest           vérifie les calculs, sans fenêtre
+  shop --shots <dossier>    rend quelques vues hors écran en PNG
   shop --uitest[=dossier]   rend l'interface hors écran en PNG
   shop --walkthrough[=dir]  filme la visite image par image (20 i/s)
 

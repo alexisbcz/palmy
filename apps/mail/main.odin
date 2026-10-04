@@ -59,6 +59,21 @@ main :: proc() {
 				dir = arg[eq + 1:]
 			}
 			os.exit(run_uitest(dir, true))
+		case strings.has_prefix(arg, "--shots"):
+			// Offscreen screenshots of the real interface, against a mailbox
+			// generated for the purpose. No compositor, no window.
+			dir := "palmy-mail-shots"
+			if eq := strings.index_byte(arg, '='); eq > 0 {
+				dir = arg[eq + 1:]
+			} else {
+				for a, i in os.args[1:] {
+					if a == arg && i + 2 <= len(os.args[1:]) && i + 1 < len(os.args[1:]) {
+						dir = os.args[1:][i + 1]
+						break
+					}
+				}
+			}
+			os.exit(shots(dir))
 		case arg == "--help" || arg == "-h":
 			print_usage()
 			os.exit(0)
@@ -104,6 +119,7 @@ print_usage :: proc() {
   mail --selftest      run the headless assertions, then exit
   mail --maildir=PATH  read one Maildir tree instead of the configured accounts
   mail --save-dir=PATH where the Save Attachment dialog opens
+  mail --shots DIR     render the interface offscreen into PNGs
   mail --uitest=DIR    render the interface offscreen into PNGs and exit
   mail --walkthrough=DIR  render the whole walkthrough as a PNG sequence
 

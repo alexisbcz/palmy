@@ -230,6 +230,15 @@ parse_args :: proc() -> Args {
 			out.dark = true
 		case "--selftest":
 			out.selftest = true
+		case "--shots":
+			// Offscreen screenshots of the real interface, against a model
+			// filled in here. No compositor, no window, and no socket.
+			dir := "palmy-chat-shots"
+			if i + 1 < len(args) {
+				i += 1
+				dir = args[i]
+			}
+			os.exit(shots(dir))
 		case "--post":
 			if i + 2 < len(args) {
 				out.post_ch = args[i + 1]
@@ -259,6 +268,7 @@ parse_args :: proc() -> Args {
 			fmt.println("  --attach CH PATH upload one file and exit")
 			fmt.println("  --thread ID      with --post or --attach: reply inside that thread")
 			fmt.println("  --selftest       headless protocol test, no UI")
+			fmt.println("  --shots DIR      render the interface offscreen into PNGs")
 			fmt.println("  --server PATH    server binary for --selftest to spawn")
 			os.exit(0)
 		case:

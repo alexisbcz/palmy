@@ -120,14 +120,25 @@ St :: struct {
 }
 
 main :: proc() {
-	for a in os.args[1:] {
+	args := os.args[1:]
+	for a, i in args {
 		if a == "--selftest" || a == "-selftest" {
 			os.exit(run_selftest())
+		}
+		// `ai --shots <dir>` renders the window offscreen. See shot.odin: it
+		// opens no socket and reads no conversation of the user's.
+		if a == "--shots" || a == "-shots" {
+			if i + 1 >= len(args) {
+				fmt.eprintln("ai: --shots needs a directory")
+				os.exit(2)
+			}
+			os.exit(shots(args[i + 1]))
 		}
 		if a == "--help" || a == "-h" {
 			fmt.println("palmy ai — a local model client.")
 			fmt.println("  ai             open the window")
 			fmt.println("  ai --selftest  run the headless assertions")
+			fmt.println("  ai --shots <dir>  render the window to PNGs, no window and no socket")
 			fmt.printfln("  talks only to %s", OLLAMA_URL)
 			os.exit(0)
 		}

@@ -84,10 +84,26 @@ Notes :: struct {
 // ---------------------------------------------------------------------------
 
 main :: proc() {
-	for a in os.args[1:] {
+	args := os.args[1:]
+	for a, i in args {
 		if a == "--selftest" {
 			run_selftest()
 			os.exit(failures == 0 ? 0 : 1)
+		}
+		// `--shots <dir>` renders the interface offscreen and writes PNGs,
+		// with no window and no compositor. See shot.odin.
+		if a == "--shots" || strings.has_prefix(a, "--shots=") {
+			dir := ""
+			if eq := strings.index_byte(a, '='); eq > 0 {
+				dir = a[eq + 1:]
+			} else if i + 1 < len(args) {
+				dir = args[i + 1]
+			}
+			if dir == "" {
+				fmt.eprintln("notes --shots <dir>")
+				os.exit(2)
+			}
+			os.exit(shots(dir))
 		}
 	}
 

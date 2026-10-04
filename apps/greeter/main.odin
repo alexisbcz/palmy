@@ -116,6 +116,12 @@ main :: proc() {
 			st.show_log = true
 		case "--selftest":
 			run_selftest = true
+		case "--shots":
+			// Render the login screen offscreen and write PNGs. No surface is
+			// opened, no greetd socket is touched, and nothing about this
+			// machine is read: see shot.odin.
+			i += 1
+			os.exit(shots(i < len(args) ? args[i] : "shots"))
 		case "--user":
 			i += 1
 			if i < len(args) {
@@ -129,6 +135,7 @@ main :: proc() {
 		case "-h", "--help":
 			fmt.println(
 				"greeter [--mock] [--sock PATH] [--demo-users] [--log]\n" +
+				"        --shots DIR                                offscreen PNGs, no window\n" +
 				"        --selftest [--user NAME] [--password PW]   headless protocol test",
 			)
 			return

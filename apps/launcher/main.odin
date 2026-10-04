@@ -86,6 +86,17 @@ St :: struct {
 }
 
 main :: proc() {
+	// `--shots <dir>` renders the launcher offscreen and writes PNGs. It never
+	// opens a surface and never indexes the machine's own `.desktop` files;
+	// see shot.odin.
+	args := os.args[1:]
+	for a, i in args {
+		if a == "--shots" {
+			dir := i + 1 < len(args) ? args[i + 1] : "shots"
+			os.exit(shots(dir))
+		}
+	}
+
 	app, err := kit.start(
 		{
 			title = "launcher",

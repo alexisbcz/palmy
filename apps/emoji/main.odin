@@ -63,9 +63,17 @@ g_test: bool
 g_test_clip: string
 
 main :: proc() {
-	for a in os.args[1:] {
+	args := os.args[1:]
+	for a, i in args {
 		if a == "--selftest" || a == "-selftest" {
 			os.exit(selftest() == 0 ? 0 : 1)
+		}
+		if a == "--shots" || a == "-shots" {
+			if i + 1 >= len(args) {
+				fmt.eprintln("emoji: --shots needs a directory")
+				os.exit(2)
+			}
+			os.exit(shots(args[i + 1]))
 		}
 	}
 

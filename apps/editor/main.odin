@@ -158,6 +158,23 @@ byte_of :: proc(s: string, dcol: int) -> int {
 
 main :: proc() {
 	args := os.args[1:]
+	// `--shots <dir>` renders the interface offscreen and writes PNGs, with
+	// no window and no compositor. See shot.odin.
+	for a, i in args {
+		if a == "--shots" || strings.has_prefix(a, "--shots=") {
+			dir := ""
+			if eq := strings.index_byte(a, '='); eq > 0 {
+				dir = a[eq + 1:]
+			} else if i + 1 < len(args) {
+				dir = args[i + 1]
+			}
+			if dir == "" {
+				fmt.eprintln("editor --shots <dir>")
+				os.exit(2)
+			}
+			os.exit(shots(dir))
+		}
+	}
 	path := ""
 	for a in args {
 		if a == "--bench" || a == "--selftest" {

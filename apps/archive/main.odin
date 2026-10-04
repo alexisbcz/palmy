@@ -102,9 +102,19 @@ St :: struct {
 }
 
 main :: proc() {
-	for a in os.args[1:] {
+	for a, i in os.args[1:] {
 		if a == "--selftest" || a == "-selftest" {
 			os.exit(selftest() == 0 ? 0 : 1)
+		}
+		// `--shots <dir>` renders the screens offscreen and exits. No window
+		// is opened, so it is safe to run on a live desktop.
+		if a == "--shots" || a == "-shots" {
+			rest := os.args[1:]
+			if i + 1 >= len(rest) {
+				fmt.eprintln("archive --shots <dir>")
+				os.exit(2)
+			}
+			os.exit(shots(rest[i + 1]))
 		}
 	}
 
