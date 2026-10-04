@@ -282,8 +282,16 @@ progress :: proc(ctx: ^Ctx, frac: f32, class: string = "") -> int {
 @(private)
 FIELD_BASE :: "flex-row items-center h-10 px-3 rounded-lg cursor-text " +
 	"overflow-hidden text-sm transition border " +
-	"bg-transparent border-slate-400 hover:border-slate-500 focus:border-indigo-400 " +
-	"border-input hover:border-ring focus:border-ring"
+	// The fallback is a self-contained light field -- fill, text and border
+	// together -- so it stays readable on a page of any colour when no theme is
+	// registered. An earlier attempt used a transparent fill and inherited the
+	// text colour, which looked right under a shadcn theme and rendered
+	// slate-200 text on a white page without one: invisible.
+	"bg-white text-slate-900 border-slate-400 hover:border-slate-500 focus:border-indigo-400 " +
+	// Tokens override all three where a theme defines them. parse_color reports
+	// an unknown token as not-ok and the class is dropped, so a partial palette
+	// falls back rather than losing a colour it needs.
+	"bg-background text-foreground border-input hover:border-ring focus:border-ring"
 
 // text_field edits a byte buffer in place. It returns whether the text changed
 // this frame and whether Enter was pressed.
