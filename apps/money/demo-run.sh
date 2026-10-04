@@ -16,4 +16,12 @@ ROOT=/home/alex/Work/palmy
 SCRATCH="$(mktemp -d /tmp/palmy-money-demo-XXXXXX)"
 export XDG_DATA_HOME="$SCRATCH"
 cd "$ROOT" || exit 1
-exec ./apps/money/money.bin --start-dir "$ROOT/apps/money/fixtures" "$@"
+
+# The fixtures are generated, not committed: `apps/*/fixtures/` is ignored by
+# repo convention, and their real source is the string constants in
+# fixtures.odin. Write them out if they are not there, so this runs from a
+# clean checkout.
+FIX="$ROOT/apps/money/fixtures"
+[ -f "$FIX/alpha-septembre.csv" ] || ./apps/money/money.bin --fixtures "$FIX" >/dev/null
+
+exec ./apps/money/money.bin --start-dir "$FIX" "$@"
