@@ -21,6 +21,7 @@ import "core:math"
 import "core:os"
 import "core:strings"
 import p "palmy:."
+import sc "shadcn:."
 
 checks := 0
 failures := 0
@@ -79,6 +80,7 @@ selftest :: proc() -> int {
 	test_directions()
 	test_search()
 	test_labels()
+	test_interaction()
 	test_format()
 
 	fmt.printf("\n%d assertions, %d failures\n", checks, failures)
@@ -2460,6 +2462,335 @@ test_labels :: proc() {
 		check(nm == 4, "every marker is labelled, got %d", nm)
 		clear(&s.markers)
 	}
+}
+
+// ---------------------------------------------------------------------------
+// The application, driven headlessly
+// ---------------------------------------------------------------------------
+
+// test_interaction runs the real interface through palmy's offscreen renderer
+// and drives it with synthetic input — the same `move_pointer`, `press`,
+// `release` and `scroll_by` a compositor's events end up as.
+//
+// This is the part of the program a screenshot cannot check and a recording
+// checks only if the recording works. It is also the part most likely to break
+// silently: a click that lands on the wrong element still draws a perfectly
+// good frame.
+test_interaction :: proc() {
+	fmt.println("- the interface, driven headlessly")
+	W :: 1500
+	H :: 940
+	sc.register_shadcn_theme(false)
+	p.set_text_gamma(1.8)
+	off := p.offscreen_create(W, H, 1, "w-full h-full bg-background text-foreground")
+	defer p.offscreen_destroy(off)
+	load_map_fonts(&off.fonts)
+
+	a := new(Maps)
+	defer free(a)
+	maps_init(a)
+	defer maps_destroy(a)
+	a.fonts = &off.fonts
+	a.sc.fonts = &off.fonts
+	a.sc.show_chrome = true
+	generate_city(&a.m)
+	rebuild(a)
+	view_fit(&a.view, a.m.bbox.min, a.m.bbox.max)
+
+	frame :: proc(a: ^Maps, off: ^p.Offscreen) {
+		ui := p.offscreen_begin(off)
+		if a.map_id != 0 {
+			a.map_rect = p.rect_of(ui, a.map_id)
+		}
+		sync_view_size(a)
+		fly_step(a, 1.0 / 60)
+		handle_keys(a, ui)
+		handle_map_mouse(a, ui)
+		a.sc.view = a.view
+		a.sc.cursor = a.cursor
+		a.sc.has_cursor = a.has_cursor
+		a.sc.show_route = a.route.ok
+		draw_ui(a, ui)
+		p.offscreen_end(off)
+	}
+	click_at :: proc(a: ^Maps, off: ^p.Offscreen, x, y: f32) {
+		p.move_pointer(off, x, y)
+		frame(a, off)
+		p.press(off)
+		frame(a, off)
+		p.release(off)
+		frame(a, off)
+		frame(a, off)
+	}
+
+	// Two frames to settle the layout, then the map panel must have a real
+	// rectangle taken from it.
+	frame(a, off)
+	frame(a, off)
+	check(a.map_id != 0, "the map panel has an identity")
+	check(a.map_rect.w > 900 && a.map_rect.h > 700, "and a rectangle: %v x %v", a.map_rect.w, a.map_rect.h)
+	mid_x := a.map_rect.x + a.map_rect.w / 2
+	mid_y := a.map_rect.y + a.map_rect.h / 2
+
+	// The cursor read-out follows the pointer.
+	p.move_pointer(off, mid_x, mid_y)
+	frame(a, off)
+	check(a.has_cursor, "the pointer over the map is noticed")
+	near(a.cursor.x, a.view.center.x, 1e-6, "and the centre of the panel is the centre of the view")
+	p.move_pointer(off, 40, 400) // over the side panel
+	frame(a, off)
+	check(!a.has_cursor, "and the pointer off the map is not")
+
+	// A wheel over the map zooms about the cursor.
+	{
+		at_x := a.map_rect.x + 300
+		at_y := a.map_rect.y + 200
+		p.move_pointer(off, at_x, at_y)
+		frame(a, off)
+		before_zoom := a.view.zoom
+		before_pt := screen_to_world(a.view, f64(at_x - a.map_rect.x), f64(at_y - a.map_rect.y))
+		p.scroll_by(off, 0, -1)
+		frame(a, off)
+		check(a.view.zoom > before_zoom, "the wheel zooms in: %.3f to %.3f", before_zoom, a.view.zoom)
+		after_pt := screen_to_world(a.view, f64(at_x - a.map_rect.x), f64(at_y - a.map_rect.y))
+		near(after_pt.x, before_pt.x, 1e-12, "and keeps the point under the cursor, in x")
+		near(after_pt.y, before_pt.y, 1e-12, "and in y")
+	}
+
+	// A drag pans by exactly the distance dragged.
+	{
+		p.move_pointer(off, mid_x, mid_y)
+		frame(a, off)
+		before := a.view.center
+		scale := view_scale(a.view)
+		p.press(off)
+		frame(a, off)
+		p.move_pointer(off, mid_x - 120, mid_y - 80)
+		frame(a, off)
+		p.release(off)
+		frame(a, off)
+		near((a.view.center.x - before.x) * scale, 120, 0.001, "a drag pans by the distance dragged, in x")
+		near((a.view.center.y - before.y) * scale, 80, 0.001, "and in y")
+		check(!a.dragging, "and the drag ends on the release")
+	}
+
+	// A drag must not be read as a click: the pan tool reports a position on a
+	// click, and dragging the map should not.
+	{
+		a.tool = .Marker
+		n := len(a.sc.markers)
+		p.move_pointer(off, mid_x, mid_y)
+		frame(a, off)
+		p.press(off)
+		frame(a, off)
+		p.move_pointer(off, mid_x + 90, mid_y + 40)
+		frame(a, off)
+		p.release(off)
+		frame(a, off)
+		check(len(a.sc.markers) == n, "dragging with the marker tool does not drop one")
+	}
+
+	// The marker tool drops one on a click.
+	{
+		a.tool = .Marker
+		n := len(a.sc.markers)
+		click_at(a, off, mid_x + 60, mid_y + 60)
+		check(len(a.sc.markers) == n + 1, "a click with the marker tool drops a marker, got %d", len(a.sc.markers))
+	}
+
+	// The measuring tool accumulates points and a length.
+	{
+		a.tool = .Measure
+		clear(&a.sc.measure)
+		click_at(a, off, mid_x - 150, mid_y - 100)
+		click_at(a, off, mid_x + 150, mid_y - 100)
+		check(len(a.sc.measure) == 2, "two clicks make two measuring points, got %d", len(a.sc.measure))
+		d := measure_total(a)
+		check(d > 0, "and a distance, %s", format_distance(d))
+		// 300 pixels at this scale.
+		_, lat := world_to_lonlat(a.view.center)
+		rel(d, 300 * ground_resolution(lat, a.view.zoom), 0.02, "which is 300 pixels' worth of ground")
+	}
+
+	// The route tool: two clicks make a route with directions.
+	{
+		a.tool = .Route
+		a.from_node, a.to_node = -1, -1
+		route_clear(&a.route)
+		click_at(a, off, mid_x - 200, mid_y + 120)
+		check(a.from_node >= 0, "the first click sets the start")
+		check(!a.route.ok, "and there is no route yet")
+		click_at(a, off, mid_x + 220, mid_y - 140)
+		check(a.to_node >= 0, "the second sets the destination")
+		check(a.route.ok, "and a route is found: %s", a.route.why)
+		check(len(a.route.steps) >= 2, "with directions, got %d steps", len(a.route.steps))
+		check(a.panel == .Route, "and the directions panel comes forward")
+		check(a.route.dist_m > 100, "over a real distance, %s", format_distance(a.route.dist_m))
+		// A marker at each end.
+		ends := 0
+		for mk in a.sc.markers {
+			if mk.kind != 0 {
+				ends += 1
+			}
+		}
+		check(ends == 2, "and a pin at each end, got %d", ends)
+
+		// Switching the cost recomputes it.
+		before := a.route.time_s
+		a.cost = .Distance
+		recompute_route(a, nil)
+		check(a.route.ok, "the route survives switching to distance")
+		check(a.route.time_s >= before - 1e-6, "and takes no less time than the fastest one")
+		a.cost = .Time
+		recompute_route(a, nil)
+	}
+
+	// The `/` shortcut has to actually move the focus, not merely set a flag.
+	// It did only the latter once, and the symptom was that every character of
+	// a typed query ran as a single-key shortcut instead: "Jubilee" turned the
+	// labels and the buildings off, and "mcs" armed the marker tool and
+	// cleared the map.
+	{
+		a.tool = .Pan
+		a.searching = false
+		p.press_key(off, '/')
+		frame(a, off)
+		frame(a, off)
+		check(a.searching, "slash puts the keyboard in the search field")
+		check(a.panel == .Search, "and brings the results panel forward")
+		before_labels := a.sc.show_labels
+		p.type_text(off, "ell")
+		frame(a, off)
+		frame(a, off)
+		check(string(a.q[:]) == "ell", "and typing goes into the field, got %q", string(a.q[:]))
+		check(a.sc.show_labels == before_labels, "not into the single-key shortcuts")
+		p.press_key(off, p.KEY_ESCAPE)
+		frame(a, off)
+		frame(a, off)
+		check(!a.searching, "and Escape gives the keyboard back")
+
+		// A second `/` starts a fresh query rather than appending to the
+		// first, and Enter on a query that matches nothing still hands the
+		// keyboard back.
+		p.press_key(off, '/')
+		frame(a, off)
+		p.type_text(off, "Jubilee")
+		frame(a, off)
+		frame(a, off)
+		check(string(a.q[:]) == "Jubilee", "a second query starts empty, got %q", string(a.q[:]))
+		check(len(a.hits) > 0, "and matches")
+		// Enter on a result flies there and hands the keyboard back, so the
+		// next `/` is a shortcut again and starts a third query from empty.
+		p.press_key(off, p.KEY_RETURN)
+		frame(a, off)
+		frame(a, off)
+		check(!a.searching, "Enter on a result gives the keyboard back")
+		a.fly = false
+		p.press_key(off, '/')
+		frame(a, off)
+		p.type_text(off, "zzqx")
+		frame(a, off)
+		frame(a, off)
+		check(string(a.q[:]) == "zzqx", "and again, got %q", string(a.q[:]))
+		check(len(a.hits) == 0, "which matches nothing")
+		p.press_key(off, p.KEY_RETURN)
+		frame(a, off)
+		frame(a, off)
+		check(!a.searching, "and Enter on it still gives the keyboard back")
+		before_tool := a.tool
+		p.press_key(off, 'm')
+		frame(a, off)
+		frame(a, off)
+		check(a.tool != before_tool, "so the next key is a shortcut again")
+		a.tool = .Pan
+		clear(&a.q)
+		clear(&a.hits)
+	}
+
+	// Search through the real field: type into the buffer the way the widget
+	// would, run the query, and fly to the result.
+	{
+		clear(&a.q)
+		append(&a.q, "Jubilee")
+		search(&a.ix, string(a.q[:]), &a.hits)
+		a.sel = 0
+		check(len(a.hits) > 0, "the field's text finds something")
+		before := a.view.center
+		ui := p.offscreen_begin(off)
+		goto_hit(a, ui, 0)
+		draw_ui(a, ui)
+		p.offscreen_end(off)
+		check(a.fly, "and the view starts flying")
+		for _ in 0 ..< 80 {
+			frame(a, off)
+		}
+		check(!a.fly, "and arrives")
+		check(before != a.view.center, "somewhere else")
+		e := a.ix.entries[a.hits[0].entry]
+		tgt := (e.bbox.min + e.bbox.max) / 2
+		near(a.view.center.x, tgt.x, 1e-9, "centred on the result, in x")
+		near(a.view.center.y, tgt.y, 1e-9, "and in y")
+	}
+
+	// And the same two things from the keyboard: with a tool armed, Enter acts
+	// at the centre of the view. This is the path a pointerless seat takes,
+	// and the only one a headless recording can drive.
+	{
+		clear_annotations(a)
+		a.tool = .Route
+		press_enter :: proc(a: ^Maps, off: ^p.Offscreen) {
+			p.press_key(off, p.KEY_RETURN)
+			frame(a, off)
+			frame(a, off)
+		}
+		press_enter(a, off)
+		check(a.from_node >= 0, "Enter with the route tool sets the start at the crosshair")
+		near(
+			world_distance(a.g.pos[a.from_node], a.view.center),
+			0,
+			600,
+			"on a road near the centre of the view",
+		)
+		// Pan a long way and set the destination.
+		a.view.center.x += 900.0 / view_scale(a.view)
+		a.view.center.y += 500.0 / view_scale(a.view)
+		frame(a, off)
+		press_enter(a, off)
+		check(a.to_node >= 0, "and again for the destination")
+		check(a.route.ok, "giving a route from the keyboard alone: %s", a.route.why)
+
+		a.tool = .Marker
+		n := len(a.sc.markers)
+		press_enter(a, off)
+		check(len(a.sc.markers) == n + 1, "Enter with the marker tool drops one")
+		a.tool = .Pan
+		press_enter(a, off)
+		check(len(a.sc.markers) == n + 1, "and with no tool armed it does nothing")
+	}
+
+	// Clearing removes the annotations but not the data.
+	{
+		clear_annotations(a)
+		check(len(a.sc.markers) == 0, "clearing removes the markers")
+		check(len(a.sc.measure) == 0, "and the measurement")
+		check(!a.route.ok, "and the route")
+		check(len(a.m.features) > 0, "but not the map")
+	}
+
+	// Every panel draws without falling over, and the frame is not blank.
+	for panel in Panel {
+		a.panel = panel
+		frame(a, off)
+	}
+	nonbg := 0
+	for y in 100 ..< 900 {
+		for x in 400 ..< 1400 {
+			if p.offscreen_pixel(off, x, y) != p.offscreen_pixel(off, 401, 101) {
+				nonbg += 1
+			}
+		}
+	}
+	check(nonbg > 20_000, "the map panel is not a flat colour, %d pixels differ", nonbg)
 }
 
 test_format :: proc() {

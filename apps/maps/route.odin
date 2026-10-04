@@ -43,6 +43,10 @@ Arc :: struct {
 
 Graph :: struct {
 	pos:    [dynamic]World_Pt,
+	// Whether a node sits on a road worth starting a journey from — anything
+	// a car uses, as opposed to a service yard or a footpath. Snapping a route
+	// endpoint to one of those puts it on a two-node stub with nowhere to go.
+	major:  [dynamic]bool,
 	start:  [dynamic]i32, // len(pos)+1 entries
 	arcs:   [dynamic]Arc,
 	lookup: map[u64]i32,
@@ -66,6 +70,7 @@ Heap_Item :: struct {
 
 graph_destroy :: proc(g: ^Graph) {
 	delete(g.pos)
+	delete(g.major)
 	delete(g.start)
 	delete(g.arcs)
 	delete(g.lookup)
@@ -92,6 +97,7 @@ node_key :: proc(w: World_Pt) -> u64 {
 graph_build :: proc(g: ^Graph, m: ^Map) {
 	delete(g.lookup)
 	clear(&g.pos)
+	clear(&g.major)
 	clear(&g.arcs)
 	clear(&g.start)
 	g.lookup = make(map[u64]i32)
@@ -116,6 +122,7 @@ graph_build :: proc(g: ^Graph, m: ^Map) {
 		}
 		id := i32(len(g.pos))
 		append(&g.pos, w)
+		append(&g.major, false)
 		g.lookup[k] = id
 		return id
 	}
@@ -125,11 +132,15 @@ graph_build :: proc(g: ^Graph, m: ^Map) {
 			continue
 		}
 		speed := f.speed > 0 ? f.speed : class_speed(f.class)
+		major := f.class != .Service && f.class != .Path
 		for ri in f.first_ring ..< f.first_ring + f.ring_count {
 			r := m.rings[ri]
 			prev := i32(-1)
 			for i in 0 ..< r.count {
 				cur := intern(g, m.pts[r.first + i])
+				if major {
+					g.major[cur] = true
+				}
 				if prev >= 0 && prev != cur {
 					l := f32(world_distance(g.pos[prev], g.pos[cur]))
 					if l > 0 {
@@ -224,10 +235,13 @@ graph_find :: proc(g: ^Graph, lon, lat: f64) -> i32 {
 // graph_nearest is the node closest to a world point, which is what a click on
 // the map resolves to. A linear scan: a city has tens of thousands of nodes and
 // this runs once per click, not once per frame.
-graph_nearest :: proc(g: ^Graph, w: World_Pt) -> (id: i32, dist_m: f64) {
+graph_nearest :: proc(g: ^Graph, w: World_Pt, major_only := false) -> (id: i32, dist_m: f64) {
 	best := i32(-1)
 	bd := f64(1e30)
 	for q, i in g.pos {
+		if major_only && !g.major[i] {
+			continue
+		}
 		dx := q.x - w.x
 		dy := q.y - w.y
 		d := dx * dx + dy * dy
