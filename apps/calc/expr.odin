@@ -383,7 +383,11 @@ parse_primary :: proc(p: ^P) -> f64 {
 			return 0
 		}
 		if c := peek(p); c.kind != .RParen {
-			return fail(p, c, c.kind == .End ? "This ( was never closed" : "Expected )")
+			// Blame the ( that is still open rather than the end of the line:
+			// the caret should point at the thing the reader has to fix.
+			return c.kind == .End \
+				? fail(p, t, "This ( was never closed") \
+				: fail(p, c, tfmt("Expected ) before `%s`", c.text))
 		}
 		next(p)
 		return v

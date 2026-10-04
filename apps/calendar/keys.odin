@@ -191,12 +191,15 @@ month_keys :: proc(ui: ^p.Ctx, c: ^Cal) {
 		c.sel = date_add(c.sel, -7 * n)
 		moved = true
 	}
-	if plain(ui, p.KEY_PAGE_DOWN) {
-		c.sel = month_add(c.sel, 1)
+	// Counted, not a boolean: two page keys can land in one frame, and a
+	// month grid that moved one month when it was asked for two is wrong in a
+	// way that is very hard to see.
+	if n := times(ui, p.KEY_PAGE_DOWN); n > 0 && !with_shift(ui, p.KEY_PAGE_DOWN) {
+		c.sel = month_add(c.sel, n)
 		moved = true
 	}
-	if plain(ui, p.KEY_PAGE_UP) {
-		c.sel = month_add(c.sel, -1)
+	if n := times(ui, p.KEY_PAGE_UP); n > 0 && !with_shift(ui, p.KEY_PAGE_UP) {
+		c.sel = month_add(c.sel, -n)
 		moved = true
 	}
 	if with_shift(ui, p.KEY_PAGE_DOWN) {

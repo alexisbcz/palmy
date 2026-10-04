@@ -157,10 +157,24 @@ vseg :: proc(ui: ^p.Ctx, c: ^Cal, label: string, v: View) {
 
 WK_W :: 34
 
+// grid_metrics works the week-row height out in pixels rather than leaving it
+// to `flex-1`.
+//
+// palmy resolves `h-full` and a flex basis against the height the parent had
+// *before* it was shrunk to fit, so a column of six rows whose natural content
+// is taller than the window keeps that natural height and the last row falls
+// off the bottom. Measuring the window and dividing is not a style choice here,
+// it is the only way the sixth week is on screen.
+grid_metrics :: proc(ui: ^p.Ctx) -> (row_h: f32, body_h: f32) {
+	win := p.size(ui)
+	// header, status bar, pt-2, pb-4, the weekday row and six 4px gaps.
+	body_h = max(120, win.y - HEADER_H - STATUS_H - 8 - 16 - 26 - 4)
+	row_h = max(28, (body_h - f32(WEEKS - 1) * 4) / f32(WEEKS))
+	return
+}
+
 month_grid :: proc(ui: ^p.Ctx, c: ^Cal) {
-	// min-h-0 matters: a flex item gets CSS's automatic minimum size, so
-	// without it the six week rows keep their content height and the last one
-	// is clipped instead of the six sharing the window.
+	row_h, _ := grid_metrics(ui)
 	p.col(ui, "w-full h-full min-h-0 overflow-hidden px-4 pb-4 pt-2 gap-1")
 	defer p.end(ui)
 
@@ -188,7 +202,7 @@ month_grid :: proc(ui: ^p.Ctx, c: ^Cal) {
 	start := date_add(first, -weekday(first))
 
 	for w in 0 ..< WEEKS {
-		p.row(ui, "w-full flex-1 min-h-0 items-stretch gap-1")
+		p.row(ui, tfmt("w-full h-[%d] shrink-0 items-stretch gap-1", int(row_h)))
 
 		wk_date := date_add(start, w * 7)
 		wk, _ := iso_week(wk_date)
@@ -301,11 +315,17 @@ day_cell :: proc(ui: ^p.Ctx, c: ^Cal, d: Date, dow: int) {
 // ---------------------------------------------------------------------------
 
 year_view :: proc(ui: ^p.Ctx, c: ^Cal) {
+	// Same reasoning as the month grid: three rows of mini months, measured
+	// rather than grown.
+	win := p.size(ui)
+	avail := max(150, win.y - HEADER_H - STATUS_H - 8 - 16 - 2 * 8)
+	row_h := int(avail / 3)
+
 	p.col(ui, "w-full h-full min-h-0 overflow-hidden px-4 pb-4 pt-2 gap-2")
 	defer p.end(ui)
 
 	for r in 0 ..< 3 {
-		p.row(ui, "w-full flex-1 min-h-0 gap-2 items-stretch")
+		p.row(ui, tfmt("w-full h-[%d] shrink-0 gap-2 items-stretch", row_h))
 		for col in 0 ..< 4 {
 			m := r * 4 + col + 1
 			mini_month(ui, c, c.sel.y, m)

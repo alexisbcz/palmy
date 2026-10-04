@@ -127,6 +127,18 @@ Replay is the same code path that applies a live event, so a restarted server
 is in exactly the state it was in. `--dir` points the log somewhere else, which
 is what the self-test uses.
 
+## Reproducing
+
+```sh
+odin build apps/chat        -collection:palmy=.../palmy -collection:shadcn=.../shadcn -collection:kit=.../apps/kit -o:speed -out:apps/chat/chat.bin
+odin build apps/chat/server -collection:palmy=.../palmy -collection:shadcn=.../shadcn -collection:kit=.../apps/kit -o:speed -out:apps/chat/server/chat-server.bin
+
+apps/chat/chat.bin --selftest          # headless protocol test, 82 assertions
+apps/chat/server/chat-server.bin       # 127.0.0.1:8787
+apps/chat/chat.bin --nick alexis       # a client
+bash apps/chat/record.sh apps/chat/demo.mp4 apps/chat/demo.txt
+```
+
 ## Not in v1
 
 No authentication beyond a self-asserted nickname (it is a loopback socket on a

@@ -33,27 +33,45 @@ for c in json.load(sys.stdin):
 }
 
 kill_palmy; sleep 0.4
-"$BIN" & APP=$!
+
+# 9>&- closes the lock fd in the child. Without it every launched process
+# inherits the flock: wl-copy (which kit.clipboard_set starts, and which
+# daemonises to serve the selection) then holds the lock for as long as it owns
+# the clipboard, and an app that outlives its recorder holds it forever. That
+# stalled every agent's recordings for half an hour at a time.
+"$BIN" 9>&- & APP=$!
 sleep 2.2
 
-read X Y W H <<< "$(hyprctl clients -j | python3 -c '
-import json,sys
-for c in json.load(sys.stdin):
-    if c.get("class")=="palmy":
-        x,y=c["at"]; w,h=c["size"]; print(x,y,w,h); break')"
-if [ -z "${X:-}" ]; then echo "no palmy window appeared"; kill $APP 2>/dev/null; exit 1; fi
+# Match the window by THE PID WE STARTED, not by class. A dozen palmy
+# applications can be on this desktop at once, and "the first window of class
+# palmy" is routinely somebody else's -- one take was 58 seconds of a terminal,
+# another recorded a different agent's app while wtype typed into it.
+read X Y W H <<< "$(APP=$APP python3 -c '
+import json,os,subprocess,sys
+want = int(os.environ["APP"])
+cs = json.loads(subprocess.run(["hyprctl","clients","-j"],capture_output=True,text=True).stdout)
+for c in cs:
+    if c.get("pid") == want:
+        x,y = c["at"]; w,h = c["size"]; print(x,y,w,h); break')"
+if [ -z "${X:-}" ]; then echo "no window appeared for pid $APP"; kill $APP 2>/dev/null; exit 1; fi
 echo "recording $BIN at $X,$Y ${W}x${H}"
 
-wf-recorder -g "$X,$Y ${W}x${H}" -f "$OUT" -c libx264 -p crf=20 -p preset=veryfast --overwrite >/dev/null 2>&1 &
+wf-recorder -g "$X,$Y ${W}x${H}" -f "$OUT" -c libx264 -p crf=20 -p preset=veryfast --overwrite 9>&- >/dev/null 2>&1 &
 REC=$!
 sleep 1.2
+
+# Re-focus our own window before every keystroke. wtype attaches a virtual
+# keyboard to the seat, so it types into whatever holds focus -- and a
+# notification or another agent's window taking focus mid-take silently
+# swallows the rest of the script, or worse, types into someone else's app.
+refocus() { hyprctl dispatch focuswindow "pid:$APP" >/dev/null 2>&1; }
 
 while IFS= read -r line; do
   [ -z "$line" ] && continue
   case "$line" in
     \#*) ;;
-    key\ *)   wtype -k "${line#key }" ;;
-    type\ *)  wtype -- "${line#type }" ;;
+    key\ *)   refocus; wtype -k "${line#key }" ;;
+    type\ *)  refocus; wtype -- "${line#type }" ;;
     move\ *)  set -- ${line#move }; hyprctl dispatch "hl.dsp.cursor.move({x=$((X+$1)),y=$((Y+$2))})" >/dev/null 2>&1 ;;
     wait\ *)  sleep "${line#wait }" ;;
     *) echo "unknown step: $line" ;;
