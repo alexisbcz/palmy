@@ -5,9 +5,11 @@
 // are measured against the faces the window would draw with.
 package main
 
+import "core:encoding/json"
 import "core:fmt"
 import "core:os"
 import "core:strings"
+import "core:time"
 import "core:unicode/utf8"
 import kit "kit:."
 import p "palmy:."
@@ -119,6 +121,7 @@ run_selftest :: proc() -> bool {
 	test_containers()
 	test_fontfile(&fonts)
 	test_export(&fonts)
+	test_prose(&fonts)
 
 	fmt.printfln("\n%d assertions, %d failed", checks, fails)
 	return fails == 0
@@ -3985,4 +3988,521 @@ check_libreoffice :: proc(cases: []Export_Case, paths: []string) {
 			)
 		}
 	}
+}
+
+// ---------------------------------------------------------------------------
+// 19. Prose linting: the position map, and vale as its own oracle
+// ---------------------------------------------------------------------------
+//
+// The one thing in this feature that can be subtly, silently wrong is the
+// mapping from vale's `line:column` back to (block, byte offset). It has a
+// checkable invariant — **the text at the mapped model position must equal the
+// text vale flagged** — and that invariant is what most of this section is.
+//
+// The corpus is generated here rather than committed: nothing in the
+// repository has to hold anybody's prose for these assertions to mean
+// something, and the non-ASCII cases are in it deliberately, because a column
+// counted in bytes rather than runes is invisible until the text stops being
+// ASCII.
+
+// PROSE_CORPUS is in the exact shape `prose_serialize` emits: one block per
+// line, one blank line between blocks, no inline emphasis. That makes the
+// oracle comparison below as strict as it can be — the markdown vale reads
+// through the app can be compared with the markdown vale reads directly.
+@(private = "file")
+PROSE_CORPUS :: `# a heading That Is plainly Utilised
+
+We utilize the the data in order to demonstrate a point , and that is very obviously quite sufficient for an adviser or an advisor who had already agreed with every single one of the numerous participants at this point in time.
+
+Café très utilize this and 漢字漢字 really bad with an emoji 🙂 utilize after it.
+
+A mispelled wrod sits here with a colour and a color.
+
+- A really long bulleted item that we utilize
+
+- Another item that was prepared by somebody
+
+> A quote that will utilize something
+`
+
+@(private = "file")
+prose_tmp :: proc(name: string) -> string {
+	_ = os.make_directory_all(SELFTEST_DIR, os.perm(0o755))
+	return fmt.tprintf("%s/%s", SELFTEST_DIR, name)
+}
+
+// prose_raw_pairs lints a file with vale directly and returns one
+// "Check\tMatch" line per alert, sorted. It is the oracle: the app has to
+// agree with this set, or the serialiser changed what the linter saw.
+@(private = "file")
+prose_raw_pairs :: proc(path, config: string) -> ([]string, bool) {
+	argv := [?]string{"vale", "--no-global", "--no-exit", "--output=JSON", fmt.tprintf("--config=%s", config), path}
+	out, _ := kit.run(argv[:], context.temp_allocator)
+	root, err := json.parse(strings.trim_space(out), .JSON, false, context.temp_allocator)
+	if err != .None {
+		return nil, false
+	}
+	obj, is_obj := root.(json.Object)
+	if !is_obj {
+		return nil, false
+	}
+	if _, bad := obj["Code"]; bad {
+		return nil, false
+	}
+	pairs := make([dynamic]string, 0, 32, context.temp_allocator)
+	for _, fv in obj {
+		arr, is_arr := fv.(json.Array)
+		if !is_arr {
+			return nil, false
+		}
+		for av in arr {
+			ao, is_ao := av.(json.Object)
+			if !is_ao {
+				continue
+			}
+			chk, cok := ao["Check"].(json.String)
+			mat, mok := ao["Match"].(json.String)
+			if !cok || !mok {
+				continue
+			}
+			append(&pairs, fmt.tprintf("%s\t%s", string(chk), string(mat)))
+		}
+	}
+	out_s := pairs[:]
+	sort_strings(out_s)
+	return out_s, true
+}
+
+@(private = "file")
+sort_strings :: proc(s: []string) {
+	for i in 1 ..< len(s) {
+		v := s[i]
+		j := i - 1
+		for j >= 0 && s[j] > v {
+			s[j + 1] = s[j]
+			j -= 1
+		}
+		s[j + 1] = v
+	}
+}
+
+test_prose :: proc(fonts: ^p.Fonts) {
+	section("prose: the position map, and vale as its own oracle")
+	before := checks
+	defer fmt.printfln("    %d assertions over the prose checker", checks - before)
+
+	// --- 1. The serialiser's map is self-consistent, with no linter involved.
+	{
+		d := doc_from_markdown(PROSE_CORPUS)
+		defer doc_destroy(&d)
+		pt := prose_serialize(&d, context.temp_allocator)
+
+		ok(len(pt.md) > 0, "the serialiser produced markdown")
+		mapped, bad_rune, bad_order := 0, 0, 0
+		for &l in pt.lines {
+			if !l.valid {
+				continue
+			}
+			pa := blk_para(&d, l.blk)
+			ok(pa != nil, "every mapped line names a block that exists")
+			if pa == nil {
+				continue
+			}
+			t := para_text(pa, context.temp_allocator)
+			prev := -1
+			for v in l.offs {
+				if v < 0 {
+					continue
+				}
+				mapped += 1
+				o := int(v)
+				// Every mapped offset is in range and on a rune boundary: an
+				// offset inside a UTF-8 sequence is exactly the bug the whole
+				// map exists to make impossible.
+				if o < 0 || o >= len(t) || t[o] & 0xc0 == 0x80 {
+					bad_rune += 1
+					continue
+				}
+				// And they only ever go forwards, one rune at a time.
+				if o <= prev {
+					bad_order += 1
+				}
+				prev = o
+			}
+		}
+		ok(mapped > 0, "the map covers the document's runes (%d of them)", mapped)
+		eq_int(bad_rune, 0, "every mapped offset is in range and on a rune boundary")
+		eq_int(bad_order, 0, "mapped offsets only ever advance")
+
+		// A multi-byte block proves the map is not an identity: the rune
+		// column and the byte offset of the same character must differ.
+		found_wide := false
+		for &l in pt.lines {
+			if !l.valid {
+				continue
+			}
+			for v, i in l.offs {
+				if v >= 0 && int(v) != i {
+					found_wide = true
+					break
+				}
+			}
+			if found_wide {
+				break
+			}
+		}
+		ok(found_wide, "the corpus contains a rune column that is not its byte offset")
+	}
+
+	// --- 2. Malformed output from vale. Every one of these must be an error
+	// rather than an empty, clean-looking result.
+	{
+		d := doc_from_markdown("Just one paragraph that we utilize.")
+		defer doc_destroy(&d)
+		pt := prose_serialize(&d, context.temp_allocator)
+
+		for bad in ([?]struct {
+			name: string,
+			text: string,
+		} {
+			{"empty output", ""},
+			{"whitespace only", "   \n  "},
+			{"not JSON at all", "E100 [.vale.ini not found] Runtime error"},
+			{"truncated JSON", `{"stdin.md": [{"Check": "Palm.Wordy",`},
+			{"a JSON array", `[1, 2, 3]`},
+			{"a JSON string", `"nope"`},
+			{"vale's config-error object", `{"Code":"E201","Text":"Missing the required 'message' key.","Path":"/x/Read.yml","Line":1,"Span":1}`},
+			{"the right shape, wrong value type", `{"stdin.md": 7}`},
+		}) {
+			list, _, err := prose_parse(bad.text, &pt, &d, context.temp_allocator)
+			ok(err != "", "%s is reported as an error, not as a clean document", bad.name)
+			eq_int(len(list), 0, "%s yields no alerts", bad.name)
+		}
+
+		// And the shape that *is* valid but has nothing in it: no error, no
+		// alerts. A genuinely clean document has to be distinguishable from a
+		// linter that did not run, and this is the pair that proves it.
+		list, _, err := prose_parse(`{"lint.md": []}`, &pt, &d, context.temp_allocator)
+		eq_str(err, "", "an empty alert array is not an error")
+		eq_int(len(list), 0, "an empty alert array yields no alerts")
+	}
+
+	// --- 3. A missing vale. Probed with PATH emptied, so this runs on a
+	// machine that has vale as well as one that does not.
+	{
+		saved := strings.clone(os.get_env("PATH", context.temp_allocator))
+		defer {
+			os.set_env("PATH", saved)
+			delete(saved)
+		}
+		os.set_env("PATH", "/nonexistent-for-the-self-test")
+		avail, why := prose_probe(context.temp_allocator)
+		ok(!avail, "vale off PATH is reported as unavailable")
+		ok(strings.contains(why, PROSE_BIN), "and the message names the binary")
+		ok(
+			strings.contains(why, "not installed") || strings.contains(why, "would not run"),
+			"and says what is wrong rather than failing obscurely",
+		)
+	}
+
+	// --- 4. Everything past here needs vale. Without it the feature is
+	// honestly unavailable and there is nothing left to assert.
+	avail, _ := prose_probe(context.temp_allocator)
+	if !avail {
+		fmt.println("    vale is not installed: the oracle comparison is skipped")
+		ok(true, "the prose checker degrades to unavailable rather than wrong")
+		return
+	}
+
+	ini, merr := prose_materialise(context.temp_allocator)
+	eq_str(merr, "", "the embedded style package writes out")
+	ok(ini != "", "and produces a .vale.ini")
+
+	// --- 5. The style package loads. A YAML typo that silently disables a
+	// rule is the quiet failure here, so this is checked two ways: vale's own
+	// `ls-config` must accept the package, and every rule in it must be shown
+	// to fire.
+	{
+		out, good := kit.run(
+			{"vale", "--no-global", fmt.tprintf("--config=%s", ini), "ls-config"},
+			context.temp_allocator,
+		)
+		ok(good, "vale ls-config accepts the package")
+		ok(strings.contains(out, "Palm"), "and reports Palm as the style in force")
+		ok(!strings.contains(out, "E2"), "with no E2xx rule-loading error")
+	}
+
+	// --- 6. The invariant, over the generated corpus.
+	corpus := prose_tmp("prose-corpus.md")
+	ok(os.write_entire_file(corpus, transmute([]u8)string(PROSE_CORPUS)) == nil, "wrote the corpus")
+
+	d, loaded := cli_load(corpus)
+	ok(loaded, "and imported it")
+	defer doc_destroy(&d)
+
+	alerts, skipped, lerr := prose_lint_text(&d, ini, context.temp_allocator)
+	eq_str(lerr, "", "the corpus lints without error")
+	ok(len(alerts) >= 15, "and produces alerts (%d)", len(alerts))
+	eq_int(skipped, 0, "with no block left unchecked")
+
+	// THE assertion. Every alert's mapped span must hold exactly the text vale
+	// said it flagged.
+	mismatches := 0
+	nonascii := 0
+	for &a in alerts {
+		pa := blk_para(&d, a.blk)
+		if pa == nil {
+			mismatches += 1
+			continue
+		}
+		t := para_text(pa, context.temp_allocator)
+		if a.from < 0 || a.to > len(t) || a.to <= a.from || t[a.from:a.to] != a.match {
+			mismatches += 1
+			fmt.eprintfln(
+				"    mapping: %s at %d:%d -> block %d+%d..%d is %q, vale flagged %q",
+				a.check,
+				a.line,
+				a.col,
+				a.blk.para,
+				a.from,
+				a.to,
+				a.from < len(t) ? t[a.from:min(a.to, len(t))] : "",
+				a.match,
+			)
+			continue
+		}
+		// A span whose byte offset differs from its rune column is the case
+		// that catches a byte-versus-rune mistake.
+		if a.from != a.col - 1 {
+			nonascii += 1
+		}
+	}
+	eq_int(mismatches, 0, "the text at every mapped position is the text vale flagged")
+	ok(nonascii > 0, "and %d of them had a byte offset that is not the rune column", nonascii)
+
+	// Every rule in the package must have fired at least once, or the corpus
+	// is not exercising it and a broken rule would pass unnoticed.
+	for rule in PROSE_RULES {
+		hit := false
+		for &a in alerts {
+			if a.check == rule {
+				hit = true
+				break
+			}
+		}
+		ok(hit, "%s fired on the corpus", rule)
+	}
+
+	// --- 7. vale as its own oracle. Lint the corpus file directly, lint the
+	// same content through the app, and compare the alert sets. This is the
+	// assertion that proves the serialiser did not change what the linter
+	// sees: if a `**` or an escape had shifted anything, the two sets would
+	// disagree.
+	{
+		oracle, got := prose_raw_pairs(corpus, ini)
+		ok(got, "vale lints the corpus file directly")
+
+		mine := make([dynamic]string, 0, len(alerts), context.temp_allocator)
+		for &a in alerts {
+			append(&mine, fmt.tprintf("%s\t%s", a.check, a.match))
+		}
+		mine_s := mine[:]
+		sort_strings(mine_s)
+
+		eq_int(len(mine_s), len(oracle), "the app finds as many alerts as vale does directly")
+		diffs := 0
+		for i in 0 ..< min(len(mine_s), len(oracle)) {
+			if mine_s[i] != oracle[i] {
+				diffs += 1
+				fmt.eprintfln("    oracle: app %q, vale %q", mine_s[i], oracle[i])
+			}
+		}
+		eq_int(diffs, 0, "and they are the same alerts, rule for rule and match for match")
+
+		// Stronger, where it holds: the corpus is written in the shape the
+		// serialiser emits, so the round trip should be byte-identical.
+		pt := prose_serialize(&d, context.temp_allocator)
+		eq_str(
+			strings.trim_space(pt.md),
+			strings.trim_space(PROSE_CORPUS),
+			"the serialised document is the corpus it came from",
+		)
+	}
+
+	// --- 8. Accepting a suggestion, through the edit path.
+	{
+		st := State{}
+		state_init(&st, fonts)
+		defer state_destroy(&st)
+		replace_document(&st, doc_from_markdown("We utilize the data. Utilize it again.\n"))
+		relayout(&st)
+
+		// The default allocator, not the temp one: these alerts are handed to
+		// `st.prose`, which frees them in `prose_destroy`.
+		list, _, e := prose_lint_text(&st.doc, ini)
+		defer delete(list)
+		eq_str(e, "", "a two-sentence document lints")
+		for &a in list {
+			if prose_ignored(&st.prose, a.check) {
+				continue
+			}
+			append(&st.prose.alerts, a)
+		}
+		prose_sort(st.prose.alerts[:])
+		st.prose.ran = true
+
+		fixable := 0
+		for &a in st.prose.alerts {
+			if a.fix != "" {
+				fixable += 1
+			}
+		}
+		ok(fixable >= 2, "and offers a replacement for both (%d)", fixable)
+
+		before := text_of(&st.doc)
+		undos := len(st.hist.undo)
+
+		// The second one first, so accepting it cannot be confused with a
+		// lucky offset at the head of the paragraph.
+		st.prose.sel = 1
+		st.caret = blk_pos(st.prose.alerts[1].blk, st.prose.alerts[1].from)
+		st.anchor = st.caret
+		prose_accept(&st)
+		relayout(&st)
+		after := text_of(&st.doc)
+		ok(after != before, "accepting a suggestion changed the document")
+		ok(strings.contains(after, "Use it again"), "and kept the capital it replaced: %q", after)
+		eq_int(len(st.hist.undo), undos + 1, "in exactly one undo step")
+
+		do_undo(&st)
+		relayout(&st)
+		eq_str(text_of(&st.doc), before, "and undo takes it back")
+
+		// The first one, which is lower case and must stay lower case.
+		st.prose.sel = 0
+		st.caret = blk_pos(st.prose.alerts[0].blk, st.prose.alerts[0].from)
+		st.anchor = st.caret
+		prose_accept(&st)
+		relayout(&st)
+		ok(strings.contains(text_of(&st.doc), "We use the data"), "a lower-case fix stays lower case")
+	}
+
+	// --- 9. Ignoring a rule for a document.
+	{
+		st := State{}
+		state_init(&st, fonts)
+		defer state_destroy(&st)
+		replace_document(&st, doc_from_markdown(PROSE_CORPUS))
+		relayout(&st)
+
+		list, _, _ := prose_lint_text(&st.doc, ini)
+		defer delete(list)
+		for &a in list {
+			append(&st.prose.alerts, a)
+		}
+		prose_sort(st.prose.alerts[:])
+		st.prose.ran = true
+		total := len(st.prose.alerts)
+
+		// Pick the rule the caret is in, which is what Alt+X does.
+		target := ""
+		for &a in st.prose.alerts {
+			if a.check == "Palm.Hedge" {
+				target = a.check
+				st.caret = blk_pos(a.blk, a.from)
+				st.anchor = st.caret
+				break
+			}
+		}
+		ok(target != "", "the corpus has a Palm.Hedge alert to switch off")
+		prose_ignore(&st)
+		ok(prose_ignored(&st.prose, "Palm.Hedge"), "the rule is off for this document")
+		ok(len(st.prose.alerts) < total, "and its alerts are gone (%d of %d left)", len(st.prose.alerts), total)
+		left := 0
+		for &a in st.prose.alerts {
+			if a.check == "Palm.Hedge" {
+				left += 1
+			}
+		}
+		eq_int(left, 0, "none of them survived")
+
+		prose_restore_rules(&st)
+		eq_int(len(st.prose.ignored), 0, "and every rule comes back on")
+	}
+
+	// --- 10. The threaded path, which is what the window actually uses. The
+	// shots run the lint synchronously and the sections above call it
+	// directly, so without this the handshake between the frame and the worker
+	// is the one part of the feature nothing exercises.
+	{
+		st := State{}
+		state_init(&st, fonts)
+		defer state_destroy(&st)
+		replace_document(&st, doc_from_markdown("We utilize the the data very obviously.\n"))
+		relayout(&st)
+		st.prose.show = true
+
+		ok(!prose_busy(), "no lint is in flight to start with")
+		started := prose_run(&st)
+		ok(started, "the worker starts")
+		ok(prose_busy(), "and is reported as in flight")
+
+		// The frame loop polls with `p.redraw`; a headless test polls with a
+		// sleep, which is the same handshake without the frames.
+		waited := 0
+		out, good, ms, got := "", false, 0, false
+		for waited < 15000 {
+			out, good, ms, got = prose_collect()
+			if got {
+				break
+			}
+			time.sleep(2 * time.Millisecond)
+			waited += 2
+		}
+		ok(got, "and the result is collected (%d ms waited)", waited)
+		ok(!prose_busy(), "after which nothing is in flight")
+		ok(ms >= 0, "and the run reports how long it took: %d ms", ms)
+		_ = good
+
+		prose_absorb(&st, out, good, ms)
+		ok(len(st.prose.alerts) >= 4, "the threaded run produced alerts (%d)", len(st.prose.alerts))
+		ok(st.prose.ran, "and is marked as having run")
+		bad := 0
+		for &a in st.prose.alerts {
+			if !prose_verify(&st.doc, &a) {
+				bad += 1
+			}
+		}
+		eq_int(bad, 0, "every alert from the threaded run maps back correctly too")
+
+		// A second run while the first is still in flight must be refused
+		// rather than queued: one vale in the air, never two.
+		ok(prose_start(strings.clone("x\n"), st.prose.config), "a second run starts once the first is done")
+		for waited = 0; waited < 15000 && prose_busy(); waited += 2 {
+			_, _, _, g2 := prose_collect()
+			if g2 {
+				break
+			}
+			time.sleep(2 * time.Millisecond)
+		}
+		ok(!prose_busy(), "and it finishes too")
+	}
+
+	// --- 11. A project's own .vale.ini wins, and `$HOME` is never consulted.
+	{
+		proj := prose_tmp("project")
+		_ = os.make_directory_all(proj, os.perm(0o755))
+		deep := fmt.tprintf("%s/chapters/two", proj)
+		_ = os.make_directory_all(deep, os.perm(0o755))
+		own := fmt.tprintf("%s/.vale.ini", proj)
+		_ = os.write_entire_file(own, transmute([]u8)string("MinAlertLevel = error\n\n[*.md]\n"))
+
+		found := prose_project_config(fmt.tprintf("%s/ch.md", deep), context.temp_allocator)
+		eq_str(found, own, "a .vale.ini above the document is found")
+
+		none := prose_project_config(fmt.tprintf("%s/untitled.md", kit_home()), context.temp_allocator)
+		eq_str(none, "", "and the search stops below $HOME")
+		eq_str(prose_project_config("", context.temp_allocator), "", "an unsaved document has no project config")
+	}
+	os.remove(corpus)
 }

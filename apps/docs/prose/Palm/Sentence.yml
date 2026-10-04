@@ -1,0 +1,10 @@
+# Sentence length, counted in words over vale's own sentence scope rather than
+# guessed from punctuation here. 32 is the point at which a reader has to go
+# back to the start of the sentence to keep the subject, which is the thing
+# worth flagging -- not length as such.
+extends: occurrence
+scope: sentence
+level: warning
+max: 32
+token: '\b\w+\b'
+message: "This sentence runs past 32 words."

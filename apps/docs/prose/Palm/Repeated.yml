@@ -1,0 +1,9 @@
+# A word typed twice in a row. The one rule here with no judgement in it at
+# all: "the the" is never what anybody meant, so this is the only check that
+# earns `error` without an argument.
+extends: repetition
+message: "'%s' is repeated."
+level: error
+alpha: true
+tokens:
+  - '[^\s]+'

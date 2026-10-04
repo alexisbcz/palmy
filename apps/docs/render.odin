@@ -243,6 +243,12 @@ draw_page :: proc(c: ^p.Canvas, st: ^State, pi: int, dr: p.Rect, z, sc: f32, liv
 				draw_find_marks(c, st, li, ox, ly, lh, k)
 			}
 
+			// Prose marks go under the text and over the find wash: they are
+			// about the words, not about a match the caret is chasing.
+			if live && len(st.prose.alerts) > 0 {
+				draw_prose_marks(c, st, li, ox, ly, lh, k)
+			}
+
 			// Selection.
 			if live && has_sel {
 				a := l.para == sel_lo.para ? max(l.start, sel_lo.off) : l.start

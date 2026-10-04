@@ -1,0 +1,11 @@
+# A form of "to be" followed by what looks like a past participle. A heuristic,
+# and knowingly a loose one -- "was tired" is an adjective, not a passive --
+# which is why it is a suggestion rather than a warning. It is here because
+# passive voice is the single most common reason a sentence in a report hides
+# who did the thing.
+extends: existence
+message: "'%s' reads as passive. Name who acts."
+level: suggestion
+ignorecase: true
+raw:
+  - '\b(?:am|are|is|was|were|be|been|being)\s+\w+ed\b'

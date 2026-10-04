@@ -11,6 +11,8 @@
 //	docs --convert <in> <out>            .json .md .docx .odt in; those plus
 //	                                     .html .pdf .odt .rtf out
 //	docs --export-png <file> <base>      render every page to <base>-pN.png
+//	docs --shots <dir>                   render the interface offscreen to PNGs
+//	docs --lint <file> [--json]          prose problems, through vale
 //	docs --bench [paragraphs]            layout and typing throughput
 package main
 
@@ -87,6 +89,21 @@ main :: proc() {
 				os.exit(2)
 			}
 			os.exit(cli_convert(os.args[2], os.args[3]) ? 0 : 1)
+		case "--shots":
+			// Offscreen screenshots of the real editor. No compositor, no
+			// window, nothing on anybody's screen.
+			dir := len(os.args) > 2 ? os.args[2] : "docs-shots"
+			os.exit(shots(dir))
+		case "--lint":
+			if len(os.args) < 3 {
+				fmt.eprintln("docs --lint <file> [--json]")
+				os.exit(2)
+			}
+			as_json := false
+			for a in os.args[3:] {
+				if a == "--json" {as_json = true}
+			}
+			os.exit(cli_lint(os.args[2], as_json) ? 0 : 1)
 		case "--export-png":
 			if len(os.args) < 4 {
 				fmt.eprintln("docs --export-png <file> <base>")
@@ -100,7 +117,9 @@ main :: proc() {
 				"  --bench [paragraphs]       layout and typing throughput\n" +
 				"  --convert <in> <out>       in: .json .md .docx .odt\n" +
 				"                             out: .json .md .html .pdf .docx .odt .rtf\n" +
-				"  --export-png <file> <base>",
+				"  --export-png <file> <base>\n" +
+				"  --lint <file> [--json]     prose problems, through vale\n" +
+				"  --shots <dir>              render the interface offscreen to PNGs",
 			)
 			return
 		}
@@ -141,6 +160,7 @@ main :: proc() {
 		measure(ui, &st)
 		handle_keys(ui, &st, app)
 		measure(ui, &st)
+		prose_tick(ui, &st)
 
 		if st.dirty {
 			relayout(&st)
@@ -172,6 +192,7 @@ main :: proc() {
 }
 
 state_destroy :: proc(st: ^State) {
+	prose_destroy(&st.prose)
 	doc_destroy(&st.doc)
 	doc_destroy(&st.clip_doc)
 	layout_destroy(&st.lay)

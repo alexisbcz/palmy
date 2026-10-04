@@ -1,0 +1,64 @@
+# Phrases with a shorter exact equivalent.
+#
+# Every entry is a one-for-one replacement, which is what lets the editor offer
+# "accept" on these and only these: vale reports the right-hand side in
+# `Action.Params`, so the fix is the linter's, not a guess made here. A rule
+# whose advice cannot be written down as a replacement belongs in one of the
+# other files.
+extends: substitution
+message: "Prefer '%s' over '%s'."
+level: warning
+ignorecase: true
+action:
+  name: replace
+swap:
+  a large number of: many
+  a number of: several
+  at the present time: now
+  at this point in time: now
+  due to the fact that: because
+  each and every: every
+  for the purpose of: for
+  has the ability to: can
+  have the ability to: can
+  in close proximity to: near
+  in many cases: often
+  in order to: to
+  in regard to: about
+  in spite of the fact that: although
+  in the event that: if
+  in the near future: soon
+  is able to: can
+  are able to: can
+  make a decision: decide
+  on a daily basis: daily
+  prior to: before
+  subsequent to: after
+  the majority of: most
+  whether or not: whether
+  with regard to: about
+  approximately: about
+  ascertain: find out
+  commence: begin
+  demonstrate: show
+  endeavor: try
+  endeavour: try
+  facilitate: help
+  initiate: start
+  methodology: method
+  modification: change
+  necessitate: require
+  numerous: many
+  optimum: best
+  subsequently: later
+  sufficient: enough
+  terminate: end
+  transmit: send
+  utilise: use
+  utilised: used
+  utilises: uses
+  utilising: using
+  utilize: use
+  utilized: used
+  utilizes: uses
+  utilizing: using

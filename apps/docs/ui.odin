@@ -30,7 +30,10 @@ chrome_top :: proc(st: ^State) -> f32 {
 measure :: proc(ui: ^p.Ctx, st: ^State) {
 	win := p.size(ui)
 	top := chrome_top(st)
-	st.view = {0, top, win.x, max(40, win.y - top - 1 - STATUS)}
+	// The problems panel takes its width out of the workspace, so the page
+	// stays centred in what is left rather than hiding behind the panel.
+	side := st.prose.show ? PROSE_W + 1 : 0
+	st.view = {0, top, max(120, win.x - side), max(40, win.y - top - 1 - STATUS)}
 	clamp_scroll(st)
 }
 
@@ -55,14 +58,23 @@ frame :: proc(ui: ^p.Ctx, st: ^State) {
 		sc.separator(ui)
 	}
 
+	p.row(ui, "flex-1 w-full min-h-0 overflow-hidden")
 	p.pixels(
 		ui,
-		"flex-1 w-full overflow-hidden cursor-text",
+		"flex-1 h-full overflow-hidden cursor-text",
 		st,
 		proc(c: ^p.Canvas, r: p.Rect, s: ^State) {
 			draw_workspace(c, r, s)
 		},
 	)
+	if st.prose.show {
+		// Vertical, explicitly: shadcn's separator defaults to horizontal and
+		// applies `w-full` *after* the caller's class, which inside a row
+		// takes the whole width and leaves both siblings at zero.
+		sc.separator(ui, .Vertical)
+		prose_panel(ui, st)
+	}
+	p.end(ui)
 
 	sc.separator(ui)
 	status_bar(ui, st)
@@ -221,6 +233,9 @@ toolbar_top :: proc(ui: ^p.Ctx, st: ^State) {
 	if tool_button(ui, "find", ICON_SEARCH, st.mode == .Find) {
 		st.mode = st.mode == .Find ? .Doc : .Find
 		st.find_hits = count_hits(st)
+	}
+	if tool_button(ui, "prose", ICON_CASE_SENSITIVE, st.prose.show) {
+		prose_toggle(st)
 	}
 	if tool_button(ui, "help", ICON_KEYBOARD, st.help) {
 		st.help = !st.help
@@ -612,6 +627,10 @@ HELP_EDIT := [?]Shortcut {
 	{"Ctrl Space", "Clear character formatting"},
 	{"Ctrl Return", "Hard page break"},
 	{"Shift + arrows", "Extend the selection"},
+	{"Ctrl G", "Check the prose (vale)"},
+	{"Alt N / Alt P", "Next, previous problem"},
+	{"Alt Y", "Accept the suggested replacement"},
+	{"Alt X / Alt Shift X", "This rule off for the document, all back on"},
 }
 
 HELP_FILE := [?]Shortcut {
