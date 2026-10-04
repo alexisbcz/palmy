@@ -15,8 +15,9 @@
 //          text positioned from the layout, so it is searchable and
 //          selectable rather than a picture of each page.
 //   .docx  office.odin — WordprocessingML in a ZIP written by zip.odin, and
-//          the one format this app also *reads*.
-//   .odt   office.odin — OpenDocument, likewise.
+//          read back as well as written.
+//   .odt   office.odin — OpenDocument, likewise read and written, including
+//          files LibreOffice wrote rather than this app.
 //   .rtf   office.odin — plain text, and the cheapest broad compatibility
 //          there is.
 package main

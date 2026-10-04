@@ -1,4 +1,4 @@
-// The interchange formats: .docx, .odt and .rtf out, .docx in.
+// The interchange formats: .docx, .odt and .rtf out; .docx and .odt in.
 //
 // A word processor that can only write its own JSON is a toy, however good
 // its pagination. These three formats are what "send it to someone" means in
@@ -2495,4 +2495,625 @@ import_docx :: proc(path: string) -> (d: Doc, ok: bool) {
 	numbering, _ := zip_read_entry(archive, "word/numbering.xml", context.temp_allocator)
 	rels, _ := zip_read_entry(archive, "word/_rels/document.xml.rels", context.temp_allocator)
 	return doc_from_docx_xml(string(document), string(numbering), string(rels), archive), true
+}
+
+// ---------------------------------------------------------------------------
+// .odt import
+// ---------------------------------------------------------------------------
+//
+// The twin of the .docx importer, and the same shape: one forward scan of
+// `content.xml` with the little XML scanner above, assembling paragraphs,
+// lists, tables and pictures as the tags go by.
+//
+// ODF differs from OOXML in three ways that matter here, and all three are
+// handled before the body walk rather than during it:
+//
+//   * **Formatting is by reference.** A run says `text:style-name="T3"`, and
+//     what T3 *is* lives in `<office:automatic-styles>` earlier in the same
+//     file. So the styles are collected in a first pass and looked up in the
+//     second.
+//   * **Repetition is compressed.** `table:number-columns-repeated="5"` means
+//     five identical columns, and a writer uses it freely. Expanding it is not
+//     optional: a table read without it has one column where it should have
+//     five.
+//   * **Whitespace is structural.** A run of spaces is `<text:s text:c="n"/>`,
+//     a tab is `<text:tab/>`, and literal runs of spaces in the file are
+//     collapsed. Reading the character data alone loses every indent.
+
+// odt_len_px converts an ODF length — they carry their unit — to layout pixels.
+@(private = "file")
+odt_len_px :: proc(s: string) -> f32 {
+	n := len(s)
+	if n == 0 {
+		return 0
+	}
+	unit := ""
+	digits := n
+	for i := n; i > 0; i -= 1 {
+		c := s[i - 1]
+		if (c >= '0' && c <= '9') || c == '.' || c == '-' || c == '+' {
+			digits = i
+			break
+		}
+	}
+	if digits < n {
+		unit = s[digits:]
+	}
+	v, ok := strconv.parse_f64(s[:digits])
+	if !ok {
+		return 0
+	}
+	switch unit {
+	case "in":
+		return f32(v) * 96
+	case "cm":
+		return f32(v) * 96 / 2.54
+	case "mm":
+		return f32(v) * 96 / 25.4
+	case "pt":
+		return f32(v) * 96 / 72
+	case "pc":
+		return f32(v) * 16
+	case "px", "":
+		return f32(v)
+	}
+	return f32(v)
+}
+
+// odt_style_name decodes ODF's `_XX_` escapes, which is how a space becomes
+// `_20_` — so `Heading_20_1` is the style display-named "Heading 1". Without
+// this every named style arrives as a stranger and the document imports as a
+// wall of body text.
+@(private = "file")
+odt_style_name :: proc(s: string, alloc := context.temp_allocator) -> string {
+	if strings.index_byte(s, '_') < 0 {
+		return s
+	}
+	b := strings.builder_make(alloc)
+	i := 0
+	for i < len(s) {
+		if s[i] == '_' && i + 3 < len(s) && s[i + 3] == '_' {
+			if v, ok := strconv.parse_u64_of_base(s[i + 1:i + 3], 16); ok && v >= 0x20 && v < 0x7f {
+				strings.write_byte(&b, u8(v))
+				i += 4
+				continue
+			}
+		}
+		strings.write_byte(&b, s[i])
+		i += 1
+	}
+	return strings.to_string(b)
+}
+
+@(private = "file")
+Odt_Styles_In :: struct {
+	text:  map[string]Char_Style, // T1 → the character style it names
+	para:  map[string]string, // P1 → the parent style name it inherits
+	align: map[string]Align,
+	brk:   map[string]bool,
+	col:   map[string]f32, // a table-column style → its width in px
+	list:  map[string]List_Kind, // L1 → bullet or numbered
+}
+
+// odt_collect_styles is the first pass: everything the body will refer to by
+// name.
+@(private = "file")
+odt_collect_styles :: proc(src: string) -> Odt_Styles_In {
+	out := Odt_Styles_In {
+		text  = make(map[string]Char_Style, 16, context.temp_allocator),
+		para  = make(map[string]string, 16, context.temp_allocator),
+		align = make(map[string]Align, 16, context.temp_allocator),
+		brk   = make(map[string]bool, 8, context.temp_allocator),
+		col   = make(map[string]f32, 16, context.temp_allocator),
+		list  = make(map[string]List_Kind, 8, context.temp_allocator),
+	}
+	x := Xml {
+		src = src,
+	}
+	name := ""
+	family := ""
+	list_name := ""
+	for xml_next(&x) {
+		if x.kind == .Text {
+			continue
+		}
+		switch x.name {
+		case "style:style":
+			if x.kind == .Close {
+				name, family = "", ""
+				break
+			}
+			name, _ = xml_attr(&x, "style:name")
+			name = strings.clone(name, context.temp_allocator)
+			family, _ = xml_attr(&x, "style:family")
+			family = strings.clone(family, context.temp_allocator)
+			if family == "paragraph" {
+				if parent, has := xml_attr(&x, "style:parent-style-name"); has {
+					out.para[name] = strings.clone(parent, context.temp_allocator)
+				}
+			}
+		case "style:text-properties":
+			if name == "" || (family != "text" && family != "paragraph") {
+				break
+			}
+			cs := out.text[name] or_else Char_Style{}
+			if v, has := xml_attr(&x, "fo:font-weight"); has && v == "bold" {
+				cs.bold = true
+			}
+			if v, has := xml_attr(&x, "fo:font-style"); has && (v == "italic" || v == "oblique") {
+				cs.italic = true
+			}
+			if v, has := xml_attr(&x, "style:text-underline-style"); has && v != "none" {
+				cs.underline = true
+			}
+			if v, has := xml_attr(&x, "style:font-name"); has {
+				low := strings.to_lower(v, context.temp_allocator)
+				for m in ([?]string{"mono", "courier", "consolas", "menlo"}) {
+					if strings.contains(low, m) {
+						cs.mono = true
+					}
+				}
+			}
+			if v, has := xml_attr(&x, "fo:font-size"); has {
+				if px := odt_len_px(v); px > 0 {
+					cs.size = px
+				}
+			}
+			if v, has := xml_attr(&x, "fo:color"); has && len(v) == 7 && v[0] == '#' {
+				if n, ok := strconv.parse_u64_of_base(v[1:], 16); ok {
+					c := u32(n & 0xffffff)
+					if c != 0 && c != 0x121212 {
+						cs.color = 0xff000000 | c
+					}
+				}
+			}
+			out.text[name] = cs
+		case "style:paragraph-properties":
+			if name == "" || family != "paragraph" {
+				break
+			}
+			if v, has := xml_attr(&x, "fo:text-align"); has {
+				switch v {
+				case "center":
+					out.align[name] = .Center
+				case "end", "right":
+					out.align[name] = .Right
+				case "justify":
+					out.align[name] = .Justify
+				case "start", "left":
+					out.align[name] = .Left
+				}
+			}
+			if v, has := xml_attr(&x, "fo:break-before"); has && v == "page" {
+				out.brk[name] = true
+			}
+		case "style:table-column-properties":
+			if name != "" {
+				if v, has := xml_attr(&x, "style:column-width"); has {
+					out.col[name] = odt_len_px(v)
+				}
+			}
+		case "text:list-style":
+			if x.kind == .Close {
+				list_name = ""
+				break
+			}
+			v, _ := xml_attr(&x, "style:name")
+			list_name = strings.clone(v, context.temp_allocator)
+		case "text:list-level-style-bullet", "text:list-level-style-image":
+			// Only level 1 decides, as in the .docx importer.
+			if list_name != "" && attr_int(&x, "text:level", 0) == 1 {
+				out.list[list_name] = .Bullet
+			}
+		case "text:list-level-style-number":
+			if list_name != "" && attr_int(&x, "text:level", 0) == 1 {
+				out.list[list_name] = .Numbered
+			}
+		}
+	}
+	return out
+}
+
+// odt_kind resolves a paragraph style name to a paragraph kind, following one
+// level of `style:parent-style-name` for the automatic styles a writer
+// generates (`P3` whose parent is `Quote`).
+@(private = "file")
+odt_kind :: proc(st: ^Odt_Styles_In, style: string) -> (Para_Kind, bool) {
+	if style == "" {
+		return .Body, false
+	}
+	if k, known := docx_kind(odt_style_name(style)); known {
+		return k, true
+	}
+	if parent, has := st.para[style]; has {
+		if k, known := docx_kind(odt_style_name(parent)); known {
+			return k, true
+		}
+	}
+	return .Body, false
+}
+
+// odt_align resolves alignment the same way, through the parent.
+@(private = "file")
+odt_align :: proc(st: ^Odt_Styles_In, style: string) -> (Align, bool) {
+	if a, has := st.align[style]; has {
+		return a, true
+	}
+	if parent, has := st.para[style]; has {
+		if a, got := st.align[parent]; got {
+			return a, true
+		}
+	}
+	return .Left, false
+}
+
+doc_from_odt_xml :: proc(content: string, archive: []u8 = nil) -> Doc {
+	styles := odt_collect_styles(content)
+	out := Doc {
+		paras = make([dynamic]Paragraph, 0, 64),
+	}
+
+	x := Xml {
+		src = content,
+	}
+
+	// The open paragraph, plus the character style stack the spans push.
+	pa: Paragraph
+	in_para := false
+	span: [16]Char_Style
+	span_n := 0
+	buf := strings.builder_make(context.temp_allocator)
+
+	// Lists nest by element, so the depth is just how many are open, and the
+	// kind comes from the outermost one that named a style.
+	list_depth := 0
+	list_kind := List_Kind.None
+
+	// Table state, exactly as the .docx importer keeps it.
+	tbl_depth := 0
+	tbl: Table
+	row: Row
+	cell: Cell
+	cell_open := false
+	row_open := false
+	in_header := false
+	widths := make([dynamic]f32, 0, 8, context.temp_allocator)
+	// Picture state: a frame's size and target, read off the attributes.
+	frame_w, frame_h := f32(0), f32(0)
+	frame_href := ""
+	frame_align := Align.Center
+
+	cur_style :: proc(span: []Char_Style, n: int) -> Char_Style {
+		return n > 0 ? span[n - 1] : Char_Style{}
+	}
+
+	flush_run :: proc(pa: ^Paragraph, buf: ^strings.Builder, cs: Char_Style) {
+		t := strings.to_string(buf^)
+		if len(t) > 0 {
+			append(&pa.runs, run_make(cs, detab(t)))
+			strings.builder_reset(buf)
+		}
+	}
+
+	for xml_next(&x) {
+		if x.kind == .Text {
+			if in_para {
+				strings.write_string(&buf, xml_unescape(x.text))
+			}
+			continue
+		}
+
+		switch x.name {
+		// --- whitespace that ODF spells out
+		case "text:s":
+			if in_para {
+				n := attr_int(&x, "text:c", 1)
+				for _ in 0 ..< clamp(n, 1, 512) {
+					strings.write_byte(&buf, ' ')
+				}
+			}
+		case "text:tab":
+			if in_para {
+				strings.write_string(&buf, "    ")
+			}
+		case "text:line-break":
+			if in_para {
+				strings.write_byte(&buf, ' ')
+			}
+
+		// --- character styles
+		case "text:span":
+			switch x.kind {
+			case .Open:
+				if in_para {
+					flush_run(&pa, &buf, cur_style(span[:], span_n))
+					cs := cur_style(span[:], span_n)
+					if v, has := xml_attr(&x, "text:style-name"); has {
+						if s2, got := styles.text[v]; got {
+							// A span inherits what it does not override.
+							if s2.bold {cs.bold = true}
+							if s2.italic {cs.italic = true}
+							if s2.underline {cs.underline = true}
+							if s2.mono {cs.mono = true}
+							if s2.size != 0 {cs.size = s2.size}
+							if s2.color != 0 {cs.color = s2.color}
+						}
+					}
+					if span_n < len(span) {
+						span[span_n] = cs
+						span_n += 1
+					}
+				}
+			case .Close:
+				if in_para && span_n > 0 {
+					flush_run(&pa, &buf, cur_style(span[:], span_n))
+					span_n -= 1
+				}
+			case .Empty, .Text, .Done:
+			}
+
+		// --- pictures
+		case "draw:frame":
+			switch x.kind {
+			case .Open, .Empty:
+				frame_w, frame_h, frame_href = 0, 0, ""
+				if v, has := xml_attr(&x, "svg:width"); has {
+					frame_w = odt_len_px(v)
+				}
+				if v, has := xml_attr(&x, "svg:height"); has {
+					frame_h = odt_len_px(v)
+				}
+			case .Close, .Text, .Done:
+			}
+		case "draw:image":
+			if v, has := xml_attr(&x, "xlink:href"); has {
+				frame_href = strings.clone(v, context.temp_allocator)
+			}
+
+		// --- paragraphs and headings
+		case "text:p", "text:h":
+			switch x.kind {
+			case .Open:
+				pa = Paragraph {
+					runs = make([dynamic]Run, 0, 4),
+				}
+				in_para = true
+				span_n = 0
+				strings.builder_reset(&buf)
+				frame_href = ""
+				frame_w, frame_h = 0, 0
+				style, _ := xml_attr(&x, "text:style-name")
+				style = strings.clone(style, context.temp_allocator)
+				if k, known := odt_kind(&styles, style); known {
+					pa.kind = k
+				}
+				if x.name == "text:h" {
+					lvl := attr_int(&x, "text:outline-level", 1)
+					pa.kind = lvl <= 1 ? .H1 : (lvl == 2 ? .H2 : .H3)
+				}
+				if a, got := odt_align(&styles, style); got {
+					pa.align = a
+				}
+				frame_align = pa.align
+				if b, got := styles.brk[style]; got && b {
+					pa.break_before = true
+				}
+				if list_depth > 0 && !cell_open {
+					pa.list = list_kind
+					pa.depth = clamp(list_depth - 1, 0, 8)
+					if pa.kind == .Code {
+						pa.kind = .Body
+					}
+				}
+			case .Close:
+				if !in_para {
+					break
+				}
+				flush_run(&pa, &buf, cur_style(span[:], span_n))
+				span_n = 0
+
+				// A paragraph whose only content was a frame is a picture.
+				if frame_href != "" && !cell_open {
+					if data, got := zip_read_entry(archive, frame_href, context.temp_allocator); got {
+						if im, decoded := image_from_bytes(data, frame_href, "", 1); decoded {
+							im2 := im
+							// The frame's drawn size is what the document asked
+							// for; turn it back into a scale on the intrinsic
+							// pixels so the model stays in its own terms.
+							if frame_w > 0 && im2.w > 0 {
+								im2.scale = frame_w / f32(im2.w)
+							}
+							for &r in pa.runs {
+								delete(r.text)
+							}
+							clear(&pa.runs)
+							pa.kind = .Image
+							pa.align = frame_align
+							pa.img = new(Doc_Image)
+							pa.img^ = im2
+						}
+					}
+				}
+				frame_href = ""
+
+				if len(pa.runs) == 0 {
+					append(&pa.runs, run_make({}))
+				}
+				normalise(&pa)
+				if cell_open {
+					pa.break_before = false
+					if !text_kind(pa.kind) {
+						pa.kind = .Body
+						if pa.img != nil {
+							image_destroy(pa.img)
+							free(pa.img)
+							pa.img = nil
+						}
+					}
+					append(&cell.paras, pa)
+				} else {
+					append(&out.paras, pa)
+				}
+				in_para = false
+			case .Empty:
+				np := para_make()
+				if cell_open {
+					append(&cell.paras, np)
+				} else {
+					append(&out.paras, np)
+				}
+			case .Text, .Done:
+			}
+
+		// --- lists
+		case "text:list":
+			switch x.kind {
+			case .Open:
+				list_depth += 1
+				if v, has := xml_attr(&x, "text:style-name"); has {
+					if k, got := styles.list[v]; got {
+						list_kind = k
+					} else if list_kind == .None {
+						list_kind = .Bullet
+					}
+				} else if list_kind == .None {
+					list_kind = .Bullet
+				}
+			case .Close:
+				list_depth = max(0, list_depth - 1)
+				if list_depth == 0 {
+					list_kind = .None
+				}
+			case .Empty, .Text, .Done:
+			}
+
+		// --- tables
+		case "table:table":
+			switch x.kind {
+			case .Open:
+				tbl_depth += 1
+				if tbl_depth == 1 {
+					tbl = Table {
+						rows    = make([dynamic]Row, 0, 4),
+						widths  = make([dynamic]f32, 0, 4),
+						borders = true,
+					}
+					clear(&widths)
+					in_header = false
+				}
+			case .Close:
+				if tbl_depth == 1 {
+					for w in widths {
+						append(&tbl.widths, w)
+					}
+					if len(tbl.rows) == 0 {
+						r := Row {
+							cells = make([dynamic]Cell, 0, 1),
+						}
+						append(&r.cells, cell_make())
+						append(&tbl.rows, r)
+					}
+					table_fit_widths(&tbl)
+					tp := para_make(.Table)
+					tp.table = new(Table)
+					tp.table^ = tbl
+					append(&out.paras, tp)
+					tbl = {}
+				}
+				tbl_depth = max(0, tbl_depth - 1)
+			case .Empty, .Text, .Done:
+			}
+		case "table:table-column":
+			if tbl_depth == 1 {
+				w := f32(0)
+				if v, has := xml_attr(&x, "table:style-name"); has {
+					w = styles.col[v] or_else 0
+				}
+				for _ in 0 ..< clamp(attr_int(&x, "table:number-columns-repeated", 1), 1, TABLE_MAX_COLS) {
+					append(&widths, w)
+				}
+			}
+		case "table:table-header-rows":
+			if tbl_depth == 1 {
+				// Every row inside this element is a header row; this model
+				// has one, which is the first.
+				in_header = x.kind == .Open
+				if x.kind == .Open {
+					tbl.header = true
+				}
+			}
+		case "table:table-row":
+			if tbl_depth != 1 {
+				break
+			}
+			switch x.kind {
+			case .Open:
+				row = Row {
+					cells = make([dynamic]Cell, 0, 4),
+				}
+				row_open = true
+			case .Close:
+				if row_open {
+					if len(row.cells) == 0 {
+						append(&row.cells, cell_make())
+					}
+					// `table:number-rows-repeated` is not expanded: it is rare
+					// outside spreadsheets, and a writer that uses it on a
+					// text table is asking for identical rows, which is not
+					// something this importer needs to invent.
+					append(&tbl.rows, row)
+					row_open = false
+				}
+			case .Empty, .Text, .Done:
+			}
+		case "table:table-cell", "table:covered-table-cell":
+			if tbl_depth != 1 {
+				break
+			}
+			switch x.kind {
+			case .Open:
+				cell = Cell {
+					paras = make([dynamic]Paragraph, 0, 1),
+				}
+				cell_open = true
+			case .Close:
+				if cell_open {
+					if len(cell.paras) == 0 {
+						append(&cell.paras, para_make())
+					}
+					if row_open {
+						append(&row.cells, cell)
+					} else {
+						cell_destroy(&cell)
+					}
+					cell_open = false
+				}
+			case .Empty:
+				// An empty cell element still occupies its columns.
+				if row_open {
+					for _ in 0 ..< clamp(attr_int(&x, "table:number-columns-repeated", 1), 1, TABLE_MAX_COLS) {
+						append(&row.cells, cell_make())
+					}
+				}
+			case .Text, .Done:
+			}
+		}
+	}
+
+	if len(out.paras) == 0 {
+		append(&out.paras, para_make())
+	}
+	return out
+}
+
+import_odt :: proc(path: string) -> (d: Doc, ok: bool) {
+	archive, err := os.read_entire_file(path, context.temp_allocator)
+	if err != nil {
+		return {}, false
+	}
+	content, got := zip_read_entry(archive, "content.xml", context.temp_allocator)
+	if !got {
+		return {}, false
+	}
+	return doc_from_odt_xml(string(content), archive), true
 }

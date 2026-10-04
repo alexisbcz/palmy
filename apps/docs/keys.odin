@@ -35,9 +35,15 @@ plain :: proc(ui: ^p.Ctx, sym: u32) -> bool {
 
 // nav reads a movement key: how many times it arrived this frame (repeats
 // included, so holding Down keeps moving) and whether Shift or Ctrl was down.
+//
+// Alt and Super are excluded, because an arrow with Alt held is a *command* —
+// Alt+Left and Alt+Right resize a table column, Alt+Up and Alt+Down scale a
+// picture — and without this the key would do both: resize the column and then
+// walk the caret out of the cell it was resizing. Ctrl stays, because
+// Ctrl+arrow is word-wise motion rather than a separate command.
 nav :: proc(ui: ^p.Ctx, sym: u32) -> (times: int, shift: bool, ctrl: bool) {
 	for k in ui.input.keys {
-		if k.sym == sym {
+		if k.sym == sym && k.mods & {.Alt, .Super} == NO_MODS {
 			times += 1
 			if .Shift in k.mods {shift = true}
 			if .Ctrl in k.mods {ctrl = true}
@@ -409,6 +415,7 @@ keys_commands :: proc(ui: ^p.Ctx, st: ^State) {
 	if p.shortcut(ui, 'd', {.Ctrl, .Shift}) {open_prompt(st, .Export_Odt);fire(st)}
 	if p.shortcut(ui, 't', {.Ctrl}) {open_prompt(st, .Export_Rtf);fire(st)}
 	if p.shortcut(ui, 'o', {.Ctrl, .Shift}) {open_prompt(st, .Import_Docx);fire(st)}
+	if p.shortcut(ui, 'o', {.Ctrl, .Alt}) {open_prompt(st, .Import_Odt);fire(st)}
 }
 
 // ---------------------------------------------------------------------------
@@ -540,7 +547,7 @@ open_prompt :: proc(st: ^State, kind: Prompt_Kind) {
 		def = default_path(st, ".pdf")
 	case .Export_Docx, .Import_Docx:
 		def = default_path(st, ".docx")
-	case .Export_Odt:
+	case .Export_Odt, .Import_Odt:
 		def = default_path(st, ".odt")
 	case .Export_Rtf:
 		def = default_path(st, ".rtf")
@@ -577,6 +584,8 @@ prompt_label :: proc(kind: Prompt_Kind) -> string {
 		return "Export RTF to"
 	case .Import_Docx:
 		return "Import Word .docx from"
+	case .Import_Odt:
+		return "Import OpenDocument .odt from"
 	case .Insert_Image:
 		return "Insert picture from"
 	case .Insert_Table:
@@ -658,7 +667,7 @@ cancel_prompt :: proc(st: ^State) {
 // prompt_verb is the word on the overlay's confirm button.
 prompt_verb :: proc(kind: Prompt_Kind) -> string {
 	switch kind {
-	case .Open, .Import_Md, .Import_Docx:
+	case .Open, .Import_Md, .Import_Docx, .Import_Odt:
 		return "Open"
 	case .Save_As:
 		return "Save"
@@ -724,8 +733,14 @@ run_prompt :: proc(st: ^State, kind: Prompt_Kind, path: string) {
 			? "Exported .rtf" \
 			: "Export failed",
 		)
-	case .Import_Docx:
-		nd, ok := import_docx(full)
+	case .Import_Docx, .Import_Odt:
+		nd: Doc
+		ok: bool
+		if kind == .Import_Docx {
+			nd, ok = import_docx(full)
+		} else {
+			nd, ok = import_odt(full)
+		}
 		if ok {
 			replace_document(st, nd)
 			st.modified = true

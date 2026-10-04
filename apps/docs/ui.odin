@@ -622,7 +622,7 @@ HELP_FILE := [?]Shortcut {
 	{"Ctrl P", "Export PDF (embedded, searchable)"},
 	{"Ctrl D / Ctrl Shift D", "Export .docx, .odt"},
 	{"Ctrl T", "Export .rtf"},
-	{"Ctrl Shift O", "Import .docx"},
+	{"Ctrl Shift O / Ctrl Alt O", "Import .docx, .odt"},
 	{"Ctrl Shift P", "Export every page as PNG"},
 	{"Ctrl = / Ctrl -", "Zoom"},
 	{"Ctrl Q", "Quit"},

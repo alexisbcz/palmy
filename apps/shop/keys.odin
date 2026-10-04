@@ -238,6 +238,21 @@ handle_keys :: proc(ui: ^p.Ctx, st: ^State, app: ^p.App) {
 		st.filter.in_stock = !st.filter.in_stock
 		refilter(st)
 	}
+	if plain(ui, 'm') {
+		if toggle_my_size(st) {
+			toast_now(
+				st,
+				tfmt(
+					"Ma taille: %s %s (%s)",
+					size_system_label(st.filter.size_system),
+					st.filter.size_label,
+					size_chart_label(st.filter.size_chart),
+				),
+			)
+		} else {
+			toast_now(st, "Filtre taille retiré")
+		}
+	}
 	if plain(ui, 'p') {
 		st.filter.promo_only = !st.filter.promo_only
 		refilter(st)

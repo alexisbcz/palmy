@@ -2864,6 +2864,85 @@ test_export :: proc(fonts: ^p.Fonts) {
 
 		append(&office_paths, docx_path, odt_path, rtf_path)
 
+		// --- import: the .odt just written must come back as the same
+		// document too. .odt used to be write-only; it is not any more, and
+		// the claim is held to the same standard the .docx is.
+		if back, got := import_odt(odt_path); got {
+			nd := back
+			defer doc_destroy(&nd)
+			eq_int(len(nd.paras), len(c.doc.paras), "%s: .odt round-trips the paragraph count", c.name)
+			if len(nd.paras) == len(c.doc.paras) {
+				bad_kind, bad_list, bad_align := 0, 0, 0
+				for i in 0 ..< len(nd.paras) {
+					if nd.paras[i].kind != c.doc.paras[i].kind {
+						bad_kind += 1
+					}
+					if nd.paras[i].list != c.doc.paras[i].list {
+						bad_list += 1
+					}
+					if nd.paras[i].align != c.doc.paras[i].align {
+						bad_align += 1
+					}
+				}
+				eq_int(bad_kind, 0, "%s: .odt round-trips every paragraph kind", c.name)
+				eq_int(bad_list, 0, "%s: .odt round-trips every list kind", c.name)
+				eq_int(bad_align, 0, "%s: .odt round-trips every alignment", c.name)
+
+				if c.tables > 0 {
+					t0, t1: ^Table
+					for i in 0 ..< len(nd.paras) {
+						if c.doc.paras[i].kind == .Table && t0 == nil {
+							t0 = c.doc.paras[i].table
+							t1 = nd.paras[i].table
+						}
+					}
+					ok(t1 != nil, "%s: the .odt reads its table back as a table", c.name)
+					if t0 != nil && t1 != nil {
+						eq_int(len(t1.rows), len(t0.rows), "%s: .odt keeps the row count", c.name)
+						eq_int(table_cols(t1), table_cols(t0), "%s: and the column count", c.name)
+						ok(t1.header == t0.header, "%s: and the header row", c.name)
+						wrong := 0
+						for col in 0 ..< table_cols(t0) {
+							if abs(table_width(t0, col) - table_width(t1, col)) > 1.2 {
+								wrong += 1
+							}
+						}
+						eq_int(wrong, 0, "%s: and every column width to within a pixel", c.name)
+						bad_cell := 0
+						for r in 0 ..< len(t0.rows) {
+							for col in 0 ..< table_cols(t0) {
+								a := cell_text(table_cell(t0, r, col), context.temp_allocator)
+								b := cell_text(table_cell(t1, r, col), context.temp_allocator)
+								if a != b {
+									bad_cell += 1
+								}
+							}
+						}
+						eq_int(bad_cell, 0, "%s: and every cell's text", c.name)
+					}
+				}
+				if c.images > 0 {
+					back_imgs, bytes_ok := 0, 0
+					for i in 0 ..< len(nd.paras) {
+						if nd.paras[i].kind != .Image || nd.paras[i].img == nil {
+							continue
+						}
+						back_imgs += 1
+						if c.doc.paras[i].kind == .Image &&
+						   c.doc.paras[i].img != nil &&
+						   len(nd.paras[i].img.bytes) == len(c.doc.paras[i].img.bytes) {
+							bytes_ok += 1
+						}
+					}
+					eq_int(back_imgs, c.images, "%s: the .odt reads its pictures back", c.name)
+					eq_int(bytes_ok, c.images, "%s: with their bytes intact", c.name)
+				}
+			}
+			check_extracted(fmt.tprintf("%s: .odt import", c.name), src, text_of(&nd))
+		} else {
+			ok(false, "%s: the .odt reads back", c.name)
+		}
+
 		// --- import: the .docx just written must come back as the same
 		// document, which is the whole claim behind "not write-only".
 		if back, got := import_docx(docx_path); got {
@@ -3745,7 +3824,14 @@ check_libreoffice :: proc(cases: []Export_Case, paths: []string) {
 	// The second question is the one that matters for this work. A .docx whose
 	// table arrives as a run of tab-separated paragraphs passes the first test
 	// and fails the second, and it is not a table.
-	for filter in ([?][2]string{{"txt:Text", "txt"}, {"html:HTML (StarWriter)", "html"}}) {
+	for filter in ([?][2]string {
+		{"txt:Text", "txt"},
+		{"html:HTML (StarWriter)", "html"},
+		// ODF written by LibreOffice rather than by this app, so the .odt
+		// importer is held against a file it did not produce. That is the
+		// only version of the claim worth making about an importer.
+		{"odt:writer8", "odt"},
+	}) {
 		argv := make([dynamic]string, 0, len(paths) + 8, context.temp_allocator)
 		append(&argv, "soffice", "--headless", LO_PROFILE, "--convert-to", filter[0], "--outdir", lo)
 		append(&argv, ..paths)
@@ -3820,6 +3906,59 @@ check_libreoffice :: proc(cases: []Export_Case, paths: []string) {
 			}
 		}
 	}
+	// --- the .odt importer, against LibreOffice's own ODF
+	for &c in cases {
+		// The .odt conversion of the .docx lands on `<case>-docx.odt`, which
+		// is a file written by LibreOffice from scratch.
+		path := fmt.tprintf("%s/%s-docx.odt", lo, c.name)
+		back, got := import_odt(path)
+		if !got {
+			ok(false, "%s: the .odt LibreOffice wrote reads back", c.name)
+			continue
+		}
+		nd := back
+		defer doc_destroy(&nd)
+		ok(len(nd.paras) > 0, "%s: LibreOffice's own .odt imports (%d paragraphs)", c.name, len(nd.paras))
+		check_covers(
+			fmt.tprintf("%s: importing LibreOffice's .odt", c.name),
+			doc_words(&c.doc),
+			text_of(&nd),
+		)
+		if c.tables > 0 {
+			tbl, rows, cells := 0, 0, 0
+			header := 0
+			for &pa in nd.paras {
+				if pa.kind != .Table || pa.table == nil {
+					continue
+				}
+				tbl += 1
+				rows += len(pa.table.rows)
+				cells += len(pa.table.rows) * table_cols(pa.table)
+				if pa.table.header {
+					header += 1
+				}
+			}
+			eq_int(tbl, c.tables, "%s: with every table", c.name)
+			eq_int(rows, c.rows, "%s: every row", c.name)
+			eq_int(cells, c.cells, "%s: and every cell", c.name)
+			ok(header > 0, "%s: and a header row that LibreOffice kept as one", c.name)
+		}
+		if c.images > 0 {
+			imgs, decoded := 0, 0
+			for &pa in nd.paras {
+				if pa.kind != .Image {
+					continue
+				}
+				imgs += 1
+				if pa.img != nil && len(pa.img.px) > 0 {
+					decoded += 1
+				}
+			}
+			eq_int(imgs, c.images, "%s: and every picture", c.name)
+			eq_int(decoded, c.images, "%s: each of which decodes", c.name)
+		}
+	}
+
 	fmt.printf("    LibreOffice round trip, per format:\n")
 	for &c in cases {
 		if c.tables == 0 && c.images == 0 {

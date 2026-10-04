@@ -5,83 +5,106 @@
 #   SHOP_DEMO=1 bash apps/tools/headless-record.sh \
 #       apps/shop/shop.bin apps/shop/demo.mp4 apps/shop/demo.txt 1440 900
 #
-# This script is entirely keyboard-driven, and that is not a stylistic choice.
-# On the headless seat the pointer never reaches the window at all: with the
-# app logging every input event, `swaymsg seat seat0 cursor set/press/release`
-# produced zero motion events and zero button events, while both `wtype`
-# invocations in the same run were delivered. So `move`/`click` steps are no
-# use here — see the report — and every step below is a key the application
-# binds anyway, because it is meant to be usable without a mouse.
+# Keyboard only, which is how demos are driven here: the compositor runs with
+# no input devices, so the seat never gains a pointer capability and a click
+# reaches no client at all. That costs this application nothing, because every
+# one of its commands has a key — a shop with six thousand rows is not usable
+# otherwise.
 #
-# The first step is a throwaway: the recorder notes that an invocation's first
-# keystroke is occasionally dropped while the compositor is still delivering
-# the keymap, and Escape on the opening screen does nothing.
+# SHOP_DEMO=1 keeps the frame clock running. palmy draws only when something
+# changed, which is right for a desktop and wrong for a camera: an idle window
+# emits no frames and a screen recorder tags the few it gets as consecutive, so
+# a fifty-second walkthrough comes out as six.
+#
+# The opening Escape is a settle step. The window is up and the keymap has
+# arrived by then, and Escape on the opening screen — no query, no filters,
+# the catalogue already showing — does nothing at all.
 
 wait 2.0
 key Escape
-wait 0.6
+wait 0.8
 
-# Search. Accent-insensitive: "creme fraiche" finds "Crème fraîche épaisse".
+# Search. Accent-insensitive: "creme fraiche" finds "Crème fraîche épaisse",
+# and the rayon "Crèmerie" with it.
 key slash
-wait 0.4
+wait 0.5
 type creme fraiche
 wait 2.6
 
-# Walk down the results. The arrows work while the search box still has the
-# keyboard, which is what a shopper does without thinking.
+# Walk down the results. The arrows work while the search box still holds the
+# keyboard, which is what a shopper does without thinking about it.
 key Down
-wait 0.5
+wait 0.4
 key Down
-wait 1.6
+wait 1.4
 
-# Enter compares that product across the chains, ordered on the price per kilo
-# rather than on the sticker price.
+# Enter compares that product across the chains — ordered on the price per
+# kilo, not on the sticker price, and the banner says when those two disagree.
 key Return
-wait 4.0
+wait 4.5
 
-# Put it in the basket.
+# Into the basket.
 key a
-wait 1.6
+wait 1.4
 
-# The basket: per-chain subtotals and the TVA broken down by rate.
+# The basket: per-chain subtotals, and the TVA broken out by rate. Every
+# number here is an integer count of centimes and HT + TVA = TTC exactly.
 key 3
-wait 4.0
+wait 4.5
 
-# Back to the catalogue, and sort the whole thing on the prix au kilo.
+# Back to the catalogue, drop the search, and sort the whole shelf on the
+# prix au kilo. (Escape clears the query first and the filters second, so one
+# press here and one press later does both.)
 key 1
-wait 1.2
+wait 1.0
+key Escape
+wait 0.9
 key u
-wait 3.0
+wait 3.2
 
-# Narrow to what is graded A or B on the Nutri-Score: n steps the ceiling.
+# Keep only what is graded A, then A or B: n steps the Nutri-Score ceiling.
 key n
 wait 1.6
 key n
-wait 3.0
+wait 2.8
 
-# Take one of those and put it on the shopping list.
-key Down
+# Put three of those on the shopping list, a page apart so they land in
+# different rayons.
+key Home
+wait 0.5
+key l
 wait 0.8
+key Next
+wait 0.6
 key l
-wait 1.0
-key Down
+wait 0.8
+key Next
+wait 0.4
+key Next
 wait 0.6
 key l
 wait 1.0
-key Down
-wait 0.6
-key l
+
+# The list, grouped by rayon in the order the shop is walked, with what it
+# would cost at the cheapest chain for each line.
+key 4
+wait 4.5
+
+# Back out, clearing the Nutri-Score ceiling.
+key 1
+wait 0.9
+key Escape
 wait 1.2
 
-# The list, grouped by rayon, with what it costs at the cheapest chain.
-key 4
+# "Ma taille": only what exists in a French 38 — including the rails that
+# label in EU sizes and the ones that label S/M/L, which is the whole reason
+# the conversion tables exist.
+key m
 wait 4.0
 
-# Arm a price alert and look at the price history.
-key 1
-wait 1.0
+# Arm a price alert on it, and look at the price history.
 key b
-wait 1.2
+wait 1.4
 key 5
 wait 4.0
 

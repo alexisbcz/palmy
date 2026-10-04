@@ -6,9 +6,9 @@
 // coalescing. See model.odin for the model, layout.odin for the measurement,
 // render.odin for the pixels.
 //
-//	docs [file.json | file.md | file.docx]
+//	docs [file.json | file.md | file.docx | file.odt]
 //	docs --selftest                      headless assertions over the model
-//	docs --convert <in> <out>            .json .md .docx in; those plus
+//	docs --convert <in> <out>            .json .md .docx .odt in; those plus
 //	                                     .html .pdf .odt .rtf out
 //	docs --export-png <file> <base>      render every page to <base>-pN.png
 //	docs --bench [paragraphs]            layout and typing throughput
@@ -95,10 +95,10 @@ main :: proc() {
 			os.exit(cli_export_png(os.args[2], os.args[3]) ? 0 : 1)
 		case "--help", "-h":
 			fmt.println(
-				"docs [file.json | file.md | file.docx]\n" +
+				"docs [file.json | file.md | file.docx | file.odt]\n" +
 				"  --selftest                 headless assertions\n" +
 				"  --bench [paragraphs]       layout and typing throughput\n" +
-				"  --convert <in> <out>       in: .json .md .docx\n" +
+				"  --convert <in> <out>       in: .json .md .docx .odt\n" +
 				"                             out: .json .md .html .pdf .docx .odt .rtf\n" +
 				"  --export-png <file> <base>",
 			)
@@ -206,6 +206,8 @@ cli_load :: proc(path: string) -> (Doc, bool) {
 		return import_markdown(path)
 	case strings.has_suffix(path, ".docx"):
 		return import_docx(path)
+	case strings.has_suffix(path, ".odt"):
+		return import_odt(path)
 	}
 	return load_doc(path)
 }

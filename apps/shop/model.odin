@@ -168,6 +168,12 @@ State :: struct {
 	brands:     [dynamic]string,
 	colors:     [dynamic]string,
 
+	// The shopper's own size, remembered across sessions so "show me what
+	// exists in my size" is one key rather than three menus. It is held apart
+	// from the live filter so that turning it off does not forget it.
+	saved_size_label:  string,
+	saved_size_chart:  Size_Chart,
+
 	// What the last refilter cost, in milliseconds, reported rather than
 	// asserted by vibes.
 	filter_ms:  f64,
@@ -596,6 +602,33 @@ list_total :: proc(st: ^State) -> (as_listed, best: Centimes) {
 	return
 }
 
+// toggle_my_size turns the shopper's own size on and off as a filter. Off, it
+// is remembered rather than forgotten; on with nothing remembered, it starts
+// at a French 38 in womenswear, which is the commonest size sold in France.
+toggle_my_size :: proc(st: ^State) -> bool {
+	if st.filter.size_label != "" {
+		delete(st.saved_size_label)
+		st.saved_size_label = strings.clone(st.filter.size_label)
+		st.saved_size_chart = st.filter.size_chart
+		delete(st.filter.size_label)
+		st.filter.size_label = ""
+		st.filter.size_chart = .None
+		refilter(st)
+		save_state(st)
+		return false
+	}
+	label := st.saved_size_label != "" ? st.saved_size_label : "38"
+	chart := st.saved_size_chart != .None ? st.saved_size_chart : Size_Chart.Women_Tops
+	delete(st.filter.size_label)
+	st.filter.size_label = strings.clone(label)
+	st.filter.size_chart = chart
+	// A size only means anything on a garment, so narrow to the rails too.
+	st.filter.dept = .Clothing
+	refilter(st)
+	save_state(st)
+	return true
+}
+
 // ---------------------------------------------------------------------------
 // Alerts
 // ---------------------------------------------------------------------------
@@ -724,11 +757,17 @@ save_state :: proc(st: ^State) -> bool {
 	strings.write_string(&b, "tri\t")
 	write_int(&b, i64(st.sort))
 	strings.write_byte(&b, '\n')
-	if st.filter.size_label != "" {
+	// The size is written whether or not it is currently applied: it is the
+	// shopper's size, not a transient filter.
+	label := st.filter.size_label != "" ? st.filter.size_label : st.saved_size_label
+	chart := st.filter.size_label != "" ? st.filter.size_chart : st.saved_size_chart
+	if label != "" {
 		strings.write_string(&b, "taille\t")
 		strings.write_string(&b, size_system_label(st.filter.size_system))
 		strings.write_byte(&b, '\t')
-		strings.write_string(&b, st.filter.size_label)
+		strings.write_string(&b, label)
+		strings.write_byte(&b, '\t')
+		write_int(&b, i64(chart))
 		strings.write_byte(&b, '\n')
 	}
 	return os.write_entire_file(state_path(st), transmute([]u8)strings.to_string(b)) == nil
@@ -788,8 +827,14 @@ load_state :: proc(st: ^State) {
 		case "taille":
 			if len(f) >= 3 {
 				st.filter.size_system = parse_size_system(f[1])
-				delete(st.filter.size_label)
-				st.filter.size_label = strings.clone(f[2])
+				delete(st.saved_size_label)
+				st.saved_size_label = strings.clone(f[2])
+				if len(f) >= 4 {
+					v, _ := strconv.parse_int(f[3])
+					if v > 0 && v <= int(max(Size_Chart)) {
+						st.saved_size_chart = Size_Chart(v)
+					}
+				}
 			}
 		}
 	}
