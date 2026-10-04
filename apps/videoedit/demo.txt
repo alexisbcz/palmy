@@ -1,17 +1,23 @@
-# videoedit — a non-linear editor, driven entirely from the keyboard because
-# this compositor build cannot synthesize pointer clicks.
+# videoedit — a non-linear editor.
+#
+# Driven from the keyboard, because every edit here has a key: that is what
+# makes the whole program demonstrable rather than only clickable.
+#
+# NOTE: the recorder captures video only. The preview now has sound — the
+# timeline's audio clips are mixed live and the playhead is read off the byte
+# count pw-cat has accepted — but none of that is in this file. The numbers
+# are in `videoedit --audiobench`.
 wait 3.0
 
 # The bin fills itself from apps/videoedit/media: four generated clips, each
-# probed with ffprobe and given a real extracted thumbnail. Three of them are
-# already laid onto V1 with their audio alongside on A1.
+# probed with ffprobe and given a real extracted thumbnail. Three are already
+# laid onto V1 with their audio alongside on A1.
 move 140 300
-wait 1.6
-move 140 380
 wait 1.4
 
-# Scrub: each Right is one frame, and the preview is served from the decoded
-# frame cache rather than a fresh ffmpeg seek.
+# Scrub: each Right is one frame, served from the decoded frame cache rather
+# than a fresh ffmpeg seek. The cache grid is 30 fps now that the audio clock
+# decides which frame is due.
 move 700 300
 key Right
 key Right
@@ -23,98 +29,131 @@ key Right
 key Right
 key Right
 key Right
-key Right
-key Right
-key Right
-key Right
-key Right
-wait 1.2
+wait 1.0
+
+# Stepping *backwards* is cache hits too. The decode window starts a second
+# behind the playhead, so a second of Left is free where it used to re-seek.
+key Left
+key Left
+key Left
+key Left
+key Left
+key Left
+key Left
+key Left
+wait 1.4
+
+# ---------------------------------------------------------------------------
+# Several edits. Watch the status bar: it names what Ctrl-Z would take back.
+# ---------------------------------------------------------------------------
 
 # Select the second clip. The inspector shows its source in/out points.
-# The first `]` takes the selection from nothing to the first clip.
 type ]
 wait 0.6
 type ]
-wait 1.6
+wait 1.4
 
-# Turn that cut into a cross-dissolve: the clip slides back to overlap its
-# neighbour and its alpha ramps up over the overlap.
+# 1. Turn that cut into a cross-dissolve: the clip slides back to overlap its
+#    neighbour and its alpha ramps up over the overlap.
 type x
 wait 1.8
 
-# Park the playhead inside the overlap and watch the two clips composite.
-# Selecting a clip puts the playhead on its start, which is now 0.5s before
-# the previous clip ends, so a few frames forward lands in the dissolve.
-type [
+# 2. Trim the out point in, a quarter second at a time.
+type e
 wait 0.6
-type ]
-wait 0.8
-key Right
-key Right
-key Right
-key Right
-key Right
-key Right
-wait 2.2
-
-# Trim the out point in, a quarter second at a time.
 type e
-wait 0.7
-type e
-wait 1.6
+wait 1.4
 
-# And trim the in point back out again.
-type q
-wait 0.7
-type q
-wait 1.6
-
-# Nudge the clip along the timeline. It snaps to the neighbouring clip edge
-# and to the playhead, and the snap guide shows which.
+# 3. Nudge the clip along the timeline. It snaps to the neighbouring edge and
+#    to the playhead, and the snap guide shows which.
 type l
-wait 0.7
-type h
+wait 0.9
+type l
 wait 1.4
 
-# Split the clip under the playhead in two.
+# 4. Split the clip under the playhead in two.
 type s
-wait 2.0
+wait 1.6
 
-# Ripple delete closes the gap the deleted clip leaves behind.
+# 5. Ripple delete: the gap closes behind it.
 type ]
-wait 0.8
+wait 0.7
 type d
-wait 2.0
+wait 1.8
 
-# A title overlay on the top video track.
+# 6. A title overlay on the top video track.
 type t
+wait 1.8
+
+# 7. The caption file. SRT, WebVTT and ASS all parse into the same cue list.
+type c
 wait 2.0
 
-# Import the caption file. SRT, WebVTT and ASS all parse into the same cue
-# list; it shows as a caption track under the timeline and over the preview.
-type c
-wait 2.2
+# ---------------------------------------------------------------------------
+# Undo, seven times. Every step is a whole-document snapshot, so undoing the
+# ripple delete — which moved every clip after it — is exactly as correct as
+# undoing the nudge. The playhead and the selection come back with it.
+# ---------------------------------------------------------------------------
+chord ctrl+z
+wait 1.3
+chord ctrl+z
+wait 1.3
+chord ctrl+z
+wait 1.3
+chord ctrl+z
+wait 1.3
+chord ctrl+z
+wait 1.3
+chord ctrl+z
+wait 1.3
+chord ctrl+z
+wait 2.0
 
-# Nudge the caption timing.
-type .
-wait 0.5
-type .
-wait 1.4
+# Nothing left to undo: the button greys out and the status bar says so.
+chord ctrl+z
+wait 1.8
 
-# Play back. The playhead advances from the frame clock and the preview is
-# served from the cache, which the worker keeps filled ahead of it.
-key space
-wait 5.0
-key space
-wait 1.0
-
-# Back to the top, so the preview has a frame to show while the export runs.
-key Home
+# ---------------------------------------------------------------------------
+# And forward again. Undo then redo returns the project to byte-identical
+# bytes — that is the property the self-test asserts over 522 random edits.
+# ---------------------------------------------------------------------------
+chord ctrl+shift+z
 wait 1.2
+chord ctrl+shift+z
+wait 1.2
+chord ctrl+shift+z
+wait 1.2
+chord ctrl+y
+wait 1.2
+chord ctrl+y
+wait 1.2
+chord ctrl+y
+wait 1.2
+chord ctrl+y
+wait 2.0
+
+# A fresh edit here would throw the redo branch away, which is what every
+# editor does and what the history test checks.
+
+# ---------------------------------------------------------------------------
+# Play a section. The playhead no longer advances on wall time: it is read off
+# the audio clock — the count of PCM bytes pw-cat has accepted, which is the
+# sound card's own rate — and the frame shown is the one due against it. You
+# cannot hear that here, only see that the picture and the ruler keep step.
+# ---------------------------------------------------------------------------
+key Home
+wait 0.8
+key space
+wait 7.0
+key space
+wait 1.5
 
 # Export a draft. One ffmpeg invocation built from the timeline: trim, scale,
-# overlay, alpha fade for the dissolve, drawtext for the title, subtitles for
-# the burn-in and amix for the audio. Progress is parsed live from ffmpeg.
+# overlay, an alpha fade for the dissolve, drawtext for the title, subtitles
+# for the burn-in, and — from the *same* resolution function the preview mixes
+# with — atrim, adelay and amix for the audio.
+key Home
+wait 0.8
 type p
 wait 9.0
 

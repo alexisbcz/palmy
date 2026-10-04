@@ -59,11 +59,29 @@ key_sym :: proc(name: string) -> u32 {
 	return 0
 }
 
+// film_mode is `--shot` with the shutter left open: one PNG per step, from a
+// single run, so a sequence of frames can be stitched into a demo without a
+// compositor. It exists because palmy's Wayland keyboard currently delivers
+// one key event per window and then goes silent (see the report), which makes
+// a recorded take impossible — while the offscreen path drives exactly the
+// same `handle_keys` and `frame` code.
+film_mode :: proc(args: []string) -> int {
+	if len(args) == 0 {
+		fmt.eprintln("sheets --film <out-prefix> [steps...]")
+		return 1
+	}
+	return shot_run(args, true)
+}
+
 shot_mode :: proc(args: []string) -> int {
 	if len(args) == 0 {
 		fmt.eprintln("sheets --shot <out.png> [steps...]")
 		return 1
 	}
+	return shot_run(args, false)
+}
+
+shot_run :: proc(args: []string, film: bool) -> int {
 	out := args[0]
 
 	off := p.offscreen_create(
@@ -82,8 +100,8 @@ shot_mode :: proc(args: []string) -> int {
 
 	app := new(App)
 	defer free(app)
-	sheet_init(&app.sh)
-	defer sheet_destroy(&app.sh)
+	app_init(app)
+	defer app_destroy(app)
 	app.fonts = &off.fonts
 	app.pal = palette_build()
 	app.name = strings.clone("Untitled")
@@ -97,10 +115,23 @@ shot_mode :: proc(args: []string) -> int {
 		p.offscreen_end(off)
 	}
 
+	shot_n := 0
+	emit :: proc(off: ^p.Offscreen, prefix: string, n: ^int) -> bool {
+		path := fmt.tprintf("%s-%04d.png", prefix, n^)
+		n^ += 1
+		return p.offscreen_write_png(off, path)
+	}
+
 	run_frame(off, app) // settle the first layout
+	if film {
+		emit(off, out, &shot_n)
+	}
 	for step in args[1:] {
 		if step == "." {
 			run_frame(off, app)
+			if film {
+				emit(off, out, &shot_n)
+			}
 			continue
 		}
 		if len(step) < 2 || step[1] != ':' {
@@ -131,8 +162,16 @@ shot_mode :: proc(args: []string) -> int {
 		}
 		run_frame(off, app)
 		off.input.mods = {}
+		if film {
+			emit(off, out, &shot_n)
+		}
 	}
 	run_frame(off, app)
+	if film {
+		emit(off, out, &shot_n)
+		fmt.printfln("wrote %d frames to %s-NNNN.png (%dx%d)", shot_n, out, SHOT_W, SHOT_H)
+		return 0
+	}
 
 	if !p.offscreen_write_png(off, out) {
 		fmt.eprintfln("sheets: could not write %s", out)

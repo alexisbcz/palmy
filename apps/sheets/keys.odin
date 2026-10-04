@@ -129,6 +129,20 @@ handle_keys :: proc(ui: ^p.Ctx, app: ^App) {
 	for _ in 0 ..< nkeys(ui, p.KEY_PAGE_UP, {}) {
 		move_cursor(app, -app.rows_vis, 0, false)
 	}
+	// Ctrl+PageUp/Down walks the tab strip, and with Shift it drags the
+	// current sheet along it.
+	for _ in 0 ..< nkeys(ui, p.KEY_PAGE_DOWN, {.Ctrl}) {
+		run_cmd(app, .Sheet_Next)
+	}
+	for _ in 0 ..< nkeys(ui, p.KEY_PAGE_UP, {.Ctrl}) {
+		run_cmd(app, .Sheet_Prev)
+	}
+	if nkeys(ui, p.KEY_PAGE_DOWN, {.Ctrl, .Shift}) > 0 {
+		run_cmd(app, .Sheet_Move_Right)
+	}
+	if nkeys(ui, p.KEY_PAGE_UP, {.Ctrl, .Shift}) > 0 {
+		run_cmd(app, .Sheet_Move_Left)
+	}
 	if once(ui, p.KEY_HOME, {}) {
 		goto_cell(app, {app.cur.row, 0})
 	}
@@ -190,6 +204,18 @@ handle_keys :: proc(ui: ^p.Ctx, app: ^App) {
 		{'O', {.Ctrl, .Shift}, .Import_CSV},
 		{'e', {.Alt}, .Export_XLSX},
 		{'o', {.Alt}, .Import_XLSX},
+		{'s', {.Alt}, .Sheet_Add},
+		{'S', {.Alt, .Shift}, .Sheet_Delete},
+		{'n', {.Alt}, .Sheet_Rename},
+		{'f', {.Alt}, .Freeze_Here},
+		{'F', {.Alt, .Shift}, .Unfreeze},
+		{'m', {.Alt}, .Merge},
+		{'M', {.Alt, .Shift}, .Unmerge},
+		{'b', {.Alt}, .Chart_Bar},
+		{'l', {.Alt}, .Chart_Line},
+		{'p', {.Alt}, .Chart_Pie},
+		{'B', {.Alt, .Shift}, .Chart_Delete},
+		{'N', {.Ctrl, .Shift}, .Name_Define},
 	}
 	for b in BINDS {
 		if once(ui, b.sym, b.mods) {
@@ -225,17 +251,17 @@ begin_edit :: proc(app: ^App, replace: bool, in_bar: bool) {
 	if replace {
 		line_set(&app.edit, "")
 	} else {
-		line_set(&app.edit, input_at(&app.sh, app.cur))
+		line_set(&app.edit, input_at(app.sh, app.cur))
 	}
 	app.anchor = app.cur
 }
 
 commit_edit :: proc(app: ^App, dr, dc: int) {
 	text := strings.clone(line_text(&app.edit), context.temp_allocator)
-	if text != input_at(&app.sh, app.cur) {
+	if text != input_at(app.sh, app.cur) {
 		undo_push(app)
-		set_input(&app.sh, app.cur, text)
-		recalc(&app.sh)
+		set_input(app.sh, app.cur, text)
+		recalc(app.sh)
 	}
 	app.mode = .Nav
 	if dr != 0 || dc != 0 {
@@ -362,6 +388,12 @@ prompt_title :: proc(k: Prompt_Kind) -> string {
 		return "Import Excel workbook from"
 	case .Goto:
 		return "Go to reference"
+	case .Sheet_Name:
+		return "Rename this sheet"
+	case .Name_Define:
+		return "Name the selection"
+	case .Name_Delete:
+		return "Delete which name"
 	case .None:
 		return ""
 	}
@@ -419,13 +451,72 @@ run_prompt :: proc(app: ^App, text: string) {
 	switch app.prompt {
 	case .None:
 	case .Goto:
-		if r, ok := parse_a1_range(arg); ok {
-			app.anchor = {r.r0, r.c0}
-			app.cur = {r.r1, r.c1}
+		// Go To understands a sheet, a named range, or a plain reference, in
+		// that order — which is the same vocabulary a formula has.
+		if sheet, rect, _, ok := parse_ref_target(arg); ok {
+			if sheet != "" {
+				i := book_find(app.book, sheet)
+				if i < 0 {
+					set_status(app, "There is no sheet called %s", sheet)
+					return
+				}
+				use_sheet(app, i)
+			}
+			app.anchor = {rect.r0, rect.c0}
+			app.cur = {rect.r1, rect.c1}
 			follow_cursor(app)
 			set_status(app, "Went to %s", arg)
+			return
+		}
+		if nd, ok := book_get_name(app.book, arg); ok {
+			if i := book_find(app.book, nd.sheet); i >= 0 {
+				use_sheet(app, i)
+			}
+			app.anchor = {nd.rect.r0, nd.rect.c0}
+			app.cur = {nd.rect.r1, nd.rect.c1}
+			follow_cursor(app)
+			set_status(app, "Went to %s", arg)
+			return
+		}
+		if i := book_find(app.book, arg); i >= 0 {
+			use_sheet(app, i)
+			set_status(app, "Sheet %s", app.sh.name)
+			return
+		}
+		set_status(app, "%s is not a reference", arg)
+	case .Sheet_Name:
+		if arg == "" {
+			return
+		}
+		undo_push(app)
+		old := strings.clone(app.sh.name, context.temp_allocator)
+		if book_rename_sheet(app.book, app.book.active, arg) {
+			recalc_all(app.sh)
+			set_status(app, "Renamed %s to %s", old, app.sh.name)
 		} else {
-			set_status(app, "%s is not a reference", arg)
+			set_status(app, "Cannot rename to %s", arg)
+		}
+	case .Name_Define:
+		if arg == "" {
+			return
+		}
+		undo_push(app)
+		if book_set_name(app.book, arg, app.sh.name, work_rect(app)) {
+			recalc_all(app.sh)
+			set_status(app, "%s names %s", arg, rect_text(work_rect(app)))
+		} else {
+			set_status(app, "%s is not a usable name", arg)
+		}
+	case .Name_Delete:
+		if arg == "" {
+			return
+		}
+		undo_push(app)
+		if book_drop_name(app.book, arg) {
+			recalc_all(app.sh)
+			set_status(app, "Dropped the name %s", arg)
+		} else {
+			set_status(app, "There is no name %s", arg)
 		}
 	case .Save_As:
 		do_save(app, arg)
@@ -433,11 +524,12 @@ run_prompt :: proc(app: ^App, text: string) {
 		if arg == "" {
 			return
 		}
-		cur, anc, ok := doc_load_file(&app.sh, arg)
+		cur, anc, ok := doc_load_file(app.book.sheets[0], arg)
 		if !ok {
 			set_status(app, "Could not open %s", arg)
 			return
 		}
+		sync_sheet(app)
 		app.cur, app.anchor = cur, anc
 		follow_cursor(app)
 		set_path(app, arg)
@@ -453,7 +545,7 @@ run_prompt :: proc(app: ^App, text: string) {
 			// Nothing selected means the whole sheet.
 			rect = {0, 0, max(app.sh.max_row, 0), max(app.sh.max_col, 0)}
 		}
-		if csv_write_file(&app.sh, arg, rect) {
+		if csv_write_file(app.sh, arg, rect) {
 			set_status(
 				app,
 				"Exported %s:%s to %s",
@@ -469,7 +561,7 @@ run_prompt :: proc(app: ^App, text: string) {
 			return
 		}
 		undo_push(app)
-		ok, rows, cols := csv_read_file(&app.sh, arg, app.cur)
+		ok, rows, cols := csv_read_file(app.sh, arg, app.cur)
 		if !ok {
 			set_status(app, "Could not read %s", arg)
 			return
@@ -479,7 +571,7 @@ run_prompt :: proc(app: ^App, text: string) {
 		if arg == "" {
 			return
 		}
-		if xlsx_write_file(&app.sh, arg, app.name) {
+		if xlsx_write_book(app.book, arg) {
 			set_status(app, "Wrote %s", arg)
 		} else {
 			set_status(app, "Could not write %s", arg)
@@ -489,16 +581,21 @@ run_prompt :: proc(app: ^App, text: string) {
 			return
 		}
 		undo_push(app)
-		ok, rows, cols, sheet := xlsx_read_file(&app.sh, arg, app.cur)
+		// A whole workbook replaces the book; a sheet-at-the-cursor import
+		// would lose the other sheets, which is the one thing a multi-sheet
+		// importer must not do.
+		ok, sheets, cells := xlsx_read_book(app.book, arg)
 		if !ok {
 			set_status(app, "%s is not a readable .xlsx", base_name(arg))
 			return
 		}
-		if sheet != "" {
-			set_status(app, "Imported %d x %d from sheet %s of %s", rows, cols, sheet, base_name(arg))
-		} else {
-			set_status(app, "Imported %d x %d from %s", rows, cols, base_name(arg))
-		}
+		sync_sheet(app)
+		app.cur = {}
+		app.anchor = {}
+		app.top_row = 0
+		app.left_col = 0
+		follow_cursor(app)
+		set_status(app, "Imported %d sheet(s), %d cells, from %s", sheets, cells, base_name(arg))
 	}
 }
 
@@ -506,7 +603,7 @@ do_save :: proc(app: ^App, path: string) {
 	if path == "" {
 		return
 	}
-	if doc_save_file(&app.sh, path, base_name(path), app.cur, app.anchor) {
+	if doc_save_file(app.sh, path, base_name(path), app.cur, app.anchor) {
 		set_path(app, path)
 		app.modified = false
 		set_status(app, "Saved %s", path)
@@ -580,8 +677,8 @@ clip_path :: proc(app: ^App) -> string {
 
 do_copy :: proc(app: ^App, cut: bool) {
 	rect := work_rect(app)
-	copy_range(&app.sh, &app.clip, rect, cut)
-	tsv := delim_export(&app.sh, rect, '\t', false, context.temp_allocator)
+	copy_range(app.sh, &app.clip, rect, cut)
+	tsv := delim_export(app.sh, rect, '\t', false, context.temp_allocator)
 	if app.last_tsv != "" {
 		delete(app.last_tsv)
 	}
@@ -605,8 +702,8 @@ do_paste :: proc(app: ^App, force_system: bool) {
 	// wl-paste --no-newline drops the final newline, so compare without it.
 	same := strings.trim_right(outside, "\n") == strings.trim_right(app.last_tsv, "\n")
 	if !force_system && app.clip.live && (!got || same) {
-		paste_clip(&app.sh, &app.clip, work_rect(app))
-		recalc(&app.sh)
+		paste_clip(app.sh, &app.clip, work_rect(app))
+		recalc(app.sh)
 		set_status(app, "Pasted at %s", addr_name(app.cur))
 		return
 	}
@@ -614,7 +711,7 @@ do_paste :: proc(app: ^App, force_system: bool) {
 		set_status(app, "Clipboard is empty")
 		return
 	}
-	rows, cols := import_delim(&app.sh, outside, app.cur, '\t')
+	rows, cols := import_delim(app.sh, outside, app.cur, '\t')
 	set_status(app, "Pasted %d x %d from the clipboard", rows, cols)
 }
 
@@ -637,7 +734,7 @@ apply_format :: proc(app: ^App, cmd: Fmt_Cmd, arg: int) {
 	// Toggles read the anchor cell and apply the opposite to the whole
 	// selection, so a mixed selection becomes uniform rather than inverting
 	// cell by cell.
-	base := fmt_at(&app.sh, {rect.r0, rect.c0})
+	base := fmt_at(app.sh, {rect.r0, rect.c0})
 
 	// Over a wide selection, format the cells that exist rather than
 	// materialising an empty one for every address in it.
@@ -658,7 +755,7 @@ apply_format :: proc(app: ^App, cmd: Fmt_Cmd, arg: int) {
 
 	for a in targets {
 		{
-			f := fmt_at(&app.sh, a)
+			f := fmt_at(app.sh, a)
 			switch cmd {
 			case .Bold:
 				f.bold = !base.bold
@@ -685,8 +782,8 @@ apply_format :: proc(app: ^App, cmd: Fmt_Cmd, arg: int) {
 			case .Align:
 				f.align = Halign(arg)
 			}
-			if cell_at(&app.sh, a) != nil || !fmt_is_default(f) {
-				set_cell_fmt(&app.sh, a, f)
+			if cell_at(app.sh, a) != nil || !fmt_is_default(f) {
+				set_cell_fmt(app.sh, a, f)
 			}
 		}
 	}
@@ -698,7 +795,7 @@ apply_format :: proc(app: ^App, cmd: Fmt_Cmd, arg: int) {
 	case .Number:
 		set_status(app, "Format: %s", num_format_name(Num_Format(arg)))
 	case .More_Dec, .Less_Dec:
-		set_status(app, "Decimals: %d", fmt_at(&app.sh, {rect.r0, rect.c0}).dec)
+		set_status(app, "Decimals: %d", fmt_at(app.sh, {rect.r0, rect.c0}).dec)
 	case .Align:
 		set_status(app, "Aligned")
 	}

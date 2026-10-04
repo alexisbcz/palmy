@@ -2,13 +2,20 @@ package main
 
 // videoedit — a non-linear editor on palmy.
 //
-// The frame loop never waits on ffmpeg. Three worker threads do all the
+// The frame loop never waits on ffmpeg. Four worker threads do all the
 // blocking work: the importer (ffprobe, thumbnails, waveforms), the preview
-// decoder (raw frames into a cache) and the exporter (one ffmpeg run, polled
-// for progress). Each owns exactly one mutex and the rule is the same in all
-// three: slow work happens with the lock released, the lock only guards a
-// handoff of plain data, and no procedure that holds a lock calls one that
-// takes it. See the header of media.odin, preview.odin and export.odin.
+// decoder (raw frames into a cache), the exporter (one ffmpeg run, polled for
+// progress) and the mixer's pump (mixed PCM into pw-cat). Each owns exactly
+// one mutex and the rule is the same in all four: slow work happens with the
+// lock released, the lock only guards a handoff of plain data, and no
+// procedure that holds a lock calls one that takes it. See the header of
+// media.odin, preview.odin, export.odin and audio.odin.
+//
+// The playhead is not advanced by wall time. While the preview plays it is
+// *read off the audio clock* — the count of PCM bytes pw-cat has accepted —
+// so the picture is presented against the sound rather than the two drifting
+// apart. `audio_follow` is the whole of that, and it falls back to
+// `delta_time` only when there is no sink to play into.
 
 import "core:fmt"
 import "core:math"
@@ -16,6 +23,7 @@ import "core:os"
 import "core:path/filepath"
 import "core:strconv"
 import "core:strings"
+import "core:time"
 import kit "kit:."
 import p "palmy:."
 
@@ -50,6 +58,8 @@ Editor :: struct {
 	im:           Importer,
 	pv:           Preview,
 	ex:           Exporter,
+	mx:           Mixer,
+	hist:         History,
 
 	playhead:     f64,
 	zoom:         f32, // pixels per second
@@ -86,6 +96,23 @@ Editor :: struct {
 	last_edit:    u64, // bumped on every timeline mutation
 	edit_seen:    u64, // the value the preview cache was built against
 
+	// Audio. `seek_req` is set by anything that moves the playhead on
+	// purpose, as opposed to the playhead moving because the clock advanced;
+	// it is what tells the mixer to flush and restart rather than carry on
+	// from where it was. `mix_dirty` is the same signal for an edit that
+	// changed *what* is audible.
+	seek_req:     bool,
+	mix_dirty:    bool,
+	mix_built:    time.Time,
+	audio_said:   bool, // the sink's failure has been reported once
+
+	// How far the painted picture was from the audio clock, which is the
+	// preview's presentation error. Counted while playing only.
+	pres_sum:     f64,
+	pres_max:     f64,
+	pres_n:       int,
+	pres_miss:    int,
+
 	// Instrumentation for the stats line.
 	draw_fps:     f32,
 	shown:        int,
@@ -110,6 +137,24 @@ main :: proc() {
 	for a, i in args {
 		if a == "--selftest" {
 			selftest()
+			return
+		}
+		if a == "--audiobench" || a == "--audiobench-loud" {
+			secs := f64(6)
+			if i + 1 < len(args) {
+				if v, ok := strconv.parse_f64(args[i + 1]); ok {
+					secs = v
+				}
+			}
+			// Silent by default: the clock, the latency and the presentation
+			// error are all properties of the byte flow, not of the amplitude,
+			// so they can be measured exactly without filling the room. The
+			// `-loud` form is there to confirm by ear that the mix is audible.
+			audio_bench(secs, a == "--audiobench")
+			return
+		}
+		if a == "--undobench" {
+			undo_bench()
 			return
 		}
 		if a == "--shot" && i + 1 < len(args) {
@@ -139,11 +184,14 @@ main :: proc() {
 	importer_start(&ed.im)
 	preview_start(&ed.pv)
 	exporter_start(&ed.ex)
+	mixer_init(&ed.mx)
 	defer kit.pick_destroy(&ed.pick)
 	defer {
 		importer_stop(&ed.im)
 		preview_stop(&ed.pv)
 		exporter_stop(&ed.ex)
+		mixer_destroy(&ed.mx)
+		history_destroy(&ed.hist)
 		project_destroy(&ed.pr)
 	}
 
@@ -173,8 +221,18 @@ main :: proc() {
 	defer p.destroy(app)
 
 	auto_laid := false
+	// wf-recorder captures on output damage, and an editor sitting still has
+	// nothing to repaint — which is correct behaviour for a window on a
+	// desktop and useless in front of a camera: a two-minute take came out
+	// three frames long. VE_RECORD asks for a frame every tick so a recording
+	// has something to record. It is off in normal use, where an idle editor
+	// goes back to blocking in poll like any other palmy window.
+	filming := os.get_env("VE_RECORD", context.temp_allocator) != ""
 
 	for ui in p.frames(app) {
+		if filming {
+			p.redraw(ui)
+		}
 		ed.draw_fps = p.frames_per_second(ui)
 
 		// 1. Collect anything the workers finished.
@@ -201,18 +259,14 @@ main :: proc() {
 		if !auto_laid && imported == 0 && len(ed.pr.media) >= 2 && !importer_busy(&ed.im) {
 			auto_layout(ed)
 			auto_laid = true
+			// The first-run layout is not an edit the user made, so there is
+			// nothing behind it worth being able to go back to.
+			undo_reset(ed)
 		}
 
-		// 2. Advance the playhead.
-		if ed.playing {
-			ed.playhead += f64(p.delta_time(ui))
-			total := project_duration(&ed.pr)
-			if ed.playhead >= total {
-				ed.playhead = total
-				ed.playing = false
-			}
-			p.redraw(ui)
-		}
+		// 2. Advance the playhead — against the audio clock, not wall time.
+		mixer_tick(&ed.mx)
+		audio_follow(ed, ui)
 
 		// 3. Input. The timeline's rectangle comes from the previous frame's
 		// layout, which is the same geometry palmy's own hit testing uses.

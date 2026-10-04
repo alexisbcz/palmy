@@ -16,8 +16,10 @@ Addr :: struct {
 }
 
 // Ref is one A1-style reference. `row == NO_ROW` means the reference named a
-// column and no row, as the `A` in `A:A` does.
+// column and no row, as the `A` in `A:A` does; `col == NO_COL` is the mirror
+// image, the `1` in `1:1`, which names a row and no column.
 NO_ROW :: -2
+NO_COL :: -2
 
 Ref :: struct {
 	col:     int,
@@ -96,7 +98,17 @@ addr_name :: proc(a: Addr) -> string {
 // ref_text prints a reference the way it was written, dollar signs included,
 // so a formula survives a round trip through the AST unchanged.
 ref_text :: proc(r: Ref) -> string {
-	if r.bad || r.col < 0 {
+	if r.bad {
+		return err_text(.Ref)
+	}
+	if r.col == NO_COL {
+		// A whole-row endpoint: `1`, or `$1`.
+		if r.row < 0 {
+			return err_text(.Ref)
+		}
+		return fmt.tprintf("%s%d", r.abs_row ? "$" : "", r.row + 1)
+	}
+	if r.col < 0 {
 		return err_text(.Ref)
 	}
 	cpart := fmt.tprintf("%s%s", r.abs_col ? "$" : "", col_name(r.col))
@@ -123,6 +135,11 @@ ref_parse :: proc(s: string) -> (Ref, bool) {
 		i += 1
 	}
 	if i == start {
+		// No letters: a bare row number, which is the `1` of `1:1`. It is
+		// only ever valid inside a range, which the parser enforces.
+		if row, good := row_only(s); good {
+			return row, true
+		}
 		return {}, false
 	}
 	col, ok := col_from_name(s[start:i])
@@ -176,7 +193,7 @@ ref_offset :: proc(r_in: Ref, drow, dcol: int) -> Ref {
 	if r.bad {
 		return r
 	}
-	if !r.abs_col {
+	if !r.abs_col && r.col != NO_COL {
 		r.col += dcol
 		if r.col < 0 || r.col >= MAX_COLS {
 			r.bad = true
@@ -212,7 +229,7 @@ ref_insert :: proc(r_in: Ref, axis_row: bool, at, n: int) -> Ref {
 			}
 		}
 	} else {
-		if r.col >= at {
+		if r.col != NO_COL && r.col >= at {
 			r.col += n
 			if r.col >= MAX_COLS {
 				r.bad = true
@@ -237,6 +254,9 @@ ref_delete :: proc(r_in: Ref, axis_row: bool, at, n: int) -> Ref {
 			r.row -= n
 		}
 	} else {
+		if r.col == NO_COL {
+			return r
+		}
 		if r.col >= at && r.col < at + n {
 			r.bad = true
 		} else if r.col >= at + n {
@@ -259,6 +279,10 @@ range_delete :: proc(a_in, b_in: Ref, axis_row: bool, at, n: int) -> (a, b: Ref,
 	}
 	if axis_row && (a.row == NO_ROW || b.row == NO_ROW) {
 		// A whole-column range only dies when the columns themselves go.
+		return a, b, true
+	}
+	if !axis_row && (a.col == NO_COL || b.col == NO_COL) {
+		// And a whole-row range only when the rows do.
 		return a, b, true
 	}
 	ia, ib := get(a, axis_row), get(b, axis_row)
@@ -296,11 +320,159 @@ parse_a1_range :: proc(s_in: string) -> (r: Rect_I, ok: bool) {
 		}
 		ar := a.row == NO_ROW ? 0 : a.row
 		br := b.row == NO_ROW ? 0 : b.row
-		return rect_norm({ar, a.col}, {br, b.col}), true
+		ac := a.col == NO_COL ? 0 : a.col
+		bc := b.col == NO_COL ? 0 : b.col
+		return rect_norm({ar, ac}, {br, bc}), true
 	}
 	a, ok1 := ref_parse(s)
-	if !ok1 || a.row == NO_ROW {
+	if !ok1 || a.row == NO_ROW || a.col == NO_COL {
 		return {}, false
 	}
 	return {a.row, a.col, a.row, a.col}, true
+}
+
+// ---------------------------------------------------------------------------
+// Sheet-qualified references
+//
+// `Sheet2!A1` and `'My Sheet'!A1:B4`. The quoting rule is Excel's: a name is
+// bare when it reads as an identifier and does not read as a cell reference,
+// and otherwise goes in single quotes with an inner quote doubled.
+// ---------------------------------------------------------------------------
+
+sheet_needs_quote :: proc(name: string) -> bool {
+	if name == "" {
+		return false
+	}
+	if is_digit(name[0]) {
+		return true
+	}
+	for i in 0 ..< len(name) {
+		c := name[i]
+		if c >= 0x80 {
+			continue // UTF-8 continuation or lead byte: fine bare
+		}
+		if !(is_alpha(c) || is_digit(c) || c == '_' || c == '.') {
+			return true
+		}
+	}
+	// A name that reads as a reference would be ambiguous with one.
+	if _, ok := ref_parse(name); ok {
+		return true
+	}
+	return false
+}
+
+// sheet_prefix renders `Sheet2!` or `'My Sheet'!`, or nothing for an
+// unqualified reference.
+sheet_prefix :: proc(name: string) -> string {
+	if name == "" {
+		return ""
+	}
+	if !sheet_needs_quote(name) {
+		return strings.concatenate({name, "!"}, context.temp_allocator)
+	}
+	b := strings.builder_make(context.temp_allocator)
+	strings.write_byte(&b, '\'')
+	for i in 0 ..< len(name) {
+		if name[i] == '\'' {
+			strings.write_byte(&b, '\'')
+		}
+		strings.write_byte(&b, name[i])
+	}
+	strings.write_string(&b, "'!")
+	return strings.to_string(b)
+}
+
+// split_sheet_ref peels a `Sheet!` or `'Sheet'!` prefix off a reference. The
+// `!` has to be the *last* one, so `'a!b'!A1` keeps its quoted name intact.
+split_sheet_ref :: proc(s_in: string) -> (sheet, rest: string, ok: bool) {
+	s := strings.trim_space(s_in)
+	if len(s) == 0 {
+		return "", s_in, false
+	}
+	if s[0] == '\'' {
+		i := 1
+		b := strings.builder_make(context.temp_allocator)
+		for i < len(s) {
+			if s[i] == '\'' {
+				if i + 1 < len(s) && s[i + 1] == '\'' {
+					strings.write_byte(&b, '\'')
+					i += 2
+					continue
+				}
+				i += 1
+				break
+			}
+			strings.write_byte(&b, s[i])
+			i += 1
+		}
+		if i >= len(s) || s[i] != '!' {
+			return "", s_in, false
+		}
+		return strings.to_string(b), s[i + 1:], true
+	}
+	if i := strings.last_index_byte(s, '!'); i > 0 {
+		return s[:i], s[i + 1:], true
+	}
+	return "", s, false
+}
+
+// parse_ref_target reads what a named range or a Go To box may hold: an
+// optional sheet, then a cell or a range. `abs` reports whether every
+// component carried a dollar sign, which is how a defined name is written
+// back out.
+parse_ref_target :: proc(text: string) -> (sheet: string, rect: Rect_I, abs: bool, ok: bool) {
+	sh, rest, _ := split_sheet_ref(text)
+	body := strings.trim_space(rest)
+	if i := strings.index_byte(body, ':'); i >= 0 {
+		a, ok1 := ref_parse(strings.trim_space(body[:i]))
+		// A second endpoint may repeat the sheet: `Sheet1!A1:Sheet1!B2`.
+		_, tail, _ := split_sheet_ref(body[i + 1:])
+		b, ok2 := ref_parse(strings.trim_space(tail))
+		if !ok1 || !ok2 {
+			return "", {}, false, false
+		}
+		ar := a.row == NO_ROW ? 0 : a.row
+		br := b.row == NO_ROW ? 0 : b.row
+		ac := a.col == NO_COL ? 0 : a.col
+		bc := b.col == NO_COL ? 0 : b.col
+		return sh,
+			rect_norm({ar, ac}, {br, bc}),
+			a.abs_col && a.abs_row && b.abs_col && b.abs_row,
+			true
+	}
+	a, good := ref_parse(body)
+	if !good || a.row == NO_ROW || a.col == NO_COL {
+		return "", {}, false, false
+	}
+	return sh, {a.row, a.col, a.row, a.col}, a.abs_col && a.abs_row, true
+}
+
+// row_only reads `1` or `$1`: a whole-row endpoint, the mirror image of the
+// `A` in `A:A`.
+row_only :: proc(s: string) -> (Ref, bool) {
+	i := 0
+	r := Ref{col = NO_COL}
+	if i < len(s) && s[i] == '$' {
+		r.abs_row = true
+		i += 1
+	}
+	if i >= len(s) {
+		return {}, false
+	}
+	row := 0
+	for k in i ..< len(s) {
+		if !is_digit(s[k]) {
+			return {}, false
+		}
+		row = row * 10 + int(s[k] - '0')
+		if row > MAX_ROWS {
+			return {}, false
+		}
+	}
+	if row < 1 {
+		return {}, false
+	}
+	r.row = row - 1
+	return r, true
 }

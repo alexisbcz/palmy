@@ -536,10 +536,22 @@ param_kv :: proc(s: string) -> (key, value: string, ok: bool) {
 // ---------------------------------------------------------------------------
 
 Attachment :: struct {
-	name:      string,
-	mime:      string,
-	size:      int, // decoded size in bytes
+	name:       string, // sanitised: safe to use as a file name, never a path
+	mime:       string,
+	size:       int, // decoded size in bytes
 	inline_cid: string,
+
+	// The IMAP section number of the part these bytes came from: "" for a
+	// single-part message, "2" for the second part of a multipart, "2.1" for
+	// the first part inside that. This is the handle `part_bytes` takes, and
+	// it is why the decoded bytes do not have to be held in memory for every
+	// message in the mailbox.
+	section:    string,
+
+	// An inline part the message itself points at — an image a `cid:` URL in
+	// the HTML refers to. Those belong to the rendering of the message, not to
+	// the list of files the reader is offered to save.
+	is_inline:  bool,
 }
 
 Body_Result :: struct {
@@ -553,15 +565,35 @@ Body_Result :: struct {
 MAX_MIME_DEPTH :: 12
 
 // extract_body walks a part and produces the one readable text the reader
-// shows, preferring text/plain exactly as the brief requires. Attachments are
-// recorded by name, type and decoded size; their bytes are not kept.
+// shows, preferring text/plain exactly as the brief requires.
+//
+// Attachments are recorded by name, type, decoded size and *section number*.
+// Their bytes are deliberately not kept: a few hundred messages carrying
+// attachments is tens of megabytes that the reader needs none of until someone
+// asks to save one, and `part_bytes` can fetch them again from the file on
+// disk in microseconds.
 extract_body :: proc(head, body: string, allocator := context.allocator) -> Body_Result {
 	hs := parse_headers(head, context.temp_allocator)
 	atts := make([dynamic]Attachment, 0, 4, allocator)
 	plain := strings.builder_make(context.temp_allocator)
 	html := strings.builder_make(context.temp_allocator)
+	cids := make([dynamic]string, 0, 4, context.temp_allocator)
 
-	walk_part(hs, body, &plain, &html, &atts, 0, allocator)
+	walk_part(hs, body, &plain, &html, &atts, &cids, "", 0, allocator)
+
+	// Inline is decided here rather than inside the walk, because the HTML
+	// part that references an image can appear after the image part does.
+	for &at in atts {
+		if at.inline_cid == "" {
+			continue
+		}
+		for c in cids {
+			if c == at.inline_cid {
+				at.is_inline = true
+				break
+			}
+		}
+	}
 
 	res := Body_Result{attachments = atts[:]}
 	pt := strings.trim_space(strings.to_string(plain))
@@ -585,6 +617,8 @@ walk_part :: proc(
 	body: string,
 	plain, html: ^strings.Builder,
 	atts: ^[dynamic]Attachment,
+	cids: ^[dynamic]string,
+	section: string,
 	depth: int,
 	allocator: Allocator,
 ) {
@@ -607,10 +641,10 @@ walk_part :: proc(
 		if ct.boundary == "" {
 			return
 		}
-		for sub in split_multipart(body, ct.boundary, context.temp_allocator) {
+		for sub, i in split_multipart(body, ct.boundary, context.temp_allocator) {
 			sh, sb := split_message(sub)
 			shs := parse_headers(sh, context.temp_allocator)
-			walk_part(shs, sb, plain, html, atts, depth + 1, allocator)
+			walk_part(shs, sb, plain, html, atts, cids, child_section(section, i + 1), depth + 1, allocator)
 			// alternative: the last readable representation wins per part, and
 			// the plain/html preference is resolved by the caller, so nothing
 			// special is needed here.
@@ -619,28 +653,33 @@ walk_part :: proc(
 	}
 
 	if ct.kind == "message" && ct.sub == "rfc822" {
-		sh, sb := split_message(body)
+		// RFC 3501 numbers an embedded message's body at the same section as
+		// the part that carries it, so the section does not change here.
+		// `part_bytes` steps through an rfc822 wrapper the same way.
+		inner := decode_part(hs, body, context.temp_allocator)
+		sh, sb := split_message(string(inner))
 		shs := parse_headers(sh, context.temp_allocator)
-		walk_part(shs, sb, plain, html, atts, depth + 1, allocator)
+		walk_part(shs, sb, plain, html, atts, cids, section, depth + 1, allocator)
 		return
 	}
 
-	decoded: []u8
-	switch cte {
-	case "base64":
-		decoded = decode_base64(body, context.temp_allocator)
-	case "quoted-printable":
-		decoded = decode_qp(body, false, context.temp_allocator)
-	case:
-		decoded = transmute([]u8)body
-	}
+	decoded := decode_part(hs, body, context.temp_allocator)
 
 	is_attachment := disposition == "attachment" || (filename != "" && ct.kind != "text")
-	if is_attachment {
-		cid := strings.trim(header_of(hs, "content-id"), "<>")
-		name := filename
+	if is_attachment || ct.kind != "text" {
+		// A non-text part with no disposition is still something the user
+		// should see is there.
+		cid := strings.trim(header_of(hs, "content-id"), "<> ")
+		// A filename out of a message is hostile input. Every directory
+		// component goes, here, once, so that `Attachment.name` is a name and
+		// never a path from this point on.
+		name := sanitise_filename(filename, context.temp_allocator)
 		if name == "" {
-			name = fmt.aprintf("part.%s", ct.sub == "" ? "bin" : ct.sub, allocator = allocator)
+			name = fmt.tprintf(
+				"part%s%s",
+				section == "" ? "" : fmt.tprintf("-%s", section),
+				mime_extension(content_type_full(ct, context.temp_allocator)),
+			)
 		}
 		append(
 			atts,
@@ -649,31 +688,233 @@ walk_part :: proc(
 				mime = content_type_full(ct, allocator),
 				size = len(decoded),
 				inline_cid = strings.clone(cid, allocator),
-			},
-		)
-		return
-	}
-
-	if ct.kind != "text" {
-		// A non-text part with no disposition is still something the user
-		// should see is there.
-		append(
-			atts,
-			Attachment {
-				name = strings.clone(filename != "" ? filename : "attachment", allocator),
-				mime = content_type_full(ct, allocator),
-				size = len(decoded),
+				section = strings.clone(section, allocator),
 			},
 		)
 		return
 	}
 
 	text := charset_to_utf8(decoded, ct.charset, context.temp_allocator)
+	// A `cid:` URL only ever appears in HTML, and html_to_text drops every
+	// attribute, so the references have to be collected from the source while
+	// it is still here.
+	if ct.sub == "html" {
+		collect_cids(text, cids)
+	}
 	target := ct.sub == "html" ? html : plain
 	if strings.builder_len(target^) > 0 {
 		strings.write_string(target, "\n\n")
 	}
 	strings.write_string(target, text)
+}
+
+// child_section numbers a multipart's children the way IMAP does: 1-based,
+// dotted, with the root carrying no number at all.
+child_section :: proc(parent: string, n: int, allocator := context.temp_allocator) -> string {
+	if parent == "" {
+		return fmt.aprintf("%d", n, allocator = allocator)
+	}
+	return fmt.aprintf("%s.%d", parent, n, allocator = allocator)
+}
+
+// decode_part applies a part's Content-Transfer-Encoding. The result aliases
+// `body` for the identity encodings, so a caller that needs to own the bytes
+// copies them — which is what `part_bytes` does.
+decode_part :: proc(hs: []Header, body: string, allocator := context.allocator) -> []u8 {
+	switch strings.to_lower(
+		strings.trim_space(header_of(hs, "content-transfer-encoding")),
+		context.temp_allocator,
+	) {
+	case "base64":
+		return decode_base64(body, allocator)
+	case "quoted-printable":
+		return decode_qp(body, false, allocator)
+	}
+	return transmute([]u8)body
+}
+
+// collect_cids pulls every `cid:ID` out of an HTML part. The id ends at the
+// first character a URL cannot continue with, which for a Content-ID is the
+// quote, bracket or whitespace that closes the attribute.
+collect_cids :: proc(html: string, out: ^[dynamic]string) {
+	rest := html
+	for {
+		i := strings.index(rest, "cid:")
+		if i < 0 {
+			return
+		}
+		rest = rest[i + 4:]
+		end := 0
+		for end < len(rest) {
+			c := rest[end]
+			if c <= ' ' || c == '"' || c == '\'' || c == '>' || c == ')' || c == '<' {
+				break
+			}
+			end += 1
+		}
+		if end > 0 {
+			append(out, strings.clone(rest[:end], context.temp_allocator))
+		}
+		rest = rest[end:]
+	}
+}
+
+// ---------------------------------------------------------------------------
+// Bytes, by section number
+//
+// This is the other half of what `extract_body` records. An attachment chip in
+// the reader carries a section number; handing that section number and the
+// message's own file back here produces the decoded octets, byte for byte as
+// the sender encoded them.
+// ---------------------------------------------------------------------------
+
+// part_bytes returns one MIME entity's transfer-decoded octets. "" is the
+// root; "2" is the second part of a multipart; "2.1" is the first part inside
+// that one. The bytes are freshly allocated and belong to the caller.
+//
+// A multipart container has no bytes of its own — its body is its children and
+// the delimiters between them — so asking for one is a miss, not a lie.
+part_bytes :: proc(raw: string, section: string, allocator := context.allocator) -> (data: []u8, ok: bool) {
+	head, body := split_message(raw)
+	rest := section
+	for depth := 0; depth <= MAX_MIME_DEPTH; depth += 1 {
+		hs := parse_headers(head, context.temp_allocator)
+		ct := parse_content_type(header_of(hs, "content-type"), context.temp_allocator)
+
+		if ct.kind == "message" && ct.sub == "rfc822" {
+			// The embedded message keeps this section number, so step inside
+			// and carry on looking at the same level — which is exactly what
+			// the collector above did on the way in.
+			inner := decode_part(hs, body, context.temp_allocator)
+			head, body = split_message(string(inner))
+			continue
+		}
+
+		if rest == "" {
+			if ct.kind == "multipart" {
+				return nil, false
+			}
+			src := decode_part(hs, body, context.temp_allocator)
+			out := make([]u8, len(src), allocator)
+			copy(out, src)
+			return out, true
+		}
+
+		if ct.kind != "multipart" || ct.boundary == "" {
+			return nil, false
+		}
+		seg := rest
+		if dot := strings.index_byte(rest, '.'); dot >= 0 {
+			seg = rest[:dot]
+			rest = rest[dot + 1:]
+		} else {
+			rest = ""
+		}
+		n, pok := strconv.parse_int(seg, 10)
+		if !pok || n < 1 {
+			return nil, false
+		}
+		parts := split_multipart(body, ct.boundary, context.temp_allocator)
+		if n > len(parts) {
+			return nil, false
+		}
+		head, body = split_message(parts[n - 1])
+	}
+	return nil, false
+}
+
+// ---------------------------------------------------------------------------
+// Names that are safe on disk
+// ---------------------------------------------------------------------------
+
+// sanitise_filename strips every directory component and the characters that
+// make a name dangerous on disk. An attachment called "../../.bashrc" becomes
+// ".bashrc"; one that reduces to nothing becomes "".
+//
+// This is the first of two locks. The second is `path_within`, which checks
+// the path this name is joined onto.
+sanitise_filename :: proc(name: string, allocator := context.allocator) -> string {
+	if name == "" {
+		return ""
+	}
+	s := name
+	if k := strings.last_index_byte(s, '/'); k >= 0 {
+		s = s[k + 1:]
+	}
+	if k := strings.last_index_byte(s, '\\'); k >= 0 {
+		s = s[k + 1:]
+	}
+	sb := strings.builder_make(allocator)
+	for i in 0 ..< len(s) {
+		ch := s[i]
+		if ch < 0x20 || ch == 0x7f {
+			continue
+		}
+		strings.write_byte(&sb, ch)
+	}
+	out := strings.trim_space(strings.to_string(sb))
+	if out == "." || out == ".." {
+		return ""
+	}
+	return out
+}
+
+// path_within reports whether `path` names a plain file sitting *directly*
+// inside `dir`: no traversal, no nesting, and not `dir` itself.
+//
+// It compares strings rather than touching the filesystem on purpose. It is
+// called on a path the app is about to construct, before anything exists, and
+// its job is to prove the construction was sound.
+path_within :: proc(dir, path: string) -> bool {
+	d := strings.trim_right(dir, "/")
+	if d == "" {
+		d = "/"
+	}
+	prefix := d == "/" ? "/" : strings.concatenate({d, "/"}, context.temp_allocator)
+	if !strings.has_prefix(path, prefix) {
+		return false
+	}
+	rest := path[len(prefix):]
+	if rest == "" || rest == "." || rest == ".." {
+		return false
+	}
+	return !strings.contains(rest, "/")
+}
+
+// mime_extension is a short, deliberately incomplete table: the content types
+// a mail client actually meets. Anything else gets ".bin", which is honest.
+mime_extension :: proc(mime: string) -> string {
+	switch strings.to_lower(strings.trim_space(mime), context.temp_allocator) {
+	case "text/plain":
+		return ".txt"
+	case "text/html":
+		return ".html"
+	case "text/csv":
+		return ".csv"
+	case "text/calendar":
+		return ".ics"
+	case "image/png":
+		return ".png"
+	case "image/jpeg":
+		return ".jpg"
+	case "image/gif":
+		return ".gif"
+	case "image/webp":
+		return ".webp"
+	case "image/svg+xml":
+		return ".svg"
+	case "application/pdf":
+		return ".pdf"
+	case "application/zip":
+		return ".zip"
+	case "application/gzip":
+		return ".gz"
+	case "application/json":
+		return ".json"
+	case "message/rfc822":
+		return ".eml"
+	}
+	return ".bin"
 }
 
 // split_multipart returns the parts between the `--boundary` delimiter lines,

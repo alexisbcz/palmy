@@ -115,6 +115,21 @@ Project :: struct {
 
 PEAKS_PER_SEC :: 100
 
+// TIME_EPS is the resolution of a timeline time, and it is not an arbitrary
+// epsilon: `project_serialise` writes times with `%.6f`, so one microsecond is
+// genuinely the smallest difference this program can represent. Anything
+// finer than that is not a smaller edit, it is no edit — and because the
+// serialisation is also the undo representation, a change below TIME_EPS would
+// be one the model remembers and the history cannot, which the undo
+// round-trip test catches immediately. The fuzzer found exactly that: a trim
+// clamped to 3.3e-7 s, a ten-thousandth of a frame, that could be made and
+// not undone. The model and its format now agree on what "nothing happened"
+// means.
+//
+// For scale: the finest edit the interface can produce is one pixel at the
+// maximum zoom of 600 px/s, which is 1.7 ms — about two thousand of these.
+TIME_EPS :: 1e-6
+
 project_init :: proc(pr: ^Project) {
 	pr.next_id = 1
 	pr.out_w, pr.out_h, pr.out_fps = 1280, 720, 30
@@ -133,14 +148,7 @@ project_destroy :: proc(pr: ^Project) {
 	}
 	delete(pr.tracks)
 	for &m in pr.media {
-		delete(m.path)
-		delete(m.name)
-		delete(m.vcodec)
-		delete(m.acodec)
-		if m.thumb.px != nil {
-			p.image_destroy(&m.thumb)
-		}
-		delete(m.peaks)
+		media_destroy(&m)
 	}
 	delete(pr.media)
 	for c in pr.captions {
@@ -148,6 +156,21 @@ project_destroy :: proc(pr: ^Project) {
 	}
 	delete(pr.captions)
 	delete(pr.caption_src)
+}
+
+// media_destroy frees one bin row. It is separate from project_destroy because
+// a snapshot restore destroys the rows it did not adopt and keeps the rest;
+// see project_parse.
+media_destroy :: proc(m: ^Media) {
+	delete(m.path)
+	delete(m.name)
+	delete(m.vcodec)
+	delete(m.acodec)
+	if m.thumb.px != nil {
+		p.image_destroy(&m.thumb)
+	}
+	delete(m.peaks)
+	m^ = {}
 }
 
 // track_sort restores the by-start ordering every mutation must leave behind.
@@ -276,7 +299,7 @@ trim_in :: proc(pr: ^Project, track, idx: int, delta: f64) -> f64 {
 	d = math.min(d, clip_len(c^) - minlen)
 	// Cannot trim before the timeline origin.
 	d = math.max(d, -c.start)
-	if math.abs(d) < 1e-9 {
+	if math.abs(d) < TIME_EPS {
 		return 0
 	}
 	c.src_in += d
@@ -296,7 +319,7 @@ trim_out :: proc(pr: ^Project, track, idx: int, delta: f64) -> f64 {
 			d = math.min(d, lim - c.src_out)
 		}
 	}
-	if math.abs(d) < 1e-9 {
+	if math.abs(d) < TIME_EPS {
 		return 0
 	}
 	c.src_out += d

@@ -1,0 +1,35 @@
+# The chatbot demo, driven by ./record.sh.
+#
+# One real chat server, one real bot process and one real client, on a private
+# headless compositor nobody can see. The window is alexis's client; qwen3-bot
+# is a separate process holding its own TCP connection to the server and its
+# own HTTP connection to ollama on 127.0.0.1:11434.
+#
+# There is no `type` step here, and that is deliberate. `headless-record.sh`
+# types with one `wtype` process per step, and against a palmy window only the
+# first invocation ever lands — see the note in record.sh. So alexis's two
+# messages are posted over the real protocol from record.sh, timed against the
+# recording, and this file is the camera: it holds the window still and waits
+# long enough for a 0.6B model to answer twice.
+#
+# The long waits are the point. The reply appears immediately as a placeholder
+# naming the model, then grows each time the bot decides an update is worth a
+# broadcast — about once a second, not once a token.
+
+wait 2.0
+
+# The first question lands about here, and the answer streams in over the next
+# few seconds: a placeholder naming the model, then bullets appearing as the
+# bot coalesces updates, then the attribution footer when it is done.
+move 640 600
+wait 6.0
+move 640 620
+wait 6.0
+move 640 560
+wait 6.0
+
+# `@qwen3-bot summarise` — the command, answered from the same context window.
+move 640 500
+wait 8.0
+move 640 460
+wait 6.0

@@ -14,18 +14,27 @@ Res :: struct {
 	v:    Value,
 	rng:  bool,
 	rect: Rect_I,
+	rsh:  ^Sheet, // the sheet `rect` lives on; nil means the formula's own
 }
 
 rv :: proc(v: Value) -> Res {
 	return {v = v}
 }
 
+// res_sheet is where a cross-sheet reference stops being special: every
+// consumer of a range asks which sheet it came from instead of assuming the
+// formula's own, and `nil` means "mine".
+res_sheet :: proc(sh: ^Sheet, r: Res) -> ^Sheet {
+	return r.rsh != nil ? r.rsh : sh
+}
+
 res_scalar :: proc(sh: ^Sheet, r: Res) -> Value {
 	if !r.rng {
 		return r.v
 	}
+	rs := res_sheet(sh, r)
 	if r.rect.r0 == r.rect.r1 && r.rect.c0 == r.rect.c1 {
-		return ensure_value(sh, {r.rect.r0, r.rect.c0})
+		return ensure_value(rs, {r.rect.r0, r.rect.c0})
 	}
 	// A multi-cell range used where one value is wanted is an error, the same
 	// way =A1:A5+1 is in a spreadsheet.
@@ -46,21 +55,43 @@ eval_ast :: proc(sh: ^Sheet, n: ^Ast, at: Addr) -> Res {
 	case .Err:
 		return rv(verr(n.err))
 	case .Name:
+		// A bare name is a named range if the book has one, and #NAME?
+		// otherwise.
+		if nd, ok := book_get_name(sh.book, n.str); ok {
+			ts := book_sheet(sh.book, resolve_sheet(sh.book, nd.sheet, 0))
+			if ts == nil {
+				return rv(verr(.Ref))
+			}
+			return {rng = true, rect = nd.rect, rsh = ts}
+		}
 		return rv(verr(.Name))
 
 	case .Ref:
 		if n.ref.bad || n.ref.row < 0 || n.ref.col < 0 {
 			return rv(verr(.Ref))
 		}
+		ts := ref_sheet(sh, n)
+		if ts == nil {
+			return rv(verr(.Ref)) // the sheet was renamed away or deleted
+		}
 		a := Addr{n.ref.row, n.ref.col}
-		return {v = ensure_value(sh, a), rng = true, rect = {a.row, a.col, a.row, a.col}}
+		return {
+			v = ensure_value(ts, a),
+			rng = true,
+			rect = {a.row, a.col, a.row, a.col},
+			rsh = ts,
+		}
 
 	case .Range:
-		rect, ok := range_rect(sh, n)
+		ts := ref_sheet(sh, n)
+		if ts == nil {
+			return rv(verr(.Ref))
+		}
+		rect, ok := range_rect(ts, n)
 		if !ok {
 			return rv(verr(.Ref))
 		}
-		return {rng = true, rect = rect}
+		return {rng = true, rect = rect, rsh = ts}
 
 	case .Percent:
 		v := res_scalar(sh, eval_ast(sh, n.kids[0], at))
@@ -87,21 +118,42 @@ eval_ast :: proc(sh: ^Sheet, n: ^Ast, at: Addr) -> Res {
 	return rv(verr(.Value))
 }
 
+// ref_sheet is the sheet a reference points at: another one when it is
+// qualified, the formula's own when it is not, and nil when the name does not
+// resolve — which is #REF!.
+ref_sheet :: proc(sh: ^Sheet, n: ^Ast) -> ^Sheet {
+	if n.sheet == "" {
+		return sh
+	}
+	return book_sheet(sh.book, book_find(sh.book, n.sheet))
+}
+
 range_rect :: proc(sh: ^Sheet, n: ^Ast) -> (Rect_I, bool) {
 	a, b := n.ref, n.ref2
 	if a.bad || b.bad {
 		return {}, false
 	}
-	c0, c1 := min(a.col, b.col), max(a.col, b.col)
 	if a.row == NO_ROW {
 		// A whole-column range spans the used rows. An empty sheet gives an
 		// empty rectangle, which every aggregate already handles.
+		c0, c1 := min(a.col, b.col), max(a.col, b.col)
 		return {0, c0, max(sh.max_row, 0), c1}, true
 	}
-	if a.row < 0 || b.row < 0 {
+	if a.col == NO_COL {
+		// And a whole-row range spans the used columns.
+		r0, r1 := min(a.row, b.row), max(a.row, b.row)
+		return {r0, 0, r1, max(sh.max_col, 0)}, true
+	}
+	if a.row < 0 || b.row < 0 || a.col < 0 || b.col < 0 {
 		return {}, false
 	}
-	return {min(a.row, b.row), c0, max(a.row, b.row), c1}, true
+	return {
+			min(a.row, b.row),
+			min(a.col, b.col),
+			max(a.row, b.row),
+			max(a.col, b.col),
+		},
+		true
 }
 
 // ---------------------------------------------------------------------------
@@ -320,7 +372,8 @@ agg_walk :: proc(sh: ^Sheet, n: ^Ast, at: Addr, ag: ^Agg) {
 		agg_add(ag, r.v, false)
 		return
 	}
-	rect, any := clamp_rect(sh, r.rect)
+	rs := res_sheet(sh, r)
+	rect, any := clamp_rect(rs, r.rect)
 	if !any {
 		return
 	}
@@ -329,10 +382,10 @@ agg_walk :: proc(sh: ^Sheet, n: ^Ast, at: Addr, ag: ^Agg) {
 	// SUM("abc") is #VALUE!.
 	for row in rect.r0 ..= rect.r1 {
 		for col in rect.c0 ..= rect.c1 {
-			if cell_at(sh, {row, col}) == nil {
+			if cell_at(rs, {row, col}) == nil {
 				continue
 			}
-			agg_add(ag, ensure_value(sh, {row, col}), true)
+			agg_add(ag, ensure_value(rs, {row, col}), true)
 			if ag.err != .None {
 				return
 			}
@@ -351,13 +404,14 @@ range_values :: proc(sh: ^Sheet, n: ^Ast, at: Addr, out: ^[dynamic]Value) -> Err
 		append(out, r.v)
 		return .None
 	}
-	rect, any := clamp_rect(sh, r.rect)
+	rs := res_sheet(sh, r)
+	rect, any := clamp_rect(rs, r.rect)
 	if !any {
 		return .None
 	}
 	for row in rect.r0 ..= rect.r1 {
 		for col in rect.c0 ..= rect.c1 {
-			v := ensure_value(sh, {row, col})
+			v := ensure_value(rs, {row, col})
 			if is_err(v) {
 				return v.err
 			}
@@ -831,15 +885,16 @@ fn_vlookup :: proc(sh: ^Sheet, k: []^Ast, at: Addr) -> Res {
 		}
 		approx = b
 	}
+	ts := res_sheet(sh, tbl)
 	rect := tbl.rect
-	rect.r1 = min(rect.r1, max(sh.max_row, rect.r0))
+	rect.r1 = min(rect.r1, max(ts.max_row, rect.r0))
 	ci := int(math.trunc(cidx))
 	if ci < 1 || rect.c0 + ci - 1 > rect.c1 {
 		return rv(verr(.Ref))
 	}
 	best := -1
 	for row in rect.r0 ..= rect.r1 {
-		v := ensure_value(sh, {row, rect.c0})
+		v := ensure_value(ts, {row, rect.c0})
 		if is_err(v) {
 			return rv(v)
 		}
@@ -858,7 +913,7 @@ fn_vlookup :: proc(sh: ^Sheet, k: []^Ast, at: Addr) -> Res {
 	if best < 0 {
 		return rv(verr(.NA))
 	}
-	return rv(ensure_value(sh, {best, rect.c0 + ci - 1}))
+	return rv(ensure_value(ts, {best, rect.c0 + ci - 1}))
 }
 
 fn_match :: proc(sh: ^Sheet, k: []^Ast, at: Addr) -> Res {
@@ -881,7 +936,8 @@ fn_match :: proc(sh: ^Sheet, k: []^Ast, at: Addr) -> Res {
 		}
 		kind = int(math.trunc(x))
 	}
-	rect, any := clamp_rect(sh, vec.rect)
+	vs := res_sheet(sh, vec)
+	rect, any := clamp_rect(vs, vec.rect)
 	if !any {
 		return rv(verr(.NA))
 	}
@@ -893,7 +949,7 @@ fn_match :: proc(sh: ^Sheet, k: []^Ast, at: Addr) -> Res {
 	for i in 0 ..< n {
 		row := rect.r0 + (rect.r0 == rect.r1 ? 0 : i)
 		col := rect.c0 + (rect.c0 == rect.c1 ? 0 : i)
-		v := ensure_value(sh, {row, col})
+		v := ensure_value(vs, {row, col})
 		if is_err(v) {
 			return rv(v)
 		}
@@ -930,8 +986,9 @@ fn_index :: proc(sh: ^Sheet, k: []^Ast, at: Addr) -> Res {
 	if !src.rng {
 		return rv(verr(.Value))
 	}
+	xs := res_sheet(sh, src)
 	rect := src.rect
-	rect.r1 = min(rect.r1, max(sh.max_row, rect.r0))
+	rect.r1 = min(rect.r1, max(xs.max_row, rect.r0))
 	h := rect.r1 - rect.r0 + 1
 	w := rect.c1 - rect.c0 + 1
 
@@ -947,13 +1004,13 @@ fn_index :: proc(sh: ^Sheet, k: []^Ast, at: Addr) -> Res {
 			if a < 1 || a > w {
 				return rv(verr(.Ref))
 			}
-			return rv(ensure_value(sh, {rect.r0, rect.c0 + a - 1}))
+			return rv(ensure_value(xs, {rect.r0, rect.c0 + a - 1}))
 		}
 		if w == 1 {
 			if a < 1 || a > h {
 				return rv(verr(.Ref))
 			}
-			return rv(ensure_value(sh, {rect.r0 + a - 1, rect.c0}))
+			return rv(ensure_value(xs, {rect.r0 + a - 1, rect.c0}))
 		}
 		return rv(verr(.Ref))
 	}
@@ -965,7 +1022,7 @@ fn_index :: proc(sh: ^Sheet, k: []^Ast, at: Addr) -> Res {
 	if a < 1 || a > h || b < 1 || b > w {
 		return rv(verr(.Ref))
 	}
-	return rv(ensure_value(sh, {rect.r0 + a - 1, rect.c0 + b - 1}))
+	return rv(ensure_value(xs, {rect.r0 + a - 1, rect.c0 + b - 1}))
 }
 
 // collapse_spaces is TRIM: outer whitespace removed and every inner run

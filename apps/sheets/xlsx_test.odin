@@ -77,7 +77,7 @@ build_ledger :: proc(sh: ^Sheet) {
 	set_col_width(sh, 0, 170)
 	set_col_width(sh, 3, 110)
 	set_row_height(sh, 0, 30)
-	sh.graph_dirty = true
+	sh.book.graph_dirty = true
 	recalc_all(sh)
 }
 

@@ -83,13 +83,14 @@ op_text :: proc(o: Op_Kind) -> string {
 }
 
 Token :: struct {
-	kind: Tok_Kind,
-	text: string, // a slice of the source, or an unescaped string literal
-	num:  f64,
-	op:   Op_Kind,
-	ref:  Ref,
-	err:  Err,
-	b:    bool,
+	kind:  Tok_Kind,
+	text:  string, // a slice of the source, or an unescaped string literal
+	num:   f64,
+	op:    Op_Kind,
+	ref:   Ref,
+	sheet: string, // the `Sheet2` of `Sheet2!A1`; "" when unqualified
+	err:   Err,
+	b:     bool,
 }
 
 Lexer :: struct {
@@ -183,6 +184,10 @@ lex_next :: proc(lx: ^Lexer) -> (t: Token, ok: bool) {
 		return lex_string(lx)
 	case '#':
 		return lex_error_literal(lx)
+	case '\'':
+		// `'My Sheet'!A1`. A quoted name only ever introduces a reference,
+		// so this is the one place an apostrophe can start a token.
+		return lex_quoted_sheet(lx)
 	}
 
 	if is_digit(c) || (c == '.' && lx.i + 1 < len(s) && is_digit(s[lx.i + 1])) {
@@ -293,6 +298,14 @@ lex_word :: proc(lx: ^Lexer) -> (Token, bool) {
 		return {kind = .Ident, text = word}, true
 	}
 
+	// `Sheet2!A1` — the `!` binds the name to the reference after it. No
+	// whitespace is allowed around it, which is what keeps `A1 ! B1` from
+	// being read as a sheet reference.
+	if lx.i < len(s) && s[lx.i] == '!' {
+		lx.i += 1
+		return lex_sheet_body(lx, word)
+	}
+
 	if r, ok := ref_parse(word); ok {
 		// `A` on its own is only a reference as part of `A:A`; otherwise it
 		// is a name, which evaluates to #NAME?.
@@ -308,6 +321,63 @@ lex_word :: proc(lx: ^Lexer) -> (Token, bool) {
 		return {kind = .Bool, b = false, text = word}, true
 	}
 	return {kind = .Ident, text = word}, true
+}
+
+// lex_quoted_sheet reads `'name'!` and then the reference that must follow
+// it. An inner apostrophe is written doubled, as in every spreadsheet.
+lex_quoted_sheet :: proc(lx: ^Lexer) -> (Token, bool) {
+	s := lx.src
+	lx.i += 1 // opening quote
+	b := strings.builder_make(context.temp_allocator)
+	closed := false
+	for lx.i < len(s) {
+		if s[lx.i] == '\'' {
+			if lx.i + 1 < len(s) && s[lx.i + 1] == '\'' {
+				strings.write_byte(&b, '\'')
+				lx.i += 2
+				continue
+			}
+			lx.i += 1
+			closed = true
+			break
+		}
+		strings.write_byte(&b, s[lx.i])
+		lx.i += 1
+	}
+	if !closed || lx.i >= len(s) || s[lx.i] != '!' {
+		return {kind = .Bad}, false
+	}
+	lx.i += 1
+	name := strings.to_string(b)
+	if name == "" {
+		return {kind = .Bad}, false
+	}
+	return lex_sheet_body(lx, name)
+}
+
+// lex_sheet_body reads the reference half of a sheet-qualified reference. It
+// is deliberately strict: after a `!` nothing but a reference is legal, so a
+// typo is a syntax error rather than a silently different formula.
+lex_sheet_body :: proc(lx: ^Lexer, sheet: string) -> (Token, bool) {
+	s := lx.src
+	start := lx.i
+	for lx.i < len(s) {
+		c := s[lx.i]
+		if is_alpha(c) || is_digit(c) || c == '$' {
+			lx.i += 1
+		} else {
+			break
+		}
+	}
+	if lx.i == start {
+		return {kind = .Bad}, false
+	}
+	word := s[start:lx.i]
+	r, ok := ref_parse(word)
+	if !ok {
+		return {kind = .Bad}, false
+	}
+	return {kind = .Ref, ref = r, text = word, sheet = sheet}, true
 }
 
 // ---------------------------------------------------------------------------
@@ -329,15 +399,16 @@ Ast_Kind :: enum u8 {
 }
 
 Ast :: struct {
-	kind: Ast_Kind,
-	num:  f64,
-	str:  string, // owned: a string literal, a call name, or a bare name
-	err:  Err,
-	b:    bool,
-	ref:  Ref,
-	ref2: Ref, // the second endpoint of a Range
-	op:   Op_Kind,
-	kids: [dynamic]^Ast,
+	kind:  Ast_Kind,
+	num:   f64,
+	str:   string, // owned: a string literal, a call name, or a bare name
+	err:   Err,
+	b:     bool,
+	ref:   Ref,
+	ref2:  Ref, // the second endpoint of a Range
+	sheet: string, // owned: the sheet a Ref or Range names; "" means this one
+	op:    Op_Kind,
+	kids:  [dynamic]^Ast,
 }
 
 ast_new :: proc(k: Ast_Kind) -> ^Ast {
@@ -356,6 +427,9 @@ ast_free :: proc(n: ^Ast) {
 	delete(n.kids)
 	if n.str != "" {
 		delete(n.str)
+	}
+	if n.sheet != "" {
+		delete(n.sheet)
 	}
 	free(n)
 }
@@ -396,6 +470,32 @@ parse_formula :: proc(src: string) -> (root: ^Ast, ok: bool) {
 		return nil, false
 	}
 	return n, true
+}
+
+// ref_span classifies a range endpoint: 0 a cell, 1 a whole column (`A`),
+// 2 a whole row (`1`). The two ends of a range must agree.
+ref_span :: proc(r: Ref) -> int {
+	if r.row == NO_ROW {
+		return 1
+	}
+	if r.col == NO_COL {
+		return 2
+	}
+	return 0
+}
+
+// row_ref_of turns a number token into a whole-row endpoint, when it really
+// is a plain positive integer row number.
+row_ref_of :: proc(t: Token) -> (Ref, bool) {
+	if t.kind != .Number {
+		return {}, false
+	}
+	for i in 0 ..< len(t.text) {
+		if !is_digit(t.text[i]) {
+			return {}, false // 1.5, 1e3: not a row
+		}
+	}
+	return row_only(t.text)
 }
 
 cur :: proc(ps: ^Parser) -> Token {
@@ -526,6 +626,21 @@ p_primary :: proc(ps: ^Parser) -> ^Ast {
 	t := cur(ps)
 	switch t.kind {
 	case .Number:
+		// `1:1` is a whole-row range, and `1` on its own is the number one.
+		// The colon is the only thing that tells them apart, so the decision
+		// is made here rather than in the lexer, where there is no lookahead
+		// that could make it.
+		if ps.i + 2 < len(ps.toks) && ps.toks[ps.i + 1].kind == .Colon {
+			a, ok1 := row_ref_of(t)
+			b, ok2 := row_ref_of(ps.toks[ps.i + 2])
+			if ok1 && ok2 {
+				ps.i += 3
+				n := ast_new(.Range)
+				n.ref = a
+				n.ref2 = b
+				return n
+			}
+		}
 		advance(ps)
 		n := ast_new(.Num)
 		n.num = t.num
@@ -562,27 +677,37 @@ p_primary :: proc(ps: ^Parser) -> ^Ast {
 					t2 = Token{kind = .Ref, ref = r, text = t2.text}
 				}
 			}
+			// `1:1` ends on a plain number, which the lexer has no reason to
+			// treat as anything else.
+			if t2.kind == .Number {
+				if r, good := row_ref_of(t2); good {
+					t2 = Token{kind = .Ref, ref = r, text = t2.text}
+				}
+			}
 			if t2.kind != .Ref {
 				ps.fail = true
 				return nil
 			}
 			advance(ps)
-			// `A1:B2` and `A:A` are both ranges; a mix of the two is not.
-			if (t.ref.row == NO_ROW) != (t2.ref.row == NO_ROW) {
+			// `A1:B2`, `A:A` and `1:1` are all ranges; a mix of two kinds is
+			// not.
+			if ref_span(t.ref) != ref_span(t2.ref) {
 				ps.fail = true
 				return nil
 			}
 			n := ast_new(.Range)
 			n.ref = t.ref
 			n.ref2 = t2.ref
+			n.sheet = strings.clone(t.sheet != "" ? t.sheet : t2.sheet)
 			return n
 		}
-		if t.ref.row == NO_ROW {
+		if t.ref.row == NO_ROW || t.ref.col == NO_COL {
 			ps.fail = true
 			return nil
 		}
 		n := ast_new(.Ref)
 		n.ref = t.ref
+		n.sheet = strings.clone(t.sheet)
 		return n
 
 	case .LParen:
@@ -700,8 +825,10 @@ ast_print :: proc(n: ^Ast, b: ^strings.Builder) {
 	case .Name:
 		strings.write_string(b, n.str)
 	case .Ref:
+		strings.write_string(b, sheet_prefix(n.sheet))
 		strings.write_string(b, ref_text(n.ref))
 	case .Range:
+		strings.write_string(b, sheet_prefix(n.sheet))
 		strings.write_string(b, ref_text(n.ref))
 		strings.write_byte(b, ':')
 		strings.write_string(b, ref_text(n.ref2))
@@ -774,14 +901,37 @@ ast_offset :: proc(n: ^Ast, drow, dcol: int) {
 	}
 }
 
-ast_structural :: proc(n: ^Ast, insert: bool, axis_row: bool, at, count: int) {
+// ast_structural fixes up a formula after rows or columns were inserted or
+// deleted on one sheet.
+//
+// `own` is the sheet the formula lives on and `target` the sheet that was
+// edited. Only references that resolve to `target` move — which is the whole
+// point: inserting a row on Sheet1 must shift `Sheet1!A5` written on Sheet2,
+// and must leave `A5` written on Sheet2 exactly where it is.
+ast_structural :: proc(
+	n: ^Ast,
+	insert: bool,
+	axis_row: bool,
+	at, count: int,
+	bk: ^Book = nil,
+	own: int = 0,
+	target: int = 0,
+) {
 	if n == nil {
 		return
 	}
 	switch n.kind {
-	case .Ref:
-		n.ref = insert ? ref_insert(n.ref, axis_row, at, count) : ref_delete(n.ref, axis_row, at, count)
-	case .Range:
+	case .Ref, .Range:
+		if resolve_sheet(bk, n.sheet, own) != target {
+			break
+		}
+		if n.kind == .Ref {
+			n.ref =
+				insert \
+				? ref_insert(n.ref, axis_row, at, count) \
+				: ref_delete(n.ref, axis_row, at, count)
+			break
+		}
 		if insert {
 			// Inserting inside a range stretches it; inserting at its start
 			// pushes it along. Both fall out of shifting each endpoint.
@@ -794,49 +944,106 @@ ast_structural :: proc(n: ^Ast, insert: bool, axis_row: bool, at, count: int) {
 	case .Num, .Str, .Bool, .Err, .Name, .Unary, .Binary, .Percent, .Call:
 	}
 	for k in n.kids {
-		ast_structural(k, insert, axis_row, at, count)
+		ast_structural(k, insert, axis_row, at, count, bk, own, target)
+	}
+}
+
+// ast_rename_sheet rewrites the sheet part of every reference that named
+// `from`, and reports whether anything changed.
+ast_rename_sheet :: proc(n: ^Ast, from, to: string) -> bool {
+	if n == nil {
+		return false
+	}
+	hit := false
+	if (n.kind == .Ref || n.kind == .Range) && n.sheet != "" && strings.equal_fold(n.sheet, from) {
+		delete(n.sheet)
+		n.sheet = strings.clone(to)
+		hit = true
+	}
+	for k in n.kids {
+		if ast_rename_sheet(k, from, to) {
+			hit = true
+		}
+	}
+	return hit
+}
+
+// ast_sheets collects every sheet name a formula mentions, so the importer
+// and the tests can see what a tree reaches without evaluating it.
+ast_sheets :: proc(n: ^Ast, out: ^[dynamic]string) {
+	if n == nil {
+		return
+	}
+	if (n.kind == .Ref || n.kind == .Range) && n.sheet != "" {
+		found := false
+		for s in out {
+			if strings.equal_fold(s, n.sheet) {
+				found = true
+				break
+			}
+		}
+		if !found {
+			append(out, n.sheet)
+		}
+	}
+	for k in n.kids {
+		ast_sheets(k, out)
 	}
 }
 
 // ast_deps collects the rectangles a formula reads, which is what the
-// dependency graph is built from.
-ast_deps :: proc(n: ^Ast, out: ^[dynamic]Rect_I, max_row: int) {
+// dependency graph is built from. Each one carries the sheet it lives on,
+// resolved here — so a rename or a reorder takes effect on the next rebuild
+// without touching a single tree.
+ast_deps :: proc(n: ^Ast, out: ^[dynamic]Dep, max_row: int, bk: ^Book = nil, own: int = 0) {
 	if n == nil {
 		return
 	}
 	switch n.kind {
 	case .Ref:
 		if !n.ref.bad {
-			append(out, Rect_I{n.ref.row, n.ref.col, n.ref.row, n.ref.col})
+			si := resolve_sheet(bk, n.sheet, own)
+			append(out, Dep{si, {n.ref.row, n.ref.col, n.ref.row, n.ref.col}})
 		}
 	case .Range:
 		if !n.ref.bad && !n.ref2.bad {
-			if n.ref.row == NO_ROW {
+			si := resolve_sheet(bk, n.sheet, own)
+			switch ref_span(n.ref) {
+			case 1: // A:A — every row of those columns
+				append(out, Dep{si, {0, min(n.ref.col, n.ref2.col), max_row, max(n.ref.col, n.ref2.col)}})
+			case 2: // 1:1 — every column of those rows
 				append(
 					out,
-					Rect_I {
-						0,
-						min(n.ref.col, n.ref2.col),
-						max_row,
-						max(n.ref.col, n.ref2.col),
+					Dep {
+						si,
+						{min(n.ref.row, n.ref2.row), 0, max(n.ref.row, n.ref2.row), MAX_COLS - 1},
 					},
 				)
-			} else {
+			case:
 				append(
 					out,
-					Rect_I {
-						min(n.ref.row, n.ref2.row),
-						min(n.ref.col, n.ref2.col),
-						max(n.ref.row, n.ref2.row),
-						max(n.ref.col, n.ref2.col),
+					Dep {
+						si,
+						{
+							min(n.ref.row, n.ref2.row),
+							min(n.ref.col, n.ref2.col),
+							max(n.ref.row, n.ref2.row),
+							max(n.ref.col, n.ref2.col),
+						},
 					},
 				)
 			}
 		}
-	case .Num, .Str, .Bool, .Err, .Name, .Unary, .Binary, .Percent, .Call:
+	case .Name:
+		// A named range is a dependency on whatever it names.
+		if nd, ok := book_get_name(bk, n.str); ok {
+			si := resolve_sheet(bk, nd.sheet, 0)
+			append(out, Dep{si, nd.rect})
+		}
+	case .Num, .Str, .Bool, .Err, .Unary, .Binary, .Percent, .Call:
 	}
 	for k in n.kids {
-		ast_deps(k, out, max_row)
+		ast_deps(k, out, max_row, bk, own)
 	}
 }
 

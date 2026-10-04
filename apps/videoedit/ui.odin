@@ -90,14 +90,19 @@ draw_ui :: proc(ed: ^Editor, ui: ^p.Ctx) {
 // Toolbar
 // ---------------------------------------------------------------------------
 
-tool_button :: proc(ui: ^p.Ctx, label, keyhint: string, active := false) -> bool {
+tool_button :: proc(
+	ui: ^p.Ctx,
+	label, keyhint: string,
+	active := false,
+	disabled := false,
+) -> bool {
 	idx := sc.button_open(
 		ui,
 		active ? .Default : .Outline,
 		.SM,
-		{hover = p.is_hovered(ui, p.node_count(ui))},
+		{hover = !disabled && p.is_hovered(ui, p.node_count(ui)), disabled = disabled},
 	)
-	hit := p.clickable(ui, idx)
+	hit := p.clickable(ui, idx) && !disabled
 	p.text(ui, label, "text-xs whitespace-nowrap")
 	if keyhint != "" {
 		p.text(ui, keyhint, "text-[10] text-muted-foreground whitespace-nowrap")
@@ -116,20 +121,44 @@ toolbar :: proc(ed: ^Editor, ui: ^p.Ctx) {
 	if tool_button(ui, "Import", "i") {
 		import_new(ed, ui)
 	}
+	// The buttons stay a fixed width and grey out when there is nothing to do,
+	// rather than carrying the name of the edit: this app is used in a tiling
+	// window manager, and a label that grows with "trim the out point" would
+	// push the right-hand half of the toolbar off a narrow window. *What*
+	// would be undone is in the status bar, which has room for it, and the
+	// status message says it again the moment you press the key.
+	if tool_button(ui, "Undo", "^Z", false, undo_label(ed) == "") {
+		if label, ok := undo_apply(ed); ok {
+			status(ed, ui, fmt.tprintf("undid: %s", label))
+		}
+	}
+	if tool_button(ui, "Redo", "^+Z", false, redo_label(ed) == "") {
+		if label, ok := redo_apply(ed); ok {
+			status(ed, ui, fmt.tprintf("redid: %s", label))
+		}
+	}
+	sc.separator(ui, .Vertical, "h-5")
 	if tool_button(ui, "Place", "a") {
 		place_media(ed, ui, -1)
 	}
 	sc.separator(ui, .Vertical, "h-5 mx-1")
 	if tool_button(ui, ed.playing ? "Pause" : "Play", "space", ed.playing) {
 		ed.playing = !ed.playing
+		if ed.playing {
+			audio_reset_presentation(ed)
+		}
 	}
 	if tool_button(ui, "Split", "s") {
+		undo_mark(ed, .Split, "split")
 		if _, ok := split_at(&ed.pr, ed.cur_track, ed.playhead); ok {
 			edited(ed)
+		} else {
+			undo_drop(ed)
 		}
 	}
 	if tool_button(ui, "Ripple delete", "d") {
 		if t, i, ok := sel_find(ed); ok {
+			undo_mark(ed, .Ripple, "ripple delete")
 			ripple_delete(&ed.pr, t, i)
 			ed.sel = -1
 			edited(ed)
@@ -137,11 +166,13 @@ toolbar :: proc(ed: ^Editor, ui: ^p.Ctx) {
 	}
 	if tool_button(ui, "Dissolve", "x") {
 		if t, i, ok := sel_find(ed); ok {
+			undo_mark(ed, .Dissolve, "toggle the dissolve", ed.sel)
 			toggle_dissolve(ed, t, i)
 			edited(ed)
 		}
 	}
 	if tool_button(ui, "Title", "t") {
+		undo_mark(ed, .Title_Add, "add a title")
 		v := track_of_kind(&ed.pr, .Video, 0)
 		ed.sel = insert_title(&ed.pr, v, ed.playhead, 2.5, buf_str(&ed.buf_title))
 		ed.cur_track = v
@@ -192,11 +223,13 @@ import_new :: proc(ed: ^Editor, ui: ^p.Ctx) {
 
 load_caption_file :: proc(ed: ^Editor, ui: ^p.Ctx) {
 	path := buf_str(&ed.buf_caption)
+	undo_mark(ed, .Captions, "import captions")
 	n, f, ok := load_captions(&ed.pr, path)
 	if ok {
 		edited(ed)
 		status(ed, ui, fmt.tprintf("%d cues from %v: %s", n, f, base_name(path)))
 	} else {
+		undo_drop(ed)
 		status(ed, ui, fmt.tprintf("could not read captions from %s", path))
 	}
 }
@@ -308,6 +341,9 @@ center_panel :: proc(ed: ^Editor, ui: ^p.Ctx) {
 	)
 	p.spacer(ui)
 
+	p.text(ui, audio_stat_line(ed), "text-[11] font-mono text-muted-foreground whitespace-nowrap")
+	sc.separator(ui, .Vertical, "h-3.5")
+
 	decoded, dms, busy := preview_stats(&ed.pv)
 	per := decoded > 0 ? dms / f64(decoded) : 0
 	p.textf(
@@ -360,6 +396,10 @@ draw_preview :: proc(c: ^p.Canvas, r: p.Rect, ed: ^Editor) {
 
 	tol := 1.0 / PREVIEW_FPS * 0.75
 	drew := false
+	// The timeline time of the frame actually painted on top, which is what the
+	// presentation error is measured against.
+	shown_at := f64(0)
+	wanted := false
 
 	#reverse for &tr, ti in pr.tracks {
 		if tr.kind != .Video || !track_enabled(pr, ti) {
@@ -369,17 +409,24 @@ draw_preview :: proc(c: ^p.Canvas, r: p.Rect, ed: ^Editor) {
 			if cl.media < 0 || !clip_covers(cl, t) {
 				continue
 			}
+			wanted = true
 			op := f32(1)
 			if cl.trans == .Dissolve && cl.xfade > 0.01 && t < cl.start + cl.xfade {
 				op = f32((t - cl.start) / cl.xfade)
 			}
-			img, ok := cache_lookup(&ed.pv, cl.id, t, tol)
+			img, at, ok := cache_lookup(&ed.pv, cl.id, t, tol)
 			if !ok {
 				continue
 			}
 			p.draw_image(c, img, frame, op)
+			// Tracks are walked bottom to top, so the last one to draw is the
+			// one the viewer is looking at.
+			shown_at = at
 			drew = true
 		}
+	}
+	if wanted {
+		audio_note_presentation(ed, shown_at, t, drew)
 	}
 
 	if !drew {
@@ -503,7 +550,19 @@ inspector :: proc(ed: ^Editor, ui: ^p.Ctx) {
 		if pr.tracks[t].kind == .Audio && cl.media >= 0 {
 			p.row(ui, "items-center gap-2 w-full")
 			p.text(ui, "gain", "text-[11] text-muted-foreground w-[72] shrink-0")
-			p.slider(ui, &cl.gain, 0, 2, "flex-1")
+			// A slider writes through the pointer, so by the time it says
+			// "changed" the old value is gone — and the snapshot has to be of
+			// the state *before*. Putting the old value back, marking, and
+			// then applying the new one is the whole trick, and it is why
+			// every widget edit in this file looks like this.
+			was := cl.gain
+			if p.slider(ui, &cl.gain, 0, 2, "flex-1") {
+				now := cl.gain
+				cl.gain = was
+				undo_mark(ed, .Gain, "change the gain", cl.id)
+				cl.gain = now
+				edited_audio(ed)
+			}
 			p.textf(ui, "text-[11] font-mono w-[40] text-center shrink-0", "%.0f%%", cl.gain * 100)
 			p.end(ui)
 		}
@@ -517,30 +576,54 @@ inspector :: proc(ed: ^Editor, ui: ^p.Ctx) {
 			}
 			changed := title_field(ed, ui)
 			if changed {
+				// Marked before `cl.title` is replaced, so the snapshot holds
+				// the text as it was. Typing coalesces by kind and clip, so a
+				// word is one undo step rather than one per letter.
+				undo_mark(ed, .Title_Text, "edit the title", cl.id)
 				delete(cl.title)
 				cl.title = strings.clone(buf_str(&ed.buf_title))
+				edited(ed)
 			}
 			p.row(ui, "items-center gap-2 w-full")
 			p.text(ui, "size", "text-[11] text-muted-foreground w-[72] shrink-0")
 			fs := f32(cl.font_size)
-			p.slider(ui, &fs, 16, 180, "flex-1")
-			cl.font_size = int(fs + 0.5)
+			if p.slider(ui, &fs, 16, 180, "flex-1") {
+				undo_mark(ed, .Title_Style, "restyle the title", cl.id)
+				cl.font_size = int(fs + 0.5)
+				edited(ed)
+			}
 			p.textf(ui, "text-[11] font-mono w-[40] text-center shrink-0", "%dpt", cl.font_size)
 			p.end(ui)
 			p.row(ui, "items-center gap-2 w-full")
 			p.text(ui, "y", "text-[11] text-muted-foreground w-[72] shrink-0")
-			p.slider(ui, &cl.pos_y, 0.05, 0.95, "flex-1")
+			wy := cl.pos_y
+			if p.slider(ui, &cl.pos_y, 0.05, 0.95, "flex-1") {
+				ny := cl.pos_y
+				cl.pos_y = wy
+				undo_mark(ed, .Title_Style, "move the title", cl.id)
+				cl.pos_y = ny
+				edited(ed)
+			}
 			p.end(ui)
 			p.row(ui, "items-center gap-2 w-full")
 			p.text(ui, "x", "text-[11] text-muted-foreground w-[72] shrink-0")
-			p.slider(ui, &cl.pos_x, 0.05, 0.95, "flex-1")
+			wx := cl.pos_x
+			if p.slider(ui, &cl.pos_x, 0.05, 0.95, "flex-1") {
+				nx := cl.pos_x
+				cl.pos_x = wx
+				undo_mark(ed, .Title_Style, "move the title", cl.id)
+				cl.pos_x = nx
+				edited(ed)
+			}
 			p.end(ui)
 			p.row(ui, "gap-1 flex-wrap")
 			for col in ([?]u32{0xffffff, 0xffd166, 0xef476f, 0x06d6a0, 0x118ab2}) {
 				idx := p.div(ui, "size-5 rounded-md border border-border cursor-pointer")
 				p.style(ui).bg = p.flat(p.hex(col))
 				if p.clickable(ui, idx) {
+					undo_mark(ed, .Title_Style, "recolour the title", cl.id)
 					cl.color = col
+					edited(ed)
 				}
 				p.end(ui)
 			}
@@ -568,10 +651,14 @@ inspector :: proc(ed: ^Editor, ui: ^p.Ctx) {
 		load_caption_file(ed, ui)
 	}
 	if tool_button(ui, "-0.1s", ",") {
+		undo_mark(ed, .Caption_Nudge, "nudge the captions")
 		pr.caption_offset -= 0.1
+		edited(ed)
 	}
 	if tool_button(ui, "+0.1s", ".") {
+		undo_mark(ed, .Caption_Nudge, "nudge the captions")
 		pr.caption_offset += 0.1
+		edited(ed)
 	}
 	p.end(ui)
 	p.textf(
@@ -657,13 +744,14 @@ inspector :: proc(ed: ^Editor, ui: ^p.Ctx) {
 	if tool_button(ui, "Load", "^O") {
 		res := project_load(pr, buf_str(&ed.buf_project))
 		if res.ok {
-			ed.playhead = res.playhead
+			seek_to(ed, res.playhead)
 			ed.zoom = res.zoom
 			ed.sel = -1
 			for m in pr.media {
 				importer_push(&ed.im, m.path)
 			}
 			edited(ed)
+			undo_reset(ed)
 		}
 		status(ed, ui, res.ok ? "loaded" : res.err)
 	}
@@ -976,12 +1064,15 @@ status_bar :: proc(ed: ^Editor, ui: ^p.Ctx) {
 		live ? "text-[11] truncate" : "text-[11] text-muted-foreground truncate",
 	)
 	p.spacer(ui)
+	// `whitespace-nowrap shrink-0`: this row is a fixed 28px tall, so a line
+	// that wraps is a line with half of itself clipped off the bottom. The
+	// message on the left truncates instead, which is the right half to lose.
 	p.textf(
 		ui,
-		"text-[11] font-mono text-muted-foreground",
-		"zoom %.0fpx/s  ·  %d tracks  ·  %d cues",
+		"text-[11] font-mono text-muted-foreground whitespace-nowrap shrink-0",
+		"%s  ·  %.0fpx/s  ·  %d cues",
+		undo_summary(ed),
 		ed.zoom,
-		len(ed.pr.tracks),
 		len(ed.pr.captions),
 	)
 }
@@ -1013,6 +1104,8 @@ HELP :: [?][2]string {
 	{"p P", "export a draft / a final"},
 	{"v", "verify the last export with ffprobe"},
 	{"ctrl-s ctrl-o", "save / load the project"},
+	{"ctrl-z", "undo — the toolbar says what it will undo"},
+	{"ctrl-shift-z", "redo (ctrl-y as well)"},
 }
 
 help_overlay :: proc(ed: ^Editor, ui: ^p.Ctx) {

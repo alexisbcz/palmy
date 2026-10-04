@@ -10,6 +10,7 @@ package main
 
 import "core:fmt"
 import "core:os"
+import "core:strings"
 import "core:time"
 import p "palmy:."
 import sc "shadcn:."
@@ -88,6 +89,17 @@ key :: proc(r: ^Rig, sym: u32, times := 1) {
 	}
 }
 
+// chord is `key` with a modifier held, for the two commands that have one:
+// Shift+V walks the attachments backwards and Shift+D is the irreversible
+// delete, which is behind a modifier precisely because it is irreversible.
+@(private = "file")
+chord :: proc(r: ^Rig, sym: u32, mods: p.Modifiers) {
+	p.press_key(r.off, sym, mods)
+	settle(r, 1)
+	settle(r, 1)
+	hold(r, 0.22)
+}
+
 @(private = "file")
 typ :: proc(r: ^Rig, text: string) {
 	if !r.film {
@@ -112,6 +124,14 @@ typ :: proc(r: ^Rig, text: string) {
 
 run_uitest :: proc(dir: string, film := false) -> int {
 	os.make_directory_all(dir)
+
+	// This run files messages, deletes them and saves an attachment, so it must
+	// not touch the mailbox somebody is actually reading. Pointing the data
+	// directory at a scratch tree inside the output folder makes `init_state`
+	// generate its own fixtures there: the run is hermetic, repeatable, and
+	// destroys nothing it did not create.
+	data_dir_override = strings.clone(fmt.tprintf("%s/mailbox", dir))
+	os.make_directory_all(data_dir_override)
 
 	off := p.offscreen_create(UITEST_W, UITEST_H, 1, "w-full h-full bg-background text-foreground")
 	defer p.offscreen_destroy(off)
@@ -208,11 +228,28 @@ run_uitest :: proc(dir: string, film := false) -> int {
 	shot(&r, "html-fallback")
 	key(&r, p.KEY_ESCAPE)
 
-	// Attachments: the reader's attachment list.
+	// Attachments: the reader's attachment list, and actually saving one.
+	//
+	// The save dialog is given a directory inside this run's output folder, so
+	// a test or a recording never writes into the user's Downloads.
+	st.save_dir = strings.clone(tfmt("%s/saved", dir))
+	os.make_directory_all(st.save_dir)
+
 	key(&r, '/')
-	typ(&r, "has:attachment")
+	typ(&r, "Instrument trace")
 	key(&r, p.KEY_DOWN)
 	shot(&r, "attachments")
+
+	// V walks the chips. The inline logo is not among them: the HTML points at
+	// it with a cid: URL, so it belongs to the message, not to this list.
+	key(&r, 'v')
+	shot(&r, "attachment-selected")
+
+	// W opens the shared file dialog with the attachment's own name filled in.
+	key(&r, 'w')
+	shot(&r, "save-dialog")
+	key(&r, p.KEY_RETURN)
+	shot(&r, "saved")
 	key(&r, p.KEY_ESCAPE)
 
 	// Reply, with typed text.
@@ -226,6 +263,30 @@ run_uitest :: proc(dir: string, film := false) -> int {
 
 	key(&r, p.KEY_RETURN)
 	shot(&r, "queued")
+
+	// Filing: move a message to another folder, then put it back.
+	key(&r, p.KEY_HOME)
+	key(&r, 'j', 3)
+	key(&r, 'm')
+	shot(&r, "move-sheet")
+	key(&r, 'j', 2)
+	shot(&r, "move-chosen")
+	key(&r, p.KEY_RETURN)
+	shot(&r, "moved")
+	key(&r, 'z')
+	shot(&r, "move-undone")
+
+	// Archive and delete, which are the same rename with a folder chosen for
+	// you, and then the one irreversible operation — which asks first.
+	key(&r, 'e')
+	shot(&r, "archived")
+	key(&r, 'z')
+	key(&r, 'd')
+	shot(&r, "trashed")
+	key(&r, 'z')
+	chord(&r, 'd', {.Shift})
+	shot(&r, "purge-confirm")
+	key(&r, p.KEY_ESCAPE)
 
 	// The folder tree, down to the POP3 account that has only an inbox.
 	key(&r, 'h')
