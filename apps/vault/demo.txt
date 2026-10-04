@@ -1,0 +1,50 @@
+# palmy vault, recorded on a private headless compositor.
+#
+# The vault is a throwaway built by demo-run.sh: fake accounts at example.com /
+# example.org / 192.0.2.1, passwords generated on the spot by this app's own
+# generator, and the public RFC 6238 TOTP seed. The master password typed below
+# is the constant DEMO_PASSWORD in main.odin.
+#
+# Timers are shortened by demo-run.sh so a short take can show them fire: the
+# clipboard clears after 12 s, and the vault locks itself after 16 s idle.
+
+wait 1.6
+
+# --- Unlock -----------------------------------------------------------------
+# Masked as it is typed, then roughly half a second of Argon2id at 256 MiB.
+type demo-vault-not-a-real-password
+wait 1.4
+key Return
+wait 3.2
+
+# --- Search -----------------------------------------------------------------
+# One match, and it carries a one-time code that starts counting down.
+chord ctrl+f
+wait 0.6
+type forge
+wait 4.0
+
+# --- Generate a password, and copy it ---------------------------------------
+chord ctrl+g
+wait 1.8
+key space
+wait 1.3
+key space
+wait 1.6
+# Enter copies it and closes, so the clipboard notice and its countdown are
+# visible over the entry again.
+key Return
+wait 6.0
+
+# --- Watch the two clocks ---------------------------------------------------
+# The one-time code rolls over every 30 s; the clipboard clears itself 12 s
+# after the copy, and says so when it does.
+wait 6.0
+wait 6.0
+wait 5.0
+
+# --- Then stop touching it ---------------------------------------------------
+# 16 s of no input and it drops the key by itself.
+wait 6.0
+wait 6.0
+wait 5.0
