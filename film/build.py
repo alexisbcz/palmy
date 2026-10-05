@@ -27,8 +27,6 @@ Shot types:
   term        a terminal, with real command output, revealed line by line.
   clip        a segment of demo footage, cropped to fill.
   intro       a clip that freezes on its last frame while a name slams on.
-  parity      a held frame of the parity comparison reel, by case name.
-  parity-rip  the same reel resampled so one case lasts exactly one beat.
   crawl       the end crawl.
 """
 
@@ -60,28 +58,6 @@ CW = 1792
 PAL = {k: "#" + v[2:] for k, v in SPEC["palette"].items()}
 FONT = {k: (v if v.startswith("/") else os.path.join(ROOT, v))
         for k, v in SPEC["fonts"].items()}
-
-# The parity comparison reel holds each case for exactly this long, in the
-# alphabetical order the report lists them in. Verified by OCRing the label
-# at six points across the reel against the index computed here.
-PARITY_REEL = os.path.join(ROOT, "parity", "out", "video", "comparison.mp4")
-CASE_SECONDS = 1.4
-
-
-def parity_index():
-    """case name -> (ordinal, seconds into the reel), from the parity report."""
-    report = os.path.join(ROOT, "parity", "out", "report.md")
-    names = []
-    for line in open(report):
-        m = re.match(r"^\| `([^`]+)` \| [0-9x]+ \| [0-9.]+ \|", line)
-        if m:
-            names.append(m.group(1))
-    names.sort()
-    return {n: (i, i * CASE_SECONDS) for i, n in enumerate(names)}
-
-
-CASES = parity_index()
-
 
 def run(args, **kw):
     r = subprocess.run(args, capture_output=True, text=True, **kw)
@@ -202,8 +178,17 @@ def shot_term(s, dur, frames):
 
 def shot_clip(s, dur, frames):
     src = os.path.join(ROOT, s["src"])
+    if not os.path.exists(src):
+        raise SystemExit(f"{s['id']}: {src} missing -- run film/build.sh capture")
     ins = ["-ss", str(s["in"]), "-t", f"{dur + 0.4:.3f}", "-i", src]
     chain = [pad() if s.get("fit") == "pad" else fill()]
+    # The mask goes on BEFORE the zoom, not after. Its coordinates describe a
+    # region of the source frame -- the window manager's spawn-slot legend,
+    # see film/SOURCES.md -- and a crash zoom moves that region around. Masking
+    # afterwards painted a black rectangle across the middle of the cold open,
+    # where the status bar was not even in shot.
+    for (x, y, w, h) in s.get("mask", []):
+        chain.append(f"drawbox=x={x}:y={y}:w={w}:h={h}:color=black:t=fill")
     if s.get("zoom"):
         chain.append(zoom_filter(s["zoom"], frames, W, H))
     chain.append(f"fps={FPS}")
@@ -216,12 +201,17 @@ def shot_clip(s, dur, frames):
 def shot_intro(s, dur, frames):
     """Grindhouse: run, freeze, slam the name on."""
     src = os.path.join(ROOT, s["src"])
+    if not os.path.exists(src):
+        raise SystemExit(f"{s['id']}: {src} missing -- run film/build.sh capture")
     hold = s["freeze"] * SEC_PER_BEAT
     live = dur - hold
     ins = ["-ss", str(s["in"]), "-t", f"{live + 0.4:.3f}", "-i", src]
     band = H - 230
-    chain = [
-        fill(), f"fps={FPS}",
+    chain = [fill()]
+    for (x, y, w, h) in s.get("mask", []):
+        chain.append(f"drawbox=x={x}:y={y}:w={w}:h={h}:color=black:t=fill")
+    chain += [
+        f"fps={FPS}",
         f"trim=duration={live:.4f}", "setpts=PTS-STARTPTS",
         f"tpad=stop_mode=clone:stop_duration={hold:.4f}",
         f"drawbox=x=0:y={band}:w={W}:h=230:color=black@0.80:t=fill"
@@ -234,57 +224,6 @@ def shot_intro(s, dur, frames):
         f"drawbox=x=0:y=0:w={W}:h={H}:color=white@0.55:t=fill"
         f":enable='between(t,{live:.4f},{live + 1.0 / FPS:.4f})'",
     ]
-    return ins, f"[0:v]{','.join(chain)}[v]"
-
-
-def shot_still(s, dur, frames):
-    """A still palmy rendered for the film, held or pushed into.
-
-    Chapter four is about what the text renderer does and does not do with
-    bidirectional text, so its frames are drawn by that renderer rather than
-    asserted on a card: film/tools/rtlcheck writes them at 2560x1440, which is
-    twice the output, so a crash zoom has real pixels to find.
-    """
-    src = os.path.join(WORK, s["src"])
-    if not os.path.exists(src):
-        raise SystemExit(f"{s['id']}: {src} missing -- run film/tools/rtlcheck/run.sh")
-    ins = ["-loop", "1", "-framerate", str(FPS), "-t", f"{dur + 0.2:.3f}", "-i", src]
-    chain = []
-    if s.get("zoom"):
-        chain.append(zoom_filter(s["zoom"], frames, W, H, prescale=False))
-    else:
-        chain.append(f"scale={W}:{H}:flags=bicubic")
-    chain += [f"fps={FPS}", f"trim=duration={dur}", "setpts=PTS-STARTPTS"]
-    return ins, f"[0:v]{','.join(chain)}[v]"
-
-
-def shot_parity(s, dur, frames):
-    _, t = CASES[s["case"]]
-    ins = ["-ss", f"{t + 0.15:.3f}", "-t", f"{min(dur, CASE_SECONDS - 0.2) + 0.1:.3f}",
-           "-i", PARITY_REEL]
-    chain = [f"fps={FPS}", f"loop=loop=-1:size={frames}:start=0",
-             f"trim=duration={dur}", "setpts=PTS-STARTPTS"]
-    if s.get("zoom"):
-        chain.append(zoom_filter(s["zoom"], frames, W, H))
-    for col, x in zip(s.get("columns", []), [205, 613, 1021]):
-        chain.append(dt(col, "body", 26, PAL["cream"], f"{x}-text_w/2", 118,
-                        box=1, boxcolor="black@0.8", boxborderw="10|14|8|14"))
-    for tx in s.get("text", []):
-        at = tx.get("from", 0) * SEC_PER_BEAT
-        chain.append(dt(tx["s"], "display", tx["size"], PAL[tx.get("color", "cream")],
-                        "(w-text_w)/2", f"{int(H * tx['y'])}",
-                        enable=f"'gte(t,{at:.3f})'"))
-    return ins, f"[0:v]{','.join(chain)}[v]"
-
-
-def shot_parity_rip(s, dur, frames):
-    """One case per beat: resample the reel by 1.4 s / one beat."""
-    start, t = CASES[s["case"]]
-    n = s["count"]
-    speed = SEC_PER_BEAT / CASE_SECONDS
-    ins = ["-ss", f"{t:.3f}", "-t", f"{n * CASE_SECONDS + 0.2:.3f}", "-i", PARITY_REEL]
-    chain = [f"setpts={speed:.8f}*PTS", f"fps={FPS}",
-             f"trim=duration={dur}", "setpts=PTS-STARTPTS"]
     return ins, f"[0:v]{','.join(chain)}[v]"
 
 
@@ -311,9 +250,8 @@ def shot_crawl(s, dur, frames):
 
 
 RENDERERS = {
-    "card": shot_card, "term": shot_term, "clip": shot_clip, "intro": shot_intro,
-    "parity": shot_parity, "parity-rip": shot_parity_rip, "crawl": shot_crawl,
-    "still": shot_still,
+    "card": shot_card, "term": shot_term, "clip": shot_clip,
+    "intro": shot_intro, "crawl": shot_crawl,
 }
 
 

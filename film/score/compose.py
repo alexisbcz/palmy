@@ -131,30 +131,113 @@ def bar(n: int) -> int:
 
 
 # ---------------------------------------------------------------------------
-# The sections, in bars. These match film/shots.json beat for beat: a section
-# boundary here is a cut there.
+# The sections, DERIVED from film/shots.json.
+#
+# The score used to carry a hand-written bar map, which meant that widening
+# the film by thirty seconds meant editing two files and hoping they agreed.
+# They are read out of the shot list instead: the chapter cards are the
+# section boundaries, the shot that holds the time-jump card is where the band
+# drops out, the chapter whose card says what the toolkit cannot do is where
+# the western cue takes over, and the freeze frames the band hits are wherever
+# the `intro` shots put them.
+#
+# So the score grows with the film. Nothing here is a bar number typed twice.
 # ---------------------------------------------------------------------------
-COLD_OPEN = (0, 8)       # the parity triptych
-TITLE = (8, 10)          # PALMFRAME
-STOP = (10, 12)          # TWO DAYS EARLIER -- the music drops out
-CH1 = (12, 25)           # NO TOOLKIT
-CH2 = (25, 38)           # THE INSTRUMENT
-CH3 = (38, 51)           # THE CAST
-CH4 = (51, 60)           # WHAT IT CANNOT DO YET -- the western cue
-CRAWL = (60, 70)         # the numbers
-END_BAR = 70
+SHOT_LIST = sorted(SHOTS["shots"], key=lambda s: s["beat"])
+TOTAL_BEATS = sum(s["beats"] for s in SHOT_LIST)
+END_BAR = TOTAL_BEATS // BEATS_PER_BAR
+assert TOTAL_BEATS % BEATS_PER_BAR == 0, "the film must be a whole number of bars"
 
-# Beats on which a character introduction freezes. The band hits these.
-FREEZE_BEATS = [161, 169, 177, 185, 193, 201]
 
-# Bars that play the surf band at all, as (first, last_exclusive, theme).
-SURF = [
-    (0, 8, "A"), (8, 10, "TITLE"), (12, 13, "PICKUP"),
-    (13, 21, "A"), (21, 25, "B4"),
-    (25, 26, "PICKUP"), (26, 34, "B"), (34, 38, "A4"),
-    (38, 39, "PICKUP"), (39, 47, "A"), (47, 51, "B4"),
-    (60, 68, "A"), (68, 70, "OUT"),
-]
+def _shot(ident):
+    for s in SHOT_LIST:
+        if s["id"] == ident:
+            return s
+    return None
+
+
+def _bar_of(shot):
+    return shot["beat"] // BEATS_PER_BAR
+
+
+# The cold open runs to the title card; the title rings over it; the band
+# stops dead under the time jump and comes back for the first chapter.
+_title = _shot("title")
+_stop = _shot("earlier")
+_ch1 = _shot("ch1-card")
+COLD_OPEN = (0, _bar_of(_title))
+TITLE = (_bar_of(_title), _bar_of(_stop))
+STOP = (_bar_of(_stop), _bar_of(_ch1))
+
+# The last chapter card is the slow one. Its cue runs from the bar after that
+# card to the start of the crawl.
+_cards = [s for s in SHOT_LIST if s["id"].startswith("ch") and s["id"].endswith("-card")]
+_crawl = _shot("crawl")
+CH4 = (_bar_of(_cards[-1]), _bar_of(_crawl))
+CRAWL = (_bar_of(_crawl), END_BAR)
+
+# The band hits every freeze frame in the character introductions.
+FREEZE_BEATS = [s["beat"] + (s["beats"] - s["freeze"]) * 1
+                for s in SHOT_LIST if s["type"] == "intro"]
+
+
+def _surf_plan():
+    """Fill every bar that is not the title, the stop or the western cue.
+
+    Each run of bars is filled with a pickup bar, then whole eight-bar themes
+    while they fit, then four-bar halves, then whatever single bars are left,
+    alternating theme A and theme B so a long chapter does not loop one eight
+    four times running.
+    """
+    free = []
+    busy = set(range(*TITLE)) | set(range(*STOP)) | set(range(*CH4))
+    run = []
+    for b in range(END_BAR):
+        if b in busy:
+            if run:
+                free.append(run)
+                run = []
+        else:
+            run.append(b)
+    if run:
+        free.append(run)
+
+    plan = [(TITLE[0], TITLE[1], "TITLE")]
+    flip = 0
+    for block in free:
+        b, end = block[0], block[-1] + 1
+        # A chapter that follows a card gets a tom roll into its downbeat.
+        if b > 0:
+            plan.append((b - 1, b, "PICKUP"))
+        while b < end:
+            left = end - b
+            # The last two bars of the film are the ending figure: a rising
+            # run and the tonic held out under the fade.
+            if end == END_BAR and left <= 2:
+                plan.append((b, end, "OUT"))
+                break
+            if end == END_BAR and left <= 5:
+                plan.append((b, end - 2, "A4" if flip % 2 == 0 else "B4"))
+                plan.append((end - 2, end, "OUT"))
+                break
+            kind = "A" if flip % 2 == 0 else "B"
+            if left >= 8:
+                plan.append((b, b + 8, kind)); b += 8
+            elif left >= 4:
+                plan.append((b, b + 4, kind + "4")); b += 4
+            else:
+                plan.append((b, b + left, kind + "4")); b += left
+            flip += 1
+    return plan
+
+
+SURF = _surf_plan()
+
+# A crash cymbal on the downbeat of every chapter, plus the film's first bar
+# and the crawl. Derived, so a chapter added to the shot list gets one.
+SECTION_STARTS = {0, CRAWL[0]} | {
+    _bar_of(c) + 1 for c in _cards if _bar_of(c) + 1 < END_BAR
+}
 
 
 def theme_bars(kind):
@@ -302,10 +385,15 @@ def build_drums() -> Track:
             continue
         playing.update(range(first, last))
 
-    tom_driven = set(range(0, 8)) | set(range(39, 51))
+    # The tom-driven feel opens the film and comes back under the cast --
+    # the chapter before the slow one.
+    tom_driven = set(range(*COLD_OPEN))
+    if len(_cards) > 1:
+        tom_driven |= set(range(_bar_of(_cards[-2]), _bar_of(_cards[-1])))
     for b_i in sorted(playing):
         b = bar(b_i)
-        t.note(b, d, CRASH, BEAT * 2, 104) if b_i in (0, 13, 26, 39, 60) else None
+        if b_i in SECTION_STARTS:
+            t.note(b, d, CRASH, BEAT * 2, 104)
         for beat_i in range(BEATS_PER_BAR):
             at = b + beat_i * BEAT
             if beat_i in (0, 2):
@@ -358,21 +446,25 @@ def build_western() -> Track:
     t.program(0, 7, GM_FINGER_BASS)
     t.control(0, 7, 7, 74)
 
-    first = CH4[0] + 1          # bar 51 is the chapter card; the cue starts at 52
-    for n, chord in enumerate(WESTERN_CHORDS):
+    # The chapter card is the first bar of CH4; the cue starts after it and
+    # repeats its eight chords for as long as the chapter lasts.
+    first = CH4[0] + 1
+    bars = max(CH4[1] - first, 1)
+    for n in range(bars):
+        chord = WESTERN_CHORDS[n % len(WESTERN_CHORDS)]
         b = bar(first + n)
         root, ivals = CHORDS[chord]
 
         # Whistle, holding.
         at = b
-        for pitch, dur in WESTERN_WHISTLE[n]:
+        for pitch, dur in WESTERN_WHISTLE[n % len(WESTERN_WHISTLE)]:
             t.note(at, 3, pitch, int(dur * 0.95), 92)
             at += dur
 
         # Trumpet, answering in the odd bars.
-        if n in WESTERN_TRUMPET:
+        if (n % 8) in WESTERN_TRUMPET:
             at = b + BEAT
-            for pitch, dur in WESTERN_TRUMPET[n]:
+            for pitch, dur in WESTERN_TRUMPET[n % 8]:
                 t.note(at, 4, pitch, int(dur * 0.9), 84)
                 at += dur
 
