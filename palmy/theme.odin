@@ -104,7 +104,17 @@ find_key :: proc(m: $T/map[string]$V, name: string) -> (string, bool) {
 	return "", false
 }
 
-@(private)
+// theme_color reads back a colour registered with `register_color`, and
+// reports whether there was one. It is the route for an application that has
+// to paint something itself -- a chart series, a canvas, a `pixels` widget --
+// in the same colours its class strings use.
+//
+//	if c, ok := palmy.theme_color("primary"); ok {
+//		palmy.fill_rect(canvas, bar, c)
+//	}
+//
+// `parse_color` resolves the whole token language, including the palette and
+// `/50` opacity, and looks here first; this is only the registered tokens.
 theme_color :: proc(name: string) -> (Color, bool) {
 	if !theme.init {
 		return {}, false
@@ -113,7 +123,9 @@ theme_color :: proc(name: string) -> (Color, bool) {
 	return c, found
 }
 
-@(private)
+// theme_radius reads back a radius registered with `register_radius`, for the
+// same reason as `theme_color`: a widget drawing its own rounded box should
+// round it by the project's `lg`, not by a number copied into the app.
 theme_radius :: proc(name: string) -> (f32, bool) {
 	if !theme.init {
 		return 0, false
@@ -122,7 +134,7 @@ theme_radius :: proc(name: string) -> (f32, bool) {
 	return r, found
 }
 
-@(private)
+// theme_text reads back a font size registered with `register_text`.
 theme_text :: proc(name: string) -> (size, leading: f32, ok: bool) {
 	if !theme.init {
 		return 0, 0, false

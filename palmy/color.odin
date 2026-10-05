@@ -12,6 +12,30 @@ TRANSPARENT :: Color{0, 0, 0, 0}
 WHITE       :: Color{255, 255, 255, 255}
 BLACK       :: Color{0, 0, 0, 255}
 
+// CURRENT is what `current` resolves to before an element knows its own text
+// colour -- CSS's `currentColor`. It is a stand-in, not a colour: the node
+// builder swaps it for the inherited text colour as each element is built, so
+// it never reaches the canvas. Its alpha is zero, so if one ever did escape it
+// would draw nothing rather than draw something wrong.
+//
+// `current/50` is this with half in the green channel; `is_current` reads the
+// marker and `current_over` does the substitution.
+CURRENT :: Color{1, 255, 1, 0}
+
+// is_current reports whether a colour is the `currentColor` stand-in.
+is_current :: proc "contextless" (c: Color) -> bool {
+	return c.a == 0 && c.r == CURRENT.r && c.b == CURRENT.b
+}
+
+// current_over resolves the stand-in against the text colour it stands for,
+// keeping whatever opacity the token asked for.
+current_over :: proc "contextless" (c, fg: Color) -> Color {
+	if !is_current(c) {
+		return c
+	}
+	return fade(fg, f32(c.g) / 255)
+}
+
 // hex takes 0xRRGGBB and returns an opaque color.
 hex :: proc "contextless" (v: u32) -> Color {
 	return {u8(v >> 16), u8(v >> 8), u8(v), 255}
@@ -107,7 +131,18 @@ parse_color :: proc(token: string) -> (color: Color, ok: bool) {
 		color = WHITE
 	case "black":
 		color = BLACK
-	case "current", "inherit":
+	case "current":
+		// `currentColor`: the element's own text colour, which is not known
+		// here. `push_node` substitutes it once the element's classes have all
+		// been applied, so `border-current` on a chip follows the button it
+		// sits in instead of being restated per variant.
+		out := CURRENT
+		out.g = u8(clamp(alpha * 255, 0, 255))
+		return out, true
+	case "inherit":
+		// `inherit` is per-property -- `bg-inherit` is the parent's
+		// background, not its text colour -- and nothing here tracks that, so
+		// it stays unhandled rather than quietly meaning something else.
 		return {}, false
 	case:
 		if len(body) >= 2 && body[0] == '[' && body[len(body) - 1] == ']' {

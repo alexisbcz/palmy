@@ -77,6 +77,24 @@ offscreen_begin :: proc(o: ^Offscreen) -> ^Ctx {
 
 // offscreen_end lays out and paints the frame, then clears the input edges the
 // way the windowed loop does.
+//
+// It also calls `free_all(context.temp_allocator)`, exactly as the windowed
+// loop does at the end of each frame. **Nothing allocated in the temporary
+// allocator survives this call** -- and `fmt.tprintf` allocates there. A
+// string built once and reused across two frames is freed memory on the
+// second, which does not crash and does not look wrong where it was built: it
+// shows up as a later frame rendering nothing. `reader` lost seventeen of
+// eighteen screenshots to this.
+//
+// Clone anything that has to live longer, or rebuild it inside each frame:
+//
+//	for shot in shots {
+//		ui := palmy.offscreen_begin(off)
+//		title := fmt.tprintf("%s - page %d", shot.name, shot.page) // this frame only
+//		palmy.text(ui, title)
+//		palmy.offscreen_end(off)
+//		palmy.offscreen_write_png(off, shot.path)
+//	}
 offscreen_end :: proc(o: ^Offscreen) {
 	end_ui(&o.ctx, &o.canvas)
 	clear_edges(&o.input)
@@ -96,6 +114,24 @@ offscreen_pixels :: proc(o: ^Offscreen) -> []u32 {
 
 offscreen_canvas :: proc(o: ^Offscreen) -> ^Canvas {
 	return &o.canvas
+}
+
+// offscreen_fonts is the font table this renderer loaded, for application code
+// that measures or draws text itself.
+//
+// `reader` builds a stand-in `^App` in its screenshot path purely to carry a
+// font table, because its own procedures took an `^App` to reach `app.fonts`.
+// They only ever needed the fonts: take a `^Fonts` and hand them this.
+//
+//	book_open(&book, path, palmy.offscreen_fonts(off), home, opts)
+offscreen_fonts :: proc(o: ^Offscreen) -> ^Fonts {
+	return &o.fonts
+}
+
+// offscreen_size is the logical size of the frame, outside a frame as well as
+// inside it -- `size(ui)` answers the same question but only while building.
+offscreen_size :: proc(o: ^Offscreen) -> [2]f32 {
+	return o.view
 }
 
 // offscreen_pixel reads one device pixel, which is what assertions use.

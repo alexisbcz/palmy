@@ -262,6 +262,27 @@ top :: proc(ctx: ^Ctx) -> int {
 	return len(ctx.stack) > 0 ? ctx.stack[len(ctx.stack) - 1] : -1
 }
 
+// resolve_current substitutes the inherited text colour for every `current`
+// token in a style, which is CSS's `currentColor`.
+//
+// It runs after the classes have been applied, not while they are being
+// applied, because `currentColor` on a border means the element's *own* final
+// text colour: `text-white border-current` is a white border however the two
+// are ordered. `inherited` is the colour the element would have had with no
+// `text-` class of its own.
+@(private)
+resolve_current :: proc(s: ^Style, inherited: Color) {
+	if is_current(s.fg) {
+		s.fg = current_over(s.fg, inherited)
+	}
+	s.bg.color = current_over(s.bg.color, s.fg)
+	s.bg.color2 = current_over(s.bg.color2, s.fg)
+	s.border_col = current_over(s.border_col, s.fg)
+	s.ring_col = current_over(s.ring_col, s.fg)
+	s.outline_col = current_over(s.outline_col, s.fg)
+	s.shadow.color = current_over(s.shadow.color, s.fg)
+}
+
 @(private)
 push_node :: proc(ctx: ^Ctx, kind: Node_Kind, class: string, disabled := false) -> int {
 	parent := top(ctx)
@@ -273,7 +294,9 @@ push_node :: proc(ctx: ^Ctx, kind: Node_Kind, class: string, disabled := false) 
 	} else {
 		s = style_default()
 	}
+	inherited_fg := s.fg
 	apply_classes(&s, class, interaction_of(ctx, id, disabled))
+	resolve_current(&s, inherited_fg)
 
 	idx := len(ctx.nodes)
 	append(
@@ -330,7 +353,9 @@ end :: proc(ctx: ^Ctx) {
 row :: proc(ctx: ^Ctx, class: string = "") -> int {
 	idx := push_node(ctx, .Box, "flex-row")
 	ctx.nodes[idx].style.dir = .Row
+	inherited_fg := ctx.nodes[idx].style.fg
 	apply_classes(&ctx.nodes[idx].style, class, interaction_of(ctx, ctx.nodes[idx].id))
+	resolve_current(&ctx.nodes[idx].style, inherited_fg)
 	// push_node derived `scrollable` from the class it was handed, which is only
 	// "flex-row" -- the caller's `overflow-scroll` arrives here. Without this the
 	// box clips and the wheel never reaches it, which is a silent failure.
@@ -341,7 +366,9 @@ row :: proc(ctx: ^Ctx, class: string = "") -> int {
 
 col :: proc(ctx: ^Ctx, class: string = "") -> int {
 	idx := push_node(ctx, .Box, "flex-col")
+	inherited_fg := ctx.nodes[idx].style.fg
 	apply_classes(&ctx.nodes[idx].style, class, interaction_of(ctx, ctx.nodes[idx].id))
+	resolve_current(&ctx.nodes[idx].style, inherited_fg)
 	// See `row`: the caller's `overflow-scroll` is applied after push_node has
 	// already decided whether this node scrolls.
 	ctx.nodes[idx].scrollable = ctx.nodes[idx].style.overflow == .Scroll
@@ -441,6 +468,13 @@ icon :: proc(ctx: ^Ctx, ic: Icon, class: string = "", turns: f32 = 0) -> int {
 //
 //	img, ok := palmy.load_image("photo.jpg")
 //	palmy.image(ui, img, "w-full h-full", .Contain)
+//
+// To turn it, or to show one part of it, hand it a view instead of the image.
+// A view borrows the same pixels and costs nothing to make, and `w`/`h` report
+// what it presents, so layout and object-fit see the turned or cropped shape:
+//
+//	palmy.image(ui, palmy.image_rotated(img, turns), "w-full h-full", .Contain)
+//	palmy.image(ui, palmy.image_window(img, px, py, vw, vh), "w-full h-full", .Fill)
 image :: proc(ctx: ^Ctx, img: Image, class: string = "", fit := Fit.Contain, zoom: f32 = 1) -> int {
 	idx := push_node(ctx, .Image, class)
 	ctx.nodes[idx].img = img
@@ -449,7 +483,16 @@ image :: proc(ctx: ^Ctx, img: Image, class: string = "", fit := Fit.Contain, zoo
 	return idx
 }
 
-@(private)
+// clone_frame copies a string into the frame arena, which is reset at the top
+// of every frame. It is what `text` does with what it is handed, and it is the
+// answer whenever a string has to outlive the statement that built it but not
+// the frame -- a number formatted for a label, a path shortened for a title.
+//
+//	label := palmy.clone_frame(ui, strings.to_upper(name, context.temp_allocator))
+//
+// `concat` is the same arena for the common case of joining pieces; this is
+// the one-argument version for a string that already exists. Do not keep what
+// it returns past `end_ui`.
 clone_frame :: proc(ctx: ^Ctx, s: string) -> string {
 	if len(s) == 0 {
 		return ""
@@ -603,7 +646,9 @@ apply :: proc(ctx: ^Ctx, class: string, idx := -1) {
 		return
 	}
 	n := &ctx.nodes[i]
+	inherited_fg := n.parent >= 0 ? ctx.nodes[n.parent].style.fg : style_default().fg
 	apply_classes(&n.style, class, interaction_of(ctx, n.id))
+	resolve_current(&n.style, inherited_fg)
 	n.scrollable = n.style.overflow == .Scroll
 }
 

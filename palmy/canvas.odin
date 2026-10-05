@@ -35,6 +35,44 @@ rect_overlaps :: proc "contextless" (a, b: Rect) -> bool {
 	return r.w > 0 && r.h > 0
 }
 
+// rect_subtract cuts `hole` out of `outer` and returns the rectangles that are
+// left: the band above, the band below, and the two beside. A clip is one
+// rectangle with no exclusion, so this is how to clip to everything *except*
+// something — draw once per band.
+//
+//	bands, n := palmy.rect_subtract(area, panel)
+//	for b in bands[:n] {
+//		palmy.push_clip(c, b)
+//		...
+//		palmy.pop_clip(c)
+//	}
+//
+// A hole that misses `outer` gives back `outer` itself, and a hole that covers
+// it gives back nothing. For the specific case of a shadow around an opaque
+// box, `drop_shadow_excluding` does the same thing in one call and without the
+// clip stack.
+rect_subtract :: proc "contextless" (outer, hole: Rect) -> (bands: [4]Rect, n: int) {
+	h := rect_intersect(outer, hole)
+	if h.w <= 0 || h.h <= 0 {
+		if outer.w > 0 && outer.h > 0 {
+			bands[0] = outer
+			n = 1
+		}
+		return
+	}
+	add :: #force_inline proc "contextless" (bands: ^[4]Rect, n: ^int, r: Rect) {
+		if r.w > 0 && r.h > 0 {
+			bands[n^] = r
+			n^ += 1
+		}
+	}
+	add(&bands, &n, {outer.x, outer.y, outer.w, h.y - outer.y})
+	add(&bands, &n, {outer.x, rect_bottom(h), outer.w, rect_bottom(outer) - rect_bottom(h)})
+	add(&bands, &n, {outer.x, h.y, h.x - outer.x, h.h})
+	add(&bands, &n, {rect_right(h), h.y, rect_right(outer) - rect_right(h), h.h})
+	return
+}
+
 // Paint describes how a shape is filled: either a flat color or a two-stop
 // linear gradient along one axis.
 Paint :: struct {
@@ -410,6 +448,35 @@ ring_pixel :: #force_inline proc(c: ^Canvas, x, y: int, cx, cy, hw, hh, ihw, ihh
 // smoothstep over the shape's distance field, which is a good approximation of
 // a gaussian blur and costs a fraction as much.
 drop_shadow :: proc(c: ^Canvas, r: Rect, rad_in: Radius, blur, spread: f32, offset: [2]f32, col: Color) {
+	drop_shadow_excluding(c, r, rad_in, blur, spread, offset, col, {})
+}
+
+// drop_shadow_excluding is `drop_shadow` with a rectangle the caller promises
+// to paint over opaquely, which is nearly always the shape casting the shadow.
+// Nothing inside it is drawn at all, so the cost is the soft ring rather than
+// the whole interior.
+//
+//	palmy.drop_shadow_excluding(c, card, rad, 20, 1, {0, 7}, shadow, card)
+//	palmy.fill_round_rect(c, card, rad, bg)
+//
+// Pass it only when the cover really is opaque: under a translucent panel the
+// shadow is visible through it, and skipping it there would show as a bright
+// rectangle. `drop_shadow` with an empty `covered` draws every pixel, which is
+// always safe. Partly-covered edge pixels are still drawn, so a fractional
+// rectangle does not leave a seam.
+//
+// `docs` measured an A4 page's shadow at 11.7 ms a frame and cut it to 3.6 ms
+// by clipping `drop_shadow` into four bands around the page; this is that, in
+// one call. See `rect_subtract` for the bands themselves.
+drop_shadow_excluding :: proc(
+	c: ^Canvas,
+	r: Rect,
+	rad_in: Radius,
+	blur, spread: f32,
+	offset: [2]f32,
+	col: Color,
+	covered: Rect,
+) {
 	if col.a == 0 || blur <= 0 && spread <= 0 {
 		return
 	}
@@ -424,27 +491,82 @@ drop_shadow :: proc(c: ^Canvas, r: Rect, rad_in: Radius, blur, spread: f32, offs
 	hw, hh := sr.w / 2, sr.h / 2
 	cx, cy := sr.x + hw, sr.y + hh
 	inv := 1 / max(blur, 0.0001)
+	// The distance at which the smoothstep saturates. It is `-blur` except
+	// when blur is zero, where `inv` is clamped and the curve never reaches 1
+	// at the edge itself.
+	full := -1 / inv
 
 	x0 := int(math.floor(b.x))
 	y0 := int(math.floor(b.y))
 	x1 := int(math.ceil(rect_right(b)))
 	y1 := int(math.ceil(rect_bottom(b)))
 
+	// The covered rectangle in whole pixels, rounded inwards so a pixel the
+	// cover only partly fills is still painted.
+	hx0, hy0, hx1, hy1: int
+	hole := covered.w > 0 && covered.h > 0
+	if hole {
+		hx0 = int(math.ceil(covered.x))
+		hy0 = int(math.ceil(covered.y))
+		hx1 = int(math.floor(rect_right(covered)))
+		hy1 = int(math.floor(rect_bottom(covered)))
+		hole = hx1 > hx0 && hy1 > hy0
+	}
+
 	for y in y0 ..< y1 {
 		py := f32(y) + 0.5 - cy
-		for x in x0 ..< x1 {
-			px := f32(x) + 0.5 - cx
-			d := sd_round_box(px, py, hw, hh, rad)
-			if d > blur {
+		row_hole := hole && y >= hy0 && y < hy1
+		x := x0
+		for x < x1 {
+			if row_hole && x >= hx0 && x < hx1 {
+				x = hx1
 				continue
 			}
-			t := clamp(0.5 - d * inv * 0.5, 0, 1)
-			cov := t * t * (3 - 2 * t) // smoothstep
-			if cov > 0.003 {
-				blend(c, x, y, col, cov)
+			px := f32(x) + 0.5 - cx
+			d := sd_round_box(px, py, hw, hh, rad)
+			if d <= full {
+				// Saturated: coverage is exactly 1 from here until the
+				// distance field comes back up, which is one flat span rather
+				// than a square root and a blend per pixel. The field is
+				// unimodal along a row, so a binary search finds the end.
+				stop := row_hole && hx0 > x ? min(x1, hx0) : x1
+				e := shadow_run_end(x, stop, py, cx, cy, hw, hh, rad, full)
+				span(c, x, e, y, col, 1)
+				x = e
+				continue
 			}
+			if d <= blur {
+				t := clamp(0.5 - d * inv * 0.5, 0, 1)
+				cov := t * t * (3 - 2 * t) // smoothstep
+				if cov > 0.003 {
+					blend(c, x, y, col, cov)
+				}
+			}
+			x += 1
 		}
 	}
+}
+
+// shadow_run_end returns one past the last pixel of the saturated run that
+// starts at `x`, which the caller has already established is inside it.
+@(private)
+shadow_run_end :: proc "contextless" (
+	x, stop: int,
+	py, cx, cy, hw, hh: f32,
+	rad: Radius,
+	full: f32,
+) -> int {
+	lo := x
+	hi := stop - 1
+	for lo < hi {
+		mid := lo + (hi - lo + 1) / 2
+		if sd_round_box(f32(mid) + 0.5 - cx, py, hw, hh, rad) <= full {
+			lo = mid
+		} else {
+			hi = mid - 1
+		}
+	}
+	return lo + 1
 }
 
 fill_circle :: proc(c: ^Canvas, cx, cy, radius: f32, col: Color) {
@@ -522,8 +644,23 @@ srgb_lut: [256]f32
 @(private)
 srgb_lut_ready: bool
 
-@(private)
+// srgb_to_linear converts one sRGB channel byte to linear light, 0..1. An
+// application compositing its own coverage -- a glyph cache, a blur, anything
+// that blends partial alpha -- wants this pair rather than blending the bytes
+// directly, which darkens light-on-dark and thickens dark-on-light.
+//
+//	lin := palmy.srgb_to_linear(col.r) * a + palmy.srgb_to_linear(dst.r) * (1 - a)
+//	out := palmy.linear_to_srgb(lin)
+//
+// Both are table-driven and exact to the byte: `linear_to_srgb` returns the
+// same value the reference `pow` would round to.
 srgb_to_linear :: proc "contextless" (v: u8) -> f32 {
+	ensure_srgb_lut()
+	return srgb_lut[v]
+}
+
+@(private)
+srgb_to_linear_fast :: #force_inline proc "contextless" (v: u8) -> f32 {
 	return srgb_lut[v]
 }
 
@@ -553,8 +690,15 @@ linear_to_srgb_exact :: proc "contextless" (v: f32) -> u8 {
 	return u8(clamp(s * 255 + 0.5, 0, 255))
 }
 
-@(private)
+// linear_to_srgb converts linear light, 0..1, back to an sRGB channel byte.
+// See `srgb_to_linear`.
 linear_to_srgb :: proc "contextless" (v: f32) -> u8 {
+	ensure_srgb_lut()
+	return linear_to_srgb_table(v)
+}
+
+@(private)
+linear_to_srgb_table :: proc "contextless" (v: f32) -> u8 {
 	c := clamp(v, 0, 1)
 	n := srgb_rev[int(c * f32(SRGB_REV_N - 1))]
 	// At most one step out either way, by construction of the table.
@@ -619,16 +763,16 @@ blend_coverage :: proc "contextless" (c: ^Canvas, x, y: int, col: Color, cov: f3
 		// cases backwards.
 		a = math.pow(a, 1 / text_gamma_value)
 	}
-	sr := srgb_to_linear(col.r)
-	sg := srgb_to_linear(col.g)
-	sb := srgb_to_linear(col.b)
-	dr := srgb_to_linear(u8((dst >> 16) & 0xff))
-	dg := srgb_to_linear(u8((dst >> 8) & 0xff))
-	db := srgb_to_linear(u8(dst & 0xff))
+	sr := srgb_to_linear_fast(col.r)
+	sg := srgb_to_linear_fast(col.g)
+	sb := srgb_to_linear_fast(col.b)
+	dr := srgb_to_linear_fast(u8((dst >> 16) & 0xff))
+	dg := srgb_to_linear_fast(u8((dst >> 8) & 0xff))
+	db := srgb_to_linear_fast(u8(dst & 0xff))
 
-	r := linear_to_srgb(sr * a + dr * (1 - a))
-	g := linear_to_srgb(sg * a + dg * (1 - a))
-	b := linear_to_srgb(sb * a + db * (1 - a))
+	r := linear_to_srgb_table(sr * a + dr * (1 - a))
+	g := linear_to_srgb_table(sg * a + dg * (1 - a))
+	b := linear_to_srgb_table(sb * a + db * (1 - a))
 	c.px[i] = 0xff00_0000 | (u32(r) << 16) | (u32(g) << 8) | u32(b)
 }
 
