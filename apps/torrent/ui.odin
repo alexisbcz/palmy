@@ -116,6 +116,7 @@ run_ui :: proc(a: Args) {
 		os.exit(1)
 	}
 	eng.down_limit = a.down_limit
+	eng.up_limit = a.up_limit
 	eng.verbose = a.verbose
 	u.eng = eng
 
@@ -472,27 +473,31 @@ ui_do_add_magnet :: proc(u: ^Ui) {
 		ui_toast(u, err)
 		return
 	}
-	// A magnet names a torrent by hash and nothing more. Fetching the metadata
-	// means asking a stranger for it (BEP 9, over the DHT), which this client
-	// is not allowed to do — so a magnet resolves only against a .torrent
-	// already in the state directory, keyed by info-hash.
+	// A magnet names a torrent by hash and nothing more. The metadata comes
+	// from a .torrent already in the state directory if there is one, and
+	// otherwise over BEP 9 from a peer one of the magnet's OWN trackers named
+	// — which on this client means a tracker on 127.0.0.1 and no other,
+	// because that is all `sock_connect` will dial. There is still no DHT:
+	// the address has to come from the link, not from a stranger.
+	//
+	// The work happens on the engine thread. It involves an announce and a
+	// metadata exchange, and the window must not wait for either.
 	hex := hash20_hex(mg.info_hash, context.temp_allocator)
 	cached := path_join(state_dir(context.temp_allocator), tsprint("%s.torrent", hex), allocator = context.temp_allocator)
-	if !path_exists(cached) {
+	dir := strings.trim_space(string(u.dir_buf[:]))
+	engine_add_magnet(u.eng, uri, dir == "" ? "." : dir, true)
+	u.dialog = .None
+	if path_exists(cached) {
+		ui_toast(u, tsprint("added %s from the metadata cache", mg.name == "" ? hex[:12] : mg.name))
+	} else {
 		ui_toast(
 			u,
 			tsprint(
-				"no metadata for %s: a magnet needs BEP 9 over a DHT, which this client will not do. Put the .torrent at %s.",
-				hex[:12],
-				cached,
+				"resolving %s over BEP 9 from the peers its own trackers name — no DHT",
+				mg.name == "" ? hex[:12] : mg.name,
 			),
 		)
-		return
 	}
-	dir := strings.trim_space(string(u.dir_buf[:]))
-	engine_add(u.eng, cached, dir == "" ? "." : dir, true)
-	u.dialog = .None
-	ui_toast(u, tsprint("added %s from the metadata cache", mg.name == "" ? hex[:12] : mg.name))
 }
 
 @(private = "file")
@@ -656,7 +661,10 @@ ui_toolbar :: proc(u: ^Ui, ui: ^p.Ctx, g: Geom) {
 			"text-xs font-mono text-sky-500 whitespace-nowrap",
 		)
 		if u.view.down_limit > 0 {
-			sc.badge(ui, tsprint("limit %s", human_rate(f64(u.view.down_limit), context.temp_allocator)), .Secondary)
+			sc.badge(ui, tsprint("down ≤ %s", human_rate(f64(u.view.down_limit), context.temp_allocator)), .Secondary)
+		}
+		if u.view.up_limit > 0 {
+			sc.badge(ui, tsprint("up ≤ %s", human_rate(f64(u.view.up_limit), context.temp_allocator)), .Secondary)
 		}
 		p.text(
 			ui,
@@ -1140,7 +1148,7 @@ ui_tab_peers :: proc(u: ^Ui, ui: ^p.Ctx, g: Geom, t: Torrent_View) {
 		p.text(ui, "No peers connected", "text-xs text-muted-foreground")
 		p.text(
 			ui,
-			"Peers come from the tracker, and only loopback addresses are dialled.",
+			"Peers come from the tracker, and only loopback addresses are dialled. The one extension this client registers is ut_metadata (BEP 9); it never registers ut_pex, so a peer has no id to send one on.",
 			"text-[10] text-muted-foreground",
 		)
 		p.end(ui)
@@ -1205,7 +1213,7 @@ ui_tab_peers :: proc(u: ^Ui, ui: ^p.Ctx, g: Geom, t: Torrent_View) {
 	}
 	p.text(
 		ui,
-		"Flags: O/I outgoing or incoming · i we are interested · C they choke us · r they want data · u/c we unchoke or choke · S seed",
+		"Flags: O/I outgoing or incoming · i we are interested · C they choke us · r they want data · u/c we unchoke or choke · E extension protocol (BEP 10) · M it offers ut_metadata · S seed. There is no letter for peer exchange because there is no peer exchange.",
 		"text-[10] text-muted-foreground px-3 pt-1",
 	)
 }
@@ -1359,7 +1367,7 @@ ui_tab_trackers :: proc(u: ^Ui, ui: ^p.Ctx, g: Geom, t: Torrent_View) {
 	}
 	p.text(
 		ui,
-		"The tracker's `interval` is honoured. There is no DHT and no peer exchange in this client, by design.",
+		"The tracker's `interval` is honoured, and a scrape asks for counts without joining the swarm. There is no DHT and no peer exchange in this client, by design: both are ways to learn an address from a stranger.",
 		"text-[10] text-muted-foreground pt-1",
 	)
 }
@@ -1620,7 +1628,7 @@ ui_dialog_add_magnet :: proc(u: ^Ui, ui: ^p.Ctx) {
 		p.end(ui)
 		p.text(
 			ui,
-			"Turning one into a torrent means asking a stranger for the metadata over a DHT, which this client will not do. A magnet is resolved against ~/.local/share/palmy-torrent/<info-hash>.torrent instead.",
+			"The metadata comes from ~/.local/share/palmy-torrent/<info-hash>.torrent if it is there, and otherwise over BEP 9 from a peer one of this link's own trackers names. There is no DHT and no peer exchange: an address has to come from the link, never from a stranger, and only 127.0.0.0/8 is dialled.",
 			"text-[10] text-muted-foreground",
 		)
 	}

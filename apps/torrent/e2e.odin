@@ -20,6 +20,7 @@ package main
 
 import "core:fmt"
 import "core:os"
+import "core:slice"
 import "core:strconv"
 import "core:strings"
 import "core:time"
@@ -34,6 +35,8 @@ E2E :: struct {
 	stop_file:   string,
 	seed_status: string,
 	leech_status: string,
+	seed_status2: string,
+	leech_status2: string,
 	tracker_log: string,
 	seed_log:    string,
 	leech_log:   string,
@@ -89,6 +92,8 @@ run_e2e :: proc(t: ^T) -> bool {
 	e.stop_file = path_join(e.root, "stop")
 	e.seed_status = path_join(e.root, "seed.status")
 	e.leech_status = path_join(e.root, "leech.status")
+	e.seed_status2 = path_join(e.root, "seed2.status")
+	e.leech_status2 = path_join(e.root, "leech2.status")
 	e.tracker_log = path_join(e.root, "tracker.log")
 	e.seed_log = path_join(e.root, "seeder.log")
 	e.leech_log = path_join(e.root, "leecher.log")
@@ -334,6 +339,217 @@ run_e2e :: proc(t: ^T) -> bool {
 		tcheck(t, "...so the output is complete", bf_complete(have))
 	}
 
+	// 7c. The scrape, against the tracker this test started. A scrape is a
+	// read: it asks how big the swarm is and does NOT join it, which is the
+	// whole reason it is a separate message.
+	{
+		bogus, _ := hash20_from_hex("00112233445566778899aabbccddeeff00112233")
+		uurl := asprint("udp://127.0.0.1:%d/announce", e.udp_port)
+		su, suerr := tracker_scrape_udp(
+			uurl,
+			{m.info_hash, bogus},
+			3000,
+			context.temp_allocator,
+		)
+		if tcheck(t, "a UDP scrape round-trips against the loopback tracker", suerr == "", suerr) {
+			teq_int(t, "...answering about both info-hashes asked, in order", len(su), 2)
+			if len(su) == 2 {
+				tcheck(
+					t,
+					"...the first entry is OUR torrent",
+					hash20_eq(su[0].info_hash, m.info_hash),
+				)
+				tcheck(
+					t,
+					"...with at least one seeder in it",
+					su[0].complete >= 1,
+					asprint("complete %d / downloaded %d / incomplete %d", su[0].complete, su[0].downloaded, su[0].incomplete),
+				)
+				tcheck(
+					t,
+					"...and the tracker counted at least one completion",
+					su[0].downloaded >= 1,
+					asprint("downloaded %d", su[0].downloaded),
+				)
+				tcheck(
+					t,
+					"...while a torrent it never heard of comes back all zeros",
+					su[1].complete == 0 && su[1].downloaded == 0 && su[1].incomplete == 0,
+					asprint("%v", su[1]),
+				)
+			}
+		}
+		sh, sherr := tracker_scrape_http(announce, {m.info_hash}, 3000, context.temp_allocator)
+		if tcheck(t, "an HTTP scrape round-trips too", sherr == "", sherr) {
+			teq_int(t, "...about one torrent", len(sh), 1)
+			if len(sh) == 1 {
+				tcheck(t, "...ours", hash20_eq(sh[0].info_hash, m.info_hash))
+				tcheck(
+					t,
+					"...and HTTP and UDP agree on the seeder count",
+					len(su) == 2 && sh[0].complete == su[0].complete,
+					asprint("http %d, udp %d", sh[0].complete, len(su) == 2 ? su[0].complete : -1),
+				)
+			}
+		}
+	}
+
+	// 7d. BEP 9: resolve a magnet for this torrent against the SEEDER that is
+	// still running, with no .torrent anywhere in the picture.
+	//
+	// The magnet carries the info-hash and the tracker URL and nothing else.
+	// The address of the peer to ask comes from that tracker; the metadata
+	// comes from the peer; and the bytes are not believed until SHA-1 over
+	// them is the hash the magnet carried. No DHT is involved and none could
+	// be: there is no DHT in this program.
+	{
+		mg_uri := asprint(
+			"magnet:?xt=urn:btih:%s&dn=%s&tr=%s",
+			hash20_hex(m.info_hash, context.temp_allocator),
+			url_encode(m.name, context.temp_allocator),
+			url_encode(announce, context.temp_allocator),
+		)
+		mg, mgerr := magnet_parse(mg_uri, context.temp_allocator)
+		if tcheck(t, "the magnet for this torrent parses", mgerr == "", mgerr) {
+			probe_id := peer_id_new(0xBEE9)
+			res, rerr := magnet_resolve(mg, probe_id, 0, 5000, context.temp_allocator)
+			if tcheck(
+				t,
+				"A MAGNET RESOLVES OVER BEP 9 WITH NO LOCAL .torrent",
+				rerr == "",
+				rerr == "" ? "" : asprint("%s; notes: %v", rerr, res.notes),
+			) {
+				tcheck(
+					t,
+					"...from a peer the magnet's own tracker named",
+					res.from_host == "127.0.0.1" && res.from_port > 0,
+					asprint("%s:%d of %d peer(s) seen", res.from_host, res.from_port, res.peers_seen),
+				)
+				rm, rmerr := metainfo_parse(
+					clone_bytes(res.torrent, context.temp_allocator),
+					context.temp_allocator,
+				)
+				if tcheck(t, "...the resolved .torrent parses", rmerr == "", rmerr) {
+					tcheck(
+						t,
+						"...and ITS INFO-HASH IS THE ONE IN THE MAGNET",
+						hash20_eq(rm.info_hash, m.info_hash),
+						hash20_hex(rm.info_hash, context.temp_allocator),
+					)
+					teq(t, "...the name came across", rm.name, m.name)
+					teq_int(t, "...all 82 piece hashes came across", piece_count(&rm), npieces)
+					teq_i64(t, "...and the total length", rm.total_length, m.total_length)
+					same_pieces := true
+					for i in 0 ..< min(piece_count(&rm), npieces) {
+						if !hash20_eq(rm.pieces[i], m.pieces[i]) {same_pieces = false}
+					}
+					tcheck(
+						t,
+						"...every piece hash is identical to the original torrent's",
+						same_pieces,
+					)
+					tcheck(
+						t,
+						"...and the info bytes were spliced, not re-encoded",
+						slice.equal(
+							rm.raw[rm.info_span[0]:rm.info_span[1]],
+							m.raw[m.info_span[0]:m.info_span[1]],
+						),
+					)
+				}
+			}
+			magnet_resolution_destroy(&res, context.temp_allocator)
+		}
+	}
+
+	// 7e. The upload limit, MEASURED.
+	//
+	// The same payload, the same two programs, the same loopback — the only
+	// difference is `--up-limit` on the seeder. If the limit does nothing the
+	// second transfer takes about as long as the first; if it works, it
+	// cannot finish faster than the payload divided by the limit.
+	up_elapsed := 0.0
+	{
+		UP_LIMIT :: 700_000
+		floor := f64(total) / f64(UP_LIMIT)
+		_ = os.process_kill(e.leecher)
+		_, _ = os.process_wait(e.leecher)
+		e.have_leecher = false
+		_ = os.process_kill(e.seeder)
+		_, _ = os.process_wait(e.seeder)
+		e.have_seeder = false
+		rm_rf(path_join(e.out_dir, PAYLOAD_NAME, allocator = context.temp_allocator))
+
+		fmt.printfln(
+			"  measuring the upload limit: %s of payload at %s should take at least %.1fs",
+			human_size(total, context.temp_allocator),
+			human_rate(UP_LIMIT, context.temp_allocator),
+			floor,
+		)
+		if tcheck(
+			t,
+			"a rate-limited seeder starts",
+			e2e_start_seeder(&e, e.seed_status2, {"--up-limit", "700000"}) == "",
+		) &&
+		   tcheck(t, "...and a fresh leecher", e2e_start_leecher(&e, e.leech_status2) == "") {
+			ustart := now_s()
+			udone := false
+			for now_s() - ustart < 60.0 {
+				st := read_status(e.leech_status2, context.temp_allocator)
+				if st.ok && st.error != "" {
+					tcheck(t, "the rate-limited leecher reported no error", false, st.error)
+					break
+				}
+				if st.ok && st.have == npieces && st.state == "Seeding" {
+					udone = true
+					break
+				}
+				time.sleep(50 * time.Millisecond)
+			}
+			up_elapsed = now_s() - ustart
+			rate := f64(total) / max(up_elapsed, 0.001)
+			fmt.printfln(
+				"  rate-limited transfer finished in %.2fs (%s average) against an unlimited %.2fs (%s)",
+				up_elapsed,
+				human_rate(rate, context.temp_allocator),
+				elapsed,
+				human_rate(f64(total) / max(elapsed, 0.001), context.temp_allocator),
+			)
+			if tcheck(t, "the rate-limited transfer still completed", udone, asprint("%.1fs", up_elapsed)) {
+				tcheck(
+					t,
+					"THE UPLOAD LIMIT IS HONOURED: it could not go faster than the budget allows",
+					up_elapsed >= floor * 0.7,
+					asprint("it took %.2fs; the floor at %d B/s is %.2fs", up_elapsed, UP_LIMIT, floor),
+				)
+				tcheck(
+					t,
+					"...and the measured rate is within 60% of the limit, not an order out",
+					rate <= f64(UP_LIMIT) * 1.6,
+					asprint("%s against a %s limit", human_rate(rate, context.temp_allocator), human_rate(UP_LIMIT, context.temp_allocator)),
+				)
+				tcheck(
+					t,
+					"...and it is strictly slower than the same transfer unlimited",
+					up_elapsed > elapsed,
+					asprint("%.2fs limited against %.2fs unlimited", up_elapsed, elapsed),
+				)
+				ust := read_status(e.seed_status2, context.temp_allocator)
+				tcheck(
+					t,
+					"...while the seeder still uploaded the whole payload",
+					ust.uploaded >= total,
+					asprint("%d of %d", ust.uploaded, total),
+				)
+				same2, detail2 := files_identical(
+					path_join(e.seed_dir, PAYLOAD_NAME, PAYLOAD[1].rel, allocator = context.temp_allocator),
+					path_join(e.out_dir, PAYLOAD_NAME, PAYLOAD[1].rel, allocator = context.temp_allocator),
+				)
+				tcheck(t, "...and throttling corrupted nothing", same2, detail2)
+			}
+		}
+	}
+
 	// 8. Shut the children down cleanly, so the seeder announces `stopped`.
 	write_file_string(e.stop_file, "stop\n")
 	e2e_wait(&e, 10)
@@ -422,26 +638,26 @@ e2e_start_tracker :: proc(e: ^E2E) -> (err: string) {
 }
 
 @(private = "file")
-e2e_start_seeder :: proc(e: ^E2E) -> (err: string) {
-	p, serr := spawn(
-		e.bin,
-		{
-			"--engine",
-			"--torrent",
-			e.torrent,
-			"--dir",
-			e.seed_dir,
-			"--port",
-			"0",
-			"--status-file",
-			e.seed_status,
-			"--stop-file",
-			e.stop_file,
-			"--run-for",
-			"300",
-		},
-		e.seed_log,
+e2e_start_seeder :: proc(e: ^E2E, status := "", extra: []string = nil) -> (err: string) {
+	args := make([dynamic]string, 0, 16, context.temp_allocator)
+	append(
+		&args,
+		"--engine",
+		"--torrent",
+		e.torrent,
+		"--dir",
+		e.seed_dir,
+		"--port",
+		"0",
+		"--status-file",
+		status == "" ? e.seed_status : status,
+		"--stop-file",
+		e.stop_file,
+		"--run-for",
+		"300",
 	)
+	append(&args, ..extra)
+	p, serr := spawn(e.bin, args[:], e.seed_log)
 	if serr != "" {
 		return serr
 	}
@@ -451,7 +667,7 @@ e2e_start_seeder :: proc(e: ^E2E) -> (err: string) {
 }
 
 @(private = "file")
-e2e_start_leecher :: proc(e: ^E2E) -> (err: string) {
+e2e_start_leecher :: proc(e: ^E2E, status := "") -> (err: string) {
 	p, serr := spawn(
 		e.bin,
 		{
@@ -463,7 +679,7 @@ e2e_start_leecher :: proc(e: ^E2E) -> (err: string) {
 			"--port",
 			"0",
 			"--status-file",
-			e.leech_status,
+			status == "" ? e.leech_status : status,
 			"--stop-file",
 			e.stop_file,
 			"--run-for",

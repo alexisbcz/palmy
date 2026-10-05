@@ -13,6 +13,7 @@ package main
 
 import "core:fmt"
 import "core:os"
+import "core:slice"
 import "core:strings"
 import "core:sync"
 import "core:thread"
@@ -26,9 +27,6 @@ HISTORY_CAP :: 200
 // Text longer than this is stored truncated. A clipboard history is not a
 // place to keep a 40MB paste, and the row only ever shows a line of it.
 TEXT_CAP :: 64 * 1024
-
-// How often the selection is sampled.
-POLL_SECONDS :: 0.7
 
 // Thumbnails are generated once, at this size, and the full image stays on
 // disk. 200 full-size screenshots in memory is not a clipboard manager.
@@ -76,6 +74,12 @@ Store :: struct {
 
 	// Worker-only.
 	last_id:  u64,
+	// A secret's hash is taken over the advertised TYPE LIST, because the
+	// content is never read. It lives in its own field: writing it into
+	// `last_id` meant a type list could collide with a payload and suppress a
+	// real capture, and meant the first selection after a password always
+	// looked new whether it was or not.
+	last_secret_id: u64,
 	status:   string, // last watcher message, guarded by mu
 	have_wl:  bool,
 }
@@ -233,75 +237,147 @@ pick_type :: proc(types: string) -> (mime: string, kind: Kind, ok: bool) {
 
 // ---------------------------------------------------------------------------
 // The watcher
+//
+// THE RACE, AND WHY SAMPLING CANNOT WIN IT
+//
+// This used to be a thread that woke every 0.7 s, asked the compositor what
+// was on the clipboard, and stored it if it had changed. That loses entries,
+// and not occasionally: a clipboard is a single-slot register with no queue
+// and no history of its own. Copy A at t=0.10 and B at t=0.35 and the sample
+// at t=0.70 sees only B — A was overwritten before this process ever asked.
+// Nothing in the old code "dropped" A; A simply never existed here.
+//
+// No poll interval fixes that. Shortening it narrows the window and spends a
+// subprocess per tick doing it, and the window never closes, because the
+// question "what is on the clipboard *now*" cannot answer "what was on it
+// in between".
+//
+// So the capture is event-driven. `wl-paste --watch` is run once, as a
+// long-lived child, and the compositor runs its command on every selection
+// change — handing that command the content of THAT selection on stdin. One
+// event, one set of bytes, no sampling. The command writes the bytes and the
+// advertised type list into a spool directory and the watcher thread drains
+// it. The thread's cadence now decides only how fast an entry appears, not
+// whether it exists, which is the whole difference.
+//
+// `spool_drain` and `ingest_selection` are what the selftest drives, with the
+// spool written by a fake in place of wl-paste. The reproduction is in
+// `selftest.odin` under "the poll race": two selections inside one poll
+// interval, sampled and then evented, with the first one missing in the
+// first case and present in the second.
+//
+// WHAT IS STILL NOT CLOSED, AND CANNOT BE FROM HERE
+//
+// The type list and the bytes still come from two different calls. wl-paste
+// gives a command its content on stdin but does not tell it what the offer
+// advertised, so the spool command asks `wl-paste --list-types` separately.
+// If the selection changes between the two, the verdict (including the
+// `is_sensitive` gate) describes one selection and the bytes another. Closing
+// that needs the offer itself — `wl_data_device` in palmy — which this
+// application cannot add. It is reported rather than worked around.
+//
+// THE SPOOL AND PRIVACY
+//
+// The spool holds real clipboard content on disk for as long as it takes the
+// thread to notice it. It is created under the application's own 0700 data
+// directory, the writing shell runs under `umask 077`, every record is
+// removed the moment it is ingested, and the whole directory is emptied on
+// start and on stop. Nothing in here is ever logged.
 // ---------------------------------------------------------------------------
 
-watcher_start :: proc() {
-	sync.atomic_store(&g.enabled, true)
-	thread.create_and_start(watcher, self_cleanup = true)
+// The fallback cadence, used only when `wl-paste --watch` could not be
+// started. It is the old behaviour, race and all, and it is the reason the
+// constant is still here.
+POLL_SECONDS :: 0.7
+
+// The event cadence. This is a `readdir` of a directory that is almost always
+// empty, not a subprocess, so it can be fast without costing anything — and
+// it is latency only: an event that has not been drained yet is not an event
+// that was lost.
+SPOOL_POLL_SECONDS :: 0.05
+
+// Sel_Source is where a sampled observation comes from. Production reads
+// wl-clipboard; the selftest swaps in a fake so the race can be reproduced
+// with no compositor and no real clipboard anywhere near it. It mirrors
+// `g_test`/`g_test_clip` on the write side.
+Sel_Source :: struct {
+	list_types: proc() -> (string, bool),
+	read:       proc(mime: string) -> ([]u8, bool),
 }
 
-watcher_stop :: proc() {
-	sync.atomic_store(&g.stop, true)
+wl_list_types :: proc() -> (string, bool) {
+	return exec_text({"wl-paste", "--list-types"}, context.temp_allocator)
 }
 
-@(private = "file")
-watcher :: proc() {
-	for !sync.atomic_load(&g.stop) {
-		if sync.atomic_load(&g.enabled) {
-			poll_once()
-			free_all(context.temp_allocator)
-		}
-		time.sleep(time.Duration(POLL_SECONDS * f64(time.Second)))
+// wl_read returns the bytes untouched, which is why it is `exec_raw` and not
+// `exec_text`: an image is binary and a code block has leading whitespace that
+// matters.
+wl_read :: proc(mime: string) -> ([]u8, bool) {
+	return exec_raw({"wl-paste", "--no-newline", "--type", mime})
+}
+
+g_source := Sel_Source {
+	list_types = wl_list_types,
+	read       = wl_read,
+}
+
+// Ingest says what happened to one observation, so a caller — and a test —
+// can tell "already had it" from "refused it" from "never saw it".
+Ingest :: enum u8 {
+	Stored,
+	Duplicate,
+	Secret,
+	Unusable,
+	Failed,
+}
+
+// ---------------------------------------------------------------------------
+// Ingest: the whole decision, as a function of what was observed
+// ---------------------------------------------------------------------------
+
+// ingest_selection takes one complete observation — the advertised type list
+// and the bytes that came with it — and decides what to do with it.
+//
+// There is no subprocess, no clock and no socket in here. That is deliberate:
+// it is what lets the selftest hand it two selections in a row and assert
+// that both land, which is exactly what the sampled path could not do.
+ingest_selection :: proc(types: string, payload: []u8) -> Ingest {
+	if strings.trim_space(types) == "" {
+		return .Unusable
 	}
-}
-
-@(private = "file")
-poll_once :: proc() {
-	types, ok := exec_text({"wl-paste", "--list-types"}, context.temp_allocator)
-	if !ok || strings.trim_space(types) == "" {
-		return
-	}
-
 	if secret, hint := is_sensitive(types); secret {
 		// Keyed on the advertised type list, not the content, which is never
 		// read: that is the whole point. Remembering it also stops the counter
-		// climbing once a second while the same password sits on the clipboard.
+		// climbing once a tick while the same password sits on the clipboard.
 		id := fnv(transmute([]u8)types)
-		if id != g.last_id {
+		if id != g.last_secret_id {
 			sync.atomic_add(&g.secrets, 1)
 			set_status(fmt.tprintf("skipped a selection flagged %s", hint))
 		}
-		g.last_id = id
-		return
+		g.last_secret_id = id
+		return .Secret
 	}
-
 	mime, kind, good := pick_type(types)
 	if !good {
-		return
+		return .Unusable
 	}
-
 	switch kind {
 	case .Text:
-		capture_text(mime)
+		return store_text(mime, payload)
 	case .Image:
-		capture_image(mime)
+		return store_image(mime, payload)
 	}
+	return .Unusable
 }
 
-@(private = "file")
-capture_text :: proc(mime: string) {
-	raw, ok := exec_raw({"wl-paste", "--no-newline", "--type", mime})
-	if !ok {
-		return
-	}
-	defer delete(raw)
+store_text :: proc(mime: string, raw: []u8) -> Ingest {
 	if len(raw) == 0 || len(strings.trim_space(string(raw))) == 0 {
-		return
+		return .Unusable
 	}
 
 	id := fnv(raw)
 	if id == g.last_id {
-		return
+		return .Duplicate
 	}
 	g.last_id = id
 
@@ -324,30 +400,16 @@ capture_text :: proc(mime: string) {
 	e.preview = make_preview(e.text)
 	e.lower = strings.to_lower(e.text[:min(len(e.text), 4096)])
 	push(e)
+	return .Stored
 }
 
-@(private = "file")
-capture_image :: proc(mime: string) {
-	tmp := fmt.tprintf("%s/.incoming", blob_dir(context.temp_allocator))
-	if tmp == "/.incoming" {
-		return
+store_image :: proc(mime: string, data: []u8) -> Ingest {
+	if len(data) == 0 {
+		return .Unusable
 	}
-	// The payload is binary, so it goes to a file rather than through a string.
-	cmd := fmt.tprintf("wl-paste --no-newline --type %s > '%s'", mime, tmp)
-	if _, ok := exec_text({"sh", "-c", cmd}, context.temp_allocator); !ok {
-		return
-	}
-	data, err := os.read_entire_file_from_path(tmp, context.allocator)
-	if err != nil || len(data) == 0 {
-		if err == nil {delete(data)}
-		return
-	}
-	defer delete(data)
-
 	id := fnv(data)
 	if id == g.last_id {
-		_ = os.remove(tmp)
-		return
+		return .Duplicate
 	}
 	g.last_id = id
 
@@ -362,14 +424,16 @@ capture_image :: proc(mime: string) {
 	case "image/gif":
 		ext = ".gif"
 	}
-	blob := fmt.aprintf("%s/%016x%s", blob_dir(context.temp_allocator), id, ext)
+	dir := blob_dir(context.temp_allocator)
+	if dir == "" {
+		return .Failed
+	}
+	blob := fmt.aprintf("%s/%016x%s", dir, id, ext)
 	if os.write_entire_file(blob, data, os.perm_number(0o600)) != nil {
 		delete(blob)
-		_ = os.remove(tmp)
-		return
+		return .Failed
 	}
 	_ = os.chmod(blob, os.perm_number(0o600))
-	_ = os.remove(tmp)
 
 	e := Entry {
 		kind  = .Image,
@@ -389,6 +453,252 @@ capture_image :: proc(mime: string) {
 	e.preview = fmt.aprintf("%s · %d × %d", mime, e.w, e.h)
 	e.lower = strings.to_lower(e.preview)
 	push(e)
+	return .Stored
+}
+
+// ---------------------------------------------------------------------------
+// The sampled path — kept as the fallback, and as the thing being measured
+// against
+// ---------------------------------------------------------------------------
+
+// sample_once asks what is on the clipboard NOW. It is the old behaviour and
+// it is still what runs when `wl-paste --watch` is unavailable; a narrow
+// window is better than no clipboard history. It is also what the
+// reproduction drives, so the race has something to be a race against.
+sample_once :: proc() -> Ingest {
+	types, ok := g_source.list_types()
+	if !ok {
+		return .Failed
+	}
+	if strings.trim_space(types) == "" {
+		return .Unusable
+	}
+	if secret, _ := is_sensitive(types); secret {
+		// The content is never asked for.
+		return ingest_selection(types, nil)
+	}
+	mime, _, good := pick_type(types)
+	if !good {
+		return .Unusable
+	}
+	payload, pok := g_source.read(mime)
+	if !pok {
+		return .Failed
+	}
+	defer delete(payload)
+	return ingest_selection(types, payload)
+}
+
+// ---------------------------------------------------------------------------
+// The spool: one record per selection, written at event time
+// ---------------------------------------------------------------------------
+
+// A record is two files, `<stamp>.types` and `<stamp>.blob`. The `.blob` is
+// written as `.part` and renamed, so its appearance is the commit: a drain
+// that runs while the writer is mid-write sees nothing rather than half a
+// selection. `<stamp>` is nanoseconds since the epoch, which is both unique
+// and sortable, and sortable matters — two copies in the same second must
+// still come back in the order they were made.
+SPOOL_SUFFIX_BLOB :: ".blob"
+SPOOL_SUFFIX_TYPES :: ".types"
+SPOOL_SUFFIX_PART :: ".part"
+
+spool_dir :: proc(al := context.temp_allocator) -> string {
+	d := data_dir(context.temp_allocator)
+	if d == "" {
+		return ""
+	}
+	return fmt.aprintf("%s/spool", d, allocator = al)
+}
+
+spool_ensure :: proc() -> string {
+	d := spool_dir(context.temp_allocator)
+	if d == "" {
+		return ""
+	}
+	_ = os.make_directory_all(d)
+	_ = os.chmod(d, os.perm_number(0o700))
+	return d
+}
+
+// spool_clear empties the directory. Called on start, so a crash cannot leave
+// yesterday's clipboard lying around, and on stop, so a clean exit does not
+// either.
+spool_clear :: proc() {
+	d := spool_dir(context.temp_allocator)
+	if d == "" {
+		return
+	}
+	infos, err := os.read_directory_by_path(d, -1, context.temp_allocator)
+	if err != nil {
+		return
+	}
+	for info in infos {
+		if info.type != .Regular {
+			continue
+		}
+		_ = os.remove(fmt.tprintf("%s/%s", d, info.name))
+	}
+}
+
+// spool_write is the record format, written from Odin. The `--watch` child
+// writes exactly these two files from the shell; this is the same thing, and
+// it is what the selftest uses to stand in for a compositor.
+spool_write :: proc(stamp: string, types: string, payload: []u8) -> bool {
+	d := spool_ensure()
+	if d == "" {
+		return false
+	}
+	tp := fmt.tprintf("%s/%s%s", d, stamp, SPOOL_SUFFIX_TYPES)
+	if os.write_entire_file(tp, transmute([]u8)types, os.perm_number(0o600)) != nil {
+		return false
+	}
+	_ = os.chmod(tp, os.perm_number(0o600))
+	part := fmt.tprintf("%s/%s%s", d, stamp, SPOOL_SUFFIX_PART)
+	if os.write_entire_file(part, payload, os.perm_number(0o600)) != nil {
+		return false
+	}
+	_ = os.chmod(part, os.perm_number(0o600))
+	// The rename is the commit.
+	return os.rename(part, fmt.tprintf("%s/%s%s", d, stamp, SPOOL_SUFFIX_BLOB)) == nil
+}
+
+// spool_drain ingests every committed record, oldest first, and removes each
+// one as it goes. It returns how many were stored.
+spool_drain :: proc() -> (stored: int, seen: int) {
+	d := spool_dir(context.temp_allocator)
+	if d == "" {
+		return 0, 0
+	}
+	infos, err := os.read_directory_by_path(d, -1, context.temp_allocator)
+	if err != nil {
+		return 0, 0
+	}
+	stamps := make([dynamic]string, 0, 8, context.temp_allocator)
+	for info in infos {
+		if info.type != .Regular || !strings.has_suffix(info.name, SPOOL_SUFFIX_BLOB) {
+			continue
+		}
+		append(&stamps, info.name[:len(info.name) - len(SPOOL_SUFFIX_BLOB)])
+	}
+	// Oldest first. The stamps are fixed-width nanosecond counts, so sorting
+	// them as strings is sorting them in time.
+	slice.sort(stamps[:])
+	for st in stamps {
+		seen += 1
+		types_path := fmt.tprintf("%s/%s%s", d, st, SPOOL_SUFFIX_TYPES)
+		blob_path := fmt.tprintf("%s/%s%s", d, st, SPOOL_SUFFIX_BLOB)
+		types, terr := os.read_entire_file_from_path(types_path, context.temp_allocator)
+		payload, perr := os.read_entire_file_from_path(blob_path, context.temp_allocator)
+		if perr == nil && terr == nil {
+			if ingest_selection(string(types), payload) == .Stored {
+				stored += 1
+			}
+		}
+		_ = os.remove(types_path)
+		_ = os.remove(blob_path)
+	}
+	return stored, seen
+}
+
+// ---------------------------------------------------------------------------
+// The `wl-paste --watch` child
+// ---------------------------------------------------------------------------
+
+@(private = "file")
+g_watch_proc: os.Process
+@(private = "file")
+g_watch_live: bool
+
+// SPOOL_SH is the command `wl-paste --watch` runs on every selection change.
+//
+//   umask 077   — the shell creates the files, not us, so the mode has to be
+//                 set before the redirect rather than chmodded after it
+//   cat         — FIRST, because wl-paste is writing into a pipe and will
+//                 block once it fills; asking it anything before draining
+//                 that pipe deadlocks on a selection bigger than 64 KB
+//   list-types  — a second wl-paste, which is the seam that is still not
+//                 atomic; see the note at the top of this section
+//   mv          — the commit
+SPOOL_SH ::
+	`umask 077; n=$(date +%s%N); cat > "$D/$n.part"; wl-paste --list-types > "$D/$n.types" 2>/dev/null; mv "$D/$n.part" "$D/$n.blob"`
+
+watch_start :: proc() -> bool {
+	d := spool_ensure()
+	if d == "" {
+		return false
+	}
+	spool_clear()
+	script := fmt.tprintf("D=%q; %s", d, SPOOL_SH)
+	pr, err := os.process_start(
+		os.Process_Desc{command = {"wl-paste", "--watch", "sh", "-c", script}},
+	)
+	if err != nil {
+		return false
+	}
+	g_watch_proc = pr
+	sync.atomic_store(&g_watch_live, true)
+	return true
+}
+
+// watch_stop is called from two places — the watcher thread's own `defer` and
+// `watcher_stop` on the way out of `main` — so it has to be safe to run twice
+// and from either thread. The compare-and-swap is what makes it so.
+//
+// It is called from `main` as well as from the thread deliberately: the thread
+// notices `g.stop` only on its next tick, and a clipboard manager that leaves
+// an orphaned `wl-paste --watch` behind leaves something writing the user's
+// selections into a spool directory with nobody draining it.
+watch_stop :: proc() {
+	if _, had := sync.atomic_compare_exchange_strong(&g_watch_live, true, false); had {
+		_ = os.process_kill(g_watch_proc)
+		_, _ = os.process_wait(g_watch_proc)
+	}
+	spool_clear()
+}
+
+// ---------------------------------------------------------------------------
+// The thread
+// ---------------------------------------------------------------------------
+
+watcher_start :: proc() {
+	sync.atomic_store(&g.enabled, true)
+	thread.create_and_start(watcher, self_cleanup = true)
+}
+
+watcher_stop :: proc() {
+	sync.atomic_store(&g.stop, true)
+	// Not left to the thread: see `watch_stop`.
+	watch_stop()
+}
+
+@(private = "file")
+watcher :: proc() {
+	evented := watch_start()
+	defer watch_stop()
+	if evented {
+		set_status("watching the selection (event-driven)")
+	} else {
+		set_status("sampling the selection every 0.7s — wl-paste --watch is unavailable")
+	}
+	// `--watch` fires on the NEXT change, so whatever is already on the
+	// clipboard when the window opens would otherwise be invisible until
+	// something else is copied.
+	sample_once()
+	free_all(context.temp_allocator)
+
+	period := evented ? SPOOL_POLL_SECONDS : POLL_SECONDS
+	for !sync.atomic_load(&g.stop) {
+		if sync.atomic_load(&g.enabled) {
+			if evented {
+				spool_drain()
+			} else {
+				sample_once()
+			}
+			free_all(context.temp_allocator)
+		}
+		time.sleep(time.Duration(period * f64(time.Second)))
+	}
 }
 
 // shrink box-filters an image down to a thumbnail. Bilinear sampling at a large
@@ -766,6 +1076,7 @@ clear_all_locked :: proc() -> int {
 		drop_entry(i)
 	}
 	g.last_id = 0
+	g.last_secret_id = 0
 	save_locked()
 	return n
 }

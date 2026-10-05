@@ -118,7 +118,9 @@ run_selftest :: proc(verbose: bool, with_e2e: bool) -> int {
 	test_announce_query(&t)
 	test_announce_parse(&t)
 	test_udp_tracker(&t)
+	test_scrape_wire(&t)
 	test_handshake(&t)
+	test_extension_wire(&t)
 	test_framing(&t)
 	test_message_encoding(&t)
 	test_rarest_first(&t)
@@ -128,6 +130,7 @@ run_selftest :: proc(verbose: bool, with_e2e: bool) -> int {
 	test_storage(&t)
 	test_create_torrent(&t)
 	test_loopback_gate(&t)
+	test_metadata_loopback(&t)
 
 	unit_passed := t.passed
 	unit_failed := t.failed
@@ -1535,7 +1538,7 @@ test_handshake :: proc(t: ^T) {
 		t,
 		"the eight reserved bytes are all zero",
 		reserved_zero,
-		"this client advertises no extensions, deliberately: no DHT, no PEX",
+		"the default encoding advertises nothing; the engine's BEP 10 form is asserted in test_extension_wire, and the DHT bit is clear in both",
 	)
 	ihv := ih
 	tcheck(t, "the info-hash is at offset 28", slice.equal(hs[28:48], ihv[:]))
