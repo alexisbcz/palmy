@@ -1,5 +1,6 @@
 package palmy
 
+import "base:intrinsics"
 import "core:fmt"
 import "core:os"
 import "core:strings"
@@ -145,6 +146,16 @@ Window :: struct {
 	// callbacks deliberately do not set it, so an idle window stays idle.
 	input_dirty:       bool,
 
+	// The wake-up descriptor: the second fd in the poll set, beside the
+	// display socket. See "Waking the frame loop" below. `wake_flag` and
+	// `wake_deadline` are written from any thread and so are only ever
+	// touched atomically; `wake_pending` belongs to the loop's thread.
+	wake_fd:           linux.Fd,
+	wake_flag:         i32,
+	wake_deadline:     i64,
+	wake_pending:      bool,
+	epoch:             time.Tick,
+
 	cursor_shape:      Cursor,
 
 	input:             Input,
@@ -221,6 +232,10 @@ window_open :: proc(w: ^Window, title, app_id: string, width, height: int, decor
 	w.input.text = strings.builder_make()
 	w.last_present = time.now()
 
+	// Before the backend, so that the roundtrips inside `wl_open` and
+	// `x_open` already poll a complete descriptor set.
+	wake_init(w)
+
 	be, berr := pick_backend()
 	if berr != "" {
 		return berr
@@ -244,6 +259,7 @@ window_close :: proc(w: ^Window) {
 		x_close(w)
 	}
 	keymap_destroy(&w.keymap)
+	wake_close(w)
 	conn_close(&w.conn)
 	delete(w.input.keys)
 	strings.builder_destroy(&w.input.text)
@@ -361,11 +377,213 @@ frame_hold_ms :: proc(w: ^Window) -> int {
 }
 
 // ---------------------------------------------------------------------------
+// Waking the frame loop
+//
+// The loop parks in `poll(2)`. For a long time the only descriptor in that set
+// was the display socket, so the only thing in the world that could end an
+// idle sleep was the display server. A worker thread with a token to show, or
+// a countdown that has to expire, had no way in — and ten applications worked
+// around that by marking the UI permanently animating, which repaints a
+// software-rasterised window at the display rate forever for the sake of an
+// event that might arrive.
+//
+// The way in is a second descriptor, an `eventfd`, polled alongside the
+// socket. Any thread may write to it without taking a lock; the loop drains it
+// after poll and decides what the write meant:
+//
+//   - `wake` sets `wake_flag` *before* writing, and the drain turns that into
+//     exactly one frame. One frame, not a mode: a thousand wakes delivered
+//     while the loop is busy still collapse into the single frame that is
+//     owed, because the counter is drained in one read.
+//
+//   - `wake_at` only moves `wake_deadline` in. Its write exists to make a loop
+//     already parked on a longer timeout recompute it; by itself it does not
+//     ask for a frame. The frame comes when the deadline passes.
+//
+// A wake raised while the loop is mid-frame is not lost: the eventfd counter
+// is still non-zero when poll is next entered, so poll returns at once. That
+// is also why the drain reads the descriptor *before* it consumes `wake_flag`
+// — the other order has a window in which a concurrent wake's write is
+// swallowed by a read while its flag is set too late to be seen, and the loop
+// then sleeps on a wake that was already delivered.
+// ---------------------------------------------------------------------------
+
+@(private)
+wake_init :: proc(w: ^Window) {
+	w.epoch = time.tick_now()
+	w.wake_flag = 0
+	w.wake_deadline = 0
+	w.wake_pending = false
+	fd, err := linux.eventfd(0, {.CLOEXEC, .NONBLOCK})
+	if err != .NONE {
+		// Not fatal. Without it the loop behaves exactly as it did before
+		// this existed: it wakes for the display server and for nothing else.
+		w.wake_fd = -1
+		return
+	}
+	w.wake_fd = fd
+}
+
+@(private)
+wake_close :: proc(w: ^Window) {
+	if w.wake_fd > 0 {
+		linux.close(w.wake_fd)
+	}
+	w.wake_fd = -1
+}
+
+// wake_poke makes a parked poll return. Descriptor 0 is this process's stdin
+// and never an eventfd, so `> 0` doubles as "a wake descriptor exists" for a
+// Window that was never opened.
+@(private)
+wake_poke :: proc(w: ^Window) {
+	if w.wake_fd <= 0 {
+		return
+	}
+	one := u64(1)
+	buf := (cast([^]u8)&one)[:8]
+	// The only failure a non-blocking eventfd can give is EAGAIN, at a
+	// counter of 2^64-2 — which would mean the loop has not run for longer
+	// than the universe has. Either way there is already a wake queued.
+	linux.write(w.wake_fd, buf)
+}
+
+// mono_ns is nanoseconds on a monotonic clock since the window opened. A
+// deadline cannot be kept on the wall clock: a one-shot that fires in 30
+// seconds must not be moved by NTP stepping the time, and `time.now()` can go
+// backwards.
+@(private)
+mono_ns :: proc(w: ^Window) -> i64 {
+	return i64(time.tick_since(w.epoch))
+}
+
+// wake_window asks the frame loop to run one more frame.
+//
+// It is safe to call from any thread. It takes no lock, allocates nothing and
+// never blocks — an atomic store and a write to an eventfd — so calling it
+// while the loop is in the middle of drawing, from inside the loop itself, or
+// from a signal handler, cannot deadlock.
+//
+// One call means at most one extra frame. The loop drains the descriptor, runs
+// a single iteration and parks again; it does not start spinning.
+wake_window :: proc(w: ^Window) {
+	intrinsics.atomic_store(&w.wake_flag, 1)
+	wake_poke(w)
+}
+
+// wake_after_window arms a one-shot: the loop sleeps at most `delay` and then
+// runs a frame. It fires once and disarms itself — nothing repeats until it is
+// armed again.
+//
+// Arming is earliest-wins. Two subsystems each asking for a wake both get
+// served by the nearer deadline, and an already-armed nearer deadline is not
+// pushed out by a later request. The natural way to use it is to re-arm every
+// frame with whatever the next thing to happen is; the natural way to misuse
+// it is to arm once for a far-off instant and expect a nearer, unrelated wake
+// not to consume it.
+//
+// A delay of zero or less is the same as `wake`.
+wake_after_window :: proc(w: ^Window, delay: time.Duration) {
+	if delay <= 0 {
+		wake_window(w)
+		return
+	}
+	now := mono_ns(w)
+	target := max(i64)
+	if i64(delay) < max(i64) - now {
+		target = now + i64(delay)
+	}
+	if target <= 0 {
+		// Zero is the disarmed sentinel, so it cannot also be a deadline.
+		target = 1
+	}
+	for {
+		cur := intrinsics.atomic_load(&w.wake_deadline)
+		if cur != 0 && cur <= target {
+			return // Something nearer is already armed.
+		}
+		if _, ok := intrinsics.atomic_compare_exchange_strong(&w.wake_deadline, cur, target);
+		   ok {
+			break
+		}
+	}
+	wake_poke(w)
+}
+
+// wake_at_window arms the one-shot for an instant rather than a delay.
+wake_at_window :: proc(w: ^Window, at: time.Time) {
+	wake_after_window(w, time.diff(time.now(), at))
+}
+
+// wake_cancel_window disarms the one-shot. A wake already turned into a
+// pending frame is not taken back.
+wake_cancel_window :: proc(w: ^Window) {
+	intrinsics.atomic_store(&w.wake_deadline, 0)
+}
+
+// The longest poll this will ask for, in milliseconds: a little over a day.
+// `poll` takes an i32, and a deadline far enough out to overflow one would
+// otherwise wrap to a negative timeout, which means "wait forever" — the one
+// answer a timer must never give. Capping instead costs a wakeup a day.
+@(private)
+WAKE_MAX_MS :: 24 * 60 * 60 * 1000
+
+// wake_cap shortens a poll timeout so that an armed one-shot is not slept
+// through. Rounding up is deliberate: waking a millisecond late costs nothing,
+// and waking early would just mean polling again.
+@(private)
+wake_cap :: proc(w: ^Window, timeout_ms: int) -> int {
+	d := intrinsics.atomic_load(&w.wake_deadline)
+	if d == 0 {
+		return min(timeout_ms, WAKE_MAX_MS) if timeout_ms >= 0 else timeout_ms
+	}
+	ms := 0
+	if left := d - mono_ns(w); left > 0 {
+		ms = int(min((left + 999_999) / 1_000_000, i64(WAKE_MAX_MS)))
+	}
+	if timeout_ms < 0 || ms < timeout_ms {
+		return ms
+	}
+	return timeout_ms
+}
+
+// drain_wake folds whatever arrived on the wake descriptor into the loop's
+// state. It runs after poll, on the loop's thread only.
+@(private)
+drain_wake :: proc(w: ^Window) {
+	if w.wake_fd > 0 {
+		// A non-semaphore eventfd empties its whole counter in one read, so
+		// a thousand queued wakes become one frame. The second read is the
+		// EAGAIN that proves it is empty.
+		buf: [8]u8
+		for {
+			n, err := linux.read(w.wake_fd, buf[:])
+			if err != .NONE || n <= 0 {
+				break
+			}
+		}
+	}
+
+	if intrinsics.atomic_exchange(&w.wake_flag, 0) != 0 {
+		w.wake_pending = true
+	}
+
+	// The deadline is checked whatever woke us, so a one-shot still fires when
+	// poll happened to return early for an unrelated event.
+	if d := intrinsics.atomic_load(&w.wake_deadline); d != 0 && mono_ns(w) >= d {
+		if _, ok := intrinsics.atomic_compare_exchange_strong(&w.wake_deadline, d, 0); ok {
+			w.wake_pending = true
+		}
+	}
+}
+
+// ---------------------------------------------------------------------------
 // Event pumping
 // ---------------------------------------------------------------------------
 
-// window_wait blocks until the server sends something, or until the timeout
-// expires. A negative timeout waits forever.
+// window_wait blocks until the server sends something, until somebody wakes
+// the window, until an armed one-shot comes due, or until the timeout expires.
+// A negative timeout waits forever — or until one of the first three happens.
 window_wait :: proc(w: ^Window, timeout_ms: int) -> bool {
 	c := &w.conn
 	if c.fatal != "" {
@@ -382,8 +600,22 @@ window_wait :: proc(w: ^Window, timeout_ms: int) -> bool {
 		}
 	}
 
-	pfd := [1]linux.Poll_Fd{{fd = c.fd, events = {.IN}}}
-	n, perr := linux.poll(pfd[:], i32(timeout_ms))
+	pfd: [2]linux.Poll_Fd
+	pfd[0] = {
+		fd     = c.fd,
+		events = {.IN},
+	}
+	nfds := 1
+	if w.wake_fd > 0 {
+		pfd[1] = {
+			fd     = w.wake_fd,
+			events = {.IN},
+		}
+		nfds = 2
+	}
+
+	n, perr := linux.poll(pfd[:nfds], i32(wake_cap(w, timeout_ms)))
+	drain_wake(w)
 	if perr == .EINTR {
 		return true
 	}
@@ -396,14 +628,18 @@ window_wait :: proc(w: ^Window, timeout_ms: int) -> bool {
 			c.fatal = "the display server closed the connection"
 			return false
 		}
-		if !conn_read(c) {
-			return false
-		}
-		switch w.backend {
-		case .Wayland:
-			wl_dispatch_pending(c, w)
-		case .X11:
-			x_dispatch_pending(w)
+		// Only the wake descriptor may have fired, and then there is nothing
+		// on the socket to read.
+		if .IN in pfd[0].revents {
+			if !conn_read(c) {
+				return false
+			}
+			switch w.backend {
+			case .Wayland:
+				wl_dispatch_pending(c, w)
+			case .X11:
+				x_dispatch_pending(w)
+			}
 		}
 	}
 	return c.fatal == ""

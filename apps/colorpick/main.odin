@@ -18,6 +18,7 @@ import "core:fmt"
 import "core:math"
 import "core:os"
 import "core:strings"
+import "core:time"
 import kit "kit:."
 import p "palmy:."
 import sc "shadcn:."
@@ -26,6 +27,27 @@ WIN_W :: 1060
 WIN_H :: 720
 
 PALETTE_CAP :: 48
+
+// The caret's blink, and how much of each cycle it is lit.
+CARET_PERIOD :: 1.1
+CARET_ON :: 0.62
+
+// Nothing here reads `ui.now`. palmy clamps `dt` to 0.1s so that a stalled
+// frame cannot teleport an animation, which means `ui.now` only tracks real
+// time while frames are frequent. This window now draws twice a second when
+// it is idle, so a timer hung off `ui.now` would run at a third of real
+// speed: a four-second toast would linger for twelve. Everything timed here
+// is timed against a real monotonic clock instead.
+START_TICK := time.tick_now()
+
+mono :: proc() -> f64 {
+	return time.duration_seconds(time.tick_since(START_TICK))
+}
+
+// secs turns a number of seconds into a wake delay.
+secs :: proc(s: f64) -> time.Duration {
+	return time.Duration(max(s, 0) * f64(time.Second))
+}
 
 Mode :: enum u8 {
 	Editor,
@@ -186,10 +208,13 @@ main :: proc() {
 		}
 
 		if st.toast != "" {
-			if ui.now > st.toast_t {
+			if mono() > st.toast_t {
 				st.toast = ""
 			} else {
-				p.redraw(ui)
+				// One frame when it expires, rather than every frame until
+				// it does. `p.redraw` here meant the window repainted at the
+				// display rate for the whole four seconds a toast was up.
+				p.wake_after(ui, secs(st.toast_t - mono()))
 			}
 		}
 	}
@@ -563,7 +588,8 @@ toast :: proc(st: ^St, ui: ^p.Ctx, msg: string) {
 		delete(st.toast)
 	}
 	st.toast = strings.clone(msg)
-	st.toast_t = ui.now + 4
+	st.toast_t = mono() + 4
+	p.wake_after(ui, secs(4))
 }
 
 // quit is nil-safe so the headless self-test can drive `handle_keys` with no
@@ -1094,8 +1120,16 @@ field_box :: proc(ui: ^p.Ctx, st: ^St, i: int) {
 	// a blinking bar in them would promise arrow-key editing that is bound to
 	// the value instead.
 	if on && f.model == .Hex && ui.input.focused {
-		ui.animating = true
-		if math.mod_f32(f32(ui.now), 1.1) < 0.62 {
+		// A blink is two frames per cycle, not sixty. Marking the window
+		// animating for it cost a third of a core for as long as the hex
+		// field was focused -- which is the default state of the app, so
+		// colorpick burned that from the moment it opened. Ask for one frame
+		// at the next edge of the blink instead.
+		phase := math.mod_f32(f32(mono()), CARET_PERIOD)
+		lit := phase < CARET_ON
+		next := lit ? CARET_ON - phase : CARET_PERIOD - phase
+		p.wake_after(ui, secs(f64(next)))
+		if lit {
 			w := p.text_width(ui.fonts, txt[:clamp(st.hex_caret, 0, len(txt))], 14, .Mono, .Regular)
 			car := p.div(ui, "absolute w-[2] rounded-full bg-foreground")
 			cs := p.style(ui, car)

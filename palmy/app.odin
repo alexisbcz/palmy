@@ -136,8 +136,122 @@ quit_app :: proc(app: ^App) {
 }
 
 // redraw forces another frame even if nothing changed.
+//
+// It is only valid from the frame loop's own thread, because it is a plain
+// write to the frame state. A worker thread wants `wake` instead.
 redraw :: proc(ctx: ^Ctx) {
 	ctx.redraw = true
+}
+
+// ---------------------------------------------------------------------------
+// Waking the loop
+//
+// `frames` blocks while the window is idle, which is the whole point of it:
+// an idle palmy window costs nothing. The cost of that used to be paid by
+// anything that happens *off* the display server — a token arriving on a
+// socket in a worker thread, a countdown expiring, a file watcher firing — and
+// it was paid by marking the UI permanently animating and repainting at the
+// display rate in the hope of noticing.
+//
+//	wake(app)                  one more frame, from any thread
+//	wake_after(app, 500 * time.Millisecond)   one frame, later
+//	wake_at(app, deadline)                    the same, as an instant
+//	wake_cancel(app)                          never mind
+//
+// The mechanism is in `palmy/window.odin`, above `window_wait`, and it is the
+// same on both backends because the poll set is shared.
+// ---------------------------------------------------------------------------
+
+@(private)
+wake_app :: proc(app: ^App) {
+	if app != nil {
+		wake_window(&app.win)
+	}
+}
+
+@(private)
+wake_ctx :: proc(ctx: ^Ctx) {
+	if ctx != nil && ctx.app != nil {
+		wake_window(&ctx.app.win)
+	}
+}
+
+// wake asks for one more frame. Safe from any thread; see `wake_window`.
+wake :: proc {
+	wake_app,
+	wake_ctx,
+	wake_window,
+}
+
+@(private)
+wake_after_app :: proc(app: ^App, delay: time.Duration) {
+	if app != nil {
+		wake_after_window(&app.win, delay)
+	}
+}
+
+@(private)
+wake_after_ctx :: proc(ctx: ^Ctx, delay: time.Duration) {
+	if ctx != nil && ctx.app != nil {
+		wake_after_window(&ctx.app.win, delay)
+	}
+}
+
+// wake_after arms a one-shot that runs one frame after `delay` and then
+// disarms itself. Arming is earliest-wins; see `wake_after_window`.
+wake_after :: proc {
+	wake_after_app,
+	wake_after_ctx,
+	wake_after_window,
+}
+
+@(private)
+wake_at_app :: proc(app: ^App, at: time.Time) {
+	if app != nil {
+		wake_at_window(&app.win, at)
+	}
+}
+
+@(private)
+wake_at_ctx :: proc(ctx: ^Ctx, at: time.Time) {
+	if ctx != nil && ctx.app != nil {
+		wake_at_window(&ctx.app.win, at)
+	}
+}
+
+// wake_at arms the one-shot for an instant rather than a delay.
+wake_at :: proc {
+	wake_at_app,
+	wake_at_ctx,
+	wake_at_window,
+}
+
+@(private)
+wake_cancel_app :: proc(app: ^App) {
+	if app != nil {
+		wake_cancel_window(&app.win)
+	}
+}
+
+@(private)
+wake_cancel_ctx :: proc(ctx: ^Ctx) {
+	if ctx != nil && ctx.app != nil {
+		wake_cancel_window(&ctx.app.win)
+	}
+}
+
+// wake_cancel disarms the one-shot.
+wake_cancel :: proc {
+	wake_cancel_app,
+	wake_cancel_ctx,
+	wake_cancel_window,
+}
+
+// frames_presented is how many frames this window has actually put on screen.
+// An idle palmy window's count does not move, which is what makes "did that
+// wake cost exactly one frame?" a question a test can ask.
+frames_presented :: proc(app: ^App) -> u64 {
+	return app == nil ? 0 : app.frames_shown
 }
 
 // ---------------------------------------------------------------------------
@@ -220,6 +334,7 @@ wait_for_frame :: proc(app: ^App) -> bool {
 			app.cfg.always ||
 			app.ctx.redraw ||
 			app.ctx.animating ||
+			w.wake_pending ||
 			w.input_dirty ||
 			w.need_configure_ack
 
@@ -235,6 +350,8 @@ wait_for_frame :: proc(app: ^App) -> bool {
 				pump_key_repeat(app)
 				continue
 			}
+			// The wake is spent on this frame, not on the next one too.
+			w.wake_pending = false
 			w.input_dirty = false
 			app.ctx.redraw = false
 			return true
