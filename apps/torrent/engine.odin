@@ -73,6 +73,19 @@ Peer :: struct {
 	peer_id:         [20]u8,
 	client:          string,
 
+	// BEP 10. `peer_ext` is what the peer's reserved bytes claimed;
+	// `ext_sent` stops us sending our own extension handshake twice;
+	// `peer_ut_metadata` is the id THE PEER asked us to send ut_metadata on,
+	// which is not the id we asked for. `peer_offered_pex` is recorded and
+	// never acted on — there is no code in this program that reads a peer
+	// exchange payload, and the peers tab says so.
+	peer_ext:        bool,
+	ext_sent:        bool,
+	peer_ut_metadata: int,
+	peer_offered_pex: bool,
+	ext_client:      string,
+	meta_served:     int, // metadata pieces handed out, for the peers tab
+
 	// The four state bits of the protocol. Both sides start choked and
 	// uninterested, and a client that assumes otherwise sends requests that are
 	// silently dropped.
@@ -155,6 +168,14 @@ Torrent :: struct {
 	// Download budget, in bytes, for the optional rate limit.
 	budget:         f64,
 	budget_at:      f64,
+	// Upload budget. Separate from the download one because the two limits
+	// are set independently and a seeder has no download budget to spend.
+	up_budget:      f64,
+	up_budget_at:   f64,
+	// Blocks that were asked for and are waiting on the upload budget rather
+	// than on the disk. Shown in the UI so a throttled transfer does not look
+	// like a stalled one.
+	up_deferred:    int,
 
 	// The unchoke decision runs on a short cadence; the optimistic slot rotates
 	// on a long one and is remembered by peer id, because peer indices move
@@ -166,6 +187,7 @@ Torrent :: struct {
 
 Engine_Cmd_Kind :: enum {
 	Add,
+	Add_Magnet,
 	Start,
 	Stop,
 	Recheck,
@@ -351,6 +373,17 @@ engine_drain_cmds :: proc(e: ^Engine) {
 			}
 			delete(c.path)
 			delete(c.dir)
+		case .Add_Magnet:
+			// This runs on the engine thread, not the UI's, for the same
+			// reason the announce does: it talks to a socket and the window
+			// must not wait for it. The engine's own step is allowed to
+			// block, because every address it can reach is on loopback.
+			if err := engine_add_magnet_locked(e, c.path, c.dir, c.start); err != "" {
+				e.last_error = strings.clone(err)
+				fmt.eprintfln("torrent: %s", err)
+			}
+			delete(c.path)
+			delete(c.dir)
 		case .Start:
 			if t := engine_find(e, c.id); t != nil && t.state == .Stopped {
 				torrent_start(e, t)
@@ -393,6 +426,18 @@ engine_find :: proc(e: ^Engine, id: int) -> ^Torrent {
 		}
 	}
 	return nil
+}
+
+engine_add_magnet :: proc(e: ^Engine, uri, dir: string, start := true) {
+	engine_post(
+		e,
+		Engine_Cmd {
+			kind = .Add_Magnet,
+			path = strings.clone(uri),
+			dir = strings.clone(dir),
+			start = start,
+		},
+	)
 }
 
 engine_add :: proc(e: ^Engine, torrent_path, dir: string, start := true) {
@@ -461,6 +506,55 @@ engine_add_locked :: proc(
 		}
 	}
 	return nt, ""
+}
+
+// engine_add_magnet_locked resolves a magnet and then adds it as an ordinary
+// torrent.
+//
+// The order matters. A .torrent already in the state directory wins, because
+// it costs nothing and is already verified; only when there is none does this
+// go to the wire, and even then the bytes are not believed until SHA-1 over
+// them matches the hash the user's own link carried. The resolved metadata is
+// written back into the state directory, so the same magnet resolves locally
+// ever after.
+@(private = "file")
+engine_add_magnet_locked :: proc(e: ^Engine, uri, dir: string, start: bool) -> (err: string) {
+	mg, perr := magnet_parse(uri, context.temp_allocator)
+	if perr != "" {
+		return perr
+	}
+	hex := hash20_hex(mg.info_hash, context.temp_allocator)
+	cached := path_join(
+		state_dir(context.temp_allocator),
+		tsprint("%s.torrent", hex),
+		allocator = context.temp_allocator,
+	)
+	if path_exists(cached) {
+		_, aerr := engine_add_locked(e, cached, dir, start)
+		return aerr
+	}
+	res, rerr := magnet_resolve(mg, e.peer_id, e.port, METAFETCH_TIMEOUT_MS, context.temp_allocator)
+	if rerr != "" {
+		detail := ""
+		if len(res.notes) > 0 {
+			detail = tsprint(" (%s)", res.notes[0])
+		}
+		return tsprint("cannot resolve %s: %s%s", hex[:12], rerr, detail)
+	}
+	if werr := write_file(cached, res.torrent); werr != "" {
+		return werr
+	}
+	if e.verbose {
+		fmt.eprintfln(
+			"torrent: resolved %s over BEP 9 from %s:%d, %d bytes of metadata, verified against the magnet's own hash",
+			hex[:12],
+			res.from_host,
+			res.from_port,
+			len(res.torrent),
+		)
+	}
+	_, aerr := engine_add_locked(e, cached, dir, start)
+	return aerr
 }
 
 @(private = "file")
@@ -850,9 +944,11 @@ engine_pending_read :: proc(e: ^Engine, pi: int) {
 		serving        = make([dynamic]Block_Req, 0, 8),
 	}
 	pr.bits = bf_make(piece_count(&target.meta))
-	hs := handshake_encode(target.meta.info_hash, e.peer_id, context.temp_allocator)
+	pr.peer_ext = reserved_has_extensions(h.reserved)
+	hs := handshake_encode(target.meta.info_hash, e.peer_id, context.temp_allocator, extended = true)
 	append(&pr.out, ..hs)
 	pr.sent_handshake = true
+	peer_send_ext_handshake(target, &pr)
 	if bf_count(target.have) > 0 {
 		msg_bitfield(&pr.out, target.have)
 	}
@@ -926,6 +1022,28 @@ torrent_tick :: proc(e: ^Engine, t: ^Torrent, now: f64) {
 		t.budget_at = now
 		burst := f64(e.down_limit) * 1.0
 		t.budget = min(t.budget + f64(e.down_limit) * dt, burst)
+	}
+
+	// The upload budget, the same shape and for the same reason. The
+	// asymmetry worth knowing: withholding a REQUEST shapes the download,
+	// because the peer sends only what we asked for. Withholding a PIECE
+	// shapes the upload, because the peer already asked and the request sits
+	// in `serving` until there is budget to answer it. Neither sleeps the
+	// loop, so one throttled torrent does not slow the others down.
+	if e.up_limit > 0 {
+		if t.up_budget_at == 0 {
+			t.up_budget_at = now
+			// Start with one second of credit rather than zero, so the first
+			// block out does not wait for a refill that has not happened yet.
+			t.up_budget = f64(e.up_limit)
+		}
+		dt := now - t.up_budget_at
+		t.up_budget_at = now
+		burst := f64(e.up_limit) * 1.0
+		t.up_budget = min(t.up_budget + f64(e.up_limit) * dt, burst)
+	} else {
+		t.up_budget_at = 0
+		t.up_deferred = 0
 	}
 
 	torrent_tracker_tick(e, t, now)
@@ -1152,7 +1270,7 @@ peer_connect :: proc(e: ^Engine, t: ^Torrent, host: string, port: int) {
 	}
 	framer_init(&pr.in_)
 	pr.bits = bf_make(piece_count(&t.meta))
-	hs := handshake_encode(t.meta.info_hash, e.peer_id, context.temp_allocator)
+	hs := handshake_encode(t.meta.info_hash, e.peer_id, context.temp_allocator, extended = true)
 	append(&pr.out, ..hs)
 	pr.sent_handshake = true
 	pr.last_send = now_s()
@@ -1208,6 +1326,7 @@ peer_kill :: proc(t: ^Torrent, i: int, why: string) {
 	delete(pr.host)
 	delete(pr.err)
 	delete(pr.client)
+	delete(pr.ext_client)
 	_ = why
 	unordered_remove(&t.peers, i)
 }
@@ -1271,6 +1390,7 @@ peer_pump_read :: proc(e: ^Engine, t: ^Torrent, pi: int) {
 			pr.handshaked = true
 			pr.peer_id = h.peer_id
 			pr.client = peer_client_name(h.peer_id)
+			pr.peer_ext = reserved_has_extensions(h.reserved)
 			if pr.peer_id == e.peer_id {
 				peer_set_dead(pr, "that is our own peer id; we dialled ourselves")
 				return
@@ -1295,10 +1415,18 @@ peer_pump_read :: proc(e: ^Engine, t: ^Torrent, pi: int) {
 				peer_set_dead(&other, "a duplicate connection to the same peer")
 			}
 			if !pr.sent_handshake {
-				hs := handshake_encode(t.meta.info_hash, e.peer_id, context.temp_allocator)
+				hs := handshake_encode(
+					t.meta.info_hash,
+					e.peer_id,
+					context.temp_allocator,
+					extended = true,
+				)
 				append(&pr.out, ..hs)
 				pr.sent_handshake = true
 			}
+			// BEP 10 says the extension handshake goes first, before any
+			// other extended message, and only to a peer that advertised it.
+			peer_send_ext_handshake(t, pr)
 			// The bitfield is optional and goes first if it goes at all. An
 			// empty one is not sent: there is nothing to say.
 			if bf_count(t.have) > 0 {
@@ -1425,9 +1553,119 @@ peer_handle :: proc(e: ^Engine, t: ^Torrent, pr: ^Peer, m: Msg) {
 	// the address it points at would not be allowed anyway.
 
 	case .Extended:
-	// The extension protocol handshake. We never advertise support for it,
-	// so a peer sending one is being optimistic; ignoring it is correct.
+		peer_handle_extended(e, t, pr, m)
 	}
+}
+
+// peer_send_ext_handshake offers exactly one extension: ut_metadata.
+//
+// It is sent only to a peer whose reserved bytes said it speaks BEP 10, and
+// only once. `metadata_size` is the length of the info dictionary — the same
+// byte range the info-hash was taken over — because a peer resolving a magnet
+// cannot ask for pieces of something whose size it does not know.
+@(private = "file")
+peer_send_ext_handshake :: proc(t: ^Torrent, pr: ^Peer) {
+	if pr.ext_sent || !pr.peer_ext {
+		return
+	}
+	size := t.meta.info_span[1] - t.meta.info_span[0]
+	msg_extended(
+		&pr.out,
+		EXT_HANDSHAKE_ID,
+		ext_handshake_payload(size, context.temp_allocator),
+	)
+	pr.ext_sent = true
+	pr.last_send = now_s()
+}
+
+// peer_handle_extended is the serving half of BEP 9.
+//
+// A peer that has only a magnet link asks us for the info dictionary in 16 KiB
+// pieces. We have it — it is `t.meta.raw[info_span]`, the exact bytes the
+// info-hash was computed over, which is the only slice that can possibly hash
+// back to the right value. Nothing is re-encoded.
+//
+// Everything else that arrives on this message id is dropped. In particular an
+// extended id we never registered is dropped by `ext_known_id`, which is where
+// a peer pushing peer exchange at us lands: there is no branch below that
+// reads an address.
+@(private = "file")
+peer_handle_extended :: proc(e: ^Engine, t: ^Torrent, pr: ^Peer, m: Msg) {
+	if len(m.payload) < 1 {
+		peer_set_dead(pr, "an extended message with no extended id")
+		return
+	}
+	ext_id := m.payload[0]
+	body := m.payload[1:]
+
+	if ext_id == EXT_HANDSHAKE_ID {
+		h, herr := ext_parse_handshake(body, context.allocator)
+		if herr != "" {
+			peer_set_dead(pr, herr)
+			return
+		}
+		defer {
+			hh := h
+			hh.client = ""
+			ext_handshake_destroy(&hh)
+		}
+		pr.peer_ut_metadata = h.ut_metadata
+		pr.peer_offered_pex = h.offered_pex
+		delete(pr.ext_client)
+		pr.ext_client = h.client
+		// A peer may send its handshake before ours; answer now if we have
+		// not already.
+		peer_send_ext_handshake(t, pr)
+		return
+	}
+	if !ext_known_id(ext_id) {
+		// An id this client never registered. There is nothing it could be
+		// but a peer guessing, and guessing is not negotiation.
+		return
+	}
+
+	// ut_metadata, on the id we published.
+	um, uerr := ut_metadata_parse(body)
+	if uerr != "" {
+		peer_set_dead(pr, uerr)
+		return
+	}
+	switch um.type {
+	case .Request:
+		if pr.peer_ut_metadata == 0 {
+			return // it never told us where to send the answer
+		}
+		size := t.meta.info_span[1] - t.meta.info_span[0]
+		lo, hi, ok := metadata_piece_span(size, um.piece)
+		if !ok || len(t.meta.raw) < t.meta.info_span[1] {
+			msg_extended(
+				&pr.out,
+				u8(pr.peer_ut_metadata),
+				ut_metadata_reject_payload(um.piece, context.temp_allocator),
+			)
+			return
+		}
+		base := t.meta.info_span[0]
+		msg_extended(
+			&pr.out,
+			u8(pr.peer_ut_metadata),
+			ut_metadata_data_payload(
+				um.piece,
+				size,
+				t.meta.raw[base + lo:base + hi],
+				context.temp_allocator,
+			),
+		)
+		pr.meta_served += 1
+		pr.last_send = now_s()
+	case .Data:
+		// This engine only ever runs with the metadata already in hand — a
+		// magnet is resolved by `magnet_resolve` before a torrent exists — so
+		// unsolicited metadata is dropped rather than believed.
+	case .Reject:
+	// Nothing was asked for, so nothing was refused.
+	}
+	_ = e
 }
 
 @(private = "file")
@@ -1634,6 +1872,14 @@ peer_serve_requests :: proc(e: ^Engine, t: ^Torrent, pr: ^Peer) {
 	served := 0
 	for len(pr.serving) > 0 && served < 16 && len(pr.out) < OUT_BUF_HIGH_WATER {
 		req := pr.serving[0]
+		// The upload limit. The request is LEFT on the queue when there is no
+		// budget for it, rather than dropped: a peer that asked once should
+		// not have to ask again because we were busy being polite. The next
+		// tick refills the bucket and the same request is answered then.
+		if e.up_limit > 0 && t.up_budget < f64(req.length) {
+			t.up_deferred = len(pr.serving)
+			break
+		}
 		ordered_remove(&pr.serving, 0)
 		if !bf_get(t.have, req.index) {
 			continue // we do not have it; silently skip, as clients do
@@ -1646,8 +1892,14 @@ peer_serve_requests :: proc(e: ^Engine, t: ^Torrent, pr: ^Peer) {
 		msg_piece(&pr.out, req.index, req.begin, block)
 		pr.up += i64(len(block))
 		t.uploaded += i64(len(block))
+		if e.up_limit > 0 {
+			t.up_budget -= f64(len(block))
+		}
 		pr.last_send = now_s()
 		served += 1
+	}
+	if len(pr.serving) == 0 {
+		t.up_deferred = 0
 	}
 }
 

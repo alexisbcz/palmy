@@ -49,6 +49,7 @@ Args :: struct {
 	exit_on_done:  bool,
 	run_for:       f64,
 	down_limit:    int,
+	up_limit:      int,
 	seed_only:     bool,
 
 	path:          string,
@@ -150,6 +151,8 @@ parse_args :: proc() -> Args {
 			a.run_for = v
 		case "--down-limit":
 			a.down_limit = parse_int_default(next(args, &i), 0)
+		case "--up-limit":
+			a.up_limit = parse_int_default(next(args, &i), 0)
 		case "--seed-only":
 			a.seed_only = true
 		case "--out":
@@ -185,12 +188,14 @@ usage :: proc() {
   torrent --tracker [--http-port N] [--udp-port N] [--ports-file F]
   torrent --engine --torrent T --dir D [--port N] [--status-file F]
           [--stop-file F] [--exit-on-complete] [--run-for S]
-          [--down-limit BYTES_PER_SEC] [--seed-only]
+          [--down-limit BYTES_PER_SEC] [--up-limit BYTES_PER_SEC] [--seed-only]
   torrent --make-torrent PATH --out F [--piece-length N] [--announce URL]
   torrent --make-payload DIR
 
 This client connects only to 127.0.0.0/8 and resolves no names. There is no
-DHT, no peer exchange and no port forwarding in it.`,
+DHT, no peer exchange and no port forwarding in it. A magnet resolves over
+BEP 9 from a peer one of its own trackers named, which on this client means a
+tracker on loopback and nothing else.`,
 	)
 }
 
@@ -319,6 +324,7 @@ run_headless :: proc(a: Args) -> int {
 	}
 	e.verbose = a.verbose
 	e.down_limit = a.down_limit
+	e.up_limit = a.up_limit
 	fmt.printfln("engine: peer %s on 127.0.0.1:%d", peer_id_text(e.peer_id, context.temp_allocator), e.port)
 
 	engine_add(e, a.torrent, dir, true)

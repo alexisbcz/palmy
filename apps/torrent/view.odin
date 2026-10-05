@@ -95,6 +95,7 @@ Engine_View :: struct {
 	torrents:   []Torrent_View,
 	last_error: string,
 	down_limit: int,
+	up_limit:   int,
 	total_down: f64,
 	total_up:   f64,
 }
@@ -115,6 +116,7 @@ engine_snapshot :: proc(
 		port       = e.port,
 		peer_id    = peer_id_text(e.peer_id, allocator),
 		down_limit = e.down_limit,
+		up_limit   = e.up_limit,
 		last_error = strings.clone(e.last_error, allocator),
 	}
 	out := make([dynamic]Torrent_View, 0, len(e.torrents), allocator)
@@ -293,6 +295,16 @@ peer_flag_text :: proc(pr: ^Peer, allocator: runtime_allocator) -> string {
 	strings.write_string(&b, pr.peer_choking ? "C" : "·")
 	strings.write_string(&b, pr.peer_interested ? "r" : "·")
 	strings.write_string(&b, pr.am_choking ? "c" : "u")
+	// `E` is BEP 10, the extension protocol — the same letter qBittorrent
+	// uses. `M` next to it means the peer registered ut_metadata, so a magnet
+	// could be resolved from it. There is no letter for peer exchange because
+	// there is no peer exchange.
+	if pr.peer_ext {
+		strings.write_string(&b, "E")
+		if pr.peer_ut_metadata > 0 {
+			strings.write_string(&b, "M")
+		}
+	}
 	if pr.seed {
 		strings.write_string(&b, "S")
 	}

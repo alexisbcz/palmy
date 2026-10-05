@@ -155,23 +155,29 @@ Handshake :: struct {
 	peer_id:   [20]u8,
 }
 
+// `extended` sets bit 0x10 of reserved byte 5: BEP 10, the extension
+// protocol. It defaults to false, so the bare encoding advertises nothing at
+// all, and the engine passes `true` because it speaks BEP 9.
+//
+// Bit 0 of the LAST reserved byte is the DHT, and there is no argument that
+// sets it. That is not a flag left false — it is a capability this client does
+// not have and will not get. See the header of extension.odin for why
+// advertising BEP 10 is not the same as advertising peer exchange.
 handshake_encode :: proc(
 	info_hash: Hash20,
 	peer_id: [20]u8,
 	allocator := context.allocator,
+	extended := false,
 ) -> []u8 {
 	ih := info_hash
 	pid := peer_id
 	out := make([]u8, HANDSHAKE_LEN, allocator)
 	out[0] = u8(len(PROTOCOL_NAME))
 	copy(out[1:], PROTOCOL_NAME)
-	// The eight reserved bytes are all zero. Each bit in them advertises an
-	// extension; this client has none to advertise, and in particular bit 0 of
-	// the last byte (DHT) and bit 0x10 of byte 5 (extension protocol, which
-	// carries peer exchange) are deliberately left clear, because a peer that
-	// believes we speak them would send us addresses we are not allowed to use.
 	// Byte 0 is the name length and bytes 1..19 the name, so the reserved
 	// block is 20..27, the info-hash 28..47 and the peer id 48..67.
+	res := ext_reserved_bytes(extended)
+	copy(out[20:28], res[:])
 	copy(out[28:], ih[:])
 	copy(out[48:], pid[:])
 	return out

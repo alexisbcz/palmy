@@ -12,7 +12,9 @@ package main
 
 import "core:fmt"
 import "core:os"
+import "core:slice"
 import "core:strings"
+import "core:time"
 import p "palmy:."
 
 @(private = "file")
@@ -53,6 +55,73 @@ mk :: proc(text: string, when_: i64) -> Entry {
 	e.preview = make_preview(e.text)
 	e.lower = strings.to_lower(e.text)
 	return e
+}
+
+
+// ---------------------------------------------------------------------------
+// A fake compositor, for the poll-race reproduction
+//
+// It is one slot, because that is what a clipboard is: `fake_offer` does not
+// append, it OVERWRITES. That single line is the whole bug — the thing the
+// poll missed was gone before the poll ran.
+//
+// `fake.watching` turns on the event stream that `wl-paste --watch` produces
+// in the real application: one spool record per selection, carrying that
+// selection's own bytes, written at the moment of the handover rather than
+// read back afterwards.
+// ---------------------------------------------------------------------------
+
+@(private = "file")
+Fake_Clip :: struct {
+	types:    string,
+	payload:  []u8,
+	offers:   int,
+	watching: bool,
+}
+
+@(private = "file")
+fake: Fake_Clip
+
+@(private = "file")
+fake_list_types :: proc() -> (string, bool) {
+	if fake.offers == 0 {
+		return "", false
+	}
+	return fake.types, true
+}
+
+@(private = "file")
+fake_read :: proc(mime: string) -> ([]u8, bool) {
+	if fake.offers == 0 {
+		return nil, false
+	}
+	// The caller owns what it is handed, exactly as `exec_raw` hands it over.
+	return slice.clone(fake.payload), true
+}
+
+@(private = "file")
+fake_offer :: proc(seq: int, types: string, text: string) {
+	fake.types = types
+	fake.payload = transmute([]u8)text
+	fake.offers += 1
+	if fake.watching {
+		// `%019d` because the real stamps are nanosecond counts of fixed
+		// width, and `spool_drain` sorts them as strings.
+		spool_write(fmt.tprintf("%019d", seq), types, transmute([]u8)text)
+	}
+}
+
+@(private = "file")
+race_reset :: proc() {
+	clear(&g.items)
+	reap_locked()
+	g.last_id = 0
+	g.last_secret_id = 0
+	watching := fake.watching
+	fake = {}
+	fake.watching = watching
+	fake.watching = false
+	spool_clear()
 }
 
 // SCRATCH_HOME is set before anything else runs. `push` persists, so a single
@@ -222,6 +291,278 @@ selftest :: proc() -> int {
 		ok(still, "a pinned entry must survive the cap; %q was evicted", pinned_text)
 		ok(len(g.items) == HISTORY_CAP, "the cap still holds at %d, got %d", HISTORY_CAP, len(g.items))
 		reap_locked()
+	}
+
+	// ---------------------------------------------------------------------
+	// THE POLL RACE
+	//
+	// TODO.md records this as "the 0.7 s poll races a fast selection handover
+	// and misses entries; measured, not theoretical". This is the
+	// reproduction, and it is in three parts:
+	//
+	//   1. the handover, sampled — two selections inside one interval, and
+	//      only the second survives;
+	//   2. the same handover, event-driven — both survive;
+	//   3. the same thing against the real clock, so "measured" means
+	//      measured: selections offered every 150 ms for two seconds, sampled
+	//      at 0.7 s, and then the identical run drained from the spool.
+	//
+	// Nothing here goes near the real clipboard. `g_source` is swapped for a
+	// fake compositor — one slot, which is what a clipboard is — and the
+	// spool is written by this file rather than by `wl-paste --watch`, in
+	// exactly the format that child writes. The watcher thread is never
+	// started, so no `wl-paste` process is ever spawned by the self-test and
+	// the user's own selection is never read.
+	// ---------------------------------------------------------------------
+	fmt.println("-- the poll race: a fast selection handover, sampled and evented")
+	{
+		TXT :: "text/plain;charset=utf-8"
+		saved_source := g_source
+		g_source = Sel_Source {
+			list_types = fake_list_types,
+			read       = fake_read,
+		}
+		defer g_source = saved_source
+		defer fake = {}
+
+		sp := spool_dir(context.temp_allocator)
+		ok(
+			strings.has_prefix(sp, SCRATCH_HOME),
+			"the spool must live under the scratch HOME, not the real one; it is %s",
+			sp,
+		)
+
+		// --- 1. the race, reproduced ----------------------------------
+		race_reset()
+		fake_offer(1, TXT, "the first thing copied")
+		fake_offer(2, TXT, "the second thing copied") // a quarter of a second later
+		ok(fake.offers == 2, "the fixture offered two selections, not %d", fake.offers)
+		r := sample_once()
+		ok(r == .Stored, "the sample stored something, got %v", r)
+		ok(len(g.items) == 1, "one sample of two selections can only yield one entry, got %d", len(g.items))
+		ok(
+			len(g.items) == 1 && g.items[0].text == "the second thing copied",
+			"the sample sees whatever is on the clipboard NOW",
+		)
+		missed := true
+		for e in g.items {
+			if e.text == "the first thing copied" {missed = false}
+		}
+		ok(
+			missed,
+			"THE RACE: a selection replaced before the next 0.7s sample never reaches this process at all",
+		)
+
+		// --- 2. the same handover, event-driven -----------------------
+		race_reset()
+		fake.watching = true
+		fake_offer(1, TXT, "the first thing copied")
+		fake_offer(2, TXT, "the second thing copied")
+		stored, seen := spool_drain()
+		ok(seen == 2, "the spool held one record per selection, got %d", seen)
+		ok(stored == 2, "both records were stored, got %d", stored)
+		ok(len(g.items) == 2, "BOTH selections are in the history, got %d", len(g.items))
+		ok(
+			len(g.items) == 2 && g.items[0].text == "the second thing copied",
+			"newest first",
+		)
+		ok(
+			len(g.items) == 2 && g.items[1].text == "the first thing copied",
+			"THE FIX: the selection the poll missed is here, with its own bytes",
+		)
+		{
+			infos, derr := os.read_directory_by_path(sp, -1, context.temp_allocator)
+			left := 0
+			if derr == nil {
+				for info in infos {
+					if info.type == .Regular {left += 1}
+				}
+			}
+			ok(left == 0, "a drained spool is empty, %d file(s) left", left)
+		}
+
+		// A burst keeps its order, and the order is the order of the
+		// selections, not of the directory.
+		race_reset()
+		fake.watching = true
+		for i in 1 ..= 6 {
+			fake_offer(i, TXT, fmt.tprintf("burst %d", i))
+		}
+		bstored, bseen := spool_drain()
+		ok(bseen == 6, "six selections, six records, got %d", bseen)
+		ok(bstored == 6, "six stored, got %d", bstored)
+		order_ok := len(g.items) == 6
+		for i in 0 ..< min(len(g.items), 6) {
+			if g.items[i].text != fmt.tprintf("burst %d", 6 - i) {order_ok = false}
+		}
+		ok(order_ok, "a burst comes back newest-first in the order it was copied")
+
+		// A record whose payload has not been renamed into place yet is not
+		// half-ingested: the rename is the commit.
+		race_reset()
+		{
+			d := spool_ensure()
+			_ = os.write_entire_file(
+				fmt.tprintf("%s/0000000000000000009.types", d),
+				transmute([]u8)string(TXT),
+				os.perm_number(0o600),
+			)
+			_ = os.write_entire_file(
+				fmt.tprintf("%s/0000000000000000009.part", d),
+				transmute([]u8)string("half written"),
+				os.perm_number(0o600),
+			)
+			ps, pseen := spool_drain()
+			ok(ps == 0 && pseen == 0, "an uncommitted record is not ingested, got %d/%d", ps, pseen)
+			ok(len(g.items) == 0, "...and nothing reached the history, got %d", len(g.items))
+			spool_clear()
+		}
+
+		// The sensitivity gate applies on the event path too. This is the
+		// one that matters: an event-driven capture that forgot it would
+		// record passwords faster than the poll ever did.
+		race_reset()
+		fake.watching = true
+		fake_offer(1, "text/plain\nx-kde-passwordmanagerhint", "hunter2-synthetic")
+		fake_offer(2, TXT, "an ordinary line")
+		before := g.secrets
+		sstored, _ := spool_drain()
+		ok(sstored == 1, "only the non-secret selection is stored, got %d", sstored)
+		ok(len(g.items) == 1, "one entry, got %d", len(g.items))
+		ok(
+			len(g.items) == 1 && g.items[0].text == "an ordinary line",
+			"and it is not the flagged one",
+		)
+		leaked := false
+		for e in g.items {
+			if strings.contains(e.text, "hunter2") {leaked = true}
+		}
+		ok(!leaked, "a selection flagged as a secret is never stored, however it arrived")
+		ok(g.secrets > before, "...and it is counted as skipped")
+
+		// The spool is written 0600. It holds real clipboard content for as
+		// long as it takes the thread to notice it.
+		race_reset()
+		fake.watching = true
+		fake_offer(1, TXT, "mode check")
+		{
+			d := spool_dir(context.temp_allocator)
+			st, serr := os.stat(fmt.tprintf("%s/%019d.blob", d, 1), context.temp_allocator)
+			ok(serr == nil, "the spool record exists")
+			if serr == nil {
+				ok(
+					u32(transmute(u32)st.mode) & 0o077 == 0,
+					"a spool record must not be group or world readable, mode is %o",
+					u32(transmute(u32)st.mode) & 0o777,
+				)
+			}
+			spool_drain()
+		}
+
+		// A secret's hash no longer aliases a content hash. Before this,
+		// `is_sensitive` wrote fnv(types) into the same field `store_text`
+		// compares payloads against.
+		race_reset()
+		g.last_id = fnv(transmute([]u8)string("some payload"))
+		ingest_selection("text/plain\nsecret", nil)
+		ok(
+			g.last_id == fnv(transmute([]u8)string("some payload")),
+			"a secret selection must not overwrite the content hash",
+		)
+
+		// --- 3. the same race against the real clock ------------------
+		race_reset()
+		{
+			OFFER_EVERY :: 0.15
+			RUN_FOR :: 2.1
+			t0 := time.now()
+			el :: proc(t0: time.Time) -> f64 {
+				return time.duration_seconds(time.since(t0))
+			}
+			next_offer := 0.0
+			next_sample := POLL_SECONDS
+			n := 0
+			for el(t0) < RUN_FOR {
+				if el(t0) >= next_offer {
+					n += 1
+					fake_offer(n, TXT, fmt.tprintf("timed %d", n))
+					next_offer += OFFER_EVERY
+				}
+				if el(t0) >= next_sample {
+					sample_once()
+					next_sample += POLL_SECONDS
+				}
+				time.sleep(5 * time.Millisecond)
+			}
+			sampled := len(g.items)
+			fmt.printfln(
+				"   measured: %d selections in %.1fs, sampled every %.1fs — %d reached the history, %d were missed",
+				n,
+				RUN_FOR,
+				POLL_SECONDS,
+				sampled,
+				n - sampled,
+			)
+			ok(n >= 10, "the fixture offered at least ten selections, got %d", n)
+			ok(
+				sampled < n,
+				"MEASURED: sampling at %.1fs missed %d of %d selections",
+				POLL_SECONDS,
+				n - sampled,
+				n,
+			)
+			ok(
+				sampled <= 5,
+				"sampling %.1fs of selections every %.1fs cannot see more than a handful; it saw %d",
+				RUN_FOR,
+				POLL_SECONDS,
+				sampled,
+			)
+
+			// The identical run, event-driven.
+			race_reset()
+			fake.watching = true
+			t1 := time.now()
+			next_offer2 := 0.0
+			next_drain := SPOOL_POLL_SECONDS
+			n2 := 0
+			for el(t1) < RUN_FOR {
+				if el(t1) >= next_offer2 {
+					n2 += 1
+					fake_offer(n2, TXT, fmt.tprintf("timed %d", n2))
+					next_offer2 += OFFER_EVERY
+				}
+				if el(t1) >= next_drain {
+					spool_drain()
+					next_drain += SPOOL_POLL_SECONDS
+				}
+				time.sleep(5 * time.Millisecond)
+			}
+			spool_drain()
+			evented := len(g.items)
+			fmt.printfln(
+				"   measured: %d selections in %.1fs, event-driven — %d reached the history, %d were missed",
+				n2,
+				RUN_FOR,
+				evented,
+				n2 - evented,
+			)
+			ok(n2 >= 10, "the second run offered at least ten selections, got %d", n2)
+			ok(
+				evented == n2,
+				"THE FIX, MEASURED: every one of %d selections reached the history; %d did",
+				n2,
+				evented,
+			)
+			ok(
+				evented > sampled,
+				"the event-driven run kept %d where sampling kept %d",
+				evented,
+				sampled,
+			)
+		}
+		race_reset()
+		spool_clear()
 	}
 
 	// ---------------------------------------------------------------------

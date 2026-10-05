@@ -597,8 +597,42 @@ trackerd_udp :: proc(t: ^Trackerd) {
 			udp_error(t, host, port, txn, "unknown connection id; send a connect first")
 			continue
 		}
+		if action == .Scrape {
+			// BEP 15 scrape: 16 bytes of header, then 20 per info-hash. The
+			// answer is 12 bytes per hash in the order asked, with no hashes
+			// in it, so the count for a torrent this tracker has never heard
+			// of still has to occupy its slot — zeros, not an omission.
+			body := pkt[16:]
+			if len(body) == 0 || len(body) % 20 != 0 || len(body) / 20 > UDP_SCRAPE_MAX {
+				udp_error(t, host, port, txn, "a scrape body must be 1..74 raw info-hashes")
+				continue
+			}
+			out := make([dynamic]u8, 0, 8 + len(body) / 20 * 12, context.temp_allocator)
+			append_be_u32(&out, u32(Udp_Action.Scrape))
+			append_be_u32(&out, txn)
+			for i := 0; i + 20 <= len(body); i += 20 {
+				ih: Hash20
+				copy(ih[:], body[i:i + 20])
+				complete, incomplete, downloaded := 0, 0, 0
+				for &sw in t.swarms {
+					if !hash20_eq(sw.info_hash, ih) {
+						continue
+					}
+					downloaded = sw.completed
+					for pe in sw.peers {
+						if pe.left == 0 {complete += 1} else {incomplete += 1}
+					}
+					break
+				}
+				append_be_u32(&out, u32(complete))
+				append_be_u32(&out, u32(downloaded))
+				append_be_u32(&out, u32(incomplete))
+			}
+			udp_send_to(&t.udp, host, port, out[:])
+			continue
+		}
 		if action != .Announce || n < 98 {
-			udp_error(t, host, port, txn, "only announce is implemented over UDP here")
+			udp_error(t, host, port, txn, "only announce and scrape are implemented over UDP here")
 			continue
 		}
 		ih: Hash20

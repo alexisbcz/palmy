@@ -454,3 +454,340 @@ tracker_announce :: proc(
 	}
 	return {}, tsprint("unsupported tracker scheme %q", u.scheme)
 }
+
+// ---------------------------------------------------------------------------
+// Scrape (BEP 15 over UDP, BEP 48 over HTTP)
+// ---------------------------------------------------------------------------
+//
+// An announce says "here I am, who else is there" and changes the tracker's
+// idea of the swarm. A scrape asks only "how many" and changes nothing. That
+// difference is the whole reason it exists: a client that wants to show swarm
+// counts for twenty torrents it is not downloading can ask once, cheaply,
+// without being counted in twenty swarms it is not in.
+//
+// Over UDP it is action 2 on the same connection id an announce uses: a
+// 16-byte header followed by 20 raw bytes per info-hash, up to 74 of them,
+// because 74 is what fits in a 1500-byte MTU alongside the header and a
+// tracker is entitled to drop a datagram that fragments. The answer is a
+// 8-byte header and then 12 bytes per hash, IN THE ORDER ASKED — there are no
+// hashes in the reply, so a client that reorders its request loses track of
+// which count belongs to which torrent.
+//
+// The three counters are, in wire order: `complete` (seeders now), `downloaded`
+// (times the swarm has been completed, ever) and `incomplete` (leechers now).
+// `downloaded` sitting in the middle is the trap; reading them as
+// complete/incomplete/downloaded gives a plausible-looking answer that is
+// wrong about two of the three.
+
+// The cap from BEP 15. A client asking for more is asking for a truncated
+// datagram.
+UDP_SCRAPE_MAX :: 74
+
+Scrape_Entry :: struct {
+	info_hash:  Hash20,
+	complete:   int, // seeders
+	downloaded: int, // completed, ever
+	incomplete: int, // leechers
+}
+
+// udp_scrape_packet is 16 bytes of header and then the hashes, raw.
+udp_scrape_packet :: proc(
+	conn_id: u64,
+	txn: u32,
+	hashes: []Hash20,
+	allocator := context.allocator,
+) -> (
+	pkt: []u8,
+	err: string,
+) {
+	if len(hashes) == 0 {
+		return nil, "a scrape with no info-hash asks nothing"
+	}
+	if len(hashes) > UDP_SCRAPE_MAX {
+		return nil, tsprint(
+			"a UDP scrape carries at most %d info-hashes; %d were asked for",
+			UDP_SCRAPE_MAX,
+			len(hashes),
+		)
+	}
+	out := make([dynamic]u8, 0, 16 + 20 * len(hashes), allocator)
+	append_be_u64(&out, conn_id)
+	append_be_u32(&out, u32(Udp_Action.Scrape))
+	append_be_u32(&out, txn)
+	for h in hashes {
+		hh := h
+		append(&out, ..hh[:])
+	}
+	return out[:], ""
+}
+
+// udp_parse_scrape reads the answer. `asked` is the list that was sent, in the
+// order it was sent, because the reply carries no hashes of its own.
+udp_parse_scrape :: proc(
+	pkt: []u8,
+	want_txn: u32,
+	asked: []Hash20,
+	allocator := context.allocator,
+) -> (
+	out: []Scrape_Entry,
+	err: string,
+) {
+	if len(pkt) < 8 {
+		return nil, tsprint("a scrape answer of %d bytes is too short", len(pkt))
+	}
+	action := be_u32(pkt[0:4])
+	txn := be_u32(pkt[4:8])
+	if txn != want_txn {
+		return nil, tsprint("scrape answer has transaction id %d, expected %d", txn, want_txn)
+	}
+	if Udp_Action(action) == .Error {
+		return nil, tsprint("the tracker refused the scrape: %s", string(pkt[8:]))
+	}
+	if Udp_Action(action) != .Scrape {
+		return nil, tsprint("scrape answer has action %d, expected 2", action)
+	}
+	body := pkt[8:]
+	if len(body) % 12 != 0 {
+		return nil, tsprint("a scrape answer body of %d bytes is not a multiple of 12", len(body))
+	}
+	n := len(body) / 12
+	// A tracker may answer about fewer torrents than were asked about — one it
+	// has never heard of is simply absent — but never about more, and the ones
+	// it does answer about are a prefix in the order asked.
+	if n > len(asked) {
+		return nil, tsprint("the tracker answered about %d torrents; %d were asked about", n, len(asked))
+	}
+	res := make([]Scrape_Entry, n, allocator)
+	for i in 0 ..< n {
+		b := body[i * 12:(i + 1) * 12]
+		res[i] = Scrape_Entry {
+			info_hash  = asked[i],
+			complete   = int(be_u32(b[0:4])),
+			downloaded = int(be_u32(b[4:8])),
+			incomplete = int(be_u32(b[8:12])),
+		}
+	}
+	return res, ""
+}
+
+// tracker_scrape_udp does connect-then-scrape, with the same one retry as the
+// announce for the same reason: a lost datagram is normal.
+tracker_scrape_udp :: proc(
+	url: string,
+	hashes: []Hash20,
+	timeout_ms: i32 = 3000,
+	allocator := context.allocator,
+) -> (
+	out: []Scrape_Entry,
+	err: string,
+) {
+	u, uerr := url_split(url)
+	if uerr != "" {
+		return nil, uerr
+	}
+	if u.scheme != "udp" {
+		return nil, tsprint("%s is not a UDP tracker", url)
+	}
+	sock: Udp
+	if oerr := udp_open(&sock, "127.0.0.1", 0); oerr != "" {
+		return nil, oerr
+	}
+	defer udp_close(&sock)
+
+	x := xs_init(u64(unix_now()) ~ u64(uintptr(rawptr(&sock))) ~ 0x5c2a)
+	buf := make([]u8, 2048, context.temp_allocator)
+
+	conn_id: u64
+	got_conn := false
+	for attempt in 0 ..< 2 {
+		txn := u32(xs_next(&x))
+		pkt := udp_connect_packet(txn)
+		if serr := udp_send_to(&sock, u.host, u.port, pkt[:]); serr != "" {
+			return nil, serr
+		}
+		n, _, _, ok := udp_recv(&sock, buf, timeout_ms)
+		if !ok {
+			continue
+		}
+		id, cerr := udp_parse_connect(buf[:n], txn)
+		if cerr != "" {
+			if attempt == 1 {
+				return nil, cerr
+			}
+			continue
+		}
+		conn_id = id
+		got_conn = true
+		break
+	}
+	if !got_conn {
+		return nil, tsprint("the UDP tracker at %s:%d never answered a connect", u.host, u.port)
+	}
+
+	for attempt in 0 ..< 2 {
+		txn := u32(xs_next(&x))
+		pkt, perr := udp_scrape_packet(conn_id, txn, hashes, context.temp_allocator)
+		if perr != "" {
+			return nil, perr
+		}
+		if serr := udp_send_to(&sock, u.host, u.port, pkt); serr != "" {
+			return nil, serr
+		}
+		n, _, _, ok := udp_recv(&sock, buf, timeout_ms)
+		if !ok {
+			continue
+		}
+		res, serr2 := udp_parse_scrape(buf[:n], txn, hashes, allocator)
+		if serr2 != "" {
+			if attempt == 1 {
+				return nil, serr2
+			}
+			continue
+		}
+		return res, ""
+	}
+	return nil, tsprint("the UDP tracker at %s:%d never answered a scrape", u.host, u.port)
+}
+
+// scrape_url_of turns an announce URL into its scrape URL, the BEP 48 way: the
+// LAST path component must be exactly `announce`, and only then is it replaced
+// with `scrape`. A tracker whose path does not end in `announce` is declaring
+// that it has no scrape endpoint, and guessing one at it is how a client gets
+// a 404 on every torrent it shows.
+scrape_url_of :: proc(url: string, allocator := context.allocator) -> (out: string, err: string) {
+	u, uerr := url_split(url)
+	if uerr != "" {
+		return "", uerr
+	}
+	if u.scheme == "udp" {
+		// UDP has no path to rewrite: a scrape is an action on the same
+		// endpoint.
+		return strings.clone(url, allocator), ""
+	}
+	q := strings.index_byte(u.target, '?')
+	path := q >= 0 ? u.target[:q] : u.target
+	query := q >= 0 ? u.target[q:] : ""
+	slash := strings.last_index_byte(path, '/')
+	if slash < 0 || path[slash + 1:] != "announce" {
+		return "", tsprint("%s has no scrape endpoint: its path does not end in `announce`", url)
+	}
+	return asprint(
+		"%s://%s:%d%s%s%s",
+		u.scheme,
+		u.host,
+		u.port,
+		path[:slash + 1],
+		"scrape",
+		query,
+	), ""
+}
+
+// scrape_parse reads the bencoded answer of an HTTP scrape: a `files`
+// dictionary keyed by the raw 20-byte info-hash.
+scrape_parse :: proc(
+	body: []u8,
+	allocator := context.allocator,
+) -> (
+	out: []Scrape_Entry,
+	err: string,
+) {
+	root, derr := ben_decode(body, context.temp_allocator)
+	if derr != "" {
+		return nil, tsprint("the tracker's scrape is not bencoded: %s", derr)
+	}
+	if root.kind != .Dict {
+		return nil, "the tracker's scrape is not a dictionary"
+	}
+	if f, ok := ben_str_of(root, "failure reason"); ok {
+		return nil, strings.clone(f, allocator)
+	}
+	files, has := ben_get(root, "files")
+	if !has || files.kind != .Dict {
+		return nil, "the tracker's scrape has no `files` dictionary"
+	}
+	res := make([dynamic]Scrape_Entry, 0, len(files.dict), allocator)
+	for pair in files.dict {
+		if len(pair.key) != 20 || pair.val.kind != .Dict {
+			continue
+		}
+		e: Scrape_Entry
+		copy(e.info_hash[:], pair.key)
+		if v, ok := ben_int_of(pair.val, "complete"); ok {
+			e.complete = int(v)
+		}
+		if v, ok := ben_int_of(pair.val, "downloaded"); ok {
+			e.downloaded = int(v)
+		}
+		if v, ok := ben_int_of(pair.val, "incomplete"); ok {
+			e.incomplete = int(v)
+		}
+		append(&res, e)
+	}
+	return res[:], ""
+}
+
+tracker_scrape_http :: proc(
+	url: string,
+	hashes: []Hash20,
+	timeout_ms: i32 = 5000,
+	allocator := context.allocator,
+) -> (
+	out: []Scrape_Entry,
+	err: string,
+) {
+	surl, serr := scrape_url_of(url, context.temp_allocator)
+	if serr != "" {
+		return nil, serr
+	}
+	u, uerr := url_split(surl)
+	if uerr != "" {
+		return nil, uerr
+	}
+	b := strings.builder_make(context.temp_allocator)
+	strings.write_string(&b, u.target)
+	first := strings.index_byte(u.target, '?') < 0
+	for h in hashes {
+		hh := h
+		strings.write_byte(&b, first ? '?' : '&')
+		first = false
+		strings.write_string(&b, "info_hash=")
+		strings.write_string(&b, url_encode_bytes(hh[:], context.temp_allocator))
+	}
+	status, body, gerr := http_get(
+		u.host,
+		u.port,
+		strings.to_string(b),
+		timeout_ms,
+		context.temp_allocator,
+	)
+	if gerr != "" {
+		return nil, gerr
+	}
+	if status != 200 {
+		return nil, tsprint("the tracker answered HTTP %d to a scrape", status)
+	}
+	return scrape_parse(body, allocator)
+}
+
+// tracker_scrape dispatches on the announce URL's scheme.
+tracker_scrape :: proc(
+	url: string,
+	hashes: []Hash20,
+	timeout_ms: i32 = 5000,
+	allocator := context.allocator,
+) -> (
+	out: []Scrape_Entry,
+	err: string,
+) {
+	u, uerr := url_split(url)
+	if uerr != "" {
+		return nil, uerr
+	}
+	switch u.scheme {
+	case "http":
+		return tracker_scrape_http(url, hashes, timeout_ms, allocator)
+	case "udp":
+		return tracker_scrape_udp(url, hashes, timeout_ms, allocator)
+	}
+	return nil, tsprint("unsupported tracker scheme %q", u.scheme)
+}
