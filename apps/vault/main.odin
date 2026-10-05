@@ -81,6 +81,8 @@ St :: struct {
 	derive_ms:  f64,
 	pw_id:      u64,
 	pw2_id:     u64,
+	// The Notes text area, so a shortcut or the self-test can focus it.
+	notes_id:   u64,
 
 	// List
 	query:      [dynamic]u8,

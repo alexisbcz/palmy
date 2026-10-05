@@ -61,6 +61,15 @@ vfield :: proc(
 	return
 }
 
+// varea is vfield's multi-line twin: palmy's text area, with the node id
+// handed back so the self-test and a keyboard shortcut can put focus in it.
+varea :: proc(ui: ^p.Ctx, name: string, buf: ^[dynamic]u8, class: string) -> u64 {
+	p.key(ui, name)
+	at := p.node_count(ui)
+	p.text_area(ui, buf, "", class)
+	return p.node_id(ui, at)
+}
+
 build :: proc(ui: ^p.Ctx, st: ^St) {
 	switch st.screen {
 	case .Unlock, .Create:
@@ -728,12 +737,22 @@ editor :: proc(ui: ^p.Ctx, st: ^St) {
 
 		p.row(ui, "w-full shrink-0 items-center gap-2")
 		mask: rune = (secret && !st.reveal) ? MASK : 0
-		class := f == .Notes ? "flex-1 h-20 text-sm" : "flex-1 h-9 text-sm"
+		if f == .Notes {
+			// Notes is the one field that is prose, so it is palmy's
+			// multi-line area rather than a tall single-line field. Enter puts
+			// a newline in it; Ctrl S is still what saves, which is why the
+			// area has no `submitted` to return.
+			st.notes_id = varea(ui, "Notes", &st.ed[f], "flex-1 h-24 text-sm")
+			p.end(ui)
+			p.end(ui)
+			continue
+		}
+		class := "flex-1 h-9 text-sm"
 		if secret {
 			class = "flex-1 h-9 text-sm font-mono"
 		}
 		_, sub, _ := vfield(ui, FIELD_LABEL[f], &st.ed[f], "", class, mask)
-		if sub && f != .Notes {
+		if sub {
 			commit_edit(st, ui)
 		}
 		if secret {

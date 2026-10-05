@@ -106,6 +106,22 @@ shots :: proc(dir: string) -> int {
 	p.press_key(off, 'e', {.Ctrl})
 	step(off, &st)
 	shot(off, dir, "08-editor")
+
+	// Notes is palmy's multi-line field, so this is the shot that shows a
+	// newline that was typed rather than one that arrived from the model: the
+	// text is entered through the real field, Enter and all, and the caret
+	// ends up on the third visual row.
+	p.set_focus(&off.ctx, st.notes_id)
+	step(off, &st)
+	p.type_text(off, "Recovery codes are in the safe.")
+	step(off, &st)
+	p.press_key(off, p.KEY_RETURN)
+	step(off, &st)
+	p.type_text(off, "Rotate this one every ninety days, and check the sign-in log first.")
+	step(off, &st)
+	step(off, &st)
+	shot(off, dir, "08b-notes")
+
 	p.press_key(off, p.KEY_ESCAPE)
 	step(off, &st)
 

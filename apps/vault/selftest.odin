@@ -120,6 +120,9 @@ selftest :: proc() -> int {
 	t_tamper()
 	t_wrong_password()
 	t_rekey()
+	// Before t_ui, which registers the theme: the field has to be legible on
+	// its built-in fallback palette too.
+	t_text_area()
 	t_ui()
 	t_kdf_cost()
 
@@ -1415,6 +1418,71 @@ t_ui :: proc() {
 		session_zero(&s)
 	}
 
+	// Notes is a multi-line field now, so a newline can be *typed* into it.
+	//
+	// The model could always hold one -- `t_roundtrip` asserts that -- but
+	// until the field was `p.text_area` there was no way to put one there from
+	// the keyboard, because Enter in a single-line field submits. The whole
+	// point of T4 is this paragraph, so it is driven the hard way: focus the
+	// real field, type, press Enter, type again, save with Ctrl S, and reopen
+	// the file from disk.
+	st.sel = 0
+	for r, i in st.rows {
+		if st.v.entries[r].title == "Example Added" {
+			st.sel = i
+		}
+	}
+	drive(off, &st)
+	p.press_key(off, 'e', {.Ctrl})
+	drive(off, &st)
+	ok(st.editing, "Ctrl E did not open the editor for the notes check")
+	ok(st.notes_id != 0, "the Notes field reported no node id")
+
+	p.set_focus(&off.ctx, st.notes_id)
+	drive(off, &st)
+	ok(p.focus_id(&off.ctx) == st.notes_id, "focus did not reach the Notes field")
+
+	p.type_text(off, "first note line")
+	drive(off, &st)
+	p.press_key(off, p.KEY_RETURN)
+	drive(off, &st)
+	ok(st.editing, "Enter in the Notes field submitted the editor instead of inserting a newline")
+	p.type_text(off, "second note line")
+	drive(off, &st)
+	ok(
+		string(st.ed[.Notes][:]) == "first note line\nsecond note line",
+		"the typed newline did not reach the Notes buffer: %q",
+		string(st.ed[.Notes][:]),
+	)
+
+	// Up and Down move by visual line inside the field rather than changing
+	// the list selection, which is what a single-line field would have let
+	// through to the application.
+	sel_before := st.sel
+	p.press_key(off, p.KEY_UP)
+	drive(off, &st)
+	ok(st.sel == sel_before, "Up inside the Notes field moved the list selection")
+
+	p.press_key(off, 's', {.Ctrl})
+	drive(off, &st)
+	ok(!st.editing, "Ctrl S did not save from inside the Notes field")
+	{
+		cur := current(&st)
+		ok(cur != nil && strings.contains(cur.notes, "\n"), "the saved entry lost the newline")
+		reload, sess, err := store_load(path, PASS)
+		ok(err == "", "the vault did not reopen after the notes edit: %s", err)
+		found := false
+		for &x in reload.entries {
+			if x.title == "Example Added" &&
+			   x.notes == "first note line\nsecond note line" {
+				found = true
+			}
+		}
+		ok(found, "the typed newline did not survive the save and reload")
+		vault_free(&reload)
+		session_zero(&sess)
+	}
+
 	// A rotation records history.
 	st.sel = 0
 	for r, i in st.rows {
@@ -1576,4 +1644,291 @@ t_kdf_cost :: proc() {
 	fmt.printfln("      a full unlock at those parameters: %.0f ms", unlock_ms)
 	vault_free(&v)
 	session_zero(&s)
+}
+
+// ---------------------------------------------------------------------------
+// palmy's multi-line field, which is what the Notes field now is
+//
+// Two properties carry this. The first is that the visual rows *partition* the
+// buffer: every byte belongs to exactly one row or to exactly one break, so
+// nothing is lost and nothing is drawn twice. The second is that the caret
+// round trips -- offset -> (row, x) -> offset is the identity on every rune
+// boundary, at every width. Everything a caret does, from a click to Up and
+// Down with a goal column, is built out of those two, so asserting them over
+// the whole of a handful of awkward strings is worth more than asserting the
+// individual key bindings one at a time.
+//
+// The strings are deliberately nasty: multi-byte runes, an empty paragraph, a
+// trailing newline, a word wider than any of the widths, runs of consecutive
+// spaces. They are also entirely synthetic. Nothing here reads a real
+// credential store; the self-test redirects XDG_DATA_HOME to a scratch path
+// before any of this runs, and no field contents are ever printed except for
+// these literals.
+//
+// No theme is registered for this one, deliberately: the widget has to be
+// legible on its built-in fallback palette too, and `t_ui` covers the themed
+// path.
+// ---------------------------------------------------------------------------
+
+@(private = "file")
+TA_TEXTS := [?]string {
+	"",
+	"one",
+	"the quick brown fox jumps over the lazy dog and keeps going for a while longer",
+	"first line\nsecond line is quite a lot longer than the first one is\n\nafter a blank\n",
+	"accents: éàüñ, greek: αβγδε, cjk: 日本語のテキスト, and back to latin",
+	"supercalifragilisticexpialidociousandthensome short tail",
+	"a  b   c    d     e      f       g        h         i          j",
+	"ends with a space ",
+}
+
+@(private = "file")
+TA_WIDTHS := [?]f32{-1, 40, 73, 120, 211, 400}
+
+// Captured from a real `text_area` node, so the assertions below measure with
+// the font size, weight and leading the widget actually uses rather than with
+// a guess.
+@(private = "file")
+ta_style: p.Style
+@(private = "file")
+ta_id: u64
+@(private = "file")
+ta_cursor: int
+@(private = "file")
+ta_scroll: [2]f32
+@(private = "file")
+ta_buf: [dynamic]u8
+
+@(private = "file")
+ta_frame :: proc(off: ^p.Offscreen) {
+	ui := p.offscreen_begin(off)
+	p.col(ui, "w-full h-full p-6 gap-3")
+	p.text(ui, "Notes", "text-xs")
+	p.key(ui, "ta")
+	at := p.node_count(ui)
+	p.text_area(ui, &ta_buf, "Write something", "w-full h-32 text-sm")
+	ta_style = p.node_style(ui, at)
+	ta_id = p.node_id(ui, at)
+	ta_cursor = p.widget_cursor(ui, at)
+	ta_scroll = p.scroll_of(ui, ta_id)
+	p.end(ui)
+	p.offscreen_end(off)
+}
+
+t_text_area :: proc() {
+	section("palmy's multi-line field: the row partition and the caret round trip")
+
+	off := p.offscreen_create(520, 320, 1, "w-full h-full flex-col bg-slate-950 text-slate-100")
+	defer p.offscreen_destroy(off)
+	ta_buf = make([dynamic]u8)
+	defer delete(ta_buf)
+
+	// Two frames: the first gives the field a rect, the second wraps to it.
+	ta_frame(off)
+	ta_frame(off)
+	ok(ta_style.font_size > 0, "the text area reported no font size")
+	ok(ta_id != 0, "the text area reported no node id")
+
+	ctx := &off.ctx
+
+	for text in TA_TEXTS {
+		for width in TA_WIDTHS {
+			rows := p.text_rows(ctx, text, width, ta_style, context.temp_allocator)
+
+			// --- the partition ---
+			ok(len(rows) > 0, "no rows for %q at width %.0f", text, width)
+			if len(rows) == 0 {
+				continue
+			}
+			ok(
+				rows[0].from == 0,
+				"the first row starts at %d, not 0 (%q @ %.0f)",
+				rows[0].from,
+				text,
+				width,
+			)
+			ok(
+				rows[len(rows) - 1].next == len(text),
+				"the last row ends at %d, not %d (%q @ %.0f)",
+				rows[len(rows) - 1].next,
+				len(text),
+				text,
+				width,
+			)
+
+			ordered, chained, clean := true, true, true
+			for r, i in rows {
+				if !(0 <= r.from && r.from <= r.to && r.to <= r.next && r.next <= len(text)) {
+					ordered = false
+					continue
+				}
+				if i + 1 < len(rows) && r.next != rows[i + 1].from {
+					chained = false
+				}
+				if strings.index_byte(text[r.from:r.to], '\n') >= 0 {
+					clean = false
+				}
+			}
+			ok(ordered, "a row's from/to/next are out of order (%q @ %.0f)", text, width)
+			ok(
+				chained,
+				"the rows do not chain: a row's next is not the next row's from (%q @ %.0f)",
+				text,
+				width,
+			)
+			ok(clean, "a row's drawn text contains a newline (%q @ %.0f)", text, width)
+
+			// Nothing lost, nothing duplicated: gluing the rows back together
+			// with the bytes their breaks consumed reproduces the input.
+			rebuilt := strings.builder_make(context.temp_allocator)
+			for r in rows {
+				if 0 <= r.from && r.from <= r.next && r.next <= len(text) {
+					strings.write_string(&rebuilt, text[r.from:r.next])
+				}
+			}
+			ok(
+				strings.to_string(rebuilt) == text,
+				"the rows do not reassemble into the text (%q @ %.0f): got %q",
+				text,
+				width,
+				strings.to_string(rebuilt),
+			)
+
+			// --- the caret round trip, over every rune boundary ---
+			bounds := make([dynamic]int, context.temp_allocator)
+			for _, i in text {
+				append(&bounds, i)
+			}
+			append(&bounds, len(text))
+
+			for b in bounds {
+				row, x := p.text_row_caret(ctx, text, rows, b, .Downstream, ta_style)
+				back, _ := p.text_row_index_at(ctx, text, rows, row, x, ta_style)
+				ok(
+					back == b,
+					"caret round trip: offset %d -> row %d x %.2f -> offset %d (%q @ %.0f)",
+					b,
+					row,
+					x,
+					back,
+					text,
+					width,
+				)
+			}
+
+			// --- down, then up, with the same goal column ---
+			//
+			// The move the widget makes for Down followed by Up: the goal
+			// column is taken once and kept, so a short row in between must
+			// not drag the caret sideways.
+			for b in bounds {
+				row, goal := p.text_row_caret(ctx, text, rows, b, .Downstream, ta_style)
+				if row + 1 >= len(rows) {
+					continue
+				}
+				down, _ := p.text_row_index_at(ctx, text, rows, row + 1, goal, ta_style)
+				drow := p.text_row_of(rows, down)
+				up, _ := p.text_row_index_at(ctx, text, rows, drow - 1, goal, ta_style)
+				ok(
+					up == b,
+					"down then up with the same goal column moved %d to %d (%q @ %.0f)",
+					b,
+					up,
+					text,
+					width,
+				)
+			}
+			free_all(context.temp_allocator)
+		}
+	}
+
+	// --- the widget, driven ---
+	section("palmy's multi-line field, driven through the renderer")
+
+	p.set_focus(ctx, ta_id)
+	ta_frame(off)
+	ok(p.focus_id(ctx) == ta_id, "focus did not reach the text area")
+
+	p.type_text(off, "first")
+	ta_frame(off)
+	ok(string(ta_buf[:]) == "first", "typing did not reach the area: %q", string(ta_buf[:]))
+
+	// Enter is a character here, not a submit. This is the whole widget.
+	p.press_key(off, p.KEY_RETURN)
+	ta_frame(off)
+	ok(string(ta_buf[:]) == "first\n", "Enter did not insert a newline: %q", string(ta_buf[:]))
+
+	p.type_text(off, "second")
+	ta_frame(off)
+	ok(string(ta_buf[:]) == "first\nsecond", "the second line did not land: %q", string(ta_buf[:]))
+	ok(ta_cursor == 12, "the caret is at %d, not at the end", ta_cursor)
+
+	// Home and End are the ends of the *visual* row, so Home here goes to the
+	// start of the second line rather than to the start of the buffer.
+	p.press_key(off, p.KEY_HOME)
+	ta_frame(off)
+	ok(ta_cursor == 6, "Home went to %d, not to the start of the visual row", ta_cursor)
+
+	p.press_key(off, p.KEY_END)
+	ta_frame(off)
+	ok(ta_cursor == 12, "End went to %d, not to the end of the visual row", ta_cursor)
+
+	// Up, then Down, returns to the same place.
+	p.press_key(off, p.KEY_UP)
+	ta_frame(off)
+	up_at := ta_cursor
+	ok(up_at >= 0 && up_at <= 5, "Up from the second line landed at %d, off the first line", up_at)
+	p.press_key(off, p.KEY_DOWN)
+	ta_frame(off)
+	ok(ta_cursor == 12, "Up then Down did not return to the end of the second line (%d)", ta_cursor)
+
+	// Shift Home selects to the start of the row, and typing replaces it.
+	p.press_key(off, p.KEY_HOME, {.Shift})
+	ta_frame(off)
+	p.type_text(off, "two")
+	ta_frame(off)
+	ok(
+		string(ta_buf[:]) == "first\ntwo",
+		"a shift-selection was not replaced by typing: %q",
+		string(ta_buf[:]),
+	)
+
+	// Backspace at the start of a line joins it to the one above, which is the
+	// one edit a single-line field can never make.
+	p.press_key(off, p.KEY_HOME)
+	ta_frame(off)
+	p.press_key(off, p.KEY_BACKSPACE)
+	ta_frame(off)
+	ok(
+		string(ta_buf[:]) == "firsttwo",
+		"backspace at the start of a line did not join it: %q",
+		string(ta_buf[:]),
+	)
+
+	// Ctrl Shift A selects everything; Backspace clears it.
+	p.press_key(off, 'a', {.Ctrl, .Shift})
+	ta_frame(off)
+	p.press_key(off, p.KEY_BACKSPACE)
+	ta_frame(off)
+	ok(len(ta_buf) == 0, "select-all then backspace left %d bytes", len(ta_buf))
+
+	// A paragraph long enough to wrap past the bottom of the field, so the
+	// view has to follow the caret.
+	clear(&ta_buf)
+	for _ in 0 ..< 16 {
+		append(&ta_buf, ..transmute([]u8)string("wrapping paragraph text "))
+	}
+	ta_frame(off)
+	{
+		rows := p.text_rows(ctx, string(ta_buf[:]), 400, ta_style, context.temp_allocator)
+		ok(len(rows) > 3, "a long paragraph wrapped to only %d rows", len(rows))
+	}
+	p.press_key(off, p.KEY_END, {.Ctrl})
+	ta_frame(off)
+	ok(ta_cursor == len(ta_buf), "Ctrl End did not go to the end of the text")
+	ok(ta_scroll.y > 0, "the view did not scroll to follow the caret to the end")
+	p.press_key(off, p.KEY_HOME, {.Ctrl})
+	ta_frame(off)
+	ok(ta_cursor == 0, "Ctrl Home did not go to the start of the text")
+	ok(ta_scroll.y == 0, "the view did not scroll back when the caret returned to the top")
 }
