@@ -188,11 +188,40 @@ measure :: proc(ctx: ^Ctx, idx: int, avail: [2]f32) -> [2]f32 {
 	own := [2]f32{resolve_dim(ctx, s.w, avail.x, 0), resolve_dim(ctx, s.h, avail.y, 1)}
 	inner := [2]f32{INDEFINITE, INDEFINITE}
 	for a in 0 ..< 2 {
+		// The space a node can hand to its children is bounded by what the
+		// node is itself allowed to be. `measure` is handed the space the
+		// parent *offers*, which near the root is the whole window, while
+		// `arrange` hands out the space the node really got. A box
+		// constrained only by `max-w` is offered far more than it will get,
+		// and anything whose shape depends on the width -- a `flex-wrap` row
+		// above all -- then measures against one width and lays out against
+		// another. The row reserves the height of fewer lines than it goes on
+		// to draw, and the overflow lands on whatever follows it.
+		//
+		// Folding the node's own `min-*` and `max-*` in here is the same
+		// correction `arrange` makes further down when it re-resolves a
+		// percentage main-axis size against the space the container actually
+		// got: measure the children against the real box, not the offered one.
+		lo := a == 0 ? s.min_w : s.min_h
+		hi := a == 0 ? s.max_w : s.max_h
+
+		box := INDEFINITE
 		if own[a] != INDEFINITE {
-			inner[a] = max(0, own[a] - fr[a])
+			box = own[a]
 		} else if avail[a] != INDEFINITE {
-			inner[a] = max(0, avail[a] - fr[a] - margin_of(s, a))
+			box = max(0, avail[a] - margin_of(s, a))
+		} else {
+			// Shrink-to-fit: the parent offered no width at all. A `max-*`
+			// that does not need the parent to resolve -- a pixel one -- is
+			// still a ceiling, and is the only thing that says how wide this
+			// node may get.
+			box = resolve_dim(ctx, hi, avail[a], a)
 		}
+		if box == INDEFINITE {
+			continue
+		}
+		box = clamp_dim(ctx, box, lo, hi, avail[a], a)
+		inner[a] = max(0, box - fr[a])
 	}
 
 	content := [2]f32{0, 0}
@@ -231,6 +260,29 @@ measure :: proc(ctx: ^Ctx, idx: int, avail: [2]f32) -> [2]f32 {
 		gap_main := s.dir == .Row ? s.gap.x : s.gap.y
 		gap_cross := s.dir == .Row ? s.gap.y : s.gap.x
 
+		// The width a wrapping row breaks against. A `.Text` node already
+		// prefers the width it actually had last frame over the width it is
+		// offered, and a wrapping box needs exactly the same thing for
+		// exactly the same reason: `measure` is handed the space the parent
+		// offers, `arrange` hands out the space the node got, and a row that
+		// breaks against the first lays out more lines than it reserved
+		// height for. The offered width is the whole window for a `flex-1`
+		// reading pane; the real one is what is left beside its siblings.
+		//
+		// Only a box whose main-axis size is definite takes the hint. A
+		// shrink-to-fit row's width *is* its widest line, so feeding last
+		// frame's width back in would be circular -- that case is already
+		// handled above, by measuring against the box's own `max-*`.
+		wrap_main := inner[main]
+		if s.wrap && own[main] != INDEFINITE {
+			if w, found := ctx.widgets[n.id]; found {
+				had := (main == 0 ? w.rect.w : w.rect.h) - fr[main]
+				if had > 0 {
+					wrap_main = wrap_main == INDEFINITE ? had : min(wrap_main, had)
+				}
+			}
+		}
+
 		run_main := f32(0)
 		run_cross := f32(0)
 		total_cross := f32(0)
@@ -262,8 +314,8 @@ measure :: proc(ctx: ^Ctx, idx: int, avail: [2]f32) -> [2]f32 {
 			kid_main := kid[main] + margin_of(cs, main)
 			kid_cross := kid[cross] + margin_of(cs, cross)
 
-			if s.wrap && count > 0 && inner[main] != INDEFINITE &&
-			   run_main + gap_main + kid_main > inner[main] {
+			if s.wrap && count > 0 && wrap_main != INDEFINITE &&
+			   run_main + gap_main + kid_main > wrap_main {
 				// Start a new flex line.
 				total_cross += run_cross + gap_cross
 				run_cross = 0
@@ -354,6 +406,20 @@ arrange :: proc(ctx: ^Ctx, idx: int, box: Rect, clip: Rect) {
 	}
 	if n.first_child < 0 {
 		return
+	}
+
+	// A wrapping box broke its lines against the width it had last frame. If
+	// the width has just changed -- the first frame it exists, a resize, a
+	// pane dragged wider -- the height it reserved is a frame out of date, so
+	// ask for the frame that will correct it. This settles the moment the
+	// width does, and costs nothing once it has.
+	if s.wrap {
+		had := widget_of(ctx, n.id).rect
+		now := s.dir == .Row ? box.w : box.h
+		was := s.dir == .Row ? had.w : had.h
+		if abs(now - was) > 0.01 {
+			ctx.redraw = true
+		}
 	}
 
 	fr := frame_of(s)
