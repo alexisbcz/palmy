@@ -189,6 +189,11 @@ json_write_para :: proc(b: ^strings.Builder, pa: ^Paragraph) {
 	if pa.depth != 0 {
 		fmt.sbprintf(b, ", \"depth\": %d", pa.depth)
 	}
+	// A picture in a cell writes its bytes here, exactly as one in the body
+	// does: the JSON is the format that must lose nothing.
+	if pa.kind == .Image && pa.img != nil {
+		json_write_image(b, pa.img)
+	}
 	strings.write_string(b, ", \"runs\": [")
 	json_write_runs(b, pa)
 	strings.write_string(b, "]}")
@@ -374,9 +379,18 @@ json_read_cell_para :: proc(po: json.Object) -> Paragraph {
 		depth = int(jnum(po, "depth", 0)),
 		runs  = make([dynamic]Run, 0, 2),
 	}
-	// A nested table or picture is not representable, so a hand-edited file
-	// that asks for one gets a body paragraph.
-	if !text_kind(pa.kind) {
+	// A picture in a cell is representable; a table inside one is not, and a
+	// hand-edited file that asks for a nested table gets a body paragraph.
+	if pa.kind == .Image {
+		if iv, hi := jget(po, "image"); hi {
+			if io_, iis := iv.(json.Object); iis {
+				if im, got := json_read_image(io_); got {
+					pa.img = new(Doc_Image)
+					pa.img^ = im
+				}
+			}
+		}
+	} else if !text_kind(pa.kind) {
 		pa.kind = .Body
 	}
 	json_read_runs(&pa, po)
@@ -636,6 +650,14 @@ md_write_table :: proc(b: ^strings.Builder, t: ^Table) {
 		for &cp, i in cl.paras {
 			if i > 0 {
 				strings.write_byte(b, ' ')
+			}
+			// A picture in a cell: Markdown has an inline image syntax, so
+			// this one needs no special case beyond writing it.
+			if cp.kind == .Image && cp.img != nil {
+				strings.write_string(b, "![")
+				md_escape(b, cp.img.alt)
+				fmt.sbprintf(b, "](%s)", cp.img.path)
+				continue
 			}
 			for &r in cp.runs {
 				text := string(r.text[:])
@@ -1331,6 +1353,13 @@ doc_to_html :: proc(d: ^Doc, title: string, alloc := context.allocator) -> strin
 						if i > 0 {
 							strings.write_string(b, "<br>")
 						}
+						// A picture in a cell is the same <img> as one in the
+						// body, without the <figure> around it: a figure is a
+						// block, and a cell is already one.
+						if cp.kind == .Image {
+							emit_cell_image(b, &cp, max(20, table_width(t, c) - 2 * CELL_PAD))
+							continue
+						}
 						emit_runs(b, &cp)
 					}
 				}
@@ -1377,6 +1406,31 @@ doc_to_html :: proc(d: ^Doc, title: string, alloc := context.allocator) -> strin
 			strings.write_string(b, "\">")
 		}
 		strings.write_string(b, "</figure>\n")
+	}
+
+	// emit_cell_image is the same picture without the <figure>: a cell is
+	// already a block, and a figure inside a table cell is not something a
+	// browser lays out the way anyone wants.
+	emit_cell_image :: proc(b: ^strings.Builder, pa: ^Paragraph, measure: f32) {
+		im := pa.img
+		if im == nil {
+			return
+		}
+		w, h := image_para_size(pa, measure, CONTENT_H)
+		if len(im.bytes) > 0 {
+			enc, err := base64.encode(im.bytes, base64.ENC_TABLE, context.temp_allocator)
+			if err == nil {
+				fmt.sbprintf(b, "<img width=\"%.0f\" height=\"%.0f\" alt=\"", w, h)
+				html_escape(b, im.alt)
+				fmt.sbprintf(b, "\" src=\"data:%s;base64,%s\">", image_mime(im.kind), enc)
+				return
+			}
+		}
+		fmt.sbprintf(b, "<img width=\"%.0f\" height=\"%.0f\" alt=\"", w, h)
+		html_escape(b, im.alt)
+		strings.write_string(b, "\" src=\"")
+		html_escape(b, im.path)
+		strings.write_string(b, "\">")
 	}
 
 	list_open := List_Kind.None

@@ -65,6 +65,9 @@ run_selftest :: proc() -> int {
 	test_attachment_bytes()
 	test_attachment_saving()
 	test_filing()
+	test_drafts()
+	test_multiselect()
+	test_autocomplete()
 	test_fixtures_and_threading()
 
 	fmt.printfln("")
@@ -681,7 +684,7 @@ test_reply :: proc() {
 	ok(.Answered in st.messages[0].flags, "replying marks the parent answered")
 	ok(buf_line_count(&st.comp.body) > 3, "the quoted parent is in the body")
 
-	rendered := build_message(st, context.temp_allocator)
+	rendered := build_message(st, false, context.temp_allocator)
 	head, _ := split_message(rendered)
 	hs := parse_headers(head, context.temp_allocator)
 	eq_str(header_of(hs, "in-reply-to"), "<parent@host.test>", "the rendered In-Reply-To header")
@@ -696,7 +699,7 @@ test_reply :: proc() {
 
 	// A non-ASCII subject has to be encoded, not written raw.
 	le_set(&st.comp.subject, "Résumé")
-	enc := build_message(st, context.temp_allocator)
+	enc := build_message(st, false, context.temp_allocator)
 	h2, _ := split_message(enc)
 	subj := header_of(parse_headers(h2, context.temp_allocator), "subject")
 	ok(strings.has_prefix(subj, "=?utf-8?B?"), "a non-ASCII subject is RFC 2047 encoded")
@@ -1967,4 +1970,439 @@ test_fixtures_and_threading :: proc() {
 	// A sender with no To is also the last thing we do, so clean up.
 	remove_tree(dir)
 	ok(!os.is_dir(dir), "the self-test's fixture tree was removed")
+}
+
+// ---------------------------------------------------------------------------
+// Drafts: the one failure in this client that destroyed something
+//
+// Everything here runs against a Maildir written for the purpose, inside the
+// app's own data directory, and removes it afterwards. The user's mail is
+// never read, by this test or by anything it calls.
+// ---------------------------------------------------------------------------
+
+test_drafts :: proc() {
+	dir := fmt.tprintf("%s/selftest-drafts", default_data_dir(context.temp_allocator))
+	remove_tree(dir)
+	os.make_directory_all(dir)
+	defer remove_tree(dir)
+
+	st := filing_state(dir)
+	defer free(st)
+	build_address_book(st)
+	inbox := -1
+	for f, fi in st.folders {
+		if f.role == .Inbox && st.accounts[f.account].name == "Work" {
+			inbox = fi
+			break
+		}
+	}
+	ok(inbox >= 0, "the Work inbox was found")
+	select_folder(st, inbox)
+
+	// --- nothing is saved for a composition nobody typed into --------------
+	compose_blank(st)
+	ok(compose_is_empty(&st.comp), "a new composition starts empty")
+	ok(!compose_dirty(&st.comp), "and is not a draft")
+	draft_tick(st)
+	ok(!os.exists(draft_path(st, context.temp_allocator)), "so nothing was written")
+
+	// A reply arrives prefilled, and that is still not something the user
+	// wrote: Escape out of one must not leave a draft behind.
+	mi := find_message_by_id(st, "file-1@selftest")
+	ok(mi >= 0, "found a message to reply to")
+	compose_reply(st, mi, false)
+	ok(!compose_is_empty(&st.comp), "a reply is prefilled")
+	ok(!compose_dirty(&st.comp), "but an untouched reply is not a draft")
+	draft_autosave_seconds = 0
+	draft_tick(st)
+	ok(!os.exists(draft_path(st, context.temp_allocator)), "and still nothing was written")
+	close_composer(st)
+	ok(!os.exists(draft_path(st, context.temp_allocator)), "closing it left no slot")
+
+	// --- typing makes it a draft, and the draft reaches the disk -----------
+	compose_blank(st)
+	le_set(&st.comp.to, "Ada <ada@analytical.test>")
+	le_set(&st.comp.subject, "The southern reach")
+	buf_set_text(&st.comp.body, "First line.\nSecond line, unfinished")
+	st.comp.body.cur = {1, 7}
+	st.comp.field = .Body
+	ok(compose_dirty(&st.comp), "typed text makes it a draft")
+	draft_tick(st)
+	slot := draft_path(st, context.temp_allocator)
+	ok(os.exists(slot), "the autosave tick wrote the slot: %s", slot)
+
+	raw, rok := read_file(slot, context.temp_allocator)
+	ok(rok, "the slot can be read back")
+	d := draft_parse(string(raw))
+	ok(d.ok, "and parses")
+	eq_str(d.to, "Ada <ada@analytical.test>", "To survived")
+	eq_str(d.subject, "The southern reach", "Subject survived")
+	eq_str(d.body, "First line.\nSecond line, unfinished", "the body survived, newlines and all")
+	eq_int(d.cursor.line, 1, "the cursor line survived")
+	eq_int(d.cursor.col, 7, "the cursor column survived")
+	ok(d.saved._nsec > 0, "a timestamp was written")
+
+	// A second tick with nothing changed must not rewrite the file.
+	before_hash := st.comp.saved_hash
+	draft_tick(st)
+	eq_int(int(st.comp.saved_hash - before_hash), 0, "an unchanged composer is not written again")
+
+	// --- the process goes away, and comes back -----------------------------
+	// A fresh State over the same directory is exactly what the next run is.
+	st2 := filing_state(dir)
+	defer free(st2)
+	build_address_book(st2)
+	ok(!st2.draft_waiting, "a fresh state has not looked yet")
+	draft_peek(st2)
+	ok(st2.draft_waiting, "the draft left on disk is noticed at startup")
+	ok(strings.contains(st2.draft_label, "The southern reach"), "and is named: %q", st2.draft_label)
+	ok(!st2.comp.open, "the composer does not open by itself")
+
+	compose_new(st2)
+	ok(st2.comp.open, "C opens it")
+	ok(!st2.draft_waiting, "and the draft is no longer waiting")
+	eq_str(le_text(&st2.comp.to), "Ada <ada@analytical.test>", "To came back")
+	eq_str(le_text(&st2.comp.subject), "The southern reach", "Subject came back")
+	eq_str(
+		buf_text(&st2.comp.body, context.temp_allocator),
+		"First line.\nSecond line, unfinished",
+		"the body came back",
+	)
+	eq_int(st2.comp.body.cur.line, 1, "the caret came back to its line")
+	eq_int(st2.comp.body.cur.col, 7, "and to its column")
+	eq_int(int(st2.comp.field), int(Compose_Field.Body), "with the same field focused")
+	ok(compose_dirty(&st2.comp), "a restored draft is still unsaved work")
+
+	// --- Escape keeps it; Discard is the only thing that throws it away ----
+	close_composer(st2)
+	ok(os.exists(draft_path(st2, context.temp_allocator)), "Escape kept the draft")
+	compose_new(st2)
+	ok(st2.comp.open, "and C picks it up again")
+	eq_str(le_text(&st2.comp.subject), "The southern reach", "with the text still there")
+
+	discard_composer(st2)
+	ok(!os.exists(draft_path(st2, context.temp_allocator)), "Discard removed the slot")
+	ok(compose_is_empty(&st2.comp), "and emptied the composer")
+
+	// --- typing and then taking it all back out again ----------------------
+	compose_blank(st2)
+	le_set(&st2.comp.subject, "nearly")
+	draft_tick(st2)
+	ok(os.exists(draft_path(st2, context.temp_allocator)), "a few characters are enough to be saved")
+	le_clear(&st2.comp.subject)
+	draft_tick(st2)
+	ok(!os.exists(draft_path(st2, context.temp_allocator)), "undoing them takes the slot away again")
+
+	// --- parking: a second composition never costs the first ---------------
+	compose_blank(st2)
+	le_set(&st2.comp.to, "grace@navy.test")
+	le_set(&st2.comp.subject, "Compiler notes")
+	buf_set_text(&st2.comp.body, "Half a paragraph that must not be lost.")
+	draft_tick(st2)
+	ok(os.exists(draft_path(st2, context.temp_allocator)), "the first draft is on disk")
+
+	reply_to := find_message_by_id(st2, "file-2@selftest")
+	ok(reply_to >= 0, "found a different message to reply to")
+	want_subject := strings.clone(st2.messages[reply_to].subject, context.temp_allocator)
+	compose_reply(st2, reply_to, false)
+	ok(
+		!os.exists(draft_path(st2, context.temp_allocator)),
+		"starting the reply cleared the slot — because it was parked, not dropped",
+	)
+	ok(
+		strings.contains(le_text(&st2.comp.subject), want_subject),
+		"and the reply is to the message that was asked for: %q",
+		le_text(&st2.comp.subject),
+	)
+
+	drafts_fi := -1
+	for f, fi in st2.folders {
+		if f.role == .Drafts && st2.accounts[f.account].name == "Work" {
+			drafts_fi = fi
+		}
+	}
+	ok(drafts_fi >= 0, "a Drafts folder was created for the account")
+	parked := -1
+	for m, i in st2.messages {
+		if m.folder == drafts_fi {
+			parked = i
+		}
+	}
+	ok(parked >= 0, "the parked draft is in it")
+	if parked >= 0 {
+		pm := st2.messages[parked]
+		eq_str(pm.subject, "Compiler notes", "with the subject it was given")
+		ok(.Draft in pm.flags, "flagged as a draft")
+		ok(.Seen in pm.flags, "and not as unread mail")
+		ok(strings.contains(pm.path, "/cur/"), "in cur/, not new/: %s", pm.path)
+		ok(strings.contains(pm.body, "must not be lost"), "the text is all there")
+		ok(is_draft_message(st2, parked), "and the list knows to open it in the composer")
+
+		// Opening it puts it back in the composer, byte for byte.
+		close_composer(st2)
+		draft_discard(st2)
+		compose_edit_draft(st2, parked)
+		ok(st2.comp.open, "the parked draft opens in the composer")
+		eq_str(le_text(&st2.comp.subject), "Compiler notes", "with its subject")
+		ok(
+			strings.contains(buf_text(&st2.comp.body, context.temp_allocator), "must not be lost"),
+			"and its body",
+		)
+		ok(st2.comp.origin_path != "", "it remembers the file it came from")
+	}
+
+	// --- sending finishes with the draft -----------------------------------
+	origin := strings.clone(st2.comp.origin_path, context.temp_allocator)
+	draft_tick(st2)
+	ok(os.exists(draft_path(st2, context.temp_allocator)), "the edited draft is held in the slot")
+	do_send(st2)
+	ok(!os.exists(draft_path(st2, context.temp_allocator)), "sending clears the slot")
+	ok(origin == "" || !os.exists(origin), "and unlinks the Drafts file it came from")
+	queued := 0
+	for m in st2.messages {
+		if st2.folders[m.folder].name == ".Outbox" || strings.contains(m.path, "/.Outbox/") {
+			queued += 1
+		}
+	}
+	ok(queued >= 1, "the message is in the local Outbox, which is the only place Send writes")
+
+	draft_autosave_seconds = 1.0
+}
+
+// ---------------------------------------------------------------------------
+// Multi-select
+// ---------------------------------------------------------------------------
+
+test_multiselect :: proc() {
+	dir := fmt.tprintf("%s/selftest-marks", default_data_dir(context.temp_allocator))
+	remove_tree(dir)
+	os.make_directory_all(dir)
+	defer remove_tree(dir)
+
+	st := filing_state(dir)
+	defer free(st)
+	inbox := -1
+	for f, fi in st.folders {
+		if f.role == .Inbox && st.accounts[f.account].name == "Work" {
+			inbox = fi
+		}
+	}
+	select_folder(st, inbox)
+	ok(len(st.rows) >= 3, "the inbox has rows to mark (%d)", len(st.rows))
+
+	// With nothing marked, a verb still acts on the row under the cursor.
+	st.row_sel = 0
+	eq_int(marked_count(st), 0, "nothing is marked to start with")
+	eq_int(
+		len(selection_messages(st, context.temp_allocator)),
+		len(row_messages(st, 0, context.temp_allocator)),
+		"so the selection is whatever the cursor covers",
+	)
+
+	// Mark three rows.
+	paths := make([dynamic]string, 0, 3, context.temp_allocator)
+	for r in 0 ..< 3 {
+		st.row_sel = r
+		mark_toggle_row(st)
+		for mi in row_messages(st, r, context.temp_allocator) {
+			append(&paths, strings.clone(st.messages[mi].path, context.temp_allocator))
+		}
+	}
+	eq_int(marked_count(st), len(paths), "every message under those rows is marked")
+	ok(row_marked(st, 0) && row_marked(st, 1) && row_marked(st, 2), "and all three rows read as marked")
+	ok(!row_marked(st, 3) || len(st.rows) <= 3, "a row that was not marked does not")
+
+	sel := selection_messages(st, context.temp_allocator)
+	eq_int(len(sel), len(paths), "the selection is the marked set, not the cursor row")
+	for i in 1 ..< len(sel) {
+		ok(sel[i - 1] < sel[i], "and it comes back in scan order")
+	}
+
+	// Toggling the same row again takes it back out.
+	st.row_sel = 1
+	n_before := marked_count(st)
+	mark_toggle_row(st)
+	ok(marked_count(st) < n_before, "toggling a marked row unmarks it")
+	mark_toggle_row(st)
+	eq_int(marked_count(st), n_before, "and toggling again puts it back")
+
+	// The cursor is somewhere else entirely; the verb still acts on the marks.
+	st.row_sel = len(st.rows) - 1
+	marked := selection_messages(st, context.temp_allocator)
+	want := len(marked)
+	ok(want >= 3, "at least three messages are selected (%d)", want)
+	moved, err := archive_selection_count(st)
+	eq_str(err, "", "archiving the selection succeeded")
+	eq_int(moved, want, "every marked message moved, not just the one under the cursor")
+	eq_int(marked_count(st), 0, "and the selection is cleared once the verb has run")
+
+	// A mark whose file has gone is dropped rather than left lying.
+	st.row_sel = 0
+	mark_toggle_row(st)
+	eq_int(marked_count(st) > 0 ? 1 : 0, 1, "something is marked again")
+	for &m in st.messages {
+		if st.marked[m.path] {
+			os.remove(m.path)
+		}
+	}
+	reload_all(st)
+	eq_int(marked_count(st), 0, "a mark whose message is gone is pruned on reload")
+}
+
+// archive_selection_count is `archive_selection` with the numbers returned
+// rather than put in a toast, which is what an assertion needs.
+archive_selection_count :: proc(st: ^State) -> (moved: int, err: string) {
+	msgs := selection_messages(st, context.temp_allocator)
+	if len(msgs) == 0 {
+		return 0, "nothing is selected"
+	}
+	ai := st.messages[msgs[0]].account
+	paths := selection_paths(st, context.temp_allocator)
+	target := ensure_role_folder(st, ai, .Archive, "Archive")
+	if target < 0 {
+		return 0, "no archive"
+	}
+	return file_selection_of(st, messages_at_paths(st, paths), target)
+}
+
+// ---------------------------------------------------------------------------
+// Address autocomplete
+// ---------------------------------------------------------------------------
+
+test_autocomplete :: proc() {
+	dir := fmt.tprintf("%s/selftest-book", default_data_dir(context.temp_allocator))
+	remove_tree(dir)
+	os.make_directory_all(dir)
+	defer remove_tree(dir)
+
+	st := filing_state(dir)
+	defer free(st)
+
+	// A handful of messages with real names on them, so the book has
+	// something to rank.
+	root := fmt.tprintf("%s/work", dir)
+	one :: proc(id, from, to: string) -> string {
+		return fmt.tprintf(
+			"Date: Tue, 3 Feb 2026 12:00:00 +0000\r\nFrom: %s\r\nTo: %s\r\nSubject: book %s\r\n\r\nbody\r\n",
+			from,
+			to,
+			id,
+		)
+	}
+	write_file(
+		fmt.tprintf("%s/cur/1770100001.M1P1.selftest:2,S", root),
+		transmute([]u8)one("1", "Grace Hopper <grace@navy.test>", "alex@work.test"),
+	)
+	write_file(
+		fmt.tprintf("%s/cur/1770100002.M2P1.selftest:2,S", root),
+		transmute([]u8)one("2", "Grace Hopper <grace@navy.test>", "alex@work.test, Ada Lovelace <ada@analytical.test>"),
+	)
+	write_file(
+		fmt.tprintf("%s/cur/1770100003.M3P1.selftest:2,S", root),
+		transmute([]u8)one("3", "grace@navy.test", "Katherine Johnson <katherine@langley.test>"),
+	)
+	reload_all(st)
+
+	ok(len(st.book) > 0, "the address book was built (%d contacts)", len(st.book))
+	find :: proc(st: ^State, email: string) -> int {
+		for c, i in st.book {
+			if c.email == email {
+				return i
+			}
+		}
+		return -1
+	}
+	gi := find(st, "grace@navy.test")
+	ai := find(st, "ada@analytical.test")
+	ok(gi >= 0 && ai >= 0, "both correspondents are in it")
+	ok(st.book[gi].count > st.book[ai].count, "the one who appears more often ranks higher")
+	eq_str(st.book[gi].name, "Grace Hopper", "a bare address later does not lose the display name")
+	ok(gi < ai, "and the book is sorted by that ranking")
+
+	// Nothing comes from anywhere but the mailbox: every contact's address
+	// has to appear in a message that was scanned, or be an account's own.
+	for c in st.book {
+		seen := false
+		for m in st.messages {
+			if strings.contains(strings.to_lower(m.blob, context.temp_allocator), strings.to_lower(c.email, context.temp_allocator)) {
+				seen = true
+				break
+			}
+		}
+		for a in st.accounts {
+			if a.address == c.email {
+				seen = true
+			}
+		}
+		ok(seen, "%q came from the mailbox, not from anywhere else", c.email)
+	}
+
+	// The fragment under the caret.
+	eq_str(ac_fragment("gra", 3), "gra", "the whole field when there is no comma")
+	eq_str(ac_fragment("ada@x.test, gra", 15), "gra", "only what follows the last comma")
+	eq_str(ac_fragment("ada@x.test, gra", 10), "ada@x.test", "and only up to the caret")
+	eq_str(ac_fragment("ada@x.test, ", 12), "", "an empty fragment is empty")
+
+	// Matching: by local part, by display name, by any word of it, by domain.
+	has :: proc(st: ^State, hits: []int, email: string) -> bool {
+		for h in hits {
+			if st.book[h].email == email {
+				return true
+			}
+		}
+		return false
+	}
+	ok(has(st, ac_match(st, "gra", "", context.temp_allocator), "grace@navy.test"), "a local-part prefix matches")
+	ok(has(st, ac_match(st, "Grace", "", context.temp_allocator), "grace@navy.test"), "case does not matter")
+	ok(has(st, ac_match(st, "hopper", "", context.temp_allocator), "grace@navy.test"), "a surname matches")
+	ok(has(st, ac_match(st, "navy", "", context.temp_allocator), "grace@navy.test"), "so does the domain")
+	ok(has(st, ac_match(st, "langley", "", context.temp_allocator), "katherine@langley.test"), "and another domain")
+	eq_int(len(ac_match(st, "zzzzz", "", context.temp_allocator)), 0, "a fragment nobody matches gives nothing")
+	ok(len(ac_match(st, "e", "", context.temp_allocator)) <= AC_MAX, "the list is capped")
+	ok(
+		!has(st, ac_match(st, "ada", "ada@analytical.test, ", context.temp_allocator), "ada@analytical.test"),
+		"somebody already in the field is not suggested again",
+	)
+
+	// Accepting: the fragment is replaced, the rest of the list is kept, and
+	// the caret lands ready for the next address.
+	compose_blank(st)
+	st.comp.field = .To
+	le_set(&st.comp.to, "gra")
+	ac_update(st)
+	ok(st.comp.ac_open, "the list opens as soon as there is something to show")
+	ok(len(st.comp.ac_hits) > 0, "with hits in it")
+	st.comp.ac_sel = 0
+	ok(ac_accept(st), "accepting works")
+	eq_str(le_text(&st.comp.to), "Grace Hopper <grace@navy.test>, ", "the fragment became the whole address")
+	ok(!st.comp.ac_open, "and the list closed")
+	eq_int(st.comp.to.cur, len(le_text(&st.comp.to)), "with the caret ready for the next one")
+
+	le_set(&st.comp.to, "Grace Hopper <grace@navy.test>, ada")
+	st.comp.to.cur = len(le_text(&st.comp.to))
+	ac_update(st)
+	ok(st.comp.ac_open, "a second address completes too")
+	ac_accept(st)
+	eq_str(
+		le_text(&st.comp.to),
+		"Grace Hopper <grace@navy.test>, Ada Lovelace <ada@analytical.test>, ",
+		"and the first address is left alone",
+	)
+
+	// Completing in the middle of a list leaves what follows where it is.
+	le_set(&st.comp.to, "kat, Grace Hopper <grace@navy.test>")
+	st.comp.to.cur = 3
+	ac_update(st)
+	ok(st.comp.ac_open, "the caret in the middle still completes")
+	ac_accept(st)
+	eq_str(
+		le_text(&st.comp.to),
+		"Katherine Johnson <katherine@langley.test>, Grace Hopper <grace@navy.test>",
+		"the address after the caret is untouched",
+	)
+
+	// The Subject field has no book behind it.
+	st.comp.field = .Subject
+	ac_update(st)
+	ok(!st.comp.ac_open, "there is no autocomplete on Subject")
 }

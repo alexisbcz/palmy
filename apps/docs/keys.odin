@@ -426,6 +426,7 @@ keys_commands :: proc(ui: ^p.Ctx, st: ^State) {
 	if p.shortcut(ui, 't', {.Ctrl}) {open_prompt(st, .Export_Rtf);fire(st)}
 	if p.shortcut(ui, 'o', {.Ctrl, .Shift}) {open_prompt(st, .Import_Docx);fire(st)}
 	if p.shortcut(ui, 'o', {.Ctrl, .Alt}) {open_prompt(st, .Import_Odt);fire(st)}
+	if p.shortcut(ui, 't', {.Ctrl, .Alt}) {open_prompt(st, .Import_Rtf);fire(st)}
 }
 
 // ---------------------------------------------------------------------------
@@ -501,6 +502,10 @@ keys_find :: proc(ui: ^p.Ctx, st: ^State) {
 		toggle_find_word(st)
 		return
 	}
+	if plain(ui, KEY_F7) || p.shortcut(ui, 'r', {.Alt}) {
+		toggle_find_regex(st)
+		return
+	}
 	if plain(ui, p.KEY_F11) {
 		replace_one(st)
 		st.find_hits = count_hits(st)
@@ -522,6 +527,9 @@ keys_find :: proc(ui: ^p.Ctx, st: ^State) {
 
 	buf := st.find_field == 0 ? &st.find : &st.repl
 	if field_edit(ui, buf, &st.swallow) {
+		if st.find_field == 0 {
+			rx_recompile(st)
+		}
 		st.find_hits = count_hits(st)
 		if st.find_field == 0 && len(st.find) > 0 {
 			// Search from the top of the current paragraph so the view does
@@ -559,7 +567,7 @@ open_prompt :: proc(st: ^State, kind: Prompt_Kind) {
 		def = default_path(st, ".docx")
 	case .Export_Odt, .Import_Odt:
 		def = default_path(st, ".odt")
-	case .Export_Rtf:
+	case .Export_Rtf, .Import_Rtf:
 		def = default_path(st, ".rtf")
 	case .Insert_Image:
 		def = fmt_image_default(st)
@@ -596,6 +604,8 @@ prompt_label :: proc(kind: Prompt_Kind) -> string {
 		return "Import Word .docx from"
 	case .Import_Odt:
 		return "Import OpenDocument .odt from"
+	case .Import_Rtf:
+		return "Import RTF from"
 	case .Insert_Image:
 		return "Insert picture from"
 	case .Insert_Table:
@@ -677,7 +687,7 @@ cancel_prompt :: proc(st: ^State) {
 // prompt_verb is the word on the overlay's confirm button.
 prompt_verb :: proc(kind: Prompt_Kind) -> string {
 	switch kind {
-	case .Open, .Import_Md, .Import_Docx, .Import_Odt:
+	case .Open, .Import_Md, .Import_Docx, .Import_Odt, .Import_Rtf:
 		return "Open"
 	case .Save_As:
 		return "Save"
@@ -743,13 +753,18 @@ run_prompt :: proc(st: ^State, kind: Prompt_Kind, path: string) {
 			? "Exported .rtf" \
 			: "Export failed",
 		)
-	case .Import_Docx, .Import_Odt:
+	case .Import_Docx, .Import_Odt, .Import_Rtf:
 		nd: Doc
 		ok: bool
-		if kind == .Import_Docx {
+		switch kind {
+		case .Import_Docx:
 			nd, ok = import_docx(full)
-		} else {
+		case .Import_Odt:
 			nd, ok = import_odt(full)
+		case .Import_Rtf:
+			nd, ok = import_rtf(full)
+		case .None, .Open, .Save_As, .Export_Md, .Import_Md, .Export_Html, .Export_Png,
+		     .Export_Pdf, .Export_Docx, .Export_Odt, .Export_Rtf, .Insert_Image, .Insert_Table:
 		}
 		if ok {
 			replace_document(st, nd)

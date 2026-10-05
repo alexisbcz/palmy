@@ -6,7 +6,7 @@
 // coalescing. See model.odin for the model, layout.odin for the measurement,
 // render.odin for the pixels.
 //
-//	docs [file.json | file.md | file.docx | file.odt]
+//	docs [file.json | file.md | file.docx | file.odt | file.rtf]
 //	docs --selftest                      headless assertions over the model
 //	docs --convert <in> <out>            .json .md .docx .odt in; those plus
 //	                                     .html .pdf .odt .rtf out
@@ -112,10 +112,10 @@ main :: proc() {
 			os.exit(cli_export_png(os.args[2], os.args[3]) ? 0 : 1)
 		case "--help", "-h":
 			fmt.println(
-				"docs [file.json | file.md | file.docx | file.odt]\n" +
+				"docs [file.json | file.md | file.docx | file.odt | file.rtf]\n" +
 				"  --selftest                 headless assertions\n" +
 				"  --bench [paragraphs]       layout and typing throughput\n" +
-				"  --convert <in> <out>       in: .json .md .docx .odt\n" +
+				"  --convert <in> <out>       in: .json .md .docx .odt .rtf\n" +
 				"                             out: .json .md .html .pdf .docx .odt .rtf\n" +
 				"  --export-png <file> <base>\n" +
 				"  --lint <file> [--json]     prose problems, through vale\n" +
@@ -199,6 +199,12 @@ state_destroy :: proc(st: ^State) {
 	history_destroy(&st.hist)
 	delete(st.find)
 	delete(st.repl)
+	delete(st.rx_err)
+	if st.rx != nil {
+		rx_destroy(st.rx)
+		free(st.rx)
+		st.rx = nil
+	}
 	delete(st.prompt_buf)
 	delete(st.path)
 	delete(st.toast)
@@ -229,6 +235,8 @@ cli_load :: proc(path: string) -> (Doc, bool) {
 		return import_docx(path)
 	case strings.has_suffix(path, ".odt"):
 		return import_odt(path)
+	case strings.has_suffix(path, ".rtf"):
+		return import_rtf(path)
 	}
 	return load_doc(path)
 }

@@ -33,6 +33,7 @@ Prompt_Kind :: enum u8 {
 	Insert_Image,
 	Insert_Table,
 	Import_Odt,
+	Import_Rtf,
 }
 
 ZOOMS := [?]f32{0.5, 0.75, 0.9, 1.0, 1.25, 1.5, 2.0}
@@ -82,6 +83,13 @@ State :: struct {
 	// before they existed.
 	find_case:  bool, // match case
 	find_word:  bool, // whole words only
+	// Regular expressions. `rx` is the compiled form of `find`, rebuilt
+	// whenever the term or the case flag changes; `rx_err` is what the find
+	// bar shows when the pattern will not compile, because a search box that
+	// silently matches nothing is a search box nobody can debug.
+	find_regex: bool,
+	rx:         ^Rx,
+	rx_err:     string,
 
 	prompt:     Prompt_Kind,
 	prompt_buf: [dynamic]u8,
@@ -1083,13 +1091,11 @@ do_insert_image :: proc(st: ^State, path: string) {
 		note(st, fmt.tprintf("Could not read %s", base_name(full)))
 		return
 	}
-	if in_cell(&st.doc, st.caret) {
-		// A picture in a cell would need the cell's measure rather than the
-		// page's, and the model has no place for that yet.
-		image_destroy(&im)
-		note(st, "A picture cannot go inside a cell yet")
-		return
-	}
+	// A picture in a cell used to be refused: it needs the cell's measure
+	// rather than the page's, and nothing knew how to give it one. The layout
+	// now sizes and places it against the column it is in, every exporter
+	// walks the cells for pictures as well as the body, and the caret steps
+	// over it the way it steps over a picture anywhere else.
 	edit_begin(st, .Structural)
 	drop_selection(st)
 	arr, idx := pos_scope(&st.doc, st.caret)
@@ -1104,13 +1110,27 @@ do_insert_image :: proc(st: ^State, path: string) {
 	if at == len(arr^) - 1 {
 		append(arr, para_make())
 	}
+	// In a cell the caret keeps the cell it is in and moves to the picture's
+	// paragraph *within* it; at the top level `row`, `col` and `cpara` are
+	// zero and this is the same `Pos` it always was.
+	cell := in_cell(&st.doc, st.caret)
 	st.caret = Pos {
-		para = at,
+		para  = cell ? st.caret.para : at,
+		row   = cell ? st.caret.row : 0,
+		col   = cell ? st.caret.col : 0,
+		cpara = cell ? at : 0,
 	}
 	st.anchor = st.caret
 	st.dirty = true
 	history_break(&st.hist)
-	w, h := image_para_size(&arr[at])
+	// The measure a picture is drawn against: the column's text width in a
+	// cell, the page's everywhere else.
+	measure := f32(CONTENT_W)
+	if cell {
+		t := st.doc.paras[st.caret.para].table
+		measure = max(20, table_width(t, st.caret.col) - 2 * CELL_PAD)
+	}
+	w, h := image_para_size(&arr[at], measure, CONTENT_H)
 	note(st, fmt.tprintf("%s — %dx%d, drawn %.0fx%.0f", base_name(full), arr[at].img.w, arr[at].img.h, w, h))
 }
 
@@ -1245,37 +1265,62 @@ lower :: proc(c: u8) -> u8 {
 // is why every caller passes the whole paragraph and a starting offset instead
 // of slicing.
 find_index :: proc(hay, needle: string, from: int, fold := true, word := false) -> int {
-	if len(needle) == 0 || len(needle) > len(hay) {
-		return -1
+	lo, _, ok := search_plain(hay, needle, from, fold, word)
+	return ok ? lo : -1
+}
+
+// find_span is what the find box actually calls. A match is a *span*, not an
+// offset and a length: case folding can expand (ß folds to `ss`, so `Straße`
+// matches `STRASSE` and the two are not the same number of bytes) and a
+// regular expression matches whatever it matches. Everything downstream —
+// the selection, the replace, the hit count — takes both ends from here.
+find_span :: proc(st: ^State, hay: string, from: int) -> (lo, hi: int, ok: bool) {
+	needle := string(st.find[:])
+	if len(needle) == 0 {
+		return 0, 0, false
 	}
-	last := len(hay) - len(needle)
-	for i in clamp(from, 0, len(hay)) ..= last {
-		hit := true
-		for j in 0 ..< len(needle) {
-			a, b := hay[i + j], needle[j]
-			if fold {
-				a, b = lower(a), lower(b)
-			}
-			if a != b {
-				hit = false
-				break
-			}
+	if st.find_regex {
+		if st.rx == nil {
+			return 0, 0, false
 		}
+		l, h, _, hit := rx_search(st.rx, hay, from)
 		if !hit {
-			continue
+			return 0, 0, false
 		}
-		if word {
-			if i > 0 && is_word_byte(hay[i - 1]) {
-				continue
+		if st.find_word &&
+		   (is_word_rune(rune_ending_at(hay, l)) || is_word_rune(rune_at_off(hay, h))) {
+			// Push past this one and try again, rather than reporting a hit
+			// the user asked not to see.
+			if h <= l {
+				return 0, 0, false
 			}
-			e := i + len(needle)
-			if e < len(hay) && is_word_byte(hay[e]) {
-				continue
-			}
+			return find_span(st, hay, h)
 		}
-		return i
+		return l, h, true
 	}
-	return -1
+	return search_plain(hay, needle, from, !st.find_case, st.find_word)
+}
+
+// rx_recompile rebuilds the compiled pattern after the term or the flags
+// change. A pattern that does not compile is kept as the error it is: the
+// find bar says so, and nothing matches until it is fixed.
+rx_recompile :: proc(st: ^State) {
+	if st.rx != nil {
+		rx_destroy(st.rx)
+		free(st.rx)
+		st.rx = nil
+	}
+	delete(st.rx_err)
+	st.rx_err = ""
+	if !st.find_regex || len(st.find) == 0 {
+		return
+	}
+	rx, err := rx_compile(string(st.find[:]), !st.find_case)
+	if err != "" {
+		st.rx_err = strings.clone(err)
+		return
+	}
+	st.rx = rx
 }
 
 // index_fold is the old name, kept because a case-insensitive substring search
@@ -1284,25 +1329,31 @@ index_fold :: proc(hay, needle: string) -> int {
 	return find_index(hay, needle, 0, true, false)
 }
 
-// find_hit applies the find box's own options.
+// find_hit applies the find box's own options, and reports where a match
+// starts. Callers that need its end use `find_span`.
 find_hit :: proc(st: ^State, hay: string, from: int) -> int {
-	return find_index(hay, string(st.find[:]), from, !st.find_case, st.find_word)
+	lo, _, ok := find_span(st, hay, from)
+	return ok ? lo : -1
 }
 
 find_mode_label :: proc(st: ^State) -> string {
-	switch {
-	case st.find_case && st.find_word:
-		return "Aa W"
-	case st.find_case:
-		return "Aa"
-	case st.find_word:
-		return "W"
+	b := strings.builder_make(context.temp_allocator)
+	if st.find_regex {
+		strings.write_string(&b, ".* ")
 	}
-	return "—"
+	if st.find_case {
+		strings.write_string(&b, "Aa ")
+	}
+	if st.find_word {
+		strings.write_string(&b, "W ")
+	}
+	out := strings.trim_space(strings.to_string(b))
+	return out == "" ? "—" : out
 }
 
 toggle_find_case :: proc(st: ^State) {
 	st.find_case = !st.find_case
+	rx_recompile(st)
 	st.find_hits = count_hits(st)
 	note(st, st.find_case ? "Match case on" : "Match case off")
 }
@@ -1311,6 +1362,17 @@ toggle_find_word :: proc(st: ^State) {
 	st.find_word = !st.find_word
 	st.find_hits = count_hits(st)
 	note(st, st.find_word ? "Whole words only" : "Whole words off")
+}
+
+toggle_find_regex :: proc(st: ^State) {
+	st.find_regex = !st.find_regex
+	rx_recompile(st)
+	st.find_hits = count_hits(st)
+	if st.find_regex && st.rx_err != "" {
+		note(st, tfmt("Regular expression: %s", st.rx_err))
+		return
+	}
+	note(st, st.find_regex ? "Regular expression on" : "Regular expression off")
 }
 
 // blk_index_of locates a position's block in a block list.
@@ -1345,9 +1407,9 @@ find_from :: proc(st: ^State, from: Pos) -> (lo, hi: Pos, ok: bool) {
 		}
 		t := para_text(pa, context.temp_allocator)
 		start := step == 0 ? clamp(from.off, 0, len(t)) : 0
-		i := find_hit(st, t, start)
-		if i >= 0 {
-			return blk_pos(bs[bi], i), blk_pos(bs[bi], i + len(needle)), true
+		lo, hi, hit := find_span(st, t, start)
+		if hit {
+			return blk_pos(bs[bi], lo), blk_pos(bs[bi], hi), true
 		}
 	}
 	return {}, {}, false
@@ -1367,12 +1429,14 @@ count_hits :: proc(st: ^State) -> int {
 		t := para_text(pa, context.temp_allocator)
 		at := 0
 		for at <= len(t) {
-			i := find_hit(st, t, at)
-			if i < 0 {
+			lo, hi, hit := find_span(st, t, at)
+			if !hit {
 				break
 			}
 			n += 1
-			at = i + max(1, len(needle))
+			// An empty match — `a*` against "bbb" — must still make progress,
+			// or counting them never finishes.
+			at = hi > lo ? hi : lo + 1
 		}
 	}
 	return n
@@ -1403,10 +1467,11 @@ selection_is_match :: proc(st: ^State) -> bool {
 		return false
 	}
 	t := pos_text(&st.doc, lo)
-	if hi.off > len(t) || hi.off - lo.off != len(st.find) {
+	if hi.off > len(t) {
 		return false
 	}
-	return find_hit(st, t, lo.off) == lo.off
+	mlo, mhi, ok := find_span(st, t, lo.off)
+	return ok && mlo == lo.off && mhi == hi.off
 }
 
 replace_one :: proc(st: ^State) {
@@ -1420,13 +1485,30 @@ replace_one :: proc(st: ^State) {
 	}
 	lo, _, _ := selection(st)
 	cs := style_after(&st.doc, lo)
+	text := replacement_at(st, pos_text(&st.doc, lo), lo.off, context.temp_allocator)
 	edit_begin(st, .Structural)
 	drop_selection(st)
-	st.caret = insert_text(&st.doc, st.caret, string(st.repl[:]), cs)
+	st.caret = insert_text(&st.doc, st.caret, text, cs)
 	st.anchor = st.caret
 	history_break(&st.hist)
 	find_next(st)
 	note(st, "Replaced")
+}
+
+// replacement_at is the text to put in place of the match at `at`. In plain
+// mode that is the replacement field verbatim; under a regular expression
+// `\1`…`\9` stand for what the groups captured, which is the whole reason to
+// have groups.
+replacement_at :: proc(st: ^State, hay: string, at: int, alloc := context.allocator) -> string {
+	repl := string(st.repl[:])
+	if !st.find_regex || st.rx == nil {
+		return strings.clone(repl, alloc)
+	}
+	lo, _, caps, ok := rx_search(st.rx, hay, at)
+	if !ok || lo != at {
+		return strings.clone(repl, alloc)
+	}
+	return rx_expand(repl, hay, caps, alloc)
 }
 
 // replace_all is one undo step for the whole document, whatever it touches.
@@ -1440,8 +1522,6 @@ replace_all :: proc(st: ^State) {
 	if len(st.find) == 0 {
 		return
 	}
-	needle := strings.clone(string(st.find[:]), context.temp_allocator)
-	repl := strings.clone(string(st.repl[:]), context.temp_allocator)
 	edit_begin(st, .Structural)
 	count := 0
 	// The block list is taken once: a replacement changes bytes, never the
@@ -1456,14 +1536,19 @@ replace_all :: proc(st: ^State) {
 		at := 0
 		for at <= blk_len(&st.doc, blk) {
 			t := para_text(blk_para(&st.doc, blk), context.temp_allocator)
-			i := find_index(t, needle, at, !st.find_case, st.find_word)
-			if i < 0 {
+			lo, hi, hit := find_span(st, t, at)
+			if !hit {
 				break
 			}
-			cs := style_after(&st.doc, blk_pos(blk, i))
-			delete_range(&st.doc, blk_pos(blk, i), blk_pos(blk, i + len(needle)))
-			insert_plain(&st.doc, blk_pos(blk, i), repl, cs)
-			at = i + max(1, len(repl))
+			with := replacement_at(st, t, lo, context.temp_allocator)
+			cs := style_after(&st.doc, blk_pos(blk, lo))
+			if hi > lo {
+				delete_range(&st.doc, blk_pos(blk, lo), blk_pos(blk, hi))
+			}
+			insert_plain(&st.doc, blk_pos(blk, lo), with, cs)
+			// Past the text just written, and always forward: an empty match
+			// would otherwise be replaced for ever.
+			at = lo + max(1, len(with))
 			count += 1
 		}
 	}
@@ -1579,6 +1664,7 @@ do_open :: proc(st: ^State, path: string) {
 		{".markdown", "Markdown"},
 		{".docx", "Word document"},
 		{".odt", "OpenDocument text"},
+		{".rtf", "RTF document"},
 	}) {
 		if !strings.has_suffix(full, imported.ext) {
 			continue
@@ -1590,6 +1676,8 @@ do_open :: proc(st: ^State, path: string) {
 			nd, ok = import_docx(full)
 		case ".odt":
 			nd, ok = import_odt(full)
+		case ".rtf":
+			nd, ok = import_rtf(full)
 		case:
 			nd, ok = import_markdown(full)
 		}

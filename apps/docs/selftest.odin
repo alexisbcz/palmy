@@ -114,6 +114,8 @@ run_selftest :: proc() -> bool {
 	test_json()
 	test_find(&fonts)
 	test_find_modes(&fonts)
+	test_search_unicode(&fonts)
+	test_regex(&fonts)
 	test_tables(&fonts)
 	test_grid_formats(&fonts)
 	test_images(&fonts)
@@ -121,6 +123,8 @@ run_selftest :: proc() -> bool {
 	test_containers()
 	test_fontfile(&fonts)
 	test_export(&fonts)
+	test_rtf_import(&fonts)
+	test_cell_image(&fonts)
 	test_prose(&fonts)
 
 	fmt.printfln("\n%d assertions, %d failed", checks, fails)
@@ -1012,6 +1016,17 @@ grid_fixture :: proc() -> Doc {
 	{
 		cl := table_cell(tp.table, 3, 2)
 		append(&cl.paras, para_make(.Body, "and a second paragraph in the cell"))
+	}
+	// And one cell with a picture in it, which every exporter has to carry
+	// and the layout has to size against the column rather than the page.
+	// The picture is wider than the column on purpose: 180 px of picture in a
+	// column about 150 px wide, so "scaled to the cell" is a claim with a
+	// number behind it.
+	{
+		cl := table_cell(tp.table, 2, 0)
+		if im, got := image_from_bytes(test_png(180, 60), "/tmp/cellpic.png", "a picture inside a cell"); got {
+			append(&cl.paras, image_para_make(im, .Center))
+		}
 	}
 	tp.table.widths[0] = 140
 	tp.table.widths[1] = 240
@@ -2709,6 +2724,18 @@ case_shape :: proc(c: ^Export_Case) {
 			c.rows += len(pa.table.rows)
 			c.cols += table_cols(pa.table)
 			c.cells += len(pa.table.rows) * table_cols(pa.table)
+			// A picture inside a cell counts: every exporter has to carry it,
+			// and LibreOffice counts the pictures in the file it reads back
+			// without caring which of them were in cells.
+			for &row in pa.table.rows {
+				for &cl in row.cells {
+					for &cp in cl.paras {
+						if cp.kind == .Image && cp.img != nil && len(cp.img.bytes) > 0 {
+							c.images += 1
+						}
+					}
+				}
+			}
 		}
 		if pa.kind == .Image && pa.img != nil && len(pa.img.bytes) > 0 {
 			c.images += 1
@@ -2925,19 +2952,18 @@ test_export :: proc(fonts: ^p.Fonts) {
 					}
 				}
 				if c.images > 0 {
-					back_imgs, bytes_ok := 0, 0
-					for i in 0 ..< len(nd.paras) {
-						if nd.paras[i].kind != .Image || nd.paras[i].img == nil {
-							continue
-						}
-						back_imgs += 1
-						if c.doc.paras[i].kind == .Image &&
-						   c.doc.paras[i].img != nil &&
-						   len(nd.paras[i].img.bytes) == len(c.doc.paras[i].img.bytes) {
+					// Pictures in document order, cells included: one of them
+					// is inside a table cell, and counting only the top-level
+					// paragraphs is how that one used to go missing unnoticed.
+					want := doc_pictures(&c.doc)
+					back := doc_pictures(&nd)
+					bytes_ok := 0
+					for i in 0 ..< min(len(back), len(want)) {
+						if len(back[i].bytes) == len(want[i].bytes) {
 							bytes_ok += 1
 						}
 					}
-					eq_int(back_imgs, c.images, "%s: the .odt reads its pictures back", c.name)
+					eq_int(len(back), c.images, "%s: the .odt reads its pictures back", c.name)
 					eq_int(bytes_ok, c.images, "%s: with their bytes intact", c.name)
 				}
 			}
@@ -3002,20 +3028,15 @@ test_export :: proc(fonts: ^p.Fonts) {
 					}
 				}
 				if c.images > 0 {
-					back_imgs := 0
+					want := doc_pictures(&c.doc)
+					back := doc_pictures(&nd)
 					bytes_ok := 0
-					for i in 0 ..< len(nd.paras) {
-						if nd.paras[i].kind != .Image || nd.paras[i].img == nil {
-							continue
-						}
-						back_imgs += 1
-						if c.doc.paras[i].kind == .Image &&
-						   c.doc.paras[i].img != nil &&
-						   len(nd.paras[i].img.bytes) == len(c.doc.paras[i].img.bytes) {
+					for i in 0 ..< min(len(back), len(want)) {
+						if len(back[i].bytes) == len(want[i].bytes) {
 							bytes_ok += 1
 						}
 					}
-					eq_int(back_imgs, c.images, "%s: the .docx reads its pictures back", c.name)
+					eq_int(len(back), c.images, "%s: the .docx reads its pictures back", c.name)
 					eq_int(bytes_ok, c.images, "%s: with their bytes intact", c.name)
 				}
 			}
@@ -3947,17 +3968,14 @@ check_libreoffice :: proc(cases: []Export_Case, paths: []string) {
 			ok(header > 0, "%s: and a header row that LibreOffice kept as one", c.name)
 		}
 		if c.images > 0 {
-			imgs, decoded := 0, 0
-			for &pa in nd.paras {
-				if pa.kind != .Image {
-					continue
-				}
-				imgs += 1
-				if pa.img != nil && len(pa.img.px) > 0 {
+			pics := doc_pictures(&nd)
+			decoded := 0
+			for im in pics {
+				if len(im.px) > 0 {
 					decoded += 1
 				}
 			}
-			eq_int(imgs, c.images, "%s: and every picture", c.name)
+			eq_int(len(pics), c.images, "%s: and every picture", c.name)
 			eq_int(decoded, c.images, "%s: each of which decodes", c.name)
 		}
 	}
@@ -4505,4 +4523,643 @@ test_prose :: proc(fonts: ^p.Fonts) {
 		eq_str(prose_project_config("", context.temp_allocator), "", "an unsaved document has no project config")
 	}
 	os.remove(corpus)
+}
+
+// ---------------------------------------------------------------------------
+// Case folding outside ASCII, and the regular expression engine
+// ---------------------------------------------------------------------------
+
+test_search_unicode :: proc(fonts: ^p.Fonts) {
+	section("find: case folding outside ASCII")
+
+	// --- the folds themselves
+	eq_int(int(fold_simple('A')), int('a'), "ASCII folds")
+	eq_int(int(fold_simple('É')), int('é'), "Latin-1 folds")
+	eq_int(int(fold_simple('Ż')), int('ż'), "Latin Extended-A folds")
+	eq_int(int(fold_simple('Σ')), int('σ'), "Greek folds")
+	eq_int(int(fold_simple('ς')), int('σ'), "and final sigma folds onto sigma")
+	eq_int(int(fold_simple('Д')), int('д'), "Cyrillic folds")
+	eq_int(int(fold_simple('Ÿ')), int('ÿ'), "the one out-of-order Latin pair folds")
+	eq_int(int(fold_simple('ſ')), int('s'), "the long s folds onto s")
+	eq_int(int(fold_simple('€')), int('€'), "something with no case is left alone")
+
+	exp, n := fold_rune('ß')
+	eq_int(n, 2, "ß folds to two runes")
+	ok(exp[0] == 's' && exp[1] == 's', "and they are ss")
+	exp2, n2 := fold_rune('ﬁ')
+	eq_int(n2, 2, "the fi ligature folds to two runes")
+	ok(exp2[0] == 'f' && exp2[1] == 'i', "and they are fi")
+
+	// --- the search, which is the point: a span, not an offset and a length
+	h1 := "Die Straße ist lang"
+	lo, hi, hit := search_plain(h1, "STRASSE", 0)
+	ok(hit, "Straße is found by STRASSE")
+	eq_str(h1[lo:hi], "Straße", "and the span covers the ß, not seven bytes")
+
+	h2 := "GROSSE STRASSE"
+	lo2, hi2, hit2 := search_plain(h2, "straße", 0)
+	ok(hit2, "and STRASSE is found by straße")
+	eq_str(h2[lo2:hi2], "STRASSE", "with the span over the text that is there")
+
+	h3 := "Le CAFÉ est ouvert"
+	lo3, hi3, hit3 := search_plain(h3, "café", 0)
+	ok(hit3, "CAFÉ is found by café")
+	eq_str(h3[lo3:hi3], "CAFÉ", "span")
+
+	lo4, hi4, hit4 := search_plain("ΟΔΥΣΣΕΥΣ", "οδυσσευς", 0)
+	ok(hit4, "a Greek word with a final sigma is found by its lower-case form")
+	eq_int(lo4, 0, "at the start")
+	eq_int(hi4, len("ΟΔΥΣΣΕΥΣ"), "and the whole of it")
+
+	_, _, hit5 := search_plain("ПРИВЕТ МИР", "привет", 0)
+	ok(hit5, "Cyrillic folds too")
+
+	// A match may not stop half way through an expansion.
+	_, _, hit6 := search_plain("Straße", "stras", 0)
+	ok(!hit6, "a needle that ends inside the ß is not a match")
+	_, _, hit7 := search_plain("Straße", "stra", 0)
+	ok(hit7, "but one that stops before it is")
+
+	// Case-sensitive still means case-sensitive.
+	_, _, hit8 := search_plain("STRASSE", "straße", 0, false)
+	ok(!hit8, "with folding off, nothing is folded")
+	_, _, hit9 := search_plain("Straße", "Straße", 0, false)
+	ok(hit9, "and an exact match still matches")
+
+	// Whole words, in runes: ü and ß are letters.
+	_, _, hw1 := search_plain("Grüße", "grüß", 0, true, true)
+	ok(!hw1, "grüß is not a whole word inside Grüße")
+	_, _, hw2 := search_plain("Grüße!", "grüße", 0, true, true)
+	ok(hw2, "but Grüße is, with punctuation after it")
+
+	// Through the find box, which is where a person meets it.
+	st := State{}
+	state_init(&st, fonts)
+	defer state_destroy(&st)
+	st.view = {0, 0, 1200, 700}
+	doc_destroy(&st.doc)
+	st.doc = Doc {
+		paras = make([dynamic]Paragraph, 0, 4),
+	}
+	append(&st.doc.paras, para_make(.Body, "Die Straße ist lang. STRASSE in Großbuchstaben."))
+	relayout(&st)
+	clear(&st.find)
+	append(&st.find, ..transmute([]u8)string("strasse"))
+	eq_int(count_hits(&st), 2, "the find box counts both spellings")
+	st.caret = pos(0, 0)
+	st.anchor = st.caret
+	ok(find_next(&st), "and finds the first")
+	a, b, _ := selection(&st)
+	eq_str(para_text(&st.doc.paras[0], context.temp_allocator)[a.off:b.off], "Straße", "selecting the text that is there")
+
+	// Replacing one spelling with another, both ways, is a span operation.
+	clear(&st.repl)
+	append(&st.repl, ..transmute([]u8)string("Allee"))
+	replace_all(&st)
+	eq_str(
+		para_text(&st.doc.paras[0], context.temp_allocator),
+		"Die Allee ist lang. Allee in Großbuchstaben.",
+		"replace all over a folded match replaces the whole match",
+	)
+}
+
+test_regex :: proc(fonts: ^p.Fonts) {
+	section("find: regular expressions")
+
+	// A tiny harness, because every case below is "does this pattern match
+	// this text, and over what span".
+	try :: proc(pat, hay: string, fold := false) -> (lo, hi: int, ok: bool) {
+		rx, err := rx_compile(pat, fold)
+		if err != "" {
+			return 0, 0, false
+		}
+		defer {
+			rx_destroy(rx)
+			free(rx)
+		}
+		l, h, _, hit := rx_search(rx, hay, 0)
+		return l, h, hit
+	}
+	span :: proc(pat, hay: string, fold := false) -> string {
+		lo, hi, hit := try(pat, hay, fold)
+		return hit ? hay[lo:hi] : "<no match>"
+	}
+
+	eq_str(span("a+", "baaad"), "aaa", "greedy plus")
+	eq_str(span("a+?", "baaad"), "a", "lazy plus")
+	eq_str(span("a*", "bbb"), "", "star can match nothing")
+	eq_str(span("ab?c", "ac"), "ac", "optional")
+	eq_str(span("c.t", "the cat sat"), "cat", "dot is one rune")
+	eq_str(span("[0-9]+", "order 1234 now"), "1234", "a class with a range")
+	eq_str(span("[^ ]+", " word "), "word", "a negated class")
+	eq_str(span("\\d+mm", "it is 42mm wide"), "42mm", "a shorthand class")
+	eq_str(span("\\s+", "a   b"), "   ", "whitespace")
+	eq_str(span("^The", "The start"), "The", "an anchor at the start")
+	eq_str(span("^The", "and The start"), "<no match>", "which does not match in the middle")
+	eq_str(span("end$", "the end"), "end", "an anchor at the end")
+	eq_str(span("cat|dog", "a dog here"), "dog", "alternation, second branch")
+	eq_str(span("cat|dog", "a cat here"), "cat", "alternation, first branch")
+	eq_str(span("(ab)+", "ababab!"), "ababab", "a group under a quantifier")
+	eq_str(span("a{3}", "aaaa"), "aaa", "an exact repeat")
+	eq_str(span("a{2,3}", "aaaa"), "aaa", "a bounded repeat is greedy")
+	eq_str(span("a{2,}", "aaaa"), "aaaa", "an open repeat")
+	eq_str(span("a{4}", "aaa"), "<no match>", "a repeat that cannot be satisfied")
+	eq_str(span("\\bart\\b", "restart art"), "art", "a word boundary")
+	eq_str(span("\\bart\\b", "restarting"), "<no match>", "which is not inside a word")
+	eq_str(span("\\.", "a.b"), ".", "an escaped metacharacter is literal")
+	eq_str(span("colou?r", "the color"), "color", "the classic optional letter")
+	eq_str(span("é+", "café"), "é", "a non-ASCII literal")
+	eq_str(span("[a-zé]+", "café!"), "café", "a class containing one")
+
+	// Folding inside a pattern.
+	eq_str(span("cat", "a CAT", true), "CAT", "a folded literal")
+	eq_str(span("cat", "a CAT", false), "<no match>", "and not when folding is off")
+	eq_str(span("[a-z]+", "ABC", true), "ABC", "a folded class matches the other case")
+
+	// Captures and the replacement expansion.
+	{
+		rx, err := rx_compile("(\\w+)@(\\w+)", false)
+		eq_str(err, "", "an address pattern compiles")
+		hay := "write to ada@analytical now"
+		lo, hi, caps, hit := rx_search(rx, hay, 0)
+		ok(hit, "and matches")
+		eq_str(hay[lo:hi], "ada@analytical", "over the whole address")
+		eq_str(
+			rx_expand("\\2 of \\1", hay, caps),
+			"analytical of ada",
+			"and the groups come back in the replacement",
+		)
+		eq_str(rx_expand("\\0!", hay, caps), "ada@analytical!", "\\0 is the whole match")
+		eq_str(rx_expand("a\\\\b", "x", caps), "a\\b", "a doubled backslash is one backslash")
+		rx_destroy(rx)
+		free(rx)
+	}
+
+	// A pattern that will not compile says so.
+	{
+		rx, err := rx_compile("a(b", false)
+		ok(rx == nil, "an unbalanced group does not compile")
+		ok(err != "", "and there is a message to show: %s", err)
+	}
+	{
+		rx, err := rx_compile("*x", false)
+		ok(rx == nil, "nor does a quantifier with nothing in front of it")
+		ok(err != "", "with its own message: %s", err)
+	}
+	{
+		rx, err := rx_compile("[a-", false)
+		ok(rx == nil, "nor an unterminated class")
+		ok(err != "", "message: %s", err)
+	}
+
+	// Catastrophic backtracking gives up instead of hanging the editor.
+	{
+		rx, err := rx_compile("(a*)*b", false)
+		eq_str(err, "", "the classic exponential pattern compiles")
+		hay := "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+		_, _, _, hit := rx_search(rx, hay, 0)
+		ok(!hit, "and does not match a string of a's — it gives up rather than hangs")
+		rx_destroy(rx)
+		free(rx)
+	}
+
+	// --- through the find box
+	st := State{}
+	state_init(&st, fonts)
+	defer state_destroy(&st)
+	st.view = {0, 0, 1200, 700}
+	doc_destroy(&st.doc)
+	st.doc = Doc {
+		paras = make([dynamic]Paragraph, 0, 4),
+	}
+	append(&st.doc.paras, para_make(.Body, "Rev 1.2 on 3 March, rev 1.10 on 4 April, rev 2.0 later."))
+	append(&st.doc.paras, para_make(.Body, "No versions here at all."))
+	relayout(&st)
+
+	clear(&st.find)
+	append(&st.find, ..transmute([]u8)string("\\d+\\.\\d+"))
+	eq_int(count_hits(&st), 0, "a pattern is literal text until regex is switched on")
+
+	toggle_find_regex(&st)
+	ok(st.find_regex, "regex is on")
+	eq_str(st.rx_err, "", "and the pattern compiled")
+	eq_str(find_mode_label(&st), ".*", "the label says so")
+	eq_int(count_hits(&st), 3, "three version numbers")
+
+	st.caret = pos(0, 0)
+	st.anchor = st.caret
+	ok(find_next(&st), "the first is found")
+	lo, hi, _ := selection(&st)
+	eq_str(para_text(&st.doc.paras[0], context.temp_allocator)[lo.off:hi.off], "1.2", "and selected exactly")
+	ok(find_next(&st), "and the next")
+	lo2, hi2, _ := selection(&st)
+	eq_str(
+		para_text(&st.doc.paras[0], context.temp_allocator)[lo2.off:hi2.off],
+		"1.10",
+		"which is four characters, not three — a span, not a length",
+	)
+
+	// Replace with a group reference.
+	clear(&st.find)
+	append(&st.find, ..transmute([]u8)string("rev (\\d+)\\.(\\d+)"))
+	rx_recompile(&st)
+	clear(&st.repl)
+	append(&st.repl, ..transmute([]u8)string("version \\1-\\2"))
+	st.find_case = true
+	rx_recompile(&st)
+	replace_all(&st)
+	eq_str(
+		para_text(&st.doc.paras[0], context.temp_allocator),
+		"Rev 1.2 on 3 March, version 1-10 on 4 April, version 2-0 later.",
+		"replace all substitutes the captures; match-case leaves the capital Rev alone",
+	)
+
+	// A bad pattern typed into the box is reported, not silently empty.
+	clear(&st.find)
+	append(&st.find, ..transmute([]u8)string("a("))
+	rx_recompile(&st)
+	ok(st.rx_err != "", "a broken pattern leaves an error for the find bar: %s", st.rx_err)
+	eq_int(count_hits(&st), 0, "and matches nothing while it is broken")
+
+	toggle_find_regex(&st)
+	ok(!st.find_regex, "switching it off leaves the box working as before")
+	eq_str(st.rx_err, "", "and clears the error")
+}
+
+// ---------------------------------------------------------------------------
+// .rtf import
+//
+// The format this program could write but not read. The strongest assertion
+// available is a round trip: export a document that has one of everything,
+// read it back, and insist the two agree — paragraph for paragraph, style for
+// style, cell for cell, byte for byte on the picture.
+// ---------------------------------------------------------------------------
+
+test_rtf_import :: proc(fonts: ^p.Fonts) {
+	section("import: .rtf")
+
+	dir := fmt.tprintf("%s/rtfin", SELFTEST_DIR)
+	kit.run({"mkdir", "-p", dir})
+
+	// --- the pieces, on their own -----------------------------------------
+	{
+		// A minimal document, written by hand, so a failure points at the
+		// reader rather than at the writer.
+		src := "{\\rtf1\\ansi\\ansicpg1252\\uc1\\deff0\n" +
+			"{\\fonttbl{\\f0\\fswiss Geist;}{\\f1\\fmodern Courier New;}}\n" +
+			"{\\colortbl;\\red18\\green18\\blue18;\\red241\\green241\\blue242;\\red200\\green0\\blue0;}\n" +
+			"{\\stylesheet{\\s0 Normal;}{\\s7\\b heading 1;}{\\s9\\i Quote;}}\n" +
+			"\\pard\\plain\\s7 {Title here}\\par\n" +
+			"\\pard\\plain\\s0 plain {\\b bold}{\\i italic}{\\f1 mono}{\\cf3 red}\\par\n" +
+			"\\pard\\plain\\s9\\qc {Centred quotation}\\par\n" +
+			"\\pard\\plain\\s0 caf\\'e9 and stra\\u223?e\\par\n" +
+			"}\n"
+		d := doc_from_rtf(src)
+		defer doc_destroy(&d)
+		eq_int(len(d.paras), 4, "four paragraphs")
+		if len(d.paras) == 4 {
+			eq_int(int(d.paras[0].kind), int(Para_Kind.H1), "the stylesheet mapped \\s7 onto Heading 1 by name")
+			eq_str(para_text(&d.paras[0], context.temp_allocator), "Title here", "its text")
+			ok(len(d.paras[0].runs) == 1 && !d.paras[0].runs[0].style.bold, "and a heading does not arrive full of bold runs")
+
+			eq_str(para_text(&d.paras[1], context.temp_allocator), "plain bolditalicmonored", "the run text")
+			bold, italic, mono, colored := 0, 0, 0, 0
+			for &r in d.paras[1].runs {
+				if r.style.bold {bold += 1}
+				if r.style.italic {italic += 1}
+				if r.style.mono {mono += 1}
+				if r.style.color != 0 {colored += 1}
+			}
+			eq_int(bold, 1, "one bold run")
+			eq_int(italic, 1, "one italic run")
+			eq_int(mono, 1, "one run in the font table's monospace face")
+			eq_int(colored, 1, "one coloured run")
+			for &r in d.paras[1].runs {
+				if r.style.color != 0 {
+					eq_int(int(r.style.color & 0xffffff), 0xc80000, "and it is the colour the table gave")
+				}
+			}
+
+			eq_int(int(d.paras[2].kind), int(Para_Kind.Quote), "\\s9 mapped onto Quote")
+			eq_int(int(d.paras[2].align), int(Align.Center), "and the alignment came with it")
+			eq_str(
+				para_text(&d.paras[3], context.temp_allocator),
+				"café and straße",
+				"\\'hh is a code-page byte and \\uN is a UTF-16 unit",
+			)
+		}
+	}
+
+	// A file that is not RTF is refused rather than read as text.
+	{
+		bad := fmt.tprintf("%s/not.rtf", dir)
+		kit.run({"sh", "-c", fmt.tprintf("printf 'hello, not rtf' > %s", bad)})
+		_, got := import_rtf(bad)
+		ok(!got, "a file that does not start with {\\rtf is refused")
+	}
+
+	// --- the round trip ----------------------------------------------------
+	cases := make([dynamic]Export_Case, 0, 2, context.temp_allocator)
+	append(&cases, Export_Case{name = "fixture", doc = rich_fixture()})
+	append(&cases, Export_Case{name = "grid", doc = grid_fixture()})
+	defer {
+		for &c in cases {
+			doc_destroy(&c.doc)
+		}
+	}
+
+	for &c in cases {
+		path := fmt.tprintf("%s/%s.rtf", dir, c.name)
+		if !export_rtf(&c.doc, path, c.name) {
+			ok(false, "%s.rtf was written", c.name)
+			continue
+		}
+		back, got := import_rtf(path)
+		if !got {
+			ok(false, "%s.rtf was read back", c.name)
+			continue
+		}
+		defer doc_destroy(&back)
+
+		// Counts first: paragraph kinds, tables, cells and pictures.
+		want_kinds := make([dynamic]Para_Kind, 0, 32, context.temp_allocator)
+		got_kinds := make([dynamic]Para_Kind, 0, 32, context.temp_allocator)
+		for &pa in c.doc.paras {
+			append(&want_kinds, pa.kind)
+		}
+		for &pa in back.paras {
+			append(&got_kinds, pa.kind)
+		}
+		eq_int(len(got_kinds), len(want_kinds), "%s: the same number of paragraphs came back", c.name)
+		same := len(got_kinds) == len(want_kinds)
+		if same {
+			for i in 0 ..< len(want_kinds) {
+				if want_kinds[i] != got_kinds[i] {
+					same = false
+					ok(
+						false,
+						"%s: paragraph %d is %s, was %s",
+						c.name,
+						i,
+						kind_name(got_kinds[i]),
+						kind_name(want_kinds[i]),
+					)
+					break
+				}
+			}
+		}
+		ok(same, "%s: every paragraph kind survived", c.name)
+
+		// The text, paragraph by paragraph, including inside cells.
+		eq_str(
+			rtf_plain_text(&back),
+			rtf_plain_text(&c.doc),
+			fmt.tprintf("%s: every word came back, in order", c.name),
+		)
+
+		// Tables keep their shape.
+		for &pa, i in c.doc.paras {
+			if pa.kind != .Table || pa.table == nil || i >= len(back.paras) {
+				continue
+			}
+			bt := back.paras[i].table
+			if bt == nil {
+				ok(false, "%s: paragraph %d came back as a table", c.name, i)
+				continue
+			}
+			eq_int(len(bt.rows), len(pa.table.rows), "%s: the table has its rows", c.name)
+			eq_int(table_cols(bt), table_cols(pa.table), "%s: and its columns", c.name)
+			ok(bt.header == pa.table.header, "%s: \\trhdr brought the header flag back", c.name)
+			// The column widths are what `\cellx` said, to within the
+			// rounding that twips impose.
+			for col in 0 ..< min(table_cols(bt), table_cols(pa.table)) {
+				d := abs(table_width(bt, col) - table_width(pa.table, col))
+				ok(d < 1.5, "%s: column %d is %.1f px wide, was %.1f", c.name, col, table_width(bt, col), table_width(pa.table, col))
+			}
+		}
+
+		// A picture comes back as the same bytes, not as a note that there
+		// was one.
+		for &pa, i in c.doc.paras {
+			if pa.kind != .Image || pa.img == nil || i >= len(back.paras) {
+				continue
+			}
+			bi := back.paras[i].img
+			if bi == nil {
+				ok(false, "%s: paragraph %d came back as a picture", c.name, i)
+				continue
+			}
+			eq_int(len(bi.bytes), len(pa.img.bytes), "%s: the picture is the same number of bytes", c.name)
+			identical := len(bi.bytes) == len(pa.img.bytes)
+			if identical {
+				for k in 0 ..< len(bi.bytes) {
+					if bi.bytes[k] != pa.img.bytes[k] {
+						identical = false
+						break
+					}
+				}
+			}
+			ok(identical, "%s: and they are the same bytes, hex-decoded back", c.name)
+			eq_int(bi.w, pa.img.w, "%s: the intrinsic width", c.name)
+			eq_int(bi.h, pa.img.h, "%s: the intrinsic height", c.name)
+			dw, _ := image_draw_size(bi)
+			ow, _ := image_draw_size(pa.img)
+			ok(abs(dw - ow) < 1.5, "%s: and \\picwgoal put it back at %.0f px, was %.0f", c.name, dw, ow)
+		}
+	}
+}
+
+// doc_pictures lists every picture in a document in reading order, inside
+// table cells as well as in the body. Counting only the top-level paragraphs
+// is how a picture in a cell could be dropped by an exporter and nothing
+// would say so.
+doc_pictures :: proc(d: ^Doc) -> []^Doc_Image {
+	out := make([dynamic]^Doc_Image, 0, 4, context.temp_allocator)
+	for blk in doc_blocks(d, context.temp_allocator) {
+		pa := blk_para(d, blk)
+		if pa != nil && pa.kind == .Image && pa.img != nil {
+			append(&out, pa.img)
+		}
+	}
+	return out[:]
+}
+
+// rtf_plain_text is every word of a document in reading order, cells
+// included, with one space between blocks: the comparison that says "nothing
+// was lost" without being sensitive to where the paragraph breaks fall.
+rtf_plain_text :: proc(d: ^Doc) -> string {
+	b := strings.builder_make(context.temp_allocator)
+	for blk in doc_blocks(d, context.temp_allocator) {
+		pa := blk_para(d, blk)
+		if pa == nil {
+			continue
+		}
+		t := strings.trim_space(para_text(pa, context.temp_allocator))
+		if t == "" {
+			continue
+		}
+		if strings.builder_len(b) > 0 {
+			strings.write_byte(&b, ' ')
+		}
+		strings.write_string(&b, t)
+	}
+	return strings.to_string(b)
+}
+
+// ---------------------------------------------------------------------------
+// A picture inside a table cell
+//
+// It used to be refused outright — "A picture cannot go inside a cell yet" —
+// because the sizing needed the cell's measure rather than the page's and
+// nothing could give it one. The claims now are: it is sized against its
+// column, the row grows to hold it, every format carries it, and the editor
+// will insert one.
+// ---------------------------------------------------------------------------
+
+test_cell_image :: proc(fonts: ^p.Fonts) {
+	section("tables: a picture inside a cell")
+
+	d := grid_fixture()
+	defer doc_destroy(&d)
+	t := d.paras[2].table
+	ok(t != nil, "the fixture's table is there")
+	cl := table_cell(t, 2, 0)
+	ok(cl != nil && len(cl.paras) == 2, "the cell has a paragraph and a picture")
+	if cl == nil || len(cl.paras) < 2 {
+		return
+	}
+	cp := &cl.paras[1]
+	ok(cp.kind == .Image && cp.img != nil, "the second one is the picture")
+
+	// --- sized against the column, not the page
+	col_w := table_width(t, 0)
+	measure := col_w - 2 * CELL_PAD
+	pw, ph := image_para_size(cp, measure, CONTENT_H)
+	ok(cp.img.w > int(measure), "the picture is wider than the column on purpose (%d px source, %.0f px column)", cp.img.w, measure)
+	ok(pw <= measure + 0.5, "so it is scaled down to the column: %.1f px in %.1f", pw, measure)
+	ok(abs(pw / ph - f32(cp.img.w) / f32(cp.img.h)) < 0.02, "and keeps its aspect ratio")
+	full_w, _ := image_para_size(cp)
+	ok(full_w > pw, "the page measure would have let it be wider (%.0f vs %.0f)", full_w, pw)
+
+	// --- the row grows to hold it
+	st := State{}
+	state_init(&st, fonts)
+	defer state_destroy(&st)
+	st.view = {0, 0, 1280, 760}
+	replace_document(&st, doc_clone(&d))
+	relayout(&st)
+
+	heights := make(map[int]f32, 8, context.temp_allocator)
+	for cb in st.lay.cells {
+		if cb.col == 0 {
+			heights[cb.row] = cb.h
+		}
+	}
+	ok(heights[2] > heights[1] + ph / 2, "the row with the picture is taller than a text row (%.0f vs %.0f)", heights[2], heights[1])
+
+	// Every line of that cell is inside the cell's box: a picture that
+	// overflowed its row would draw over the row below it.
+	pic_lines := 0
+	for l in st.lay.lines {
+		if l.para != 2 || l.row != 2 || l.col != 0 || l.cpara != 1 {
+			continue
+		}
+		pic_lines += 1
+		box_y, box_h := f32(0), f32(0)
+		for cb in st.lay.cells {
+			if cb.row == 2 && cb.col == 0 && cb.page == l.page {
+				box_y, box_h = cb.y, cb.h
+			}
+		}
+		ok(l.y >= box_y - 0.5, "the picture's line starts inside its cell")
+		ok(l.y + l.h <= box_y + box_h + 0.5, "and ends inside it (%.1f vs %.1f)", l.y + l.h, box_y + box_h)
+		ok(abs(l.h - ph) < 0.5, "the line box is as tall as the picture (%.1f vs %.1f)", l.h, ph)
+	}
+	eq_int(pic_lines, 1, "the picture is one line box")
+
+	// --- every format carries it
+	{
+		j := doc_to_json(&d, context.temp_allocator)
+		back, jok := doc_from_json(j)
+		ok(jok, "JSON: the document parses back")
+		defer doc_destroy(&back)
+		bt := back.paras[2].table
+		ok(bt != nil, "JSON: the table comes back")
+		if bt != nil {
+			bc := table_cell(bt, 2, 0)
+			ok(bc != nil && len(bc.paras) == 2, "JSON: with both of the cell's paragraphs")
+			if bc != nil && len(bc.paras) == 2 {
+				ok(bc.paras[1].kind == .Image && bc.paras[1].img != nil, "JSON: and the picture is a picture")
+				if bc.paras[1].img != nil {
+					eq_int(len(bc.paras[1].img.bytes), len(cp.img.bytes), "JSON: with its bytes")
+				}
+			}
+		}
+	}
+	{
+		md := doc_to_markdown(&d, context.temp_allocator)
+		ok(strings.contains(md, "![a picture inside a cell]"), "Markdown: the cell carries an image link")
+	}
+	{
+		html := doc_to_html(&d, "cells", context.temp_allocator)
+		// The picture is inside a <td>, not inside a <figure> of its own.
+		td := strings.index(html, "<img")
+		ok(td > 0, "HTML: an <img> was written")
+		ok(strings.contains(html, "alt=\"a picture inside a cell\""), "HTML: with the cell picture's alt text")
+	}
+	{
+		rtf := doc_to_rtf(&d, "cells", context.temp_allocator)
+		// The cell's picture has to sit between the row definition and the
+		// `\cell` that ends its cell, with no `\par` in between: either a
+		// `\pard` or a `\par` there ends the cell early in a real reader.
+		pict_at := strings.index(rtf, "\\pict")
+		ok(pict_at > 0, "RTF: a {\\pict} group was written")
+		if pict_at > 0 {
+			before := rtf[:pict_at]
+			trowd := strings.last_index(before, "\\trowd")
+			ok(trowd >= 0, "RTF: it comes after a row definition")
+			rest := rtf[pict_at:]
+			cell_at := strings.index(rest, "\\cell")
+			row_at := strings.index(rest, "\\row")
+			par_at := strings.index(rest, "\\par")
+			ok(cell_at > 0, "RTF: and is closed by a \\cell")
+			ok(row_at < 0 || cell_at < row_at, "RTF: inside the row it belongs to")
+			ok(par_at < 0 || par_at > cell_at, "RTF: with no \\par before the cell ends")
+		}
+	}
+
+	// --- and the editor will insert one
+	{
+		st2 := State{}
+		state_init(&st2, fonts)
+		defer state_destroy(&st2)
+		st2.view = {0, 0, 1280, 760}
+		doc_destroy(&st2.doc)
+		st2.doc = Doc {
+			paras = make([dynamic]Paragraph, 0, 2),
+		}
+		append(&st2.doc.paras, table_para_make(2, 2))
+		append(&st2.doc.paras, para_make())
+		relayout(&st2)
+		st2.caret = Pos{para = 0, row = 1, col = 1, cpara = 0}
+		st2.anchor = st2.caret
+
+		path := fmt.tprintf("%s/cellpic.png", SELFTEST_DIR)
+		kit.run({"mkdir", "-p", SELFTEST_DIR})
+		ok(os.write_entire_file(path, test_png(120, 80)) == nil, "a picture was written to insert")
+		do_insert_image(&st2, path)
+		ic := table_cell(st2.doc.paras[0].table, 1, 1)
+		ok(ic != nil, "the cell is still there")
+		found := false
+		if ic != nil {
+			for &q in ic.paras {
+				if q.kind == .Image && q.img != nil {
+					found = true
+				}
+			}
+		}
+		ok(found, "and the picture went into it rather than being refused")
+		ok(st2.caret.para == 0 && st2.caret.row == 1 && st2.caret.col == 1, "the caret stayed in the cell")
+		ok(!strings.contains(st2.toast, "cannot"), "and nothing was refused: %q", st2.toast)
+	}
 }

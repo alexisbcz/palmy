@@ -431,11 +431,17 @@ find_bar :: proc(ui: ^p.Ctx, st: ^State) {
 	mini_field(ui, "f", "Find", string(st.find[:]), "text to find", st.find_field == 0, t)
 	mini_field(ui, "r", "Replace", string(st.repl[:]), "replacement", st.find_field == 1, t)
 
-	p.text(
-		ui,
-		st.find_hits == 0 ? "no matches" : tfmt("%d match%s", st.find_hits, st.find_hits == 1 ? "" : "es"),
-		"text-[12] text-muted-foreground whitespace-nowrap",
-	)
+	// A pattern that will not compile is named, not swallowed: "no matches"
+	// for `a(b` would send somebody hunting through their document.
+	if st.find_regex && st.rx_err != "" {
+		p.text(ui, tfmt("bad pattern: %s", st.rx_err), "text-[12] text-destructive whitespace-nowrap")
+	} else {
+		p.text(
+			ui,
+			st.find_hits == 0 ? "no matches" : tfmt("%d match%s", st.find_hits, st.find_hits == 1 ? "" : "es"),
+			"text-[12] text-muted-foreground whitespace-nowrap",
+		)
+	}
 	p.style(ui).shrink = 0
 
 	// The two depth switches, which is the whole difference between a find box
@@ -445,6 +451,9 @@ find_bar :: proc(ui: ^p.Ctx, st: ^State) {
 	}
 	if tool_button(ui, "mword", ICON_WHOLE_WORD, st.find_word) {
 		toggle_find_word(st)
+	}
+	if tool_button(ui, "mrx", ICON_REGEX, st.find_regex) {
+		toggle_find_regex(st)
 	}
 
 	vrule(ui)
@@ -473,6 +482,7 @@ find_bar :: proc(ui: ^p.Ctx, st: ^State) {
 	hint(ui, "Tab", "field")
 	hint(ui, "F5", "case")
 	hint(ui, "F6", "word")
+	hint(ui, "F7", "regex")
 	hint(ui, "F11", "replace")
 	hint(ui, "F12", "all")
 }
@@ -597,7 +607,7 @@ HELP_DEMO := [?]Shortcut {
 	{"F6 / F7", "Bullet list, numbered list"},
 	{"F8", "Cycle alignment"},
 	{"F9", "Find and replace bar"},
-	{"F5 / F6 in find", "Match case, whole words"},
+	{"F5 / F6 / F7 in find", "Match case, whole words, regular expression"},
 	{"F10", "Set mark, then arrows extend the selection"},
 	{"F11 / F12", "Replace, replace all"},
 	{"KP + / KP -", "Zoom in, zoom out"},
@@ -642,6 +652,7 @@ HELP_FILE := [?]Shortcut {
 	{"Ctrl D / Ctrl Shift D", "Export .docx, .odt"},
 	{"Ctrl T", "Export .rtf"},
 	{"Ctrl Shift O / Ctrl Alt O", "Import .docx, .odt"},
+	{"Ctrl Alt T", "Import .rtf"},
 	{"Ctrl Shift P", "Export every page as PNG"},
 	{"Ctrl = / Ctrl -", "Zoom"},
 	{"Ctrl Q", "Quit"},

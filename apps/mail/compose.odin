@@ -26,19 +26,52 @@ compose_reset :: proc(c: ^Composer) {
 	buf_init(&c.body, "")
 	delete(c.in_reply_to)
 	delete(c.references)
+	delete(c.origin_path)
 	c.in_reply_to = ""
 	c.references = ""
+	c.origin_path = ""
 	c.sent_to = ""
 	c.confirm = false
+	// The autosave bookkeeping belongs to one composition, not to the
+	// composer: a new one starts with nothing of its own on disk.
+	c.open_hash = 0
+	c.saved_hash = 0
+	c.saved_any = false
+	c.saved_at = {}
+	c.last_tick = {}
+	ac_close(c)
 }
 
+// compose_new is C. A draft waiting from a previous run, or one Escape left
+// in the composer, is picked up rather than thrown away — which is what a
+// person pressing the compose key after losing their window actually wants.
+// Shift+C is the way to insist on a blank one.
 compose_new :: proc(st: ^State) {
 	c := &st.comp
+	if st.draft_waiting {
+		if draft_restore(st) {
+			return
+		}
+	}
+	if compose_dirty(c) {
+		c.open = true
+		st.pane = .Compose
+		note(st, "Carrying on with your unsent draft — Shift+C starts a new one")
+		return
+	}
+	compose_blank(st)
+}
+
+// compose_blank always starts an empty message, parking anything unsent first.
+compose_blank :: proc(st: ^State) {
+	c := &st.comp
+	park_draft(st)
 	compose_reset(c)
 	c.open = true
 	c.mode = .New
 	c.field = .To
 	c.account = account_of_folder(st, st.folder_sel)
+	c.open_hash = compose_hash(c)
 	st.pane = .Compose
 }
 
@@ -216,7 +249,21 @@ compose_reply :: proc(st: ^State, mi: int, all: bool) {
 	if mi < 0 || mi >= len(st.messages) {
 		return
 	}
-	m := st.messages[mi]
+	// Parking an unsent draft files it into Drafts, and that reloads the
+	// tree and renumbers every message — so the one being replied to is
+	// found again by path, never by the index we came in with.
+	idx := mi
+	if compose_dirty(&st.comp) || st.draft_waiting {
+		keep := strings.clone(st.messages[idx].path, context.temp_allocator)
+		if park_draft(st) {
+			idx = message_at_path(st, keep)
+			if idx < 0 {
+				note(st, "Your draft was kept in Drafts; the message you were replying to has moved.")
+				return
+			}
+		}
+	}
+	m := st.messages[idx]
 	c := &st.comp
 	compose_reset(c)
 	c.open = true
@@ -247,17 +294,29 @@ compose_reply :: proc(st: ^State, mi: int, all: bool) {
 	strings.write_string(&body, quote_body(m, st.tz_offset, context.temp_allocator))
 	buf_init(&c.body, strings.to_string(body))
 	c.body.cur = {0, 0}
+	c.open_hash = compose_hash(c)
 	st.pane = .Compose
 
 	// Answering a message marks it answered, as every client does.
-	set_flags(st, mi, st.messages[mi].flags | {.Answered, .Seen})
+	set_flags(st, idx, st.messages[idx].flags | {.Answered, .Seen})
 }
 
 compose_forward :: proc(st: ^State, mi: int) {
 	if mi < 0 || mi >= len(st.messages) {
 		return
 	}
-	m := st.messages[mi]
+	idx := mi
+	if compose_dirty(&st.comp) || st.draft_waiting {
+		keep := strings.clone(st.messages[idx].path, context.temp_allocator)
+		if park_draft(st) {
+			idx = message_at_path(st, keep)
+			if idx < 0 {
+				note(st, "Your draft was kept in Drafts; the message you were forwarding has moved.")
+				return
+			}
+		}
+	}
+	m := st.messages[idx]
 	c := &st.comp
 	compose_reset(c)
 	c.open = true
@@ -278,6 +337,7 @@ compose_forward :: proc(st: ^State, mi: int) {
 	}
 	buf_init(&c.body, strings.to_string(b))
 	c.body.cur = {0, 0}
+	c.open_hash = compose_hash(c)
 	st.pane = .Compose
 }
 
@@ -298,7 +358,7 @@ new_message_id :: proc(domain: string, allocator := context.allocator) -> string
 // as 8-bit UTF-8, which every modern reader handles and which keeps the file
 // on disk readable in an editor; non-ASCII header values are RFC 2047 encoded,
 // because a raw 8-bit Subject is not legal and would not round-trip.
-build_message :: proc(st: ^State, allocator := context.allocator) -> string {
+build_message :: proc(st: ^State, draft := false, allocator := context.allocator) -> string {
 	c := &st.comp
 	a := st.accounts[clamp(c.account, 0, max(0, len(st.accounts) - 1))]
 	domain := "localhost"
@@ -326,7 +386,11 @@ build_message :: proc(st: ^State, allocator := context.allocator) -> string {
 	strings.write_string(&b, "Content-Transfer-Encoding: 8bit\r\n")
 	// A marker, so it is never in doubt where a message in the Outbox came
 	// from or that it was never transmitted.
-	strings.write_string(&b, "X-Palmy-Mail: queued-locally; never-transmitted\r\n")
+	if draft {
+		strings.write_string(&b, "X-Palmy-Mail: unsent draft; never-transmitted\r\n")
+	} else {
+		strings.write_string(&b, "X-Palmy-Mail: queued-locally; never-transmitted\r\n")
+	}
 	strings.write_string(&b, "\r\n")
 
 	text := buf_text(&c.body, context.temp_allocator)
@@ -404,7 +468,7 @@ compose_send :: proc(st: ^State) -> (path: string, ok: bool) {
 		note(st, "A message needs at least one recipient.")
 		return "", false
 	}
-	content := build_message(st, context.temp_allocator)
+	content := build_message(st, false, context.temp_allocator)
 	folder := send_destination(st, c.account, context.temp_allocator)
 	p, wok := maildir_deliver(folder, content)
 	if !wok {

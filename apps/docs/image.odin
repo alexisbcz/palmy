@@ -176,20 +176,25 @@ image_para_make :: proc(im: Doc_Image, align := Align.Center) -> Paragraph {
 // apply, in this order: the content measure, so it never runs into the margin,
 // and the content height, so a picture always fits on a page of its own rather
 // than being unplaceable.
-image_draw_size :: proc(im: ^Doc_Image) -> (w, h: f32) {
+// `measure` and `maxh` default to the page's own text area. A picture inside
+// a table cell is capped by the cell instead — the same two rules, against a
+// smaller box, which is all "a picture in a cell" needs from the sizing.
+image_draw_size :: proc(im: ^Doc_Image, measure := f32(IMAGE_MAX_W), maxh := f32(CONTENT_H)) -> (w, h: f32) {
 	if im == nil || im.w <= 0 || im.h <= 0 {
 		return 0, 0
 	}
 	s := im.scale <= 0 ? f32(1) : im.scale
 	w = f32(im.w) * s
 	h = f32(im.h) * s
-	if w > IMAGE_MAX_W {
-		k := IMAGE_MAX_W / w
+	lim_w := max(measure, 8)
+	lim_h := max(maxh, 8)
+	if w > lim_w {
+		k := lim_w / w
 		w *= k
 		h *= k
 	}
-	if h > CONTENT_H {
-		k := CONTENT_H / h
+	if h > lim_h {
+		k := lim_h / h
 		w *= k
 		h *= k
 	}
@@ -199,22 +204,22 @@ image_draw_size :: proc(im: ^Doc_Image) -> (w, h: f32) {
 // image_para_size answers for a paragraph, including the placeholder box an
 // image that would not decode is given — a document that moved between
 // machines should say what it is missing rather than silently closing up.
-image_para_size :: proc(pa: ^Paragraph) -> (w, h: f32) {
+image_para_size :: proc(pa: ^Paragraph, measure := f32(IMAGE_MAX_W), maxh := f32(CONTENT_H)) -> (w, h: f32) {
 	if pa.img == nil {
-		return 160, 90
+		return min(160, measure), 90
 	}
-	return image_draw_size(pa.img)
+	return image_draw_size(pa.img, measure, maxh)
 }
 
 // image_x is the picture's left edge within the text area, from the
 // paragraph's own alignment. Justified reads as centred, which is the only
 // sensible thing a single box can do with it.
-image_x :: proc(pa: ^Paragraph, w: f32) -> f32 {
+image_x :: proc(pa: ^Paragraph, w: f32, measure := f32(CONTENT_W)) -> f32 {
 	switch pa.align {
 	case .Center, .Justify:
-		return max(0, (CONTENT_W - w) / 2)
+		return max(0, (measure - w) / 2)
 	case .Right:
-		return max(0, CONTENT_W - w)
+		return max(0, measure - w)
 	case .Left:
 	}
 	return 0

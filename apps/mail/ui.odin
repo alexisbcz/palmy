@@ -93,6 +93,22 @@ initials :: proc(a: Address) -> string {
 	return s == "" ? "?" : s
 }
 
+// mark_badge stands in for the avatar on a marked row. Replacing the face
+// rather than squeezing a checkbox in beside it is what every list with a
+// multi-select does, and it reads at a glance across a scrolled page.
+mark_badge :: proc(ui: ^p.Ctx, size: string, icon_size: string, hl: bool) {
+	p.div(
+		ui,
+		tfmt(
+			"flex-row %s shrink-0 items-center justify-center rounded-full %s",
+			size,
+			hl ? "bg-white" : "bg-selection",
+		),
+	)
+	p.icon(ui, ICON_CHECK, tfmt("%s %s", icon_size, hl ? "text-selection" : "text-white"))
+	p.end(ui)
+}
+
 avatar :: proc(ui: ^p.Ctx, a: Address, size: string = "size-8", text_class := "text-[12]") {
 	p.div(
 		ui,
@@ -611,6 +627,7 @@ sidebar :: proc(ui: ^p.Ctx, st: ^State, drawer: bool) {
 	hint(ui, "C", "compose")
 	hint(ui, "R", "reply")
 	hint(ui, "V W", "choose · save file")
+	hint(ui, "T", "select · acts on all")
 	hint(ui, "E M D", "archive · move · trash")
 	hint(ui, "Z", "undo a move")
 	hint(ui, "/", "search")
@@ -870,6 +887,15 @@ list_header :: proc(ui: ^p.Ctx, st: ^State) {
 	}
 	p.icon(ui, st.searching ? ICON_SEARCH : ICON_MAILS, "size-3.5 shrink-0 text-muted-foreground")
 	p.text(ui, title, "truncate text-[12.5] font-semibold text-foreground max-w-[200]")
+	if n := marked_count(st); n > 0 {
+		// What the next verb will act on, said in numbers, because "E" over a
+		// selection of eleven is not a keystroke to guess at.
+		p.div(ui, "flex-row h-[18] shrink-0 items-center gap-1 px-1.5 rounded-full bg-selection")
+		p.icon(ui, ICON_CHECK, "size-2.5 shrink-0 text-white")
+		p.text(ui, tfmt("%d selected", n), "text-[10] font-semibold text-white whitespace-nowrap")
+		p.style(ui).shrink = 0
+		p.end(ui)
+	}
 	p.spacer(ui, "flex-1")
 	p.text(ui, sub, "text-[11] text-muted-foreground whitespace-nowrap")
 	p.style(ui).shrink = 0
@@ -886,6 +912,7 @@ thread_row :: proc(ui: ^p.Ctx, st: ^State, row: Row, i: int, sel, focused: bool)
 	m := st.messages[newest]
 	unread := t.unread > 0
 	hl := sel && focused
+	marked := row_marked(st, i)
 
 	p.key(ui, tfmt("t:%d:%s", row.thread, t.subject))
 	idx := p.row(
@@ -900,6 +927,8 @@ thread_row :: proc(ui: ^p.Ctx, st: ^State, row: Row, i: int, sel, focused: bool)
 		p.apply(ui, "bg-selection", idx)
 	case sel:
 		p.apply(ui, "bg-foreground/10", idx)
+	case marked:
+		p.apply(ui, "bg-selection/15 hover:bg-selection/25", idx)
 	case unread:
 		p.apply(ui, "bg-background hover:bg-accent", idx)
 	case:
@@ -927,7 +956,11 @@ thread_row :: proc(ui: ^p.Ctx, st: ^State, row: Row, i: int, sel, focused: bool)
 	}
 	p.end(ui)
 
-	avatar(ui, m.from, "size-8", "text-[11.5]")
+	if marked {
+		mark_badge(ui, "size-8", "size-4", hl)
+	} else {
+		avatar(ui, m.from, "size-8", "text-[11.5]")
+	}
 
 	p.col(ui, "flex-1 min-w-0 gap-0.5")
 
@@ -1016,6 +1049,7 @@ message_row :: proc(ui: ^p.Ctx, st: ^State, row: Row, i: int, sel, focused: bool
 	m := st.messages[row.msg]
 	unread := msg_unread(m)
 	hl := sel && focused
+	marked := st.marked[m.path]
 
 	p.key(ui, tfmt("m:%d", row.msg))
 	idx := p.row(ui, tfmt("h-[%d] shrink-0 w-full items-center gap-2 border-b border-border/40 transition cursor-pointer", MSG_ROW_H))
@@ -1025,6 +1059,8 @@ message_row :: proc(ui: ^p.Ctx, st: ^State, row: Row, i: int, sel, focused: bool
 		p.apply(ui, "bg-selection", idx)
 	case sel:
 		p.apply(ui, "bg-foreground/10", idx)
+	case marked:
+		p.apply(ui, "bg-selection/15 hover:bg-selection/25", idx)
 	case:
 		p.apply(ui, "bg-muted/35 hover:bg-accent", idx)
 	}
@@ -1047,7 +1083,11 @@ message_row :: proc(ui: ^p.Ctx, st: ^State, row: Row, i: int, sel, focused: bool
 		ICON_CORNER_UP_LEFT,
 		hl ? "size-3 shrink-0 text-white/60" : "size-3 shrink-0 text-muted-foreground/50",
 	)
-	avatar(ui, m.from, "size-6", "text-[10]")
+	if marked {
+		mark_badge(ui, "size-6", "size-3", hl)
+	} else {
+		avatar(ui, m.from, "size-6", "text-[10]")
+	}
 
 	p.col(ui, "flex-1 min-w-0 gap-0")
 	p.row(ui, "items-center gap-1.5 w-full min-w-0")
@@ -1290,15 +1330,25 @@ attachments_block :: proc(ui: ^p.Ctx, st: ^State, m: Message) {
 		return
 	}
 
-	// One row per attachment rather than a wrapped row of chips.
+	// A wrapping row of chips.
 	//
-	// Chips were fine while they were decoration. Now each one carries a Save
-	// button, they are wide enough that five of them wrap — and palmy's
-	// `flex-wrap` lays a second line out without growing the row's height, so
-	// the overflow draws straight over the message body. A column has no wrap
-	// to get wrong, and it gives a long filename somewhere to go. (Reported as
-	// a toolkit gap; worked around here rather than patched there.)
-	p.col(ui, "w-full shrink-0 gap-1")
+	// This was a column of full-width rows for a while, and the comment there
+	// said why: each chip carries a Save button, five of them are wider than
+	// the reading pane, and palmy's `flex-wrap` used to lay a second line out
+	// without growing the row's height — so the overflow drew straight over
+	// the message body. The toolkit now measures a wrapping box against the
+	// width it really got rather than the width it was offered, and asks for
+	// one more frame when that width changes. This pane is the awkward case:
+	// `flex-1 min-w-0` beside two fixed siblings, so it is offered the whole
+	// window while measuring and gets the remainder while arranging. It is
+	// therefore right from the *second* frame, not the first.
+	//
+	// The ids are kept for the same reason the list's are — the geometry only
+	// exists once the tree has been laid out — and `--uitest` asserts the row
+	// is as tall as the lines it laid out rather than trusting a screenshot.
+	box := p.row(ui, "w-full flex-wrap gap-2")
+	st.att_box_id = p.node_id(ui, box)
+	st.att_chip_n = 0
 	for ai, k in saveable {
 		if k >= MAX_ATTACHMENT_CHIPS {
 			p.text(
@@ -1312,19 +1362,24 @@ attachments_block :: proc(ui: ^p.Ctx, st: ^State, m: Message) {
 		on := st.att_sel == k
 
 		p.key(ui, tfmt("att:%d", ai))
-		row := p.row(ui, "h-9 w-full shrink-0 items-center gap-2 pl-2 pr-1.5 rounded-lg border bg-muted/40 transition cursor-pointer")
+		row := p.row(ui, "h-9 shrink-0 items-center gap-2 pl-2 pr-1.5 rounded-lg border bg-muted/40 transition cursor-pointer")
 		p.apply(ui, on ? "border-selection ring-2 ring-selection/35" : "border-border hover:bg-muted", row)
 		if p.clickable(ui, row) {
 			st.att_sel = k
 		}
+		if st.att_chip_n < len(st.att_chip_ids) {
+			st.att_chip_ids[st.att_chip_n] = p.node_id(ui, row)
+			st.att_chip_n += 1
+		}
 		p.icon(ui, attachment_icon(at.mime), "size-4 shrink-0 text-muted-foreground")
-		p.text(ui, at.name, "flex-1 min-w-0 truncate text-[11.5] font-medium text-foreground")
+		p.col(ui, "gap-0 max-w-[190] shrink")
+		p.text(ui, at.name, "truncate text-[11.5] font-medium text-foreground")
 		p.text(
 			ui,
 			tfmt("%s · %s", at.mime, human_bytes(at.size, context.temp_allocator)),
-			"shrink-0 text-[10] text-muted-foreground whitespace-nowrap",
+			"truncate text-[10] text-muted-foreground",
 		)
-		p.style(ui).shrink = 0
+		p.end(ui)
 
 		// The save button. A list without one would be a list of things you
 		// can look at and not open, which is what this was before.
@@ -1548,7 +1603,9 @@ composer :: proc(ui: ^p.Ctx, st: ^State) {
 	p.col(ui, "flex-1 min-h-0 w-full")
 
 	compose_field(ui, st, .To, "To", &c.to)
+	ac_popup(ui, st, .To)
 	compose_field(ui, st, .Cc, "Cc", &c.cc)
+	ac_popup(ui, st, .Cc)
 	compose_field(ui, st, .Subject, "Subject", &c.subject)
 
 	// The body, with a real cursor.
@@ -1595,7 +1652,7 @@ composer :: proc(ui: ^p.Ctx, st: ^State) {
 	{
 		idx := p.row(ui, "h-8 shrink-0 items-center gap-1.5 px-2.5 rounded-lg border border-border bg-background hover:bg-muted cursor-pointer transition")
 		if p.clickable(ui, idx) {
-			close_composer(st)
+			discard_composer(st)
 		}
 		p.text(ui, "Discard", "text-[13] text-foreground whitespace-nowrap")
 		p.style(ui).shrink = 0
@@ -1603,6 +1660,19 @@ composer :: proc(ui: ^p.Ctx, st: ^State) {
 	}
 
 	p.row(ui, "flex-1 min-w-0 items-center gap-1.5 justify-end")
+	if c.saved_any {
+		// Saying when it was last kept is the whole point of keeping it: a
+		// promise with no evidence is not one anybody can rely on.
+		p.row(ui, "shrink-0 items-center gap-1 px-1.5 h-[18] rounded-full bg-muted")
+		p.icon(ui, ICON_CHECK, "size-2.5 shrink-0 text-emerald-600")
+		p.text(
+			ui,
+			tfmt("Draft saved %s", clock_of(c.saved_at, st.tz_offset, context.temp_allocator)),
+			"text-[10] text-muted-foreground whitespace-nowrap",
+		)
+		p.style(ui).shrink = 0
+		p.end(ui)
+	}
 	p.icon(ui, ICON_LOCK, "size-3 shrink-0 text-emerald-600")
 	p.text(
 		ui,
@@ -1621,6 +1691,70 @@ composer :: proc(ui: ^p.Ctx, st: ^State) {
 	if c.confirm {
 		send_confirm(ui, st)
 	}
+}
+
+// ac_popup is the suggestion list under an address field.
+//
+// It is drawn in the flow, directly beneath the field it belongs to, rather
+// than floating over the body. Wayland gives this toolkit no xdg_popup — every
+// other overlay here is drawn in-window for the same reason — and a list that
+// pushes the body down a few rows is honest about the space it is taking.
+ac_popup :: proc(ui: ^p.Ctx, st: ^State, which: Compose_Field) {
+	c := &st.comp
+	if !c.ac_open || c.field != which || len(c.ac_hits) == 0 {
+		return
+	}
+	p.col(ui, "w-full shrink-0 border-b border-border bg-popover py-1")
+	defer p.end(ui)
+
+	for h, k in c.ac_hits {
+		if h < 0 || h >= len(st.book) {
+			continue
+		}
+		ct := st.book[h]
+		on := k == c.ac_sel
+		p.key(ui, tfmt("ac:%d", h))
+		idx := p.row(ui, "h-[30] shrink-0 w-full items-center gap-2 pl-[64] pr-4 cursor-pointer transition")
+		if on {
+			p.apply(ui, "bg-selection", idx)
+		} else {
+			p.apply(ui, "hover:bg-accent", idx)
+		}
+		if p.clickable(ui, idx) {
+			c.ac_sel = k
+			ac_accept(st)
+		}
+		p.icon(ui, ICON_AT_SIGN, on ? "size-3 shrink-0 text-white/80" : "size-3 shrink-0 text-muted-foreground")
+		if ct.name != "" {
+			p.text(
+				ui,
+				ct.name,
+				on 				? "shrink-0 max-w-[180] truncate text-[12.5] font-medium text-white" 				: "shrink-0 max-w-[180] truncate text-[12.5] font-medium text-foreground",
+			)
+		}
+		p.text(
+			ui,
+			ct.email,
+			on 			? "flex-1 min-w-0 truncate text-[11.5] text-white/75" 			: "flex-1 min-w-0 truncate text-[11.5] text-muted-foreground",
+		)
+		p.text(
+			ui,
+			tfmt("%d", ct.count),
+			on ? "text-[10] text-white/60 whitespace-nowrap" : "text-[10] text-muted-foreground/70 whitespace-nowrap",
+		)
+		p.style(ui).shrink = 0
+		p.end(ui)
+	}
+
+	p.row(ui, "h-[20] shrink-0 w-full items-center gap-1.5 pl-[64] pr-4")
+	sc.kbd(ui, "Up", "h-4 text-[9]")
+	sc.kbd(ui, "Down", "h-4 text-[9]")
+	p.text(ui, "choose", "text-[9.5] text-muted-foreground/70 whitespace-nowrap")
+	p.style(ui).shrink = 0
+	sc.kbd(ui, "Tab", "h-4 text-[9]")
+	p.text(ui, "complete  ·  from the addresses already in this mailbox", "text-[9.5] text-muted-foreground/70 whitespace-nowrap")
+	p.style(ui).shrink = 0
+	p.end(ui)
 }
 
 compose_field :: proc(ui: ^p.Ctx, st: ^State, which: Compose_Field, label: string, e: ^Line_Edit) {
@@ -1767,6 +1901,29 @@ status_bar :: proc(ui: ^p.Ctx, st: ^State) {
 		p.row(ui, "items-center gap-1 min-w-0")
 		p.icon(ui, ICON_SHIELD_OFF, "size-3 shrink-0 text-destructive")
 		p.text(ui, st.warn, "truncate text-[11] text-destructive")
+		p.end(ui)
+	}
+
+	if st.draft_waiting || (!st.comp.open && st.comp.saved_any) {
+		// A draft from a previous run. It is not opened for you; it is said
+		// out loud, with the key that picks it up.
+		p.text(ui, "·", "text-[11] text-muted-foreground/50")
+		p.row(ui, "items-center gap-1 min-w-0 shrink")
+		p.icon(ui, ICON_PENCIL, "size-3 shrink-0 text-selection")
+		label := st.draft_label
+		if !st.draft_waiting {
+			// Saved in this session rather than found at startup: say what it
+			// is from the composer, which still holds it.
+			label = strings.trim_space(le_text(&st.comp.subject))
+			if label == "" {
+				label = strings.trim_space(le_text(&st.comp.to))
+			}
+			if label == "" {
+				label = "an unsent message"
+			}
+		}
+		p.text(ui, tfmt("Unsent draft: %s", label), "truncate text-[11] text-foreground")
+		sc.kbd(ui, "C", "h-4 text-[9.5]")
 		p.end(ui)
 	}
 

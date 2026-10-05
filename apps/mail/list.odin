@@ -368,6 +368,14 @@ full_date :: proc(t: time.Time, offset: i64, allocator := context.allocator) -> 
 	)
 }
 
+// clock_of is the wall-clock time alone, for the places that are saying
+// "just now" and only need the minute.
+clock_of :: proc(t: time.Time, offset: i64, allocator := context.allocator) -> string {
+	local := time.Time{_nsec = t._nsec + offset * 1_000_000_000}
+	hh, mi, _ := time.clock(local)
+	return fmt.aprintf("%02d:%02d", hh, mi, allocator = allocator)
+}
+
 human_bytes :: proc(n: int, allocator := context.allocator) -> string {
 	if n < 1000 {
 		return fmt.aprintf("%d B", n, allocator = allocator)
@@ -451,6 +459,13 @@ open_row :: proc(st: ^State) {
 		return
 	}
 	mi := current_message(st)
+	// A draft opens in the composer, not in the reader. Opening your own
+	// unfinished message read-only is the one thing nobody wants to do with
+	// it, and every mail client agrees.
+	if is_draft_message(st, mi) {
+		compose_edit_draft(st, mi)
+		return
+	}
 	if mi >= 0 {
 		set_flags(st, mi, st.messages[mi].flags | {.Seen})
 	}
@@ -468,4 +483,127 @@ move_selection :: proc(st: ^State, by: int) {
 	st.row_sel = clamp(st.row_sel + by, 0, len(st.rows) - 1)
 	st.list_scroll_to = st.row_sel
 	sync_reader(st)
+}
+
+// ---------------------------------------------------------------------------
+// Multi-select
+//
+// Marks are kept as a set of Maildir paths, not row or message indices, for
+// the reason `selection_paths` already gives: creating a folder reloads the
+// tree and renumbers every message, so an index taken before a reload names a
+// different message after it. A path is what the message *is*.
+//
+// A thread row stands for every message under it, so marking one marks them
+// all and the row only reads as marked when all of them are.
+// ---------------------------------------------------------------------------
+
+marked_count :: proc(st: ^State) -> int {
+	return len(st.marked)
+}
+
+marks_clear :: proc(st: ^State) {
+	for k in st.marked {
+		delete(k)
+	}
+	clear(&st.marked)
+}
+
+// prune_marks drops marks whose file is no longer in the model — moved out
+// from under us by the engine, or deleted. A mark that no longer names
+// anything would make "3 selected" a lie.
+prune_marks :: proc(st: ^State) {
+	if len(st.marked) == 0 {
+		return
+	}
+	live := make(map[string]bool, len(st.messages), context.temp_allocator)
+	for m in st.messages {
+		live[m.path] = true
+	}
+	gone := make([dynamic]string, 0, 8, context.temp_allocator)
+	for k in st.marked {
+		if !live[k] {
+			append(&gone, k)
+		}
+	}
+	for k in gone {
+		key, _ := delete_key(&st.marked, k)
+		delete(key)
+	}
+}
+
+// row_messages is what one row stands for, without regard to the marks —
+// `selection_messages` is the one that consults them.
+row_messages :: proc(st: ^State, ri: int, allocator := context.temp_allocator) -> []int {
+	out := make([dynamic]int, 0, 8, allocator)
+	if ri < 0 || ri >= len(st.rows) {
+		return out[:]
+	}
+	r := st.rows[ri]
+	if r.kind == .Message {
+		append(&out, r.msg)
+		return out[:]
+	}
+	if r.thread < 0 || r.thread >= len(st.threads) {
+		return out[:]
+	}
+	for mi in st.threads[r.thread].msgs {
+		append(&out, mi)
+	}
+	return out[:]
+}
+
+row_marked :: proc(st: ^State, ri: int) -> bool {
+	msgs := row_messages(st, ri, context.temp_allocator)
+	if len(msgs) == 0 {
+		return false
+	}
+	for mi in msgs {
+		if !st.marked[st.messages[mi].path] {
+			return false
+		}
+	}
+	return true
+}
+
+// mark_toggle_row is T. A partly marked thread marks the rest rather than
+// unmarking what is there, which is the behaviour that never loses a mark by
+// surprise.
+mark_toggle_row :: proc(st: ^State) {
+	msgs := row_messages(st, st.row_sel, context.temp_allocator)
+	if len(msgs) == 0 {
+		return
+	}
+	on := !row_marked(st, st.row_sel)
+	for mi in msgs {
+		path := st.messages[mi].path
+		if on {
+			if !st.marked[path] {
+				st.marked[strings.clone(path)] = true
+			}
+		} else {
+			if key, found := delete_key(&st.marked, path); found {
+				delete(key)
+			}
+		}
+	}
+	if n := marked_count(st); n > 0 {
+		note(st, tfmt("%d message%s selected  ·  E M D act on all of them, Shift+T clears", n, plural(n)))
+	} else {
+		note(st, "Selection cleared")
+	}
+}
+
+// marked_messages is the marked set in scan order, which is the order every
+// other loop over messages here uses.
+marked_messages :: proc(st: ^State, allocator := context.temp_allocator) -> []int {
+	out := make([dynamic]int, 0, max(1, len(st.marked)), allocator)
+	if len(st.marked) == 0 {
+		return out[:]
+	}
+	for m, i in st.messages {
+		if st.marked[m.path] {
+			append(&out, i)
+		}
+	}
+	return out[:]
 }

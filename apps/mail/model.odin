@@ -411,6 +411,28 @@ Composer :: struct {
 	account:     int,
 	sent_to:     string, // the outbox path, after a send
 	confirm:     bool, // the Send confirmation step is showing
+
+	// Autosave. `open_hash` is what the composer held the moment it was
+	// filled, so a reply nobody typed into is not a draft; `saved_hash` is
+	// what is on disk. Both are content hashes, which is cheap enough to
+	// take once a second and exact enough that a save only happens when
+	// something really changed.
+	open_hash:   u64,
+	saved_hash:  u64,
+	saved_at:    time.Time,
+	saved_any:   bool, // this composition has a slot on disk
+	last_tick:   time.Time,
+
+	// The Maildir file this composition was loaded from, when it was opened
+	// out of the Drafts folder. Sending or discarding unlinks it; parking
+	// rewrites it. Empty for a composition that started in the composer.
+	origin_path: string,
+
+	// Address autocomplete, for To and Cc.
+	ac_open:     bool,
+	ac_sel:      int,
+	ac_prefix:   string, // the fragment being completed, lowercased
+	ac_hits:     [dynamic]int, // indices into State.book
 }
 
 State :: struct {
@@ -474,6 +496,21 @@ State :: struct {
 	narrow:     bool,
 	list_w:     f32,
 
+	// A draft slot was found on disk at startup and nothing has picked it up
+	// yet. The composer takes it on the next C.
+	draft_waiting: bool,
+	draft_label:   string, // "Subject — 14:03", for the toast and the status bar
+
+	// Multi-select. Marks are kept by path rather than by index, for the
+	// reason `selection_paths` gives: creating a folder reloads the tree and
+	// renumbers every message, and an index taken before that reload names a
+	// different message after it.
+	marked:      map[string]bool,
+
+	// The address book, built from every message on disk. Autocomplete reads
+	// it; nothing else does.
+	book:        [dynamic]Contact,
+
 	// `--maildir=PATH` was given: one tree, and no discovery of others.
 	single_tree: bool,
 	read_scroll_home: bool,
@@ -488,6 +525,14 @@ State :: struct {
 	side_id:     u64,
 	side_row_id: u64,
 	side_scroll: bool,
+
+	// The attachment chips, for the same reason: the wrapping row's geometry
+	// only exists after the tree has been laid out, and `--uitest` checks
+	// that the row is as tall as the lines it laid out instead of trusting a
+	// screenshot. 24 is `MAX_ATTACHMENT_CHIPS`.
+	att_box_id:   u64,
+	att_chip_ids: [24]u64,
+	att_chip_n:   int,
 }
 
 // Side_Row flattens the sidebar the same way Row flattens the list, so one

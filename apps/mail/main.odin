@@ -104,9 +104,18 @@ main :: proc() {
 	for ui in p.frames(app) {
 		st.now = time.now()
 		handle_keys(ui, st, app)
+		draft_tick(st)
 		frame(ui, st)
 		apply_scroll(ui, st)
 		retitle(app, st)
+	}
+
+	// The window closed. Whatever is in the composer is written out before
+	// this process goes away — the autosave tick has a second of slack in it,
+	// and the last second of someone's typing is exactly what they would
+	// notice missing.
+	if compose_dirty(&st.comp) {
+		draft_save(st)
 	}
 }
 
@@ -125,10 +134,15 @@ print_usage :: proc() {
 
 Keys, all unmodified so the keyboard alone is enough:
 
-  J K  move      Enter  open      C reply/compose    / search
+  J K  move      Enter  open      C compose/continue a draft    / search
+  Shift+C  a new blank message      T  select · Shift+T clears
   V W  choose an attachment, save it through the file dialog
   E M D  archive · move to a folder · delete to Trash      Z  undo a move
   Shift+D  delete from disk — the one irreversible thing, and it asks first
+
+The composer autosaves. Closing it keeps the draft; C picks it back up, and
+starting another composition files the unfinished one in Drafts rather than
+dropping it. Only the Discard button throws a draft away.
 
 This client has no network code. It reads a Maildir from disk; Send queues a
 message into the account's own local Outbox and transmits nothing. Saving an
@@ -196,6 +210,14 @@ init_state :: proc(st: ^State) {
 	}
 
 	reload_all(st)
+
+	// A draft left behind by the last run. The composer does not open by
+	// itself — walking into half a message is startling — but the status bar
+	// says it is there and C picks it up.
+	draft_peek(st)
+	if st.draft_waiting {
+		note(st, tfmt("An unsent draft is waiting: %s  ·  press C", st.draft_label))
+	}
 }
 
 // default_save_dir is where the Save dialog opens the first time: the usual
@@ -236,6 +258,8 @@ reload_all :: proc(st: ^State) {
 
 	scan_accounts(st)
 	rebuild_sidebar(st)
+	build_address_book(st)
+	prune_marks(st)
 
 	st.folder_sel = 0
 	if keep_folder != "" {
@@ -594,6 +618,11 @@ list_keys :: proc(ui: ^p.Ctx, st: ^State) {
 	if plain(ui, 'c') {
 		compose_new(st)
 	}
+	// Shift+C insists on a blank message. Whatever was unsent is kept, in
+	// Drafts, rather than quietly replaced.
+	if shifted(ui, 'c') {
+		compose_blank(st)
+	}
 	if plain(ui, 'r') && mi >= 0 {
 		compose_reply(st, mi, false)
 	}
@@ -643,6 +672,19 @@ list_keys :: proc(ui: ^p.Ctx, st: ^State) {
 		do_undo(st)
 	}
 
+	// Multi-select. T marks the row under the cursor — a whole conversation
+	// on a thread row — and every verb above then acts on the marked set
+	// instead. Shift+T clears it, and so does Escape.
+	if plain(ui, 't') {
+		mark_toggle_row(st)
+	}
+	if shifted(ui, 't') {
+		if marked_count(st) > 0 {
+			marks_clear(st)
+			note(st, "Selection cleared")
+		}
+	}
+
 	if plain(ui, '/') {
 		focus_search(st)
 	}
@@ -657,7 +699,10 @@ list_keys :: proc(ui: ^p.Ctx, st: ^State) {
 	// somewhere the user did not ask for: collapse the conversation, then drop
 	// the search, and then stop. The sidebar is reached with Left or Tab.
 	if plain(ui, p.KEY_ESCAPE) {
-		if ti := current_thread(st); ti >= 0 && st.threads[ti].expanded {
+		if marked_count(st) > 0 {
+			marks_clear(st)
+			note(st, "Selection cleared")
+		} else if ti := current_thread(st); ti >= 0 && st.threads[ti].expanded {
 			st.threads[ti].expanded = false
 			rebuild_rows(st)
 			sync_reader(st)
@@ -743,7 +788,7 @@ do_move :: proc(st: ^State, target_fi: int) {
 		note(st, err)
 		return
 	}
-	note(st, tfmt("Moved %d message%s to %s  ·  Z to undo", n, plural(n), name))
+	note(st, tfmt("Moved %d message%s to %s  ·  %s", n, plural(n), name, undo_phrase(n)))
 }
 
 do_undo :: proc(st: ^State) {
@@ -779,10 +824,39 @@ purge_keys :: proc(ui: ^p.Ctx, st: ^State) {
 	}
 }
 
+// close_composer is Escape and the X: it puts the composer away and keeps
+// what is in it. Discard is the button that throws work away, and it is the
+// only thing that does.
 close_composer :: proc(st: ^State) {
 	st.comp.open = false
 	st.comp.confirm = false
 	st.pane = .List
+	ac_close(&st.comp)
+	if compose_dirty(&st.comp) {
+		if draft_save(st) {
+			note(st, "Draft saved — press C to carry on with it")
+		}
+	}
+}
+
+// discard_composer is the one way to lose a draft on purpose: the slot goes,
+// and so does the Drafts file it was opened from, if it came from one.
+discard_composer :: proc(st: ^State) {
+	c := &st.comp
+	had := !compose_is_empty(c)
+	origin := strings.clone(c.origin_path, context.temp_allocator)
+	draft_discard(st)
+	c.open = false
+	c.confirm = false
+	compose_reset(c)
+	st.pane = .List
+	if origin != "" && os.exists(origin) {
+		os.remove(origin)
+		reload_all(st)
+	}
+	if had {
+		note(st, "Draft discarded")
+	}
 }
 
 do_send :: proc(st: ^State) {
@@ -791,7 +865,17 @@ do_send :: proc(st: ^State) {
 		st.comp.confirm = false
 		return
 	}
-	close_composer(st)
+	// The message is queued, so the draft of it is finished with: the slot
+	// goes, and so does the Drafts file it was opened from.
+	origin := strings.clone(st.comp.origin_path, context.temp_allocator)
+	draft_discard(st)
+	if origin != "" && os.exists(origin) {
+		os.remove(origin)
+	}
+	compose_reset(&st.comp)
+	st.comp.open = false
+	st.comp.confirm = false
+	st.pane = .List
 	// Rescan, so the queued message appears in the Outbox folder the way any
 	// other message does. Nothing special: it is a file in a Maildir.
 	reload_all(st)
@@ -800,6 +884,28 @@ do_send :: proc(st: ^State) {
 
 compose_keys :: proc(ui: ^p.Ctx, st: ^State) {
 	c := &st.comp
+
+	// The suggestion list owns Up, Down, Tab, Enter and Escape while it is
+	// showing, and nothing else. Escape closes the list rather than the
+	// composer, which is the one thing that would make the feature hostile.
+	if c.ac_open && !c.confirm {
+		if plain(ui, p.KEY_ESCAPE) {
+			ac_close(c)
+			return
+		}
+		if plain(ui, p.KEY_DOWN) {
+			c.ac_sel = (c.ac_sel + 1) % max(1, len(c.ac_hits))
+			return
+		}
+		if plain(ui, p.KEY_UP) {
+			c.ac_sel = (c.ac_sel + max(1, len(c.ac_hits)) - 1) % max(1, len(c.ac_hits))
+			return
+		}
+		if plain(ui, p.KEY_TAB) || plain(ui, p.KEY_RETURN) {
+			ac_accept(st)
+			return
+		}
+	}
 
 	if c.confirm {
 		if plain(ui, p.KEY_RETURN) {
@@ -817,10 +923,12 @@ compose_keys :: proc(ui: ^p.Ctx, st: ^State) {
 	}
 	if plain(ui, p.KEY_TAB) {
 		c.field = Compose_Field((int(c.field) + 1) % len(Compose_Field))
+		ac_close(c)
 		return
 	}
 	if p.shortcut(ui, p.KEY_TAB, {.Shift}) {
 		c.field = Compose_Field((int(c.field) + len(Compose_Field) - 1) % len(Compose_Field))
+		ac_close(c)
 		return
 	}
 	if p.shortcut(ui, p.KEY_RETURN, {.Ctrl}) {
@@ -910,37 +1018,53 @@ compose_keys :: proc(ui: ^p.Ctx, st: ^State) {
 	case .Body, .Send:
 		return
 	}
+	edited := false
 	for b in transmute([]u8)typed {
 		if b >= 0x20 {
 			le_insert(e, string([]u8{b}))
+			edited = true
 		}
 	}
 	for _ in 0 ..< key_times(ui, p.KEY_BACKSPACE) {
 		le_backspace(e)
+		edited = true
 	}
 	for _ in 0 ..< key_times(ui, p.KEY_DELETE) {
 		le_delete(e)
+		edited = true
 	}
 	for _ in 0 ..< key_times(ui, p.KEY_LEFT) {
 		le_left(e)
+		edited = true
 	}
 	for _ in 0 ..< key_times(ui, p.KEY_RIGHT) {
 		le_right(e)
+		edited = true
 	}
 	if plain(ui, p.KEY_HOME) {
 		le_home(e)
+		edited = true
 	}
 	if plain(ui, p.KEY_END) {
 		le_end(e)
+		edited = true
 	}
 	if p.shortcut(ui, 'u', {.Ctrl}) {
 		le_clear(e)
+		edited = true
+	}
+	if edited {
+		// Only To and Cc have a book behind them; ac_update knows that and
+		// shuts the list for anything else.
+		ac_update(st)
 	}
 	if plain(ui, p.KEY_RETURN) || plain(ui, p.KEY_DOWN) {
 		c.field = Compose_Field(min(int(c.field) + 1, int(Compose_Field.Body)))
+		ac_close(c)
 	}
 	if plain(ui, p.KEY_UP) {
 		c.field = Compose_Field(max(int(c.field) - 1, 0))
+		ac_close(c)
 	}
 }
 
