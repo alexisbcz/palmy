@@ -28,12 +28,51 @@ KEY_PAGE_DOWN :: 0xff56
 KEY_END       :: 0xff57
 KEY_INSERT    :: 0xff63
 KEY_KP_ENTER  :: 0xff8d
+KEY_MENU      :: 0xff67
+// The function keys are contiguous from F1: `0xffbd + n`. They stopped at F5
+// and F11 here, and three applications went on to spell the rest of them
+// locally, which is how `sheets` ended up with its own `KEY_F10`.
 KEY_F1        :: 0xffbe
 KEY_F2        :: 0xffbf
 KEY_F3        :: 0xffc0
 KEY_F4        :: 0xffc1
 KEY_F5        :: 0xffc2
+KEY_F6        :: 0xffc3
+KEY_F7        :: 0xffc4
+KEY_F8        :: 0xffc5
+KEY_F9        :: 0xffc6
+KEY_F10       :: 0xffc7
 KEY_F11       :: 0xffc8
+KEY_F12       :: 0xffc9
+KEY_F13       :: 0xffca
+KEY_F14       :: 0xffcb
+KEY_F15       :: 0xffcc
+KEY_F16       :: 0xffcd
+KEY_F17       :: 0xffce
+KEY_F18       :: 0xffcf
+KEY_F19       :: 0xffd0
+KEY_F20       :: 0xffd1
+KEY_F21       :: 0xffd2
+KEY_F22       :: 0xffd3
+KEY_F23       :: 0xffd4
+KEY_F24       :: 0xffd5
+// The keypad. `KP_ENTER` was already here; the rest were not, and `image`
+// spells `KP_ADD` and `KP_SUB` itself to zoom.
+KEY_KP_MUL    :: 0xffaa
+KEY_KP_ADD    :: 0xffab
+KEY_KP_SUB    :: 0xffad
+KEY_KP_DECIMAL :: 0xffae
+KEY_KP_DIV    :: 0xffaf
+KEY_KP_0      :: 0xffb0
+KEY_KP_1      :: 0xffb1
+KEY_KP_2      :: 0xffb2
+KEY_KP_3      :: 0xffb3
+KEY_KP_4      :: 0xffb4
+KEY_KP_5      :: 0xffb5
+KEY_KP_6      :: 0xffb6
+KEY_KP_7      :: 0xffb7
+KEY_KP_8      :: 0xffb8
+KEY_KP_9      :: 0xffb9
 KEY_DELETE    :: 0xffff
 KEY_SPACE     :: 0x0020
 
@@ -270,7 +309,22 @@ fallback_sym :: proc(code: u32, shift: bool) -> u32 {
 		{49, 'n', 'N'}, {50, 'm', 'M'}, {51, ',', '<'}, {52, '.', '>'}, {53, '/', '?'},
 		{57, KEY_SPACE, KEY_SPACE},
 		{59, KEY_F1, KEY_F1}, {60, KEY_F2, KEY_F2}, {61, KEY_F3, KEY_F3}, {62, KEY_F4, KEY_F4},
-		{63, KEY_F5, KEY_F5}, {87, KEY_F11, KEY_F11},
+		{63, KEY_F5, KEY_F5}, {64, KEY_F6, KEY_F6}, {65, KEY_F7, KEY_F7}, {66, KEY_F8, KEY_F8},
+		{67, KEY_F9, KEY_F9}, {68, KEY_F10, KEY_F10}, {87, KEY_F11, KEY_F11}, {88, KEY_F12, KEY_F12},
+		{183, KEY_F13, KEY_F13}, {184, KEY_F14, KEY_F14}, {185, KEY_F15, KEY_F15},
+		{186, KEY_F16, KEY_F16}, {187, KEY_F17, KEY_F17}, {188, KEY_F18, KEY_F18},
+		{189, KEY_F19, KEY_F19}, {190, KEY_F20, KEY_F20}, {191, KEY_F21, KEY_F21},
+		{192, KEY_F22, KEY_F22}, {193, KEY_F23, KEY_F23}, {194, KEY_F24, KEY_F24},
+		{127, KEY_MENU, KEY_MENU},
+		// The keypad, as it reads with num lock on -- this fallback has no
+		// lock state, and a layout that does arrives through libxkbcommon.
+		{55, KEY_KP_MUL, KEY_KP_MUL}, {74, KEY_KP_SUB, KEY_KP_SUB},
+		{78, KEY_KP_ADD, KEY_KP_ADD}, {98, KEY_KP_DIV, KEY_KP_DIV},
+		{83, KEY_KP_DECIMAL, KEY_KP_DECIMAL},
+		{82, KEY_KP_0, KEY_KP_0}, {79, KEY_KP_1, KEY_KP_1}, {80, KEY_KP_2, KEY_KP_2},
+		{81, KEY_KP_3, KEY_KP_3}, {75, KEY_KP_4, KEY_KP_4}, {76, KEY_KP_5, KEY_KP_5},
+		{77, KEY_KP_6, KEY_KP_6}, {71, KEY_KP_7, KEY_KP_7}, {72, KEY_KP_8, KEY_KP_8},
+		{73, KEY_KP_9, KEY_KP_9},
 		{102, KEY_HOME, KEY_HOME}, {103, KEY_UP, KEY_UP}, {104, KEY_PAGE_UP, KEY_PAGE_UP},
 		{105, KEY_LEFT, KEY_LEFT}, {106, KEY_RIGHT, KEY_RIGHT}, {107, KEY_END, KEY_END},
 		{108, KEY_DOWN, KEY_DOWN}, {109, KEY_PAGE_DOWN, KEY_PAGE_DOWN},

@@ -16,9 +16,21 @@ import stbi "vendor:stb/image"
 
 Image :: struct {
 	px:    []u32,
+	// The size this image presents: what layout measures and what `draw_image`
+	// maps the destination rectangle onto. For a view (see `image_window`) it
+	// is the size of the window after it has been turned, not the size of the
+	// pixel buffer.
 	w, h:  int,
 	// What the file claimed, for a properties panel.
 	source_channels: int,
+
+	// A view onto someone else's pixels, all zero for an ordinary image.
+	// `stride` is the row length of the buffer, `ox`/`oy` the window's origin
+	// in it, and `turns` the clockwise quarter turns to read it through.
+	// `image_window` fills these in; nothing else needs to look at them.
+	stride: int,
+	ox, oy: int,
+	turns:  u8,
 }
 
 // load_image decodes a file from disk.
@@ -73,8 +85,12 @@ image_size :: proc(path: string) -> (w, h, channels: int, ok: bool) {
 	return int(x), int(y), int(c), true
 }
 
+// image_destroy frees the pixels. A view from `image_window` borrows another
+// image's buffer, so destroying one is a no-op rather than a double free.
 image_destroy :: proc(img: ^Image) {
-	delete(img.px)
+	if img.stride == 0 {
+		delete(img.px)
+	}
 	img^ = {}
 }
 
@@ -90,6 +106,98 @@ is_image_path :: proc(path: string) -> bool {
 		}
 	}
 	return false
+}
+
+// ---------------------------------------------------------------------------
+// Views: a window onto an image, turned, with no copy.
+//
+// `image` reported both of these as missing: a viewer that rotates had to
+// build the rotated pixels itself, and one that pans had to drive the canvas
+// directly. A view is a plain `Image` that borrows the original's buffer, so
+// it goes anywhere an image goes -- `p.image`, `draw_image`, `fitted_rect` --
+// and costs nothing to make or to throw away.
+//
+//	p.image(ui, p.image_rotated(photo, turns), "w-full h-full", .Contain)
+//	p.image(ui, p.image_window(photo, px, py, vw, vh, turns), "...", .Fill)
+//
+// Views do not stack: each one is described against the original pixels, so
+// `image_rotated(image_rotated(img, 1), 1)` is a quarter turn, not a half.
+// Chain the turns instead. A view must outlive nothing -- it holds no memory
+// of its own -- and `image_destroy` on one is a no-op.
+// ---------------------------------------------------------------------------
+
+// image_source returns the pixel buffer's own geometry, which is the image
+// itself unless it is a view.
+@(private)
+image_source :: proc "contextless" (img: Image) -> (sw, sh: int) {
+	if img.stride > 0 {
+		sw = img.stride
+		sh = img.stride > 0 ? len(img.px) / img.stride : 0
+		return
+	}
+	return img.w, img.h
+}
+
+// image_rotated returns a view of the whole image, turned clockwise by
+// `quarter_turns` (negative turns anticlockwise). A quarter turn swaps `w`
+// and `h`, so layout and object-fit see the turned shape.
+image_rotated :: proc "contextless" (img: Image, quarter_turns: int) -> Image {
+	sw, sh := image_source(img)
+	return image_window_src(img, 0, 0, sw, sh, quarter_turns, true)
+}
+
+// image_window returns a view of one rectangle of the image, turned clockwise
+// by `quarter_turns`. The rectangle is in the *turned* image's pixels, which
+// is what panning a rotated picture means: `x` and `y` are how far into the
+// picture the window starts as you see it, not as it is stored.
+//
+// A window that runs off the edge is clamped to the image, so a pan can be
+// driven straight from a scroll offset without the caller checking bounds.
+image_window :: proc "contextless" (img: Image, x, y, w, h: int, quarter_turns: int = 0) -> Image {
+	return image_window_src(img, x, y, w, h, quarter_turns, false)
+}
+
+@(private)
+image_window_src :: proc "contextless" (img: Image, x, y, w, h: int, quarter_turns: int, whole: bool) -> Image {
+	sw, sh := image_source(img)
+	if sw <= 0 || sh <= 0 || len(img.px) < sw * sh {
+		return {}
+	}
+	q := u8(((quarter_turns % 4) + 4) % 4)
+
+	// The size the whole buffer presents once turned.
+	fw, fh := sw, sh
+	if q == 1 || q == 3 {
+		fw, fh = sh, sw
+	}
+
+	cx, cy, cw, ch := 0, 0, fw, fh
+	if !whole {
+		cx, cy = clamp(x, 0, fw), clamp(y, 0, fh)
+		cw = clamp(w, 0, fw - cx)
+		ch = clamp(h, 0, fh - cy)
+		if cw <= 0 || ch <= 0 {
+			return {}
+		}
+	}
+
+	// Where that window sits in the stored buffer, undoing the turn.
+	out := img
+	out.px = img.px
+	out.stride = sw
+	out.turns = q
+	out.w, out.h = cw, ch
+	switch q {
+	case 0:
+		out.ox, out.oy = cx, cy
+	case 1:
+		out.ox, out.oy = cy, fw - (cx + cw)
+	case 2:
+		out.ox, out.oy = fw - (cx + cw), fh - (cy + ch)
+	case 3:
+		out.ox, out.oy = fh - (cy + ch), cx
+	}
+	return out
 }
 
 // Fit decides how an image fills the box it is given, matching CSS object-fit.
@@ -145,6 +253,25 @@ draw_image :: proc(c: ^Canvas, img: Image, dst: Rect, opacity: f32 = 1) {
 	x1 := int(math.ceil(rect_right(b)))
 	y1 := int(math.ceil(rect_bottom(b)))
 
+	if img.turns == 1 || img.turns == 3 {
+		// A quarter-turned view reads across the source's rows, so walking the
+		// destination in columns is what keeps the source reads sequential.
+		// The destination writes scatter instead, but there is one of those
+		// per pixel against four bilinear taps.
+		for x in x0 ..< x1 {
+			u := (f32(x) + 0.5 - dst.x) * sx - 0.5
+			for y in y0 ..< y1 {
+				v := (f32(y) + 0.5 - dst.y) * sy - 0.5
+				col := nearest ? sample_nearest(img, u, v) : sample_bilinear(img, u, v)
+				if col.a == 0 {
+					continue
+				}
+				blend(c, x, y, col, opacity)
+			}
+		}
+		return
+	}
+
 	for y in y0 ..< y1 {
 		v := (f32(y) + 0.5 - dst.y) * sy - 0.5
 		for x in x0 ..< x1 {
@@ -158,35 +285,62 @@ draw_image :: proc(c: ^Canvas, img: Image, dst: Rect, opacity: f32 = 1) {
 	}
 }
 
+// view_uv maps a point in what the image presents to a point in the stored
+// buffer's own axes, relative to the view's origin. It is the identity for an
+// ordinary image.
+@(private)
+view_uv :: #force_inline proc "contextless" (img: Image, u, v: f32) -> (f32, f32) {
+	switch img.turns {
+	case 1:
+		return v, f32(img.w - 1) - u
+	case 2:
+		return f32(img.w - 1) - u, f32(img.h - 1) - v
+	case 3:
+		return f32(img.h - 1) - v, u
+	}
+	return u, v
+}
+
+// view_texel reads one stored pixel. Taps are clamped to the whole buffer
+// rather than to the window, so a window's edge samples its real neighbours
+// instead of smearing its own border -- panning stays continuous.
+@(private)
+view_texel :: #force_inline proc "contextless" (img: Image, sw, sh, x, y: int) -> u32 {
+	stride := img.stride > 0 ? img.stride : img.w
+	cx := clamp(img.ox + x, 0, sw - 1)
+	cy := clamp(img.oy + y, 0, sh - 1)
+	return img.px[cy * stride + cx]
+}
+
 @(private)
 sample_nearest :: proc "contextless" (img: Image, u, v: f32) -> Color {
-	x := clamp(int(u + 0.5), 0, img.w - 1)
-	y := clamp(int(v + 0.5), 0, img.h - 1)
-	p := img.px[y * img.w + x]
+	sw, sh := image_source(img)
+	su, sv := view_uv(img, u, v)
+	p := view_texel(img, sw, sh, int(su + 0.5), int(sv + 0.5))
 	return {u8(p >> 16), u8(p >> 8), u8(p), u8(p >> 24)}
 }
 
 @(private)
-sample_bilinear :: proc "contextless" (img: Image, u, v: f32) -> Color {
+sample_bilinear :: proc "contextless" (img: Image, u_in, v_in: f32) -> Color {
+	sw, sh := image_source(img)
+	u, v := view_uv(img, u_in, v_in)
 	x0 := int(math.floor(u))
 	y0 := int(math.floor(v))
 	fx := u - f32(x0)
 	fy := v - f32(y0)
 
-	px :: proc "contextless" (img: Image, x, y: int) -> [4]f32 {
-		cx := clamp(x, 0, img.w - 1)
-		cy := clamp(y, 0, img.h - 1)
-		p := img.px[cy * img.w + cx]
+	px :: proc "contextless" (img: Image, sw, sh, x, y: int) -> [4]f32 {
+		p := view_texel(img, sw, sh, x, y)
 		// Weight colour by alpha so transparent pixels do not bleed their
 		// colour into opaque neighbours.
 		a := f32((p >> 24) & 0xff)
 		return {f32((p >> 16) & 0xff) * a, f32((p >> 8) & 0xff) * a, f32(p & 0xff) * a, a}
 	}
 
-	c00 := px(img, x0, y0)
-	c10 := px(img, x0 + 1, y0)
-	c01 := px(img, x0, y0 + 1)
-	c11 := px(img, x0 + 1, y0 + 1)
+	c00 := px(img, sw, sh, x0, y0)
+	c10 := px(img, sw, sh, x0 + 1, y0)
+	c01 := px(img, sw, sh, x0, y0 + 1)
+	c11 := px(img, sw, sh, x0 + 1, y0 + 1)
 
 	top := c00 * (1 - fx) + c10 * fx
 	bot := c01 * (1 - fx) + c11 * fx
