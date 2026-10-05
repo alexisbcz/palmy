@@ -43,3 +43,6 @@ apps/*/tmp/
 __pycache__/
 *.pyc
 .vercel
+
+# Agent worktrees (see TODO.md: toolkit work happens in one).
+.claude/worktrees/
