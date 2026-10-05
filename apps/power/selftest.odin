@@ -32,6 +32,7 @@ import "core:mem/virtual"
 import "core:os"
 import "core:strings"
 import "core:time"
+import kit "kit:."
 import p "palmy:."
 import sc "shadcn:."
 
@@ -85,6 +86,10 @@ selftest :: proc() {
 	t0 := time.now()
 	fmt.println("power self-test")
 
+	// The CLI writes an audit record for everything that is not a read. Point
+	// it at the scratch directory so a test run never appends to the real log.
+	_ = os.set_env("PALM_AUDIT", fmt.tprintf("%s/audit.jsonl", scratch_root()))
+
 	test_uptime()
 	test_btime()
 	test_cpufreq()
@@ -95,6 +100,7 @@ selftest :: proc() {
 	test_format()
 	test_log()
 	test_nothing_executes()
+	test_cli_surface()
 
 	// The canned sysfs trees and the fake PATH directory were the test's own
 	// and go away with it.
@@ -848,6 +854,61 @@ test_nothing_executes :: proc() {
 		}
 	}
 
+	// --- the other front end, under the same trap ------------------------
+	//
+	// Everything above drove the window. An agent drives `power reboot`, and
+	// the promise has to hold there too — more so, because a command has no
+	// confirmation dialog in front of it. So the five actions are run again
+	// as real child processes, which inherit this PATH: if any of them
+	// executed, the fake would write the sentinel.
+	//
+	// The same pass checks the two rules that make the surface usable by an
+	// agent at all: the whole of stdout is one JSON document, and it matches
+	// the fields the command declared.
+	{
+		self := self_exe()
+		for c in cases {
+			verb := cli_verb(c.a)
+			out, ok := kit.run({self, verb, "--json"}, context.temp_allocator)
+			check(ok, "`power %s` exited 0", verb)
+			check(
+				!os.exists(sentinel),
+				"`power %s` executed NOTHING (no %s was run)",
+				verb,
+				ACTIONS[c.a].cmd,
+			)
+			problems := kit.cli_validate_output(out, INTENT_FIELDS, context.temp_allocator)
+			check(
+				len(problems) == 0,
+				"`power %s --json` prints one document matching its declared schema%s",
+				verb,
+				len(problems) > 0 ? fmt.tprintf(" (%s)", problems[0]) : "",
+			)
+			check(
+				strings.contains(out, ACTIONS[c.a].cmd),
+				"`power %s --json` names the command it did not run",
+				verb,
+			)
+			check(
+				strings.contains(out, `"executed": false`),
+				"`power %s --json` says executed: false",
+				verb,
+			)
+		}
+
+		// And the kit's guard, which is the belt to the declaration's braces:
+		// while an intent command is running, the shared process helpers
+		// refuse to spawn anything at all.
+		for c in cases {
+			argv := strings.split(ACTIONS[c.a].cmd, " ", context.temp_allocator)
+			check(
+				kit.cli_forbidden(argv) != "",
+				"the kit's denylist refuses %q outright",
+				ACTIONS[c.a].cmd,
+			)
+		}
+	}
+
 	// Cancelling runs nothing and logs nothing either.
 	count_before := g_log_count
 	p.press_key(off, 'b')
@@ -974,4 +1035,251 @@ load_selftest_fonts :: proc(f: ^p.Fonts) {
 			break
 		}
 	}
+}
+
+// ---------------------------------------------------------------------------
+// The command surface
+//
+// The window has had assertions since it was written. The CLI is the other
+// front end, so it gets the same treatment: the declaration is checked against
+// the behaviour by running the real binary, which is the only way the two can
+// be kept from drifting.
+//
+// The intent class is proved in test_nothing_executes, under the fake PATH.
+// What is here is everything else the shared convention promises: the schema,
+// the examples, the exit codes, and the rule that under --json the whole of
+// stdout is one document and nothing else.
+// ---------------------------------------------------------------------------
+
+// self_exe is this binary's real path. It has to be resolved here rather than
+// passed along as /proc/self/exe, because that name means "the caller" and the
+// caller of a `sh -c` line is the shell.
+@(private = "file")
+self_exe :: proc() -> string {
+	if path, err := os.get_executable_path(context.temp_allocator); err == nil {
+		return path
+	}
+	return os.args[0]
+}
+
+// cli_run runs this binary again and hands back stdout and the exit code,
+// which is what the documented codes have to be checked against.
+@(private = "file")
+cli_run :: proc(args: ..string) -> (out: string, code: int) {
+	// WAYLAND_DISPLAY and DISPLAY are cleared for every child. A command is
+	// supposed to answer and exit; if a mistake here ever made one fall
+	// through to the window instead, it would block the test run forever on a
+	// window nobody is watching. With no display it fails instead, which is a
+	// test failure rather than a hang.
+	return cli_run_env({"WAYLAND_DISPLAY=", "DISPLAY="}, ..args)
+}
+
+// cli_run_env is cli_run with environment variables set for the child, which
+// is how the identity scope is tested: PALM_IDENTITY is read from the
+// environment and may only ever be narrowed.
+@(private = "file")
+cli_run_env :: proc(env: []string, args: ..string) -> (out: string, code: int) {
+	// sh -c, because the child needs its own environment and process_exec
+	// inherits this one.
+	line := strings.builder_make(context.temp_allocator)
+	for e in env {
+		strings.write_string(&line, e)
+		strings.write_byte(&line, ' ')
+	}
+	strings.write_string(&line, fmt.tprintf("%q", self_exe()))
+	for a in args {
+		strings.write_string(&line, fmt.tprintf(" %q", a))
+	}
+	state, sout, _, err := os.process_exec(
+		{command = {"sh", "-c", strings.to_string(line)}},
+		context.temp_allocator,
+	)
+	if err != nil {
+		return "", -1
+	}
+	return string(sout), state.exit_code
+}
+
+test_cli_surface :: proc() {
+	section("the command surface")
+
+	// --- the declaration itself -----------------------------------------
+	sf := surface()
+	check(sf.noun == "power", "the surface is named power")
+	check(sf.selftest != nil, "--selftest is part of the declaration")
+	for cmd in sf.commands {
+		check(cmd.run != nil, "%q has an implementation", cmd.verb)
+		check(cmd.summary != "", "%q has a summary", cmd.verb)
+		check(len(cmd.out) > 0, "%q declares what it prints", cmd.verb)
+		check(len(cmd.examples) > 0, "%q ships an example", cmd.verb)
+		// Every action this applet can take is intent class, and nothing here
+		// is ever allowed to become mutate or destructive.
+		for a in Action {
+			if cmd.verb == cli_verb(a) {
+				check(cmd.effect == .Intent, "%q is intent class", cmd.verb)
+			}
+		}
+	}
+
+	// --- the schema, which is what palm reads ---------------------------
+	{
+		out, code := cli_run("--schema")
+		eq_i(code, 0, "--schema exits 0")
+		problems := kit.cli_validate_output(
+			out,
+			{
+				{name = "noun", kind = .String},
+				{name = "summary", kind = .String},
+				{name = "commands", kind = .Array, of = {{name = "verb", kind = .String}, {name = "effect", kind = .String}, {name = "usage", kind = .String}}},
+				{name = "exit_codes", kind = .Object},
+			},
+			context.temp_allocator,
+		)
+		check(len(problems) == 0, "--schema is one JSON document of the shape palm expects")
+		for cmd in sf.commands {
+			check(
+				strings.contains(out, fmt.tprintf("\"verb\": %q", cmd.verb)),
+				"the schema advertises %q",
+				cmd.verb,
+			)
+		}
+	}
+
+	// --- every example it ships parses ----------------------------------
+	//
+	// --parse-only runs the real parser and stops before the command body, so
+	// this is the declaration checked against itself rather than against a
+	// second copy of the rules.
+	for cmd in sf.commands {
+		for ex in cmd.examples {
+			words := kit.cli_split_example(ex, context.temp_allocator)
+			check(len(words) > 0 && words[0] == "power", "the example %q starts with the noun", ex)
+			args := make([dynamic]string, context.temp_allocator)
+			for w in words[1:] {
+				append(&args, w)
+			}
+			append(&args, "--parse-only")
+			_, code := cli_run(..args[:])
+			eq_i(code, 0, fmt.tprintf("the example %q parses", ex))
+		}
+	}
+
+	// --- a read command matches the schema it declared ------------------
+	{
+		out, code := cli_run("status", "--json")
+		eq_i(code, 0, "power status exits 0")
+		problems := kit.cli_validate_output(out, STATUS_FIELDS, context.temp_allocator)
+		check(
+			len(problems) == 0,
+			"power status --json matches its declared schema%s",
+			len(problems) > 0 ? fmt.tprintf(" (%s)", problems[0]) : "",
+		)
+		// Nothing else on stdout: the document starts at the first byte and
+		// the parse above consumed all of it.
+		check(strings.has_prefix(strings.trim_space(out), "{"), "and stdout begins with the document")
+	}
+	{
+		out, code := cli_run("actions", "--json")
+		eq_i(code, 0, "power actions exits 0")
+		problems := kit.cli_validate_output(out, ACTIONS_FIELDS, context.temp_allocator)
+		check(len(problems) == 0, "power actions --json matches its declared schema")
+		for a in Action {
+			check(strings.contains(out, ACTIONS[a].cmd), "it names %v's command", a)
+		}
+		check(!strings.contains(out, `"executes": true`), "and nothing claims it executes")
+	}
+	{
+		out, code := cli_run("intents", "--json")
+		eq_i(code, 0, "power intents exits 0")
+		problems := kit.cli_validate_output(out, INTENTS_FIELDS, context.temp_allocator)
+		check(len(problems) == 0, "power intents --json matches its declared schema")
+	}
+
+	// --- without --json the same result is rendered for a person ---------
+	{
+		out, code := cli_run("actions")
+		eq_i(code, 0, "power actions without --json exits 0")
+		check(!strings.has_prefix(strings.trim_space(out), "{"), "and does not print JSON")
+		check(strings.contains(out, "systemctl reboot"), "but says the same thing")
+	}
+
+	// --- the documented exit codes ---------------------------------------
+	{
+		_, code := cli_run("--help")
+		eq_i(code, kit.EXIT_OK, "--help exits 0")
+	}
+	{
+		_, code := cli_run("teleport")
+		eq_i(code, kit.EXIT_USAGE, "an unknown command exits 2")
+	}
+	{
+		_, code := cli_run("status", "--sideways")
+		eq_i(code, kit.EXIT_USAGE, "an unknown flag exits 2")
+	}
+	{
+		_, code := cli_run("shot")
+		eq_i(code, kit.EXIT_USAGE, "a missing required argument exits 2")
+	}
+	{
+		out, code := cli_run("shot", "/proc/nope/no.png", "--json")
+		eq_i(code, kit.EXIT_FAILED, "a command that could not do its work exits 7")
+		check(strings.contains(out, `"error": "failed"`), "and says so in machine-readable form")
+	}
+
+	// --- scope may be narrowed, never widened ----------------------------
+	{
+		out, code := cli_run_env({"PALM_IDENTITY=work"}, "status", "--identity", "personal", "--json")
+		eq_i(code, kit.EXIT_OUT_OF_SCOPE, "asking for another identity exits 5")
+		check(strings.contains(out, `"error": "out of scope"`), "with the documented token")
+		check(strings.contains(out, `"identity": "work"`), "naming the scope in force")
+		check(strings.contains(out, `"requested": "personal"`), "and the one that was asked for")
+	}
+	{
+		_, code := cli_run_env({"PALM_IDENTITY=work"}, "status", "--identity", "work", "--json")
+		eq_i(code, kit.EXIT_OK, "asking for the identity already in force is fine")
+	}
+	{
+		_, code := cli_run("status", "--identity", "all", "--json")
+		eq_i(code, kit.EXIT_OUT_OF_SCOPE, "`--identity all` is refused, not interpreted")
+	}
+
+	// --- --dry-run changes nothing ---------------------------------------
+	{
+		png := fmt.tprintf("%s/dry.png", scratch_root())
+		os.remove(png)
+		out, code := cli_run("shot", png, "--dry-run", "--json")
+		eq_i(code, kit.EXIT_OK, "a dry run of a mutating command exits 0")
+		check(strings.contains(out, `"dry_run": true`), "and says it was a dry run")
+		check(!os.exists(png), "and wrote nothing")
+	}
+
+	// --- the safety denylist ---------------------------------------------
+	//
+	// These are the decisions this project has already made, moved into the
+	// shared kit where every application inherits them.
+	check(kit.cli_forbidden({"systemctl", "reboot"}) != "", "systemctl reboot is refused")
+	check(kit.cli_forbidden({"reboot"}) != "", "reboot is refused")
+	check(kit.cli_forbidden({"loginctl", "terminate-session", "self"}) != "", "ending a session is refused")
+	check(kit.cli_forbidden({"nmcli", "radio", "wifi", "off"}) != "", "switching the radio off is refused")
+	check(
+		kit.cli_forbidden({"nmcli", "device", "wifi", "connect", "somewhere"}) != "",
+		"joining a network is refused",
+	)
+	check(kit.cli_forbidden({"rfkill", "block", "all"}) != "", "blocking a radio is refused")
+	check(
+		kit.cli_forbidden({"systemctl", "stop", "sddm"}) != "",
+		"stopping the display manager is refused",
+	)
+	check(kit.cli_forbidden({"systemctl", "disable", "ollama"}) != "", "disabling ollama is refused")
+	check(
+		kit.cli_forbidden({"ffmpeg", "-f", "v4l2", "-i", "/dev/video0", "out.mp4"}) != "",
+		"opening the camera is refused",
+	)
+	check(kit.cli_forbidden({"pw-record", "mic.wav"}) != "", "opening the microphone is refused")
+	// And the things that must keep working, because reading is not changing.
+	check(kit.cli_forbidden({"nmcli", "-t", "-f", "SSID", "device", "wifi"}) == "", "listing networks is fine")
+	check(kit.cli_forbidden({"nmcli", "radio", "wifi"}) == "", "reading the radio state is fine")
+	check(kit.cli_forbidden({"loginctl", "list-sessions"}) == "", "listing sessions is fine")
+	check(kit.cli_forbidden({"upower", "--dump"}) == "", "reading upower is fine")
+	check(kit.cli_forbidden({"ffmpeg", "-i", "clip.mp4", "out.webm"}) == "", "transcoding a file is fine")
 }

@@ -9,6 +9,7 @@ import "core:fmt"
 import "core:math"
 import "core:os"
 import "core:strings"
+import kit "kit:."
 
 TC :: struct {
 	n:      int,
@@ -288,6 +289,7 @@ selftest :: proc() -> int {
 	t_book_document(&tc)
 	t_xlsx_book(&tc)
 	t_robustness(&tc)
+	t_cli(&tc)
 
 	fmt.println()
 	if tc.failed == 0 {
@@ -1416,3 +1418,264 @@ t_robustness :: proc(tc: ^TC) {
 
 _ :: math
 _ :: os
+
+// ---------------------------------------------------------------------------
+// The command surface
+//
+// Sheets already had a command line; what it did not have was a way to check
+// that the command line and the engine agree. These assertions run the real
+// binary as a child process and compare what it prints with what the engine
+// computes in this process — the same formula, two front ends, one answer.
+//
+// They also hold the convention to its promises: the schema advertises only
+// commands that exist, every example still parses, each read command's
+// output matches the fields it declared, --dry-run writes nothing, and the
+// documented exit codes are the ones that come back.
+// ---------------------------------------------------------------------------
+
+cli_self_exe :: proc() -> string {
+	if path, err := os.get_executable_path(context.temp_allocator); err == nil {
+		return path
+	}
+	return os.args[0]
+}
+
+// cli_run runs this binary again and hands back stdout and the exit code. The
+// display variables are cleared, so a command that fell through to the window
+// by mistake would fail rather than hang the test run on a window nobody is
+// looking at.
+cli_run :: proc(args: ..string) -> (out: string, code: int) {
+	line := strings.builder_make(context.temp_allocator)
+	strings.write_string(&line, "WAYLAND_DISPLAY= DISPLAY= ")
+	strings.write_string(&line, fmt.tprintf("%q", cli_self_exe()))
+	for a in args {
+		strings.write_string(&line, fmt.tprintf(" %q", a))
+	}
+	state, sout, _, err := os.process_exec(
+		{command = {"sh", "-c", strings.to_string(line)}},
+		context.temp_allocator,
+	)
+	if err != nil {
+		return "", -1
+	}
+	return string(sout), state.exit_code
+}
+
+t_cli :: proc(tc: ^TC) {
+	sf := surface()
+	dir := fmt.tprintf("/tmp/palmy-sheets-cli-%d", os.get_pid())
+	os.make_directory_all(dir)
+	defer os.remove_all(dir)
+	// Never append to the real audit log from a test run.
+	_ = os.set_env("PALM_AUDIT", fmt.tprintf("%s/audit.jsonl", dir))
+
+	// --- the declaration --------------------------------------------------
+	ok_mark(tc, sf.noun == "sheets", "the surface is named sheets")
+	ok_mark(tc, sf.selftest != nil, "--selftest is part of the declaration")
+	ok_mark(tc, sf.takes_path, "a bare path still opens in the window")
+	for cmd in sf.commands {
+		ok_mark(tc, cmd.run != nil, fmt.tprintf("%s has an implementation", cmd.verb))
+		ok_mark(tc, cmd.summary != "", fmt.tprintf("%s has a summary", cmd.verb))
+		ok_mark(tc, len(cmd.out) > 0, fmt.tprintf("%s declares what it prints", cmd.verb))
+		ok_mark(tc, len(cmd.examples) > 0, fmt.tprintf("%s ships an example", cmd.verb))
+	}
+
+	// The old spellings are still routed, because scripts call them.
+	for legacy in ([?]string{"--export", "--shot", "--film"}) {
+		found := false
+		for cmd in sf.commands {
+			for a in cmd.aliases {
+				if a == legacy {
+					found = true
+				}
+			}
+		}
+		ok_mark(tc, found, fmt.tprintf("the old spelling %s is still accepted", legacy))
+	}
+
+	// --- every example parses ---------------------------------------------
+	for cmd in sf.commands {
+		for ex in cmd.examples {
+			words := kit.cli_split_example(ex, context.temp_allocator)
+			ok_mark(tc, len(words) > 0 && words[0] == "sheets", fmt.tprintf("the example %q starts with the noun", ex))
+			args := make([dynamic]string, context.temp_allocator)
+			for w in words[1:] {
+				append(&args, w)
+			}
+			append(&args, "--parse-only")
+			_, code := cli_run(..args[:])
+			ok_mark(tc, code == 0, fmt.tprintf("the example %q parses", ex))
+		}
+	}
+
+	// --- a read command matches its declared schema -------------------------
+	{
+		out, code := cli_run("info", "--json")
+		ok_mark(tc, code == 0, "sheets info exits 0")
+		problems := kit.cli_validate_output(out, INFO_FIELDS, context.temp_allocator)
+		ok_mark(
+			tc,
+			len(problems) == 0,
+			fmt.tprintf("info --json matches its declared schema%s", len(problems) > 0 ? fmt.tprintf(" (%s)", problems[0]) : ""),
+		)
+		ok_mark(tc, strings.contains(out, `"sheet_count": 2`), "and sees both sheets of the demo book")
+	}
+	{
+		out, code := cli_run("get", "Summary!B8", "--json")
+		ok_mark(tc, code == 0, "sheets get exits 0")
+		problems := kit.cli_validate_output(out, CELL_FIELDS, context.temp_allocator)
+		ok_mark(tc, len(problems) == 0, "get --json matches its declared schema")
+		ok_mark(tc, strings.contains(out, `"input": "=SUM(Sales!D3:D7)"`), "and hands back what was typed")
+		ok_mark(tc, strings.contains(out, `"formatted": "$2,781.05"`), "and how the grid shows it")
+	}
+	{
+		out, code := cli_run("cells", "A1:B3", "--sheet", "Summary", "--json")
+		ok_mark(tc, code == 0, "sheets cells exits 0")
+		problems := kit.cli_validate_output(out, CELLS_FIELDS, context.temp_allocator)
+		ok_mark(tc, len(problems) == 0, "cells --json matches its declared schema")
+		ok_mark(tc, strings.contains(out, `"count": 6`), "and returns the six cells in the rectangle")
+	}
+
+	// --- the CLI and the engine give the same answer ------------------------
+	//
+	// This is the assertion that says the two front ends are one program.
+	// The same formula is evaluated here, against a book built in this
+	// process, and over there, by the command — and the two have to agree.
+	{
+		app := new(App)
+		defer free(app)
+		app_init(app)
+		defer app_destroy(app)
+		seed_demo(app)
+		book_recalc_all(app.book)
+
+		formula := "=INDEX(Sales!A3:A7,MATCH(MAX(Sales!D3:D7),Sales!D3:D7,0))"
+		sales := app.book.sheets[0]
+		scratch := Addr{sales.max_row + 4, sales.max_col + 4}
+		set_input(sales, scratch, formula)
+		book_recalc_all(app.book)
+		here := format_value(cell_at(sales, scratch).val, Cell_Fmt{})
+
+		out, code := cli_run("eval", formula, "--json")
+		ok_mark(tc, code == 0, "sheets eval exits 0")
+		problems := kit.cli_validate_output(out, EVAL_FIELDS, context.temp_allocator)
+		ok_mark(tc, len(problems) == 0, "eval --json matches its declared schema")
+		ok_mark(tc, here == "East", fmt.tprintf("the engine in this process says %q", here))
+		ok_mark(
+			tc,
+			strings.contains(out, fmt.tprintf("\"value\": %q", here)),
+			"and the command agrees with it",
+		)
+
+		// eval is declared read, so it must leave nothing behind. The book on
+		// disk is untouched because none was given; the demo book the command
+		// built is its own.
+		ok_mark(tc, len(os.read_directory_by_path(dir, -1, context.temp_allocator) or_else nil) <= 1, "eval wrote no files")
+	}
+
+	// --- mutate, and --dry-run ----------------------------------------------
+	{
+		book := fmt.tprintf("%s/book.sheet.json", dir)
+		_, code := cli_run("export", book, "--json")
+		ok_mark(tc, code == 0, "sheets export exits 0")
+		ok_mark(tc, os.exists(book), "and the file is there")
+
+		before, _ := os.read_entire_file_from_path(book, context.temp_allocator)
+		out, dcode := cli_run("set", book, "Sales!B3", "999", "--dry-run", "--json")
+		ok_mark(tc, dcode == 0, "a dry run of set exits 0")
+		ok_mark(tc, strings.contains(out, `"written": false`), "and says it wrote nothing")
+		ok_mark(tc, strings.contains(out, `"dry_run": true`), "and the kit marks it as a dry run")
+		ok_mark(tc, strings.contains(out, `"was": "120"`), "and reports what the cell held")
+		after, _ := os.read_entire_file_from_path(book, context.temp_allocator)
+		ok_mark(tc, string(before) == string(after), "and the file on disk is byte for byte the same")
+
+		out2, scode := cli_run("set", book, "Sales!B3", "999", "--json")
+		ok_mark(tc, scode == 0, "set exits 0")
+		ok_mark(tc, strings.contains(out2, `"written": true`), "and says it wrote")
+		changed, _ := os.read_entire_file_from_path(book, context.temp_allocator)
+		ok_mark(tc, string(before) != string(changed), "and the file really changed")
+
+		// And the change is visible to the engine the next time it reads.
+		out3, _ := cli_run("get", "Sales!B3", book, "--json")
+		ok_mark(tc, strings.contains(out3, `"value": "999"`), "and reading it back gives the new value")
+		// The formula that depends on it recomputed, which is the thing a
+		// spreadsheet is for.
+		out4, _ := cli_run("get", "Sales!D3", book, "--json")
+		ok_mark(tc, strings.contains(out4, `"value": "4495.5"`), "and the formula above it recalculated")
+	}
+
+	// --- the documented exit codes -------------------------------------------
+	{
+		_, code := cli_run("--help")
+		ok_mark(tc, code == kit.EXIT_OK, "--help exits 0")
+	}
+	{
+		_, code := cli_run("--transpose")
+		ok_mark(tc, code == kit.EXIT_USAGE, "an unknown flag exits 2")
+		// But a bare word is a file name for the window, which is what
+		// takes_path declares, so it is not the CLI's to refuse. (With no
+		// display it cannot open one here, so this says only that the
+		// dispatcher let it past.)
+		_, bare := cli_run("transpose")
+		ok_mark(tc, bare != kit.EXIT_USAGE, "a bare word is handed to the window, not refused")
+	}
+	{
+		_, code := cli_run("get")
+		ok_mark(tc, code == kit.EXIT_USAGE, "a missing required argument exits 2")
+	}
+	{
+		_, code := cli_run("get", "not-a-ref", "--json")
+		ok_mark(tc, code == kit.EXIT_USAGE, "a malformed cell reference exits 2")
+	}
+	{
+		out, code := cli_run("info", fmt.tprintf("%s/absent.sheet.json", dir), "--json")
+		ok_mark(tc, code == kit.EXIT_NOT_FOUND, "a book that is not there exits 3")
+		ok_mark(tc, strings.contains(out, `"error": "not found"`), "with the documented token")
+	}
+	{
+		_, code := cli_run("get", "Nowhere!A1", "--json")
+		ok_mark(tc, code == kit.EXIT_NOT_FOUND, "a sheet that is not there exits 3")
+	}
+	{
+		out, code := cli_run("export", "/proc/nope/book.xlsx", "--json")
+		ok_mark(tc, code == kit.EXIT_FAILED, "a write that cannot happen exits 7")
+		ok_mark(tc, strings.contains(out, `"error": "failed"`), "with the documented token")
+	}
+
+	// --- --json means one document on stdout and nothing else -----------------
+	for verb in ([?]string{"info", "cells"}) {
+		out, _ := cli_run(verb, "--json")
+		trimmed := strings.trim_space(out)
+		ok_mark(tc, strings.has_prefix(trimmed, "{"), fmt.tprintf("%s --json starts with the document", verb))
+		ok_mark(tc, strings.has_suffix(trimmed, "}"), fmt.tprintf("%s --json ends with it too", verb))
+	}
+
+	// --- the schema ------------------------------------------------------------
+	{
+		out, code := cli_run("--schema")
+		ok_mark(tc, code == 0, "--schema exits 0")
+		for cmd in sf.commands {
+			ok_mark(
+				tc,
+				strings.contains(out, fmt.tprintf("\"verb\": %q", cmd.verb)),
+				fmt.tprintf("the schema advertises %s", cmd.verb),
+			)
+		}
+	}
+
+	// --- scope may be narrowed, never widened -----------------------------------
+	{
+		state, sout, _, err := os.process_exec(
+			{
+				command = {
+					"sh",
+					"-c",
+					fmt.tprintf("WAYLAND_DISPLAY= DISPLAY= PALM_IDENTITY=work %q info --identity personal --json", cli_self_exe()),
+				},
+			},
+			context.temp_allocator,
+		)
+		ok_mark(tc, err == nil && state.exit_code == kit.EXIT_OUT_OF_SCOPE, "asking for another identity exits 5")
+		ok_mark(tc, strings.contains(string(sout), `"error": "out of scope"`), "with the documented token")
+	}
+}
