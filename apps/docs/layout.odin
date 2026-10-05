@@ -758,10 +758,21 @@ TABLE_MIN_ROW_H :: f32(26)
 // padding. Space-before is dropped inside a cell and only the space-after
 // between paragraphs is kept, so a one-paragraph cell is exactly its text.
 @(private = "file")
-cell_content_h :: proc(lay: ^Layout, d: ^Doc, cl: ^Cell, keys: []Cache_Key, at: int) -> f32 {
+cell_content_h :: proc(lay: ^Layout, d: ^Doc, cl: ^Cell, keys: []Cache_Key, at: int, measure := f32(CONTENT_W)) -> f32 {
 	h := f32(0)
 	for j in 0 ..< len(cl.paras) {
 		pa := &cl.paras[j]
+		// A picture in a cell is one line box as tall as the picture, exactly
+		// as it is at the top level — but measured against the cell's width,
+		// not the page's.
+		if pa.kind == .Image {
+			_, ih := image_para_size(pa, measure, CONTENT_H)
+			h += ih
+			if j + 1 < len(cl.paras) {
+				h += kind_metrics(pa.kind).after + pa.after
+			}
+			continue
+		}
 		if c, have := &lay.cache[keys[at + j]]; have {
 			for src in c.lines {
 				h += src.h
@@ -816,7 +827,17 @@ layout_table :: proc(
 			if cl == nil {
 				continue
 			}
-			h = max(h, cell_content_h(lay, d, cl, keys, starts[r * ncols + c]))
+			h = max(
+				h,
+				cell_content_h(
+					lay,
+					d,
+					cl,
+					keys,
+					starts[r * ncols + c],
+					max(20, table_width(t, c) - 2 * CELL_PAD),
+				),
+			)
 		}
 		row_h[r] = max(TABLE_MIN_ROW_H, h + 2 * CELL_PAD)
 	}
@@ -870,6 +891,12 @@ layout_table :: proc(
 				}
 				ind := para_indent(cpa, km)
 				avail := max(20, cw - 2 * CELL_PAD - ind)
+				// A picture in a cell: one line box as tall as the picture,
+				// sized and placed against the cell rather than the page.
+				img_w, img_h := f32(0), f32(0)
+				if cpa.kind == .Image {
+					img_w, img_h = image_para_size(cpa, avail, CONTENT_H)
+				}
 				base_frag := len(lay.frags)
 				append(&lay.frags, ..cc.frags[:])
 				for src in cc.lines {
@@ -883,6 +910,16 @@ layout_table :: proc(
 					l.y = cy
 					l.indent = cx + CELL_PAD + ind
 					l.marker = l.first && cpa.list != .None ? (cpa.list == .Bullet ? 0 : 1) : -1
+					if cpa.kind == .Image {
+						l.h = img_h
+						l.w = img_w
+						l.ascent = img_h
+						l.x = l.indent + image_x(cpa, img_w, avail)
+						l.indent = l.x
+						cy += l.h
+						append(&lay.lines, l)
+						continue
+					}
 					switch cpa.align {
 					case .Left, .Justify:
 						l.x = l.indent

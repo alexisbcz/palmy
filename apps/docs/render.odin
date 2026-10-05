@@ -235,7 +235,15 @@ draw_page :: proc(c: ^p.Canvas, st: ^State, pi: int, dr: p.Rect, z, sc: f32, liv
 				p.fill_rect(c, {ox + (l.indent - 16) * k, ly, 3 * k, lh}, p.hex(COL_RULE))
 			case .Image:
 				draw_image_para(c, pa, {ox + l.x * k, ly, l.w * k, lh})
-			case .Body, .H1, .H2, .H3, .Table:
+			case .Table:
+				// A line that belongs to a table paragraph is a line inside
+				// one of its cells, so the cell's own paragraph has to be
+				// resolved to find out whether it is a picture.
+				if cp := blk_para(&st.doc, Blk{l.para, l.row, l.col, l.cpara});
+				   cp != nil && cp.kind == .Image {
+					draw_image_para(c, cp, {ox + l.x * k, ly, l.w * k, lh})
+				}
+			case .Body, .H1, .H2, .H3:
 			}
 
 			// Find highlights sit under the selection.

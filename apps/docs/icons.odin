@@ -83,6 +83,16 @@ ICON_WHOLE_WORD :: p.Icon {
 	stroke = 2,
 }
 
+// Lucide's `regex`: a terminal-ish asterisk and braces. It has to read at
+// 14 px next to the Aa and the whole-word icons, so it is the glyph shape
+// rather than a literal `.*`.
+ICON_REGEX :: p.Icon {
+	name   = "regex",
+	d      = "M17 3 L17 11 M20.2 5 L13.8 9 M20.2 9 L13.8 5 M5 19 C5 18.448 5.448 18 6 18 C6.552 18 7 18.448 7 19 C7 19.552 6.552 20 6 20 C5.448 20 5 19.552 5 19 Z",
+	view   = 24,
+	stroke = 2,
+}
+
 ICON_SQUARE :: p.Icon {
 	name   = "square",
 	d      = "M4 4 L20 4 L20 20 L4 20 Z",

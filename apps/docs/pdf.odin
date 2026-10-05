@@ -242,7 +242,8 @@ Pdf_Font :: struct {
 // `/RunLengthDecode`, which is twenty lines of code (`run_length` in
 // apps/slides/pdf.odin, re-implemented here) and still halves a screenshot.
 Pdf_Image :: struct {
-	para:  int, // the image paragraph it belongs to
+	src:   ^Doc_Image, // the picture it is, which is what identifies it — a
+	                  // picture in a table cell has no top-level paragraph index
 	w, h:  int, // the pixel size of the stream, after any downscale
 	jpeg:  bool,
 	data:  []u8, // the stream bytes, filter applied
@@ -402,23 +403,21 @@ pdf_run_length :: proc(src: []u8, alloc := context.temp_allocator) -> []u8 {
 }
 
 // pdf_image_for finds or builds the XObject for one image paragraph.
-pdf_image_for :: proc(cx: ^Pdf_Ctx, pi: int) -> int {
+pdf_image_for :: proc(cx: ^Pdf_Ctx, src: ^Doc_Image) -> int {
+	if src == nil {
+		return -1
+	}
 	for im, i in cx.images {
-		if im.para == pi {
+		if im.src == src {
 			return i
 		}
 	}
-	pa := &cx.st.doc.paras[pi]
-	if pa.img == nil {
-		return -1
-	}
-	src := pa.img
 
 	// A JPEG is handed over verbatim.
 	if src.kind == .JPEG && len(src.bytes) > 0 {
 		append(
 			&cx.images,
-			Pdf_Image{para = pi, w = src.w, h = src.h, jpeg = true, data = src.bytes},
+			Pdf_Image{src = src, w = src.w, h = src.h, jpeg = true, data = src.bytes},
 		)
 		return len(cx.images) - 1
 	}
@@ -469,7 +468,7 @@ pdf_image_for :: proc(cx: ^Pdf_Ctx, pi: int) -> int {
 	append(
 		&cx.images,
 		Pdf_Image {
-			para = pi,
+			src = src,
 			w = w,
 			h = h,
 			jpeg = false,
@@ -625,12 +624,52 @@ pdf_collect :: proc(cx: ^Pdf_Ctx) {
 	pdf_need(cx, fi, "0123456789")
 
 	// Every picture becomes an XObject, in document order, so the resource
-	// dictionary is complete before a content stream is written.
-	for pi in 0 ..< len(cx.st.doc.paras) {
-		if cx.st.doc.paras[pi].kind == .Image {
-			pdf_image_for(cx, pi)
+	// dictionary is complete before a content stream is written. The walk is
+	// over blocks rather than top-level paragraphs: a picture inside a table
+	// cell is a picture, and leaving the cells out is how one used to be
+	// exported as a grey placeholder.
+	for blk in doc_blocks(&cx.st.doc, context.temp_allocator) {
+		pa := blk_para(&cx.st.doc, blk)
+		if pa != nil && pa.kind == .Image {
+			pdf_image_for(cx, pa.img)
 		}
 	}
+}
+
+// pdf_picture places one picture in its line box.
+//
+// `cm` does the placing: the matrix maps the unit square onto the box, and
+// the height is negative because PDF puts an image's first row at the *top*
+// of that square while this page's y axis has already been flipped. It is a
+// procedure rather than inline code because a picture can now be in a table
+// cell as well as in the body, and both must place it the same way.
+@(private = "file")
+pdf_picture :: proc(
+	b: ^strings.Builder,
+	cx: ^Pdf_Ctx,
+	fill: ^u32,
+	img: ^Doc_Image,
+	x, y, w, h, top: f32,
+) {
+	if k := pdf_image_for(cx, img); k >= 0 {
+		strings.write_string(b, "q\n")
+		num(b, w * PT)
+		strings.write_string(b, " 0 0 ")
+		num(b, h * PT)
+		strings.write_byte(b, ' ')
+		num(b, (MARGIN + x) * PT)
+		strings.write_byte(b, ' ')
+		num(b, PDF_H - (MARGIN + y + h) * PT)
+		fmt.sbprintf(b, " cm %s Do\nQ\n", cx.images[k].res)
+		return
+	}
+	// Nothing to draw: a framed placeholder, as the window draws it, so the
+	// page still says a picture belongs here.
+	set_fill(b, fill, COL_RULE)
+	rect(b, MARGIN + x, top, w, TABLE_RULE)
+	rect(b, MARGIN + x, top + h - TABLE_RULE, w, TABLE_RULE)
+	rect(b, MARGIN + x, top, TABLE_RULE, h)
+	rect(b, MARGIN + x + w - TABLE_RULE, top, TABLE_RULE, h)
 }
 
 // pdf_page_content renders one page into a content stream, mirroring
@@ -694,30 +733,15 @@ pdf_page_content :: proc(cx: ^Pdf_Ctx, pi: int, alloc := context.allocator) -> s
 				set_fill(&b, &fill, COL_RULE)
 				rect(&b, MARGIN + l.indent - 16, top, 3, l.h)
 			case .Image:
-				// `cm` places the picture: the matrix maps the unit square
-				// onto the box, and the height is negative because PDF puts
-				// an image's first row at the *top* of that square while this
-				// page's y axis has already been flipped.
-				if k := pdf_image_for(cx, l.para); k >= 0 {
-					strings.write_string(&b, "q\n")
-					num(&b, l.w * PT)
-					strings.write_string(&b, " 0 0 ")
-					num(&b, l.h * PT)
-					strings.write_byte(&b, ' ')
-					num(&b, (MARGIN + l.x) * PT)
-					strings.write_byte(&b, ' ')
-					num(&b, PDF_H - (MARGIN + l.y + l.h) * PT)
-					fmt.sbprintf(&b, " cm %s Do\nQ\n", cx.images[k].res)
-				} else {
-					// Nothing to draw: a framed placeholder, as the window
-					// draws it, so the page still says a picture belongs here.
-					set_fill(&b, &fill, COL_RULE)
-					rect(&b, MARGIN + l.x, top, l.w, TABLE_RULE)
-					rect(&b, MARGIN + l.x, top + l.h - TABLE_RULE, l.w, TABLE_RULE)
-					rect(&b, MARGIN + l.x, top, TABLE_RULE, l.h)
-					rect(&b, MARGIN + l.x + l.w - TABLE_RULE, top, TABLE_RULE, l.h)
+				pdf_picture(&b, cx, &fill, pa.img, l.x, l.y, l.w, l.h, top)
+			case .Table:
+				// A line inside a table belongs to one of its cells, so the
+				// cell's own paragraph says whether it is a picture.
+				if cp := blk_para(&st.doc, Blk{l.para, l.row, l.col, l.cpara});
+				   cp != nil && cp.kind == .Image {
+					pdf_picture(&b, cx, &fill, cp.img, l.x, l.y, l.w, l.h, top)
 				}
-			case .Body, .H1, .H2, .H3, .Table:
+			case .Body, .H1, .H2, .H3:
 			}
 
 			// The list marker, right-aligned against the text's left edge the

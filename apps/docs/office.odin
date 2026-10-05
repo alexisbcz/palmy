@@ -61,15 +61,20 @@ Media :: struct {
 	mime:  string,
 	ext:   string,
 	bytes: []u8,
+	img:   ^Doc_Image, // which picture this is, so a cell's can be found too
 }
 
 // collect_media walks the document and lists the pictures to embed, in order.
 // Both container formats need the list before they can write their manifest,
 // and both refer to the entries by index, so it is gathered once.
+// It walks the *blocks*, not the top-level paragraphs: a picture inside a
+// table cell is a picture to embed like any other, and leaving the cells out
+// is how one used to be exported as nothing at all.
 collect_media :: proc(d: ^Doc, prefix: string, alloc := context.temp_allocator) -> []Media {
 	out := make([dynamic]Media, 0, 4, alloc)
-	for &pa in d.paras {
-		if pa.kind != .Image || pa.img == nil || len(pa.img.bytes) == 0 {
+	for blk in doc_blocks(d, context.temp_allocator) {
+		pa := blk_para(d, blk)
+		if pa == nil || pa.kind != .Image || pa.img == nil || len(pa.img.bytes) == 0 {
 			continue
 		}
 		n := len(out) + 1
@@ -85,27 +90,35 @@ collect_media :: proc(d: ^Doc, prefix: string, alloc := context.temp_allocator) 
 				mime = image_mime(pa.img.kind),
 				ext = ext,
 				bytes = pa.img.bytes,
+				img = pa.img,
 			},
 		)
 	}
 	return out[:]
 }
 
-// media_of finds the entry for one image paragraph, by counting the image
-// paragraphs before it — the same order `collect_media` used.
-media_of :: proc(d: ^Doc, media: []Media, want: int) -> (Media, bool) {
-	k := 0
-	for pi in 0 ..< len(d.paras) {
-		pa := &d.paras[pi]
-		if pa.kind != .Image || pa.img == nil || len(pa.img.bytes) == 0 {
-			continue
+// media_for finds the entry for one picture by identity. The index of the
+// paragraph it sits in is not enough any more — a picture in a cell has no
+// top-level index — and the picture itself is unique.
+media_for :: proc(media: []Media, img: ^Doc_Image) -> (Media, bool) {
+	if img == nil {
+		return {}, false
+	}
+	for m in media {
+		if m.img == img {
+			return m, true
 		}
-		if pi == want {
-			return k < len(media) ? media[k] : Media{}, k < len(media)
-		}
-		k += 1
 	}
 	return {}, false
+}
+
+// media_of is the same lookup for a top-level paragraph index, kept because
+// that is what the body writers have in hand.
+media_of :: proc(d: ^Doc, media: []Media, want: int) -> (Media, bool) {
+	if want < 0 || want >= len(d.paras) {
+		return {}, false
+	}
+	return media_for(media, d.paras[want].img)
 }
 
 @(private = "file")
@@ -247,7 +260,9 @@ docx_ppr :: proc(b: ^strings.Builder, pa: ^Paragraph, in_cell := false) {
 //     on a page break — the same rule this app's own pagination uses, so the
 //     exported file breaks the way the window does.
 @(private = "file")
-docx_table :: proc(b: ^strings.Builder, t: ^Table) {
+// `media` and `img_seq` are passed in because a cell may hold a picture, and
+// the drawing ids have to stay unique across the whole document.
+docx_table :: proc(b: ^strings.Builder, t: ^Table, media: []Media, img_seq: ^int) {
 	ncols := table_cols(t)
 	strings.write_string(b, "<w:tbl><w:tblPr><w:tblStyle w:val=\"TableGrid\"/>")
 	fmt.sbprintf(b, "<w:tblW w:w=\"%d\" w:type=\"dxa\"/>", tw(CONTENT_W))
@@ -308,6 +323,21 @@ docx_table :: proc(b: ^strings.Builder, t: ^Table) {
 				for &cp in cl.paras {
 					strings.write_string(b, "<w:p>")
 					docx_ppr(b, &cp, true)
+					if cp.kind == .Image {
+						// A picture in a cell is the same `<w:drawing>` as one
+						// in the body; only its measure differs, and
+						// `docx_drawing` is told which.
+						if m, got := media_for(media, cp.img); got {
+							img_seq^ += 1
+							docx_drawing(b, &cp, m, img_seq^, max(20, table_width(t, c) - 2 * CELL_PAD))
+						} else {
+							strings.write_string(b, "<w:r><w:t xml:space=\"preserve\">[")
+							xml_escape(b, cp.img == nil ? "picture" : (cp.img.alt != "" ? cp.img.alt : cp.img.path))
+							strings.write_string(b, "]</w:t></w:r>")
+						}
+						strings.write_string(b, "</w:p>")
+						continue
+					}
 					if head {
 						// A header cell's text is bold, matching the shading.
 						for &r2 in cp.runs {
@@ -348,8 +378,8 @@ docx_table :: proc(b: ^strings.Builder, t: ^Table) {
 // and once on <a:ext> for the shape — and a reader that finds them disagreeing
 // scales the picture to the wrong size.
 @(private = "file")
-docx_drawing :: proc(b: ^strings.Builder, pa: ^Paragraph, m: Media, id: int) {
-	w, h := image_para_size(pa)
+docx_drawing :: proc(b: ^strings.Builder, pa: ^Paragraph, m: Media, id: int, measure := f32(CONTENT_W)) {
+	w, h := image_para_size(pa, measure, CONTENT_H)
 	cx, cy := emu(w), emu(h)
 	strings.write_string(b, "<w:r><w:drawing>")
 	strings.write_string(b, "<wp:inline distT=\"0\" distB=\"0\" distL=\"0\" distR=\"0\">")
@@ -395,7 +425,7 @@ doc_to_docx_document :: proc(d: ^Doc, media: []Media = nil, alloc := context.all
 	img_id := 1
 	for &pa, pi in d.paras {
 		if pa.kind == .Table && pa.table != nil {
-			docx_table(&b, pa.table)
+			docx_table(&b, pa.table, media, &img_id)
 			// A table may not be the last thing in a body: Word and
 			// LibreOffice both want a paragraph after it, and without one the
 			// file opens with the table merged into the section break.
@@ -916,7 +946,7 @@ doc_to_odt_content :: proc(d: ^Doc, media: []Media = nil, alloc := context.alloc
 	// odt_table writes a <table:table>. ODF puts a repeating header inside
 	// <table:table-header-rows>, which is both the structure and the
 	// pagination instruction — the same rule the app's own layout uses.
-	odt_table :: proc(b: ^strings.Builder, st: ^Odt_Styles, t: ^Table, n: int) {
+	odt_table :: proc(b: ^strings.Builder, st: ^Odt_Styles, t: ^Table, n: int, media: []Media, img_seq: ^int) {
 		ncols := table_cols(t)
 		fmt.sbprintf(
 			b,
@@ -927,7 +957,14 @@ doc_to_odt_content :: proc(d: ^Doc, media: []Media = nil, alloc := context.alloc
 		for c in 0 ..< ncols {
 			fmt.sbprintf(b, "<table:table-column table:style-name=\"Tbl%d.%d\"/>", n, c)
 		}
-		row :: proc(b: ^strings.Builder, st: ^Odt_Styles, t: ^Table, n, r, ncols: int) {
+		row :: proc(
+			b: ^strings.Builder,
+			st: ^Odt_Styles,
+			t: ^Table,
+			n, r, ncols: int,
+			media: []Media,
+			img_seq: ^int,
+		) {
 			head := t.header && r == 0
 			strings.write_string(b, "<table:table-row>")
 			for c in 0 ..< ncols {
@@ -942,6 +979,18 @@ doc_to_odt_content :: proc(d: ^Doc, media: []Media = nil, alloc := context.alloc
 					strings.write_string(b, "<text:p/>")
 				} else {
 					for &cp in cl.paras {
+						// A picture in a cell is the same <draw:frame> as one
+						// in the body, sized against the column rather than
+						// the page.
+						if cp.kind == .Image {
+							href := ""
+							if m, got := media_for(media, cp.img); got {
+								href = m.part
+							}
+							img_seq^ += 1
+							odt_image(b, &cp, href, img_seq^, max(20, table_width(t, c) - 2 * CELL_PAD))
+							continue
+						}
 						name := head ? "TblHead" : odt_para_style(cp.kind)
 						fmt.sbprintf(b, "<text:p text:style-name=\"%s\">", name)
 						emit_inline(b, st, &cp)
@@ -954,14 +1003,14 @@ doc_to_odt_content :: proc(d: ^Doc, media: []Media = nil, alloc := context.alloc
 		}
 		if t.header && len(t.rows) > 0 {
 			strings.write_string(b, "<table:table-header-rows>")
-			row(b, st, t, n, 0, ncols)
+			row(b, st, t, n, 0, ncols, media, img_seq)
 			strings.write_string(b, "</table:table-header-rows>")
 			for r in 1 ..< len(t.rows) {
-				row(b, st, t, n, r, ncols)
+				row(b, st, t, n, r, ncols, media, img_seq)
 			}
 		} else {
 			for r in 0 ..< len(t.rows) {
-				row(b, st, t, n, r, ncols)
+				row(b, st, t, n, r, ncols, media, img_seq)
 			}
 		}
 		strings.write_string(b, "</table:table>")
@@ -969,8 +1018,8 @@ doc_to_odt_content :: proc(d: ^Doc, media: []Media = nil, alloc := context.alloc
 
 	// odt_image writes a <draw:frame> anchored as a character inside its own
 	// paragraph, which is how ODF says "an inline picture".
-	odt_image :: proc(b: ^strings.Builder, pa: ^Paragraph, href: string, n: int) {
-		w, h := image_para_size(pa)
+	odt_image :: proc(b: ^strings.Builder, pa: ^Paragraph, href: string, n: int, measure := f32(CONTENT_W)) {
+		w, h := image_para_size(pa, measure, CONTENT_H)
 		align := "center"
 		switch pa.align {
 		case .Left:
@@ -1010,7 +1059,7 @@ doc_to_odt_content :: proc(d: ^Doc, media: []Media = nil, alloc := context.alloc
 		if pa.kind == .Table && pa.table != nil {
 			close_lists(&body, &levels, &list_kind)
 			tbl_n += 1
-			odt_table(&body, &styles, pa.table, tbl_n)
+			odt_table(&body, &styles, pa.table, tbl_n, media, &img_n)
 			continue
 		}
 		if pa.kind == .Image {
@@ -1697,6 +1746,13 @@ rtf_table :: proc(b: ^strings.Builder, t: ^Table, cols: []u32) {
 						// readers.
 						strings.write_string(b, "\\line ")
 					}
+					if cp.kind == .Image {
+						// The same `{\pict}` group as in the body, sized
+						// against the column. No `\pard` and no `\par`: both
+						// would end the cell.
+						rtf_pict(b, &cp, max(20, table_width(t, c) - 2 * CELL_PAD))
+						continue
+					}
 					rtf_runs(b, &cp, cols, head, cp.kind == .Code)
 				}
 			}
@@ -1717,8 +1773,6 @@ rtf_table :: proc(b: ^strings.Builder, t: ^Table, cols: []u32) {
 // third too big.
 @(private = "file")
 rtf_image :: proc(b: ^strings.Builder, pa: ^Paragraph) {
-	im := pa.img
-	w, h := image_para_size(pa)
 	strings.write_string(b, "\\pard\\plain\\s0")
 	switch pa.align {
 	case .Center, .Justify:
@@ -1729,11 +1783,21 @@ rtf_image :: proc(b: ^strings.Builder, pa: ^Paragraph) {
 		strings.write_string(b, "\\ql")
 	}
 	strings.write_byte(b, ' ')
+	rtf_pict(b, pa)
+	strings.write_string(b, "\\par\n")
+}
+
+// rtf_pict is the `{\pict}` group alone, without the paragraph around it: a
+// picture in a table cell needs the group and must not have the `\pard` or
+// the `\par`, either of which would end the cell.
+@(private = "file")
+rtf_pict :: proc(b: ^strings.Builder, pa: ^Paragraph, measure := f32(CONTENT_W)) {
+	im := pa.img
+	w, h := image_para_size(pa, measure, CONTENT_H)
 	if im == nil || len(im.bytes) == 0 || im.kind == .Unknown {
 		strings.write_byte(b, '{')
 		rtf_text(b, fmt.tprintf("[%s]", im == nil ? "picture" : (im.alt != "" ? im.alt : im.path)))
 		strings.write_byte(b, '}')
-		strings.write_string(b, "\\par\n")
 		return
 	}
 	strings.write_byte(b, '{')
@@ -1756,7 +1820,6 @@ rtf_image :: proc(b: ^strings.Builder, pa: ^Paragraph) {
 		}
 	}
 	strings.write_byte(b, '}')
-	strings.write_string(b, "\\par\n")
 }
 
 export_rtf :: proc(d: ^Doc, path, title: string) -> bool {
@@ -2277,7 +2340,9 @@ doc_from_docx_xml :: proc(
 					}
 					// A paragraph that carried a picture becomes an image
 					// paragraph, with the bytes read back out of the archive.
-					if blip_rid != "" && !cell_open {
+					// This used to be skipped inside a cell, because the
+					// model had nowhere to put a picture in one. It has.
+					if blip_rid != "" {
 						if target, has := rel_map[blip_rid]; has {
 							part := strings.has_prefix(target, "/") 							? target[1:] 							: fmt.tprintf("word/%s", target)
 							if data, got := zip_read_entry(archive, part, context.temp_allocator);
@@ -2301,9 +2366,10 @@ doc_from_docx_xml :: proc(
 					normalise(&pa)
 					if cell_open {
 						// Inside a cell: cell paragraphs carry no page break
-						// and no table of their own.
+						// and no table of their own. A picture is allowed —
+						// only a nested table is not.
 						pa.break_before = false
-						if !text_kind(pa.kind) {
+						if !text_kind(pa.kind) && pa.kind != .Image {
 							pa.kind = .Body
 							if pa.img != nil {
 								image_destroy(pa.img)
@@ -2912,8 +2978,10 @@ doc_from_odt_xml :: proc(content: string, archive: []u8 = nil) -> Doc {
 				flush_run(&pa, &buf, cur_style(span[:], span_n))
 				span_n = 0
 
-				// A paragraph whose only content was a frame is a picture.
-				if frame_href != "" && !cell_open {
+				// A paragraph whose only content was a frame is a picture —
+				// in a table cell as readily as in the body, now that the
+				// model has a place for one.
+				if frame_href != "" {
 					if data, got := zip_read_entry(archive, frame_href, context.temp_allocator); got {
 						if im, decoded := image_from_bytes(data, frame_href, "", 1); decoded {
 							im2 := im
@@ -2942,7 +3010,8 @@ doc_from_odt_xml :: proc(content: string, archive: []u8 = nil) -> Doc {
 				normalise(&pa)
 				if cell_open {
 					pa.break_before = false
-					if !text_kind(pa.kind) {
+					// A picture is allowed in a cell; a nested table is not.
+					if !text_kind(pa.kind) && pa.kind != .Image {
 						pa.kind = .Body
 						if pa.img != nil {
 							image_destroy(pa.img)

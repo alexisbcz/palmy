@@ -41,6 +41,9 @@ settle :: proc(r: ^Rig, frames := 3) {
 	for _ in 0 ..< frames {
 		ui := p.offscreen_begin(r.off)
 		handle_keys(ui, r.st, nil)
+		// The same autosave tick the windowed loop runs, so a draft written
+		// here is written by the code the application uses.
+		draft_tick(r.st)
 		frame(ui, r.st)
 		apply_scroll(ui, r.st)
 		p.offscreen_end(r.off)
@@ -162,6 +165,11 @@ run_uitest :: proc(dir: string, film := false) -> int {
 	st := new(State)
 	init_state(st)
 
+	// Autosave on every tick rather than once a second: a test should not
+	// have to sleep to watch a file appear, and the content hash still keeps
+	// an unchanged composer from being rewritten.
+	draft_autosave_seconds = 0
+
 	r := Rig {
 		off  = off,
 		st   = st,
@@ -252,6 +260,15 @@ run_uitest :: proc(dir: string, film := false) -> int {
 	shot(&r, "saved")
 	key(&r, p.KEY_ESCAPE)
 
+	// Five attachments, which is the case the wrapping chip row exists for
+	// and the one that used to draw over the message body.
+	key(&r, '/')
+	typ(&r, "liwen")
+	key(&r, p.KEY_DOWN)
+	shot(&r, "attachments-wrapped")
+	check_chip_wrap(&r)
+	key(&r, p.KEY_ESCAPE)
+
 	// Reply, with typed text.
 	key(&r, 'r')
 	typ(&r, "Thursday works for me. I will have the revised forecast ready by Wednesday evening.")
@@ -263,6 +280,38 @@ run_uitest :: proc(dir: string, film := false) -> int {
 
 	key(&r, p.KEY_RETURN)
 	shot(&r, "queued")
+
+	// Address autocomplete, and a draft that survives the composer being
+	// closed. Both are keyboard-only, like everything else here.
+	key(&r, p.KEY_HOME)
+	key(&r, 'c')
+	typ(&r, "gra")
+	shot(&r, "autocomplete")
+	key(&r, p.KEY_TAB) // Tab completes the highlighted address
+	shot(&r, "autocomplete-accepted")
+	key(&r, p.KEY_TAB) // To -> Cc
+	key(&r, p.KEY_TAB) // Cc -> Subject
+	typ(&r, "Southern reach, revised")
+	key(&r, p.KEY_TAB) // Subject -> Body
+	typ(&r, "Half a paragraph that must not be lost.")
+	shot(&r, "draft-typed")
+	key(&r, p.KEY_ESCAPE) // closed, and kept
+	shot(&r, "draft-saved")
+	key(&r, 'c') // picked straight back up, caret and all
+	shot(&r, "draft-restored")
+	key(&r, p.KEY_ESCAPE)
+
+	// Multi-select: T marks a conversation, and one verb acts on all of them.
+	key(&r, p.KEY_HOME)
+	key(&r, 't')
+	key(&r, 'j')
+	key(&r, 't')
+	key(&r, 'j')
+	key(&r, 't')
+	shot(&r, "multi-select")
+	key(&r, 'e')
+	shot(&r, "multi-archived")
+	key(&r, 'z')
 
 	// Filing: move a message to another folder, then put it back.
 	key(&r, p.KEY_HOME)
@@ -319,6 +368,99 @@ run_uitest :: proc(dir: string, film := false) -> int {
 
 	fmt.printfln("mail --uitest: wrote %d frames", r.n)
 	return 0
+}
+
+// check_chip_wrap is the assertion behind the wrapping attachment row.
+//
+// It is here rather than in `--selftest` because it is a *geometry* claim: the
+// row's height and the chips' rectangles only exist once the tree has been
+// laid out, so it has to run against a rendered frame. Two frames are
+// rendered first, deliberately: this reading pane is `flex-1 min-w-0` beside
+// two fixed siblings, so it is offered the whole window while measuring and
+// gets the remainder while arranging. The toolkit corrects that with the
+// width the box really had last frame, which means frame one can be wrong and
+// frame two must not be.
+@(private = "file")
+check_chip_wrap :: proc(r: ^Rig) {
+	// Two more frames past `shot`'s own settle, so the width has certainly
+	// been through a full measure/arrange cycle.
+	settle(r, 2)
+
+	ui := p.offscreen_begin(r.off)
+	handle_keys(ui, r.st, nil)
+	frame(ui, r.st)
+	apply_scroll(ui, r.st)
+
+	st := r.st
+	fails := 0
+	if st.att_box_id == 0 || st.att_chip_n == 0 {
+		fmt.eprintfln("  chip wrap: no attachment row was built")
+		p.offscreen_end(r.off)
+		return
+	}
+	box := p.rect_of(ui, st.att_box_id)
+	lines := 0
+	last_y := f32(-1e9)
+	bottom := f32(0)
+	right := f32(0)
+	for i in 0 ..< st.att_chip_n {
+		c := p.rect_of(ui, st.att_chip_ids[i])
+		if c.w <= 0 || c.h <= 0 {
+			continue
+		}
+		if c.y > last_y + 1 {
+			lines += 1
+			last_y = c.y
+		}
+		bottom = max(bottom, c.y + c.h)
+		right = max(right, c.x + c.w)
+		// No chip may stick out of the row it is in, on either axis.
+		if c.x < box.x - 0.5 || c.x + c.w > box.x + box.w + 0.5 {
+			fmt.eprintfln(
+				"  FAIL chip %d runs past the row horizontally: %.1f..%.1f in %.1f..%.1f",
+				i,
+				c.x,
+				c.x + c.w,
+				box.x,
+				box.x + box.w,
+			)
+			fails += 1
+		}
+		if c.y + c.h > box.y + box.h + 0.5 {
+			fmt.eprintfln(
+				"  FAIL chip %d runs past the bottom of the row: %.1f > %.1f",
+				i,
+				c.y + c.h,
+				box.y + box.h,
+			)
+			fails += 1
+		}
+	}
+	// The claim the bug broke: the row reserved the height of every line it
+	// went on to lay out.
+	if bottom > box.y + box.h + 0.5 {
+		fmt.eprintfln(
+			"  FAIL the row is %.1f px tall but its chips reach %.1f px past its top",
+			box.h,
+			bottom - box.y,
+		)
+		fails += 1
+	}
+	if lines < 2 {
+		fmt.eprintfln("  NOTE the chips fitted on one line (%d chips, row %.0f px wide) — wrap untested", st.att_chip_n, box.w)
+	}
+	fmt.printfln(
+		"  chip wrap: %d chips on %d line%s, row %.0fx%.0f, chips reach %.0f px down and %.0f px across — %s",
+		st.att_chip_n,
+		lines,
+		lines == 1 ? "" : "s",
+		box.w,
+		box.h,
+		bottom - box.y,
+		right - box.x,
+		fails == 0 ? "contained" : "OVERFLOWING",
+	)
+	p.offscreen_end(r.off)
 }
 
 // copy_faces loads the same font files into a second offscreen renderer; each

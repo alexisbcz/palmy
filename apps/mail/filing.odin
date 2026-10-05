@@ -292,6 +292,7 @@ file_selection :: proc(st: ^State, target_fi: int) -> (moved: int, err: string) 
 	if moved == 0 {
 		return 0, first_err == "" ? "nothing moved" : first_err
 	}
+	marks_clear(st)
 	return moved, ""
 }
 
@@ -312,6 +313,17 @@ selection_paths :: proc(st: ^State, allocator := context.temp_allocator) -> []st
 	return out[:]
 }
 
+// message_at_path is the single-message form, for the callers that keep hold
+// of exactly one message across a reload.
+message_at_path :: proc(st: ^State, want: string) -> int {
+	for m, i in st.messages {
+		if m.path == want {
+			return i
+		}
+	}
+	return -1
+}
+
 // messages_at_paths resolves those paths back to indices after a reload.
 messages_at_paths :: proc(st: ^State, paths: []string, allocator := context.temp_allocator) -> []int {
 	out := make([dynamic]int, 0, len(paths), allocator)
@@ -326,24 +338,15 @@ messages_at_paths :: proc(st: ^State, paths: []string, allocator := context.temp
 	return out[:]
 }
 
-// selection_messages is the set of messages the current row stands for.
+// selection_messages is what a verb acts on: everything marked when anything
+// is marked, and otherwise the set the current row stands for. Every verb in
+// this file goes through it, which is how one multi-select reaches archive,
+// move, delete and the permanent delete without any of them knowing about it.
 selection_messages :: proc(st: ^State, allocator := context.temp_allocator) -> []int {
-	out := make([dynamic]int, 0, 8, allocator)
-	if st.row_sel < 0 || st.row_sel >= len(st.rows) {
-		return out[:]
+	if len(st.marked) > 0 {
+		return marked_messages(st, allocator)
 	}
-	r := st.rows[st.row_sel]
-	if r.kind == .Message {
-		append(&out, r.msg)
-		return out[:]
-	}
-	if r.thread < 0 || r.thread >= len(st.threads) {
-		return out[:]
-	}
-	for mi in st.threads[r.thread].msgs {
-		append(&out, mi)
-	}
-	return out[:]
+	return row_messages(st, st.row_sel, allocator)
 }
 
 // archive_selection files the selection into Archive, creating it if the
@@ -372,7 +375,7 @@ archive_selection :: proc(st: ^State) {
 		note(st, err)
 		return
 	}
-	note(st, tfmt("Archived %d message%s  ·  Z to undo", n, plural(n)))
+	note(st, tfmt("Archived %d message%s  ·  %s", n, plural(n), undo_phrase(n)))
 }
 
 // delete_selection is "move to Trash" for a protocol that has one, and the
@@ -415,7 +418,14 @@ delete_selection :: proc(st: ^State) {
 		note(st, err)
 		return
 	}
-	note(st, tfmt("Moved %d message%s to Trash  ·  Z to undo", n, plural(n)))
+	note(st, tfmt("Moved %d message%s to Trash  ·  %s", n, plural(n), undo_phrase(n)))
+}
+
+// undo_phrase is honest about what Z will do. Only the last move is
+// remembered — a stack of undos over a tree other tools can rename under us
+// would be a stack of stale paths — so a multiple move must not claim more.
+undo_phrase :: proc(n: int) -> string {
+	return n > 1 ? "Z puts the last one back" : "Z to undo"
 }
 
 // file_selection_of is `file_selection` over an explicit set, which is what
@@ -437,6 +447,9 @@ file_selection_of :: proc(st: ^State, msgs: []int, target_fi: int) -> (moved: in
 	if moved == 0 {
 		return 0, first_err == "" ? "nothing moved" : first_err
 	}
+	// The marks named files that have just been renamed. A selection that
+	// survived the verb applied to it would be a selection of stale paths.
+	marks_clear(st)
 	return moved, ""
 }
 
@@ -530,6 +543,7 @@ purge_selection :: proc(st: ^State) {
 		}
 		n += 1
 	}
+	marks_clear(st)
 	if n == 0 {
 		note(st, failed == "" ? "Nothing was deleted" : failed)
 		return
