@@ -6,12 +6,17 @@
 // the root box exactly and then matches remaining boxes greedily by size, which
 // is enough to spot a wrong padding, radius or height.
 import { readFileSync, existsSync } from "node:fs";
+import path from "node:path";
+import { fileURLToPath } from "node:url";
 
-const ROOT = "/home/alex/Work/palmy/parity";
+// Derived from this file's location so it follows the tree it is run from;
+// PARITY_ROOT and PARITY_WEB override it, as in tools/diff-all.sh.
+const ROOT = process.env.PARITY_ROOT || path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
+const WEB = process.env.PARITY_WEB || `${ROOT}/out/web`;
 const id = process.argv[2];
 if (!id) { console.error("usage: geomdiff.mjs <case-id>"); process.exit(2); }
 
-const webPath = `${ROOT}/out/web/${id}.json`;
+const webPath = `${WEB}/${id}.json`;
 const odinPath = `${ROOT}/out/odin/${id}.geom.json`;
 if (!existsSync(webPath)) { console.error(`no browser capture for ${id}`); process.exit(2); }
 if (!existsSync(odinPath)) { console.error(`no palmy render for ${id}`); process.exit(2); }

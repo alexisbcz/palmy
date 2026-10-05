@@ -1,7 +1,16 @@
 // Turn out/diff/metrics.ndjson into a readable report.
+//
+// The tree to report on is derived from this file's own location, so a run
+// inside a git worktree reports that worktree rather than a hardcoded
+// checkout. PARITY_ROOT and PARITY_WEB override it, which is how
+// tools/diff-all.sh points a worktree at the captures it borrowed.
 import { readFileSync, writeFileSync, existsSync, readdirSync } from "node:fs";
+import path from "node:path";
+import { fileURLToPath } from "node:url";
 
-const ROOT = "/home/alex/Work/palmy/parity";
+const HERE = path.dirname(fileURLToPath(import.meta.url));
+const ROOT = process.env.PARITY_ROOT || path.resolve(HERE, "..");
+const WEB = process.env.PARITY_WEB || `${ROOT}/out/web`;
 const lines = existsSync(`${ROOT}/out/diff/metrics.ndjson`)
   ? readFileSync(`${ROOT}/out/diff/metrics.ndjson`, "utf8").trim().split("\n").filter(Boolean)
   : [];
@@ -10,8 +19,8 @@ const rows = lines.map((l) => JSON.parse(l));
 const done = rows.filter((r) => r.status === "ok");
 const missing = rows.filter((r) => r.status !== "ok");
 
-const allCases = existsSync(`${ROOT}/out/web`)
-  ? readdirSync(`${ROOT}/out/web`).filter((f) => f.endsWith(".png")).map((f) => f.slice(0, -4))
+const allCases = existsSync(WEB)
+  ? readdirSync(WEB).filter((f) => f.endsWith(".png")).map((f) => f.slice(0, -4))
   : [];
 
 const byComponent = new Map();
