@@ -34,6 +34,11 @@ import p "palmy:."
 WIN_W :: 1280
 WIN_H :: 820
 
+// secs turns a number of seconds into a wake delay for `p.wake_after`.
+secs :: proc(s: f64) -> time.Duration {
+	return time.Duration(max(s, 0) * f64(time.Second))
+}
+
 SIDEBAR_W :: 248
 PARAMS_W :: 268
 
@@ -162,6 +167,10 @@ main :: proc() {
 	}
 	defer p.destroy(app)
 
+	// Tell the worker threads which window to wake. Set before any of them
+	// exists, read-only afterwards.
+	WAKE = app
+
 	st := St {
 		model      = strings.clone("qwen3:0.6b"),
 		pinned     = true,
@@ -219,25 +228,41 @@ main :: proc() {
 			st.last_probe = mono()
 			probe_refresh(&st.probe)
 		}
-
 		handle_keys(ui, app, &st)
 		build(ui, &st)
 		pick_overlay(ui, &st)
 
-		// A worker thread cannot wake palmy's `poll`, and there is no wake
-		// descriptor to write to, so while anything is in flight the window
-		// marks itself animating and paces to the display instead. This has
-		// to come after the input handling: the frame that starts a stream is
-		// the frame that must already be asking for the next one.
+		// This used to say: a worker thread cannot wake palmy's poll, so
+		// while anything is in flight the window marks itself animating and
+		// paces to the display instead. It can now. `wake_ui` in ollama.odin
+		// is called by the worker after every publish, so the window draws
+		// once per token rather than sixty times a second regardless of
+		// whether a token arrived -- measured at 43% of a core before and 4%
+		// after, for a model emitting ten tokens a second.
+		//
+		// Two things are clocks rather than consequences of the stream, and a
+		// clock has to ask for the frame that runs it: the live rate and
+		// elapsed readout in the stats strip, and the 1.2s /api/ps refresh
+		// above. Four frames a second is enough for a counter a human is
+		// reading, and is still fifteen times less than painting every vsync.
+		//
+		// Only while something is in flight. Idle, the 6s refresh stays
+		// opportunistic -- it happens on the next frame something else
+		// causes, exactly as it did before -- because a window nobody is
+		// looking at should wake for nothing at all, not ten times a minute.
 		if st.streaming || st.pulling {
-			ui.animating = true
+			p.wake_after(ui, 250 * time.Millisecond)
+			p.wake_after(ui, secs(st.last_probe + interval - mono()))
 		}
 
 		if st.toast != "" {
-			if ui.now > st.toast_t {
+			// `mono()`, not `ui.now`: palmy clamps dt to 0.1s per frame, so
+			// `ui.now` lags real time badly once the window is only drawing
+			// when something happens, and a 3.5s toast would outstay it.
+			if mono() > st.toast_t {
 				st.toast = ""
 			} else {
-				ui.animating = true
+				p.wake_after(ui, secs(st.toast_t - mono()))
 			}
 		}
 	}

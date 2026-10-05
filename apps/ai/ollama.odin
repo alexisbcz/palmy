@@ -15,6 +15,14 @@ package main
 // calls nothing that could lock again. Nothing in this file takes two mutexes.
 // `cancel` and `running` are atomics so the UI can ask a worker to stop, and
 // see that it has, without ever blocking on the worker's lock.
+//
+// WAKING. Publishing is only half the job: the frame loop sleeps in poll()
+// when nothing is happening, so a token appended to a buffer and not announced
+// sits there until some unrelated event wakes the window. Every publish
+// therefore ends with `wake_ui`, which is `palmy.wake` -- an atomic store and
+// a write to an eventfd, no lock, never blocking. It is called *after* the
+// unlock all the same, so the rule above still reads as written: these are
+// leaves.
 
 import "core:encoding/json"
 import "core:fmt"
@@ -25,9 +33,21 @@ import "core:strings"
 import "core:sync"
 import "core:thread"
 import "core:time"
+import p "palmy:."
 
 OLLAMA_URL :: "http://127.0.0.1:11434"
 START_HINT :: "OLLAMA_HOST=127.0.0.1:11434 ollama serve"
+
+// WAKE is the window the workers nudge. `main` sets it once, before the first
+// worker exists; nothing writes it afterwards. It stays nil under
+// `ai --selftest`, which has no window, and `wake_ui` is a no-op then.
+WAKE: ^p.App
+
+wake_ui :: proc() {
+	if WAKE != nil {
+		p.wake(WAKE)
+	}
+}
 
 // ---------------------------------------------------------------------------
 // Values
@@ -218,6 +238,7 @@ pub_text :: proc(s: ^Stream, content, think: string, now: f64) {
 	s.tokens += 1
 	s.elapsed = now - s.started
 	sync.mutex_unlock(&s.mu)
+	wake_ui()
 }
 
 @(private = "file")
@@ -233,6 +254,7 @@ pub_stats :: proc(s: ^Stream, prompt_n, eval_n: int, eval_ns, load_ns: i64, reas
 	s.load_ns = load_ns
 	s.elapsed = now - s.started
 	sync.mutex_unlock(&s.mu)
+	wake_ui()
 }
 
 @(private = "file")
@@ -250,6 +272,7 @@ pub_progress :: proc(s: ^Stream, status: string, total, completed: i64, now: f64
 	}
 	s.elapsed = now - s.started
 	sync.mutex_unlock(&s.mu)
+	wake_ui()
 }
 
 @(private = "file")
@@ -270,6 +293,7 @@ pub_done :: proc(s: ^Stream, err: string, stopped: bool, now: f64) {
 	s.finished = true
 	s.elapsed = now - s.started
 	sync.mutex_unlock(&s.mu)
+	wake_ui()
 }
 
 // ---------------------------------------------------------------------------
@@ -666,6 +690,7 @@ probe_worker :: proc(p: ^Probe) {
 	p.err = strings.clone(err)
 	p.got = true
 	sync.mutex_unlock(&p.mu)
+	wake_ui()
 
 	delete(models)
 	delete(loaded)
