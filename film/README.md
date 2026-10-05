@@ -1,12 +1,18 @@
 # The film
 
-A two-minute short about the toolkit, on the homepage. Cut from footage that
-already existed, to a score written here.
+Two minutes and thirteen seconds about the toolkit, on the homepage.
+Everything on screen is the window manager or an application; the score was
+written for it.
+
+The spine is the window manager — a Wayland compositor that is itself a palmy
+client, with four applications running inside it, launched, cascaded, moved,
+resized and maximised. Then sixteen more applications, four beats each; then
+six of them introduced by name; then what the toolkit still cannot do.
 
 ```sh
-bash film/build.sh          # scan, score, stills, cut, encode
+bash film/build.sh          # scan, score, capture, cut, encode
 bash film/build.sh score    # just the music
-bash film/build.sh stills   # just chapter four's rendered frames
+bash film/build.sh capture  # just the three recordings
 bash film/build.sh cut      # just the edit
 bash film/build.sh encode   # just the two encodes, the poster and the captions
 ```
@@ -28,10 +34,9 @@ of the same file and lays the bars on the same grid. There is no place where a
 time in seconds is chosen by eye, and nothing can drift, because neither side
 knows what a second is.
 
-The clearest demonstration of this is the sequence in chapter two. The parity
-suite's comparison reel holds each of its 182 cases for 1.4 s; `setpts`
-resamples it by `0.41667 / 1.4` so a case lasts exactly one beat, and then the
-case changes *are* the beats.
+The clearest demonstration is the application montage in chapter two: sixteen
+programs, four beats each, every cut on a downbeat, derived rather than
+dialled in.
 
 ## The files
 
@@ -45,9 +50,10 @@ case changes *are* the beats.
 | `score/compose.py` | the composition — two original cues, emitted as four stems |
 | `score/render.sh` | fluidsynth, then the surf signal chain in ffmpeg |
 | `score/*.mid` | the generated MIDI, committed so the score is inspectable without running anything |
-| `tools/rtlcheck/` | an Odin program that renders chapter four's two frames through palmy's own text path |
+| `tools/capture/` | the recording sandbox, the steps files, and the document chapter four films |
 | `tools/captions.py` | WebVTT, from the captions in `shots.json` |
 | `tools/scan-identity.sh` | the safety gate: frames out, OCR, grep |
+| `tools/scan-used.py` | the windows the shot list takes, so the gate scans what ships rather than whole clips |
 | `SOURCES.md` | every clip used, every clip rejected, and why |
 
 ## The score
@@ -64,18 +70,27 @@ goes through `tremolo` at 5.6 Hz and two staggered `aecho`s, which is a spring
 reverb tank described in ffmpeg filters; the drums get a short room only,
 because a kit through a reverb tank turns to soup.
 
-## Chapter four draws itself
+## The score grows with the film
 
-The fourth chapter is about what palmy's text path does and does not do with
-bidirectional text, and a claim like that has no business being a card. So its
-two frames are rendered **by that text path**, by `tools/rtlcheck`: Hebrew
-reordered, Arabic joined and a line holding both directions on one frame; the
-vowel marks that GPOS would attach and the Devanagari that is not shaped at
-all on the next, with a crash zoom into the evidence.
+`score/compose.py` does not contain a bar map. It reads `shots.json` and
+derives one: the chapter cards are the section boundaries, the shot holding
+the time-jump card is where the band drops out, the last chapter card is where
+the western cue takes over, and the beats the band hits are wherever the
+`intro` shots put their freeze frames. Widen the edit by thirty seconds and
+the score is thirty seconds longer, in the same key, without a number being
+typed twice.
 
-That makes the chapter self-checking. If shaping regresses, the frame the film
-holds regresses with it, because `build.sh` re-renders it on every build
-rather than keeping a committed PNG.
+## Chapter four films its own evidence
+
+The chapter claims the toolkit still gets things wrong about right-to-left
+text, so it shows them rather than asserting them: the word processor, opening
+a document in Arabic, Devanagari and English. The Arabic is joined — the
+letters take their cursive forms — and the crash zoom lands on the vowel marks
+sitting on the advance instead of on the letter, with the unshaped Devanagari
+underneath.
+
+`build.sh` re-records that take on every build. If shaping regresses, the
+frame the film holds regresses with it.
 
 ## Safety
 

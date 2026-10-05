@@ -1,0 +1,170 @@
+# The window manager, carrying the film.
+# 
+# The window manager's status bar names the spawn *slot*, not the binary that
+# film/tools/capture/sandbox.sh bound to it: a permanent legend reading
+# "F1 counter  F2 gallery ...", and a toast saying "launched counter" for
+# three seconds after each launch (`wall_now() - s.status_at < 3.0`). Both sit
+# in the right-hand end of the bar, and every window-manager shot in
+# shots.json carries a `mask` over exactly that region -- verified by reading
+# the bar back out of the finished cut. No frame of the film shows either.
+#
+# The marked line below is where the last toast has expired anyway, and the
+# shot list takes its desktop footage from there on. The mask is what makes
+# the wallpaper shot at the head of the clip safe as well.
+# 
+# Every step is a key. Pointer events do not reach a client on this seat.
+wait 1.2
+# launch four applications into the compositor
+key F1
+wait 1.7
+key F2
+wait 1.7
+key F3
+wait 1.7
+key F5
+wait 4.3
+# ---- filmable from here -------------------------------------------
+# cascade them, so all four are on screen at once
+key F12
+wait 3.0
+# walk the focus ring
+key F6
+wait 1.1
+key F6
+wait 1.1
+key F6
+wait 1.4
+# window mode: arrows move, PgUp/PgDn resize
+key F10
+wait 1.5
+# shrink and place each window in turn, F6 between them
+key Next
+key Next
+key Next
+key Next
+key Next
+key Next
+key Next
+wait 0.7
+key Left
+key Left
+key Left
+key Left
+key Left
+key Left
+key Left
+key Left
+key Left
+key Up
+key Up
+wait 1.0
+key F6
+wait 0.9
+key Next
+key Next
+key Next
+key Next
+key Next
+key Next
+key Next
+wait 0.7
+key Right
+key Right
+key Right
+key Right
+key Right
+key Right
+key Right
+key Right
+key Right
+key Right
+key Right
+key Right
+key Right
+key Right
+key Right
+key Right
+key Up
+key Up
+wait 1.0
+key F6
+wait 0.9
+key Next
+key Next
+key Next
+key Next
+key Next
+key Next
+key Next
+wait 0.7
+key Left
+key Left
+key Left
+key Left
+key Left
+key Left
+key Left
+key Left
+key Left
+key Down
+key Down
+key Down
+key Down
+key Down
+key Down
+key Down
+wait 1.0
+key F6
+wait 0.9
+key Next
+key Next
+key Next
+key Next
+key Next
+key Next
+key Next
+wait 0.7
+key Right
+key Right
+key Right
+key Right
+key Right
+key Right
+key Right
+key Right
+key Right
+key Right
+key Right
+key Right
+key Right
+key Right
+key Right
+key Right
+key Down
+key Down
+key Down
+key Down
+key Down
+key Down
+key Down
+wait 1.0
+key F6
+wait 0.9
+key F10
+wait 1.0
+# four applications, live, in a compositor that is itself a palmy client
+wait 3.4
+# one of them full screen, and back
+key F11
+wait 2.4
+key F11
+wait 1.6
+key F7
+wait 1.0
+key F11
+wait 2.4
+key F11
+wait 2.0
+# and re-cascaded
+key F12
+wait 4.0

@@ -7,21 +7,21 @@
     "",
     "which is an integer, which is the whole reason for those two numbers. A cut",
     "therefore lands on an exact frame that is also an exact beat of the score,",
-    "and the score is generated from the same tempo, so the two cannot drift.",
+    "and film/score/compose.py derives its sections from THIS file, so the score",
+    "grows with the film rather than the film being stretched to fit the score.",
     "",
-    "280 beats = 70 bars = 116.667 s.",
+    "320 beats = 80 bars = 133.333 s.",
     "",
-    "Source clips are listed in film/SOURCES.md with the result of the identity",
-    "scan that cleared each one. Clips not listed there were rejected and must",
-    "not be added here without a fresh scan."
+    "Everything on screen is the window manager or an application. Source clips",
+    "are listed in film/SOURCES.md with the result of the identity scan that",
+    "cleared each one; the window manager and the chapter-four document are",
+    "re-recorded by film/build.sh on every build."
   ],
-
   "tempo_bpm": 144,
   "beats_per_bar": 4,
   "fps": 24,
   "width": 1280,
   "height": 720,
-
   "palette": {
     "cream": "0xF4D35E",
     "white": "0xF2EFE6",
@@ -29,292 +29,738 @@
     "red": "0xE23A2E",
     "black": "0x000000"
   },
-
   "fonts": {
     "display": "parity/web/public/fonts/Geist-700.ttf",
     "body": "parity/web/public/fonts/Geist-500.ttf",
     "mono": "/usr/share/fonts/TTF/JetBrainsMonoNerdFont-Regular.ttf"
   },
-
   "shots": [
     {
-      "id": "open-card",
-      "beat": 0, "beats": 8, "type": "parity", "case": "card-default",
-      "zoom": {"from": 3.2, "to": 1.0, "cx": 0.78, "cy": 0.42},
-      "caption": "Chromium renders a card. So does palmy. The third panel is the difference.",
-      "_": "Cold open: start inside the difference panel and pull out to the triptych."
-    },
-    {
-      "id": "open-rip",
-      "beat": 8, "beats": 8, "type": "parity-rip", "case": "chart-bar", "count": 8,
-      "caption": "Eight of the 182 cases, one per beat.",
-      "_": "The comparison reel, resampled so one case lasts exactly one beat."
-    },
-    {
-      "id": "open-sidebar",
-      "beat": 16, "beats": 8, "type": "parity", "case": "sidebar-submenu",
-      "zoom": {"from": 1.0, "to": 2.6, "cx": 0.78, "cy": 0.42},
-      "text": [{"s": "0.33", "size": 150, "y": 0.70, "color": "cream", "from": 4}],
-      "caption": "A file tree, 0.33 of 255 apart."
-    },
-    {
-      "id": "open-numbers",
-      "beat": 24, "beats": 8, "type": "card",
-      "lines": [
-        {"s": "182 CASES", "size": 128, "color": "cream"},
-        {"s": "MEAN ABSOLUTE ERROR 2.953 OF 255", "size": 52, "color": "white", "gap": 34},
-        {"s": "ZERO GEOMETRY MISMATCHES", "size": 52, "color": "white", "gap": 12}
+      "id": "open-desk",
+      "type": "clip",
+      "src": "film/.work/capture/wm.mp4",
+      "in": 28.0,
+      "mask": [
+        [
+          880,
+          0,
+          400,
+          25
+        ]
       ],
-      "caption": "182 cases. Mean absolute error 2.953 of 255. Zero geometry mismatches."
+      "zoom": {
+        "from": 2.6,
+        "to": 1.0,
+        "cx": 0.62,
+        "cy": 0.52
+      },
+      "label": "four applications, one compositor, and the compositor is a palmy client",
+      "caption": "Four applications live in a window manager that is itself written in the toolkit.",
+      "beat": 0,
+      "beats": 16
     },
-
     {
       "id": "title",
-      "beat": 32, "beats": 8, "type": "card",
+      "type": "card",
       "lines": [
-        {"s": "PALMFRAME", "size": 190, "color": "cream"},
-        {"s": "A UI TOOLKIT WITH A THREE-LINE DEPENDENCY LIST", "size": 44, "color": "white", "gap": 40}
+        {
+          "s": "PALMFRAME",
+          "size": 190,
+          "color": "cream"
+        },
+        {
+          "s": "A UI TOOLKIT WITH A THREE-LINE DEPENDENCY LIST",
+          "size": 44,
+          "color": "white",
+          "gap": 40
+        }
       ],
-      "caption": "PALMFRAME — a UI toolkit with a three-line dependency list."
+      "caption": "PALMFRAME — a UI toolkit with a three-line dependency list.",
+      "beat": 16,
+      "beats": 8
     },
     {
       "id": "earlier",
-      "beat": 40, "beats": 8, "type": "card",
+      "type": "card",
       "lines": [
-        {"s": "TWO DAYS EARLIER", "size": 140, "color": "cream"},
-        {"s": "THE FIRST COMMIT", "size": 44, "color": "dim", "gap": 40}
+        {
+          "s": "TWO DAYS EARLIER",
+          "size": 140,
+          "color": "cream"
+        },
+        {
+          "s": "THE FIRST COMMIT",
+          "size": 44,
+          "color": "dim",
+          "gap": 40
+        }
       ],
-      "caption": "TWO DAYS EARLIER — the first commit."
+      "caption": "TWO DAYS EARLIER — the first commit.",
+      "beat": 24,
+      "beats": 8
     },
-
     {
       "id": "ch1-card",
-      "beat": 48, "beats": 4, "type": "card",
+      "type": "card",
       "lines": [
-        {"s": "CHAPTER ONE", "size": 64, "color": "white"},
-        {"s": "NO TOOLKIT", "size": 176, "color": "cream", "gap": 24}
+        {
+          "s": "CHAPTER ONE",
+          "size": 64,
+          "color": "white"
+        },
+        {
+          "s": "NO TOOLKIT",
+          "size": 176,
+          "color": "cream",
+          "gap": 24
+        }
       ],
-      "caption": "CHAPTER ONE: NO TOOLKIT"
+      "caption": "CHAPTER ONE: NO TOOLKIT",
+      "beat": 32,
+      "beats": 4
     },
     {
       "id": "ldd",
-      "beat": 52, "beats": 8, "type": "term",
+      "type": "term",
       "prompt": "$ ldd apps/reader/reader.bin",
-      "out": ["linux-vdso.so.1", "libm.so.6 => /usr/lib/libm.so.6",
-              "libc.so.6 => /usr/lib/libc.so.6",
-              "/lib64/ld-linux-x86-64.so.2"],
-      "caption": "ldd on a palmy binary: vdso, libm, libc, and the loader. That is the whole list."
+      "out": [
+        "linux-vdso.so.1",
+        "libm.so.6 => /usr/lib/libm.so.6",
+        "libc.so.6 => /usr/lib/libc.so.6",
+        "/lib64/ld-linux-x86-64.so.2"
+      ],
+      "caption": "ldd on a palmy binary: vdso, libm, libc, and the loader. That is the whole list.",
+      "beat": 36,
+      "beats": 8
     },
     {
       "id": "ldd-zoom",
-      "beat": 60, "beats": 4, "type": "term",
+      "type": "term",
       "prompt": "$ ldd apps/reader/reader.bin",
-      "out": ["linux-vdso.so.1", "libm.so.6 => /usr/lib/libm.so.6",
-              "libc.so.6 => /usr/lib/libc.so.6",
-              "/lib64/ld-linux-x86-64.so.2"],
-      "zoom": {"from": 1.0, "to": 3.4, "cx": 0.30, "cy": 0.56},
-      "caption": "No libwayland. No libX11. No GTK, no Qt, no font library."
+      "out": [
+        "linux-vdso.so.1",
+        "libm.so.6 => /usr/lib/libm.so.6",
+        "libc.so.6 => /usr/lib/libc.so.6",
+        "/lib64/ld-linux-x86-64.so.2"
+      ],
+      "zoom": {
+        "from": 1.0,
+        "to": 3.4,
+        "cx": 0.3,
+        "cy": 0.56
+      },
+      "caption": "No libwayland. No libX11. No GTK, no Qt, no font library.",
+      "beat": 44,
+      "beats": 4
     },
     {
       "id": "wm-wall",
-      "beat": 64, "beats": 8, "type": "clip",
-      "src": "apps/wm/demo.mp4", "in": 0.30,
+      "type": "clip",
+      "src": "film/.work/capture/wm.mp4",
+      "in": 0.4,
+      "mask": [
+        [
+          880,
+          0,
+          400,
+          25
+        ]
+      ],
       "label": "the Wayland protocol, encoded onto a socket by hand",
-      "caption": "A Wayland compositor, nested — written against a hand-rolled protocol."
+      "caption": "A Wayland compositor, nested — written against a hand-rolled protocol.",
+      "beat": 48,
+      "beats": 8
     },
     {
-      "id": "showcase",
-      "beat": 72, "beats": 4, "type": "clip",
-      "src": "parity/out/video/showcase.mp4", "in": 4.2,
-      "label": "shadcn/ui, rendered by a software rasterizer",
-      "caption": "shadcn/ui widgets, rasterized in software onto a Wayland surface."
+      "id": "wm-four",
+      "type": "clip",
+      "src": "film/.work/capture/wm.mp4",
+      "in": 29.5,
+      "mask": [
+        [
+          880,
+          0,
+          400,
+          25
+        ]
+      ],
+      "label": "calc · maps · sheets · calendar",
+      "caption": "Four real applications, tiled by hand: a calculator, a map, a spreadsheet, a calendar.",
+      "beat": 56,
+      "beats": 16
     },
-
-    {"id": "m-calc",     "beat": 76, "beats": 2, "type": "clip", "src": "apps/calc/demo.mp4",     "in": 4.0,  "label": "calc",
-     "caption": "Twelve of the forty applications, one every two beats."},
-    {"id": "m-notes",    "beat": 78, "beats": 2, "type": "clip", "src": "apps/notes/demo.mp4",    "in": 7.0,  "label": "notes"},
-    {"id": "m-editor",   "beat": 80, "beats": 2, "type": "clip", "src": "apps/editor/demo.mp4",   "in": 24.0, "label": "editor"},
-    {"id": "m-emoji",    "beat": 82, "beats": 2, "type": "clip", "src": "apps/emoji/demo.mp4",    "in": 4.0,  "label": "emoji"},
-    {"id": "m-calendar", "beat": 84, "beats": 2, "type": "clip", "src": "apps/calendar/demo.mp4", "in": 20.0, "label": "calendar"},
-    {"id": "m-sheets",   "beat": 86, "beats": 2, "type": "clip", "src": "apps/sheets/demo.mp4",   "in": 5.0,  "label": "sheets"},
-    {"id": "m-docs",     "beat": 88, "beats": 2, "type": "clip", "src": "apps/docs/demo.mp4",     "in": 55.0, "label": "docs"},
-    {"id": "m-reader",   "beat": 90, "beats": 2, "type": "clip", "src": "apps/reader/demo.mp4",   "in": 30.0, "label": "reader"},
-    {"id": "m-maps",     "beat": 92, "beats": 2, "type": "clip", "src": "apps/maps/demo.mp4",     "in": 26.0, "label": "maps"},
-    {"id": "m-torrent",  "beat": 94, "beats": 2, "type": "clip", "src": "apps/torrent/demo.mp4",  "in": 36.0, "label": "torrent"},
-    {"id": "m-audio",    "beat": 96, "beats": 2, "type": "clip", "src": "apps/audio/demo.mp4",    "in": 22.0, "label": "audio"},
-    {"id": "m-ai",       "beat": 98, "beats": 2, "type": "clip", "src": "apps/ai/demo.mp4",       "in": 20.0, "label": "ai"},
-
+    {
+      "id": "wm-move",
+      "type": "clip",
+      "src": "film/.work/capture/wm.mp4",
+      "in": 18.0,
+      "mask": [
+        [
+          880,
+          0,
+          400,
+          25
+        ]
+      ],
+      "label": "window mode: arrows move, PgUp/PgDn resize",
+      "caption": "Window mode: the arrows move a window, PgUp and PgDn resize it.",
+      "beat": 72,
+      "beats": 12
+    },
+    {
+      "id": "wm-max",
+      "type": "clip",
+      "src": "film/.work/capture/wm.mp4",
+      "in": 40.5,
+      "mask": [
+        [
+          880,
+          0,
+          400,
+          25
+        ]
+      ],
+      "label": "one of them full screen",
+      "caption": "One of them full screen, and back.",
+      "beat": 84,
+      "beats": 8
+    },
+    {
+      "id": "wm-emoji",
+      "type": "clip",
+      "src": "film/.work/capture/wm2.mp4",
+      "in": 36.0,
+      "mask": [
+        [
+          880,
+          0,
+          400,
+          25
+        ]
+      ],
+      "label": "a second desktop: editor, reader, archive, and the character picker",
+      "caption": "A second desktop in the same compositor — the editor, the reader and the archive browser, with the character picker maximised over them: 2,753 characters.",
+      "beat": 92,
+      "beats": 8
+    },
+    {
+      "id": "wm-cascade",
+      "type": "clip",
+      "src": "film/.work/capture/wm.mp4",
+      "in": 45.2,
+      "mask": [
+        [
+          880,
+          0,
+          400,
+          25
+        ]
+      ],
+      "label": "re-cascaded, four clients, sixty frames a second",
+      "caption": "Re-cascaded. Four windows, four clients, sixty frames a second.",
+      "beat": 100,
+      "beats": 8
+    },
     {
       "id": "ch2-card",
-      "beat": 100, "beats": 4, "type": "card",
+      "type": "card",
       "lines": [
-        {"s": "CHAPTER TWO", "size": 64, "color": "white"},
-        {"s": "THE INSTRUMENT", "size": 150, "color": "cream", "gap": 24}
+        {
+          "s": "CHAPTER TWO",
+          "size": 64,
+          "color": "white"
+        },
+        {
+          "s": "THE APPLICATIONS",
+          "size": 140,
+          "color": "cream",
+          "gap": 24
+        }
       ],
-      "caption": "CHAPTER TWO: THE INSTRUMENT"
+      "caption": "CHAPTER TWO: THE APPLICATIONS",
+      "beat": 108,
+      "beats": 4
     },
     {
-      "id": "split",
-      "beat": 104, "beats": 8, "type": "parity", "case": "alert-dialog-sm",
-      "columns": ["CHROMIUM", "PALMY · ODIN", "DIFFERENCE"],
-      "caption": "Left: Chromium. Middle: palmy. Right: every pixel where they disagree."
+      "id": "m-calc",
+      "type": "clip",
+      "src": "apps/calc/demo.mp4",
+      "in": 4.0,
+      "label": "calc — a calculator with its own expression parser",
+      "caption": "Sixteen of them, four beats each.",
+      "beat": 112,
+      "beats": 4
     },
     {
-      "id": "rip",
-      "beat": 112, "beats": 24, "type": "parity-rip", "case": "button-default", "count": 24,
-      "caption": "Twenty-four more, one per beat. Every case is a real browser capture."
+      "id": "m-sheets",
+      "type": "clip",
+      "src": "apps/sheets/demo.mp4",
+      "in": 5.0,
+      "label": "sheets — a spreadsheet with its own formula engine",
+      "beat": 116,
+      "beats": 4
     },
     {
-      "id": "sep-zero",
-      "beat": 136, "beats": 8, "type": "parity", "case": "separator-horizontal",
-      "text": [
-        {"s": "0.000", "size": 150, "y": 0.54, "color": "cream", "from": 2},
-        {"s": "THREE PANELS. ONE BAR.", "size": 40, "y": 0.73, "color": "white", "from": 4}
+      "id": "m-docs",
+      "type": "clip",
+      "src": "apps/docs/demo.mp4",
+      "in": 55.0,
+      "label": "docs — a word processor that writes its own .docx",
+      "beat": 120,
+      "beats": 4
+    },
+    {
+      "id": "m-reader",
+      "type": "clip",
+      "src": "apps/reader/demo.mp4",
+      "in": 30.0,
+      "label": "reader — EPUB, MOBI, PDF and DjVu",
+      "beat": 124,
+      "beats": 4
+    },
+    {
+      "id": "m-editor",
+      "type": "clip",
+      "src": "apps/editor/demo.mp4",
+      "in": 24.0,
+      "label": "editor — a code editor",
+      "beat": 128,
+      "beats": 4
+    },
+    {
+      "id": "m-notes",
+      "type": "clip",
+      "src": "apps/notes/demo.mp4",
+      "in": 7.0,
+      "label": "notes — markdown notes",
+      "beat": 132,
+      "beats": 4
+    },
+    {
+      "id": "m-maps",
+      "type": "clip",
+      "src": "apps/maps/demo.mp4",
+      "in": 26.0,
+      "label": "maps — vector maps and routing",
+      "beat": 136,
+      "beats": 4
+    },
+    {
+      "id": "m-calendar",
+      "type": "clip",
+      "src": "apps/calendar/demo.mp4",
+      "in": 20.0,
+      "label": "calendar — a calendar",
+      "beat": 140,
+      "beats": 4
+    },
+    {
+      "id": "m-emoji",
+      "type": "clip",
+      "src": "apps/emoji/demo.mp4",
+      "in": 4.0,
+      "label": "emoji — a character picker",
+      "beat": 144,
+      "beats": 4
+    },
+    {
+      "id": "m-torrent",
+      "type": "clip",
+      "src": "apps/torrent/demo.mp4",
+      "in": 36.0,
+      "label": "torrent — BitTorrent, loopback only",
+      "beat": 148,
+      "beats": 4
+    },
+    {
+      "id": "m-vault",
+      "type": "clip",
+      "src": "apps/vault/demo.mp4",
+      "in": 2.0,
+      "label": "vault — a password vault, Argon2id",
+      "beat": 152,
+      "beats": 4
+    },
+    {
+      "id": "m-audio",
+      "type": "clip",
+      "src": "apps/audio/demo.mp4",
+      "in": 22.0,
+      "label": "audio — an audio player",
+      "beat": 156,
+      "beats": 4
+    },
+    {
+      "id": "m-video",
+      "type": "clip",
+      "src": "apps/video/demo.mp4",
+      "in": 30.0,
+      "label": "video — a video player",
+      "beat": 160,
+      "beats": 4
+    },
+    {
+      "id": "m-shop",
+      "type": "clip",
+      "src": "apps/shop/demo.mp4",
+      "in": 20.0,
+      "label": "shop — a shopping list",
+      "beat": 164,
+      "beats": 4
+    },
+    {
+      "id": "m-pickdemo",
+      "type": "clip",
+      "src": "apps/pickdemo/demo.mp4",
+      "in": 12.0,
+      "label": "pickdemo — the file picker",
+      "beat": 168,
+      "beats": 4
+    },
+    {
+      "id": "m-ai",
+      "type": "clip",
+      "src": "apps/ai/demo.mp4",
+      "in": 20.0,
+      "label": "ai — a local model, as a user process",
+      "beat": 172,
+      "beats": 4
+    },
+    {
+      "id": "count",
+      "type": "card",
+      "lines": [
+        {
+          "s": "SEVENTEEN OF THE FORTY",
+          "size": 104,
+          "color": "cream"
+        },
+        {
+          "s": "THE OTHER TWENTY-THREE ARE NOT HERE BECAUSE THEIR",
+          "size": 38,
+          "color": "white",
+          "gap": 44
+        },
+        {
+          "s": "RECORDINGS CAUGHT THE MACHINE THEY RAN ON",
+          "size": 38,
+          "color": "white",
+          "gap": 8
+        }
       ],
-      "caption": "A separator: 0.000. The three panels are the same pixels."
+      "caption": "Seventeen of the forty. The other twenty-three are not here because their recordings caught the machine they ran on.",
+      "beat": 176,
+      "beats": 8
     },
-    {
-      "id": "worst",
-      "beat": 144, "beats": 8, "type": "parity", "case": "badge-icon",
-      "text": [
-        {"s": "24.364", "size": 170, "y": 0.70, "color": "red", "from": 1},
-        {"s": "AND THIS IS THE WORST ONE", "size": 44, "color": "white", "y": 0.87, "from": 3}
-      ],
-      "caption": "And the worst case: 24.364. A badge with an icon, where the glyphs differ most."
-    },
-
     {
       "id": "ch3-card",
-      "beat": 152, "beats": 4, "type": "card",
+      "type": "card",
       "lines": [
-        {"s": "CHAPTER THREE", "size": 64, "color": "white"},
-        {"s": "THE CAST", "size": 176, "color": "cream", "gap": 24}
+        {
+          "s": "CHAPTER THREE",
+          "size": 64,
+          "color": "white"
+        },
+        {
+          "s": "THE CAST",
+          "size": 176,
+          "color": "cream",
+          "gap": 24
+        }
       ],
-      "caption": "CHAPTER THREE: THE CAST"
+      "caption": "CHAPTER THREE: THE CAST",
+      "beat": 184,
+      "beats": 4
     },
     {
-      "id": "c-wm", "beat": 156, "beats": 8, "type": "intro",
-      "src": "apps/wm/demo.mp4", "in": 5.2, "freeze": 3,
-      "name": "THE WINDOW MANAGER", "stat": "a Wayland compositor, itself a palmy client",
-      "caption": "THE WINDOW MANAGER — a Wayland compositor, itself a palmy client."
+      "id": "c-wm",
+      "type": "intro",
+      "src": "film/.work/capture/wm.mp4",
+      "in": 29.5,
+      "freeze": 3,
+      "name": "THE WINDOW MANAGER",
+      "stat": "a Wayland compositor, itself a palmy client",
+      "caption": "THE WINDOW MANAGER — a Wayland compositor, itself a palmy client.",
+      "mask": [
+        [
+          880,
+          0,
+          400,
+          25
+        ]
+      ],
+      "beat": 188,
+      "beats": 8
     },
     {
-      "id": "c-reader", "beat": 164, "beats": 8, "type": "intro",
-      "src": "apps/reader/demo.mp4", "in": 52.0, "freeze": 3,
-      "name": "THE READER", "stat": "four formats · 461 assertions",
-      "caption": "THE READER — four formats, 461 assertions."
+      "id": "c-reader",
+      "type": "intro",
+      "src": "apps/reader/demo.mp4",
+      "in": 52.0,
+      "freeze": 3,
+      "name": "THE READER",
+      "stat": "four formats · 461 assertions",
+      "caption": "THE READER — four formats · 461 assertions.",
+      "beat": 196,
+      "beats": 8
     },
     {
-      "id": "c-docs", "beat": 172, "beats": 8, "type": "intro",
-      "src": "apps/docs/demo.mp4", "in": 44.0, "freeze": 3,
-      "name": "THE WORD PROCESSOR", "stat": "writes its own .docx, a ZIP of XML, by hand",
-      "caption": "THE WORD PROCESSOR — writes its own .docx, a ZIP of XML, by hand."
+      "id": "c-docs",
+      "type": "intro",
+      "src": "apps/docs/demo.mp4",
+      "in": 44.0,
+      "freeze": 3,
+      "name": "THE WORD PROCESSOR",
+      "stat": "writes its own .docx, a ZIP of XML, by hand",
+      "caption": "THE WORD PROCESSOR — writes its own .docx, a ZIP of XML, by hand.",
+      "beat": 204,
+      "beats": 8
     },
     {
-      "id": "c-sheets", "beat": 180, "beats": 8, "type": "intro",
-      "src": "apps/sheets/demo.mp4", "in": 9.0, "freeze": 3,
-      "name": "THE SPREADSHEET", "stat": "its own formula engine",
-      "caption": "THE SPREADSHEET — its own formula engine."
+      "id": "c-sheets",
+      "type": "intro",
+      "src": "apps/sheets/demo.mp4",
+      "in": 9.0,
+      "freeze": 3,
+      "name": "THE SPREADSHEET",
+      "stat": "its own formula engine",
+      "caption": "THE SPREADSHEET — its own formula engine.",
+      "beat": 212,
+      "beats": 8
     },
     {
-      "id": "c-torrent", "beat": 188, "beats": 8, "type": "intro",
-      "src": "apps/torrent/demo.mp4", "in": 44.0, "freeze": 3,
-      "name": "THE TORRENT CLIENT", "stat": "refuses any address outside loopback",
-      "caption": "THE TORRENT CLIENT — refuses any address outside loopback."
+      "id": "c-torrent",
+      "type": "intro",
+      "src": "apps/torrent/demo.mp4",
+      "in": 44.0,
+      "freeze": 3,
+      "name": "THE TORRENT CLIENT",
+      "stat": "refuses any address outside loopback",
+      "caption": "THE TORRENT CLIENT — refuses any address outside loopback.",
+      "beat": 220,
+      "beats": 8
     },
     {
-      "id": "c-vault", "beat": 196, "beats": 8, "type": "intro",
-      "src": "apps/vault/demo.mp4", "in": 2.0, "freeze": 3,
-      "name": "THE VAULT", "stat": "Argon2id · no network access of any kind",
-      "caption": "THE VAULT — Argon2id, and no network access of any kind."
+      "id": "c-vault",
+      "type": "intro",
+      "src": "apps/vault/demo.mp4",
+      "in": 2.0,
+      "freeze": 3,
+      "name": "THE VAULT",
+      "stat": "Argon2id · no network access of any kind",
+      "caption": "THE VAULT — Argon2id · no network access of any kind.",
+      "beat": 228,
+      "beats": 8
     },
-
     {
       "id": "ch4-card",
-      "beat": 204, "beats": 4, "type": "card",
+      "type": "card",
       "lines": [
-        {"s": "CHAPTER FOUR", "size": 64, "color": "white"},
-        {"s": "WHAT IT CANNOT DO YET", "size": 108, "color": "cream", "gap": 24}
+        {
+          "s": "CHAPTER FOUR",
+          "size": 64,
+          "color": "white"
+        },
+        {
+          "s": "WHAT IT CANNOT DO YET",
+          "size": 108,
+          "color": "cream",
+          "gap": 24
+        }
       ],
-      "caption": "CHAPTER FOUR: WHAT IT CANNOT DO YET"
+      "caption": "CHAPTER FOUR: WHAT IT CANNOT DO YET",
+      "beat": 236,
+      "beats": 4
     },
     {
-      "id": "bidi-wired",
-      "beat": 208, "beats": 8, "type": "still", "src": "rtl-wired.png",
-      "caption": "The bidirectional algorithm, now in the text path: Hebrew reordered, Arabic joined, one line holding two directions. 4,564 cases and 105,801 expectations against ICU and fribidi, 0 failures.",
-      "_": "Rendered by palmy itself, by film/tools/rtlcheck. Not a card: a claim about a text renderer should be drawn by that text renderer."
+      "id": "rtl-doc",
+      "type": "clip",
+      "src": "film/.work/capture/rtl.mp4",
+      "in": 1.6,
+      "label": "the word processor, opening a document in three scripts",
+      "caption": "The word processor, on a document in three scripts. The Arabic is joined: the letters take their cursive forms.",
+      "_": "Recorded on every build by film/build.sh, so a regression in shaping shows up here.",
+      "beat": 240,
+      "beats": 12
     },
     {
-      "id": "bidi-gaps",
-      "beat": 216, "beats": 4, "type": "still", "src": "rtl-gaps.png",
-      "caption": "And still wrong: no GPOS, so marks sit on the advance. No Indic, Thai or Khmer shaping at all. truncate_to still cuts the logical prefix. 288 joining letters have no presentation form."
-    },
-    {
-      "id": "bidi-gaps-zoom",
-      "beat": 220, "beats": 4, "type": "still", "src": "rtl-gaps.png",
-      "zoom": {"from": 1.1, "to": 2.7, "cx": 0.88, "cy": 0.435},
-      "caption": "Those are the vowel marks, sitting where the font's advance put them instead of on the letters they belong to."
+      "id": "rtl-zoom",
+      "type": "clip",
+      "src": "film/.work/capture/rtl.mp4",
+      "in": 1.8,
+      "zoom": {
+        "from": 1.2,
+        "to": 3.0,
+        "cx": 0.3,
+        "cy": 0.48
+      },
+      "caption": "And still wrong: no GPOS, so the vowel marks sit on the advance instead of on the letter, and there is no Indic shaping at all.",
+      "beat": 252,
+      "beats": 8
     },
     {
       "id": "plan",
-      "beat": 224, "beats": 8, "type": "card",
+      "type": "card",
       "lines": [
-        {"s": "PALMFRAME", "size": 128, "color": "cream"},
-        {"s": "THE DISTRIBUTION", "size": 56, "color": "white", "gap": 24}
+        {
+          "s": "PALMFRAME",
+          "size": 128,
+          "color": "cream"
+        },
+        {
+          "s": "THE DISTRIBUTION",
+          "size": 56,
+          "color": "white",
+          "gap": 24
+        }
       ],
       "badge": "A PLAN, NOT A SHIPPED THING",
-      "caption": "Palmframe, the distribution: a plan, not a shipped thing."
+      "caption": "Palmframe, the distribution: a plan, not a shipped thing.",
+      "beat": 260,
+      "beats": 8
     },
     {
       "id": "line",
-      "beat": 232, "beats": 8, "type": "card",
+      "type": "card",
       "lines": [
-        {"s": "THE TOOLKIT IS MEASURED.", "size": 76, "color": "white"},
-        {"s": "THE DISTRIBUTION IS NOT.", "size": 76, "color": "dim", "gap": 20},
-        {"s": "EVERY PAGE OF THE SITE SAYS WHICH IS WHICH.", "size": 38, "color": "dim", "gap": 48}
+        {
+          "s": "THE TOOLKIT IS MEASURED.",
+          "size": 76,
+          "color": "white"
+        },
+        {
+          "s": "THE DISTRIBUTION IS NOT.",
+          "size": 76,
+          "color": "dim",
+          "gap": 20
+        },
+        {
+          "s": "EVERY PAGE OF THE SITE SAYS WHICH IS WHICH.",
+          "size": 38,
+          "color": "dim",
+          "gap": 48
+        }
       ],
-      "caption": "The toolkit is measured. The distribution is not. Every page of the site says which is which."
+      "caption": "The toolkit is measured. The distribution is not. Every page of the site says which is which.",
+      "beat": 268,
+      "beats": 8
     },
-
     {
       "id": "crawl",
-      "beat": 240, "beats": 36, "type": "crawl",
+      "type": "crawl",
       "lines": [
-        ["MEASURED", ""],
-        ["parity cases captured from Chromium", "182"],
-        ["rendered by palmy", "182"],
-        ["mean absolute error, of 255", "2.953"],
-        ["pixels within 2/255", "90.40%"],
-        ["geometry mismatches", "0"],
-        ["", ""],
-        ["unit tests, all passing", "99"],
-        ["reader assertions, 0 failed", "461"],
-        ["bidi cases against ICU and fribidi", "4,564"],
-        ["bidi expectations asserted", "105,801"],
-        ["codepoints checked against fribidi's class table", "1,114,112"],
-        ["", ""],
-        ["applications on the toolkit", "40"],
-        ["shared libraries linked", "libc, libm"],
-        ["", ""],
-        ["NOT MEASURED", ""],
-        ["the distribution", "a plan"],
-        ["GPOS mark attachment", "not implemented"],
-        ["Indic, Thai and Khmer shaping", "not implemented"],
-        ["", ""],
-        ["no frame of this film is camera footage", ""],
-        ["no audio in it was recorded by a microphone", ""],
-        ["the score was written for it, one byte at a time", ""]
+        [
+          "MEASURED",
+          ""
+        ],
+        [
+          "unit tests, all passing",
+          "99"
+        ],
+        [
+          "reader assertions, 0 failed",
+          "461"
+        ],
+        [
+          "bidi cases against ICU and fribidi",
+          "4,564"
+        ],
+        [
+          "bidi expectations asserted",
+          "105,801"
+        ],
+        [
+          "codepoints checked against fribidi's class table",
+          "1,114,112"
+        ],
+        [
+          "parity cases diffed against Chromium",
+          "182"
+        ],
+        [
+          "mean absolute error, of 255",
+          "2.953"
+        ],
+        [
+          "geometry mismatches",
+          "0"
+        ],
+        [
+          "",
+          ""
+        ],
+        [
+          "applications on the toolkit",
+          "40"
+        ],
+        [
+          "applications in this film",
+          "17"
+        ],
+        [
+          "shared libraries linked",
+          "libc, libm"
+        ],
+        [
+          "",
+          ""
+        ],
+        [
+          "NOT MEASURED",
+          ""
+        ],
+        [
+          "the distribution",
+          "a plan"
+        ],
+        [
+          "GPOS mark attachment",
+          "not implemented"
+        ],
+        [
+          "Indic, Thai and Khmer shaping",
+          "not implemented"
+        ],
+        [
+          "",
+          ""
+        ],
+        [
+          "no frame of this film is camera footage",
+          ""
+        ],
+        [
+          "no audio in it was recorded by a microphone",
+          ""
+        ],
+        [
+          "the score was written for it, one byte at a time",
+          ""
+        ]
       ],
-      "caption": "The numbers, measured and not measured. No frame of this film is camera footage; no audio in it was recorded by a microphone."
+      "caption": "The numbers, measured and not measured. No frame of this film is camera footage; no audio in it was recorded by a microphone.",
+      "beat": 276,
+      "beats": 40
     },
     {
       "id": "end",
-      "beat": 276, "beats": 4, "type": "card",
+      "type": "card",
       "lines": [
-        {"s": "PALMFRAME", "size": 110, "color": "cream"},
-        {"s": "THE TOOLKIT IS REAL. THE REST IS ON THE RECORD.", "size": 36, "color": "white", "gap": 32}
+        {
+          "s": "PALMFRAME",
+          "size": 110,
+          "color": "cream"
+        },
+        {
+          "s": "THE TOOLKIT IS REAL. THE REST IS ON THE RECORD.",
+          "size": 36,
+          "color": "white",
+          "gap": 32
+        }
       ],
-      "caption": "Palmframe. The toolkit is real. The rest is on the record."
+      "caption": "Palmframe. The toolkit is real. The rest is on the record.",
+      "beat": 316,
+      "beats": 4
     }
   ]
 }

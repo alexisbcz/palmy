@@ -28,9 +28,15 @@ const MP4 = "/film/palmframe.mp4";
 const POSTER = "/film/palmframe-poster.jpg";
 const VTT = "/film/film.vtt";
 
-/** How much of the film the silent preview loops: the cold open. */
+/**
+ * How much of the film the silent preview loops. 13.3 s is exactly the first
+ * eight bars of the score: the window manager with four applications in it,
+ * the title, and the card that says how old the project is. The loop ends on
+ * a bar line, so a viewer who leaves it running never hears it restart
+ * mid-phrase.
+ */
 const PREVIEW_END = 13.3;
-const DURATION = "1:57";
+const DURATION = "2:13";
 
 export function Film({ className }: { className?: string }) {
   const hostRef = useRef<HTMLDivElement | null>(null);
@@ -106,7 +112,7 @@ export function Film({ className }: { className?: string }) {
             empty box while the first frames arrive. */}
         <img
           src={POSTER}
-          alt="Chromium's render of a dialog beside palmy's, and the difference between them"
+          alt="Four applications running inside the palmy window manager"
           loading="lazy"
           decoding="async"
           className="absolute inset-0 size-full object-cover"

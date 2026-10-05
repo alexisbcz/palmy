@@ -18,14 +18,18 @@
 
 set -uo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
-OUT="${SCAN_OUT:-$ROOT/film/.scan}"
+# Per-run by default. Two of these overlapping used to share one directory,
+# and the first thing each does is `rm -rf` it -- so one run deleted the
+# other's frames mid-scan and the survivor reported "ok" for clips it had
+# never OCRed. A safety gate that passes because its evidence was deleted is
+# worse than no gate.
+OUT="${SCAN_OUT:-$ROOT/film/.scan/run-$$}"
 N="${1:-8}"; shift || true
 
 CLIPS=("$@")
 if [ ${#CLIPS[@]} -eq 0 ]; then
 	mapfile -t CLIPS < <(ls "$ROOT"/apps/*/demo.mp4 \
-		"$ROOT"/apps/mail/walkthrough.mp4 "$ROOT"/apps/shop/walkthrough.mp4 \
-		"$ROOT"/parity/out/video/*.mp4 2>/dev/null)
+		"$ROOT"/film/.work/capture/*.mp4 2>/dev/null)
 fi
 
 # Anything here must never appear in a published frame. The first group is

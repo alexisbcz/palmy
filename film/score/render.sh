@@ -28,6 +28,14 @@ mkdir -p "$OUT"
 
 python3 "$HERE/compose.py"
 
+# The film's length comes from the shot list, not from a number typed here, so
+# the fade and the trim move when the edit grows.
+LEN=$(python3 -c "
+import json; s=json.load(open('$HERE/../shots.json'))
+print(f\"{sum(x['beats'] for x in s['shots'])*60/s['tempo_bpm']:.3f}\")")
+FADE=$(awk -v l="$LEN" 'BEGIN{printf "%.3f", l-2.0}')
+echo "film is $LEN s; fading from $FADE"
+
 for stem in lead rhythm drums western; do
 	# -a file keeps fluidsynth from probing ALSA, which on this machine prints
 	# a page of errors about PCM devices it was never going to use.
@@ -57,8 +65,8 @@ ffmpeg -nostdin -v error -y \
 		[3:a]${WESTERN//[$'\n\t ']/}[w];
 		[l][r][d][w]amix=inputs=4:duration=longest:normalize=0[m];
 		[m]loudnorm=I=-16:TP=-1.5:LRA=11,
-		   afade=t=out:st=114.667:d=2.0,
-		   atrim=end=116.667,asetpts=N/SR/TB,
+		   afade=t=out:st=$FADE:d=2.0,
+		   atrim=end=$LEN,asetpts=N/SR/TB,
 		   alimiter=limit=0.95[out]" \
 	-map "[out]" -ac 2 -ar "$RATE" -c:a pcm_s16le "$OUT/score.wav"
 

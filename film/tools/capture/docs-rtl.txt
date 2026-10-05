@@ -1,0 +1,3 @@
+# Nothing to drive: the document is prepared, the app just opens it.
+# The hold has to cover every shot chapter four takes from this clip.
+wait 11.0
