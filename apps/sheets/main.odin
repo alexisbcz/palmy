@@ -12,97 +12,18 @@ import "core:strings"
 import kit "kit:."
 import p "palmy:."
 
-USAGE :: `sheets — a spreadsheet for palmy
-
-  sheets [file.sheet.json | file.csv | file.xlsx]
-  sheets --export OUT.xlsx [IN]    write an Excel workbook, headless
-  sheets --export OUT.csv   [IN]   write a CSV, headless
-  sheets --selftest                run the engine test suite
-  sheets --shot PATH               render one frame to a PNG
-  sheets --film PREFIX [steps...]  render one PNG per step`
-
-// export_mode is the headless writer: `--export out.xlsx [in.sheet.json]`.
-// With no input it exports the demo book, which is what makes the flag
-// testable on a machine with no documents on it.
-export_mode :: proc(args: []string) -> int {
-	if len(args) == 0 {
-		fmt.eprintln("sheets: --export needs an output path")
-		return 2
-	}
-	out := args[0]
-	app := new(App)
-	defer free(app)
-	app_init(app)
-	defer app_destroy(app)
-	app.name = strings.clone(base_name(out))
-
-	if len(args) > 1 {
-		src := args[1]
-		ok := false
-		switch {
-		case strings.has_suffix(src, ".csv"), strings.has_suffix(src, ".tsv"):
-			got, _, _ := csv_read_file(app.sh, src, {0, 0})
-			ok = got
-		case strings.has_suffix(src, ".xlsx"):
-			got, _, _ := xlsx_read_book(app.book, src)
-			sync_sheet(app)
-			ok = got
-		case:
-			_, _, got := doc_load_file(app.sh, src)
-			ok = got
-		}
-		if !ok {
-			fmt.eprintfln("sheets: cannot read %s", src)
-			return 1
-		}
-	} else {
-		seed_demo(app)
-	}
-
-	switch {
-	case strings.has_suffix(out, ".xlsx"):
-		if !xlsx_write_book(app.book, out) {
-			fmt.eprintfln("sheets: cannot write %s", out)
-			return 1
-		}
-	case strings.has_suffix(out, ".csv"), strings.has_suffix(out, ".tsv"):
-		rect := Rect_I{0, 0, max(app.sh.max_row, 0), max(app.sh.max_col, 0)}
-		if !csv_write_file(app.sh, out, rect) {
-			fmt.eprintfln("sheets: cannot write %s", out)
-			return 1
-		}
-	case:
-		if !doc_save_file(app.sh, out, base_name(out), {}, {}) {
-			fmt.eprintfln("sheets: cannot write %s", out)
-			return 1
-		}
-	}
-	n := 0
-	for s in app.book.sheets {
-		n += len(s.cells)
-	}
-	fmt.printfln("wrote %s (%d sheet(s), %d cells)", out, len(app.book.sheets), n)
-	return 0
-}
-
+// The usage text and the headless exporter that used to live here are gone:
+// `--help` is generated from the declaration in cli.odin, and `--export` is a
+// command there. Two front ends over one engine means one description of it
+// too — a hand-written usage string is the first thing to go out of date.
 main :: proc() {
-	for arg, i in os.args[1:] {
-		if arg == "--selftest" || arg == "-t" {
-			os.exit(selftest())
-		}
-		if arg == "--shot" {
-			os.exit(shot_mode(os.args[2 + i:]))
-		}
-		if arg == "--film" {
-			os.exit(film_mode(os.args[2 + i:]))
-		}
-		if arg == "--export" {
-			os.exit(export_mode(os.args[2 + i:]))
-		}
-		if arg == "--help" || arg == "-h" {
-			fmt.println(USAGE)
-			os.exit(0)
-		}
+	// The command line is the other front end over the same engine: see
+	// cli.odin for the declaration and apps/kit/cli.odin for the convention
+	// it is parsed by. --selftest, --export, --shot and --film are commands
+	// there now, with their old spellings kept as aliases. With no command,
+	// or with a path, there is a window.
+	if code, handled := kit.cli(surface()); handled {
+		os.exit(code)
 	}
 
 	app_win, err := kit.start({title = "Sheets", width = 1240, height = 760, min_width = 720, min_height = 420})

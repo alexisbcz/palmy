@@ -89,27 +89,13 @@ Notes :: struct {
 // ---------------------------------------------------------------------------
 
 main :: proc() {
-	args := os.args[1:]
-	for a, i in args {
-		if a == "--selftest" {
-			run_selftest()
-			os.exit(failures == 0 ? 0 : 1)
-		}
-		// `--shots <dir>` renders the interface offscreen and writes PNGs,
-		// with no window and no compositor. See shot.odin.
-		if a == "--shots" || strings.has_prefix(a, "--shots=") {
-			dir := ""
-			if eq := strings.index_byte(a, '='); eq > 0 {
-				dir = a[eq + 1:]
-			} else if i + 1 < len(args) {
-				dir = args[i + 1]
-			}
-			if dir == "" {
-				fmt.eprintln("notes --shots <dir>")
-				os.exit(2)
-			}
-			os.exit(shots(dir))
-		}
+	// The command line is the other front end over the same store: see
+	// cli.odin for the declaration and apps/kit/cli.odin for everything that
+	// is done with it. `--selftest` and `--shots <dir>` are commands there
+	// now, and both still work spelled the way they always were. With no
+	// command there is a window.
+	if code, handled := kit.cli(surface()); handled {
+		os.exit(code)
 	}
 
 	app, err := kit.start(

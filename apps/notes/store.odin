@@ -30,7 +30,18 @@ note_free :: proc(n: Note) {
 }
 
 // store_dir makes sure the directory exists and returns it.
+//
+// $PALMY_NOTES_DIR moves the whole notebook, window and commands alike. It is
+// what lets the self-test drive the real `notes write` and `notes delete`
+// against a scratch directory, which is the only honest way to test a command
+// that deletes files: anything less is testing a different program.
 store_dir :: proc() -> string {
+	if over := os.get_env("PALMY_NOTES_DIR", context.temp_allocator); over != "" {
+		if !os.is_dir(over) {
+			os.make_directory_all(over)
+		}
+		return strings.clone(over)
+	}
 	home := os.get_env("HOME", context.temp_allocator)
 	if home == "" {
 		home = "/tmp"

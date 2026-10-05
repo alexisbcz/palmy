@@ -11,6 +11,7 @@ package main
 import "core:fmt"
 import "core:os"
 import "core:strings"
+import kit "kit:."
 import p "palmy:."
 import prose "../prose"
 
@@ -70,6 +71,7 @@ run_selftest :: proc() {
 	test_buffer()
 	test_wrap()
 	test_prose()
+	test_cli()
 
 	if failures == 0 {
 		fmt.printfln("notes selftest: %d checks passed", checks)
@@ -689,4 +691,239 @@ test_prose :: proc() {
 	check(nt.pr.on && len(nt.pr.alerts) > 0, "and come back")
 
 	os.remove(fmt.tprintf("%s/%s", nt.dir, PROSE_CONF))
+}
+
+// ---------------------------------------------------------------------------
+// The command surface
+//
+// Notes had an engine and no command line. These assertions are what says the
+// command line is the *same* engine rather than a second one that will drift:
+// every command runs the store procedures the window runs, so a note written
+// by `notes write` is a note the window can open, with the same title rule and
+// the same file name.
+//
+// They drive the real binary as a child process, with $PALMY_NOTES_DIR
+// pointing at a scratch notebook, because `notes delete` is only honestly
+// testable against files it may really remove.
+// ---------------------------------------------------------------------------
+
+cli_self_exe :: proc() -> string {
+	if path, err := os.get_executable_path(context.temp_allocator); err == nil {
+		return path
+	}
+	return os.args[0]
+}
+
+// cli_run runs this binary again against the scratch notebook and hands back
+// stdout and the exit code. The display variables are cleared so that a
+// mistake in the dispatcher could never make a child open a window and hang
+// the test run on it.
+cli_run :: proc(dir: string, args: ..string) -> (out: string, code: int) {
+	return cli_run_env(dir, {}, ..args)
+}
+
+cli_run_env :: proc(dir: string, env: []string, args: ..string) -> (out: string, code: int) {
+	line := strings.builder_make(context.temp_allocator)
+	strings.write_string(&line, "WAYLAND_DISPLAY= DISPLAY= ")
+	strings.write_string(&line, fmt.tprintf("PALMY_NOTES_DIR=%q PALM_AUDIT=%q ", dir, fmt.tprintf("%s/audit.jsonl", dir)))
+	for e in env {
+		strings.write_string(&line, e)
+		strings.write_byte(&line, ' ')
+	}
+	strings.write_string(&line, fmt.tprintf("%q", cli_self_exe()))
+	for a in args {
+		strings.write_string(&line, fmt.tprintf(" %q", a))
+	}
+	state, sout, _, err := os.process_exec(
+		{command = {"sh", "-c", strings.to_string(line)}},
+		context.temp_allocator,
+	)
+	if err != nil {
+		return "", -1
+	}
+	return string(sout), state.exit_code
+}
+
+test_cli :: proc() {
+	dir := fmt.tprintf("/tmp/palmy-notes-cli-%d", os.get_pid())
+	os.make_directory_all(dir)
+	defer os.remove_all(dir)
+
+	sf := surface()
+
+	// --- the declaration -------------------------------------------------
+	check(sf.noun == "notes", "the surface is named notes")
+	check(sf.selftest != nil, "--selftest is part of the declaration")
+	destructive := 0
+	for cmd in sf.commands {
+		check(cmd.run != nil, tfmt("%s has an implementation", cmd.verb))
+		check(cmd.summary != "", tfmt("%s has a summary", cmd.verb))
+		check(len(cmd.out) > 0, tfmt("%s declares what it prints", cmd.verb))
+		check(len(cmd.examples) > 0, tfmt("%s ships an example", cmd.verb))
+		if cmd.effect == .Destructive {
+			destructive += 1
+		}
+	}
+	check_int(destructive, 1, "exactly one command is destructive")
+
+	// --- every example parses --------------------------------------------
+	for cmd in sf.commands {
+		for ex in cmd.examples {
+			words := kit.cli_split_example(ex, context.temp_allocator)
+			check(words[0] == "notes", tfmt("the example %q starts with the noun", ex))
+			args := make([dynamic]string, context.temp_allocator)
+			for w in words[1:] {
+				append(&args, w)
+			}
+			append(&args, "--parse-only")
+			_, code := cli_run(dir, ..args[:])
+			check_int(code, 0, tfmt("the example %q parses", ex))
+		}
+	}
+
+	// --- an empty notebook is an empty list, not an error -----------------
+	{
+		out, code := cli_run(dir, "list", "--json")
+		check_int(code, 0, "list on an empty notebook exits 0")
+		problems := kit.cli_validate_output(out, LIST_FIELDS, context.temp_allocator)
+		check(len(problems) == 0, "and matches its declared schema")
+		check(strings.contains(out, `"count": 0`), "with nothing in it")
+	}
+
+	// --- write, read, and the window's own store agree --------------------
+	{
+		out, code := cli_run(dir, "write", "groceries", "--text", "# Groceries\\n\\n- milk\\n- eggs", "--json")
+		check_int(code, 0, "write exits 0")
+		problems := kit.cli_validate_output(out, WROTE_FIELDS, context.temp_allocator)
+		check(len(problems) == 0, "write matches its declared schema")
+		check(strings.contains(out, `"title": "Groceries"`), "the title comes from the first line")
+		check(strings.contains(out, "groceries.md"), "and the file is named after it")
+		check(strings.contains(out, `"created": true`), "and it says the note is new")
+
+		// The file on disk is a note the window would load, with the same
+		// title and the same word count the engine computes.
+		all := store_load(dir)
+		check_int(len(all), 1, "the window's own store sees exactly one note")
+		if len(all) == 1 {
+			check_eq(all[0].title, "Groceries", "and reads the same title")
+			check(strings.contains(all[0].body, "- eggs"), "and the same text")
+		}
+	}
+	{
+		out, code := cli_run(dir, "read", "groceries", "--json")
+		check_int(code, 0, "read exits 0")
+		problems := kit.cli_validate_output(out, READ_FIELDS, context.temp_allocator)
+		check(len(problems) == 0, "read matches its declared schema")
+		check(strings.contains(out, "- milk"), "and hands back the text")
+	}
+	{
+		// A title, a slug and a prefix all find the same note.
+		_, by_title := cli_run(dir, "read", "Groceries", "--json")
+		check_int(by_title, 0, "a note is found by its title")
+		_, by_prefix := cli_run(dir, "read", "groc", "--json")
+		check_int(by_prefix, 0, "and by an unambiguous prefix of it")
+		_, by_path := cli_run(dir, "read", fmt.tprintf("%s/groceries.md", dir), "--json")
+		check_int(by_path, 0, "and by its path")
+	}
+
+	// --- append and rename ------------------------------------------------
+	{
+		_, code := cli_run(dir, "append", "groceries", "--text", "- bread", "--json")
+		check_int(code, 0, "append exits 0")
+		n, found := store_load(dir)[0], true
+		_ = found
+		check(strings.contains(n.body, "- bread"), "and the line is in the file")
+	}
+	{
+		out, code := cli_run(dir, "rename", "groceries", "Shopping", "--json")
+		check_int(code, 0, "rename exits 0")
+		check(strings.contains(out, "shopping.md"), "and the file follows the title")
+		check(!os.exists(fmt.tprintf("%s/groceries.md", dir)), "and the old file is gone")
+	}
+
+	// --- search ------------------------------------------------------------
+	{
+		out, code := cli_run(dir, "search", "bread", "--json")
+		check_int(code, 0, "search exits 0")
+		problems := kit.cli_validate_output(out, SEARCH_FIELDS, context.temp_allocator)
+		check(len(problems) == 0, "search matches its declared schema")
+		check(strings.contains(out, `"count": 1`), "and finds the note")
+		out2, _ := cli_run(dir, "search", "parsnips", "--json")
+		check(strings.contains(out2, `"count": 0`), "and finds nothing when there is nothing")
+	}
+
+	// --- refusal rather than prompting -------------------------------------
+	//
+	// The one assertion that makes the destructive class mean something: the
+	// command exits non-zero with a reason, leaves the note alone, and does
+	// not block on a terminal read. It is run with stdin closed, so if it ever
+	// tried to ask it would fail rather than wait.
+	{
+		out, code := cli_run(dir, "delete", "shopping", "--json")
+		check_int(code, kit.EXIT_NEEDS_YES, "delete without --yes exits 4")
+		check(strings.contains(out, `"error": "needs --yes"`), "with the documented token")
+		check(strings.contains(out, `"effect": "destructive"`), "naming the class it refused on")
+		check(os.exists(fmt.tprintf("%s/shopping.md", dir)), "and the note is still there")
+	}
+	{
+		out, code := cli_run(dir, "delete", "shopping", "--yes", "--dry-run", "--json")
+		check_int(code, 0, "a dry run of delete exits 0")
+		check(strings.contains(out, `"deleted": false`), "and says it deleted nothing")
+		check(os.exists(fmt.tprintf("%s/shopping.md", dir)), "and the note is still there")
+	}
+	{
+		out, code := cli_run(dir, "delete", "shopping", "--yes", "--json")
+		check_int(code, 0, "delete with --yes exits 0")
+		check(strings.contains(out, `"deleted": true`), "and says so")
+		check(!os.exists(fmt.tprintf("%s/shopping.md", dir)), "and the note is gone")
+	}
+
+	// --- the documented exit codes ------------------------------------------
+	{
+		_, code := cli_run(dir, "read", "nothing-like-this", "--json")
+		check_int(code, kit.EXIT_NOT_FOUND, "reading a note that is not there exits 3")
+	}
+	{
+		_, code := cli_run(dir, "scribble")
+		check_int(code, kit.EXIT_USAGE, "an unknown command exits 2")
+	}
+	{
+		_, code := cli_run(dir, "read")
+		check_int(code, kit.EXIT_USAGE, "a missing required argument exits 2")
+	}
+	{
+		_, code := cli_run(dir, "list", "--limit", "banana")
+		check_int(code, kit.EXIT_USAGE, "a flag of the wrong type exits 2")
+	}
+	{
+		_, code := cli_run_env(dir, {"PALM_IDENTITY=work"}, "list", "--identity", "personal", "--json")
+		check_int(code, kit.EXIT_OUT_OF_SCOPE, "asking for another identity exits 5")
+	}
+	{
+		_, code := cli_run(dir, "write", "x", "--text", "hi", "--json")
+		check_int(code, 0, "write creates a note that was not there")
+		_, bad := cli_run(dir, "write", "x")
+		check_int(bad, kit.EXIT_USAGE, "and write with neither --text nor --file exits 2")
+	}
+
+	// --- --json means one document on stdout and nothing else ---------------
+	for verb in ([?]string{"list", "path"}) {
+		out, _ := cli_run(dir, verb, "--json")
+		trimmed := strings.trim_space(out)
+		check(strings.has_prefix(trimmed, "{"), tfmt("%s --json starts with the document", verb))
+		check(strings.has_suffix(trimmed, "}"), tfmt("%s --json ends with it too", verb))
+	}
+
+	// --- the schema -----------------------------------------------------------
+	{
+		out, code := cli_run(dir, "--schema")
+		check_int(code, 0, "--schema exits 0")
+		for cmd in sf.commands {
+			check(
+				strings.contains(out, fmt.tprintf("\"verb\": %q", cmd.verb)),
+				tfmt("the schema advertises %s", cmd.verb),
+			)
+		}
+		check(strings.contains(out, `"effect": "destructive"`), "and says which command is destructive")
+	}
 }

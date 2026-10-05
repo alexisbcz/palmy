@@ -80,6 +80,15 @@ start :: proc(cfg: p.Config, dark := false) -> (app: ^p.App, err: string) {
 //
 //	out, ok := kit.run({"nmcli", "-t", "-f", "SSID,SIGNAL", "device", "wifi"})
 run :: proc(argv: []string, allocator := context.allocator) -> (out: string, ok: bool) {
+	// While a CLI command is running, the shared convention's guard decides
+	// what may be spawned at all: an intent-class command executes nothing,
+	// and the safety denylist in cli.odin refuses the handful of commands this
+	// project has decided no application may run. Outside a CLI command the
+	// guard is off and this behaves exactly as it always has.
+	if why := cli_guard_check(argv); why != "" {
+		cli_guard_refuse(argv, why)
+		return "", false
+	}
 	state, sout, serr, err := os.process_exec({command = argv}, context.temp_allocator)
 	if err != nil {
 		return "", false
@@ -111,6 +120,10 @@ run_lines :: proc(argv: []string, allocator := context.allocator) -> (lines: []s
 // launcher wants when it opens an application.
 launch :: proc(argv: []string) -> bool {
 	if len(argv) == 0 {
+		return false
+	}
+	if why := cli_guard_check(argv); why != "" {
+		cli_guard_refuse(argv, why)
 		return false
 	}
 	_, err := os.process_start({command = argv})
@@ -146,6 +159,10 @@ BAD_CLASS :: "text-destructive"
 // the daemon's lifetime, and reaps the child (process_wait does that) rather than leaving
 // a zombie per copy.
 clipboard_set :: proc(text: string) -> bool {
+	if why := cli_guard_check({"wl-copy"}); why != "" {
+		cli_guard_refuse({"wl-copy"}, why)
+		return false
+	}
 	child, err := os.process_start({command = {"wl-copy", "--", text}})
 	if err != nil {
 		return false
