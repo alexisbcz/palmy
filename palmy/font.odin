@@ -1418,7 +1418,10 @@ Caret_Affinity :: enum u8 {
 Text_Glyph :: struct {
 	cp:     rune, // the codepoint drawn: a presentation form, a mirror, or the source rune
 	src:    int,  // byte offset in the source string of the first rune behind it
-	size:   int,  // source bytes it consumed; more than one rune for a ligature
+	size:   int,  // source bytes it *owns*; more than one rune for a ligature, and
+	              // zero for a mark drawn from inside a ligature that owns them
+	              // already. The spans partition the string, which is what lets a
+	              // byte offset name exactly one glyph.
 	x:      f32,  // left edge of its advance box, relative to the line origin
 	adv:    f32,  // width of that box: kern + advance + tracking
 	dx:     f32,  // where inside the box the glyph is painted
@@ -1569,6 +1572,16 @@ text_layout_line :: proc(
 		sub := text[run.start:run.end]
 		first := len(sh.glyphs)
 		sc := Shape_Ctx{}
+		// One past the last byte owned by a lam-alef ligature already emitted.
+		// A ligature's span covers everything between its lam and its alef,
+		// including any harakat that stood between the two letters -- and the
+		// shaper then emits those marks as glyphs of their own, from *inside*
+		// that span, so that no codepoint is lost. Both are right, and taking
+		// both at face value would have the same byte claimed by two glyphs:
+		// `text_glyph_for` would answer with whichever one visual order
+		// happened to put first, and a selection would measure it twice. The
+		// ligature keeps the bytes; the mark keeps its ink and claims nothing.
+		lig_end := 0
 		for {
 			sr, done := shape_step(sub, &sc, DEFAULT_SHAPE_OPTIONS)
 			if done {
@@ -1582,12 +1595,19 @@ text_layout_line :: proc(
 			if rtl && !sr.shaped && !ctl {
 				cp = bidi_mirror(cp)
 			}
+			size := sr.size
+			switch {
+			case sr.lig:
+				lig_end = sr.src + sr.size
+			case sr.src < lig_end:
+				size = 0
+			}
 			append(
 				&sh.glyphs,
 				Text_Glyph {
 					cp     = cp,
 					src    = run.start + sr.src,
-					size   = sr.size,
+					size   = size,
 					level  = run.level,
 					rtl    = rtl,
 					shaped = sr.shaped,
@@ -1997,7 +2017,10 @@ text_selection_spans :: proc(
 	glyphs, _, _ := text_layout_line(f, text, text_base_dir(text, dir), st)
 	n := 0
 	for g in glyphs {
-		if g.adv <= 0 || g.src + g.size <= a || g.src >= b {
+		// A glyph that owns no bytes -- a mark the ligature around it already
+		// accounts for -- cannot intersect a byte range, and measuring it
+		// again would highlight the same ink twice.
+		if g.adv <= 0 || g.size <= 0 || g.src + g.size <= a || g.src >= b {
 			continue
 		}
 		// A ligature only partly inside the range is highlighted in
