@@ -50,7 +50,39 @@ find_case :: proc(id: string) -> (Case, bool) {
 	return {}, false
 }
 
-ROOT := "/home/alex/Work/palmy/parity"
+// ROOT is the parity/ directory to write into, WEB the browser captures to
+// measure against.
+//
+// `#directory` is this source file's own directory at compile time --
+// <checkout>/parity/odin/render/ -- so a binary built from a git worktree
+// renders that worktree's cases into that worktree's out/. This used to be a
+// hardcoded /home/alex/Work/palmy/parity, which meant a worktree build wrote
+// its renders into the main checkout and compared them with the main
+// checkout's captures: a green run that had measured nothing.
+//
+// PARITY_ROOT and PARITY_WEB override both, which is how tools/diff-all.sh
+// lends a worktree the captures it cannot have of its own (out/web/*.png is
+// gitignored, being browser output rather than source).
+// SOURCE_DIR is resolved by the compiler, so this is a constant: the trailing
+// "/odin/render/" is sliced off to leave the parity directory.
+@(private)
+SOURCE_DIR :: #directory // ".../parity/odin/render/"
+
+ROOT := SOURCE_DIR[:len(SOURCE_DIR) - len("/odin/render/")]
+WEB := ""
+
+// resolve_paths applies the environment, once, before anything reads a file.
+@(private)
+resolve_paths :: proc() {
+	if v := os.get_env("PARITY_ROOT", context.allocator); v != "" {
+		ROOT = strings.trim_suffix(v, "/")
+	}
+	if v := os.get_env("PARITY_WEB", context.allocator); v != "" {
+		WEB = strings.trim_suffix(v, "/")
+	} else {
+		WEB = fmt.aprintf("%s/out/web", ROOT)
+	}
+}
 
 // png_size reads the reference screenshot's pixel dimensions. Playwright crops
 // an element on whole-pixel boundaries, so the image can be a pixel wider than
@@ -69,7 +101,7 @@ png_size :: proc(path: string) -> (w, h: int, ok: bool) {
 
 // target_size reads the root element's box out of the browser capture.
 target_size :: proc(id: string) -> (w, h, dx, dy: f32, ok: bool) {
-	path := fmt.tprintf("%s/out/web/%s.json", ROOT, id)
+	path := fmt.tprintf("%s/%s.json", WEB, id)
 	data, err := os.read_entire_file_from_path(path, context.temp_allocator)
 	if err != nil {
 		return 0, 0, 0, 0, false
@@ -134,7 +166,7 @@ render_case :: proc(c: Case) -> (ok: bool, note: string) {
 	}
 
 	// Canvas from the reference image, layout at the element's exact size.
-	ref := fmt.tprintf("%s/out/web/%s.png", ROOT, c.id)
+	ref := fmt.tprintf("%s/%s.png", WEB, c.id)
 	cw, ch, png_ok := png_size(ref)
 	if !png_ok {
 		cw, ch = int(math.ceil(w)), int(math.ceil(h))
@@ -208,6 +240,8 @@ dump_geometry :: proc(off: ^p.Offscreen, id: string) {
 }
 
 main :: proc() {
+	resolve_paths()
+
 	// Design tokens are global, so register them once before anything renders.
 	sc.register_shadcn_theme()
 
