@@ -1,0 +1,8 @@
+[Desktop Entry]
+Type=Application
+Name=Terminal
+Comment=A terminal emulator
+Exec=term
+Icon=term
+Terminal=false
+Categories=System;TerminalEmulator;

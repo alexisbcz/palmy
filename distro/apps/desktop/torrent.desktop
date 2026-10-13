@@ -1,0 +1,8 @@
+[Desktop Entry]
+Type=Application
+Name=Torrent
+Comment=Download with BitTorrent
+Exec=torrent
+Icon=torrent
+Terminal=false
+Categories=Network;FileTransfer;P2P;

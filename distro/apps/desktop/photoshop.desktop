@@ -1,0 +1,8 @@
+[Desktop Entry]
+Type=Application
+Name=Paint
+Comment=Edit raster images in layers
+Exec=photoshop
+Icon=photoshop
+Terminal=false
+Categories=Graphics;RasterGraphics;

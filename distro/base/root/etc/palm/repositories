@@ -1,0 +1,5 @@
+# One repository per line: an http:// URL or an absolute path.
+# 10.0.2.2 is the build host as QEMU's user network shows it; on the host,
+# `make -C distro serve` serves distro/out/repo there on port 8080. palm tries
+# <url>/PALMINDEX here (and <url>/x86_64/PALMINDEX for a bare base URL).
+http://10.0.2.2:8080/x86_64

@@ -1,0 +1,199 @@
+# Palmframe distribution — the contract
+
+Every piece of the distribution is built by a different hand. This file is the
+set of interfaces they agree on. Change it only by saying so in
+`distro/notes/<you>.md`; anything here is what the other pieces were built
+against.
+
+## Shape
+
+An Alpine-inspired distribution: a small static busybox userland, an init and a
+package manager written in Odin, glibc (taken from the build host) because
+every palmy binary links it, and the palmy window manager and applications on
+top. It boots in QEMU from a real disk image.
+
+```
+Linux 6.18 LTS (distro/kernel, everything built in, no modules)
+└─ /sbin/init          palm-init        (distro/init, Odin)
+   ├─ coldplug + hotplug device permissions
+   ├─ services from /etc/palm/services/
+   │  ├─ getty on ttyS0 (busybox getty/login)      serial console shell
+   │  └─ palm-login    (distro/login, Odin)        greetd-protocol daemon
+   │       ├─ greeter session:  wm --drm --kiosk --exec greeter   (as user greeter)
+   │       └─ user session:     wm --drm                          (as the user)
+   └─ /sbin/palm       the package manager      (distro/palm, Odin)
+```
+
+## Filesystem layout
+
+Merged /usr, like Arch: `/bin -> usr/bin`, `/sbin -> usr/bin`,
+`/lib -> usr/lib`, `/lib64 -> usr/lib`, `/usr/sbin -> bin`. glibc's loader is
+therefore found at `/lib64/ld-linux-x86-64.so.2`.
+
+| path | what |
+| --- | --- |
+| `/etc/palm/repositories` | one repository per line: an `http://` URL or an absolute path |
+| `/etc/palm/keys/*.pub` | trusted ed25519 public keys (raw 32 bytes, hex encoded, one line) |
+| `/etc/palm/world` | the packages the user asked for, one per line (apk's world) |
+| `/etc/palm/services/<name>` | service definitions for palm-init |
+| `/usr/lib/palm/db/installed` | the installed-package database (palm owns the format) |
+| `/var/cache/palm/` | downloaded packages and indexes |
+| `/var/log/<service>.log` | each service's stdout+stderr |
+| `/usr/share/fonts/` | TTF/OTF fonts; palmy scans this |
+| `/run/user/<uid>` | XDG_RUNTIME_DIR, 0700, created by palm-login |
+
+## palm-init (PID 1)
+
+- Mounts `/proc`, `/sys`, `/dev` (devtmpfs), `/dev/pts`, `/dev/shm`, `/run`,
+  `/tmp`; remounts `/` read-write; sets the hostname from `/etc/hostname`;
+  brings up `lo`, and `eth0` with DHCP via `udhcpc` when present.
+- Device permissions, at boot (walk) and on hotplug (netlink uevents):
+  `/dev/dri/*` root:video 0660, `/dev/input/event*` root:input 0660,
+  `/dev/snd/*` root:audio 0660, `/dev/tty[0-9]*` root:tty 0620.
+- Signals follow the busybox convention so busybox's `reboot`, `poweroff` and
+  `halt` work unchanged: **SIGTERM → reboot, SIGUSR2 → poweroff,
+  SIGUSR1 → halt, SIGINT (ctrl-alt-del) → reboot.** Shutdown is: stop services
+  (SIGTERM, wait 3 s, SIGKILL), sync, remount `/` read-only, `reboot(2)`.
+- Reaps every orphan.
+- Service file format (`/etc/palm/services/<name>`), one `key = value` per line,
+  `#` comments:
+
+  ```
+  cmd     = /usr/bin/palm-login          # required; split on spaces, no shell
+  user    = root                         # default root
+  restart = always                       # always | never   (default always)
+  after   = network                      # optional, another service name
+  tty     = /dev/ttyS0                   # optional: stdin/out/err on that tty, setsid + TIOCSCTTY
+  env     = KEY=value                    # repeatable
+  ```
+- Kernel command line: `palm.single` starts `/bin/sh` on the console instead of
+  services; `palm.autologin=<user>` is passed through to palm-login (see below).
+
+## Users
+
+| user | uid | groups | password |
+| --- | --- | --- | --- |
+| root | 0 | root | `palm` |
+| palm | 1000 | palm, wheel, video, input, audio | `palm` |
+| greeter | 900 | greeter, video, input | locked (`!`) |
+
+Groups: root 0, wheel 10, tty 5, audio 63, video 39, input 97, greeter 900,
+palm 1000. `/etc/shadow` holds SHA-512 crypt (`$6$`) hashes.
+
+## palm-login and the session
+
+palm-login speaks the **greetd IPC protocol** (`greetd-ipc(7)`: native-endian
+u32 length, then a JSON object) on `/run/palm-login.sock`, so the existing
+`apps/greeter` works against it unchanged. It sets `GREETD_SOCK` to that path
+for the greeter session.
+
+1. palm-login starts the greeter session as user `greeter`:
+   `wm --drm --kiosk --exec greeter`, with `XDG_RUNTIME_DIR=/run/user/900`.
+2. The greeter authenticates (`create_session`, `post_auth_message_response`)
+   — palm-login checks the password against `/etc/shadow` itself (SHA-512
+   crypt implemented in Odin) — then `start_session{cmd, env}`.
+3. When the greeter session exits, palm-login starts `cmd` (default `["wm",
+   "--drm"]`) as that user: `setgid`, `initgroups`, `setuid`, in `$HOME`, with
+   `HOME USER LOGNAME SHELL PATH XDG_RUNTIME_DIR XDG_SESSION_TYPE=wayland
+   XDG_CURRENT_DESKTOP=palmframe` set.
+4. When the user session exits, back to 1.
+
+`palm.autologin=<user>` on the kernel command line skips 1–2.
+Greeter power actions run `/sbin/poweroff` / `/sbin/reboot` (busybox, which
+signal PID 1 as above).
+
+## The window manager on bare metal
+
+`apps/wm` gains, without losing the nested mode it has today:
+
+- `--drm`: the bare-metal backend — KMS on `/dev/dri/card0` (dumb buffers,
+  page flip), evdev input from `/dev/input/event*`, its own XKB keymap. When
+  logind is not running (Palmframe has none) it opens the devices directly; it
+  needs only membership of `video` and `input`. Selected automatically when
+  neither `WAYLAND_DISPLAY` nor `DISPLAY` is set and `/dev/dri/card0` exists.
+- `--exec <cmd>`: spawn that client once the Wayland socket is listening, with
+  `WAYLAND_DISPLAY` set. Repeatable.
+- `--kiosk`: no bar, no workspace UI, the first client fullscreen, and exit
+  when the first `--exec` client exits.
+- In QEMU the pointer is a **virtio-tablet** (absolute `EV_ABS` X/Y, scaled to
+  the output) and the keyboard is virtio-keyboard; both must work.
+- The default terminal binding launches `term` (apps/term), not `foot`.
+
+## palm, the package manager
+
+Alpine's apk is the model: small, fast, a world file, signed indexes, `--root`
+for building images from the host.
+
+```
+palm add <pkg>...         install (and record in world)
+palm del <pkg>...         remove (and drop from world), and orphans
+palm update               fetch and verify every repository index
+palm upgrade              upgrade everything to the newest available
+palm search <text>        search names and descriptions
+palm info <pkg>           details; -L lists files
+palm list [--installed|--upgradable|--available]
+palm verify               check installed files against recorded sha256
+palm fix [<pkg>]          reinstall broken/missing files
+palm build <dir> -o <outdir>          build a package from <dir>/PALMBUILD
+palm index <outdir> --key <secret>    write and sign <outdir>/PALMINDEX
+palm keygen <name>                    write <name>.sec and <name>.pub
+global: --root <dir>  --initdb  --repo <url|path> (repeatable, overrides repositories)
+        --keys-dir <dir>  --allow-untrusted  --no-cache  --json  --yes  --dry-run
+```
+
+- A package is `<name>-<ver>-r<rel>.palm`: a gzip-compressed ustar archive
+  whose first member is `.PKGINFO` (`key = value` lines: `pkgname`, `pkgver`,
+  `pkgdesc`, `arch`, `size`, `license`, `depend` (repeatable), `provides`,
+  `install_user`), followed by the files, with modes and **owner recorded as
+  root unless the recipe says otherwise** (so no fakeroot is needed to build).
+- `PALMINDEX` is a text index of every package (name, version, deps, size,
+  sha256 of the `.palm`) plus a detached ed25519 signature `PALMINDEX.sig`.
+  Package integrity is the index's sha256; the index's integrity is the
+  signature.
+- HTTP repositories are plain `http://` — the signature is what makes that
+  safe, exactly as with apk.
+- `--root <dir> --initdb` creates the database in an empty directory, which is
+  how the image is assembled from the host without root: palm writes files
+  with the recorded owner when running as root and as the invoking user
+  otherwise, and the image builder runs it under `fakeroot`.
+
+## Build outputs
+
+Everything is under `distro/out/` (git-ignored); sources downloaded into
+`distro/build/` (git-ignored).
+
+| output | built by |
+| --- | --- |
+| `distro/out/bzImage` | `distro/kernel/build.sh` |
+| `distro/out/busybox` | `distro/busybox/build.sh` |
+| `distro/out/bin/<name>` | Odin binaries |
+| `distro/out/repo/x86_64/*.palm`, `PALMINDEX`, `PALMINDEX.sig` | `distro/recipes` |
+| `distro/out/palmframe.img` | the bootable disk: GPT, ESP with limine, ext4 root |
+
+Odin binaries are built with
+`odin build <dir> -o:speed -collection:palmy=palmy -collection:kit=apps/kit -collection:shadcn=shadcn`
+from the repository root.
+
+## QEMU
+
+`qemu-system-x86_64` on this host is a rootless wrapper in `~/.local/bin`
+(KVM works; display backends `gtk`, `sdl`, `none`). The standard machine:
+
+```
+qemu-system-x86_64 -enable-kvm -cpu host -m 2G -smp 4 \
+  -device virtio-vga -device virtio-keyboard-pci -device virtio-tablet-pci \
+  -nic user,model=virtio-net-pci -serial mon:stdio
+```
+
+Headless verification uses `-display none -qmp unix:<sock>,server,nowait` and
+the QMP `screendump` command with `"format": "png"`; input can be injected with
+QMP `input-send-event`. Read the PNG to see what the machine shows.
+
+## Rules for everyone building this
+
+- **Never run the window manager's DRM or seat backends on the host.** Bare
+  metal means inside QEMU. The host is the user's live desktop.
+- No `sudo` (it needs a password). Rootless tools only; `fakeroot` exists.
+- Do not `git commit`; the tree is shared and is committed at the end.
+- Stay inside the directories you own. If you need something changed elsewhere,
+  write it in `distro/notes/<your-name>.md`.

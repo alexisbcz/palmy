@@ -1,0 +1,36 @@
+#!/bin/sh
+# udhcpc's hook: configure the interface from the lease it got.
+#
+# udhcpc runs this with $1 = deconfig | bound | renew | leasefail | nak and
+# the lease in the environment ($interface $ip $mask $router $dns $domain).
+# palm-init's `network` service runs udhcpc on eth0; this is the default
+# script path busybox was configured with.
+
+RESOLV_CONF=/etc/resolv.conf
+
+case "$1" in
+deconfig)
+	ip -4 addr flush dev "$interface"
+	ip link set "$interface" up
+	;;
+bound|renew)
+	ip -4 addr flush dev "$interface"
+	ip -4 addr add "$ip/${mask:-24}" ${broadcast:+broadcast "$broadcast"} dev "$interface"
+	if [ -n "$router" ]; then
+		while ip -4 route del default dev "$interface" 2>/dev/null; do :; done
+		for gw in $router; do
+			ip -4 route add default via "$gw" dev "$interface"
+			break
+		done
+	fi
+	{
+		[ -n "$domain" ] && echo "search $domain"
+		for ns in $dns; do echo "nameserver $ns"; done
+	} > "$RESOLV_CONF.new" && mv "$RESOLV_CONF.new" "$RESOLV_CONF"
+	echo "udhcpc: $interface is $ip/${mask:-24} via ${router:-no router}"
+	;;
+leasefail|nak)
+	echo "udhcpc: no lease on $interface yet ($1)"
+	;;
+esac
+exit 0

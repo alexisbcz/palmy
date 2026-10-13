@@ -1,0 +1,6 @@
+# The graphical login: palm-login runs the greeter in a kiosk window manager
+# as `greeter`, then the user's session. It reads PALM_AUTOLOGIN, which
+# palm-init sets from palm.autologin= on the kernel command line.
+cmd     = /usr/bin/palm-login
+user    = root
+restart = always

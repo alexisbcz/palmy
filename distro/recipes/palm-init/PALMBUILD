@@ -1,0 +1,17 @@
+# PID 1: mounts, device permissions, services from /etc/palm/services,
+# shutdown. Statically linked (distro/init/build.sh), so it starts even if a
+# broken glibc upgrade has left the dynamic loader unusable.
+#
+# The kernel looks for /sbin/init; /sbin -> usr/bin (palmframe-base), and
+# /usr/bin/init points at palm-init. It runs busybox's udhcpc, getty and
+# syslogd for the services palmframe-base ships.
+pkgname  = palm-init
+pkgver   = 0.1.0
+pkgrel   = 0
+pkgdesc  = Palmframe's init and service supervisor
+license  = MIT
+depend   = palmframe-base busybox
+provides = cmd:init
+
+file     = ${PALMFRAME_OUT}/bin/palm-init -> /usr/bin/palm-init mode 0755
+symlink  = /usr/bin/init -> palm-init

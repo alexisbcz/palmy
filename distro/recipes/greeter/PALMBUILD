@@ -1,0 +1,11 @@
+# The login screen (apps/greeter), run by palm-login inside
+# `wm --drm --kiosk --exec greeter`.
+pkgname  = greeter
+pkgver   = 0.1.0
+pkgrel   = 0
+pkgdesc  = The palmy login screen
+license  = MIT
+depend   = glibc fonts libxkbcommon
+provides = cmd:greeter
+
+file     = ${PALMFRAME_OUT}/bin/greeter -> /usr/bin/greeter mode 0755

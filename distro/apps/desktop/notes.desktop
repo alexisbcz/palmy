@@ -1,0 +1,8 @@
+[Desktop Entry]
+Type=Application
+Name=Notes
+Comment=Markdown notes kept as files
+Exec=notes
+Icon=notes
+Terminal=false
+Categories=Office;Utility;

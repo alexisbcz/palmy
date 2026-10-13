@@ -1,0 +1,8 @@
+[Desktop Entry]
+Type=Application
+Name=System Monitor
+Comment=Processes, memory, network and sensors
+Exec=sysmon
+Icon=sysmon
+Terminal=false
+Categories=System;Monitor;

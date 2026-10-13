@@ -1,0 +1,33 @@
+# The fonts Palmframe ships, and where they go on the target.
+#
+# One file per line: <source> <destination> <set>, whitespace separated.
+# A relative source is relative to the repository root; an absolute one is a
+# file on the build host. <set> is `base` (always installed: without it text
+# is wrong somewhere) or `emoji` (optional, 10 MB, colour emoji).
+#
+# Why these and no others. Every application goes through kit.start, which
+# pins Geist for sans and the first of JetBrainsMonoNerdFont-Regular,
+# DejaVuSansMono, LiberationMono-Regular for mono, by an absolute host path;
+# palmy's load_font finds the same file *name* anywhere under /usr/share/fonts
+# when that path does not exist, so the directories below are free choices
+# kept close to what Arch uses. Geist is a 32 KB Latin subset, so DejaVu Sans
+# rides along as the fallback face for everything past it: Greek, Cyrillic,
+# arrows, box drawing, math. palmy's discovery is a plain directory walk -- no
+# fontconfig, no cache -- so installing the file is all it takes.
+#
+# Licenses: Geist, JetBrains Mono (Nerd Font glyphs MIT) and Noto Color Emoji
+# are SIL OFL 1.1; DejaVu is the Bitstream Vera license plus public-domain
+# changes. Each license text is installed beside the fonts.
+
+parity/web/public/fonts/Geist-400.ttf                     /usr/share/fonts/geist/Geist-400.ttf                     base
+parity/web/public/fonts/Geist-500.ttf                     /usr/share/fonts/geist/Geist-500.ttf                     base
+parity/web/public/fonts/Geist-600.ttf                     /usr/share/fonts/geist/Geist-600.ttf                     base
+parity/web/public/fonts/Geist-700.ttf                     /usr/share/fonts/geist/Geist-700.ttf                     base
+distro/apps/licenses/Geist-OFL.txt                        /usr/share/licenses/fonts/Geist-OFL.txt                  base
+/usr/share/fonts/TTF/JetBrainsMonoNerdFont-Regular.ttf    /usr/share/fonts/TTF/JetBrainsMonoNerdFont-Regular.ttf   base
+/usr/share/fonts/TTF/JetBrainsMonoNerdFont-Italic.ttf     /usr/share/fonts/TTF/JetBrainsMonoNerdFont-Italic.ttf    base
+/usr/share/licenses/ttf-jetbrains-mono-nerd-basic/OFL.txt /usr/share/licenses/fonts/JetBrainsMono-OFL.txt          base
+/usr/share/fonts/TTF/DejaVuSans.ttf                       /usr/share/fonts/TTF/DejaVuSans.ttf                      base
+/usr/share/licenses/ttf-dejavu/LICENSE                    /usr/share/licenses/fonts/DejaVu-LICENSE.txt             base
+/usr/share/fonts/noto/NotoColorEmoji.ttf                  /usr/share/fonts/noto/NotoColorEmoji.ttf                 emoji
+/usr/share/licenses/noto-fonts-emoji/LICENSE              /usr/share/licenses/fonts/NotoColorEmoji-OFL.txt         emoji

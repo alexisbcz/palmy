@@ -1,0 +1,3 @@
+# palm-init mounts /proc /sys /dev /dev/pts /dev/shm /run /tmp itself and
+# remounts / read-write; this file is for anything beyond that (busybox mount -a).
+# <device>  <mountpoint>  <type>  <options>  <dump>  <pass>

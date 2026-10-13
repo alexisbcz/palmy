@@ -1,0 +1,63 @@
+# The parts of the palmframe-base filesystem that are not plain files in
+# distro/base/root: directories with special modes, the merged-/usr symlinks,
+# and the owners that differ from root:root. The image builder (and the
+# palmframe-base PALMBUILD recipe) applies these on top of copying root/.
+#
+#	dir     <path> <mode> [owner:group]
+#	symlink <path> <target>
+#	mode    <path> <mode>
+#	owner   <path> <owner:group>
+#
+# Owners are numeric so they mean the same thing before /etc/passwd exists.
+
+# Merged /usr, as in the CONTRACT. glibc's loader is found as
+# /lib64/ld-linux-x86-64.so.2 through these.
+dir     usr             0755
+dir     usr/bin         0755
+dir     usr/lib         0755
+dir     usr/share       0755
+dir     usr/local       0755
+dir     usr/local/bin   0755
+symlink bin             usr/bin
+symlink sbin            usr/bin
+symlink lib             usr/lib
+symlink lib64           usr/lib
+symlink usr/sbin        bin
+symlink usr/lib64       lib
+
+# Mount points palm-init mounts on (it creates missing ones, but a read-only
+# root at first boot cannot get them created).
+dir     proc            0555
+dir     sys             0555
+dir     dev             0755
+dir     run             0755
+dir     tmp             1777
+dir     mnt             0755
+dir     boot            0755
+
+dir     root            0700
+dir     home            0755
+dir     home/palm       0700  1000:1000
+owner   home/palm/.profile    1000:1000
+# The XDG directories applications expect to find: several create their data
+# directory with a plain (non-recursive) mkdir of ~/.local/share/<app>, and
+# notes' first-run note fails without it (distro/notes/apps.md).
+dir     home/palm/.config       0755  1000:1000
+dir     home/palm/.cache        0755  1000:1000
+dir     home/palm/.local        0755  1000:1000
+dir     home/palm/.local/share  0755  1000:1000
+dir     home/palm/.local/state  0755  1000:1000
+dir     var             0755
+dir     var/log         0755
+dir     var/tmp         1777
+dir     var/cache       0755
+dir     var/cache/palm  0755
+dir     var/lib         0755
+dir     var/lib/greeter 0750  900:900
+symlink var/run         ../run
+symlink var/lock        ../run/lock
+symlink etc/mtab        ../proc/self/mounts
+
+mode    etc/shadow      0600
+mode    usr/share/udhcpc/default.script 0755
+dir     etc/palm/keys   0755

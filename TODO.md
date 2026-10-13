@@ -249,43 +249,28 @@ instead and has the exact replacement written in a comment at its caret site.
 
 # The window manager
 
-`apps/wm` has the parts of a bare-metal compositor — a hand-rolled D-Bus client
-and logind seat layer, KMS output with dumb buffers and page-flip, evdev input
-with a touchpad state machine, and an XKB compiler that matches libxkbcommon on
-131 of 131 layouts — and **none of it is wired into `main`**. It still runs
-nested, as a palmy window on a host, and every backend path is gated off behind
-an environment variable.
+`apps/wm` runs on bare metal now, inside QEMU. `wm --drm` (`apps/wm/bare.odin`)
+drives KMS dumb buffers with page flip, reads `/dev/input/event*` directly,
+compiles its own keymap without libxkbcommon, and opens the devices itself when
+there is no logind, which is how Palmframe runs it. It also gained `--exec`
+and `--kiosk`, which the login screen uses. The nested mode is unchanged.
 
-## W1 — boot it
+## W1 — boot it: done, in QEMU only
 
-> **Prompt.** Wire `apps/wm`'s bare-metal backend into its frame loop, behind a
-> flag, and bring it up on a spare VT.
->
-> You own `apps/wm/`. `palmy/` is read-only; report what you need.
->
-> Read `drm.odin`, `seat.odin` and `evdev.odin`'s file headers first — each ends
-> with the exact integration seam it expects, and `seat.odin` already contains
-> `seat_bind_backends()` wiring the other two, which has never executed.
->
-> The loop becomes: `drm_init`, fold `drm_poll_fds` and `ev_fds` into the
-> existing `poll` set, `drm_dispatch`, then `draw` once per head with that
-> head's origin, then `drm_present`. `xkb_init_default()` replaces the host
-> keymap path at the `p.host_keymap` call. `s.out_w`/`out_h` become per-head.
->
-> **This is the task where the safety rules stop being theoretical.** Up to the
-> moment you set `PALMY_WM_DRM_LIVE=1` and `PALMY_WM_SEAT_LIVE=1`, nothing may
-> call `SET_MASTER`, `SETCRTC`, `PAGE_FLIP`, `TakeControl` or `TakeDevice` — the
-> gates exist and are asserted, keep them that way. The first real run belongs
-> on a VT the user is not logged into, started by the user, not by you. Say so
-> and stop there if you cannot get one.
->
-> What has never executed and is therefore what you are really testing: no
-> `drm_event_vblank` has ever been read off a real fd, no `TakeDevice` has
-> returned a real descriptor, no `PauseDevice` has ever arrived, and no evdev
-> byte has come from a real device. The parsers are proved against synthetic
-> streams. Expect struct-layout and cmsg-framing bugs there first.
->
-> Report what came up, what did not, and what you had to leave to a person.
+The Palmframe image boots to `wm --drm` as user palm, and the verification run
+in `distro/README.md` drove it over QMP: SUPER+Return opens `term`, typed
+commands run, two windows tile, and an absolute pointer click moves focus
+(`distro/out/shots/verify-r1-0[2-6]-*.png`). `wm --drm-probe` inside the guest
+passes 173 of 173. What W1 asked for and did not happen:
+
+- **Never on a real VT or real hardware.** Only virtio-gpu has run, so the
+  SETCRTC + DIRTYFB fallback for a device that refuses page flip has never
+  triggered.
+- **The logind path has never executed.** `seat_take_control` and
+  `seat_bind_backends` are wired, but Palmframe has no logind and the host was
+  off limits, so no `TakeDevice` has returned a real descriptor and no
+  `PauseDevice` has arrived.
+- **One head only.** See multi-head under W2.
 
 ## W2 — the things a daily driver needs that it does not have
 
@@ -298,9 +283,59 @@ an environment variable.
 - **Multi-head is unproven.** One monitor is plugged in; the layout, the CRTC
   allocator's collision avoidance and `global_remove` on unplug are exercised
   against fabricated heads only.
-- **`apps/wm/config.odin` still spawns `foot`** at three bindings. Those should
-  become `term` now that `apps/term` exists, and the commented float rule should
-  say `app_id=palmy-term`.
+- **No VT switching.** Without logind, Ctrl+Alt+Fn does nothing and the console
+  VT is not put into `KD_GRAPHICS`. Input devices are grabbed, so the console
+  does not also receive keys.
+- **No input hotplug.** `/dev/input/event*` is scanned once at startup; a
+  keyboard plugged in later is ignored. palm-init already sets its permissions
+  from the uevent, so only the wm side is missing.
+- **Keys reach clients as press and release pairs** re-derived from the keysym,
+  so a client cannot see a key held down.
+- **A full CPU repaint every frame**, no damage tracking.
+
+---
+
+# Distribution
+
+`distro/` builds Palmframe into a disk image (`make distro`) that boots in
+QEMU from UEFI firmware through limine, palm-init and palm-login to the
+greeter and the window manager, and installs and removes packages with palm
+from a signed repository. `distro/README.md` says what was verified and how.
+These are the gaps that run found or that the areas' notes name.
+
+- **The kernel limine boots is a copy** made at image time on the FAT
+  partition. `palm upgrade linux` updates `/boot/vmlinuz` on the root and not
+  that copy. Mount the FAT partition at `/boot/efi` (an fstab entry, which is
+  also missing) and have the linux package install there; palm has no hooks
+  by design, so the package has to carry the file itself.
+- **palm cannot become root.** busybox is not setuid, so `su` and `passwd`
+  fail for palm and package management happens on the serial console as
+  root. Either a setuid busybox with `/etc/busybox.conf`, or a small Odin
+  `doas`.
+- **glibc, libxkbcommon and xkeyboard-config are copied from the Arch build
+  host** (`distro/recipes/generate.sh`), with versions from `pacman -Q`. The
+  image is only as reproducible as the host.
+- **Never booted on real hardware.** `distro/kernel/palmframe.config` is
+  written for QEMU's devices.
+- **Not exercised in the image:** Restart from the greeter, logging out with
+  SUPER+SHIFT+E, the autologin and single-user limine entries, and the
+  windowed `distro/run-qemu.sh` (all testing was headless). Restart and
+  logout passed in the login agent's own initramfs boot.
+- **`palm list` and `palm info` warn when no repository answers**
+  (`cannot connect to 10.0.2.2:8080`), although both are local queries.
+- **No timezone.** The greeter's clock shows UTC.
+- **No clipboard.** palmy copies through `wl-copy`, which is not shipped.
+- **`files` and `launcher` still offer `foot`** as the terminal
+  (`apps/files/main.odin`, `apps/launcher/main.odin`).
+- **Fixed-size system.** No swap, and the root filesystem is the installed size
+  plus 1 GiB with no resize on first boot.
+- **palm-init's SIGHUP only adds.** Removed services keep running and changed
+  ones are not restarted.
+- **palm-login** keeps no utmp, wtmp or lastlog and ignores shadow's aging
+  fields; the only brake on guessing is a 1.5 s delay per failure.
+- **Two cosmetic faults** in the verification screenshots: a single click in
+  `term` leaves a one-cell selection, and the greeter's Shut Down button has no
+  hover state.
 
 ---
 
@@ -527,8 +562,9 @@ So nobody spends an afternoon rediscovering these.
   `zwlr_virtual_pointer_v1` holder so the seat genuinely reports
   `capabilities: 1`; the client still receives no `wl_pointer.enter`. Demos are
   keyboard-driven, which every application supports. The cost shows up as real
-  gaps: no drag-and-drop has ever completed, and `apps/term` has never received
-  a mouse event from a real pointer.
+  gaps: no drag-and-drop has ever completed. The one place a pointer has reached
+  `apps/term` is the Palmframe image under QEMU, where a virtio-tablet click
+  through `wm --drm` focused it and left a one-cell selection.
 - **`apps/network` cannot change network state** and must stay that way.
 - **`apps/power` executes nothing** and must stay that way.
 - **DHT and PEX in `apps/torrent`** are absent on purpose: both are ways to

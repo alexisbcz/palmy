@@ -1,0 +1,16 @@
+# The kernel: Linux LTS with everything Palmframe needs built in (virtio,
+# DRM, evdev, ext4), so there are no modules and no initramfs. Built by
+# distro/kernel/build.sh.
+#
+# /boot/vmlinuz is the system's copy; the firmware cannot read ext4, so
+# distro/image/build.sh also puts it on the EFI system partition, where
+# limine loads it from.
+pkgname  = linux
+pkgver   = 6.18.56
+pkgrel   = 0
+pkgdesc  = The Linux kernel, Palmframe configuration
+license  = GPL-2.0-only
+url      = https://kernel.org
+
+file     = ${PALMFRAME_OUT}/bzImage -> /boot/vmlinuz mode 0644
+file     = ${PALMFRAME_OUT}/kernel.config -> /boot/config mode 0644

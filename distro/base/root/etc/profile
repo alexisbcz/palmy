@@ -1,0 +1,37 @@
+# /etc/profile — read by every login shell (busybox ash as `sh -l`).
+
+export PATH=/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin
+export PAGER=less
+export EDITOR=vi
+export LANG=C.UTF-8
+export CHARSET=UTF-8
+
+# XDG base directories. XDG_RUNTIME_DIR is normally created by palm-login for
+# a graphical session; a serial-console login makes its own, private one.
+export XDG_CONFIG_HOME="$HOME/.config"
+export XDG_DATA_HOME="$HOME/.local/share"
+export XDG_CACHE_HOME="$HOME/.cache"
+export XDG_STATE_HOME="$HOME/.local/state"
+export XDG_DATA_DIRS=/usr/local/share:/usr/share
+export XDG_CONFIG_DIRS=/etc/xdg
+if [ -z "$XDG_RUNTIME_DIR" ]; then
+	XDG_RUNTIME_DIR="/run/user/$(id -u)"
+	if [ ! -d "$XDG_RUNTIME_DIR" ]; then
+		mkdir -p "$XDG_RUNTIME_DIR" 2>/dev/null && chmod 0700 "$XDG_RUNTIME_DIR"
+	fi
+	export XDG_RUNTIME_DIR
+fi
+
+if [ "$(id -u)" = 0 ]; then
+	PS1='\[\033[1;31m\]\u@\h\[\033[0m\]:\[\033[1;34m\]\w\[\033[0m\]# '
+else
+	PS1='\[\033[1;32m\]\u@\h\[\033[0m\]:\[\033[1;34m\]\w\[\033[0m\]$ '
+fi
+export PS1
+
+umask 022
+
+for script in /etc/profile.d/*.sh; do
+	[ -r "$script" ] && . "$script"
+done
+unset script

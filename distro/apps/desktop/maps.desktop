@@ -1,0 +1,8 @@
+[Desktop Entry]
+Type=Application
+Name=Maps
+Comment=Offline maps
+Exec=maps
+Icon=maps
+Terminal=false
+Categories=Utility;Maps;

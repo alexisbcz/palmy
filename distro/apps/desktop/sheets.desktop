@@ -1,0 +1,8 @@
+[Desktop Entry]
+Type=Application
+Name=Sheets
+Comment=Spreadsheets
+Exec=sheets
+Icon=sheets
+Terminal=false
+Categories=Office;Spreadsheet;

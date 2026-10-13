@@ -1,0 +1,6 @@
+# A login prompt on the first serial port — the console QEMU shows with
+# -serial mon:stdio. busybox getty prints /etc/issue and hands the name to
+# busybox login, which checks it against /etc/shadow.
+cmd     = /sbin/getty -L 115200 ttyS0 vt100
+tty     = /dev/ttyS0
+restart = always
