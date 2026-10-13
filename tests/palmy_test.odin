@@ -1157,3 +1157,20 @@ test_fonts_do_not_leak :: proc(t: ^testing.T) {
 	)
 	testing.expectf(t, len(track.bad_free_array) == 0, "%d bad frees", len(track.bad_free_array))
 }
+
+// With no font file at all -- a minimal system before fonts are installed --
+// text goes through the built-in segment font, which only knows printable
+// ASCII. Non-ASCII text must measure and draw as placeholders, not index past
+// that font's table: this was a panic on the first em dash.
+@(test)
+test_no_fonts_non_ascii :: proc(t: ^testing.T) {
+	f: p.Fonts // zero value: no face loaded, as on a system with no fonts
+	w := p.text_width(&f, "Café — \U0001f600", 16)
+	q := p.text_width(&f, "Caf? ? ?", 16)
+	testing.expectf(t, near(w, q, 0.001), "one placeholder per rune: %.3f vs %.3f", w, q)
+
+	off := p.offscreen_create(160, 32)
+	defer p.offscreen_destroy(off)
+	p.draw_text(p.offscreen_canvas(off), &f, "naïve → café", 0, 20, 16, p.WHITE)
+	free_all(context.temp_allocator)
+}

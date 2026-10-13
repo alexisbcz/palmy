@@ -330,6 +330,9 @@ fonts_init :: proc(f: ^Fonts) {
 	if !load_env(f, .Sans, .Regular, .Upright, "PALMY_FONT") {
 		pick_face(f, &f.faces[.Sans][.Regular][.Upright], files, SANS_CANDIDATES[:])
 	}
+	if !f.faces[.Sans][.Regular][.Upright].ok {
+		pick_any_text_face(f, &f.faces[.Sans][.Regular][.Upright], files)
+	}
 	if !load_env(f, .Sans, .Medium, .Upright, "PALMY_FONT_MEDIUM") {
 		pick_face(f, &f.faces[.Sans][.Medium][.Upright], files, SANS_MEDIUM_CANDIDATES[:])
 	}
@@ -412,7 +415,7 @@ fill_weight_gaps :: proc(f: ^Fonts) {
 
 	for fam in Font_Family {
 		// Preference order for each missing weight, nearest first.
-		order := weight_order()
+		order := WEIGHT_ORDER
 		for wt in Font_Weight {
 			if f.faces[fam][wt][.Upright].ok {
 				continue
@@ -429,14 +432,21 @@ fill_weight_gaps :: proc(f: ^Fonts) {
 	}
 }
 
+// WEIGHT_ORDER is, for each weight, the others to borrow from, nearest first.
+//
+// It is a package-level table and not a procedure returning the same literal,
+// and that is load-bearing: the slice literals in a returned value live in the
+// callee's stack frame, so every slice the caller indexed was dangling. It
+// never showed on a desktop, where every weight has its own file and the
+// table is not consulted; on a system with one sans file (Palmframe's
+// minimal image ships DejaVuSans alone before the kit pins Geist) the first
+// missing weight read freed stack and every application died in fonts_init.
 @(private)
-weight_order :: proc() -> [Font_Weight][]Font_Weight {
-	return {
-		.Regular  = {.Medium, .Semibold, .Bold},
-		.Medium   = {.Regular, .Semibold, .Bold},
-		.Semibold = {.Bold, .Medium, .Regular},
-		.Bold     = {.Semibold, .Medium, .Regular},
-	}
+WEIGHT_ORDER := [Font_Weight][]Font_Weight {
+	.Regular  = {.Medium, .Semibold, .Bold},
+	.Medium   = {.Regular, .Semibold, .Bold},
+	.Semibold = {.Bold, .Medium, .Regular},
+	.Bold     = {.Semibold, .Medium, .Regular},
 }
 
 // fill_slant_gaps resolves the italic slots, and the order it tries things in
@@ -452,7 +462,7 @@ fill_slant_gaps :: proc(f: ^Fonts) {
 		}
 	}
 
-	order := weight_order()
+	order := WEIGHT_ORDER
 	for fam in Font_Family {
 		for wt in Font_Weight {
 			if f.faces[fam][wt][.Italic].ok {
@@ -487,9 +497,16 @@ fill_slant_gaps :: proc(f: ^Fonts) {
 // load_font pins one font file to a family, weight and slant, overriding
 // discovery. The parity renderer uses it to load exactly the files the browser
 // loads.
+//
+// A path that does not exist is looked up again by file name under the system
+// font directories. Applications pin fonts by the absolute path they have on a
+// development machine -- the kit loads Geist out of the parity tree -- and on
+// an installed system the same file lives in /usr/share/fonts instead. Without
+// this second look every such application silently drops to whatever the scan
+// picked, which on a minimal system means a different typeface per window.
 load_font :: proc(f: ^Fonts, path: string, fam: Font_Family, wt: Font_Weight, sl := Font_Slant.Upright) -> bool {
 	face: Face
-	if !face_load(f, &face, path) {
+	if !face_load_relocated(f, &face, path) {
 		return false
 	}
 	f.faces[fam][wt][sl] = face
@@ -594,6 +611,32 @@ scan_font_files :: proc() -> [dynamic]string {
 	return out
 }
 
+// pick_any_text_face is the last resort when no candidate family is
+// installed: any upright, regular-looking text face beats the built-in
+// segment font. A minimal system ships a font or two that need not be on any
+// list -- Adwaita Sans, IBM Plex, whatever the integrator chose -- and without
+// this the whole interface fell to the stb_easy_font fallback while a perfectly
+// good TrueType file sat in /usr/share/fonts. Files whose names say they are
+// not a body face (mono, emoji, symbols, a script-specific Noto) are passed
+// over, and the walk order makes the choice stable across runs.
+@(private)
+pick_any_text_face :: proc(f: ^Fonts, face: ^Face, files: [dynamic]string) {
+	SKIP :: [?]string{"mono", "emoji", "symbol", "math", "cjk", "arabic", "hebrew", "thai", "devanagari", "italic", "oblique", "bold", "light", "thin", "black", "condensed"}
+	for path in files {
+		stem := strings.to_lower(filepath.stem(path), context.temp_allocator)
+		usable := true
+		for word in SKIP {
+			if strings.contains(stem, word) {
+				usable = false
+				break
+			}
+		}
+		if usable && face_load(f, face, path) {
+			return
+		}
+	}
+}
+
 @(private)
 pick_face :: proc(f: ^Fonts, face: ^Face, files: [dynamic]string, candidates: []string) {
 	// Exact stem match in candidate order, so preference is respected.
@@ -647,7 +690,7 @@ FALLBACK_CANDIDATES := [?]string {
 // chain is searched in the order faces are added.
 load_fallback_font :: proc(f: ^Fonts, path: string) -> bool {
 	face: Face
-	if !face_load(f, &face, path) {
+	if !face_load_relocated(f, &face, path) {
 		return false
 	}
 	append(&f.fallbacks, face)
@@ -758,6 +801,35 @@ face_load :: proc(f: ^Fonts, face: ^Face, path: string) -> bool {
 	face.ok = true
 	append(&f.owned, Owned_Font{data = data, path = face.path})
 	return true
+}
+
+// face_load_relocated is face_load with the by-name second look load_font
+// describes. The scan only runs on a miss, so a path that exists costs nothing
+// extra, and a name found in several directories resolves to the first one
+// font_dirs lists -- the system directories before the user's.
+@(private)
+face_load_relocated :: proc(f: ^Fonts, face: ^Face, path: string) -> bool {
+	if face_load(f, face, path) {
+		return true
+	}
+	if os.exists(path) {
+		// The file is there and is not a font: another copy will not be either.
+		return false
+	}
+	name := filepath.base(path)
+	files := scan_font_files()
+	defer {
+		for p in files {
+			delete(p)
+		}
+		delete(files)
+	}
+	for p in files {
+		if filepath.base(p) == name && face_load(f, face, p) {
+			return true
+		}
+	}
+	return false
 }
 
 // font_path reports which file backs a family, weight and slant.
@@ -981,7 +1053,8 @@ text_width :: proc(
 ) -> f32 {
 	face := &f.faces[fam][wt][sl]
 	if !face.ok {
-		return f32(ef.width(text)) * fallback_scale(size) + f32(len(text)) * tracking
+		ascii := fallback_ascii(text)
+		return f32(ef.width(ascii)) * fallback_scale(size) + f32(len(ascii)) * tracking
 	}
 	if !text_simple(text, dir) {
 		return text_width_complex(
@@ -1186,7 +1259,8 @@ draw_text_outlined :: proc(
 // draw_text_fallback renders with the built-in vector-segment font, used only
 // when no font file could be found on the system.
 @(private)
-draw_text_fallback :: proc(c: ^Canvas, text: string, x, y, size: f32, col: Color) -> f32 {
+draw_text_fallback :: proc(c: ^Canvas, text_in: string, x, y, size: f32, col: Color) -> f32 {
+	text := fallback_ascii(text_in)
 	quads: [4096]ef.Quad = ---
 	s := fallback_scale(size)
 	n := ef.print_quad_buffer(0, 0, text, {col.r, col.g, col.b, col.a}, quads[:], s)
@@ -1197,6 +1271,31 @@ draw_text_fallback :: proc(c: ^Canvas, text: string, x, y, size: f32, col: Color
 		fill_rect(c, {x + tl.x, top + tl.y, max(br.x - tl.x, 1), max(br.y - tl.y, 1)}, col)
 	}
 	return f32(ef.width(text)) * s
+}
+
+// fallback_ascii is the text as the built-in font can draw it: one '?' per
+// rune outside printable ASCII. stb_easy_font indexes a 96-entry table by
+// byte with no bounds check of its own, so the first em dash or accented
+// letter in an interface -- every application has some -- was an
+// out-of-range panic on exactly the system that has no fonts installed,
+// which is the system where the fallback is the only thing on screen.
+@(private)
+fallback_ascii :: proc(text: string) -> string {
+	clean := true
+	for i in 0 ..< len(text) {
+		if text[i] < 0x20 || text[i] > 0x7e {
+			clean = false
+			break
+		}
+	}
+	if clean {
+		return text
+	}
+	b := strings.builder_make(0, len(text), context.temp_allocator)
+	for r in text {
+		strings.write_byte(&b, r >= 0x20 && r <= 0x7e ? u8(r) : '?')
+	}
+	return strings.to_string(b)
 }
 
 // text_index_at maps a pixel offset back to a byte index in the string — which
