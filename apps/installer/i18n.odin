@@ -9,159 +9,123 @@ package main
 // distro/locale/*/installer.msg has each of them. A msgid built at run time
 // would be invisible to that check.
 //
-// The catalogues belong to kit's i18n library (apps/kit/i18n.odin), which owns
-// the format, the search path and the language fallback. Until that library
-// lands, the loader below reads the same `.msg` format (INSTALLER.md, "i18n
-// library") itself; the five procedures are the seam, so swapping it for kit
-// is a change to this file only.
+// The catalogues are kit's (apps/kit/i18n.odin), which owns the format, the
+// search path and the language fallback. This file only adds what the
+// installer needs on top: `N` for msgids that are chosen in one place and
+// translated in another, and finding the checkout's catalogues when the
+// binary is run from distro/out/bin on a development machine.
 
 import "core:fmt"
 import "core:os"
 import "core:path/filepath"
 import "core:strings"
+import kit "kit:."
 
 // The domain: catalogues are <root>/<lang>/installer.msg.
 DOMAIN :: "installer"
 
 // N marks a string as a msgid without translating it, for tables and return
 // values that are translated where they are drawn (gettext's N_).
-N :: proc(msgid: string) -> string {
+N :: proc "contextless" (msgid: string) -> string {
 	return msgid
 }
+
+// tr and trf mark a right-to-left translation as such. palmy gives each
+// paragraph the direction of its first strong character, so an Arabic
+// sentence that starts with "GPT", "Palmframe" or a %s would otherwise be
+// laid out left to right, its full stop and guillemets landing on the wrong
+// side. A RIGHT-TO-LEFT MARK in front fixes the paragraph's direction and
+// draws nothing.
+RLM :: "\u200f"
+FSI :: "\u2068" // FIRST STRONG ISOLATE
+PDI :: "\u2069" // POP DIRECTIONAL ISOLATE
 
 tr :: proc(msgid: string) -> string {
-	if s, ok := cat.strings[msgid]; ok && s != "" {
-		return s
-	}
-	return msgid
+	return mark(kit.tr(msgid))
 }
 
+// trf also isolates every string argument (FSI ... PDI) in a right-to-left
+// interface. "/dev/vda" inside an Arabic sentence is otherwise taken apart
+// by the bidi algorithm — its leading slash is neutral and joins the Arabic
+// run — and drawn as "dev/vda/".
 trf :: proc(msgid: string, args: ..any) -> string {
-	return fmt.tprintf(tr(msgid), ..args)
+	format := kit.tr(msgid)
+	if !is_rtl() {
+		return fmt.tprintf(format, ..args)
+	}
+	// The isolated copies live in their own slice: an `any` points at its
+	// value, so each one needs storage that outlives the loop iteration.
+	texts := make([]string, len(args), context.temp_allocator)
+	wrapped := make([]any, len(args), context.temp_allocator)
+	for a, i in args {
+		if s, ok := a.(string); ok {
+			// An argument that is itself a translation ("20.0 GiB" from
+			// size_label) loses its mark, or the isolate would take the
+			// mark's direction instead of its text's.
+			texts[i] = fmt.tprintf("%s%s%s", FSI, strings.trim_prefix(s, RLM), PDI)
+			wrapped[i] = texts[i]
+		} else {
+			wrapped[i] = a
+		}
+	}
+	return mark(fmt.tprintf(format, ..wrapped), format)
+}
+
+// mark prefixes the RIGHT-TO-LEFT MARK when the interface is right to left
+// and the translation is written in a right-to-left script. A translation
+// with no such letters ("%.1f GiB") is left alone: forced right to left it
+// would come out as "GiB 20.0".
+mark :: proc(text: string, decided_by := "") -> string {
+	if !is_rtl() || !has_rtl_letters(decided_by == "" ? text : decided_by) {
+		return text
+	}
+	return fmt.tprintf("%s%s", RLM, text)
+}
+
+has_rtl_letters :: proc(s: string) -> bool {
+	for r in s {
+		switch r {
+		case 0x0590 ..= 0x08FF, 0xFB1D ..= 0xFDFF, 0xFE70 ..= 0xFEFF:
+			return true
+		}
+	}
+	return false
 }
 
 // i18n_start loads the catalogue for `lang` ("" = from the environment).
 i18n_start :: proc(lang := "") {
-	l := lang
-	if l == "" {
-		for v in ([?]string{"LANGUAGE", "LC_ALL", "LC_MESSAGES", "LANG"}) {
-			if e := os.get_env(v, context.temp_allocator); e != "" {
-				l = e
-				break
-			}
-		}
-	}
-	set_language(l)
+	find_checkout_catalogues()
+	kit.i18n_init(DOMAIN, lang)
 }
 
 // set_language switches the whole interface: the next frame is drawn from the
 // new catalogue, and mirrored when the language is written right to left.
 set_language :: proc(code: string) {
-	clear(&cat.strings)
-	cat.lang = strings.clone(code)
-	cat.rtl = false
-	// fr_FR.UTF-8 -> fr_FR -> fr, the fallback order INSTALLER.md gives.
-	base := code
-	if i := strings.index_any(base, ".@"); i >= 0 {
-		base = base[:i]
-	}
-	short := base
-	if i := strings.index_byte(short, '_'); i >= 0 {
-		short = short[:i]
-	}
-	cat.rtl = short == "ar" || short == "he" || short == "fa" || short == "ur"
-	if short == "" || short == "C" || short == "POSIX" || short == "en" {
-		return
-	}
-	for root in locale_roots() {
-		for l in ([?]string{base, short}) {
-			path := fmt.tprintf("%s/%s/%s.msg", root, l, DOMAIN)
-			if data, err := os.read_entire_file(path, context.allocator); err == nil {
-				catalogue_parse(string(data), &cat.strings)
-				return
-			}
-		}
-	}
+	find_checkout_catalogues()
+	kit.i18n_init(DOMAIN, code)
 }
 
 is_rtl :: proc() -> bool {
-	return cat.rtl
+	return kit.i18n_is_rtl()
 }
 
-@(private = "file")
-Catalogue :: struct {
-	lang:    string,
-	rtl:     bool,
-	strings: map[string]string,
-}
-
-@(private = "file")
-cat: Catalogue
-
-// locale_roots: the installed path, an override for development, and the
-// checkout's distro/locale found relative to the binary (distro/out/bin).
-@(private = "file")
-locale_roots :: proc() -> []string {
-	out := make([dynamic]string, context.temp_allocator)
-	if e := os.get_env("PALM_LOCALE_DIR", context.temp_allocator); e != "" {
-		append(&out, e)
+// find_checkout_catalogues points kit at the repository's distro/locale when
+// the installed root is absent and PALM_LOCALE_DIR is not set: the binary in
+// distro/out/bin, or the current directory being the repository.
+find_checkout_catalogues :: proc() {
+	if os.get_env("PALM_LOCALE_DIR", context.temp_allocator) != "" || os.exists(kit.LOCALE_ROOT) {
+		return
 	}
-	append(&out, "/usr/share/palm/locale")
+	candidates := make([dynamic]string, context.temp_allocator)
 	if len(os.args) > 0 {
-		dir := filepath.dir(os.args[0], context.temp_allocator)
-		append(&out, fmt.tprintf("%s/../../locale", dir))
+		append(&candidates, fmt.tprintf("%s/../../locale", filepath.dir(os.args[0])))
 	}
-	append(&out, "distro/locale")
-	return out[:]
-}
-
-// catalogue_parse reads the gettext-like `.msg` format. Plural entries keep
-// their singular form only; the installer has no plural strings.
-catalogue_parse :: proc(text: string, into: ^map[string]string) {
-	id := ""
-	have_id := false
-	rest := text
-	for line in strings.split_lines_iterator(&rest) {
-		l := strings.trim_space(line)
-		switch {
-		case strings.has_prefix(l, "msgid_plural "):
-		// ignored: see above
-		case strings.has_prefix(l, "msgid "):
-			id = unquote(l[len("msgid "):])
-			have_id = true
-		case strings.has_prefix(l, "msgstr[0] "), strings.has_prefix(l, "msgstr "):
-			if have_id {
-				v := unquote(l[strings.index_byte(l, ' ') + 1:])
-				into[id] = v
-				have_id = false
-			}
+	append(&candidates, "distro/locale")
+	for c in candidates {
+		if os.exists(fmt.tprintf("%s/fr/%s.msg", c, DOMAIN)) {
+			abs, _ := filepath.abs(c, context.temp_allocator)
+			os.set_env("PALM_LOCALE_DIR", abs)
+			return
 		}
 	}
-}
-
-// unquote strips the quotes and resolves \" \\ \n \t.
-unquote :: proc(s: string) -> string {
-	t := strings.trim_space(s)
-	if len(t) < 2 || t[0] != '"' || t[len(t) - 1] != '"' {
-		return strings.clone(t)
-	}
-	t = t[1:len(t) - 1]
-	sb := strings.builder_make()
-	for i := 0; i < len(t); i += 1 {
-		c := t[i]
-		if c == '\\' && i + 1 < len(t) {
-			i += 1
-			switch t[i] {
-			case 'n':
-				strings.write_byte(&sb, '\n')
-			case 't':
-				strings.write_byte(&sb, '\t')
-			case:
-				strings.write_byte(&sb, t[i])
-			}
-			continue
-		}
-		strings.write_byte(&sb, c)
-	}
-	return strings.to_string(sb)
 }

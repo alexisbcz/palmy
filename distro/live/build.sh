@@ -19,11 +19,12 @@
 #    into an empty directory under fakeroot, against the local repository and
 #    the build's key. palmframe-live pulls in palmframe, the installer, the
 #    tools it formats with, tzdata, the catalogues and a CJK font.
-# 2. Two services of palmframe-base are deleted from that root: palm-login
-#    (the live system's session is the installer, not a login screen) and
-#    getty-ttyS0 (palmframe-live's root-autologin getty takes the port).
-#    A package cannot remove another's files and palm runs no scripts, and
-#    palm-init has no way to disable a service, so the image builder does it.
+# 2. Two services of palmframe-base are masked, not deleted: palmframe-live
+#    ships /etc/palm/services.off/palm-login (the live system's session is
+#    the installer, not a login screen) and .../getty-ttyS0 (its own
+#    root-autologin getty takes the port), and palm-init starts nothing named
+#    there. Every file palm installed stays, so `palm verify` on the live
+#    system is clean.
 # 3. The repository is copied into the root at /usr/share/palm/repo, flat
 #    (PALMINDEX, PALMINDEX.sig, *.palm): palm reads <base>/x86_64 if it has
 #    an index, else <base> itself, so `--repo /usr/share/palm/repo` installs
@@ -97,8 +98,6 @@ fakeroot -- bash -euo pipefail -c '
 		cp -a "$live/root/." "$rootfs/"
 		ln -sfn usr/bin/palm-init "$rootfs/init"
 	fi
-
-	rm -f "$rootfs/etc/palm/services/palm-login" "$rootfs/etc/palm/services/getty-ttyS0"
 
 	mkdir -p "$rootfs/usr/share/palm/repo"
 	cp "$repo"/PALMINDEX "$repo"/PALMINDEX.sig "$repo"/*.palm "$rootfs/usr/share/palm/repo/"

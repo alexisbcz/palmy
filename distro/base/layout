@@ -37,16 +37,19 @@ dir     boot            0755
 
 dir     root            0700
 dir     home            0755
-dir     home/palm       0700  1000:1000
-owner   home/palm/.profile    1000:1000
+# What a new user's home starts as. The installer copies /etc/skel into the
+# account it creates; the disk image's demo user `palm` gets the same tree
+# from the palmframe-demo package, so palmframe-base owns nothing under /home
+# and an installed system (where `palm` is removed) still verifies clean.
 # The XDG directories applications expect to find: several create their data
 # directory with a plain (non-recursive) mkdir of ~/.local/share/<app>, and
 # notes' first-run note fails without it (distro/notes/apps.md).
-dir     home/palm/.config       0755  1000:1000
-dir     home/palm/.cache        0755  1000:1000
-dir     home/palm/.local        0755  1000:1000
-dir     home/palm/.local/share  0755  1000:1000
-dir     home/palm/.local/state  0755  1000:1000
+dir     etc/skel                0755
+dir     etc/skel/.config        0755
+dir     etc/skel/.cache         0755
+dir     etc/skel/.local         0755
+dir     etc/skel/.local/share   0755
+dir     etc/skel/.local/state   0755
 dir     var             0755
 dir     var/log         0755
 dir     var/tmp         1777

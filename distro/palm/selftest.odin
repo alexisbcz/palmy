@@ -532,6 +532,7 @@ file    = hello.sh -> /usr/bin/hello
 file    = hello.conf -> /etc/hello/hello.conf
 dir     = /var/lib/hello mode 0750
 symlink = /usr/bin/hi -> hello
+symlink = /etc/hello/current -> hello.conf
 owner   = /var/lib/hello palm:palm
 mode    = /usr/bin/hello 4755
 `,
@@ -659,13 +660,19 @@ test_lifecycle :: proc() {
 	put(fmt.tprintf("%s/usr/share/foo/a.txt", root), "tampered\n")
 	_ = os.remove(fmt.tprintf("%s/usr/share/foo/sub/b.txt", root))
 	put(fmt.tprintf("%s/etc/hello/hello.conf", root), "greeting = mine\n")
+	// A retargeted link under /etc is configuration too (/etc/localtime).
+	_ = os.remove(fmt.tprintf("%s/etc/hello/current", root))
+	os.symlink("mine.conf", fmt.tprintf("%s/etc/hello/current", root))
 	eq_i(R(root, "verify"), EXIT_FAILED_GENERIC, "verify fails on a changed and a missing file")
+	check(strings.contains(g_out, "/etc/hello/current: modified (config): points to mine.conf"), "a retargeted /etc link is reported softly: %s", g_out)
 	check(strings.contains(g_out, "sha256 mismatch") && strings.contains(g_out, "missing"), "verify names both problems: %s", g_out)
 	check(strings.contains(g_out, "modified (config)"), "an edited config is reported softly")
 	eq_i(R(root, "fix"), 0, "fix: %s", g_out)
 	eq_s(slurp(fmt.tprintf("%s/usr/share/foo/a.txt", root)), "alpha\n", "fix restored the changed file")
 	eq_s(slurp(fmt.tprintf("%s/usr/share/foo/sub/b.txt", root)), "beta\n", "fix restored the missing file")
 	eq_i(R(root, "verify"), 0, "verify passes after fix: %s", g_out)
+	cur, _ := os.read_link(fmt.tprintf("%s/etc/hello/current", root), context.temp_allocator)
+	eq_s(cur, "mine.conf", "fix keeps a retargeted /etc link")
 
 	// Conflicts: evil also ships /usr/bin/hello.
 	eq_i(R(root, "add", "evil"), EXIT_REFUSED, "a file conflict is refused")
@@ -692,6 +699,8 @@ test_lifecycle :: proc() {
 	check(!os.exists(fmt.tprintf("%s/usr/share/foo/old.txt", root)), "a file dropped by the new version is removed")
 	eq_s(slurp(fmt.tprintf("%s/etc/hello/hello.conf", root)), "greeting = mine\n", "the edited config is kept")
 	eq_s(slurp(fmt.tprintf("%s/etc/hello/hello.conf.palm-new", root)), "greeting = hello there\n", "the new config is beside it as .palm-new")
+	cur, _ = os.read_link(fmt.tprintf("%s/etc/hello/current", root), context.temp_allocator)
+	eq_s(cur, "mine.conf", "upgrade keeps a retargeted /etc link")
 
 	// del: hello goes, and libfoo goes with it because nothing needs it.
 	eq_i(R(root, "del", "libfoo"), 0, "del of a dependency")

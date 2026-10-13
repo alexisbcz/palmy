@@ -10,7 +10,12 @@ license  = MIT
 
 dir      = /usr/share/palm/locale
 file     = ${PALMFRAME_ROOT}/distro/locale/ar/greeter.msg -> /usr/share/palm/locale/ar/greeter.msg mode 0644
+file     = ${PALMFRAME_ROOT}/distro/locale/ar/installer.msg -> /usr/share/palm/locale/ar/installer.msg mode 0644
 file     = ${PALMFRAME_ROOT}/distro/locale/de/greeter.msg -> /usr/share/palm/locale/de/greeter.msg mode 0644
+file     = ${PALMFRAME_ROOT}/distro/locale/de/installer.msg -> /usr/share/palm/locale/de/installer.msg mode 0644
 file     = ${PALMFRAME_ROOT}/distro/locale/es/greeter.msg -> /usr/share/palm/locale/es/greeter.msg mode 0644
+file     = ${PALMFRAME_ROOT}/distro/locale/es/installer.msg -> /usr/share/palm/locale/es/installer.msg mode 0644
 file     = ${PALMFRAME_ROOT}/distro/locale/fr/greeter.msg -> /usr/share/palm/locale/fr/greeter.msg mode 0644
+file     = ${PALMFRAME_ROOT}/distro/locale/fr/installer.msg -> /usr/share/palm/locale/fr/installer.msg mode 0644
 file     = ${PALMFRAME_ROOT}/distro/locale/ja/greeter.msg -> /usr/share/palm/locale/ja/greeter.msg mode 0644
+file     = ${PALMFRAME_ROOT}/distro/locale/ja/installer.msg -> /usr/share/palm/locale/ja/installer.msg mode 0644

@@ -4,9 +4,9 @@
 # in a kiosk wm, and a root shell on the serial port. Only
 # distro/live/build.sh installs it; it never goes onto an installed disk.
 #
-# Packages cannot remove another package's files and palm runs no scripts,
-# so the two base services this replaces (palm-login and getty-ttyS0) are
-# deleted from the live root by distro/live/build.sh, not here.
+# The two base services this replaces (palm-login and getty-ttyS0) are
+# masked by /etc/palm/services.off/<name> (palm-init starts nothing named
+# there), since a package cannot remove another package's files.
 #
 # /init is what the kernel runs from an initramfs; it is palm-init, as
 # /sbin/init is on a disk.

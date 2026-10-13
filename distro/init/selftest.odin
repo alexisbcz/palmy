@@ -10,11 +10,13 @@ package main
 //	uevents            a real kernel datagram, a libudev one, garbage
 //	device rules       which /dev names get which group and mode
 //	locale.conf        which variables services get from /etc/locale.conf
+//	mask               /etc/palm/services.off/<name> masks a service
 //
 // It touches nothing on the machine and needs no privileges.
 
 import "core:fmt"
 import "core:strings"
+import "core:sys/linux"
 
 @(private = "file")
 failures := 0
@@ -173,6 +175,18 @@ export LC_MESSAGES='de_DE.UTF-8'
 	}
 
 	// --- helpers ---------------------------------------------------------------
+	// --- masks (/etc/palm/services.off) ---------------------------------------
+	{
+		dir := "/tmp/palm-init-selftest-mask"
+		mkdir_p(dir)
+		write_file(strings.concatenate({dir, "/palm-login"}, context.temp_allocator), "")
+		check("mask: a file in the mask directory masks its service", masked("palm-login", dir))
+		check("mask: other services are not masked", !masked("getty-ttyS0", dir))
+		linux.unlink(strings.clone_to_cstring(strings.concatenate({dir, "/palm-login"}, context.temp_allocator), context.temp_allocator))
+		linux.rmdir(strings.clone_to_cstring(dir, context.temp_allocator))
+		check("mask: no mask directory, nothing masked", !masked("palm-login", dir))
+	}
+
 	check("trim_comment: leading #", trim_comment("# all comment") == "")
 	check("split_fields: runs of blanks", len(split_fields("  a \t b  ")) == 2)
 

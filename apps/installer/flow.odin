@@ -12,6 +12,7 @@ package main
 // `go_next`, `go_back` and `go_to`; selftest.odin drives the same procedures
 // with no window at all.
 
+import "core:os"
 import "core:strings"
 import "core:time"
 import "core:time/datetime"
@@ -92,6 +93,7 @@ St :: struct {
 	// Focus requests: the next frame puts the keyboard on this page's first
 	// control (or on a named field).
 	want_focus:     bool,
+	scroll_pending: bool, // a list's selection still has to be scrolled into view
 	focus_field:    Maybe(Field),
 }
 
@@ -113,9 +115,27 @@ state_init :: proc(st: ^St, b: Backend) {
 	}
 	append(&st.hostname, "palmframe")
 
+	st.disk_i = preselect_disk(st.disks)
+
 	// Start from whatever language the environment names, or English.
 	st.lang_i = 0
 	pick_language(st, st.lang_i)
+}
+
+// preselect_disk: one usable disk is the common case (a laptop, a QEMU
+// guest), so it is chosen already; with several, the user chooses. Erasing
+// it still takes the confirmation that names it.
+preselect_disk :: proc(disks: []Disk) -> int {
+	usable := -1
+	for d, i in disks {
+		if ok, _ := disk_usable(d); ok {
+			if usable >= 0 {
+				return -1
+			}
+			usable = i
+		}
+	}
+	return usable
 }
 
 cur_language :: proc(st: ^St) -> Language {
@@ -205,6 +225,12 @@ pick_language :: proc(st: ^St, i: int) {
 		if .Keyboard not_in st.picked {
 			for idx, li in st.layouts {
 				if st.keyboards[idx].layout == d.layout {
+					if li != st.layout_i || st.variant != "" {
+						// The compositor follows too, so the account page
+						// types in the layout the keyboard page will show.
+						st.kb_dirty = true
+						st.kb_dirty_at = 0
+					}
 					st.layout_i = li
 					st.variant = ""
 					break
@@ -431,6 +457,7 @@ move_to :: proc(st: ^St, p: Page) {
 	st.page = p
 	st.visited += {p}
 	st.want_focus = true
+	st.scroll_pending = true
 }
 
 // plan_of is the Plan the summary describes and the install carries out.
@@ -440,6 +467,13 @@ plan_of :: proc(st: ^St) -> Plan {
 	root := ""
 	if !a.same_root {
 		root = a.root_password
+	}
+	// The default package set has no CJK font (19 MB in every palmy process
+	// is a lot for a machine that never shows a kanji), so a system that is
+	// to speak Japanese gets it added; it is in the medium's repository.
+	packages: []string
+	if strings.has_prefix(cur_language(st).code, "ja") {
+		packages = CJK_PACKAGES[:]
 	}
 	return Plan {
 		disk = d.path,
@@ -451,9 +485,13 @@ plan_of :: proc(st: ^St) -> Plan {
 		user = a.user,
 		password = a.password,
 		root_password = root,
-		efi_boot_entry = true,
+		packages = packages,
+		efi_boot_entry = os.is_dir("/sys/firmware/efi"),
 	}
 }
+
+// A package-level array, so the slice plan_of hands out outlives the call.
+CJK_PACKAGES := [?]string{"palmframe", "fonts-cjk"}
 
 start_install :: proc(st: ^St) {
 	if st.worker != nil {

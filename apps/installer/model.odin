@@ -31,11 +31,11 @@ Zone :: struct {
 	name:    string, // Europe/Paris
 	region:  string, // Europe
 	city:    string, // Paris
-	country: string, // FR
+	country: string, // France (the core reads the name from iso3166.tab)
 }
 
 Language :: struct {
-	code:         string, // fr_FR
+	code:         string, // fr_FR, ar
 	native_name:  string, // Français
 	english_name: string, // French
 	rtl:          bool,
@@ -69,9 +69,11 @@ Install_Step :: enum {
 	Done,
 }
 
+// Progress is the core's: `fraction` is the whole installation's progress,
+// 0..1, not the current step's, so it goes straight to the bar.
 Progress :: struct {
 	step:     Install_Step,
-	fraction: f32, // within the step, 0..1
+	fraction: f32,
 	message:  string,
 }
 

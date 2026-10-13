@@ -8,7 +8,7 @@ package main
 // hands the plan to install_core, which runs on a worker thread while this
 // thread draws its progress every frame.
 //
-//	installer [--demo] [--demo-fail] [--lang CODE]
+//	installer [--demo] [--demo-fail] [--dry-run] [--lang CODE]
 //	installer --shots DIR       offscreen PNGs of every page, no window
 //	installer --selftest        flow, validation and catalogue checks
 //
@@ -17,6 +17,9 @@ package main
 //   - real: the disks, layouts and zones come from install_core, the keyboard
 //     page switches the compositor's layout, and Install erases the chosen
 //     disk. Only as root on a Palmframe system (/etc/palm/keys exists).
+//     --dry-run keeps everything real except the install itself, which the
+//     core then only describes (Options.dry_run): for trying the real disk
+//     list and keyboard switching inside QEMU without writing the disk.
 //   - demo: everything is fabricated and the install only sleeps. This is
 //     what runs anywhere else, whether --demo was given or not, and the rail
 //     says so. It is how the installer is developed and photographed on a
@@ -35,6 +38,7 @@ import p "palmy:."
 main :: proc() {
 	want_demo := false
 	demo_fail := false
+	dry_run := false
 	lang := ""
 
 	args := os.args[1:]
@@ -45,6 +49,8 @@ main :: proc() {
 		case "--demo-fail":
 			want_demo = true
 			demo_fail = true
+		case "--dry-run":
+			dry_run = true
 		case "--lang":
 			i += 1
 			if i < len(args) {
@@ -57,7 +63,7 @@ main :: proc() {
 			os.exit(selftest())
 		case "-h", "--help":
 			fmt.println(
-				"installer [--demo] [--demo-fail] [--lang CODE]\n" +
+				"installer [--demo] [--demo-fail] [--dry-run] [--lang CODE]\n" +
 				"          --shots DIR   offscreen PNGs of every page in en, fr and ar; no window\n" +
 				"          --selftest    step flow, validation and catalogue checks",
 			)
@@ -71,6 +77,7 @@ main :: proc() {
 	b := Backend {
 		demo      = choose_mode(want_demo),
 		demo_fail = demo_fail,
+		dry_run   = dry_run,
 	}
 
 	i18n_start(lang)

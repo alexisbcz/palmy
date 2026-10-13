@@ -1,0 +1,2 @@
+# Masked on the live system: palmframe-live's getty-live (root autologin)
+# takes ttyS0 (palm-init does not start a service named here).

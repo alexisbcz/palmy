@@ -84,14 +84,14 @@ mirror :: proc(ui: ^p.Ctx, idx: int) {
 	}
 }
 
-// txt is p.text for a line that sits in a column: in a right-to-left
-// interface it hugs the right edge even when the string itself is Latin
-// (a device path, a layout's English description).
+// txt is p.text for a line that sits in a column, aligned to the
+// interface's direction rather than the string's: in a right-to-left
+// interface a device path or an English layout name hugs the right edge, and
+// in a left-to-right one "العربية" on the language page lines up on the left
+// with the names above it.
 txt :: proc(ui: ^p.Ctx, s: string, class := "") -> int {
 	idx := p.text(ui, s, class)
-	if is_rtl() {
-		p.apply(ui, "text-right", idx)
-	}
+	p.apply(ui, is_rtl() ? "text-right" : "text-left", idx)
 	return idx
 }
 
@@ -163,6 +163,12 @@ draw :: proc(st: ^St, ui: ^p.Ctx) {
 	p.div(ui, "absolute inset-0 bg-gradient-to-b from-[#121217] to-[#07070a]")
 	p.end(ui)
 
+	// Every element's id includes the language. palmy wraps a text node at
+	// no more than the width that id had last frame (measure in
+	// palmy/layout.odin), so a label that becomes longer in the new language
+	// would otherwise stay as narrow as the old one and break onto two lines.
+	// Fresh ids on a language switch start every label from its own width.
+	p.key(ui, cur_language(st).code)
 	body := hrow(ui, "w-full h-full")
 	rail(st, ui)
 	p.col(ui, "flex-1 h-full min-w-0")
@@ -275,16 +281,16 @@ rail :: proc(st: ^St, ui: ^p.Ctx) {
 			}
 		}
 		{
-			disc := "size-7 rounded-full items-center justify-center border shrink-0"
+			DISC :: "size-7 rounded-full items-center justify-center border shrink-0"
 			switch {
 			case done:
-				p.div(ui, disc + " bg-primary border-primary")
+				p.div(ui, DISC + " bg-primary border-primary")
 				p.icon(ui, II_CHECK, "size-4 text-primary-foreground")
 			case current:
-				p.div(ui, disc + " border-foreground bg-background")
+				p.div(ui, DISC + " border-foreground bg-background")
 				p.textf(ui, "text-xs font-semibold text-foreground", "%d", int(pg) + 1)
 			case:
-				p.div(ui, disc + " border-border")
+				p.div(ui, DISC + " border-border")
 				p.textf(ui, "text-xs text-muted-foreground", "%d", int(pg) + 1)
 			}
 			p.end(ui)
@@ -307,20 +313,21 @@ rail :: proc(st: ^St, ui: ^p.Ctx) {
 	if st.backend.demo {
 		b := hrow(ui, "items-center gap-2")
 		sc.badge(ui, tr("Demo"), .Destructive)
-		p.end(ui)
 		hend(ui, b)
 		txt(ui, tr("Nothing on this computer will be changed."), "text-xs text-muted-foreground")
 	}
-	keys_hint(ui, "Tab", tr("Move"))
-	keys_hint(ui, "Enter", tr("Next"))
-	keys_hint(ui, "Esc", tr("Back"))
+	if st.page < .Install {
+		keys_hint(ui, "Tab", tr("Move"))
+		keys_hint(ui, "Enter", tr("Next"))
+		keys_hint(ui, "Esc", tr("Back"))
+	}
 	p.end(ui)
 }
 
 keys_hint :: proc(ui: ^p.Ctx, key, what: string) {
 	r := hrow(ui, "items-center gap-2")
 	sc.kbd(ui, key)
-	p.text(ui, what, "text-xs text-muted-foreground")
+	p.text(ui, what, "text-xs text-muted-foreground whitespace-nowrap")
 	hend(ui, r)
 }
 
@@ -341,7 +348,7 @@ page_subtitle :: proc(pg: Page) -> string {
 	case .Install:
 		return tr("This takes a few minutes. Every step is in the log.")
 	case .Done:
-		return tr("Palmframe is installed.")
+		return ""
 	}
 	return ""
 }
@@ -363,7 +370,7 @@ page_heading :: proc(pg: Page) -> string {
 	case .Install:
 		return tr("Installing Palmframe")
 	case .Done:
-		return tr("All done")
+		return ""
 	}
 	return ""
 }
@@ -371,9 +378,11 @@ page_heading :: proc(pg: Page) -> string {
 heading :: proc(st: ^St, ui: ^p.Ctx) {
 	p.col(ui, "w-full gap-2 px-12 pt-10 pb-6")
 	defer p.end(ui)
-	if st.page < .Install {
-		txt(ui, trf("Step %d of %d", int(st.page) + 1, int(Page.Summary) + 1), "text-xs font-medium text-muted-foreground")
+	if st.page == .Done {
+		// The page says it all, in the middle of the screen.
+		return
 	}
+	txt(ui, trf("Step %d of %d", int(st.page) + 1, len(Page)), "text-xs font-medium text-muted-foreground")
 	txt(ui, page_heading(st.page), "text-3xl font-semibold tracking-tight text-foreground")
 	txt(ui, page_subtitle(st.page), "text-sm text-muted-foreground")
 }
@@ -387,15 +396,20 @@ footer :: proc(st: ^St, ui: ^p.Ctx) {
 	bar := hrow(ui, "w-full items-center gap-4 px-12 py-5 border-t border-border")
 	defer hend(ui, bar)
 
-	if button(ui, st, tr("Back"), back_icon(), .Outline, disabled = !can_go_back(st)) {
-		go_back(st)
+	if can_go_back(st) {
+		if button(ui, st, tr("Back"), back_icon(), .Outline) {
+			go_back(st)
+		}
 	}
-	p.spacer(ui)
-
+	// The reason Next is not available fills the space between the buttons
+	// (rather than a spacer and a shrink-wrapped label: see the note on the
+	// language key in `draw` — the reason changes as the page is filled in).
 	ok, why := can_leave(st)
+	reason := ""
 	if !ok && why != "" && (st.page != .Account || st.tried) {
-		p.text(ui, tr(why), "text-xs text-muted-foreground")
+		reason = tr(why)
 	}
+	p.text(ui, reason, is_rtl() ? "flex-1 text-xs text-muted-foreground text-left" : "flex-1 text-xs text-muted-foreground text-right")
 
 	label := tr("Next")
 	variant := sc.Variant.Default
@@ -455,7 +469,7 @@ erase_dialog :: proc(st: ^St, ui: ^p.Ctx) {
 			st.dialog_focus = false
 			p.redraw(ui)
 		}
-		if button(ui, st, trf("Erase %s", d.name), II_TRIANGLE_ALERT, .Destructive) {
+		if button(ui, st, trf("Erase %s", d.path), II_TRIANGLE_ALERT, .Destructive) {
 			confirm_erase(st)
 		}
 	}

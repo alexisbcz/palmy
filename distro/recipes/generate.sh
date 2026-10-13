@@ -15,8 +15,8 @@
 # holds without running anything.
 #
 # Hand-written recipes (linux, palm-init, palm, palm-login, greeter,
-# palmy-wm, and the installer's palm-install, installer and palmframe-live)
-# are left alone.
+# palmy-wm, palmframe-demo, and the installer's palm-install, installer and
+# palmframe-live) are left alone.
 #
 # Sources in the recipes are spelled ${PALMFRAME_ROOT} (the checkout),
 # ${PALMFRAME_OUT} (distro/out) and ${PALMFRAME_KEYS} (distro/build/keys);
@@ -85,7 +85,7 @@ id_name() {
 	cat <<EOF
 #
 # The filesystem itself: merged /usr, /etc (users, services, repositories),
-# the mount points palm-init mounts on, and palm's own home. Every other
+# the mount points palm-init mounts on, and /etc/skel. Every other
 # package depends on this one, so it is always installed first and its
 # /etc/passwd is in place when later packages' owners are resolved.
 pkgname  = palmframe-base
@@ -294,6 +294,10 @@ done
 # variants) and posix/ (a second copy of every zone under another name)
 # directories are left out: nothing on Palmframe asks for them, and they
 # would triple the package.
+# tzdata's releases are a year and a letter (2026c), which apk-style
+# versions accept as they are; host_version would drop the letter.
+TZ_VER="$(pacman -Q tzdata 2>/dev/null | awk '{print $2}' | sed 's/-.*//')"
+[[ "$TZ_VER" =~ ^[0-9]{4}[a-z]?$ ]] || TZ_VER=2026
 {
 	header " from the build host's /usr/share/zoneinfo"
 	cat <<EOF
@@ -301,7 +305,7 @@ done
 # Compiled TZif files and the zone tables, taken from the build host. Only
 # the canonical tree is shipped -- not right/ or posix/.
 pkgname  = tzdata
-pkgver   = $(host_version tzdata 2026)
+pkgver   = $TZ_VER
 pkgrel   = 0
 pkgdesc  = Time zone database (from the build host)
 license  = Public-Domain

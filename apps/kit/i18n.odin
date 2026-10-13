@@ -96,6 +96,11 @@ i18n_set_language :: proc(lang: string) {
 	i18n_init(domain, lang)
 }
 
+// i18n_shutdown drops every catalogue; tr returns msgids afterwards.
+i18n_shutdown :: proc() {
+	i18n_reset()
+}
+
 // i18n_language is the language being shown: the directory name of the most
 // specific catalogue in use ("fr", "pt_BR"), or "en" when the msgids are.
 i18n_language :: proc() -> string {

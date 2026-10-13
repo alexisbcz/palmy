@@ -15,6 +15,9 @@
 #   make -C distro iso        distro/out/palmframe-live.iso, the live installer
 #                             (UEFI and BIOS, runs from RAM; distro/live)
 #   make -C distro run-iso    boot it in QEMU with a blank target disk
+#   make -C distro test-installer  the installer's selftests (no disks touched)
+#   make -C distro test-install    ISO -> GUI and CLI installs -> boot each
+#                             installed disk, all in QEMU; distro/out/shots/
 #   make -C distro clean      remove the packages, root and image (not the
 #                             kernel, busybox or the keys)
 #
@@ -48,7 +51,7 @@ export SOURCE_DATE_EPOCH ?= 0
 
 PALM := $(BIN)/palm
 
-.PHONY: all recipes packages repo image run test serve check-libs clean binaries iso run-iso
+.PHONY: all recipes packages repo image run test serve check-libs clean binaries iso run-iso test-installer test-install
 .DELETE_ON_ERROR:
 
 all: image
@@ -97,27 +100,15 @@ $(foreach a,$(APP_BINS),$(eval $(call app_rule,$(a))))
 
 # The installer: palm-install (distro/installer/cli) and the graphical
 # installer (apps/installer), both over install_core in distro/installer/core.
-# They are built only when their sources are in the tree, and a failed build
-# is reported but not fatal (the leading `-`): they are being written while
-# the rest of the distribution must keep building, and the disk image does
-# not need them. The recipes that ship them are skipped below while the
-# binaries are missing, and the live image (make iso) refuses to be made
-# without their packages.
-INSTALLER_BINS :=
-ifneq ($(wildcard $(ROOT)/distro/installer/cli),)
-INSTALLER_BINS += $(BIN)/palm-install
+# A failed build stops make like any other binary: the live image must never
+# ship a stale installer from an earlier good build.
+INSTALLER_BINS := $(BIN)/palm-install $(BIN)/installer
 $(BIN)/palm-install: $(call srcs,distro/installer)
 	@mkdir -p $(BIN)
-	-cd $(ROOT) && $(ODIN) build distro/installer/cli -o:speed $(ICOLL) -out:$@ || \
-		{ echo "warning: palm-install did not build; its package is skipped or stale"; exit 1; }
-endif
-ifneq ($(wildcard $(ROOT)/apps/installer),)
-INSTALLER_BINS += $(BIN)/installer
+	cd $(ROOT) && $(ODIN) build distro/installer/cli -o:speed $(ICOLL) -out:$@
 $(BIN)/installer: $(call srcs,apps/installer) $(call srcs,distro/installer/core) $(TOOLKIT)
 	@mkdir -p $(BIN)
-	-cd $(ROOT) && $(ODIN) build apps/installer -o:speed $(ICOLL) -out:$@ || \
-		{ echo "warning: installer did not build; its package is skipped or stale"; exit 1; }
-endif
+	cd $(ROOT) && $(ODIN) build apps/installer -o:speed $(ICOLL) -out:$@
 
 binaries: $(BIN)/palm $(BIN)/palm-init $(BIN)/palm-login $(BIN)/wm $(addprefix $(BIN)/,$(APP_BINS)) $(INSTALLER_BINS)
 
@@ -141,10 +132,6 @@ packages: recipes binaries $(OUT)/bzImage $(OUT)/busybox $(KEYS)/palmframe.pub
 	@mkdir -p $(REPO)
 	rm -f $(REPO)/*.palm
 	@set -e; for r in $(DISTRO)/recipes/*/PALMBUILD; do \
-		case "$$(basename $$(dirname $$r))" in palm-install|installer) \
-			b=$(BIN)/$$(basename $$(dirname $$r)); \
-			if [ ! -x $$b ]; then echo "packages: skipping $$(basename $$b) ($$b not built yet)"; continue; fi ;; \
-		esac; \
 		$(PALM) build $$(dirname $$r) -o $(REPO) >/dev/null; \
 	done
 	@echo "packages: $$(ls $(REPO)/*.palm | wc -l) in $(REPO)"
@@ -170,6 +157,20 @@ run-iso:
 
 test:
 	python3 -I -u $(DISTRO)/image/test-boot.py
+
+# The installer's own checks, none of which touch a host disk: install_core
+# and palm-install's selftest (GPTs written into image files, an install into
+# a directory) and the graphical installer's (demo backend only).
+test-installer: $(BIN)/palm-install $(BIN)/installer
+	@mkdir -p $(DISTRO)/build/installer-core
+	cd $(ROOT) && TMPDIR=$(DISTRO)/build/installer-core $(BIN)/palm-install --selftest
+	cd $(ROOT) && $(BIN)/installer --selftest
+
+# End to end, all inside QEMU: the live ISO, the graphical installer driven
+# over QMP onto a blank disk, palm-install onto a second one from the serial
+# console, then each installed disk booted on its own (distro/live/test-install.py).
+test-install: iso
+	python3 -I -u $(DISTRO)/live/test-install.py
 
 serve:
 	@echo "serving $(OUT)/repo on http://0.0.0.0:$(PORT) (the guest uses http://10.0.2.2:$(PORT)/x86_64)"

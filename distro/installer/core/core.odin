@@ -103,6 +103,9 @@ Progress :: struct {
 }
 
 DEFAULT_REPO :: "file:///usr/share/palm/repo"
+// A package-level slice, not a literal in normalise_plan: a slice literal
+// there would point into that procedure's stack frame.
+DEFAULT_PACKAGES := []string{"palmframe"}
 DEFAULT_TARGET :: "/mnt/target"
 DEFAULT_EFIVARS :: "/sys/firmware/efi/efivars"
 DEFAULT_LOG :: "/var/log/palm-install.log"
@@ -234,7 +237,9 @@ install_with :: proc(p: Plan, o: Options, report: proc(Progress, rawptr), user: 
 		root = c.o.target,
 		esp  = join(c.o.target, "boot/efi"),
 	}
-	open_log(&c)
+	if !c.o.dry_run {
+		open_log(&c) // a dry run changes nothing, not even a log file
+	}
 	defer if c.log != nil {os.close(c.log)}
 
 	logf(&c, "palm-install: %s, disk %s, target %s%s%s", time_stamp(), c.p.disk, c.t.root,
@@ -315,7 +320,7 @@ normalise_plan :: proc(p: Plan) -> Plan {
 	q := p
 	if q.repo == "" {q.repo = DEFAULT_REPO}
 	if len(q.packages) == 0 {
-		q.packages = {"palmframe"}
+		q.packages = DEFAULT_PACKAGES
 	}
 	if q.root_password == "" {q.root_password = q.password}
 	if q.keyboard.layout == "" {q.keyboard.layout = "us"}
@@ -352,7 +357,7 @@ open_log :: proc(c: ^Ctx) {
 	candidates := [?]string{c.o.log_path, "/tmp/palm-install.log"}
 	for path in candidates {
 		if path == "" {continue}
-		_ = os.make_directory_all(dir_of(path))
+		_ = mkdir_p(dir_of(path))
 		f, err := os.open(path, {.Write, .Create, .Append}, os.perm_number(0o600))
 		if err == nil {
 			c.log = f
@@ -445,4 +450,14 @@ time_stamp :: proc() -> string {
 	y, mo, d := time.date(now)
 	h, mi, s := time.clock(now)
 	return fmt.tprintf("%04d-%02d-%02d %02d:%02d:%02d UTC", y, int(mo), d, h, mi, s)
+}
+
+// mkdir_p is make_directory_all without the complaint when the directory is
+// already there, which is the normal case on a second run.
+mkdir_p :: proc(path: string) -> os.Error {
+	e := os.make_directory_all(path)
+	if e != nil && os.is_dir(path) {
+		return nil
+	}
+	return e
 }

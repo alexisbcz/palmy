@@ -4,7 +4,7 @@
 # Compiled TZif files and the zone tables, taken from the build host. Only
 # the canonical tree is shipped -- not right/ or posix/.
 pkgname  = tzdata
-pkgver   = 2026
+pkgver   = 2026c
 pkgrel   = 0
 pkgdesc  = Time zone database (from the build host)
 license  = Public-Domain

@@ -53,12 +53,23 @@ list_box :: proc(ui: ^p.Ctx, class := "flex-1") -> int {
 	return idx
 }
 
-// keep_visible scrolls the selected row into view after the arrows moved it,
-// or when the page has just opened on a selection further down.
-keep_visible :: proc(ui: ^p.Ctx, list, row: int, force: bool) {
-	if scroll_selection || force {
-		p.scroll_into_view(ui, p.node_id(ui, list), p.node_id(ui, row), 8)
+// keep_visible scrolls the selected row into view after the arrows or the
+// search moved it, and when a page opens on a selection further down.
+// palmy scrolls by last frame's rectangles, so on the frame a row first
+// appears there is nothing to scroll to yet: the request stays pending until
+// the row has been laid out once.
+keep_visible :: proc(st: ^St, ui: ^p.Ctx, list, row: int) {
+	if !scroll_selection && !st.scroll_pending {
+		return
 	}
+	id := p.node_id(ui, row)
+	if p.rect_of(ui, id).h <= 0 {
+		st.scroll_pending = true
+		p.redraw(ui)
+		return
+	}
+	p.scroll_into_view(ui, p.node_id(ui, list), id, 8)
+	st.scroll_pending = false
 }
 
 // ---------------------------------------------------------------------------
@@ -128,7 +139,6 @@ page_language :: proc(st: ^St, ui: ^p.Ctx) {
 
 page_keyboard :: proc(st: ^St, ui: ^p.Ctx) {
 	now := p.elapsed(ui)
-	opening := st.want_focus
 	cols := hrow(ui, "w-full flex-1 min-h-0 gap-6")
 	defer hend(ui, cols)
 
@@ -161,7 +171,7 @@ page_keyboard :: proc(st: ^St, ui: ^p.Ctx) {
 			p.text(ui, k.layout, "text-xs font-mono text-muted-foreground")
 			hend(ui, row)
 			if sel {
-				keep_visible(ui, list, row, opening)
+				keep_visible(st, ui, list, row)
 			}
 		}
 		if len(visible) == 0 {
@@ -228,13 +238,17 @@ page_keyboard :: proc(st: ^St, ui: ^p.Ctx) {
 // 3. Time zone
 // ---------------------------------------------------------------------------
 
-MONTHS := [?]string {
-	N("January"), N("February"), N("March"), N("April"), N("May"), N("June"),
-	N("July"), N("August"), N("September"), N("October"), N("November"), N("December"),
+month_name :: proc(m: int) -> string {
+	names := [?]string {
+		N("January"), N("February"), N("March"), N("April"), N("May"), N("June"),
+		N("July"), N("August"), N("September"), N("October"), N("November"), N("December"),
+	}
+	return tr(names[clamp(m - 1, 0, 11)])
 }
 
-WEEKDAYS := [?]string {
-	N("Sunday"), N("Monday"), N("Tuesday"), N("Wednesday"), N("Thursday"), N("Friday"), N("Saturday"),
+weekday_name :: proc(d: int) -> string {
+	names := [?]string{N("Sunday"), N("Monday"), N("Tuesday"), N("Wednesday"), N("Thursday"), N("Friday"), N("Saturday")}
+	return tr(names[clamp(d, 0, 6)])
 }
 
 // clock_now is the wall clock, which shots.odin pins so pictures do not
@@ -249,7 +263,6 @@ clock_now :: proc() -> time.Time {
 pinned_clock: time.Time
 
 page_timezone :: proc(st: ^St, ui: ^p.Ctx) {
-	opening := st.want_focus
 	p.col(ui, "w-full flex-1 min-h-0 gap-4")
 	defer p.end(ui)
 
@@ -270,9 +283,9 @@ page_timezone :: proc(st: ^St, ui: ^p.Ctx) {
 		p.col(ui, "flex-1 gap-0.5 min-w-0")
 		txt(ui, z.city, "text-lg font-semibold text-foreground")
 		date := tr("{weekday}, {day} {month} {year}")
-		date, _ = strings.replace_all(date, "{weekday}", tr(WEEKDAYS[int(wd)]), context.temp_allocator)
+		date, _ = strings.replace_all(date, "{weekday}", weekday_name(int(wd)), context.temp_allocator)
 		date, _ = strings.replace_all(date, "{day}", fmt.tprintf("%d", d), context.temp_allocator)
-		date, _ = strings.replace_all(date, "{month}", tr(MONTHS[int(mon) - 1]), context.temp_allocator)
+		date, _ = strings.replace_all(date, "{month}", month_name(int(mon)), context.temp_allocator)
 		date, _ = strings.replace_all(date, "{year}", fmt.tprintf("%d", y), context.temp_allocator)
 		txt(ui, date, "text-sm text-muted-foreground")
 		if known {
@@ -286,7 +299,7 @@ page_timezone :: proc(st: ^St, ui: ^p.Ctx) {
 	hend(ui, card)
 
 	n := p.node_count(ui)
-	if changed, _ := sc.input(ui, &st.zone_search, tr("Search for a city, a region or a country code")); changed {
+	if changed, _ := sc.input(ui, &st.zone_search, tr("Search for a city, a region or a country")); changed {
 		if v := filtered_zones(st); len(v) > 0 {
 			pick_zone(st, v[0])
 			scroll_selection = true
@@ -308,13 +321,14 @@ page_timezone :: proc(st: ^St, ui: ^p.Ctx) {
 		p.col(ui, "flex-1 min-w-0")
 		txt(ui, zz.city, "text-sm whitespace-nowrap truncate")
 		p.end(ui)
-		p.text(ui, zz.region, "text-xs text-muted-foreground whitespace-nowrap")
-		p.div(ui, "w-10 items-end")
-		p.text(ui, zz.country, "text-xs font-mono text-muted-foreground")
-		p.end(ui)
+		place := zz.region
+		if zz.country != "" {
+			place = zz.region == "" ? zz.country : fmt.tprintf("%s · %s", zz.country, zz.region)
+		}
+		p.text(ui, place, "text-xs text-muted-foreground whitespace-nowrap")
 		hend(ui, row)
 		if sel {
-			keep_visible(ui, list, row, opening)
+			keep_visible(st, ui, list, row)
 		}
 	}
 	if len(visible) == 0 {
@@ -434,17 +448,15 @@ page_account :: proc(st: ^St, ui: ^p.Ctx) {
 		if p.focused(ui, check) {
 			p.apply(ui, "ring-3 ring-ring/50")
 		}
+		// Space toggles; Enter on the box is Next, as everywhere else.
 		toggled := p.clickable(ui, check) || (p.focused(ui, check) && p.key_pressed(ui, p.KEY_SPACE, false))
-		if p.focused(ui, check) && (p.key_pressed(ui, p.KEY_RETURN, false)) {
-			// Enter on the box is Next, like everywhere else.
-		}
 		{
 			p.div(ui, st.same_root ? "size-4 rounded-sm bg-primary border border-primary items-center justify-center shrink-0" : "size-4 rounded-sm border border-input shrink-0")
 			if st.same_root {
 				p.icon(ui, II_CHECK, "size-3 text-primary-foreground")
 			}
 			p.end(ui)
-			p.text(ui, tr("Use the same password for the administrator (root)"), "text-sm text-foreground")
+			txt(ui, tr("Use the same password for the administrator (root)"), "flex-1 min-w-0 text-sm text-foreground")
 		}
 		hend(ui, check)
 		if toggled {
@@ -503,7 +515,8 @@ text_field :: proc(
 	if shown {
 		r := hrow(ui, "items-center gap-1.5")
 		p.icon(ui, II_CIRCLE_ALERT, "size-3.5 text-destructive shrink-0")
-		p.text(ui, tr(problem), "text-xs text-destructive")
+		// flex-1: one problem replaces another at the same id (see `draw`).
+		txt(ui, tr(problem), "flex-1 min-w-0 text-xs text-destructive")
 		hend(ui, r)
 	} else if hint != "" {
 		txt(ui, hint, "text-xs text-muted-foreground")
@@ -649,7 +662,7 @@ page_install :: proc(st: ^St, ui: ^p.Ctx) {
 	}
 	snap := worker_snapshot(st.worker, LOG_KEEP)
 	failed := snap.finished && !snap.ok
-	frac := overall_fraction(snap.progress)
+	frac := clamp(snap.progress.fraction, 0, 1)
 
 	p.col(ui, "w-full max-w-[880] flex-1 min-h-0 gap-5")
 	defer p.end(ui)
@@ -658,11 +671,11 @@ page_install :: proc(st: ^St, ui: ^p.Ctx) {
 	{
 		head := hrow(ui, "w-full items-center gap-3")
 		if failed {
-			p.icon(ui, II_TRIANGLE_ALERT, "size-5 text-destructive")
-			txt(ui, tr("The installation failed"), "text-lg font-semibold text-destructive")
+			p.icon(ui, II_TRIANGLE_ALERT, "size-5 text-destructive shrink-0")
+			p.text(ui, tr("The installation failed"), "text-lg font-semibold text-destructive whitespace-nowrap")
 		} else {
 			sc.spinner(ui, "size-5", f32(ui.now))
-			txt(ui, step_name(snap.progress.step), "text-lg font-semibold text-foreground")
+			p.text(ui, step_name(snap.progress.step), "text-lg font-semibold text-foreground whitespace-nowrap")
 		}
 		p.spacer(ui)
 		p.textf(ui, "text-sm font-medium text-muted-foreground tabular-nums", "%d%%", int(frac * 100 + 0.5))
@@ -681,17 +694,17 @@ page_install :: proc(st: ^St, ui: ^p.Ctx) {
 			switch {
 			case s < snap.progress.step || snap.progress.step == .Done:
 				p.icon(ui, II_CHECK, "size-3.5 text-emerald-400")
-				p.text(ui, step_name(s), "text-xs text-foreground")
+				p.text(ui, step_name(s), "text-xs text-foreground whitespace-nowrap")
 			case s == snap.progress.step && !failed:
 				p.icon(ui, II_LOADER_CIRCLE, "size-3.5 text-foreground", f32(ui.now))
-				p.text(ui, step_name(s), "text-xs font-medium text-foreground")
+				p.text(ui, step_name(s), "text-xs font-medium text-foreground whitespace-nowrap")
 			case s == snap.progress.step && failed:
 				p.icon(ui, II_CIRCLE_ALERT, "size-3.5 text-destructive")
-				p.text(ui, step_name(s), "text-xs font-medium text-destructive")
+				p.text(ui, step_name(s), "text-xs font-medium text-destructive whitespace-nowrap")
 			case:
 				p.div(ui, "size-3.5 rounded-full border border-border")
 				p.end(ui)
-				p.text(ui, step_name(s), "text-xs text-muted-foreground")
+				p.text(ui, step_name(s), "text-xs text-muted-foreground whitespace-nowrap")
 			}
 			hend(ui, r)
 		}
