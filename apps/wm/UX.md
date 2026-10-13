@@ -661,6 +661,14 @@ Add a `bind` line to the guest's `~/.config/palmy/wm.conf` (a
 `--guest-script`), wait 1.5 s for the mtime reload, reopen — the new binding
 is listed.
 
+A user file adds to the default table rather than replacing it: a `bind` on a
+chord the default uses replaces that one, `unbind = <mods>, <key>` removes
+one, and `default_binds = replace` asks for an empty table to start from. (It
+used to be the other way round, and one added shortcut cost every default —
+the cheat sheet itself, close, the workspace keys.) A reload re-applies only
+the layout settings the file changed, so it never re-tiles a workspace the
+user had set floating.
+
 ### P1-9. Edge resistance and window-to-window snapping
 
 While moving a floating window, its edges stick (8 px) to the work-area edges

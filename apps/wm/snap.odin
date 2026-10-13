@@ -197,12 +197,10 @@ snap_key :: proc(cur: Snap, maximized: bool, dir: Cfg_Dir) -> Snap_Key_Result {
 		}
 		return {zone = .Maximize}
 	case .Down:
-		#partial switch cur {
-		case .Top_Left:
-			return {zone = .Bottom_Left}
-		case .Top_Right:
-			return {zone = .Bottom_Right}
-		case .None:
+		// From any zone, quarters included, Down restores: it is the one
+		// key that always undoes a snap (UX.md P0-5). A bottom quarter is
+		// reached from a half, or by dragging to a corner.
+		if cur == .None {
 			return {minimize = true}
 		}
 		return {restore = true}

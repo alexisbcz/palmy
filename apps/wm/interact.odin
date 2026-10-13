@@ -169,7 +169,10 @@ ix_covered :: proc(s: ^Server, t: ^Toplevel) -> bool {
 			above = true
 			continue
 		}
-		if above && w.mapped && !w.minimized && p.rect_overlaps(frame_rect(w), fr) {
+		// Only the floating band counts: the lift never goes over an
+		// always-on-top or fullscreen window, so those covering it are no
+		// reason to lift.
+		if above && w.mapped && !w.minimized && ws_layer(s, w) == 1 && p.rect_overlaps(frame_rect(w), fr) {
 			return true
 		}
 	}
@@ -243,12 +246,18 @@ ix_begin_drag :: proc(s: ^Server, t: ^Toplevel, kind: Drag, edges: Edges, btn :=
 // ix_start_move turns an armed press (or a client's move request) into a
 // move: a maximized, snapped or tiled window is restored to its free size
 // under the pointer first (P0-4), and only now leaves the layout.
+//
+// The move is anchored at the press, not at the pointer that crossed the
+// threshold: the window then catches up with the travel the threshold
+// swallowed, and the pixel that was pressed stays under the pointer for
+// the whole move however coarse the motion events are.
 ix_start_move :: proc(s: ^Server, t: ^Toplevel) {
-	ix.move_keep_on = ix_restore_for_move(s, t, s_pointer)
+	grab := ix.press_at
+	ix.move_keep_on = ix_restore_for_move(s, t, grab)
 	m := ws_win(t)
 	m.auto_float = false
 	s.drag = .Move
-	s.drag_from = s_pointer
+	s.drag_from = grab
 	s.drag_orig = {t.x, t.y, t.req_w, t.req_h}
 	ix.last_click_t = nil
 	raise_window(s, t)

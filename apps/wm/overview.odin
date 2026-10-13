@@ -102,31 +102,83 @@ overview_forget :: proc(s: ^Server, t: ^Toplevel) {
 	ov.built_ws = -1
 }
 
-// ov_grid is the layout, pure: n boxes of aspect ratios `aspect` (w / h)
-// placed into an area as a grid, rows filled in the order given, each box
-// as large as its cell allows but never larger than max_w x max_h.
+// ov_grid is the layout, pure: n boxes of sizes `sizes` placed into an
+// area in rows, filled in the order given.
+//
+// Every box is scaled by the same factor — the largest at which all the
+// rows fit, never above 1 — so the windows keep their sizes relative to
+// each other: the big one you were working in reads as the big one, not
+// as the smallest thumbnail because it had the most to shrink. Each row is
+// centred horizontally, the rows as a block vertically, and the boxes of a
+// row share a centre line, with OV_LABEL_H under each row for the titles.
+OV_LABEL_H :: 26
+
 ov_grid :: proc(area: p.Rect, sizes: [][2]f32, gap: f32, out: []p.Rect) {
 	n := len(sizes)
 	if n == 0 {
 		return
 	}
-	cols := int(math.ceil(math.sqrt(f32(n) * area.w / max(area.h, 1) * 0.75)))
-	cols = clamp(cols, 1, n)
-	rows := (n + cols - 1) / cols
-	cw := (area.w - gap * f32(cols - 1)) / f32(cols)
-	ch := (area.h - gap * f32(rows - 1)) / f32(rows)
-	for i in 0 ..< n {
-		r := i / cols
-		in_row := min(cols, n - r * cols)
-		c := i % cols
-		// A short last row is centred rather than left-aligned.
-		row_w := f32(in_row) * cw + gap * f32(in_row - 1)
-		x0 := area.x + (area.w - row_w) / 2
-		cell := p.Rect{x0 + f32(c) * (cw + gap), area.y + f32(r) * (ch + gap), cw, ch - 26}
-		w, h := sizes[i].x, sizes[i].y
-		sc := min(cell.w / max(w, 1), cell.h / max(h, 1), 1)
-		bw, bh := w * sc, h * sc
-		out[i] = {cell.x + (cell.w - bw) / 2, cell.y + (cell.h - bh) / 2, bw, bh}
+	// fits packs the rows at scale sc and returns the block's height, or a
+	// value above area.h if one box alone is wider than the area.
+	fits :: proc(area: p.Rect, sizes: [][2]f32, gap, sc: f32) -> f32 {
+		total, row_w, row_h := f32(0), f32(0), f32(0)
+		rows := 0
+		for sz in sizes {
+			bw, bh := sz.x * sc, sz.y * sc
+			if bw > area.w {
+				return area.h + 1
+			}
+			if row_w > 0 && row_w + gap + bw > area.w {
+				total += row_h + OV_LABEL_H
+				rows += 1
+				row_w, row_h = 0, 0
+			}
+			row_w += (row_w > 0 ? gap : 0) + bw
+			row_h = max(row_h, bh)
+		}
+		total += row_h + OV_LABEL_H + gap * f32(rows)
+		return total
+	}
+	lo, hi := f32(0.02), f32(1)
+	if fits(area, sizes, gap, hi) > area.h {
+		for _ in 0 ..< 24 {
+			mid := (lo + hi) / 2
+			if fits(area, sizes, gap, mid) <= area.h {
+				lo = mid
+			} else {
+				hi = mid
+			}
+		}
+	} else {
+		lo = hi
+	}
+	sc := lo
+
+	// Lay the rows out at that scale: first the rows' extents, then each
+	// box centred in its row.
+	block_h := fits(area, sizes, gap, sc)
+	y := area.y + max((area.h - block_h) / 2, 0)
+	i := 0
+	for i < n {
+		j := i
+		row_w, row_h := f32(0), f32(0)
+		for j < n {
+			bw := sizes[j].x * sc
+			if j > i && row_w + gap + bw > area.w {
+				break
+			}
+			row_w += (j > i ? gap : 0) + bw
+			row_h = max(row_h, sizes[j].y * sc)
+			j += 1
+		}
+		x := area.x + (area.w - row_w) / 2
+		for k in i ..< j {
+			bw, bh := sizes[k].x * sc, sizes[k].y * sc
+			out[k] = {x, y + (row_h - bh) / 2, bw, bh}
+			x += bw + gap
+		}
+		y += row_h + OV_LABEL_H + gap
+		i = j
 	}
 }
 
