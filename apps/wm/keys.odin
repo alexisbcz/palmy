@@ -374,7 +374,7 @@ bind_human :: proc(b: ^Cfg_Bind) -> string {
 	case .Move_To_Workspace:
 		return fmt.tprintf("Move window to workspace %d", b.arg)
 	case .Move_To_Workspace_Follow:
-		return fmt.tprintf("Move window to workspace %d and follow", b.arg)
+		return fmt.tprintf("Take window to workspace %d", b.arg)
 	case .Move_To_Workspace_Rel:
 		return b.arg < 0 ? "Move window to previous workspace" : "Move window to next workspace"
 	case .Cascade:

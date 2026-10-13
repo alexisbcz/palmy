@@ -184,7 +184,7 @@ overview_layout :: proc(s: ^Server) {
 		}
 		return a.x + a.w / 2 < b.x + b.w / 2
 	})
-	area := p.Rect{f32(o.x) + 48, top + OV_STRIP_H + 24, f32(o.w) - 96, f32(o.h) - (top - f32(o.y)) - OV_STRIP_H - 56}
+	area := p.Rect{f32(o.x) + 48, top + OV_STRIP_H + 52, f32(o.w) - 96, f32(o.h) - (top - f32(o.y)) - OV_STRIP_H - 84}
 	sizes := make([][2]f32, len(wins), context.temp_allocator)
 	for t, i in wins {
 		fr := frame_rect(t)
@@ -226,6 +226,7 @@ ov_pick :: proc(s: ^Server, i: int) {
 	t := ov.items[i].t
 	overview_close(s)
 	focus_window(s, t)
+	ix_reveal(s, t)
 }
 
 // ov_item_rect is where item i is drawn now, mid-flight on the way in.
@@ -440,7 +441,7 @@ overview_draw :: proc(s: ^Server, app: ^p.App, cv: ^p.Canvas, oi: int) {
 	q := strings.to_string(ov.filter)
 	if q != "" {
 		w := max(p.text_width(f, q, 14, .Sans, .Medium) + 40, 240)
-		r := p.Rect{f32(o.x) + (f32(o.w) - w) / 2, top + OV_STRIP_H - 6, w, 30}
+		r := p.Rect{f32(o.x) + (f32(o.w) - w) / 2, top + OV_STRIP_H + 10, w, 30}
 		p.fill_round_rect(cv, r, {8, 8, 8, 8}, p.hex(0x18181b))
 		p.stroke_round_rect(cv, r, {8, 8, 8, 8}, 1, p.hex(ACCENT))
 		p.draw_text(cv, f, q, r.x + 14, r.y + 20, 14, p.hex(0xfafafa), .Sans, .Medium)

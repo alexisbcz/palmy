@@ -74,7 +74,10 @@ cheat_rows :: proc(s: ^Server) -> []Cheat_Row {
 		}
 	}
 	for m in CHEAT_MOUSE {
-		r := Cheat_Row{keys = {m[0]}, label = m[1], group = "Mouse"}
+		// The gesture is one "cap"; it needs a slice that outlives the loop.
+		keys := make([]string, 1, context.temp_allocator)
+		keys[0] = m[0]
+		r := Cheat_Row{keys = keys, label = m[1], group = "Mouse"}
 		if q != "" && !strings.contains(strings.to_lower(m[1], context.temp_allocator), q) && !strings.contains(strings.to_lower(m[0], context.temp_allocator), q) {
 			continue
 		}
@@ -131,32 +134,49 @@ cheat_draw :: proc(s: ^Server, app: ^p.App, cv: ^p.Canvas) {
 	f := &app.fonts
 	o := s.outputs[s.cur_out]
 	rows := cheat_rows(s)
-	ROW :: f32(21)
-	HEAD :: f32(30)
-	avail_h := f32(o.h - ws_bar_h(s)) - 140
-	// Items per column: headings count as rows of their own height. The
-	// number of columns is whatever makes the sheet fit the output.
-	heights := make([dynamic]f32, 0, len(rows) + 8, context.temp_allocator)
-	kinds := make([dynamic]int, 0, len(rows) + 8, context.temp_allocator) // -1 heading, else row index
+	ROW :: f32(19)
+	HEAD :: f32(27)
+	TOP :: f32(66)
+	max_h := f32(o.h - ws_bar_h(s)) - 60
+	avail_h := max_h - TOP - 20
+
+	// Lay the rows out in columns, top to bottom, starting a new column
+	// whenever the next row would run past the bottom. A heading never ends
+	// a column on its own.
+	Placed :: struct {
+		col:  int,
+		y:    f32,
+		row:  int, // index into rows; negative for a heading of rows[-row-1]
+	}
+	placed := make([dynamic]Placed, 0, len(rows) + 8, context.temp_allocator)
+	col := 0
+	y := f32(0)
 	last := ""
 	for r, i in rows {
 		if r.group != last {
-			append(&heights, HEAD)
-			append(&kinds, -1 - i)
+			if y + HEAD + ROW > avail_h && y > 0 {
+				col += 1
+				y = 0
+			}
+			append(&placed, Placed{col, y, -1 - i})
+			y += HEAD
 			last = r.group
 		}
-		append(&heights, ROW)
-		append(&kinds, i)
+		if y + ROW > avail_h {
+			col += 1
+			y = 0
+		}
+		append(&placed, Placed{col, y, i})
+		y += ROW
 	}
-	total := f32(0)
-	for h in heights {
-		total += h
+	cols := col + 1
+	col_w := min(f32(330), (f32(o.w) - 72) / f32(cols))
+	used_h := f32(0)
+	for pl in placed {
+		used_h = max(used_h, pl.y + (pl.row < 0 ? HEAD : ROW))
 	}
-	cols := clamp(int(total / avail_h) + 1, 1, 4)
-	col_w := min(f32(330), (f32(o.w) - 120) / f32(cols))
-	per_col := total / f32(cols)
-	pw := col_w * f32(cols) + 48
-	ph := min(per_col + 120, f32(o.h - ws_bar_h(s)) - 40)
+	pw := col_w * f32(cols) + 40
+	ph := min(TOP + used_h + 20, max_h)
 	panel := p.Rect{f32(o.x) + (f32(o.w) - pw) / 2, f32(o.y + ws_bar_h(s)) + (f32(o.h - ws_bar_h(s)) - ph) / 2, pw, ph}
 	cheat.panel = panel
 	p.reset_clip(cv)
@@ -164,51 +184,43 @@ cheat_draw :: proc(s: ^Server, app: ^p.App, cv: ^p.Canvas) {
 	p.drop_shadow(cv, panel, {14, 14, 14, 14}, 40, 0, {0, 14}, p.hexa(0x000000aa))
 	p.fill_round_rect(cv, panel, {14, 14, 14, 14}, p.hex(0x0f0f12))
 	p.stroke_round_rect(cv, panel, {14, 14, 14, 14}, 1, p.hex(0x27272a))
-	p.draw_text(cv, f, "Keyboard shortcuts", panel.x + 24, panel.y + 36, 17, p.hex(0xfafafa), .Sans, .Semibold)
+	p.draw_text(cv, f, "Keyboard shortcuts", panel.x + 20, panel.y + 34, 17, p.hex(0xfafafa), .Sans, .Semibold)
 	q := strings.to_string(cheat.filter)
 	hint := q != "" ? q : "type to filter"
 	hw := max(p.text_width(f, hint, 12.5, .Sans, .Regular) + 28, 200)
-	fr := p.Rect{panel.x + panel.w - hw - 24, panel.y + 18, hw, 28}
+	fr := p.Rect{panel.x + panel.w - hw - 20, panel.y + 16, hw, 28}
 	p.fill_round_rect(cv, fr, {7, 7, 7, 7}, p.hex(0x18181b))
 	p.stroke_round_rect(cv, fr, {7, 7, 7, 7}, 1, p.hex(q != "" ? ACCENT : 0x27272a))
 	p.draw_text(cv, f, hint, fr.x + 12, fr.y + 18.5, 12.5, p.hex(q != "" ? 0xfafafa : 0x71717a), .Sans, .Regular)
+	if len(rows) == 0 {
+		p.draw_text(cv, f, "no shortcut matches", panel.x + 20, panel.y + TOP + 16, 12.5, p.hex(0x71717a), .Sans, .Regular)
+	}
 
-	p.push_clip(cv, {panel.x, panel.y + 56, panel.w, panel.h - 64})
-	x := panel.x + 24
-	y0 := panel.y + 64
-	y := y0
-	col := 0
-	for k, i in kinds {
-		h := heights[i]
-		if y + h > y0 + per_col + ROW && col < cols - 1 && k < 0 {
-			col += 1
-			x = panel.x + 24 + f32(col) * col_w
-			y = y0
-		}
-		if k < 0 {
-			r := rows[-k - 1]
-			p.draw_text(cv, f, r.group, x, y + 20, 11, p.hex(0xa5b4fc), .Sans, .Semibold)
-			y += h
+	p.push_clip(cv, {panel.x, panel.y + TOP - 8, panel.w, panel.h - TOP})
+	for pl in placed {
+		x := panel.x + 20 + f32(pl.col) * col_w
+		yy := panel.y + TOP + pl.y
+		if pl.row < 0 {
+			r := rows[-pl.row - 1]
+			p.draw_text(cv, f, r.group, x, yy + 18, 11, p.hex(0xa5b4fc), .Sans, .Semibold)
 			continue
 		}
-		r := rows[k]
+		r := rows[pl.row]
 		kx := x
 		for part, j in r.keys {
 			if j > 0 {
 				kx += 3
 			}
-			kw := p.text_width(f, part, 10.5, .Sans, .Medium) + 10
-			cap := p.Rect{kx, y + 2, kw, 17}
+			kw := p.text_width(f, part, 10.5, .Sans, .Medium) + 9
+			cap := p.Rect{kx, yy + 1, kw, 16}
 			p.fill_round_rect(cv, cap, {4, 4, 4, 4}, p.hex(0x18181b))
 			p.stroke_round_rect(cv, cap, {4, 4, 4, 4}, 1, p.hex(0x3f3f46))
-			p.fill_rect(cv, {cap.x + 2, cap.y + cap.h - 1, cap.w - 4, 1}, p.hex(0x3f3f46))
-			p.draw_text(cv, f, part, kx + 5, y + 14.5, 10.5, p.hex(0xe4e4e7), .Sans, .Medium)
+			p.draw_text(cv, f, part, kx + 4.5, yy + 13, 10.5, p.hex(0xe4e4e7), .Sans, .Medium)
 			kx += kw
 		}
-		lx := max(kx + 10, x + 128)
-		label := ellipsize_end(f, r.label, 12, .Regular, x + col_w - 12 - lx)
-		p.draw_text(cv, f, label, lx, y + 15, 12, p.hex(0xd4d4d8), .Sans, .Regular)
-		y += h
+		lx := max(kx + 8, x + 112)
+		label := ellipsize_end(f, r.label, 11.5, .Regular, x + col_w - 10 - lx)
+		p.draw_text(cv, f, label, lx, yy + 13, 11.5, p.hex(0xd4d4d8), .Sans, .Regular)
 	}
 	p.pop_clip(cv)
 }

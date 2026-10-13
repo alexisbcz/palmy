@@ -606,6 +606,9 @@ map_focus :: proc(s: ^Server, t: ^Toplevel) {
 	}
 	if take {
 		focus_window(s, t)
+		// A new tiled window under floating ones is shown through them, so
+		// the window that just took the keyboard is never invisible.
+		ix_reveal(s, t)
 		return
 	}
 	// Behind the focused window: just under it in the same band, so it is
