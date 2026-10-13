@@ -1799,6 +1799,7 @@ ev_apply_to_input :: proc(in_: ^p.Input, scale: f32 = 1) {
 	in_.scroll = {}
 	in_.mouse_delta = {}
 	clear(&in_.keys)
+	clear(&key_codes)
 	in_.over_surface = true
 	in_.focused = true
 
@@ -1808,6 +1809,9 @@ ev_apply_to_input :: proc(in_: ^p.Input, scale: f32 = 1) {
 			in_.mods = e.mods
 			if e.down {
 				append(&in_.keys, p.Key_Event{sym = e.sym, mods = e.mods, repeat = e.repeat})
+				// The keycode rides alongside, so bindings can match the key
+				// the user pressed and not only what it typed (keys.odin).
+				append(&key_codes, e.keycode)
 			}
 		case .Pointer_Motion, .Pointer_Motion_Absolute:
 			in_.mouse_delta += {f32(e.dx), f32(e.dy)}

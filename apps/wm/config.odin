@@ -19,6 +19,7 @@ import "core:fmt"
 import "core:os"
 import "core:strconv"
 import "core:strings"
+import "core:text/regex"
 import "core:time"
 import p "palmy:."
 
@@ -55,6 +56,19 @@ Cfg_Act :: enum u8 {
 	Reload,
 	Quit, // leave the compositor (the nested host window closes)
 	Session, // intent only: logged, never executed
+
+	// The interaction model of UX.md.
+	Snap_Dir, // arg: Cfg_Dir. Floating: the snap table; tiled: max/restore/focus
+	Toggle_Fullscreen,
+	Toggle_On_Top,
+	Toggle_Sticky,
+	Move_To_Workspace_Follow, // arg: 1-based workspace
+	Lower,
+	Switcher, // arg: 0 this workspace, 1 every workspace
+	Overview,
+	Cheat_Sheet,
+	Window_Menu,
+	Debug_Hud,
 }
 
 Cfg_Dir :: enum u8 {
@@ -71,6 +85,9 @@ Cfg_Bind :: struct {
 	// keys, and a daily driver still wants F11 to maximise.
 	any_mods: bool,
 	sym:     u32,
+	// `code:N` binds a physical key by its XKB keycode instead of a symbol,
+	// for keys whose symbol differs between layouts. 0 means "by symbol".
+	code:    u32,
 	act:     Cfg_Act,
 	arg:     int,
 	argv:    []string,
@@ -81,6 +98,29 @@ Cfg_Placement :: enum u8 {
 	Cascade,
 	Center,
 	Pointer,
+}
+
+// Cfg_Focus_New decides whether a window that maps takes the keyboard
+// (UX.md P0-13). `smart` lets it only when the user launched it in the last
+// two seconds or has not typed in the last one, so a window that opens by
+// itself cannot steal the rest of a sentence.
+Cfg_Focus_New :: enum u8 {
+	Smart,
+	Always,
+	Never,
+}
+
+Cfg_Anim :: enum u8 {
+	On,
+	Off,
+	Reduced, // opacity only, 100 ms
+}
+
+Cfg_Wall_Mode :: enum u8 {
+	Fill,
+	Fit,
+	Center,
+	Tile,
 }
 
 // Cfg_Rule matches a toplevel once, when it maps. An empty field matches
@@ -98,6 +138,19 @@ Cfg_Rule :: struct {
 	maximize:    bool,
 	set_size:    bool,
 	w, h:        int,
+
+	// P1-11. `app_re` is a regular expression on the app_id (`class~` or
+	// `app_id~`), searched rather than anchored, like grep.
+	app_re:      string,
+	opacity:     f32, // 0: unset
+	on_top:      bool,
+	sticky:      bool,
+	placement:   int, // 0 unset, 1 centre, 2 under the pointer
+	no_anim:     bool,
+	fullscreen:  bool,
+	no_focus:    bool,
+	output:      string,
+	rerule:      bool, // match again whenever the title changes
 }
 
 Cfg_Output :: struct {
@@ -136,6 +189,26 @@ Cfg :: struct {
 	master_count:    int,
 	move_step:       int,
 	resize_step:     int,
+
+	// The title bar buttons, in order, and which side they sit on
+	// (`buttons = minimize,maximize,close` or `close,minimize,maximize:left`).
+	buttons:         [3]Frame_Btn,
+	buttons_n:       int,
+	buttons_left:    bool,
+	double_click_ms: int,
+	focus_new:       Cfg_Focus_New,
+	debug_hud:       bool,
+	animations:      Cfg_Anim,
+	// The modifier that turns a press anywhere in a window into a move or a
+	// resize. It defaults to `mod`; `mod_drag = alt` is for X11 hands.
+	drag_mod:        p.Modifiers,
+	drag_mod_set:    bool,
+	hot_corner:      bool,
+	super_tap:       bool, // a lone tap of Super opens the overview
+	wallpaper:       string,
+	wallpaper_mode:  Cfg_Wall_Mode,
+	wallpaper_color: u32,
+	wallpaper_flat:  bool,
 
 	binds:           [dynamic]Cfg_Bind,
 	rules:           [dynamic]Cfg_Rule,
@@ -179,50 +252,90 @@ master_count        = 1
 move_step           = 36
 resize_step         = 48
 
+# Title bar buttons, in order; append :left to put them on the left.
+buttons             = minimize,maximize,close
+double_click_ms     = 400
+
+# Whether a new window takes the keyboard: smart (only when you just launched
+# it, or are not typing), always, or never.
+focus_new           = smart
+
+# Motion. off, on, or reduced (fades only).
+animations          = on
+
+# A lone tap of SUPER opens the overview, as does pushing the pointer into
+# the top-left corner.
+super_tap           = on
+hot_corner          = on
+
+# The desktop: a picture (fill, fit, center or tile), or a flat colour, or
+# by default a generated gradient.
+#   wallpaper       = ~/Pictures/wall.png
+#   wallpaper_mode  = fill
+#   wallpaper_color = #101014
+
+# The window counts and frame rate, for whoever is tuning the compositor.
+debug_hud           = off
+
 # Launchers. Commands are resolved against $PATH, so no absolute paths.
 bind = $mod,       Return, spawn term
 bind = $mod,       T,      spawn term
+bind = $mod,       Space,  spawn launcher
 bind = $mod,       D,      spawn launcher
 bind = $mod,       C,      spawn counter
 bind = $mod,       G,      spawn gallery
 bind = $mod,       O,      spawn todo
 bind = $mod,       P,      spawn pixels
 
-# Focus, stacking and the window itself.
-bind = $mod,       Tab,    focusnext
-bind = $mod SHIFT, Tab,    focusprev
+# The window itself.
 bind = $mod,       Q,      close
+bind = ALT,        F4,     close
 bind = $mod,       M,      togglemaximize
 bind = $mod,       N,      minimize
 bind = $mod,       V,      togglefloat
-bind = $mod,       F,      toggletiling
-bind = $mod,       Space,  nextlayout
-bind = $mod,       W,      windowmode
-bind = $mod SHIFT, C,      cascade
-bind = $mod SHIFT, R,      reload
+bind = $mod,       F,      fullscreen
+bind = ANY,        F11,    fullscreen
+bind = $mod SHIFT, T,      ontop
+bind = ALT,        Space,  windowmenu
+bind = $mod,       Up,     snap up
+bind = $mod,       Down,   snap down
+bind = $mod,       Left,   snap left
+bind = $mod,       Right,  snap right
 
-# Master-stack tuning.
-bind = $mod,       H,      masterratio -5
-bind = $mod,       L,      masterratio +5
-bind = $mod SHIFT, H,      mastercount -1
-bind = $mod SHIFT, L,      mastercount +1
-bind = $mod,       E,      swapmaster
+# Switching and finding windows.
+bind = ALT,        Tab,    switcher
+bind = ALT SHIFT,  Tab,    switcher
+bind = $mod,       Tab,    switcher all
+bind = $mod SHIFT, Tab,    switcher all
+bind = $mod,       W,      overview
+bind = $mod,       Slash,  cheatsheet
 
 # Directional focus and movement.
-bind = $mod,       Left,   movefocus left
-bind = $mod,       Right,  movefocus right
-bind = $mod,       Up,     movefocus up
-bind = $mod,       Down,   movefocus down
-bind = $mod SHIFT, Left,   movewindow left
-bind = $mod SHIFT, Right,  movewindow right
-bind = $mod SHIFT, Up,     movewindow up
-bind = $mod SHIFT, Down,   movewindow down
-bind = $mod CTRL,  Left,   resizewindow left
-bind = $mod CTRL,  Right,  resizewindow right
-bind = $mod CTRL,  Up,     resizewindow up
-bind = $mod CTRL,  Down,   resizewindow down
+bind = $mod,       H,      movefocus left
+bind = $mod,       J,      movefocus down
+bind = $mod,       K,      movefocus up
+bind = $mod,       L,      movefocus right
+bind = $mod SHIFT, H,      movewindow left
+bind = $mod SHIFT, J,      movewindow down
+bind = $mod SHIFT, K,      movewindow up
+bind = $mod SHIFT, L,      movewindow right
+bind = $mod ALT,   Left,   resizewindow left
+bind = $mod ALT,   Right,  resizewindow right
+bind = $mod ALT,   Up,     resizewindow up
+bind = $mod ALT,   Down,   resizewindow down
 
-# Workspaces.
+# Layout.
+bind = $mod,       Backslash, nextlayout
+bind = $mod SHIFT, Space,  toggletiling
+bind = $mod CTRL,  H,      masterratio -5
+bind = $mod CTRL,  L,      masterratio +5
+bind = $mod CTRL,  K,      mastercount +1
+bind = $mod CTRL,  J,      mastercount -1
+bind = $mod,       E,      swapmaster
+bind = $mod SHIFT, C,      cascade
+bind = $mod ALT,   W,      windowmode
+
+# Workspaces. SHIFT moves the window there; CTRL SHIFT moves it and follows.
 bind = $mod,       1,      workspace 1
 bind = $mod,       2,      workspace 2
 bind = $mod,       3,      workspace 3
@@ -241,30 +354,28 @@ bind = $mod SHIFT, 6,      movetoworkspace 6
 bind = $mod SHIFT, 7,      movetoworkspace 7
 bind = $mod SHIFT, 8,      movetoworkspace 8
 bind = $mod SHIFT, 9,      movetoworkspace 9
+bind = $mod CTRL SHIFT, 1, movetoworkspacefollow 1
+bind = $mod CTRL SHIFT, 2, movetoworkspacefollow 2
+bind = $mod CTRL SHIFT, 3, movetoworkspacefollow 3
+bind = $mod CTRL SHIFT, 4, movetoworkspacefollow 4
+bind = $mod CTRL SHIFT, 5, movetoworkspacefollow 5
+bind = $mod CTRL SHIFT, 6, movetoworkspacefollow 6
+bind = $mod CTRL SHIFT, 7, movetoworkspacefollow 7
+bind = $mod CTRL SHIFT, 8, movetoworkspacefollow 8
+bind = $mod CTRL SHIFT, 9, movetoworkspacefollow 9
+bind = $mod CTRL,  Left,   workspacerel -1
+bind = $mod CTRL,  Right,  workspacerel +1
 bind = $mod,       Prior,  workspacerel -1
 bind = $mod,       Next,   workspacerel +1
 
-# Session. These are intent-only: the action is logged and nothing is run.
+# The compositor. Session actions are intent-only nested: logged, not run.
+bind = $mod SHIFT, R,      reload
+bind = $mod CTRL SHIFT, D, debughud
 bind = $mod SHIFT, E,      exit
 bind = $mod ALT,   Q,      quit
 
-# Bare function keys, with no modifier at all. The host compositor eats SUPER
-# when this one runs nested, and the scripted recorder can only synthesize
-# unmodified keys, so every binding above that the demo needs has a twin here.
-bind = ANY, F1,  spawn counter
-bind = ANY, F2,  spawn gallery
-bind = ANY, F3,  spawn todo
-bind = ANY, F4,  spawn term
-bind = ANY, F5,  spawn pixels
-bind = ANY, F6,  focusnext
-bind = ANY, F7,  focusprev
-bind = ANY, F8,  close
-bind = ANY, F9,  toggletiling
-bind = ANY, F10, windowmode
-bind = ANY, F11, togglemaximize
-bind = ANY, F12, nextlayout
-bind = ANY, F13, workspacerel +1
-bind = ANY, F14, workspacerel -1
+# The bare function-key twins the scripted demo recorder needs live in
+# apps/wm/demo.conf now (record.sh passes it with --config=).
 
 # Per-application rules. Matched once, when the window maps.
 #   rule = app_id=palmy-term, float
@@ -307,10 +418,14 @@ cfg_free :: proc(c: ^Cfg) {
 	for r in c.rules {
 		delete(r.app_id)
 		delete(r.title)
+		delete(r.app_re)
+		delete(r.output)
 	}
 	clear(&c.rules)
 	for o in c.outputs {delete(o.name)}
 	clear(&c.outputs)
+	delete(c.wallpaper)
+	c.wallpaper = ""
 	for a in c.autostart {
 		for w in a {delete(w)}
 		delete(a)
@@ -349,6 +464,20 @@ cfg_scalars :: proc(c: ^Cfg) {
 	c.master_count = 1
 	c.move_step = 36
 	c.resize_step = 48
+	c.buttons = {.Minimize, .Maximize, .Close}
+	c.buttons_n = 3
+	c.buttons_left = false
+	c.double_click_ms = 400
+	c.focus_new = .Smart
+	c.debug_hud = false
+	c.animations = .On
+	c.drag_mod = {}
+	c.drag_mod_set = false
+	c.hot_corner = true
+	c.super_tap = true
+	c.wallpaper_mode = .Fill
+	c.wallpaper_color = 0
+	c.wallpaper_flat = false
 }
 
 // cfg_load resets `c` to the compiled-in default and then, if a file exists,
@@ -380,7 +509,9 @@ cfg_load :: proc(c: ^Cfg) {
 	c.loaded = true
 	// A user file replaces the default bindings wholesale rather than adding
 	// to them; otherwise there is no way to *remove* one.
-	if cfg_has_binds(string(data)) {
+	// ...unless it says `default_binds = keep`, which is how demo.conf adds
+	// the recorder's bare function keys on top of the default table.
+	if cfg_has_binds(string(data)) && !cfg_keeps_default_binds(string(data)) {
 		for b in c.binds {
 			for a in b.argv {delete(a)}
 			delete(b.argv)
@@ -407,6 +538,18 @@ cfg_has_binds :: proc(text: string) -> bool {
 		t := strings.trim_space(line)
 		if strings.has_prefix(t, "bind") {
 			return true
+		}
+	}
+	return false
+}
+
+cfg_keeps_default_binds :: proc(text: string) -> bool {
+	rest := text
+	for line in strings.split_lines_iterator(&rest) {
+		t := cfg_strip_comment(line)
+		eq := strings.index_byte(t, '=')
+		if eq > 0 && strings.trim_space(t[:eq]) == "default_binds" {
+			return strings.to_lower(strings.trim_space(t[eq + 1:]), context.temp_allocator) == "keep"
 		}
 	}
 	return false
@@ -527,6 +670,67 @@ cfg_set :: proc(c: ^Cfg, name, val, src: string, n: int) {
 		c.move_step = clamp(cfg_int(val, c.move_step), 1, 400)
 	case "resize_step":
 		c.resize_step = clamp(cfg_int(val, c.resize_step), 1, 400)
+	case "default_binds":
+		// Read by cfg_load before parsing; nothing to set here.
+	case "buttons":
+		cfg_buttons(c, val, src, n)
+	case "double_click_ms":
+		c.double_click_ms = clamp(cfg_int(val, c.double_click_ms), 100, 2000)
+	case "focus_new":
+		switch strings.to_lower(val, context.temp_allocator) {
+		case "smart":
+			c.focus_new = .Smart
+		case "always", "on":
+			c.focus_new = .Always
+		case "never", "off":
+			c.focus_new = .Never
+		case:
+			cfg_err(c, src, n, "focus_new is smart, always or never, not %q", val)
+		}
+	case "debug_hud":
+		c.debug_hud = cfg_bool(val, c.debug_hud)
+	case "animations":
+		switch strings.to_lower(val, context.temp_allocator) {
+		case "on", "true", "yes", "1":
+			c.animations = .On
+		case "off", "false", "no", "0":
+			c.animations = .Off
+		case "reduced":
+			c.animations = .Reduced
+		case:
+			cfg_err(c, src, n, "animations is on, off or reduced, not %q", val)
+		}
+	case "mod_drag", "drag_mod":
+		m, ok := cfg_mods(c, val)
+		if !ok {
+			cfg_err(c, src, n, "unknown modifier in %q", val)
+			return
+		}
+		c.drag_mod = m
+		c.drag_mod_set = true
+	case "hot_corner":
+		c.hot_corner = cfg_bool(val, c.hot_corner)
+	case "super_tap":
+		c.super_tap = cfg_bool(val, c.super_tap)
+	case "wallpaper":
+		delete(c.wallpaper)
+		c.wallpaper = cfg_expand_home(val)
+	case "wallpaper_mode":
+		switch strings.to_lower(val, context.temp_allocator) {
+		case "fill":
+			c.wallpaper_mode = .Fill
+		case "fit":
+			c.wallpaper_mode = .Fit
+		case "center", "centre":
+			c.wallpaper_mode = .Center
+		case "tile":
+			c.wallpaper_mode = .Tile
+		case:
+			cfg_err(c, src, n, "wallpaper_mode is fill, fit, center or tile, not %q", val)
+		}
+	case "wallpaper_color":
+		c.wallpaper_color = cfg_color(val, c.wallpaper_color)
+		c.wallpaper_flat = true
 	case "bind":
 		cfg_bind(c, val, src, n)
 	case "rule":
@@ -684,12 +888,21 @@ cfg_bind :: proc(c: ^Cfg, val, src: string, n: int) {
 		}
 		bind.mods = m
 	}
-	sym, ok := cfg_keysym(key_s)
-	if !ok {
-		cfg_err(c, src, n, "unknown key %q", key_s)
-		return
+	if strings.has_prefix(strings.to_lower(key_s, context.temp_allocator), "code:") {
+		code := cfg_int(key_s[5:], 0)
+		if code <= 8 || code > 255 {
+			cfg_err(c, src, n, "a keycode is 9..255, not %q", key_s)
+			return
+		}
+		bind.code = u32(code)
+	} else {
+		sym, ok := cfg_keysym(key_s)
+		if !ok {
+			cfg_err(c, src, n, "unknown key %q", key_s)
+			return
+		}
+		bind.sym = sym
 	}
-	bind.sym = sym
 	if !cfg_action(c, &bind, act_s, src, n) {
 		return
 	}
@@ -698,7 +911,7 @@ cfg_bind :: proc(c: ^Cfg, val, src: string, n: int) {
 	// A later binding on the same chord replaces an earlier one, so a user
 	// file can override one default without clearing the rest.
 	for &old, i in c.binds {
-		if old.sym == bind.sym && old.mods == bind.mods && old.any_mods == bind.any_mods {
+		if old.sym == bind.sym && old.code == bind.code && old.mods == bind.mods && old.any_mods == bind.any_mods {
 			for s2 in old.argv {delete(s2)}
 			delete(old.argv)
 			delete(old.label)
@@ -757,8 +970,38 @@ cfg_action :: proc(c: ^Cfg, bind: ^Cfg_Bind, s, src: string, n: int) -> bool {
 		bind.arg = int(d)
 	case "togglefloat", "togglefloating":
 		bind.act = .Toggle_Float
-	case "togglemaximize", "fullscreen", "maximize":
+	case "togglemaximize", "maximize":
 		bind.act = .Toggle_Maximize
+	case "fullscreen", "togglefullscreen":
+		bind.act = .Toggle_Fullscreen
+	case "snap":
+		d, ok := cfg_dir(arg)
+		if !ok {
+			cfg_err(c, src, n, "snap needs left|right|up|down")
+			return false
+		}
+		bind.act = .Snap_Dir
+		bind.arg = int(d)
+	case "ontop", "toggleontop", "alwaysontop":
+		bind.act = .Toggle_On_Top
+	case "sticky", "togglesticky", "pin":
+		bind.act = .Toggle_Sticky
+	case "movetoworkspacefollow", "movetoworkspaceandfollow":
+		bind.act = .Move_To_Workspace_Follow
+		bind.arg = cfg_int(arg, 1)
+	case "lower":
+		bind.act = .Lower
+	case "switcher":
+		bind.act = .Switcher
+		bind.arg = strings.to_lower(arg, context.temp_allocator) == "all" ? 1 : 0
+	case "overview":
+		bind.act = .Overview
+	case "cheatsheet", "help", "keys":
+		bind.act = .Cheat_Sheet
+	case "windowmenu":
+		bind.act = .Window_Menu
+	case "debughud":
+		bind.act = .Debug_Hud
 	case "minimize":
 		bind.act = .Minimize
 	case "toggletiling":
@@ -874,6 +1117,15 @@ cfg_rule :: proc(c: ^Cfg, val, src: string, n: int) {
 		case strings.has_prefix(t, "class="):
 			r.app_id = strings.clone(strings.trim_space(t[len("class="):]))
 			any = true
+		case strings.has_prefix(t, "class~") || strings.has_prefix(t, "app_id~"):
+			k := strings.index_byte(t, '~')
+			pat := strings.trim_space(t[k + 1:])
+			if _, err := regex.create(pat, {}, context.temp_allocator, context.temp_allocator); err != nil {
+				cfg_err(c, src, n, "bad regular expression %q", pat)
+				continue
+			}
+			r.app_re = strings.clone(pat)
+			any = true
 		case strings.has_prefix(t, "title~"):
 			r.title = strings.clone(strings.trim_space(t[len("title~"):]))
 			any = true
@@ -892,6 +1144,31 @@ cfg_rule :: proc(c: ^Cfg, val, src: string, n: int) {
 			r.no_title = true
 		case t == "maximize" || t == "maximise":
 			r.maximize = true
+		case t == "ontop" || t == "on_top":
+			r.on_top = true
+		case t == "sticky":
+			r.sticky = true
+		case t == "noanim":
+			r.no_anim = true
+		case t == "fullscreen":
+			r.fullscreen = true
+		case t == "nofocus":
+			r.no_focus = true
+		case t == "rerule":
+			r.rerule = true
+		case strings.has_prefix(t, "opacity"):
+			r.opacity = clamp(cfg_f32(strings.trim_space(t[len("opacity"):]), 1), 0.1, 1)
+		case strings.has_prefix(t, "placement"):
+			switch strings.trim_space(t[len("placement"):]) {
+			case "center", "centre":
+				r.placement = 1
+			case "pointer", "mouse":
+				r.placement = 2
+			case:
+				cfg_err(c, src, n, "placement is center or pointer")
+			}
+		case strings.has_prefix(t, "output"):
+			r.output = strings.clone(strings.trim_space(t[len("output"):]))
 		case strings.has_prefix(t, "workspace"):
 			r.workspace = cfg_int(strings.trim_space(t[len("workspace"):]), 0)
 		case strings.has_prefix(t, "size"):
@@ -909,6 +1186,7 @@ cfg_rule :: proc(c: ^Cfg, val, src: string, n: int) {
 		cfg_err(c, src, n, "a rule needs app_id= or title~")
 		delete(r.app_id)
 		delete(r.title)
+		delete(r.output)
 		return
 	}
 	append(&c.rules, r)
@@ -1015,6 +1293,20 @@ CFG_KEYNAMES := [?]struct {
 	{"F13", 0xffca},
 	{"F14", 0xffcb},
 	{"F15", 0xffcc},
+	{"Backslash", '\\'},
+	{"Slash", '/'},
+	{"Grave", '`'},
+	{"Minus", '-'},
+	{"Equal", '='},
+	{"Comma", ','},
+	{"Period", '.'},
+	{"Semicolon", ';'},
+	{"Apostrophe", '\''},
+	{"BracketLeft", '['},
+	{"BracketRight", ']'},
+	{"Super_L", 0xffeb},
+	{"Super_R", 0xffec},
+	{"Print", 0xff61},
 }
 
 cfg_keysym :: proc(name: string) -> (u32, bool) {
@@ -1040,6 +1332,58 @@ cfg_keysym :: proc(name: string) -> (u32, bool) {
 		return u32(cfg_lower(last)), true
 	}
 	return 0, false
+}
+
+// cfg_buttons parses `minimize,maximize,close` with an optional `:left`.
+cfg_buttons :: proc(c: ^Cfg, val, src: string, n: int) {
+	v := strings.to_lower(strings.trim_space(val), context.temp_allocator)
+	left := false
+	if strings.has_suffix(v, ":left") {
+		left = true
+		v = v[:len(v) - len(":left")]
+	} else if strings.has_suffix(v, ":right") {
+		v = v[:len(v) - len(":right")]
+	}
+	out: [3]Frame_Btn
+	k := 0
+	rest := v
+	for part in strings.split_iterator(&rest, ",") {
+		b: Frame_Btn
+		switch strings.trim_space(part) {
+		case "":
+			continue
+		case "close":
+			b = .Close
+		case "maximize", "maximise":
+			b = .Maximize
+		case "minimize", "minimise":
+			b = .Minimize
+		case:
+			cfg_err(c, src, n, "unknown title bar button %q", part)
+			return
+		}
+		if k >= 3 {
+			cfg_err(c, src, n, "at most three buttons")
+			return
+		}
+		out[k] = b
+		k += 1
+	}
+	c.buttons = out
+	c.buttons_n = k
+	c.buttons_left = left
+}
+
+// cfg_expand_home turns a leading ~/ into $HOME/, which is what anyone
+// writing a wallpaper path expects to work.
+cfg_expand_home :: proc(v: string) -> string {
+	t := strings.trim_space(v)
+	if strings.has_prefix(t, "~/") {
+		if h := os.get_env("HOME", context.temp_allocator); h != "" {
+			return fmt.aprintf("%s/%s", h, t[2:])
+		}
+	}
+	return strings.clone(t)
 }
 
 cfg_lower :: proc(r: rune) -> rune {

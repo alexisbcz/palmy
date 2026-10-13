@@ -238,52 +238,9 @@ bare_app :: proc(w, h: int) -> ^p.App {
 // The software cursor
 //
 // There is no host cursor to lean on and no cursor plane in use, so the
-// pointer is painted into every frame after everything else. Classic arrow,
-// black outline, white fill, 1:1 pixels.
+// pointer is painted into every frame after everything else. Its shapes, and
+// the client cursors drawn in their place, are cursor.odin's.
 // ---------------------------------------------------------------------------
-
-BARE_CURSOR := [?]string {
-	"X",
-	"XX",
-	"X.X",
-	"X..X",
-	"X...X",
-	"X....X",
-	"X.....X",
-	"X......X",
-	"X.......X",
-	"X........X",
-	"X.........X",
-	"X......XXXXX",
-	"X...X..X",
-	"X..XX..X",
-	"X.X  X..X",
-	"XX   X..X",
-	"X     X..X",
-	"      X..X",
-	"       XX",
-}
-
-bare_draw_cursor :: proc(cv: ^p.Canvas, x, y: int) {
-	for row, dy in BARE_CURSOR {
-		py := y + dy
-		if py < 0 || py >= cv.h {
-			continue
-		}
-		for ch, dx in row {
-			px := x + dx
-			if px < 0 || px >= cv.w {
-				continue
-			}
-			switch ch {
-			case 'X':
-				cv.px[py * cv.w + px] = 0xff00_0000
-			case '.':
-				cv.px[py * cv.w + px] = 0xffff_ffff
-			}
-		}
-	}
-}
 
 // ---------------------------------------------------------------------------
 // Keys
@@ -383,7 +340,7 @@ bare_frame :: proc(s: ^Server, app: ^p.App) -> bool {
 			return false
 		}
 		draw(s, app, cv)
-		bare_draw_cursor(cv, cx, cy)
+		cursor_draw(s, cv, cx, cy)
 		return drm_present(h)
 	}
 
@@ -398,7 +355,7 @@ bare_frame :: proc(s: ^Server, app: ^p.App) -> bool {
 	comp := p.canvas_from(bare_out.composite, bare_out.cw, bare_out.ch)
 	defer p.canvas_destroy(&comp)
 	draw(s, app, &comp)
-	bare_draw_cursor(&comp, cx, cy)
+	cursor_draw(s, &comp, cx, cy)
 	shown := false
 	for h in heads {
 		if !drm_head_ready(h) {
@@ -492,6 +449,7 @@ bare_main :: proc(display, conf: string) -> int {
 	opened, found := ev_start()
 	ev_screen = {f64(s.out_w), f64(s.out_h)}
 	ev_pointer = {f64(s.out_w) / 2, f64(s.out_h) / 2}
+	app.win.input.mouse = {f32(ev_pointer[0]), f32(ev_pointer[1])}
 	defer ev_stop()
 	fmt.printfln("wm: input: %d of %d device(s) opened", opened, found)
 	for d in ev_devices {
@@ -565,6 +523,19 @@ bare_main :: proc(display, conf: string) -> int {
 		if rt := ev_next_timeout(bare_mono_ms()); rt >= 0 {
 			timeout = min(timeout, i32(rt))
 		}
+		// Something on screen changes by itself soon (a tooltip, a snap
+		// preview, a toast running out): wake for it rather than a second
+		// later. An animation in flight wants every frame.
+		if anim_busy() {
+			want_frame = true
+			timeout = awaiting ? 100 : i32(max(bare_pace_wait_ms(), 0))
+		}
+		if wm := wake_ms(); wm >= 0 {
+			timeout = min(timeout, i32(wm))
+			if wm == 0 {
+				want_frame = true
+			}
+		}
 		n, _ := linux.poll(pfds[:], timeout)
 
 		// What woke us decides whether the screen is stale. A page-flip
@@ -572,6 +543,9 @@ bare_main :: proc(display, conf: string) -> int {
 		// asked for can now go out — so it does not ask for another, and an
 		// idle desktop costs one frame a second rather than sixty.
 		activity := n == 0 && timeout > 0
+		if anim_busy() {
+			activity = true
+		}
 		for f, i in pfds {
 			if f.revents != {} && (i < drm_lo || i >= drm_hi) {
 				activity = true
