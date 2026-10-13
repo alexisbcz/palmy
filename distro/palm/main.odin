@@ -242,10 +242,17 @@ dispatch :: proc(args: []string) -> int {
 		return e.code
 	}
 	saved_quiet := g_quiet
+	saved_progress := g_progress_json
 	if o.json {
+		// The selftest is already quiet; it drives --json for the document
+		// and does not want progress lines on its stderr.
+		g_progress_json = !g_quiet
 		g_quiet = true
 	}
-	defer g_quiet = saved_quiet
+	defer {
+		g_quiet = saved_quiet
+		g_progress_json = saved_progress
+	}
 
 	switch o.verb {
 	case "", "help":
@@ -502,9 +509,15 @@ open_for_query :: proc(o: ^Opts) -> (^DB, []^Repo, Err) {
 	return db, repos, Err{}
 }
 
+// pkg_json writes one package. `db` supplies what only the installed side
+// knows: whether the package is in world (`explicit`: asked for, rather than
+// pulled in as a dependency). A store needs that to say "installed by you"
+// and to know that removing a dependency is really a question about whoever
+// needs it.
 @(private = "file")
-pkg_json :: proc(b: ^strings.Builder, p: ^Pkg, installed: ^Pkg) {
-	fmt.sbprintf(b, "{{\"name\":%s,\"version\":%s,\"description\":%s,\"license\":%s,\"size\":%d", json_str(p.name), json_str(p.version), json_str(p.desc), json_str(p.license), p.size)
+pkg_json :: proc(b: ^strings.Builder, p: ^Pkg, installed: ^Pkg, db: ^DB) {
+	fmt.sbprintf(b, "{{\"name\":%s,\"version\":%s,\"description\":%s,\"license\":%s,\"url\":%s,\"size\":%d,\"csize\":%d", json_str(p.name), json_str(p.version), json_str(p.desc), json_str(p.license), json_str(p.url), p.size, p.csize)
+	fmt.sbprintf(b, ",\"category\":%s,\"icon\":%s,\"details\":%s", json_str(p.category), json_str(p.icon), json_str(p.details))
 	strings.write_string(b, ",\"depends\":[")
 	for d, i in p.depends {
 		if i > 0 {strings.write_byte(b, ',')}
@@ -517,11 +530,37 @@ pkg_json :: proc(b: ^strings.Builder, p: ^Pkg, installed: ^Pkg) {
 	}
 	strings.write_string(b, "]")
 	if installed != nil {
-		fmt.sbprintf(b, ",\"installed\":%s", json_str(installed.version))
+		fmt.sbprintf(b, ",\"installed\":%s,\"installed_size\":%d", json_str(installed.version), installed.size)
+		explicit := false
+		if db != nil {
+			for w in db.world {
+				if world_name(w) == p.name {explicit = true}
+			}
+		}
+		fmt.sbprintf(b, ",\"explicit\":%v", explicit)
 	} else {
-		strings.write_string(b, ",\"installed\":null")
+		strings.write_string(b, ",\"installed\":null,\"explicit\":false")
 	}
 	strings.write_string(b, "}")
+}
+
+// required_by names the installed packages that depend on `p`, by its name
+// or by anything it provides -- what `palm del p` would have to keep it for.
+@(private = "file")
+required_by :: proc(db: ^DB, p: ^Pkg) -> []string {
+	out := make([dynamic]string, context.temp_allocator)
+	for q in db.pkgs {
+		if q.name == p.name {continue}
+		for d in q.depends {
+			c, okc := parse_constraint(d)
+			if okc && pkg_satisfies(p, c) {
+				append(&out, q.name)
+				break
+			}
+		}
+	}
+	slice.sort(out[:])
+	return out[:]
 }
 
 @(private = "file")
@@ -550,7 +589,7 @@ cmd_search :: proc(o: ^Opts) -> Err {
 		strings.write_byte(&b, '[')
 		for n, i in names {
 			if i > 0 {strings.write_byte(&b, ',')}
-			pkg_json(&b, all[n], db_find(db, n))
+			pkg_json(&b, all[n], db_find(db, n), db)
 		}
 		strings.write_byte(&b, ']')
 		fmt.println(strings.to_string(b))
@@ -622,7 +661,19 @@ cmd_info :: proc(o: ^Opts) -> Err {
 		}
 		if o.json {
 			if i > 0 {strings.write_byte(&b, ',')}
-			pkg_json(&b, p, inst)
+			pkg_json(&b, p, inst, db)
+			{
+				// required_by goes in before the closing brace, like files
+				s := strings.to_string(b)
+				strings.builder_reset(&b)
+				strings.write_string(&b, s[:len(s) - 1])
+				strings.write_string(&b, ",\"required_by\":[")
+				for n, k in required_by(db, p) {
+					if k > 0 {strings.write_byte(&b, ',')}
+					strings.write_string(&b, json_str(n))
+				}
+				strings.write_string(&b, "]}")
+			}
 			if o.list_files {
 				// splice the file list in before the closing brace
 				s := strings.to_string(b)
@@ -647,6 +698,7 @@ cmd_info :: proc(o: ^Opts) -> Err {
 		if p.desc != "" {fmt.printf("  description: %s\n", p.desc)}
 		if p.license != "" {fmt.printf("  license:     %s\n", p.license)}
 		if p.url != "" {fmt.printf("  url:         %s\n", p.url)}
+		if p.category != "" {fmt.printf("  category:    %s\n", p.category)}
 		fmt.printf("  size:        %s\n", human_size(p.size))
 		if len(p.depends) > 0 {fmt.printf("  depends:     %s\n", strings.join(p.depends, " ", context.temp_allocator))}
 		if len(p.provides) > 0 {fmt.printf("  provides:    %s\n", strings.join(p.provides, " ", context.temp_allocator))}
@@ -695,7 +747,7 @@ cmd_list :: proc(o: ^Opts) -> Err {
 		p := a != nil ? a : inst
 		if o.json {
 			if count > 0 {strings.write_byte(&b, ',')}
-			pkg_json(&b, p, inst)
+			pkg_json(&b, p, inst, db)
 		} else {
 			status := ""
 			switch {

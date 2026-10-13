@@ -9,6 +9,9 @@ pkgver   = 0.1.0
 pkgrel   = 0
 pkgdesc  = Noto Color Emoji
 license  = OFL-1.1 AND Bitstream-Vera
+category = System
+icon     = sparkles
+details  = Colour emoji for every palmy application: install it and emoji in text, chat and the emoji picker are drawn in colour instead of as empty boxes.
 
 file     = /usr/share/fonts/noto/NotoColorEmoji.ttf -> /usr/share/fonts/noto/NotoColorEmoji.ttf mode 0644
 file     = /usr/share/licenses/noto-fonts-emoji/LICENSE -> /usr/share/licenses/fonts/NotoColorEmoji-OFL.txt mode 0644

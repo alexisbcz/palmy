@@ -7,6 +7,9 @@ pkgver   = 0.1.0
 pkgrel   = 0
 pkgdesc  = Date and colour picker demo
 license  = MIT
+category = Development
+icon     = calendar-days
+details  = A demonstration of palmy's date, colour and file pickers.
 depend   = glibc fonts libxkbcommon
 provides = cmd:pickdemo
 

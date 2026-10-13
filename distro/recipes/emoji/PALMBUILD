@@ -7,6 +7,9 @@ pkgver   = 0.1.0
 pkgrel   = 0
 pkgdesc  = Emoji picker
 license  = MIT
+category = Accessories
+icon     = sparkles
+details  = Browse and search every emoji by name. Pair it with fonts-emoji for colour.
 depend   = glibc fonts libxkbcommon
 provides = cmd:emoji
 

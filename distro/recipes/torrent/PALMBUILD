@@ -7,6 +7,9 @@ pkgver   = 0.1.0
 pkgrel   = 0
 pkgdesc  = BitTorrent client
 license  = MIT
+category = Internet
+icon     = download
+details  = Download and share files over BitTorrent, with magnet links and per-file progress.
 depend   = glibc fonts libxkbcommon
 provides = cmd:torrent
 

@@ -10,6 +10,9 @@ pkgrel   = 0
 pkgdesc  = Tiny versions of many common UNIX utilities in a single static binary
 license  = GPL-2.0-only
 url      = https://busybox.net
+category = System
+icon     = terminal
+details  = The shell and the command-line userland in one statically linked program: sh, the coreutils, mount, getty and login, udhcpc, syslogd and vi, each a link to the same binary.
 depend   = palmframe-base
 provides = cmd:sh
 

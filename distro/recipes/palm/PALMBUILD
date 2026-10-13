@@ -10,6 +10,10 @@ pkgver   = 0.1.0
 pkgrel   = 0
 pkgdesc  = The Palmframe package manager
 license  = MIT
+category = System
+icon     = package
+details  = palm installs, removes and upgrades packages from signed repositories, modelled on Alpine's apk: a world file that states what was asked for, every change a fresh resolution of it, and no install scripts of any kind.
+details  = Software is a window onto it; everything it shows comes from palm --json.
 depend   = palmframe-base glibc
 provides = cmd:palm
 

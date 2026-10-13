@@ -14,9 +14,15 @@
 # output is committed anyway, so a reader sees exactly what each package
 # holds without running anything.
 #
-# Hand-written recipes (linux, palm-init, palm, palm-login, greeter,
+# Hand-written recipes (linux, palm-init, palm, palm-login, palmd, greeter,
 # palmy-wm, palmframe-demo, and the installer's palm-install, installer and
 # palmframe-live) are left alone.
+#
+# Every recipe also carries the fields Software (apps/store) reads:
+# `category` (its shelf in Discover; one of the closed list in
+# distro/palm/PALMBUILD.md), `icon` (a lucide icon name the store draws) and
+# `details` (the prose on the package's page). pkgdesc is the one-line
+# summary under the name.
 #
 # Sources in the recipes are spelled ${PALMFRAME_ROOT} (the checkout),
 # ${PALMFRAME_OUT} (distro/out) and ${PALMFRAME_KEYS} (distro/build/keys);
@@ -93,6 +99,9 @@ pkgver   = $OWN_VER
 pkgrel   = 0
 pkgdesc  = The Palmframe filesystem layout, users and base configuration
 license  = MIT
+category = System
+icon     = hard-drive
+details  = The skeleton every other package stands on: merged /usr, /etc with the users, groups and services, the repository list and its signing key, and the mount points palm-init mounts on.
 install_user = root
 install_user = palm
 install_user = greeter
@@ -139,6 +148,9 @@ pkgrel   = 0
 pkgdesc  = Tiny versions of many common UNIX utilities in a single static binary
 license  = GPL-2.0-only
 url      = https://busybox.net
+category = System
+icon     = terminal
+details  = The shell and the command-line userland in one statically linked program: sh, the coreutils, mount, getty and login, udhcpc, syslogd and vi, each a link to the same binary.
 depend   = palmframe-base
 provides = cmd:sh
 
@@ -168,6 +180,9 @@ pkgrel   = 0
 pkgdesc  = GNU C Library runtime (from the build host)
 license  = LGPL-2.1-or-later
 url      = https://www.gnu.org/software/libc
+category = System
+icon     = binary
+details  = The C library and the dynamic loader every palmy program links against, copied from the machine that built the distribution so the binaries run unchanged.
 depend   = palmframe-base
 provides = so:libc.so.6 so:libm.so.6 so:ld-linux-x86-64.so.2
 
@@ -191,6 +206,9 @@ pkgrel   = 0
 pkgdesc  = Keymap handling library (from the build host)
 license  = MIT
 url      = https://xkbcommon.org
+category = System
+icon     = keyboard
+details  = Applications load it to compile the keymap the window manager sends them, so every layout the window manager knows types correctly in every window.
 depend   = glibc
 provides = so:libxkbcommon.so.0
 
@@ -213,13 +231,16 @@ pkgrel   = 0
 pkgdesc  = X keyboard configuration data (from the build host)
 license  = MIT
 url      = https://www.freedesktop.org/wiki/Software/XKeyboardConfig
+category = System
+icon     = keyboard
+details  = The rules, keycodes and layouts the window manager compiles its keymap from. Without them it falls back to a built-in US layout.
 
 tree     = /usr/share/X11/xkb -> /usr/share/X11/xkb
 EOF
 } | emit xkeyboard-config
 
 # --- fonts and fonts-emoji: distro/apps/fonts.list ---------------------------
-fonts_recipe() { # fonts_recipe <pkg> <set> <desc>
+fonts_recipe() { # fonts_recipe <pkg> <set> <desc> <icon> <details>
 	header " from distro/apps/fonts.list (set $2)"
 	cat <<EOF
 #
@@ -231,6 +252,9 @@ pkgver   = $OWN_VER
 pkgrel   = 0
 pkgdesc  = $3
 license  = OFL-1.1 AND Bitstream-Vera
+category = System
+icon     = $4
+details  = $5
 
 EOF
 	grep -v '^#' "$DISTRO/apps/fonts.list" | while read -r src dst set; do
@@ -239,8 +263,10 @@ EOF
 		echo "file     = $src -> $dst mode 0644"
 	done
 }
-fonts_recipe fonts base "Geist, JetBrains Mono and DejaVu Sans: the fonts every palmy application uses" | emit fonts
-fonts_recipe fonts-emoji emoji "Noto Color Emoji" | emit fonts-emoji
+fonts_recipe fonts base "Geist, JetBrains Mono and DejaVu Sans: the fonts every palmy application uses" type \
+	"palmy finds fonts by walking /usr/share/fonts, with no fontconfig and no cache, so these files are all it takes: Geist for the interface, JetBrains Mono for code and terminals, DejaVu Sans for the scripts the others lack." | emit fonts
+fonts_recipe fonts-emoji emoji "Noto Color Emoji" sparkles \
+	"Colour emoji for every palmy application: install it and emoji in text, chat and the emoji picker are drawn in colour instead of as empty boxes." | emit fonts-emoji
 
 # --- the applications ---------------------------------------------------------
 # One package per program: the default set (distro/apps/default.list, minus
@@ -255,9 +281,54 @@ declare -A DESC=(
 	[docs]="Documents" [sheets]="Spreadsheets" [slides]="Presentations"
 	[calendar]="Calendar" [reader]="PDF and e-book reader"
 	[photoshop]="Image editor" [maps]="Maps" [money]="Personal finance"
-	[torrent]="BitTorrent client" [shop]="Shop demo" [track]="Time tracker"
+	[torrent]="BitTorrent client" [shop]="Shop demo" [track]="Issue tracker"
 	[pickdemo]="Date and colour picker demo" [emoji]="Emoji picker"
 	[prose]="The prose engine behind docs (command line)"
+	[store]="Find, install and update software"
+)
+# The shelf each application sits on in Software's Discover view, the icon it
+# is drawn with there, and the paragraph on its page.
+declare -A CATEGORY=(
+	[term]=System [launcher]=System [sysmon]=System [store]=System
+	[files]=Accessories [calc]=Accessories [maps]=Accessories [emoji]=Accessories
+	[editor]=Development [track]=Development [pickdemo]=Development
+	[notes]=Office [docs]=Office [sheets]=Office [slides]=Office
+	[calendar]=Office [reader]=Office [money]=Office [prose]=Office
+	[image]=Graphics [photoshop]=Graphics
+	[torrent]=Internet [shop]=Internet
+)
+declare -A ICON=(
+	[term]=square-terminal [launcher]=layout-grid [sysmon]=activity [store]=package
+	[files]=folder [calc]=calculator [maps]=map-pin [emoji]=sparkles
+	[editor]=code [track]=flag [pickdemo]=calendar-days
+	[notes]=notebook-pen [docs]=file-text [sheets]=file-spreadsheet [slides]=presentation
+	[calendar]=calendar [reader]=book-open [money]=credit-card [prose]=type
+	[image]=image [photoshop]=palette [torrent]=download [shop]=tag
+)
+declare -A DETAILS=(
+	[term]="A terminal with tabs. It runs your shell, follows the system theme, and was checked against ghostty cell by cell."
+	[launcher]="Type a few letters of an application's name and press Return. SUPER+D opens it from anywhere."
+	[files]="Browse folders in a list or as icons, with a sidebar of places, breadcrumbs, live filtering and an inspector for the selected file."
+	[editor]="A plain-text editor for code and notes, with syntax colouring and the keyboard shortcuts you would expect."
+	[notes]="Markdown notes kept as plain files under your home directory, searchable, with a live preview."
+	[calc]="A calculator that shows the whole expression as you type it, and keeps a history of what you worked out."
+	[sysmon]="CPU, memory, disks and processes, read straight from /proc and /sys, updating every second."
+	[image]="Open PNG, JPEG and other images, zoom, and step through the rest of the folder."
+	[docs]="A word processor for writing documents, with styles, and a prose checker that suggests plainer wording."
+	[sheets]="A spreadsheet with formulas, formatting and CSV import and export."
+	[slides]="Make presentations from simple slides, and present them full screen."
+	[calendar]="Your events by day, week and month, stored locally."
+	[reader]="Read EPUB books and plain text, with your place remembered."
+	[photoshop]="A raster image editor with layers, brushes and selections."
+	[maps]="Explore a generated city offline: pan, zoom and search its streets."
+	[money]="A personal ledger: accounts, transactions and where the money went."
+	[torrent]="Download and share files over BitTorrent, with magnet links and per-file progress."
+	[shop]="A demonstration storefront: a catalogue, a basket and a checkout that sells nothing."
+	[track]="Issues kept as plain files in a directory, with a command line for agents and people alike."
+	[pickdemo]="A demonstration of palmy's date, colour and file pickers."
+	[emoji]="Browse and search every emoji by name. Pair it with fonts-emoji for colour."
+	[prose]="The engine behind the docs app's prose checker, as a command: it reads text and suggests plainer wording."
+	[store]="Discover applications by category, search, install and remove them, and keep the system up to date. Changes go through palmd and are shown as a plan before anything happens."
 )
 apps="$(grep -v '^#' "$DISTRO/apps/default.list" | grep -vx -e wm -e greeter -e '') $EXTRA_APPS"
 for app in $apps; do
@@ -266,6 +337,7 @@ for app in $apps; do
 	prose) deps="glibc" ;;
 	term) deps="$deps busybox" ;; # the shell it runs
 	docs) deps="$deps prose" ;;   # runs prose as a subprocess
+	store) deps="$deps palm palmd" ;; # reads with palm, changes through palmd
 	esac
 	{
 		header " for distro/apps/default.list and EXTRA_APPS"
@@ -277,6 +349,9 @@ pkgver   = $OWN_VER
 pkgrel   = 0
 pkgdesc  = ${DESC[$app]:-$app}
 license  = MIT
+category = ${CATEGORY[$app]:-Accessories}
+icon     = ${ICON[$app]:-package}
+details  = ${DETAILS[$app]:-${DESC[$app]:-$app}}
 depend   = $deps
 provides = cmd:$app
 
@@ -491,7 +566,10 @@ pkgver   = $OWN_VER
 pkgrel   = 0
 pkgdesc  = The Palmframe system: kernel, init, login, window manager and the default applications
 license  = MIT
-depend   = palmframe-base linux busybox glibc palm-init palm palm-login
+category = System
+icon     = monitor
+details  = Everything a Palmframe machine has after installation. Removing an application keeps it out; removing this package would remove the system.
+depend   = palmframe-base linux busybox glibc palm-init palm palm-login palmd
 depend   = palmy-wm greeter fonts libxkbcommon xkeyboard-config
 depend   = tzdata palm-locale
 depend   = $(grep -v '^#' "$DISTRO/apps/default.list" | grep -vx -e wm -e greeter -e '' | tr '\n' ' ' | sed 's/ $//')

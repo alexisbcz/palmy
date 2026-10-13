@@ -7,6 +7,9 @@ pkgver   = 0.1.0
 pkgrel   = 0
 pkgdesc  = The palmy terminal
 license  = MIT
+category = System
+icon     = square-terminal
+details  = A terminal with tabs. It runs your shell, follows the system theme, and was checked against ghostty cell by cell.
 depend   = glibc fonts libxkbcommon busybox
 provides = cmd:term
 

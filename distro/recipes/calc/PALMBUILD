@@ -7,6 +7,9 @@ pkgver   = 0.1.0
 pkgrel   = 0
 pkgdesc  = Calculator
 license  = MIT
+category = Accessories
+icon     = calculator
+details  = A calculator that shows the whole expression as you type it, and keeps a history of what you worked out.
 depend   = glibc fonts libxkbcommon
 provides = cmd:calc
 

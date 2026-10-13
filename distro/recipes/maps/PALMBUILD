@@ -7,6 +7,9 @@ pkgver   = 0.1.0
 pkgrel   = 0
 pkgdesc  = Maps
 license  = MIT
+category = Accessories
+icon     = map-pin
+details  = Explore a generated city offline: pan, zoom and search its streets.
 depend   = glibc fonts libxkbcommon
 provides = cmd:maps
 

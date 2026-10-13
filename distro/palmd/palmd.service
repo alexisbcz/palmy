@@ -1,0 +1,6 @@
+# palmd: installs and removes packages for Software (apps/store), for root
+# and members of group wheel. It listens on /run/palmd.sock; its log, every
+# request with the uid that made it, is /var/log/palmd.log.
+cmd     = /usr/bin/palmd
+user    = root
+restart = always

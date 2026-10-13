@@ -6,6 +6,9 @@ pkgver   = 0.1.0
 pkgrel   = 0
 pkgdesc  = Palmframe's login manager (greetd protocol)
 license  = MIT
+category = System
+icon     = lock-keyhole
+details  = Speaks the greetd protocol on /run/palm-login.sock: it runs the login screen, checks passwords against /etc/shadow, and starts the session of whoever logged in.
 depend   = palmframe-base glibc palmy-wm greeter
 install_user = greeter
 

@@ -5,8 +5,11 @@
 pkgname  = track
 pkgver   = 0.1.0
 pkgrel   = 0
-pkgdesc  = Time tracker
+pkgdesc  = Issue tracker
 license  = MIT
+category = Development
+icon     = flag
+details  = Issues kept as plain files in a directory, with a command line for agents and people alike.
 depend   = glibc fonts libxkbcommon
 provides = cmd:track
 

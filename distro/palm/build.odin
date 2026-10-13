@@ -282,6 +282,18 @@ parse_recipe :: proc(dir: string) -> (^Recipe, Err) {
 				r.pkg.license = v
 			case "url":
 				r.pkg.url = v
+			case "category":
+				if !category_valid(v) {
+					return nil, recipe_err(kv.line, "category %q is not one of %v", v, CATEGORIES)
+				}
+				r.pkg.category = v
+			case "icon":
+				if !icon_valid(v) {
+					return nil, recipe_err(kv.line, "icon %q is not a lowercase icon name", v)
+				}
+				r.pkg.icon = v
+			case "details":
+				r.pkg.details = r.pkg.details == "" ? v : fmt.aprintf("%s\n%s", r.pkg.details, v)
 			case "arch":
 				r.pkg.arch = v
 			case "depend":

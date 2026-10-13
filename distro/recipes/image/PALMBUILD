@@ -7,6 +7,9 @@ pkgver   = 0.1.0
 pkgrel   = 0
 pkgdesc  = Image viewer
 license  = MIT
+category = Graphics
+icon     = image
+details  = Open PNG, JPEG and other images, zoom, and step through the rest of the folder.
 depend   = glibc fonts libxkbcommon
 provides = cmd:image
 
