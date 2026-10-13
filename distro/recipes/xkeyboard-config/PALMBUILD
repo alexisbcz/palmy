@@ -10,5 +10,8 @@ pkgrel   = 0
 pkgdesc  = X keyboard configuration data (from the build host)
 license  = MIT
 url      = https://www.freedesktop.org/wiki/Software/XKeyboardConfig
+category = System
+icon     = keyboard
+details  = The rules, keycodes and layouts the window manager compiles its keymap from. Without them it falls back to a built-in US layout.
 
 tree     = /usr/share/X11/xkb -> /usr/share/X11/xkb

@@ -33,7 +33,7 @@ distro/run-qemu.sh           # boot it in a QEMU window, UEFI firmware
 
 `make distro` builds the kernel (Linux 6.18.56) and busybox (1.37) only if
 `distro/out/bzImage` or `distro/out/busybox` is missing, because those take
-minutes. Then it builds the Odin binaries, generates the recipes, builds 36
+minutes. Then it builds the Odin binaries, generates the recipes, builds 38
 packages into `distro/out/repo/x86_64/`, signs the index, and assembles
 `distro/out/palmframe.img`. Once the kernel exists, the rest takes about five
 seconds. The image is 1.2 GB sparse and 84 MB on disk.
@@ -53,7 +53,7 @@ Other targets:
 | `make -C distro image` | rebuild the image from the repository |
 | `make -C distro run` | `distro/run-qemu.sh` |
 | `make -C distro test` | the headless boot test (`image/test-boot.py`); screenshots in `distro/out/shots/` |
-| `make -C distro serve` | serve the repository on :8080 for the guest's `palm update` |
+| `make -C distro serve` | serve the repository on :8080 for the guest's `palm update` (`PORT=8091` for another port) |
 | `make -C distro check-libs` | fail if a shipped binary needs anything but libc, libm and the loader |
 | `make -C distro clean` | remove the packages, root and image; keeps the kernel, busybox and the signing key |
 
@@ -81,8 +81,8 @@ The image is used in place: what the guest installs stays installed. Run
 | `root` | `palm` | the serial console getty (`--serial`) |
 | `greeter` | locked | runs the login screen, uid 900 |
 
-In the session, SUPER+Return opens `term`, SUPER+D the launcher, and
-SUPER+SHIFT+E ends the session and returns to the greeter. The rest of the key
+In the session, SUPER+Return opens `term`, SUPER+D the launcher, SUPER+S
+Software, and SUPER+SHIFT+E ends the session and returns to the greeter. The rest of the key
 bindings are in `apps/wm/config.odin`.
 
 ## The boot chain
@@ -115,6 +115,7 @@ same image boot under legacy BIOS.
 | `init/` | palm-init, PID 1, statically linked | Odin |
 | `login/` | palm-login, the login daemon | Odin |
 | `palm/` | palm, the package manager | Odin |
+| `palmd/` | palmd, the root daemon that runs palm for group wheel | Odin |
 | `base/` | `/etc`, the users, the service files, and `layout` (what git cannot hold: symlinks, owners, modes) | text |
 | `apps/` | builds the applications; `default.list`, `fonts.list`, `.desktop` files, `apps.tsv` | shell, text |
 | `recipes/` | one `PALMBUILD` per package, and `generate.sh` | text, shell |
@@ -236,12 +237,43 @@ the applications). `make` runs it on every build and its output is committed.
 built from. `/etc/palm/repositories` names `http://10.0.2.2:8080/x86_64`,
 which is the build host as QEMU's user network shows it, so
 `make -C distro serve` on the host is the guest's repository. The repository
-has 36 packages; the `palmframe` meta-package installs 31 of them. `shop`,
+has 38 packages; the `palmframe` meta-package installs 33 of them. `shop`,
 `track`, `pickdemo`, `emoji` and `fonts-emoji` are in the repository but not
 installed, so `palm add` has something to fetch.
 
 `notes/palm.md` has the decisions the contract left open and the image
 builder's command lines.
+
+### Software and palmd
+
+Software (`apps/store`, the `store` command, SUPER+S) is the graphical face of
+palm: Discover with a shelf per category, live search, Installed (what you
+asked for, or everything with what each dependency is for), Updates with
+Update all, and a page per package with its description, sizes, licence,
+dependencies, reverse dependencies and file list.
+
+It reads by running `palm ... --json` as the logged-in user, and changes the
+system through palmd (`palmd/`), a small root daemon palm-init starts from
+`/etc/palm/services/palmd` (shipped by the palmd package). palmd listens on
+`/run/palmd.sock` (0666) with greetd's framing, and answers only root and
+members of group wheel, decided per connection from `SO_PEERCRED` against
+`/etc/passwd` and `/etc/group`. It understands three requests -- plan an add,
+del or upgrade; apply a plan; update the indexes -- and builds palm's argv
+itself from validated package names (`[a-z0-9][a-z0-9+._-]*`), so nothing a
+client sends reaches palm as an option. One operation runs at a time; every
+request is logged with the peer's uid to `/var/log/palmd.log`.
+
+Nothing changes on a click. Software asks palmd for the plan, shows it ("will
+install track; download 561 kB"), and applies it only when confirmed; palmd
+plans again and refuses if the plan has changed since it was shown. palm's
+progress streams into the dialog, and a failure is shown in palm's own words.
+`palmd --request '<json>'` is a client for the serial console.
+
+palm gained what this needed and nothing else: optional `category`, `icon`
+and `details` fields (`palm/PALMBUILD.md`; older indexes still read), sizes
+and `explicit`/`required_by` in its `--json` output, and progress as JSON
+lines on stderr under `--json`. `notes/store.md` has the rest, including the
+verification run.
 
 ## What has been verified
 
@@ -324,7 +356,9 @@ on real hardware yet.
   root, not that copy: the FAT partition is not mounted, and palm has no hooks
   to copy it.
 - **No su or passwd for palm.** busybox is not setuid, so palm cannot become
-  root. Package management is done as root on the serial console.
+  root. Members of wheel install and remove packages through Software and
+  palmd; anything else (`palm verify`, `palm fix`, editing `/etc`) is done as
+  root on the serial console.
 - **glibc, libxkbcommon and xkeyboard-config come from the build host** (Arch),
   not from source.
 - **The window manager on bare metal** has no VT switching (Ctrl+Alt+Fn does

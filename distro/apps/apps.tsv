@@ -38,6 +38,7 @@ screenshot	screenshot	yes	grim, slurp, hyprctl	no	capture is entirely grim/slurp
 sheets	sheets	yes	optional: wl-copy via sh	yes	spreadsheet works; copying a range out of the app needs wl-copy
 shop	shop	yes	none	yes	demo storefront/feed generator, no external tools
 slides	slides	yes	none	yes	presentations, no external tools
+store	store	yes	palm (reads with --json), palmd on /run/palmd.sock (changes)	yes	Software: discover, search, install, remove and update packages; changes go through palmd for group wheel. Verified in QEMU (distro/notes/store.md)
 sysmon	sysmon	yes	/proc, /sys	yes	verified in the minimal chroot (host /proc bound in). User column shows uid? without /etc/passwd entries
 term	term	yes	a shell ($SHELL or /bin/sh), /dev/ptmx	yes	verified: runs busybox sh and takes typed input in the minimal chroot
 torrent	torrent	yes	network (plain sockets)	yes	no external tools

@@ -10,6 +10,9 @@ pkgver   = 0.1.0
 pkgrel   = 0
 pkgdesc  = Palmframe's init and service supervisor
 license  = MIT
+category = System
+icon     = activity
+details  = PID 1. It mounts the filesystems, sets device permissions at boot and on hotplug, starts the services in /etc/palm/services and restarts them when they exit, and shuts the machine down cleanly.
 depend   = palmframe-base busybox
 provides = cmd:init
 

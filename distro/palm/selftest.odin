@@ -526,6 +526,10 @@ pkgver  = 1.0
 pkgrel  = 0
 pkgdesc = Says hello, # with a hash in it
 license = MIT
+category = Accessories
+icon    = terminal
+details = The first paragraph.
+details = The second one.
 depend  = libfoo>=0.5
 install_user = palm
 file    = hello.sh -> /usr/bin/hello
@@ -581,6 +585,9 @@ test_recipes :: proc() {
 	eq_s(info.version, "1.0-r0", ".PKGINFO pkgver carries the release")
 	eq_s(info.desc, "Says hello, # with a hash in it", "a # inside a value is kept")
 	eq_i(len(info.install_users), 1, "install_user recorded")
+	eq_s(info.category, "Accessories", "category recorded in .PKGINFO")
+	eq_s(info.icon, "terminal", "icon recorded in .PKGINFO")
+	eq_s(info.details, "The first paragraph.\nThe second one.", "details lines are paragraphs")
 
 	// Two builds of the same recipe are the same bytes.
 	again := scratch("repo-again")
@@ -597,6 +604,8 @@ test_recipes :: proc() {
 		{"pkgname = x\npkgver = 1\ndir = /a\nowner = /a nobody:nobody\n", "unknown owner name"},
 		{"pkgname = X Y\npkgver = 1\n", "bad name"},
 		{"pkgname = x\npkgver = 1\ndir = /../etc\n", "a path that climbs"},
+		{"pkgname = x\npkgver = 1\ncategory = Toys\n", "a category outside the list"},
+		{"pkgname = x\npkgver = 1\nicon = Big Icon\n", "an icon that is not a name"},
 	}
 	for c in cases {
 		put(fmt.tprintf("%s/PALMBUILD", bad), c[0])
@@ -625,6 +634,7 @@ test_lifecycle :: proc() {
 	eq_i(run("--root", root, "add", "hello", "--repo", repo, "--keys-dir", keys), EXIT_NOT_FOUND, "no database without --initdb")
 	eq_i(run("--root", root, "--initdb", "--repo", repo, "--keys-dir", keys, "add", "hello", "--dry-run", "--json"), 0, "dry run")
 	check(strings.contains(g_out, `"install":[{"name":"libfoo"`), "dry-run JSON plans libfoo first: %s", g_out)
+	check(strings.contains(g_out, `"download_size":`) && strings.contains(g_out, `"size_change":`), "the plan carries its sizes: %s", g_out)
 	check(!os.exists(fmt.tprintf("%s/usr/bin/hello", root)), "dry run wrote no files")
 
 	code := run("--root", root, "--initdb", "--repo", repo, "--keys-dir", keys, "add", "hello")
@@ -654,6 +664,17 @@ test_lifecycle :: proc() {
 	eq_i(R(root, "search", "foo library", "--json"), 0, "search")
 	check(strings.contains(g_out, `"name":"libfoo"`), "search finds by description")
 	eq_i(R(root, "search", "zzzz"), EXIT_NOT_FOUND, "search for nothing is not found")
+
+	// What a store reads: the store fields survive index and installed
+	// database, world decides `explicit`, and reverse dependencies are named.
+	eq_i(R(root, "info", "hello", "libfoo", "--json"), 0, "info --json")
+	check(strings.contains(g_out, `"category":"Accessories","icon":"terminal","details":"The first paragraph.\nThe second one."`), "info carries category, icon and details: %s", g_out)
+	check(strings.contains(g_out, `"name":"hello"`) && strings.contains(g_out, `"explicit":true`), "hello is explicit (in world)")
+	check(strings.contains(g_out, `"explicit":false,"required_by":["hello"]`), "libfoo is a dependency, required by hello: %s", g_out)
+	eq_i(R(root, "list", "--installed", "--json"), 0, "list --installed --json")
+	check(strings.contains(g_out, `"installed_size":`), "list carries installed sizes")
+	db_text := slurp(fmt.tprintf("%s/usr/lib/palm/db/installed", root))
+	check(strings.contains(db_text, "category = Accessories\n") && strings.contains(db_text, "details = The second one.\n"), "the installed database keeps the store fields")
 
 	// Break things; verify sees it; fix mends it.
 	put(fmt.tprintf("%s/usr/share/foo/a.txt", root), "tampered\n")

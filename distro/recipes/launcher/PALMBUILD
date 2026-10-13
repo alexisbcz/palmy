@@ -7,6 +7,9 @@ pkgver   = 0.1.0
 pkgrel   = 0
 pkgdesc  = Application launcher
 license  = MIT
+category = System
+icon     = layout-grid
+details  = Type a few letters of an application's name and press Return. SUPER+D opens it from anywhere.
 depend   = glibc fonts libxkbcommon
 provides = cmd:launcher
 

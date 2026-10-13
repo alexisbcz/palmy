@@ -7,6 +7,9 @@ pkgver   = 0.1.0
 pkgrel   = 0
 pkgdesc  = Presentations
 license  = MIT
+category = Office
+icon     = presentation
+details  = Make presentations from simple slides, and present them full screen.
 depend   = glibc fonts libxkbcommon
 provides = cmd:slides
 

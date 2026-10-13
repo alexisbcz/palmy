@@ -5,6 +5,9 @@ pkgver   = 0.1.0
 pkgrel   = 0
 pkgdesc  = The palmy login screen
 license  = MIT
+category = System
+icon     = user
+details  = The screen you log in on: the clock, the accounts, the session, and Restart and Shut Down.
 depend   = glibc fonts libxkbcommon
 provides = cmd:greeter
 

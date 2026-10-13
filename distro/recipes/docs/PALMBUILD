@@ -7,6 +7,9 @@ pkgver   = 0.1.0
 pkgrel   = 0
 pkgdesc  = Documents
 license  = MIT
+category = Office
+icon     = file-text
+details  = A word processor for writing documents, with styles, and a prose checker that suggests plainer wording.
 depend   = glibc fonts libxkbcommon prose
 provides = cmd:docs
 

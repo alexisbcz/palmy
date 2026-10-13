@@ -215,9 +215,10 @@ Staged :: struct {
 	paths:  []File_Rec, // type and path only, for the conflict check
 }
 
-stage :: proc(t: ^Txn, changes: []Change) -> ([]Staged, Err) {
+stage :: proc(t: ^Txn, changes: []Change, steps: int = 0) -> ([]Staged, Err) {
 	out := make([dynamic]Staged)
-	for c in changes {
+	for c, i in changes {
+		progress("fetch", c.new.name, c.new.version, i + 1, steps)
 		data, e := fetch_package(t.o, c.new)
 		if !ok(e) {
 			return nil, e
@@ -537,7 +538,11 @@ install_staged :: proc(t: ^Txn, s: ^Staged) -> Err {
 
 // run_plan carries out phases 1 to 4.
 run_plan :: proc(t: ^Txn, plan: Plan) -> Err {
-	staged, e := stage(t, plan.changes[:])
+	// Every package is fetched, then each removal and each install is one
+	// step: that is the denominator a progress bar divides by.
+	steps := 2 * len(plan.changes) + len(plan.remove)
+	step := len(plan.changes)
+	staged, e := stage(t, plan.changes[:], steps)
 	if !ok(e) {
 		return e
 	}
@@ -551,19 +556,21 @@ run_plan :: proc(t: ^Txn, plan: Plan) -> Err {
 		}
 	}
 	for p in plan.remove {
-		say("removing %s %s", p.name, p.version)
+		step += 1
+		progress("remove", p.name, p.version, step, steps)
 		if re := remove_package(t, p, incoming); !ok(re) {
 			return re
 		}
 	}
 	for &s in staged {
 		c := s.change
+		step += 1
 		if c.old == nil {
-			say("installing %s %s", c.new.name, c.new.version)
+			progress("install", c.new.name, c.new.version, step, steps)
 		} else if c.old.version == c.new.version {
-			say("reinstalling %s %s", c.new.name, c.new.version)
+			progress("reinstall", c.new.name, c.new.version, step, steps)
 		} else {
-			say("upgrading %s %s -> %s", c.new.name, c.old.version, c.new.version)
+			progress("upgrade", c.new.name, c.new.version, step, steps, c.old.version)
 		}
 		if ie := install_staged(t, &s); !ok(ie) {
 			return ie

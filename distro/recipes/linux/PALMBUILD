@@ -11,6 +11,10 @@ pkgrel   = 0
 pkgdesc  = The Linux kernel, Palmframe configuration
 license  = GPL-2.0-only
 url      = https://kernel.org
+category = System
+icon     = server
+details  = Linux 6.18 LTS, configured for Palmframe: virtio devices, DRM, evdev and ext4 are built in, so the system boots with no modules and no initramfs.
+details  = Upgrading it updates /boot/vmlinuz on the root filesystem; the copy limine boots from lives on the EFI partition and is refreshed when the image is rebuilt.
 
 file     = ${PALMFRAME_OUT}/bzImage -> /boot/vmlinuz mode 0644
 file     = ${PALMFRAME_OUT}/kernel.config -> /boot/config mode 0644

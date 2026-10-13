@@ -7,6 +7,9 @@ pkgver   = 0.1.0
 pkgrel   = 0
 pkgdesc  = The prose engine behind docs (command line)
 license  = MIT
+category = Office
+icon     = type
+details  = The engine behind the docs app's prose checker, as a command: it reads text and suggests plainer wording.
 depend   = glibc
 provides = cmd:prose
 

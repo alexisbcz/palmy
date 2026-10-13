@@ -1,0 +1,8 @@
+[Desktop Entry]
+Type=Application
+Name=Software
+Comment=Find, install and update software
+Exec=store
+Icon=store
+Terminal=false
+Categories=System;PackageManager;

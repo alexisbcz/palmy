@@ -21,6 +21,36 @@ import "core:strings"
 
 DEFAULT_ARCH :: "x86_64"
 
+// CATEGORIES is the closed set a package's `category` may name. It is closed
+// so a store can lay out a fixed set of shelves and a recipe's typo fails the
+// build instead of opening a shelf of one.
+CATEGORIES :: [?]string{"Accessories", "Development", "Graphics", "Internet", "Office", "System", "Multimedia", "Games"}
+
+category_valid :: proc(s: string) -> bool {
+	for c in CATEGORIES {
+		if c == s {
+			return true
+		}
+	}
+	return false
+}
+
+// icon_valid keeps an icon name to what a front end can look up and what a
+// record line can hold: lowercase words joined by '-'.
+icon_valid :: proc(s: string) -> bool {
+	if s == "" || len(s) > 64 {
+		return false
+	}
+	for c in transmute([]byte)s {
+		switch c {
+		case 'a' ..= 'z', '0' ..= '9', '-':
+		case:
+			return false
+		}
+	}
+	return true
+}
+
 File_Rec :: struct {
 	path:  string,
 	type:  Entry_Type,
@@ -37,6 +67,14 @@ Pkg :: struct {
 	arch:          string,
 	license:       string,
 	url:           string,
+	// What a graphical front end (apps/store) shows. All three are optional
+	// and an older index simply has none of them: `category` is one of
+	// CATEGORIES, `icon` names an icon the front end knows (a lucide name),
+	// and `details` is longer prose than the one-line pkgdesc, one paragraph
+	// per `details` line.
+	category:      string,
+	icon:          string,
+	details:       string,
 	size:          i64, // installed size
 	csize:         i64, // size of the .palm
 	sha256:        string, // of the .palm
@@ -66,6 +104,7 @@ pkg_from_record :: proc(rec: []KV, allocator := context.allocator) -> (Pkg, Err)
 	provs := make([dynamic]string)
 	users := make([dynamic]string)
 	files := make([dynamic]File_Rec)
+	paras := make([dynamic]string, context.temp_allocator)
 	for kv in rec {
 		v := strings.clone(kv.value)
 		switch kv.key {
@@ -81,6 +120,12 @@ pkg_from_record :: proc(rec: []KV, allocator := context.allocator) -> (Pkg, Err)
 			p.license = v
 		case "url":
 			p.url = v
+		case "category":
+			p.category = v
+		case "icon":
+			p.icon = v
+		case "details":
+			append(&paras, v)
 		case "size":
 			p.size, _ = strconv.parse_i64(v)
 		case "csize":
@@ -111,6 +156,9 @@ pkg_from_record :: proc(rec: []KV, allocator := context.allocator) -> (Pkg, Err)
 	p.provides = provs[:]
 	p.install_users = users[:]
 	p.files = files[:]
+	if len(paras) > 0 {
+		p.details = strings.join(paras[:], "\n")
+	}
 	if p.arch == "" {
 		p.arch = DEFAULT_ARCH
 	}
@@ -142,6 +190,13 @@ pkg_write :: proc(b: ^strings.Builder, p: ^Pkg, form: Pkg_Form) {
 	fmt.sbprintf(b, "arch = %s\n", p.arch != "" ? p.arch : DEFAULT_ARCH)
 	if p.license != "" {fmt.sbprintf(b, "license = %s\n", p.license)}
 	if p.url != "" {fmt.sbprintf(b, "url = %s\n", p.url)}
+	if p.category != "" {fmt.sbprintf(b, "category = %s\n", p.category)}
+	if p.icon != "" {fmt.sbprintf(b, "icon = %s\n", p.icon)}
+	if p.details != "" {
+		for para in strings.split_lines(p.details, context.temp_allocator) {
+			if para != "" {fmt.sbprintf(b, "details = %s\n", para)}
+		}
+	}
 	fmt.sbprintf(b, "size = %d\n", p.size)
 	if form != .Pkginfo {
 		if form == .Index {fmt.sbprintf(b, "csize = %d\n", p.csize)}

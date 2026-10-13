@@ -7,6 +7,9 @@ pkgver   = 0.1.0
 pkgrel   = 0
 pkgdesc  = System monitor
 license  = MIT
+category = System
+icon     = activity
+details  = CPU, memory, disks and processes, read straight from /proc and /sys, updating every second.
 depend   = glibc fonts libxkbcommon
 provides = cmd:sysmon
 

@@ -7,6 +7,9 @@ pkgver   = 0.1.0
 pkgrel   = 0
 pkgdesc  = Markdown notes
 license  = MIT
+category = Office
+icon     = notebook-pen
+details  = Markdown notes kept as plain files under your home directory, searchable, with a live preview.
 depend   = glibc fonts libxkbcommon
 provides = cmd:notes
 
