@@ -6,6 +6,9 @@ pkgver   = 0.1.0
 pkgrel   = 0
 pkgdesc  = The palmy Wayland window manager
 license  = MIT
+category = System
+icon     = layout-grid
+details  = A tiling and floating Wayland compositor that drives the display and input devices directly, with workspaces, a bar and every key binding in one text file.
 depend   = glibc fonts
 provides = cmd:wm
 

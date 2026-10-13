@@ -19,6 +19,9 @@ license = MIT
 url     = https://example.invalid/palmframe
 depend  = glibc palmframe-fonts
 provides = cmd:term
+category = System
+icon    = square-terminal
+details = A terminal emulator with tabs, written with palmy.
 
 file    = ${PALMY_OUT}/bin/term -> /usr/bin/term mode 0755
 tree    = share -> /usr/share/term
@@ -49,6 +52,19 @@ typo is caught at build time rather than shipped.
 | `depend` | repeatable | space-separated constraints: `glibc`, `libgui>=2`, `foo<3`, `bar=1.2`, `baz~1.2` |
 | `provides` | repeatable | space-separated virtual names other packages may depend on: `cmd:sh`, `so:libc.so.6`, optionally versioned `so:libc.so.6=6` |
 | `install_user` | repeatable | a user the package expects to exist (see below) |
+| `category` | | one of `Accessories`, `Development`, `Graphics`, `Internet`, `Office`, `System`, `Multimedia`, `Games` |
+| `icon` | | an icon name for a graphical front end: lowercase letters, digits and `-` (a [lucide](https://lucide.dev) name, which is what `apps/store` draws) |
+| `details` | repeatable | longer prose than `pkgdesc`, one paragraph per line |
+
+`category`, `icon` and `details` exist for Software (`apps/store`): the
+category is the shelf a package sits on in Discover, `pkgdesc` is the one-line
+summary under its name, and `details` is the text on its page. All three are
+optional. They are copied into `.PKGINFO`, `PALMINDEX` and the installed
+database like every other field, and palm has always skipped keys it does not
+know when it reads any of those, so an index with these fields is still read
+by an older palm, and an older index simply has none of them. The category
+list is closed so that a typo fails `palm build` instead of opening a shelf of
+one.
 
 Constraint operators are `>=`, `<=`, `>`, `<`, `=` and `~`. `=1.2` matches any
 release of 1.2 (`1.2-r0`, `1.2-r7`) unless a release is given (`=1.2-r3`);
@@ -132,6 +148,9 @@ pkgver = 0.1.0-r0
 pkgdesc = The palmy terminal
 arch = x86_64
 license = MIT
+category = System
+icon = square-terminal
+details = A terminal emulator with tabs, written with palmy.
 size = 1843200
 depend = glibc
 depend = palmframe-fonts

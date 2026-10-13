@@ -7,6 +7,9 @@ pkgver   = 0.1.0
 pkgrel   = 0
 pkgdesc  = Calendar
 license  = MIT
+category = Office
+icon     = calendar
+details  = Your events by day, week and month, stored locally.
 depend   = glibc fonts libxkbcommon
 provides = cmd:calendar
 

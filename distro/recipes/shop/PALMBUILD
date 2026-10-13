@@ -7,6 +7,9 @@ pkgver   = 0.1.0
 pkgrel   = 0
 pkgdesc  = Shop demo
 license  = MIT
+category = Internet
+icon     = tag
+details  = A demonstration storefront: a catalogue, a basket and a checkout that sells nothing.
 depend   = glibc fonts libxkbcommon
 provides = cmd:shop
 

@@ -7,6 +7,9 @@ pkgver   = 0.1.0
 pkgrel   = 0
 pkgdesc  = File manager
 license  = MIT
+category = Accessories
+icon     = folder
+details  = Browse folders in a list or as icons, with a sidebar of places, breadcrumbs, live filtering and an inspector for the selected file.
 depend   = glibc fonts libxkbcommon
 provides = cmd:files
 

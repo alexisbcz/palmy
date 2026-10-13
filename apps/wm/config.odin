@@ -183,6 +183,7 @@ resize_step         = 48
 bind = $mod,       Return, spawn term
 bind = $mod,       T,      spawn term
 bind = $mod,       D,      spawn launcher
+bind = $mod,       S,      spawn store
 bind = $mod,       C,      spawn counter
 bind = $mod,       G,      spawn gallery
 bind = $mod,       O,      spawn todo

@@ -7,6 +7,9 @@ pkgver   = 0.1.0
 pkgrel   = 0
 pkgdesc  = Personal finance
 license  = MIT
+category = Office
+icon     = credit-card
+details  = A personal ledger: accounts, transactions and where the money went.
 depend   = glibc fonts libxkbcommon
 provides = cmd:money
 

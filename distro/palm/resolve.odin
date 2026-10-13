@@ -289,13 +289,20 @@ plan_print :: proc(plan: Plan) {
 }
 
 plan_json :: proc(plan: Plan, dry_run: bool) -> string {
+	// Sizes ride along so a front end can say "download 4.2 MB, uses 11 MB"
+	// before anything happens: csize is what fetching costs (the .palm),
+	// size what the files take once unpacked.
+	download: i64 = 0
+	growth: i64 = 0
 	b := strings.builder_make(context.temp_allocator)
 	strings.write_string(&b, "{\"install\":[")
 	n := 0
 	for c in plan.changes {
 		if c.old != nil {continue}
 		if n > 0 {strings.write_byte(&b, ',')}
-		fmt.sbprintf(&b, "{{\"name\":%s,\"version\":%s}}", json_str(c.new.name), json_str(c.new.version))
+		fmt.sbprintf(&b, "{{\"name\":%s,\"version\":%s,\"size\":%d,\"csize\":%d}}", json_str(c.new.name), json_str(c.new.version), c.new.size, c.new.csize)
+		download += c.new.csize
+		growth += c.new.size
 		n += 1
 	}
 	strings.write_string(&b, "],\"upgrade\":[")
@@ -303,15 +310,18 @@ plan_json :: proc(plan: Plan, dry_run: bool) -> string {
 	for c in plan.changes {
 		if c.old == nil {continue}
 		if n > 0 {strings.write_byte(&b, ',')}
-		fmt.sbprintf(&b, "{{\"name\":%s,\"from\":%s,\"to\":%s}}", json_str(c.new.name), json_str(c.old.version), json_str(c.new.version))
+		fmt.sbprintf(&b, "{{\"name\":%s,\"from\":%s,\"to\":%s,\"size\":%d,\"csize\":%d}}", json_str(c.new.name), json_str(c.old.version), json_str(c.new.version), c.new.size, c.new.csize)
+		download += c.new.csize
+		growth += c.new.size - c.old.size
 		n += 1
 	}
 	strings.write_string(&b, "],\"remove\":[")
 	for p, i in plan.remove {
 		if i > 0 {strings.write_byte(&b, ',')}
-		fmt.sbprintf(&b, "{{\"name\":%s,\"version\":%s}}", json_str(p.name), json_str(p.version))
+		fmt.sbprintf(&b, "{{\"name\":%s,\"version\":%s,\"size\":%d}}", json_str(p.name), json_str(p.version), p.size)
+		growth -= p.size
 	}
-	fmt.sbprintf(&b, "],\"dry_run\":%v}}", dry_run)
+	fmt.sbprintf(&b, "],\"download_size\":%d,\"size_change\":%d,\"dry_run\":%v}}", download, growth, dry_run)
 	return strings.to_string(b)
 }
 

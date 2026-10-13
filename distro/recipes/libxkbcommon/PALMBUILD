@@ -9,6 +9,9 @@ pkgrel   = 0
 pkgdesc  = Keymap handling library (from the build host)
 license  = MIT
 url      = https://xkbcommon.org
+category = System
+icon     = keyboard
+details  = Applications load it to compile the keymap the window manager sends them, so every layout the window manager knows types correctly in every window.
 depend   = glibc
 provides = so:libxkbcommon.so.0
 

@@ -7,6 +7,9 @@ pkgver   = 0.1.0
 pkgrel   = 0
 pkgdesc  = PDF and e-book reader
 license  = MIT
+category = Office
+icon     = book-open
+details  = Read EPUB books and plain text, with your place remembered.
 depend   = glibc fonts libxkbcommon
 provides = cmd:reader
 

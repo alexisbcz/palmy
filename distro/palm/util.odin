@@ -83,6 +83,41 @@ say :: proc(format: string, args: ..any) {
 	fmt.print("\n")
 }
 
+// g_progress_json is --json outside the selftest. stdout then has to stay
+// one document, so the steps of a transaction go to stderr instead, one JSON
+// object per line:
+//
+//	{"event":"fetch","name":"track","version":"0.1.0-r0","step":1,"steps":3}
+//
+// palmd streams those lines to the store as they arrive, which is how a
+// progress bar knows where palm is without anyone parsing English.
+g_progress_json := false
+
+// progress reports one step of a transaction: event is fetch, remove,
+// install, upgrade or reinstall. step counts from 1 to steps.
+progress :: proc(event, name, version: string, step, steps: int, from := "") {
+	if g_progress_json {
+		fmt.eprintf("{{\"event\":%s,\"name\":%s,\"version\":%s", json_str(event), json_str(name), json_str(version))
+		if from != "" {
+			fmt.eprintf(",\"from\":%s", json_str(from))
+		}
+		fmt.eprintf(",\"step\":%d,\"steps\":%d}}\n", step, steps)
+		return
+	}
+	switch event {
+	case "fetch":
+		// a person sees fetching only as the pause before "installing"
+	case "remove":
+		say("removing %s %s", name, version)
+	case "install":
+		say("installing %s %s", name, version)
+	case "reinstall":
+		say("reinstalling %s %s", name, version)
+	case "upgrade":
+		say("upgrading %s %s -> %s", name, from, version)
+	}
+}
+
 warn :: proc(format: string, args: ..any) {
 	if g_quiet {
 		return

@@ -7,6 +7,9 @@ pkgver   = 0.1.0
 pkgrel   = 0
 pkgdesc  = Spreadsheets
 license  = MIT
+category = Office
+icon     = file-spreadsheet
+details  = A spreadsheet with formulas, formatting and CSV import and export.
 depend   = glibc fonts libxkbcommon
 provides = cmd:sheets
 
