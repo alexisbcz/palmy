@@ -670,6 +670,24 @@ route_input :: proc(ctx: ^Ctx) {
 	if key_pressed(ctx, KEY_TAB) {
 		cycle_focus(ctx, .Shift in in_.mods)
 	}
+
+	// A frame that consumed input gets one more after it. The tree is built
+	// top to bottom in a single pass, so whatever a click or a key changes is
+	// already stale in every element built before the code that handled it:
+	// a form row that takes focus on click has drawn its predecessors
+	// assuming the old focus. Without this the corrected picture waited for
+	// the next event of any kind -- in practice the next nudge of the mouse,
+	// which is why focusing a field felt like half a second, and with a
+	// perfectly still pointer it never came at all. One extra frame per
+	// input is what Dear ImGui does for the same reason.
+	edge := in_.pressed != {} || in_.released != {} || len(in_.keys) > 0 ||
+		strings.builder_len(in_.text) > 0 || in_.scroll != {} || in_.mouse_delta != {}
+	if edge {
+		ctx.redraw = true
+	}
+	if in_.pressed != {} || len(in_.keys) > 0 || strings.builder_len(in_.text) > 0 {
+		ctx.caret_epoch = time.tick_now()
+	}
 }
 
 @(private)
