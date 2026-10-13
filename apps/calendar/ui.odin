@@ -1,7 +1,6 @@
 // The frame: the month grid, the year view, the day pane and the dialogs.
 package main
 
-import "core:math"
 import p "palmy:."
 import sc "shadcn:."
 
@@ -688,16 +687,18 @@ form_dialog :: proc(ui: ^p.Ctx, c: ^Cal) {
 			FIELD_LABELS[f],
 			"w-[72] shrink-0 text-right text-[12] font-medium text-muted-foreground",
 		)
-		active := c.form.field == f
 		idx := p.row(
 			ui,
 			"flex-1 min-w-0 h-9 items-center gap-1 px-3 rounded-lg border border-input bg-background overflow-hidden cursor-text",
 		)
+		// Focus follows the press, as a browser's input does, and is settled
+		// before the row is dressed so the frame that sees the press shows it.
+		if p.clickable(ui, idx) || p.is_active(ui, idx) {
+			c.form.field = f
+		}
+		active := c.form.field == f
 		if active {
 			p.apply(ui, "border-ring ring-3 ring-ring/40", idx)
-		}
-		if p.clickable(ui, idx) {
-			c.form.field = f
 		}
 		v := string(c.form.bufs[f][:])
 		p.text(
@@ -707,12 +708,9 @@ form_dialog :: proc(ui: ^p.Ctx, c: ^Cal) {
 			? "text-[13] text-muted-foreground/60 whitespace-nowrap shrink-0" \
 			: "text-[13] text-foreground whitespace-nowrap shrink-0",
 		)
-		if active {
-			p.redraw(ui)
-			if math.mod(f64(p.elapsed(ui)), 1.06) < 0.62 {
-				p.div(ui, "w-px h-[16] ml-px bg-foreground shrink-0")
-				p.end(ui)
-			}
+		if active && p.caret_on(ui) {
+			p.div(ui, "w-px h-[16] ml-px bg-foreground shrink-0")
+			p.end(ui)
 		}
 		p.end(ui)
 		p.end(ui)

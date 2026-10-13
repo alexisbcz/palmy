@@ -2,6 +2,7 @@ package palmy
 
 import "core:math"
 import "core:strings"
+import "core:time"
 
 // push_styled applies palmy's own defaults first and the caller's classes
 // second, so anything you write wins over the built-in look.
@@ -57,6 +58,31 @@ activated :: proc(ctx: ^Ctx, idx := -1) -> bool {
 		return true
 	}
 	return ctx.clicked == id
+}
+
+// The caret's blink, in seconds: on for BLINK_ON out of every BLINK_PERIOD.
+BLINK_PERIOD :: 1.06
+BLINK_ON :: 0.6
+
+// caret_on says whether a blinking caret is lit this frame, and arranges for
+// the frame on which it next changes. Only that frame: between the two edges
+// the loop sleeps, where pinning it at vsync to watch a clock -- which is
+// how carets here used to blink -- repainted the whole window sixty times a
+// second for as long as a field held focus.
+//
+// It counts from the last press or keystroke on a real monotonic clock, so a
+// caret is solid while someone types and `tick`'s clamped `dt` cannot stretch
+// the blink. Offscreen there is no clock to wake on, and it reads the
+// renderer's synthetic time instead, which keeps captures deterministic.
+caret_on :: proc(ctx: ^Ctx) -> bool {
+	if ctx.app == nil {
+		return math.mod_f64(ctx.now, BLINK_PERIOD) < BLINK_ON
+	}
+	phase := math.mod_f64(time.duration_seconds(time.tick_since(ctx.caret_epoch)), BLINK_PERIOD)
+	on := phase < BLINK_ON
+	next := (on ? BLINK_ON : BLINK_PERIOD) - phase
+	wake_after(ctx, time.Duration(next * f64(time.Second)) + time.Millisecond)
+	return on
 }
 
 // is_hovered and is_active report the pointer state of an element, as of the
@@ -506,9 +532,7 @@ text_field :: proc(
 	ctx.nodes[t].style.margin[LEFT] = -w.scroll.x
 
 	if has_focus {
-		// A blinking caret, which is also what keeps this element animating.
-		ctx.animating = true
-		if math.mod_f32(f32(ctx.now), 1.06) < 0.6 {
+		if caret_on(ctx) {
 			caret := push_styled(ctx, .Box, "absolute w-[1.5]", "")
 			// The caret takes the text colour, so it is correct on any theme.
 			ctx.nodes[caret].style.bg = flat(s.fg)
@@ -1213,29 +1237,10 @@ text_area :: proc(
 			ctx.nodes[t].style.fg = fade(s.fg, 0.5)
 		}
 
-		if has_focus && ri == caret_row {
-			// A caret that does not blink, and deliberately so.
-			//
-			// `text_field` blinks by setting `ctx.animating = true` and
-			// reading `ctx.now`, and both halves of that are a trap. The flag
-			// pins the whole application at vsync for as long as any field
-			// holds focus -- `colorpick`, whose hex field is focused at
-			// startup, burned a third of a core from the moment it opened --
-			// and `ctx.now` is not a clock: `tick` clamps `dt` to 0.1 s so a
-			// stalled frame cannot teleport an animation, which means a
-			// four-second interval measured against it lasts twelve seconds at
-			// two frames a second.
-			//
-			// A steady caret costs nothing and is never wrong. When the
-			// one-shot timer lands, this becomes:
-			//
-			//	phase := monotonic_now() % BLINK_PERIOD
-			//	visible := phase < BLINK_ON
-			//	wake_after(ctx, (visible ? BLINK_ON : BLINK_PERIOD) - phase)
-			//
-			// -- one wake per blink edge, read off a real monotonic clock,
-			// with the frame loop asleep in between. The caret is drawn here
-			// and nowhere else, so that is this block and nothing further.
+		// The caret is drawn here and nowhere else. It blinks on
+		// `caret_on`'s schedule, which wakes the loop once per edge rather
+		// than holding it at vsync.
+		if has_focus && ri == caret_row && caret_on(ctx) {
 			caret := push_styled(ctx, .Box, "absolute w-[1.5]", "")
 			ctx.nodes[caret].style.bg = flat(s.fg)
 			// Positioned with `inset`, not `margin`: an absolutely positioned

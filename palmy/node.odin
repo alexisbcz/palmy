@@ -4,6 +4,7 @@ import "core:fmt"
 import "core:mem"
 import "core:mem/virtual"
 import "core:strings"
+import "core:time"
 
 Node_Kind :: enum u8 {
 	Box,
@@ -129,6 +130,11 @@ Ctx :: struct {
 
 	animating: bool,
 	redraw:    bool,
+
+	// When the pointer was last pressed or a key typed: the caret blinks from
+	// here, so it is solid while someone is working and starts blinking only
+	// once they stop, which is what every text field on every platform does.
+	caret_epoch: time.Tick,
 
 	// Index of the most recently created element, which `style` targets.
 	last:      int,
