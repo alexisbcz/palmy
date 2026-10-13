@@ -210,6 +210,27 @@ selftest :: proc(sock, user, password: string) -> int {
 			payload,
 		)
 
+		pw := req_power("poweroff", context.temp_allocator)
+		check(
+			"encoder: palm-login's power extension",
+			pw == `{"type":"power","action":"poweroff"}`,
+			pw,
+		)
+
+		// The session list picks the palmy window manager when it is offered.
+		list := []Session {
+			{name = "Hyprland", exec = "start-hyprland", kind = .Wayland},
+			PALMFRAME_SESSION,
+			{name = "Shell", exec = "bash -l", kind = .Shell},
+		}
+		check("sessions: Palmframe is the default", default_session(list) == 1, fmt.tprintf("%d", default_session(list)))
+		check(
+			"sessions: Palmframe starts wm --drm",
+			strings.join(session_cmd(PALMFRAME_SESSION, context.temp_allocator), " ", context.temp_allocator) == "wm --drm",
+			"",
+		)
+		check("sessions: no wm, no default", default_session(list[:1]) == -1, "")
+
 		none := req_post_response("", false, context.temp_allocator)
 		check(
 			"encoder: an informative message is answered with no response field",
