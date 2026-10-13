@@ -107,7 +107,6 @@ Server :: struct {
 	status_at:    f64,
 	toast:        string,
 	toast_at:     f64,
-	cascade_at:   [2]int,
 }
 
 server: Server
@@ -442,34 +441,64 @@ place_new_window :: proc(s: ^Server, t: ^Toplevel) {
 	case 2:
 		placement = .Pointer
 	}
-	first := true
-	for o in s.stack {
-		if o != t && o.mapped && !o.minimized && ws_floating_now(s, o) {
-			first = false
-			break
+	// The window to cascade from is the topmost floating one already on
+	// this output of this workspace — the one actually there. A remembered
+	// "last placed" position went stale as soon as that window closed or
+	// moved, and the next window landed 32 px from a ghost, squarely over
+	// the one that was left.
+	ref: ^Toplevel
+	for i := len(s.stack) - 1; i >= 0; i -= 1 {
+		o := s.stack[i]
+		if o == t || !o.mapped || o.minimized || !ws_floating_now(s, o) {
+			continue
 		}
+		ofr := frame_rect(o)
+		if ws_output_at(s, int(ofr.x + ofr.w / 2), int(ofr.y + ofr.h / 2)) != oi {
+			continue
+		}
+		ref = o
+		break
 	}
+	first := ref == nil
 	fx, fy: int
 	switch {
 	case placement == .Center || (placement == .Cascade && first):
 		fx = wa.x + (wa.w - fw) / 2
 		fy = wa.y + (wa.h - fh) / 2
-		s.cascade_at = {fx, fy}
 	case placement == .Pointer:
 		fx = s_pointer.x - fw / 2
 		fy = s_pointer.y - th / 2
 	case:
+		rfr := frame_rect(ref)
 		step := 32
-		fx = s.cascade_at.x + step
-		fy = s.cascade_at.y + step
-		// Wrap before any edge, back to the top-left of the work area, so a
-		// tenth window does not end up half off the screen.
-		if s.cascade_at == {} || fx + fw > wa.x + wa.w || fy + fh > wa.y + wa.h || fx < wa.x || fy < wa.y {
-			s.place_n += 1
-			fx = wa.x + 48 + (s.place_n % 4) * 24
-			fy = wa.y + 32 + (s.place_n % 4) * 16
+		fx = int(rfr.x) + step
+		fy = int(rfr.y) + step
+		// Past the right edge, slide left to fit: the window below keeps
+		// its title bar in view as long as this one starts lower.
+		if fx + fw > wa.x + wa.w {
+			fx = max(wa.x, wa.x + wa.w - fw)
 		}
-		s.cascade_at = {fx, fy}
+		// Past the bottom, the new window is shortened to fit below the
+		// title bar of the one it cascades from — what a cascade is for —
+		// as long as that leaves it at least half the work area's height.
+		// A window as large as the screen would otherwise cover the one
+		// before it whole wherever it went.
+		if fy + fh > wa.y + wa.h {
+			nh := wa.y + wa.h - fy - th - bw
+			if nh >= max(t.min_h, MIN_H, wa.h / 2) && t.max_h == 0 {
+				t.req_h = nh
+				fh = nh + th + bw
+				if ws_alive(s, t) {
+					send_configure(s, t, t.req_w, t.req_h)
+				}
+			} else {
+				// No room left: wrap back to the top-left of the work area,
+				// so a tenth window does not end up half off the screen.
+				s.place_n += 1
+				fx = wa.x + 48 + (s.place_n % 4) * 24
+				fy = wa.y + 32 + (s.place_n % 4) * 16
+			}
+		}
 	}
 	fx = clamp(fx, wa.x, max(wa.x, wa.x + wa.w - fw))
 	fy = clamp(fy, wa.y, max(wa.y, wa.y + wa.h - fh))

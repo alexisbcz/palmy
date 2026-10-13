@@ -31,6 +31,7 @@ Ov_Item :: struct {
 	t:    ^Toplevel,
 	rect: p.Rect, // the window's scaled rectangle (content, title bar above)
 	from: p.Rect, // where it flew from
+	fr:   p.Rect, // the window's frame when this was laid out
 }
 
 Overview :: struct {
@@ -245,9 +246,60 @@ overview_layout :: proc(s: ^Server) {
 	rects := make([]p.Rect, len(wins), context.temp_allocator)
 	ov_grid(area, sizes, 28, rects)
 	for t, i in wins {
-		append(&ov.items, Ov_Item{t = t, rect = rects[i], from = frame_rect(t)})
+		append(&ov.items, Ov_Item{t = t, rect = rects[i], from = frame_rect(t), fr = frame_rect(t)})
 	}
 	ov.sel = clamp(ov.sel, 0, max(len(ov.items) - 1, 0))
+}
+
+// overview_relayout lays the overview out again while it is open, after
+// the windows under it changed — one dragged to another workspace, the
+// layout reflowing to fill the gap, a client committing its new size. Each
+// card glides from where it is drawn now to its new place, so the cards
+// never show one window's new buffer squeezed into its old rectangle.
+overview_relayout :: proc(s: ^Server) {
+	old := make([]Ov_Item, len(ov.items), context.temp_allocator)
+	for it, i in ov.items {
+		old[i] = it
+		old[i].rect = ov_item_rect(s, it)
+	}
+	sel_t: ^Toplevel
+	if ov.sel >= 0 && ov.sel < len(ov.items) {
+		sel_t = ov.items[ov.sel].t
+	}
+	overview_layout(s)
+	for &it, i in ov.items {
+		for o in old {
+			if o.t == it.t {
+				it.from = o.rect
+			}
+		}
+		if it.t == sel_t {
+			ov.sel = i
+		}
+	}
+	ov.t0 = wall_now()
+	s.dirty = true
+}
+
+// ov_stale says whether a window under the overview has moved or changed
+// size since the cards were laid out: the layout reflowed, or a client
+// answered a configure with a buffer of the new size.
+ov_stale :: proc(s: ^Server) -> bool {
+	n := 0
+	for t in s.stack {
+		if t.mapped {
+			n += 1
+		}
+	}
+	if n != len(ov.items) {
+		return true
+	}
+	for it in ov.items {
+		if frame_rect(it.t) != it.fr {
+			return true
+		}
+	}
+	return false
 }
 
 ov_matches :: proc(t: ^Toplevel) -> bool {
@@ -299,6 +351,8 @@ overview_pointer :: proc(s: ^Server, app: ^p.App, in_: ^p.Input, mp: [2]int) -> 
 	}
 	if ov.built_ws != s.cur_ws {
 		overview_layout(s)
+	} else if !ov.dragging && ov_stale(s) {
+		overview_relayout(s)
 	}
 	px, py := f32(mp.x), f32(mp.y)
 	hover := -1
@@ -346,7 +400,7 @@ overview_pointer :: proc(s: ^Server, app: ^p.App, in_: ^p.Input, mp: [2]int) -> 
 				target := ov_ws_index(s, ws_hit)
 				if target >= 0 {
 					ws_move_to(s, ov.items[i].t, target)
-					overview_layout(s)
+					overview_relayout(s)
 				}
 			}
 		} else if i == hover {
@@ -462,6 +516,18 @@ ov_move_sel :: proc(d: int) {
 overview_draw :: proc(s: ^Server, app: ^p.App, cv: ^p.Canvas, oi: int) {
 	if ov.built_ws != s.cur_ws {
 		overview_layout(s)
+	} else if !ov.dragging && ov_stale(s) {
+		overview_relayout(s)
+	}
+	// While a card is dragged, the thumbnail under the pointer is the drop
+	// target, and says so.
+	drop_ws := -1
+	if ov.dragging {
+		for r, i in ov.ws_rects {
+			if p.rect_contains(r, f32(s_pointer.x), f32(s_pointer.y)) {
+				drop_ws = i
+			}
+		}
 	}
 	f := &app.fonts
 	o := s.outputs[oi]
@@ -479,12 +545,18 @@ overview_draw :: proc(s: ^Server, app: ^p.App, cv: ^p.Canvas, oi: int) {
 		draw_ws_thumb(s, cv, i, r)
 		col := u32(i == s.cur_ws ? ACCENT : 0x3f3f46)
 		p.stroke_round_rect(cv, p.rect_inset(r, -1), {6, 6, 6, 6}, i == s.cur_ws ? 2 : 1, p.hex(col))
+		if drop_ws == strip - 1 {
+			ov_draw_drop_target(cv, r)
+		}
 		tw := p.text_width(f, w.name, 11, .Sans, .Semibold)
 		p.draw_text(cv, f, w.name, r.x + (r.w - tw) / 2, r.y + r.h + 13, 11, p.hex(i == s.cur_ws ? 0xffffff : 0xa1a1aa), .Sans, .Semibold)
 	}
 	if strip < len(ov.ws_rects) {
 		r := ov.ws_rects[strip]
 		p.stroke_round_rect(cv, r, {6, 6, 6, 6}, 1, p.hex(0x3f3f46))
+		if drop_ws == strip {
+			ov_draw_drop_target(cv, r)
+		}
 		p.draw_line(cv, r.x + r.w / 2 - 7, r.y + r.h / 2, r.x + r.w / 2 + 7, r.y + r.h / 2, 1.5, p.hex(0x71717a))
 		p.draw_line(cv, r.x + r.w / 2, r.y + r.h / 2 - 7, r.x + r.w / 2, r.y + r.h / 2 + 7, 1.5, p.hex(0x71717a))
 	}
@@ -525,11 +597,32 @@ overview_draw :: proc(s: ^Server, app: ^p.App, cv: ^p.Canvas, oi: int) {
 		p.draw_text(cv, f, label, lx, r.y + r.h + 20, 12, p.hex(match ? 0xfafafa : 0x71717a), .Sans, .Medium)
 	}
 	if ov.dragging && ov.press_i >= 0 && ov.press_i < len(ov.items) {
+		// The card being dragged. Over a workspace thumbnail it shrinks to
+		// the size it will have in that miniature and goes translucent, so
+		// it never hides the target it is being dropped on; elsewhere it is
+		// a smaller copy of the card, kept below the bar.
 		it := ov.items[ov.press_i]
-		w := it.rect.w * 0.6
-		h := it.rect.h * 0.6
-		draw_ov_window(s, app, cv, it.t, {f32(s_pointer.x) - w / 2, f32(s_pointer.y) - h / 2, w, h}, 0.85)
+		px, py := f32(s_pointer.x), f32(s_pointer.y)
+		if drop_ws >= 0 {
+			r := ov.ws_rects[drop_ws]
+			fr := frame_rect(it.t)
+			k := r.w / f32(max(o.w, 1))
+			w, h := max(fr.w * k, 12), max(fr.h * k, 8)
+			draw_ov_window(s, app, cv, it.t, {px - w / 2, py - h / 2, w, h}, 0.7)
+		} else {
+			w := it.rect.w * 0.6
+			h := it.rect.h * 0.6
+			y := max(py - h / 2, top + OV_STRIP_H)
+			draw_ov_window(s, app, cv, it.t, {px - w / 2, y, w, h}, 0.85)
+		}
 	}
+}
+
+// ov_draw_drop_target marks a workspace thumbnail as where a dragged card
+// will land: an accent wash and a thicker accent outline.
+ov_draw_drop_target :: proc(cv: ^p.Canvas, r: p.Rect) {
+	p.fill_round_rect(cv, r, {6, 6, 6, 6}, with_alpha(ACCENT, 0.25))
+	p.stroke_round_rect(cv, p.rect_inset(r, -3), {8, 8, 8, 8}, 2, p.hex(ACCENT))
 }
 
 // draw_ov_window draws a window's scaled render (frame included).

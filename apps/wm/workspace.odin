@@ -40,6 +40,7 @@ Ws_Workspace :: struct {
 	layout:       int,
 	master_ratio: f32,
 	master_count: int,
+	tiled_in:     Tile_Rect, // the area the last layout pass filled (tile_area_ws)
 }
 
 // Ws_Output is a logical head. Today exactly one of these exists and it is
@@ -1004,6 +1005,41 @@ tile_area :: proc(s: ^Server, oi: int) -> Tile_Rect {
 	}
 }
 
+// tile_area_ws is the rectangle a tiling workspace's layout fills: its
+// output's tile_area, less the side a window snapped to a full-height half
+// (or third) holds. Super+Left on a tile is meant to put two windows side by
+// side; when the layout went on filling the whole output under the snapped
+// window, the tile that became master sat entirely hidden behind it, and
+// two keystrokes made a window disappear. So the layout yields that side and
+// tiles into the rest. If too little would be left to tile into, it keeps
+// the whole area — a window overlapped beats a window squeezed to nothing.
+tile_area_ws :: proc(s: ^Server, idx, oi: int) -> Tile_Rect {
+	area := tile_area(s, oi)
+	l, r := area.x, area.x + area.w
+	gap := s.cfg.gaps_in
+	for t in ws_stack(s, idx) {
+		m, ok := ws_peek(t)
+		if !ok || !t.mapped || t.minimized || !m.floating || t.maximized || m.fullscreen {
+			continue
+		}
+		fr := target_frame(t)
+		cx := int(fr.x + fr.w / 2)
+		if cx < area.x || cx >= area.x + area.w || int(fr.y + fr.h / 2) < area.y || int(fr.y + fr.h / 2) >= area.y + area.h {
+			continue // on another output
+		}
+		#partial switch m.snap {
+		case .Left, .Left_Third, .Left_Two_Thirds:
+			l = max(l, int(fr.x + fr.w) + gap)
+		case .Right, .Right_Third, .Right_Two_Thirds:
+			r = min(r, int(fr.x) - gap)
+		}
+	}
+	if r - l < 2 * MIN_W {
+		return area
+	}
+	return {l, area.y, r - l, area.h}
+}
+
 // tile_place turns a cell — which contains the whole frame — into the content
 // rectangle the client is configured with.
 tile_place :: proc(s: ^Server, t: ^Toplevel, cell: Tile_Rect) {
@@ -1034,6 +1070,14 @@ tile_place :: proc(s: ^Server, t: ^Toplevel, cell: Tile_Rect) {
 		if ny + h + bw > oy + oh - g {
 			ny = max(oy + ws_bar_h(s) + g + th, oy + oh - g - h - bw)
 		}
+	}
+	// A tile that moves because the layout reflowed — a neighbour closed,
+	// minimized, snapped out, or a new one arrived — glides to its new cell
+	// (UX.md P1-6) instead of jumping there in one frame. Not while the
+	// pointer is dragging a size: the cell then follows the pointer, and an
+	// animation restarted every frame would only make it lag.
+	if (t.x != nx || t.y != ny || w != t.req_w || h != t.req_h) && s.drag != .Resize && s.drag != .Split {
+		anim_geom_begin(s, t)
 	}
 	if t.x != nx || t.y != ny {
 		t.x, t.y = nx, ny
@@ -1311,11 +1355,12 @@ tile_apply :: proc(s: ^Server) {
 				m.floating = false
 			}
 		}
+		area := tile_area_ws(s, idx, oi)
+		w.tiled_in = area
 		wins := tile_windows(s, idx)
 		if len(wins) == 0 {
 			continue
 		}
-		area := tile_area(s, oi)
 		fn := TILE_LAYOUTS[clamp(w.layout, 0, len(TILE_LAYOUTS) - 1)].fn
 		for _ in 0 ..< 32 {
 			who := fn(s, w, area, wins)
@@ -1412,6 +1457,17 @@ ws_tick :: proc(s: ^Server) {
 		}
 	}
 
+	// A window snapped to a side, resized, moved off or closed changes the
+	// room the layout has (tile_area_ws), whichever path changed it.
+	if cw := &s.workspaces[s.cur_ws]; cw.tiling && len(s.stack) > 0 {
+		oi := cw.output
+		if oi < 0 || oi >= len(s.outputs) || !s.outputs[oi].enabled {
+			oi = s.cur_out
+		}
+		if tile_area_ws(s, s.cur_ws, oi) != cw.tiled_in {
+			s.needs_layout = true
+		}
+	}
 	if s.needs_layout {
 		s.needs_layout = false
 		tile_apply(s)

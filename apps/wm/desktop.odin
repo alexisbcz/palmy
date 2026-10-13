@@ -208,6 +208,11 @@ draw_workspace :: proc(s: ^Server, app: ^p.App, cv: ^p.Canvas, idx: int, dx: int
 	// It is lifted only over the floating band: always-on-top and
 	// fullscreen windows stay above it, or "on top" would mean nothing.
 	lifted := idx == s.cur_ws ? ix_lifted(s) : nil
+	// A window on its way to the taskbar is drawn over everything else on
+	// the workspace: the layout reflows into its place in the same frame,
+	// and drawn in its old place in the stacking it would shrink unseen
+	// behind the tile that takes its room.
+	leaving := make([dynamic]^Toplevel, 0, 2, context.temp_allocator)
 	for t in stack {
 		if lifted != nil && ws_layer(s, t) >= 2 {
 			draw_window_at(s, app, cv, lifted, dx)
@@ -217,6 +222,10 @@ draw_workspace :: proc(s: ^Server, app: ^p.App, cv: ^p.Canvas, idx: int, dx: int
 			continue
 		}
 		if t.minimized && !anim_has(t) {
+			continue
+		}
+		if t.minimized {
+			append(&leaving, t)
 			continue
 		}
 		if t == dragging {
@@ -232,6 +241,9 @@ draw_workspace :: proc(s: ^Server, app: ^p.App, cv: ^p.Canvas, idx: int, dx: int
 	}
 	if lifted != nil {
 		draw_window_at(s, app, cv, lifted, dx)
+	}
+	for t in leaving {
+		draw_window_at(s, app, cv, t, dx)
 	}
 	if dx == 0 {
 		anim_draw_ghosts(s, cv, idx)
