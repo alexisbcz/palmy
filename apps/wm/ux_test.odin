@@ -340,6 +340,24 @@ ux_selftest :: proc(s: ^Server, c: ^Client) {
 		ws_check(!any_f, "the default has no bare function-key twins left but F11")
 		cfg_destroy(&c2)
 	}
+	{
+		// The cheat sheet folds binding families into one row each, and the
+		// filter still finds a binding folded in.
+		ws_ensure(s)
+		folded, focus4 := false, false
+		for r in cheat_rows(s, "workspace 2") {
+			if r.label == "Move window to workspace 1…9" && len(r.keys) == 3 && r.keys[2] == "1…9" {
+				folded = true
+			}
+		}
+		for r in cheat_rows(s, "") {
+			if r.label == "Focus window left, down, up, right" && len(r.keys) == 5 {
+				focus4 = true
+			}
+		}
+		ws_check(folded, "the cheat sheet folds Super+Shift+1…9 into one row, found by \"workspace 2\"")
+		ws_check(focus4, "and Super+H/J/K/L into one row with four caps")
+	}
 
 	// --- edge resistance and the overview grid ------------------------------
 	{

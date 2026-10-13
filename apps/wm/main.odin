@@ -612,10 +612,15 @@ map_focus :: proc(s: ^Server, t: ^Toplevel) {
 		return
 	}
 	// Behind the focused window: just under it in the same band, so it is
-	// on screen but does not cover what the user is working in.
+	// on screen but does not cover what the user is working in. Only in the
+	// same band: a floating or always-on-top window opening while a tile
+	// has focus keeps its own band, above the layout. Slipping it under the
+	// focused tile regardless of band hid a floating, always-on-top window
+	// under a full-height terminal, where nothing but its taskbar entry
+	// said it existed.
 	m.urgent = true
-	if f := s.focus; f != nil {
-		raise_window(s, t)
+	raise_window(s, t)
+	if f := s.focus; f != nil && f != t && ws_layer(s, f) == ws_layer(s, t) {
 		for w, i in s.stack {
 			if w == t {
 				ordered_remove(&s.stack, i)
@@ -1186,11 +1191,18 @@ toggle_sticky :: proc(s: ^Server, t: ^Toplevel) {
 	}
 	m := ws_win(t)
 	m.sticky = !m.sticky
-	if m.sticky && (ws_in_layout(s, t) || m.auto_float) {
-		// A window on every workspace cannot hold a cell in each layout.
-		// One the layout floated only because it did not fit is floating
-		// for good now: otherwise the next workspace, with room to spare,
-		// would take it back as its master tile.
+	if m.sticky && (!m.floating || m.auto_float) {
+		// A window on every workspace cannot hold a cell in each layout, so
+		// it floats for good, at the rect it has now. That holds on a
+		// floating workspace too, where nothing marks a window floating:
+		// asking ws_in_layout there says "no" and left the window unmarked,
+		// and the next tiling workspace took it as a tile. One the layout
+		// floated only because it did not fit is floating for good as well:
+		// otherwise a workspace with room to spare would take it back.
+		if !t.maximized && !m.fullscreen && m.snap == .None {
+			m.float_rect = {t.x, t.y, t.req_w, t.req_h}
+			m.have_float = true
+		}
 		m.floating = true
 		m.auto_float = false
 		s.needs_layout = true
@@ -1368,6 +1380,7 @@ cascade_all :: proc(s: ^Server) {
 		// the top-left quarter instead of maximizing.
 		if m, ok := ws_peek(t); ok {
 			m.snap = .None
+			m.snap_tile = false
 		}
 		t.x = ox + 56 + (n % 6) * 44
 		t.y = oy + ws_bar_h(s) + ws_title_h(t) + 24 + (n % 6) * 38

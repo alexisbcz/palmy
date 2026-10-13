@@ -78,6 +78,11 @@ Ws_Win :: struct {
 	snap:       Snap,
 	pre_snap:   [4]int,
 	max_snap:   Snap,
+	// Snapped out of the layout from the keyboard (Super+Left/Right on a
+	// tiled window). Restoring it returns it to its cell, not to a float
+	// rect it never had: the keys are a detour, and undoing a detour is
+	// being back where you were (principle 4).
+	snap_tile:  bool,
 	// Floated by the layout itself, because the client's minimum size did not
 	// fit any cell. It goes back into the layout once it fits again.
 	auto_float: bool,
@@ -1425,6 +1430,7 @@ ws_toggle_float :: proc(s: ^Server, t: ^Toplevel) {
 	m.floating = !m.floating
 	m.auto_float = false
 	m.snap = .None
+	m.snap_tile = false
 	if t.maximized {
 		t.maximized = false
 	}

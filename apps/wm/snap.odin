@@ -348,6 +348,15 @@ snap_apply :: proc(s: ^Server, t: ^Toplevel, z: Snap) {
 	}
 	m := ws_win(t)
 	switch {
+	case t.maximized && ws_in_layout(s, t):
+		// A maximized tile still holds its cell: snapping takes it out of
+		// the layout, and restore puts it back there.
+		t.maximized = false
+		m.max_snap = .None
+		m.pre_snap = snap_default_float(s, t)
+		m.floating = true
+		m.snap_tile = true
+		s.needs_layout = true
 	case t.maximized:
 		// Snapping a maximized window: the free rect it returns to is the
 		// one from before the maximize.
@@ -359,6 +368,8 @@ snap_apply :: proc(s: ^Server, t: ^Toplevel, z: Snap) {
 	case m.snap == .None && ws_in_layout(s, t):
 		m.pre_snap = snap_default_float(s, t)
 		m.floating = true
+		m.snap_tile = true
+		s.needs_layout = true
 	case m.snap == .None:
 		m.pre_snap = win_rect(t)
 	}
@@ -382,6 +393,19 @@ snap_release :: proc(s: ^Server, t: ^Toplevel) {
 		return
 	}
 	m.snap = .None
+	if m.snap_tile && m.floating {
+		// Back into the layout: its tiling order never changed, so the
+		// next pass gives it the very cell it left.
+		m.snap_tile = false
+		m.floating = false
+		anim_geom_begin(s, t)
+		t.last_cfg_w = -1
+		ws_restack(s)
+		s.needs_layout = true
+		s.dirty = true
+		return
+	}
+	m.snap_tile = false
 	r := m.pre_snap
 	win_set_rect(s, t, r[0], r[1], r[2], r[3])
 }
@@ -480,6 +504,7 @@ ix_restore_for_move :: proc(s: ^Server, t: ^Toplevel, mp: [2]int) -> bool {
 		t.maximized = false
 		m.max_snap = .None
 		m.snap = .None
+		m.snap_tile = false
 		if ws_in_layout(s, t) {
 			m.floating = true
 			r := snap_default_float(s, t)
@@ -488,6 +513,7 @@ ix_restore_for_move :: proc(s: ^Server, t: ^Toplevel, mp: [2]int) -> bool {
 	case m.snap != .None:
 		w, h = m.pre_snap[2], m.pre_snap[3]
 		m.snap = .None
+		m.snap_tile = false // dragged off: a free window now
 	case ws_in_layout(s, t):
 		r := snap_default_float(s, t)
 		w, h = r[2], r[3]

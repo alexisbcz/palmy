@@ -68,6 +68,7 @@ Interact :: struct {
 	preview_at:     f64,
 	drop_t:         ^Toplevel,
 	snapshot:       Ix_Snapshot,
+	partner_snapshot: Ix_Snapshot, // the other half of a snap pair's boundary drag
 	split_partner:  ^Toplevel,
 	split_span:     [2]int, // a snap pair's outer extent when the drag began
 	// A move that began by restoring a maximized, snapped or tiled window
@@ -125,6 +126,7 @@ ix_forget :: proc(s: ^Server, t: ^Toplevel) {
 	}
 	if ix.last_click_t == t {ix.last_click_t = nil}
 	if ix.snapshot.t == t {ix.snapshot = {}}
+	if ix.partner_snapshot.t == t {ix.partner_snapshot = {}}
 	if ix.drop_t == t {ix.drop_t = nil}
 	if ix.split_partner == t {ix.split_partner = nil}
 	if ix.reveal_t == t {ix.reveal_t = nil}
@@ -207,8 +209,13 @@ dbl_click_ok :: proc(prev_t, t: ^Toplevel, prev_at, now: f64, prev_pos, pos: [2]
 // ---------------------------------------------------------------------------
 
 ix_take_snapshot :: proc(s: ^Server, t: ^Toplevel) {
+	ix.snapshot = ix_snapshot_of(s, t)
+	ix.partner_snapshot = {}
+}
+
+ix_snapshot_of :: proc(s: ^Server, t: ^Toplevel) -> Ix_Snapshot {
 	m := ws_win(t)
-	ix.snapshot = Ix_Snapshot {
+	snap := Ix_Snapshot {
 		valid     = true,
 		t         = t,
 		x         = t.x,
@@ -220,7 +227,26 @@ ix_take_snapshot :: proc(s: ^Server, t: ^Toplevel) {
 		meta      = m^,
 		in_layout = ws_in_layout(s, t),
 	}
-	ix.snapshot.free = !ix.snapshot.in_layout && !t.maximized && m.snap == .None && !m.fullscreen
+	snap.free = !snap.in_layout && !t.maximized && m.snap == .None && !m.fullscreen
+	return snap
+}
+
+// ix_restore_snapshot puts a window back to what a snapshot recorded.
+ix_restore_snapshot :: proc(s: ^Server, snap: Ix_Snapshot) {
+	t := snap.t
+	if t == nil || !snap.valid || !ws_alive(s, t) {
+		return
+	}
+	m := ws_win(t)
+	m^ = snap.meta
+	t.maximized = snap.maximized
+	t.saved = snap.saved
+	t.resizing = false
+	t.x, t.y = snap.x, snap.y
+	t.req_w, t.req_h = snap.w, snap.h
+	t.anchor_x, t.anchor_y = false, false
+	send_configure(s, t, snap.w, snap.h)
+	t.last_cfg_w = -1
 }
 
 // ix_begin_drag starts a drag of any kind on a window.
@@ -275,19 +301,16 @@ ix_cancel_drag :: proc(s: ^Server) {
 	ix.snap = .None
 	ix.snap_shown = false
 	ix.drop_t = nil
+	partner := ix.partner_snapshot
+	ix.partner_snapshot = {}
+	ix.split_partner = nil
 	if t == nil || !snap.valid || snap.t != t || !ws_alive(s, t) {
 		return
 	}
-	m := ws_win(t)
-	m^ = snap.meta
-	t.maximized = snap.maximized
-	t.saved = snap.saved
-	t.resizing = false
-	t.x, t.y = snap.x, snap.y
-	t.req_w, t.req_h = snap.w, snap.h
-	t.anchor_x, t.anchor_y = false, false
-	send_configure(s, t, snap.w, snap.h)
-	t.last_cfg_w = -1
+	ix_restore_snapshot(s, snap)
+	// A snap pair's boundary drag moved two windows; both go back, or the
+	// cancel would leave a gap the width of the drag between them.
+	ix_restore_snapshot(s, partner)
 	ws_restack(s)
 	s.needs_layout = true
 	s.dirty = true
@@ -515,6 +538,7 @@ ix_drag_release :: proc(s: ^Server, t: ^Toplevel) {
 	ix.drop_t = nil
 	ix.split_partner = nil
 	ix.snapshot = {}
+	ix.partner_snapshot = {}
 	s.needs_layout = true
 	s.dirty = true
 }
@@ -750,6 +774,7 @@ handle_pointer :: proc(s: ^Server, app: ^p.App, scale: f32) {
 			} else if partner := snap_partner(s, t); partner != nil && (edges == {.Right} || edges == {.Left}) && ix_edge_faces(t, partner, edges) {
 				ix_begin_drag(s, t, .Split, edges)
 				ix.split_partner = partner
+				ix.partner_snapshot = ix_snapshot_of(s, partner)
 				lt, rt := t, partner
 				if partner.x < t.x {
 					lt, rt = partner, t

@@ -655,8 +655,17 @@ row a key chord rendered as shadcn `kbd` caps and the action's human label
 filter; Escape or any chord that is listed executes it and closes. It is also
 reachable from the overview's "?" and the welcome card.
 
+Families of bindings fold into one row, so the table fits two columns: the
+nine workspace keys are `Super` `1…9` "Workspace 1…9", four keys that move
+one way each are one row with their four caps (or one `Arrows` cap), and the
+filter still matches every binding folded in. A group a column break cuts
+repeats its heading, marked "continued", at the top of the next column; the
+label column is measured from the whole table, so filtering never moves it.
+The lone Super tap, which has no binding to read, is listed under Focus.
+
 **Test:** `key:meta_l+slash wait:0.3 shot:` — overlay with ≥ 6 group
-headings; it lists `Super` `Shift` `2` next to "Move window to workspace 2".
+headings in two columns; it lists `Super` `Shift` `1…9` next to "Move window
+to workspace 1…9", and typing "workspace 2" keeps that row.
 Add a `bind` line to the guest's `~/.config/palmy/wm.conf` (a
 `--guest-script`), wait 1.5 s for the mtime reload, reopen — the new binding
 is listed.
