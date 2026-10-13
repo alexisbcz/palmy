@@ -70,6 +70,9 @@ Kind :: enum u8 {
 	Confined_Pointer,
 	Idle_Mgr,
 	Idle_Inhibitor,
+	// wp-cursor-shape-v1 (cursor.odin).
+	Cursor_Shape_Mgr,
+	Cursor_Shape_Dev,
 }
 
 Object :: struct {
@@ -253,6 +256,7 @@ GLOBALS := [?]Global {
 	{16, "zwp_relative_pointer_manager_v1", 1},
 	{17, "zwp_pointer_constraints_v1", 1},
 	{18, "zwp_idle_inhibit_manager_v1", 1},
+	{19, "wp_cursor_shape_manager_v1", 1},
 }
 
 // ---------------------------------------------------------------------------
@@ -359,9 +363,14 @@ handle_request :: proc(s: ^Server, c: ^Client, id: u32, op: u16, r: ^Reader) {
 	case .Pointer:
 		switch op {
 		case 0:
-			// set_cursor: the host draws the pointer, so the client's cursor
-			// surface is accepted and ignored.
-			r_u32(r);r_u32(r);r_i32(r);r_i32(r)
+			// set_cursor(serial, surface, hotspot_x, hotspot_y). On bare
+			// metal the surface is drawn as the cursor (cursor.odin);
+			// nested, the host draws the pointer and this is bookkeeping.
+			r_u32(r)
+			sid := r_u32(r)
+			hx := r_i32(r)
+			hy := r_i32(r)
+			cursor_set_surface(s, c, sid, hx, hy)
 		case 1:
 			pointer_gone(s, c, id)
 			obj_drop(c, id)
@@ -442,6 +451,10 @@ handle_request :: proc(s: ^Server, c: ^Client, id: u32, op: u16, r: ^Reader) {
 		req_lock_idle_mgr(s, c, o, id, op, r)
 	case .Idle_Inhibitor:
 		req_lock_idle_inhibitor(s, c, o, id, op, r)
+	case .Cursor_Shape_Mgr:
+		req_cursor_shape_mgr(s, c, o, id, op, r)
+	case .Cursor_Shape_Dev:
+		req_cursor_shape_dev(s, c, o, id, op, r)
 	case .Decoration:
 		switch op {
 		case 0:
@@ -554,6 +567,8 @@ req_registry :: proc(s: ^Server, c: ^Client, id: u32, op: u16, r: ^Reader) {
 			obj_new(c, new, .Pconstraints, v, nil)
 		case "zwp_idle_inhibit_manager_v1":
 			obj_new(c, new, .Idle_Mgr, v, nil)
+		case "wp_cursor_shape_manager_v1":
+			obj_new(c, new, .Cursor_Shape_Mgr, v, nil)
 		}
 		return
 	}
@@ -794,6 +809,7 @@ req_surface :: proc(s: ^Server, c: ^Client, o: Object, id: u32, op: u16, r: ^Rea
 }
 
 surface_destroy :: proc(s: ^Server, c: ^Client, surf: ^Surface, id: u32) {
+	cursor_surface_gone(surf)
 	if surf.xdg != nil {
 		surf.xdg.surf = nil
 	}
@@ -1174,6 +1190,9 @@ send_configure :: proc(s: ^Server, t: ^Toplevel, w, h: int) {
 	if t.maximized {
 		put_state(&states, 1)
 	}
+	if ws_fullscreen(t) {
+		put_state(&states, 2)
+	}
 	if t.resizing {
 		put_state(&states, 3)
 	}
@@ -1209,7 +1228,13 @@ xdg_commit :: proc(s: ^Server, x: ^Xdg_Surface) {
 		t.req_w, t.req_h = t.w, t.h
 		place_new_window(s, t)
 		append(&s.stack, t)
-		focus_window(s, t)
+		ws_restack(s)
+		anim_open(s, t)
+		map_focus(s, t)
+		if m, ok := ws_peek(t); ok && m.want_fullscreen {
+			m.want_fullscreen = false
+			set_fullscreen(s, t, true)
+		}
 		log_line("mapped %q %dx%d at %d,%d", t.title, t.w, t.h, t.x, t.y)
 		if !surf.entered {
 			surf.entered = true
@@ -1257,13 +1282,21 @@ req_toplevel :: proc(s: ^Server, c: ^Client, o: Object, id: u32, op: u16, r: ^Re
 		title := r_string(r)
 		delete(t.title)
 		t.title = strings.clone(title)
+		ws_rerule(s, t)
 		s.dirty = true
 	case 3:
 		app := r_string(r)
 		delete(t.app_id)
 		t.app_id = strings.clone(app)
 	case 4:
-		r_u32(r);r_u32(r);r_i32(r);r_i32(r)
+		// show_window_menu(seat, serial, x, y): a client that draws its own
+		// title bar asks for the same window menu ours opens (UX.md P0-3).
+		r_u32(r);r_u32(r)
+		mx := int(r_i32(r))
+		my := int(r_i32(r))
+		if t.mapped {
+			menu_open_window(s, t, t.x + mx, t.y + my)
+		}
 	case 5:
 		// move(seat, serial): the client asks us to start an interactive move.
 		r_u32(r);r_u32(r)
@@ -1288,16 +1321,14 @@ req_toplevel :: proc(s: ^Server, c: ^Client, o: Object, id: u32, op: u16, r: ^Re
 	case 10:
 		set_maximized(s, t, false)
 	case 11:
+		// set_fullscreen(output): a real fullscreen, frameless and over the
+		// bar (P1-4), no longer a maximize.
 		r_u32(r)
-		set_maximized(s, t, true)
+		set_fullscreen(s, t, true)
 	case 12:
-		set_maximized(s, t, false)
+		set_fullscreen(s, t, false)
 	case 13:
-		t.minimized = true
-		if s.focus == t {
-			focus_window(s, topmost_other(s, t))
-		}
-		s.dirty = true
+		minimize_window(s, t)
 	}
 }
 

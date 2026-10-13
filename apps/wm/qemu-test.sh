@@ -21,6 +21,15 @@
 #   apps/wm/qemu-test.sh --guest-script F  run shell script F as root in the
 #                                        guest once wm listens (e.g. rewrite
 #                                        /etc/palm/keyboard, killall -HUP wm)
+#   apps/wm/qemu-test.sh --apps "gallery counter"
+#                                        also put these ./bin programs (make)
+#                                        in the guest, for windows to test with
+#   apps/wm/qemu-test.sh --tag wmux-     prefix the QMP socket's name, so two
+#                                        agents' VMs never share one
+#   apps/wm/qemu-test.sh --hold          after the steps, keep the VM running
+#                                        until it is killed, so further QMP
+#                                        scripts can drive the same session
+#   apps/wm/qemu-test.sh --no-build      reuse the wm binary already in --out
 #   apps/wm/qemu-test.sh -- <steps>      replace the default QMP script
 #
 # The steps are qemu-qmp.py's (wait:, shot:, type:, key:, move:, click:,
@@ -50,12 +59,20 @@ sigterm_after=0
 keyboard=""
 localtime=""
 guest_script=""
+apps=""
+tag=""
+hold=0
+build=1
 while [ $# -gt 0 ]; do
 	case "$1" in
 	--out) OUT=$(mkdir -p "$2" && cd "$2" && pwd); shift ;;
 	--keyboard) keyboard=$2; shift ;;
 	--localtime) localtime=$2; shift ;;
 	--guest-script) guest_script=$2; shift ;;
+	--apps) apps=$2; shift ;;
+	--tag) tag=$2; shift ;;
+	--hold) hold=1 ;;
+	--no-build) build=0 ;;
 	--root) as_user=0 ;;
 	--kiosk) kiosk=1 ;;
 	--no-xkb) xkb=0 ;;
@@ -70,7 +87,7 @@ while [ $# -gt 0 ]; do
 done
 
 STAGE="$OUT/root"
-QMP="$OUT/qmp.sock"
+QMP="$OUT/${tag}qmp.sock"
 SERIAL="$OUT/serial.log"
 
 [ -f "$KERNEL" ] || { echo "qemu-test: no $KERNEL (distro/kernel/build.sh)" >&2; exit 1; }
@@ -80,8 +97,10 @@ mkdir -p "$OUT"
 # --- build ------------------------------------------------------------------
 cd "$ROOT"
 COLL="-collection:palmy=palmy -collection:kit=apps/kit -collection:shadcn=shadcn"
-echo "qemu-test: building wm, term and launcher"
-odin build apps/wm $COLL -o:speed -out:"$OUT/wm.bin"
+if [ "$build" = 1 ] || [ ! -x "$OUT/wm.bin" ]; then
+	echo "qemu-test: building wm, term and launcher"
+	odin build apps/wm $COLL -o:speed -out:"$OUT/wm.bin"
+fi
 for app in term launcher; do
 	[ -d "apps/$app" ] || continue
 	if [ ! -x "$OUT/$app" ] || [ -n "$(find "apps/$app" palmy apps/kit shadcn -name '*.odin' -newer "$OUT/$app" | head -1)" ]; then
@@ -106,6 +125,10 @@ done
 cp "$OUT/wm.bin" "$STAGE/usr/bin/wm"
 cp "$OUT/term" "$STAGE/usr/bin/term"
 [ -x "$OUT/launcher" ] && cp "$OUT/launcher" "$STAGE/usr/bin/launcher" || true
+for app in $apps; do
+	[ -x "bin/$app" ] || { echo "qemu-test: no bin/$app (make)" >&2; exit 2; }
+	cp "bin/$app" "$STAGE/usr/bin/$app"
+done
 
 for l in libc.so.6 libm.so.6 libxkbcommon.so.0; do
 	cp -L "/usr/lib/$l" "$STAGE/usr/lib/$l"
@@ -236,6 +259,7 @@ if [ "$interactive" = 1 ]; then
 	wait $QPID
 	exit 0
 fi
+echo "qemu-test: QEMU pid $QPID, QMP $QMP"
 
 if [ $# -eq 0 ]; then
 	set -- \
@@ -251,6 +275,12 @@ if [ $# -eq 0 ]; then
 		"shot:$OUT/04-click.png"
 fi
 timeout "$timeout_s" python3 "$ROOT/apps/wm/qemu-qmp.py" "$QMP" "$@" || echo "qemu-test: QMP script failed or timed out"
+if [ "$hold" = 1 ]; then
+	echo "qemu-test: holding; drive it with qemu-qmp.py $QMP, kill $QPID to stop"
+	wait $QPID || true
+	trap - EXIT INT TERM
+	exit 0
+fi
 
 echo "qemu-test: stopping QEMU"
 python3 - "$QMP" <<'EOF' || true
