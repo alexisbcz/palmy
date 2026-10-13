@@ -112,3 +112,80 @@ installs it first and later owners resolve by name against its /etc/passwd.
 - No ESP entry in /etc/fstab; no swap; root fs is grown to installed size +
   1 GiB (ROOT_EXTRA_MIB), no resize-on-first-boot.
 - palm itself, palm-init, palm-login, wm gaps are in their own notes.
+
+## The installer, end to end (2026-10-13)
+
+```
+make -C distro                   # from scratch (kernel/busybox kept): 46 packages, image
+make -C distro iso               # distro/out/palmframe-live.iso
+make -C distro test-installer    # palm-install --selftest + installer --selftest (no disks)
+make -C distro test-install      # iso, then distro/live/test-install.py (QEMU only)
+python3 -I distro/live/test-install.py [--only gui|cli]
+```
+
+`distro/live/test-install.py` does what a person does, over QMP keys, with a
+screendump per step in `distro/out/shots/install-NN-<step>.png`; scratch
+disks and serial transcripts in `distro/build/integrate/qemu/`:
+
+- **GUI** — live ISO under OVMF + blank 8 GiB virtio disk: Arabic (RTL shot),
+  Français (UI French), keyboard fr followed live (physical `q w e r t y`
+  types `azerty` in the test field), Europe/Paris, `/dev/vda` erase
+  confirmed, Ada Lovelace / ada / analytical / palmframe typed on AZERTY,
+  install (≈4 s from the in-RAM repository), Done, Restart. Then the disk
+  alone with the same OVMF variable store: OVMF prints
+  `BdsDxe: starting Boot0009 "Palmframe" from HD(1,GPT,...)/\EFI\palmframe\BOOTX64.EFI`,
+  BootCurrent = 0009 = first in BootOrder, limine, palm-init; the serial
+  getty says `analytical login:` and root takes the user's password;
+  `date` CEST, LANG fr_FR, layout fr, localtime -> Europe/Paris; ada uid
+  1000 in wheel/audio/video/input; `palm verify` exit 0 (only soft config
+  lines); `palm list --installed` 33 packages, no palmframe-demo;
+  `/dev/root` 7.3G (vda2 = 15724544 of 16777216 sectors); /home holds only
+  `ada`; the greeter French with the Paris clock and "Ada Lovelace · ada";
+  `palmframe` typed on AZERTY logs ada in to `wm --drm`; in term physical
+  `q w e r t y` gives `azerty`, `date` says CEST, `hostname` analytical.
+- **CLI** — a second live boot with two blank disks, from the serial root
+  shell (busybox sh has no `<(...)`, so the password comes on stdin):
+  `echo gracehopper | palm-install --disk /dev/vdb --language de_DE --keyboard de --timezone America/New_York --hostname cli-test --user grace --full-name 'Grace Hopper' --password-file - --yes`
+  exits 0 in ~1 s. vdb booted alone (the live machine's OVMF vars copied
+  beside it): the Palmframe entry starts, `cli-test login:`, LANG de_DE,
+  layout de, EDT, verify clean, the greeter in German with New York time,
+  grace logs in, term types `qwertz` for physical `q w e r t y`.
+
+Last full run: **all passed** (`distro/build/integrate/full-run.log`).
+
+### Changes made for it
+
+- **/etc/skel and palmframe-demo** (requests in notes/installer-core.md):
+  palmframe-base no longer owns `/home/palm`; it ships `/etc/skel` (.profile
+  and the XDG dirs). A new hand-written package `palmframe-demo` makes
+  `/home/palm` from the same skeleton; `distro/image/build.sh` installs
+  `palmframe palmframe-demo`, the installer only `palmframe` (so `palm verify`
+  on an installed disk is clean). `distro/base/apply-layout.sh` still creates
+  /home/palm for the init/login boot tests.
+- **palm**: retargeted symlinks under /etc are configuration (notes/palm.md).
+- **palm-init**: `/etc/palm/services.off/<name>` masks a service
+  (notes/init.md); palmframe-live masks palm-login and getty-ttyS0 instead of
+  `distro/live/build.sh` deleting them. On the live system `palm verify` now
+  reports only `/boot/vmlinuz: missing`, which build.sh leaves out of the
+  initramfs on purpose (the kernel is on the ISO beside it);
+  `distro/live/test-boot.py` checks exactly that.
+- **Makefile**: palm-install and installer now build like every other
+  binary (a failure stops make; no more stale-binary packaging); their
+  recipes are no longer skipped. New targets `test-installer` and
+  `test-install`.
+
+### Seen, not fixed (other owners)
+
+- **palmy**: a text field reached with Tab keeps its caret at 0, so tabbing
+  into the prefilled "Computer name" (`palmframe`) and typing gives
+  `analyticalpalmframe`. The first GUI run did exactly that; the test now
+  presses End first. A person would hit it: palmy should put the caret at the
+  end (or select all) when a field gains focus from the keyboard.
+- **installer/core**: the progress line under the step name is the core's
+  English message ("Mounting") in a French UI; the step names are
+  translated.
+- **wm**: the bar's date ("Tue 13 Oct") and the empty-desktop hint are
+  English in a French session (wm has no catalogue).
+- The ESP is still not mounted on the installed system (`df /boot/efi` shows
+  the root), as noted by the core.
+- Only keyboard input was used in QEMU, no pointer.

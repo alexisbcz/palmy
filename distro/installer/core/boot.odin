@@ -75,7 +75,7 @@ step_bootloader :: proc(c: ^Ctx) -> string {
 
 	progress(c, 0.1, "Copying the boot loader")
 	for d in ([]string{"EFI/BOOT", "EFI/palmframe", "boot/limine"}) {
-		if e := os.make_directory_all(join(esp, d)); e != nil {
+		if e := mkdir_p(join(esp, d)); e != nil {
 			return fmt.tprintf("mkdir %s: %v", join(esp, d), e)
 		}
 	}

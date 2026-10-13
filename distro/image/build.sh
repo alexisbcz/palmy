@@ -7,8 +7,9 @@
 # No root and no loop devices. The steps, and why each is done this way:
 #
 # 1. The root filesystem is made by palm itself: `palm --root ... --initdb
-#    add palmframe` into an empty directory, against the local repository and
-#    the build's own key. That is the same code path, the same signature
+#    add palmframe palmframe-demo` into an empty directory (palmframe-demo is
+#    the demo user's home), against the local repository and the build's own
+#    key. That is the same code path, the same signature
 #    check and the same installed database a user's `palm add` produces, so
 #    `palm verify` on the booted machine checks exactly what was shipped.
 # 2. palm runs under fakeroot, and mkfs.ext4 -d runs in the same fakeroot
@@ -56,7 +57,7 @@ mkdir -p "$WORK" "$ROOTFS"
 root_bytes_file="$WORK/root.bytes"
 fakeroot -- bash -euo pipefail -c '
 	palm=$1 rootfs=$2 repo=$3 keys=$4 work=$5 extra=$6
-	"$palm" --root "$rootfs" --initdb --repo "$repo" --keys-dir "$keys" --yes add palmframe
+	"$palm" --root "$rootfs" --initdb --repo "$repo" --keys-dir "$keys" --yes add palmframe palmframe-demo
 
 	# The repository the installed system uses is the one palmframe-base
 	# ships in /etc/palm/repositories (the build host over QEMU user

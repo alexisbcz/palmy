@@ -752,7 +752,11 @@ verify_packages :: proc(o: ^Opts, db: ^DB, only: []string) -> []Problem {
 				if fi.type != .Symlink {
 					append(&out, Problem{p.name, f.path, "not a symlink", false})
 				} else if target, _ := os.read_link(host, context.temp_allocator); target != f.sha {
-					append(&out, Problem{p.name, f.path, fmt.aprintf("points to %s, not %s", target, f.sha), false})
+					// Retargeting a link under /etc (/etc/localtime) is a
+					// configuration change, reported like an edited file.
+					etc := strings.has_prefix(f.path, "/etc/")
+					what := etc ? fmt.aprintf("modified (config): points to %s, not %s", target, f.sha) : fmt.aprintf("points to %s, not %s", target, f.sha)
+					append(&out, Problem{p.name, f.path, what, etc})
 				}
 			case .File, .Hardlink:
 				if fi.type != .Regular {

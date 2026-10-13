@@ -45,3 +45,12 @@ while read -r kind path a b; do
 	*) ;;
 	esac
 done < "$here/layout"
+
+# The demo user's home, as the palmframe-demo package makes it on the disk
+# image: a copy of /etc/skel owned by palm (1000). The boot tests built on
+# this script log in as palm.
+if [ ! -d "$dest/home/palm" ]; then
+	cp -R "$dest/etc/skel" "$dest/home/palm"
+	chmod 0700 "$dest/home/palm"
+	chown -R 1000:1000 "$dest/home/palm" 2>/dev/null || true
+fi

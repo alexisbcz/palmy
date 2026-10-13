@@ -201,7 +201,7 @@ make_home :: proc(c: ^Ctx, root, user, home: string, uid: int) -> string {
 			logf(c, "removed the demo user's home /home/%s", DEMO_USER)
 		}
 	}
-	if e := os.make_directory_all(dst); e != nil {
+	if e := mkdir_p(dst); e != nil {
 		return fmt.tprintf("mkdir %s: %v", dst, e)
 	}
 	_ = os.chmod(dst, os.perm_number(0o700))
@@ -275,7 +275,7 @@ write_locale :: proc(c: ^Ctx, root, language: string) -> string {
 // /usr/share/X11/xkb at start and re-read on change.
 @(private)
 write_keyboard :: proc(c: ^Ctx, root: string, kb: Keyboard) -> string {
-	_ = os.make_directory_all(join(root, "etc/palm"))
+	_ = mkdir_p(join(root, "etc/palm"))
 	text := fmt.tprintf(
 		"# The keyboard layout, chosen at installation. The window manager reads\n# this at start and again when it changes; XKB_DEFAULT_LAYOUT and\n# XKB_DEFAULT_VARIANT override it.\nlayout = %s\nvariant = %s\noptions =\n",
 		kb.layout, kb.variant,

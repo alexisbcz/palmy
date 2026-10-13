@@ -414,6 +414,20 @@ extract :: proc(t: ^Txn, s: ^Staged) -> ([]File_Rec, Err) {
 			}
 			rec.sha = strings.clone(e.link)
 			rec.mode = 0o777
+			// A symlink under /etc is configuration as much as a file is:
+			// /etc/localtime is palmframe-base's link to UTC until the
+			// installer (or the person) points it at their zone. Like an
+			// edited file, a link retargeted locally is kept; unlike a file
+			// there is nothing useful to put beside it as .palm-new.
+			if protected(e.path) && exists && fi.type == .Symlink {
+				disk, _ := os.read_link(dest, context.temp_allocator)
+				prev, had := old_recs[e.path]
+				if disk != e.link && (!had || prev.sha != disk) {
+					say("  %s points to %s by local choice; kept (the package's link is %s)", e.path, disk, e.link)
+					append(&recs, rec)
+					continue
+				}
+			}
 			tmp := fmt.tprintf("%s/.palm-new.%s", parent_dir(dest), base_name(dest))
 			_ = remove_path(tmp, false)
 			if err := os.symlink(e.link, tmp); err != nil {

@@ -22,6 +22,7 @@ import "core:thread"
 Backend :: struct {
 	demo:      bool,
 	demo_fail: bool, // --demo-fail: the fake install fails partway
+	dry_run:   bool, // --dry-run: real mode, but the core only says what it would do
 }
 
 load_languages :: proc(b: ^Backend) -> []Language {
@@ -174,10 +175,11 @@ Worker :: struct {
 	plan:     Plan,
 	progress: Progress,
 	log:      [dynamic]string,
-	finished: bool,
-	ok:       bool,
-	err:      string,
-	th:       ^thread.Thread,
+	finished:  bool,
+	ok:        bool,
+	err:       string,
+	core_logs: bool, // log lines arrive through worker_log, not from reports
+	th:        ^thread.Thread,
 }
 
 worker_start :: proc(b: Backend, p: Plan) -> ^Worker {
@@ -199,7 +201,10 @@ worker_run :: proc(t: ^thread.Thread) {
 	if w.backend.demo {
 		ok, err = demo_install(w.plan, worker_report, w, w.backend.demo_fail)
 	} else {
-		ok, err = core_install(w.plan, worker_report, w)
+		// The core writes its own log lines through worker_log, so its
+		// progress messages need not be logged a second time.
+		w.core_logs = true
+		ok, err = core_install(w.plan, w)
 	}
 	sync.mutex_lock(&w.mu)
 	w.finished = true
@@ -218,9 +223,17 @@ worker_report :: proc(pr: Progress, user: rawptr) {
 	defer sync.mutex_unlock(&w.mu)
 	msg := strings.clone(pr.message)
 	w.progress = Progress{step = pr.step, fraction = pr.fraction, message = msg}
-	if msg != "" && (len(w.log) == 0 || w.log[len(w.log) - 1] != msg) {
+	if !w.core_logs && msg != "" && (len(w.log) == 0 || w.log[len(w.log) - 1] != msg) {
 		append(&w.log, msg)
 	}
+}
+
+// worker_log is the core's Options.on_log, called on the install thread for
+// every line it writes to /var/log/palm-install.log.
+worker_log :: proc(w: ^Worker, line: string) {
+	sync.mutex_lock(&w.mu)
+	defer sync.mutex_unlock(&w.mu)
+	append(&w.log, strings.clone(line))
 }
 
 // Snapshot is what one frame draws: a copy taken under the lock.
@@ -250,8 +263,10 @@ worker_snapshot :: proc(w: ^Worker, max_lines: int) -> Snapshot {
 	}
 }
 
-// STEP_WEIGHT is how much of the bar each step fills. Packages dominate: they
-// are the only step whose length grows with what is installed.
+// STEP_WEIGHT is how much of the bar each step fills in the demo, which has
+// to make up its own whole-install fraction the way the core does with its
+// STEP_SPAN. Packages dominate: they are the only step whose length grows
+// with what is installed.
 STEP_WEIGHT := [Install_Step]f32 {
 	.Partition  = 3,
 	.Format     = 6,
@@ -264,16 +279,16 @@ STEP_WEIGHT := [Install_Step]f32 {
 }
 
 // overall_fraction folds (step, fraction within it) into one 0..1 value.
-overall_fraction :: proc(pr: Progress) -> f32 {
+overall_fraction :: proc(step: Install_Step, within: f32) -> f32 {
 	total, before: f32
 	for s in Install_Step {
 		total += STEP_WEIGHT[s]
-		if s < pr.step {
+		if s < step {
 			before += STEP_WEIGHT[s]
 		}
 	}
-	if pr.step == .Done {
+	if step == .Done {
 		return 1
 	}
-	return clamp((before + STEP_WEIGHT[pr.step] * clamp(pr.fraction, 0, 1)) / total, 0, 1)
+	return clamp((before + STEP_WEIGHT[step] * clamp(within, 0, 1)) / total, 0, 1)
 }

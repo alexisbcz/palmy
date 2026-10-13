@@ -173,3 +173,16 @@ fakeroot -s <state> -- sh -c '
   decompressed at a time).
 - Not exercised inside the real Palmframe image (that image is the
   integrator's); exercised in a minimal initramfs under QEMU as above.
+
+## Changed by the installer integration (2026-10-13)
+
+- **Symlinks under /etc are configuration** (`install.odin`, `main.odin`).
+  `/etc/localtime` is palmframe-base's link to UTC until the installer points
+  it at the chosen zone. `palm verify` now reports a retargeted /etc link as
+  `modified (config): points to X, not Y` (soft, exit 0), like an edited
+  file, instead of a hard problem. On install/upgrade/fix a link under /etc
+  that was retargeted locally (on-disk target differs from both the new and
+  the previously recorded one) is kept, with a message; there is no
+  `.palm-new` for a link. Selftest: the test package gained
+  `/etc/hello/current -> hello.conf`; verify, fix and upgrade all keep a
+  retargeted copy (498 assertions, 0 failures).

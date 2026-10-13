@@ -300,21 +300,94 @@ passes 173 of 173. What W1 asked for and did not happen:
 `distro/` builds Palmframe into a disk image (`make distro`) that boots in
 QEMU from UEFI firmware through limine, palm-init and palm-login to the
 greeter and the window manager, and installs and removes packages with palm
-from a signed repository. `distro/README.md` says what was verified and how.
-These are the gaps that run found or that the areas' notes name.
+from a signed repository. `make -C distro iso` builds a live ISO whose
+installer (`apps/installer`, or `palm-install` on the serial console) erases
+a disk and installs onto it. In QEMU the installed disk then boots alone
+through its own UEFI entry, to a greeter in the chosen language.
+`distro/README.md` says what was verified and how, and `distro/INSTALLER.md`
+is the installer's reference. These are the gaps those runs found or that
+the areas' notes name.
 
-- **The kernel limine boots is a copy** made at image time on the FAT
-  partition. `palm upgrade linux` updates `/boot/vmlinuz` on the root and not
-  that copy. Mount the FAT partition at `/boot/efi` (an fstab entry, which is
-  also missing) and have the linux package install there; palm has no hooks
-  by design, so the package has to carry the file itself.
-- **palm cannot become root.** busybox is not setuid, so `su` and `passwd`
-  fail for palm and package management happens on the serial console as
+## The installer
+
+- **An installed disk boots only through UEFI, and nobody is told.** The
+  layout has no BIOS boot partition and the core runs no `limine
+  bios-install`. Under SeaBIOS the live ISO boots, and `palm-install`
+  finishes with exit 0 ("no UEFI boot entry requested; the disk boots
+  through EFI/BOOT/BOOTX64.EFI") and asks for a restart. The disk then hangs
+  at `Booting from Hard Disk...`. Either add a BIOS boot partition and
+  `limine bios-install` to `distro/installer/core`, or have both front ends
+  say plainly, before erasing, that the result needs UEFI.
+- **The ESP is in `/etc/fstab` but not mounted.** palm-init runs no
+  `mount -a`, so on an installed system `df /boot/efi` shows the root. This
+  is the same gap as the image's kernel copy below: `palm upgrade linux`
+  updates `/boot/vmlinuz`, not the `vmlinuz` limine boots from the ESP.
+- **Part of the interface stays English in every language.** The progress
+  detail line under the step name (`Installing palm-login (11 of 33)`) is the
+  core's English message. `validate`'s problems are English sentences with
+  the values baked in, and only a problem code with arguments would let the
+  GUI translate them (`distro/notes/installer-gui.md`). Country names in the
+  time-zone list (`Britain (UK)`) and keyboard layout descriptions are
+  tzdata's and xkeyboard-config's English. The wm bar's date (`Tue 13 Oct`)
+  and its empty-desktop hint are English because wm has no catalogue.
+- **palmy: Tab into a prefilled field puts the caret at 0.** Tabbing into
+  *Computer name* (`palmframe`) and typing `analytical` gives
+  `analyticalpalmframe`. `distro/live/test-install.py` presses End first, but
+  a person would not know to. palmy should put the caret at the end, or
+  select all, when a field gains focus from the keyboard.
+- **palmy: a text's wrap width is capped at last frame's width**
+  (`palmy/layout.odin`, `measure`, about line 235). When the string at an id
+  gets longer, as on a language switch, a shrink-wrapped label breaks onto
+  several lines and never recovers. The installer works around it. The
+  reproduction is in `distro/notes/installer-gui.md`.
+- **palmy has no layout direction.** The installer (`hrow`/`hend`) and the
+  greeter mirror their rows by hand for Arabic. A `flex-row-reverse` or a
+  direction would remove both copies.
+- **A second install in the same machine moves the boot entry.** The core
+  reuses an existing "Palmframe" `Boot####`, so installing onto a second
+  disk points the one entry at the new disk, and the first disk boots only
+  through the firmware's fallback path. A per-disk description, or matching
+  on the ESP's GUID, would keep both.
+- **The live console's hint is wrong.** `/etc/profile.d/palm-live.sh`
+  (`distro/live/root`) offers `palm-install` to "install interactively".
+  palm-install has no interactive mode. Run with no options, it reports the
+  plan invalid (no user, no password, no disk) and exits 4.
+- **Not exercised:** a whole install in Arabic or Japanese (Arabic was
+  checked on the installer's screens; for Japanese only its name in the
+  language list has been seen rendered); the pointer (QEMU runs used keys
+  only); NVMe and MMC partition naming and 4 KiB-sector devices outside
+  image files; real hardware, and a real USB stick.
+- **`apps/term` drops legacy keysyms.** Its `keysym_codepoint` covers only
+  Latin-1 and `0x01xxxxxx` Unicode keysyms. With a Cyrillic, Greek, Arabic
+  or Hebrew layout, or for the euro sign, wm delivers the keysym and term
+  types nothing. The launcher shows the same keys correctly
+  (`distro/notes/wm.md`).
+- **The live medium is large for what it needs.** `fonts-cjk` is the
+  unsubsetted 19 MB Noto CJK collection, because the host has no subsetting
+  tool. The ISO also carries all 46 packages (62 MB of the 84 MB initramfs),
+  not only what `palmframe` needs.
+- **Erase-the-whole-disk only:** no resize, dual boot, encryption or swap.
+  The contract chose this. It is listed here so that it is not mistaken for
+  finished.
+- **Cosmetic:** on the Done page the pointer, parked at the screen's centre,
+  covers part of the heading.
+
+## The system
+
+- **The kernel limine boots is a copy** made at image or install time on the
+  FAT partition. `palm upgrade linux` updates `/boot/vmlinuz` on the root and
+  not that copy. Mount the ESP at `/boot/efi` (installed disks have the fstab
+  line; the image does not, and palm-init has no `mount -a`) and have the
+  linux package install there. palm has no hooks by design, so the package
+  has to carry the file itself.
+- **The user cannot become root.** busybox is not setuid, so `su` and
+  `passwd` fail, and package management happens on the serial console as
   root. Either a setuid busybox with `/etc/busybox.conf`, or a small Odin
   `doas`.
-- **glibc, libxkbcommon and xkeyboard-config are copied from the Arch build
-  host** (`distro/recipes/generate.sh`), with versions from `pacman -Q`. The
-  image is only as reproducible as the host.
+- **glibc, libxkbcommon, xkeyboard-config, tzdata, e2fsprogs, dosfstools,
+  limine and the CJK font are copied from the Arch build host**
+  (`distro/recipes/generate.sh`). Where a version is recorded, it comes from
+  `pacman -Q`. The image is only as reproducible as the host.
 - **Never booted on real hardware.** `distro/kernel/palmframe.config` is
   written for QEMU's devices.
 - **Not exercised in the image:** Restart from the greeter, logging out with
@@ -323,12 +396,14 @@ These are the gaps that run found or that the areas' notes name.
   logout passed in the login agent's own initramfs boot.
 - **`palm list` and `palm info` warn when no repository answers**
   (`cannot connect to 10.0.2.2:8080`), although both are local queries.
-- **No timezone.** The greeter's clock shows UTC.
+  Every installed system shows this, because its repository is the build
+  host's.
 - **No clipboard.** palmy copies through `wl-copy`, which is not shipped.
 - **`files` and `launcher` still offer `foot`** as the terminal
   (`apps/files/main.odin`, `apps/launcher/main.odin`).
-- **Fixed-size system.** No swap, and the root filesystem is the installed size
-  plus 1 GiB with no resize on first boot.
+- **The disk image is fixed-size.** It has no swap, and its root filesystem
+  is the installed size plus 1 GiB, with no resize on first boot. Installed
+  disks fill the whole disk.
 - **palm-init's SIGHUP only adds.** Removed services keep running and changed
   ones are not restarted.
 - **palm-login** keeps no utmp, wtmp or lastlog and ignores shadow's aging

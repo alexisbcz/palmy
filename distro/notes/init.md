@@ -100,3 +100,12 @@ foreground run" (lease obtained, or backgrounded after 5 tries).
   else.
 - busybox `poweroff` / `reboot` / `halt` work (SIGUSR2 / SIGTERM / SIGUSR1).
   ctrl-alt-del is SIGINT → reboot.
+
+## Changed by the installer integration (2026-10-13)
+
+- **Masks** (`service.odin`): a service is not started while
+  `/etc/palm/services.off/<name>` exists (also for the built-in `network`).
+  palmframe-live ships `services.off/palm-login` and `services.off/getty-ttyS0`
+  instead of the live build deleting palmframe-base's service files, so
+  `palm verify` on the live system no longer reports them missing. Logged as
+  `service X is masked by ...`. Selftest: 3 mask checks.

@@ -239,7 +239,7 @@ step_mount :: proc(c: ^Ctx) -> string {
 	if c.o.disk_image {
 		logf(c, "disk image: building the system in %s (a plain directory, not mounted)", c.t.root)
 		if c.o.dry_run {return ""}
-		if e := os.make_directory_all(c.t.esp); e != nil {
+		if e := mkdir_p(c.t.esp); e != nil {
 			return fmt.tprintf("mkdir %s: %v", c.t.esp, e)
 		}
 		return ""
@@ -260,14 +260,14 @@ step_mount :: proc(c: ^Ctx) -> string {
 			}
 		}
 	}
-	if e := os.make_directory_all(c.t.root); e != nil {
+	if e := mkdir_p(c.t.root); e != nil {
 		return fmt.tprintf("mkdir %s: %v", c.t.root, e)
 	}
 	if e := mount(c, c.parts.root_dev, c.t.root, "ext4", ""); e != "" {
 		return e
 	}
 	c.mounted_root = true
-	if e := os.make_directory_all(c.t.esp); e != nil {
+	if e := mkdir_p(c.t.esp); e != nil {
 		return fmt.tprintf("mkdir %s: %v", c.t.esp, e)
 	}
 	// The ESP holds the boot loader and a kernel; nobody but root needs to

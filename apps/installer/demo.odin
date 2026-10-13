@@ -23,7 +23,7 @@ LANGUAGES := [?]Language {
 	{code = "fr_FR", native_name = "Français", english_name = "French", available = true},
 	{code = "de_DE", native_name = "Deutsch", english_name = "German", available = true},
 	{code = "es_ES", native_name = "Español", english_name = "Spanish", available = true},
-	{code = "ar_EG", native_name = "العربية", english_name = "Arabic", rtl = true, available = true},
+	{code = "ar", native_name = "العربية", english_name = "Arabic", rtl = true, available = true},
 	{code = "ja_JP", native_name = "日本語", english_name = "Japanese", available = false},
 }
 
@@ -119,54 +119,55 @@ demo_layouts :: proc() -> []Keyboard {
 	return out
 }
 
-// demo_zones is a slice of tzdata's zone1970.tab, one city per row.
+// demo_zones is a slice of tzdata's zone1970.tab, one city per row, with the
+// country named as iso3166.tab names it (which is what the core reports).
 demo_zones :: proc() -> []Zone {
 	names := [?][2]string {
-		{"Africa/Abidjan", "CI"},
-		{"Africa/Cairo", "EG"},
-		{"Africa/Casablanca", "MA"},
-		{"Africa/Johannesburg", "ZA"},
-		{"Africa/Lagos", "NG"},
-		{"Africa/Nairobi", "KE"},
-		{"America/Argentina/Buenos_Aires", "AR"},
-		{"America/Bogota", "CO"},
-		{"America/Chicago", "US"},
-		{"America/Denver", "US"},
-		{"America/Los_Angeles", "US"},
-		{"America/Mexico_City", "MX"},
-		{"America/New_York", "US"},
-		{"America/Sao_Paulo", "BR"},
-		{"America/Toronto", "CA"},
-		{"Asia/Baghdad", "IQ"},
-		{"Asia/Bangkok", "TH"},
-		{"Asia/Dubai", "AE"},
-		{"Asia/Kolkata", "IN"},
-		{"Asia/Riyadh", "SA"},
-		{"Asia/Seoul", "KR"},
-		{"Asia/Shanghai", "CN"},
-		{"Asia/Singapore", "SG"},
-		{"Asia/Tokyo", "JP"},
-		{"Atlantic/Reykjavik", "IS"},
-		{"Australia/Melbourne", "AU"},
-		{"Australia/Sydney", "AU"},
-		{"Europe/Amsterdam", "NL"},
-		{"Europe/Athens", "GR"},
-		{"Europe/Berlin", "DE"},
-		{"Europe/Brussels", "BE"},
-		{"Europe/Dublin", "IE"},
-		{"Europe/Helsinki", "FI"},
-		{"Europe/Istanbul", "TR"},
-		{"Europe/Lisbon", "PT"},
-		{"Europe/London", "GB"},
-		{"Europe/Madrid", "ES"},
-		{"Europe/Moscow", "RU"},
-		{"Europe/Paris", "FR"},
-		{"Europe/Rome", "IT"},
-		{"Europe/Stockholm", "SE"},
-		{"Europe/Warsaw", "PL"},
-		{"Europe/Zurich", "CH"},
-		{"Pacific/Auckland", "NZ"},
-		{"Pacific/Honolulu", "US"},
+		{"Africa/Abidjan", "Côte d'Ivoire"},
+		{"Africa/Cairo", "Egypt"},
+		{"Africa/Casablanca", "Morocco"},
+		{"Africa/Johannesburg", "South Africa"},
+		{"Africa/Lagos", "Nigeria"},
+		{"Africa/Nairobi", "Kenya"},
+		{"America/Argentina/Buenos_Aires", "Argentina"},
+		{"America/Bogota", "Colombia"},
+		{"America/Chicago", "United States"},
+		{"America/Denver", "United States"},
+		{"America/Los_Angeles", "United States"},
+		{"America/Mexico_City", "Mexico"},
+		{"America/New_York", "United States"},
+		{"America/Sao_Paulo", "Brazil"},
+		{"America/Toronto", "Canada"},
+		{"Asia/Baghdad", "Iraq"},
+		{"Asia/Bangkok", "Thailand"},
+		{"Asia/Dubai", "United Arab Emirates"},
+		{"Asia/Kolkata", "India"},
+		{"Asia/Riyadh", "Saudi Arabia"},
+		{"Asia/Seoul", "Korea (South)"},
+		{"Asia/Shanghai", "China"},
+		{"Asia/Singapore", "Singapore"},
+		{"Asia/Tokyo", "Japan"},
+		{"Atlantic/Reykjavik", "Iceland"},
+		{"Australia/Melbourne", "Australia"},
+		{"Australia/Sydney", "Australia"},
+		{"Europe/Amsterdam", "Netherlands"},
+		{"Europe/Athens", "Greece"},
+		{"Europe/Berlin", "Germany"},
+		{"Europe/Brussels", "Belgium"},
+		{"Europe/Dublin", "Ireland"},
+		{"Europe/Helsinki", "Finland"},
+		{"Europe/Istanbul", "Turkey"},
+		{"Europe/Lisbon", "Portugal"},
+		{"Europe/London", "Britain (UK)"},
+		{"Europe/Madrid", "Spain"},
+		{"Europe/Moscow", "Russia"},
+		{"Europe/Paris", "France"},
+		{"Europe/Rome", "Italy"},
+		{"Europe/Stockholm", "Sweden"},
+		{"Europe/Warsaw", "Poland"},
+		{"Europe/Zurich", "Switzerland"},
+		{"Pacific/Auckland", "New Zealand"},
+		{"Pacific/Honolulu", "United States"},
 	}
 	out := make([]Zone, len(names))
 	for n, i in names {
@@ -218,16 +219,20 @@ demo_disks :: proc() -> []Disk {
 	return out
 }
 
+// demo_time_scale shortens the fake install's naps; the selftest runs it at
+// a fiftieth of the speed a person watches.
+demo_time_scale: f32 = 1
+
 // demo_install stands in for install_core.install. It walks the same steps,
 // reports the same kind of progress, sleeps instead of working, and touches
 // nothing. With `fail` it stops partway through the packages with an error,
 // so the failure screen can be seen too.
 demo_install :: proc(p: Plan, report: proc(pr: Progress, user: rawptr), user: rawptr, fail: bool) -> (ok: bool, err: string) {
 	say :: proc(report: proc(pr: Progress, user: rawptr), user: rawptr, step: Install_Step, f: f32, msg: string) {
-		report(Progress{step = step, fraction = f, message = msg}, user)
+		report(Progress{step = step, fraction = overall_fraction(step, f), message = msg}, user)
 	}
 	nap :: proc(ms: int) {
-		time.sleep(time.Duration(ms) * time.Millisecond)
+		time.sleep(time.Duration(f32(ms) * demo_time_scale) * time.Millisecond)
 	}
 
 	say(report, user, .Partition, 0, fmt.tprintf("demo: would write a fresh GPT to %s (nothing is written)", p.disk))

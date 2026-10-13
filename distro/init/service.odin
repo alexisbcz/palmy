@@ -36,6 +36,12 @@ package main
 // up for now) and then forks itself into the background to renew it, so its
 // foreground exit is exactly the moment `after = network` should mean. A file
 // named `network` in /etc/palm/services replaces the built-in.
+//
+// A service is masked, never started, while a file of its name exists in
+// /etc/palm/services.off/. That lets one package turn off another's service
+// without deleting a file palm owns (so `palm verify` stays clean): the live
+// installer's palmframe-live masks palmframe-base's palm-login and
+// getty-ttyS0 this way. The mask also stops the built-in network.
 
 import "core:fmt"
 import "core:slice"
@@ -79,6 +85,12 @@ BACKOFF_MIN_MS :: 1_000
 BACKOFF_MAX_MS :: 30_000
 
 SERVICE_DIR :: "/etc/palm/services"
+MASK_DIR :: "/etc/palm/services.off"
+
+// masked says whether /etc/palm/services.off/<name> exists (see the header).
+masked :: proc(name: string, mask_dir := MASK_DIR) -> bool {
+	return exists(strings.concatenate({mask_dir, "/", name}, context.temp_allocator))
+}
 DEFAULT_PATH :: "/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin"
 
 // parse_service reads one service file. An unknown key is an error rather
@@ -165,6 +177,10 @@ load_services :: proc() -> int {
 	for name in names {
 		if strings.has_prefix(name, ".") || strings.has_suffix(name, "~") {continue}
 		if find_service(name) != nil {continue}
+		if masked(name) {
+			say("service %s is masked by %s/%s; not started", name, MASK_DIR, name)
+			continue
+		}
 		// The parsed service keeps slices of the text, so it is read into
 		// the permanent allocator and lives as long as the service does.
 		text, rok := read_file(strings.concatenate({SERVICE_DIR, "/", name}, context.temp_allocator))
@@ -190,7 +206,7 @@ load_services :: proc() -> int {
 // add_builtin_network registers the udhcpc one-shot when there is an eth0 and
 // a udhcpc to run, and no service file of the same name.
 add_builtin_network :: proc() {
-	if find_service("network") != nil {return}
+	if find_service("network") != nil || masked("network") {return}
 	s := new(Service)
 	s.name = "network"
 	s.user = "root"

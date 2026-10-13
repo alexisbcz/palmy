@@ -1,0 +1,2 @@
+# Masked on the live system: its session is the installer, not a login screen
+# (palm-init does not start a service named here; distro/init/service.odin).

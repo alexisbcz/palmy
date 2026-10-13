@@ -15,8 +15,12 @@ a mail client, an office suite, media players, a torrent client, a local-model
 chat client, and others. A first version of the distribution exists too: a
 kernel, a busybox userland, and an init, a login daemon and a package manager
 written in Odin, built by `make distro` into a disk image that boots in QEMU to
-the greeter and the window manager. It has not run on real hardware, and what
-it lacks is listed in [`distro/README.md`](distro/README.md). Everything under
+the greeter and the window manager. `make -C distro iso` builds a live ISO
+whose graphical installer, translated into five languages, Arabic right to
+left among them, puts the system on a disk of its own. In QEMU that disk then
+boots alone through its own UEFI entry, to a greeter in the chosen language.
+None of it has run on real hardware. What it lacks is listed in
+[`distro/README.md`](distro/README.md). Everything under
 *Where this is going* below is still a plan, not a shipped thing, and is
 written here so the direction is on the record rather than implied.
 
@@ -101,6 +105,7 @@ make            # build every example into ./bin
 make run-todo   # or run-counter, run-gallery, run-pixels
 make test       # the headless test suite
 make distro     # the Palmframe disk image; distro/run-qemu.sh boots it
+make -C distro iso   # the live installer; distro/run-qemu.sh --iso boots it
 ```
 
 Built and tested with Odin `dev-2026-09` on Hyprland; any compositor with
@@ -459,7 +464,8 @@ a test suite, and this does not yet.
 ### A distribution where AI is part of the system
 
 The distribution underneath it now exists: `distro/` boots under QEMU from
-firmware to a login screen and a desktop, with its own package manager. None
+firmware to a login screen and a desktop, with its own package manager and an
+installer. None
 of what this section describes runs on it yet; that is the part that would
 make it more than a small Linux distribution.
 
