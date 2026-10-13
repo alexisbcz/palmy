@@ -69,6 +69,11 @@ Interact :: struct {
 	drop_t:         ^Toplevel,
 	snapshot:       Ix_Snapshot,
 	split_partner:  ^Toplevel,
+	split_span:     [2]int, // a snap pair's outer extent when the drag began
+	// A move that began by restoring a maximized, snapped or tiled window
+	// keeps that window wholly on its output (UX.md P0-4): the grab point
+	// slides along the title bar instead of the title running off the edge.
+	move_keep_on:   bool,
 
 	// Double-click detection on title bars (P0-2).
 	last_click_t:   ^Toplevel,
@@ -88,7 +93,7 @@ Interact :: struct {
 	reflow_btn:     int,
 
 	// A tiled window focused from the keyboard while floating windows cover
-	// it; those are drawn translucent until the pointer moves (P0-1).
+	// it; it is drawn over them while it keeps focus (P0-1).
 	reveal_t:       ^Toplevel,
 
 	// Focus policy inputs (P0-13): when the user last launched something and
@@ -138,12 +143,25 @@ ix_note_reflow :: proc(s: ^Server) {
 }
 
 // ix_reveal marks a keyboard-focused tiled window that floating windows
-// cover, so they are drawn see-through over it until the pointer moves.
+// cover. It is drawn — and hit — lifted above them for as long as it keeps
+// focus, so the window that has the keyboard is never invisible; clicking a
+// floating window, or any other focus change, ends it. (It
+// used to be the other way round — the covering windows drawn at 30% — and
+// two windows' text printed over each other read as a rendering fault.)
+// Typing does not end it: the user is typing into the window being shown.
 ix_reveal :: proc(s: ^Server, t: ^Toplevel) {
 	ix.reveal_t = nil
 	if t == nil || !ws_in_layout(s, t) || t.maximized {
 		return
 	}
+	if ix_covered(s, t) {
+		ix.reveal_t = t
+		s.dirty = true
+	}
+}
+
+// ix_covered says whether a mapped window above t in the stack overlaps it.
+ix_covered :: proc(s: ^Server, t: ^Toplevel) -> bool {
 	fr := frame_rect(t)
 	above := false
 	for w in s.stack {
@@ -152,33 +170,20 @@ ix_reveal :: proc(s: ^Server, t: ^Toplevel) {
 			continue
 		}
 		if above && w.mapped && !w.minimized && p.rect_overlaps(frame_rect(w), fr) {
-			ix.reveal_t = t
-			s.dirty = true
-			return
-		}
-	}
-}
-
-// ix_veiled says whether a window is drawn translucent because it covers the
-// window ix_reveal marked.
-ix_veiled :: proc(s: ^Server, w: ^Toplevel) -> bool {
-	t := ix.reveal_t
-	if t == nil || w == t || s.focus != t {
-		return false
-	}
-	if !p.rect_overlaps(frame_rect(w), frame_rect(t)) {
-		return false
-	}
-	seen := false
-	for x in s.stack {
-		if x == t {
-			seen = true
-		}
-		if x == w {
-			return seen
+			return true
 		}
 	}
 	return false
+}
+
+// ix_lifted is the window ix_reveal marked, while it still has focus and
+// is still covered; nil otherwise.
+ix_lifted :: proc(s: ^Server) -> ^Toplevel {
+	t := ix.reveal_t
+	if t == nil || s.focus != t || !t.mapped || t.minimized || !ws_on_current(s, t) {
+		return nil
+	}
+	return t
 }
 
 // dbl_click_ok is the double-click test, pure: the same window, within the
@@ -239,7 +244,7 @@ ix_begin_drag :: proc(s: ^Server, t: ^Toplevel, kind: Drag, edges: Edges, btn :=
 // move: a maximized, snapped or tiled window is restored to its free size
 // under the pointer first (P0-4), and only now leaves the layout.
 ix_start_move :: proc(s: ^Server, t: ^Toplevel) {
-	ix_restore_for_move(s, t, s_pointer)
+	ix.move_keep_on = ix_restore_for_move(s, t, s_pointer)
 	m := ws_win(t)
 	m.auto_float = false
 	s.drag = .Move
@@ -326,6 +331,15 @@ ix_move_to :: proc(s: ^Server, t: ^Toplevel, mp: [2]int, ctrl: bool) {
 	}
 	t.x, t.y = nx, ny
 	clamp_window(s, t)
+	if ix.move_keep_on {
+		oi := ws_output_at(s, mp.x, mp.y)
+		o := s.outputs[oi]
+		bw := ws_border(t)
+		fw := t.req_w + 2 * bw
+		if fw <= o.w {
+			t.x = clamp(t.x - bw, o.x, o.x + o.w - fw) + bw
+		}
+	}
 
 	// The snap target under the pointer, and a drop target among the tiled
 	// windows when this one came out of the layout.
@@ -395,10 +409,10 @@ ix_resize_to :: proc(s: ^Server, t: ^Toplevel, d: [2]int) {
 ix_split_to :: proc(s: ^Server, t: ^Toplevel, mp: [2]int) {
 	if partner := ix.split_partner; partner != nil {
 		lt, rt := t, partner
-		if frame_rect(partner).x < frame_rect(t).x {
+		if partner.x < t.x {
 			lt, rt = partner, t
 		}
-		snap_group_drag(s, lt, rt, mp.x)
+		snap_group_drag(s, lt, rt, ix.split_span, mp.x)
 		return
 	}
 	idx := ws_index_of(s, t)
@@ -507,10 +521,6 @@ handle_pointer :: proc(s: ^Server, app: ^p.App, scale: f32) {
 	moved := mp != ix.last_mp
 	ix.last_mp = mp
 	if moved {
-		if ix.reveal_t != nil {
-			ix.reveal_t = nil
-			s.dirty = true
-		}
 		s.dirty = true
 	}
 	any_press := in_.pressed[.Left] || in_.pressed[.Right] || in_.pressed[.Middle]
@@ -731,6 +741,11 @@ handle_pointer :: proc(s: ^Server, app: ^p.App, scale: f32) {
 			} else if partner := snap_partner(s, t); partner != nil && (edges == {.Right} || edges == {.Left}) && ix_edge_faces(t, partner, edges) {
 				ix_begin_drag(s, t, .Split, edges)
 				ix.split_partner = partner
+				lt, rt := t, partner
+				if partner.x < t.x {
+					lt, rt = partner, t
+				}
+				ix.split_span = snap_group_span(lt, rt)
 			} else {
 				ix_begin_drag(s, t, .Resize, edges)
 			}

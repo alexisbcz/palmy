@@ -261,6 +261,11 @@ menu_open_desktop :: proc(s: ^Server, x, y: int) {
 		menu_add(it, "Settings", .Spawn_Settings)
 	}
 	menu_place(s, x, y)
+	// The first row, Open Terminal, starts selected, so right-click then
+	// Return opens a terminal: the desktop menu and Alt+Space's window menu
+	// both answer the keyboard straight away. The pointer opened it at that
+	// row's corner anyway.
+	menu.hover = 0
 }
 
 menu_open_layout :: proc(s: ^Server, x, y: int) {

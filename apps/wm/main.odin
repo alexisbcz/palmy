@@ -1170,6 +1170,9 @@ toggle_on_top :: proc(s: ^Server, t: ^Toplevel) {
 	}
 	m := ws_win(t)
 	m.on_top = !m.on_top
+	if m.on_top && m.auto_float {
+		m.auto_float = false // pinned above the rest: the user's float now
+	}
 	ws_restack(s)
 	raise_window(s, t)
 	note(s, fmt.tprintf("%s %s", title_of(t), m.on_top ? "always on top" : "no longer on top"))
@@ -1183,9 +1186,13 @@ toggle_sticky :: proc(s: ^Server, t: ^Toplevel) {
 	}
 	m := ws_win(t)
 	m.sticky = !m.sticky
-	if m.sticky && ws_in_layout(s, t) {
+	if m.sticky && (ws_in_layout(s, t) || m.auto_float) {
 		// A window on every workspace cannot hold a cell in each layout.
+		// One the layout floated only because it did not fit is floating
+		// for good now: otherwise the next workspace, with room to spare,
+		// would take it back as its master tile.
 		m.floating = true
+		m.auto_float = false
 		s.needs_layout = true
 	}
 	s.dirty = true
@@ -1347,10 +1354,17 @@ cascade_all :: proc(s: ^Server) {
 	ox, oy, _, _ := ws_output_rect(s, s.cur_out)
 	n := 0
 	for t in s.stack {
-		if !t.mapped {
+		// Arranging is about the windows on screen. A minimized one stays
+		// minimized, where its taskbar entry says it is (principle 2).
+		if !t.mapped || t.minimized {
 			continue
 		}
-		t.minimized = false
+		// A cascaded window is no longer in its snap zone; forgetting the
+		// zone keeps Super+Up from reading a stale "left half" and going to
+		// the top-left quarter instead of maximizing.
+		if m, ok := ws_peek(t); ok {
+			m.snap = .None
+		}
 		t.x = ox + 56 + (n % 6) * 44
 		t.y = oy + ws_bar_h(s) + ws_title_h(t) + 24 + (n % 6) * 38
 		clamp_window(s, t)

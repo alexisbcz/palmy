@@ -256,6 +256,13 @@ hit_window :: proc(s: ^Server, t: ^Toplevel, mx, my: int) -> (Region, Edges) {
 }
 
 window_at :: proc(s: ^Server, mx, my: int) -> (^Toplevel, Region, Edges) {
+	// A window lifted over the floating ones (ix_reveal) is hit where it is
+	// drawn: on top.
+	if t := ix_lifted(s); t != nil {
+		if r, e := hit_window(s, t, mx, my); r != .None {
+			return t, r, e
+		}
+	}
 	#reverse for t in s.stack {
 		if !t.mapped || t.minimized {
 			continue

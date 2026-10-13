@@ -270,6 +270,11 @@ ux_selftest :: proc(s: ^Server, c: ^Client) {
 		code := Cfg_Bind{code = 10}
 		ws_check(bind_matches_key(&code, 0, 0, 2), "code:10 is the evdev key 2")
 		ws_eq(int(us_digit_of(11)), int('0'), "the tenth number-row key is 0")
+		sl := Cfg_Bind{mods = {.Super}, sym = '/'}
+		ws_check(bind_matches_key(&sl, '!', '!', 53, true), "on AZERTY, Super and the key where US has / matches a Slash binding")
+		ws_check(!bind_matches_key(&sl, '!', '!', 53, false), "but not on a layout that types / unshifted elsewhere")
+		ws_check(bind_shift_consumed(&sl, '/', ':'), "AZERTY's Shift+: types /, and that Shift is spent on the symbol")
+		ws_check(!bind_shift_consumed(&sl, '?', '/'), "US Shift+/ is ?, which is not the binding")
 	}
 	{
 		cfg: Cfg

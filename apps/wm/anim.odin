@@ -8,8 +8,8 @@
 //
 //   open         scale 0.95 → 1 about the centre, opacity 0 → 1   160 ms
 //   close        scale 1 → 0.95, opacity 1 → 0, from a snapshot  120 ms
-//   minimize     frame → its taskbar entry, opacity 1 → 0        180 ms
-//   restore      taskbar entry → frame, opacity 0 → 1            180 ms
+//   minimize     frame → its taskbar entry, then fades            200 ms
+//   restore      taskbar entry → frame, opacity 0 → 1            200 ms
 //   geometry     old frame rect → new (maximize, snap, tile)     160 ms
 //   workspace    both workspaces slide by the output's width     200 ms
 //
@@ -70,7 +70,7 @@ anim_app: ^p.App
 
 ANIM_OPEN :: 0.16
 ANIM_CLOSE :: 0.12
-ANIM_MIN :: 0.18
+ANIM_MIN :: 0.20
 ANIM_GEOM :: 0.16
 ANIM_WS :: 0.20
 ANIM_REDUCED :: 0.10
@@ -86,6 +86,17 @@ ease_out :: proc(t: f32) -> f32 {
 ease_in :: proc(t: f32) -> f32 {
 	u := clamp(t, 0, 1)
 	return u * u * u
+}
+
+// ease_in_out is cubic both ways: a slow start, so the eye catches what is
+// moving, and a slow landing.
+ease_in_out :: proc(t: f32) -> f32 {
+	u := clamp(t, 0, 1)
+	if u < 0.5 {
+		return 4 * u * u * u
+	}
+	v := -2 * u + 2
+	return 1 - v * v * v / 2
 }
 
 lerp_rect :: proc(a, b: p.Rect, k: f32) -> p.Rect {
@@ -169,15 +180,19 @@ anim_eval :: proc(t: ^Toplevel, a: Win_Anim) -> (p.Rect, f32) {
 		e := ease_out(k)
 		return lerp_rect(a.from, target_frame(t), e), 1
 	case .Minimize:
-		e := ease_out(k)
+		e := ease_in_out(k)
 		if reduced {
-			return a.from, 1 - e
+			return a.from, 1 - ease_out(k)
 		}
 		to, ok := bar_entry_rect(t)
 		if !ok {
 			to = scale_rect(a.from, 0.5)
 		}
-		return lerp_rect(a.from, to, e), 1 - e
+		// The window stays solid while it visibly shrinks toward its
+		// taskbar entry, and only fades as it arrives. On a plain ease-out
+		// it had covered most of the way, at a third of its opacity, within
+		// 50 ms, and the motion was never seen.
+		return lerp_rect(a.from, to, e), 1 - ease_in(k)
 	case .Restore:
 		e := ease_out(k)
 		if reduced {

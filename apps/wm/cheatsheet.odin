@@ -55,21 +55,36 @@ Cheat_Row :: struct {
 	keys:  []string,
 	label: string,
 	group: string,
+	alt:   string, // other chords for the same action, as text
 }
 
 // cheat_rows builds the rows from the binding table, filtered.
 cheat_rows :: proc(s: ^Server) -> []Cheat_Row {
 	q := strings.to_lower(strings.to_string(cheat.filter), context.temp_allocator)
 	rows := make([dynamic]Cheat_Row, 0, 96, context.temp_allocator)
+	seen := make(map[string]int, 96, context.temp_allocator)
 	for g in CHEAT_GROUPS {
 		for &b in s.cfg.binds {
 			if bind_group(b.act) != g {
 				continue
 			}
-			r := Cheat_Row{keys = chord_parts(&b), label = bind_human(&b), group = g}
+			// One row per action: Super+T on a row of its own under
+			// Super+Return, both "Open term", is noise. A second chord for
+			// the same action is named after the first row's label, dimmed
+			// ("Open term  also Super+T"), so the caps column stays one
+			// width and a bind line the user just added still shows even
+			// when it duplicates a default.
+			label := bind_human(&b)
+			if at, dup := seen[label]; dup {
+				r := &rows[at]
+				r.alt = r.alt == "" ? chord_text(&b) : strings.concatenate({r.alt, ", ", chord_text(&b)}, context.temp_allocator)
+				continue
+			}
+			r := Cheat_Row{keys = chord_parts(&b), label = label, group = g}
 			if q != "" && !strings.contains(strings.to_lower(r.label, context.temp_allocator), q) && !strings.contains(strings.to_lower(chord_text(&b), context.temp_allocator), q) {
 				continue
 			}
+			seen[label] = len(rows)
 			append(&rows, r)
 		}
 	}
@@ -134,43 +149,37 @@ cheat_draw :: proc(s: ^Server, app: ^p.App, cv: ^p.Canvas) {
 	f := &app.fonts
 	o := s.outputs[s.cur_out]
 	rows := cheat_rows(s)
-	ROW :: f32(19)
 	HEAD :: f32(27)
 	TOP :: f32(66)
 	max_h := f32(o.h - ws_bar_h(s)) - 60
 	avail_h := max_h - TOP - 20
 
-	// Lay the rows out in columns, top to bottom, starting a new column
-	// whenever the next row would run past the bottom. A heading never ends
-	// a column on its own.
-	Placed :: struct {
-		col:  int,
-		y:    f32,
-		row:  int, // index into rows; negative for a heading of rows[-row-1]
-	}
-	placed := make([dynamic]Placed, 0, len(rows) + 8, context.temp_allocator)
-	col := 0
-	y := f32(0)
-	last := ""
-	for r, i in rows {
-		if r.group != last {
-			if y + HEAD + ROW > avail_h && y > 0 {
-				col += 1
-				y = 0
-			}
-			append(&placed, Placed{col, y, -1 - i})
-			y += HEAD
-			last = r.group
+	// Rows are 19 px, and tighten (down to 17 px) when that saves a whole
+	// column — otherwise one overflowing row sits alone in a column.
+	ROW := f32(19)
+	placed, cols := cheat_layout(rows, avail_h, ROW, HEAD)
+	if cols > 1 {
+		_, tight := cheat_layout(rows, avail_h, 17, HEAD)
+		for ROW > 17 && cols > tight {
+			ROW -= 1
+			placed, cols = cheat_layout(rows, avail_h, ROW, HEAD)
 		}
-		if y + ROW > avail_h {
-			col += 1
-			y = 0
-		}
-		append(&placed, Placed{col, y, i})
-		y += ROW
 	}
-	cols := col + 1
 	col_w := min(f32(330), (f32(o.w) - 72) / f32(cols))
+	// Each column's labels start on one line: past the widest run of key
+	// caps in that column, so a four-cap chord does not push its label out
+	// of line with its neighbours'. A gesture whose text is wider than half
+	// the column is left out of the measure and simply pushes its own label.
+	label_x := make([]f32, cols, context.temp_allocator)
+	for pl in placed {
+		if pl.row < 0 {
+			continue
+		}
+		w := cheat_caps_w(f, rows[pl.row].keys)
+		if w <= col_w * 0.5 {
+			label_x[pl.col] = max(label_x[pl.col], w)
+		}
+	}
 	used_h := f32(0)
 	for pl in placed {
 		used_h = max(used_h, pl.y + (pl.row < 0 ? HEAD : ROW))
@@ -218,9 +227,62 @@ cheat_draw :: proc(s: ^Server, app: ^p.App, cv: ^p.Canvas) {
 			p.draw_text(cv, f, part, kx + 4.5, yy + 13, 10.5, p.hex(0xe4e4e7), .Sans, .Medium)
 			kx += kw
 		}
-		lx := max(kx + 8, x + 112)
+		lx := max(kx + 10, x + label_x[pl.col] + 10)
 		label := ellipsize_end(f, r.label, 11.5, .Regular, x + col_w - 10 - lx)
 		p.draw_text(cv, f, label, lx, yy + 13, 11.5, p.hex(0xd4d4d8), .Sans, .Regular)
+		if r.alt != "" {
+			ax := lx + p.text_width(f, label, 11.5, .Sans, .Regular) + 8
+			if room := x + col_w - 10 - ax; room > 40 {
+				alt := ellipsize_end(f, strings.concatenate({"also ", r.alt}, context.temp_allocator), 10.5, .Regular, room)
+				p.draw_text(cv, f, alt, ax, yy + 13, 10.5, p.hex(0x71717a), .Sans, .Regular)
+			}
+		}
 	}
 	p.pop_clip(cv)
+}
+
+// cheat_caps_w is the width a row's key caps take, as cheat_draw lays them.
+cheat_caps_w :: proc(f: ^p.Fonts, keys: []string) -> f32 {
+	w := f32(0)
+	for part, j in keys {
+		if j > 0 {
+			w += 3
+		}
+		w += p.text_width(f, part, 10.5, .Sans, .Medium) + 9
+	}
+	return w
+}
+
+Cheat_Placed :: struct {
+	col: int,
+	y:   f32,
+	row: int, // index into rows; negative for a heading of rows[-row-1]
+}
+
+// cheat_layout lays the rows out in columns, top to bottom, starting a new
+// column whenever the next row would run past the bottom. A heading never
+// ends a column on its own, nor with a single row under it.
+cheat_layout :: proc(rows: []Cheat_Row, avail_h, row_h, head_h: f32) -> ([dynamic]Cheat_Placed, int) {
+	placed := make([dynamic]Cheat_Placed, 0, len(rows) + 8, context.temp_allocator)
+	col := 0
+	y := f32(0)
+	last := ""
+	for r, i in rows {
+		if r.group != last {
+			if y + head_h + 2 * row_h > avail_h && y > 0 {
+				col += 1
+				y = 0
+			}
+			append(&placed, Cheat_Placed{col, y, -1 - i})
+			y += head_h
+			last = r.group
+		}
+		if y + row_h > avail_h {
+			col += 1
+			y = 0
+		}
+		append(&placed, Cheat_Placed{col, y, i})
+		y += row_h
+	}
+	return placed, col + 1
 }
