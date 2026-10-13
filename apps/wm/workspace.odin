@@ -735,6 +735,13 @@ ws_move_to :: proc(s: ^Server, t: ^Toplevel, idx: int) {
 	if m, ok := ws_peek(t); ok {
 		m.sticky = false // moving it somewhere means it lives there now
 	}
+	if !ws_in_layout(s, t) && !t.maximized && !ws_fullscreen(t) {
+		oi := s.workspaces[idx].output
+		if oi < 0 || oi >= len(s.outputs) {
+			oi = s.cur_out
+		}
+		win_fit_work_area(s, t, oi)
+	}
 	if was_focus {
 		focus_window(s, mru_next(s, nil))
 	}
@@ -1277,7 +1284,7 @@ tile_apply :: proc(s: ^Server) {
 		// A window the layout floated because it did not fit gets another
 		// chance every pass: the output may have grown, or a neighbour gone.
 		for t in ws_stack(s, idx) {
-			if m, ok := ws_peek(t); ok && m.auto_float && m.floating {
+			if m, ok := ws_peek(t); ok && m.auto_float && m.floating && !m.sticky {
 				m.floating = false
 			}
 		}
@@ -1291,6 +1298,29 @@ tile_apply :: proc(s: ^Server) {
 			who := fn(s, w, area, wins)
 			if who == nil {
 				break
+			}
+			// Before floating it over everything, see whether the window
+			// that does not fit would as the first window — the master
+			// column, which can grow to nearly the full width. A gallery
+			// with a 720x480 minimum opened next to a small counter fits as
+			// master with the counter and a terminal stacked beside it,
+			// where floating it centred covered both. The swap is of
+			// tiling positions, so it holds on every later pass.
+			if who != wins[0] {
+				trial := make([]^Toplevel, len(wins), context.temp_allocator)
+				copy(trial, wins)
+				for x, i in trial {
+					if x == who {
+						trial[i] = trial[0]
+					}
+				}
+				trial[0] = who
+				if fn(s, w, area, trial) == nil {
+					a, b := ws_win(who), ws_win(wins[0])
+					a.seq, b.seq = b.seq, a.seq
+					note(s, fmt.tprintf("%s made master: it fits nowhere else", title_of(who)))
+					break
+				}
 			}
 			tile_auto_float(s, who, area)
 			wins = tile_windows(s, idx)

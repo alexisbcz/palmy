@@ -259,6 +259,23 @@ win_set_rect :: proc(s: ^Server, t: ^Toplevel, x, y, w, h: int) {
 	s.dirty = true
 }
 
+// win_fit_work_area keeps a free window wholly inside an output's work area
+// (UX.md P0-13): shrunk to it if larger, and moved in from whichever edge it
+// crosses. A floating window sent to another workspace goes through here, so
+// it never arrives with its bottom past the screen.
+win_fit_work_area :: proc(s: ^Server, t: ^Toplevel, oi: int) {
+	wa := ws_work_area(s, oi)
+	bw := ws_border(t)
+	th := ws_title_h(t)
+	w := min(t.req_w, wa.w - 2 * bw)
+	h := min(t.req_h, wa.h - th - bw)
+	x := clamp(t.x, wa.x + bw, wa.x + wa.w - bw - w)
+	y := clamp(t.y, wa.y + th, wa.y + wa.h - bw - h)
+	if x != t.x || y != t.y || w != t.req_w || h != t.req_h {
+		win_set_rect(s, t, x, y, w, h)
+	}
+}
+
 win_rect :: proc(t: ^Toplevel) -> [4]int {
 	return {t.x, t.y, t.req_w, t.req_h}
 }
@@ -389,8 +406,11 @@ snap_default_float :: proc(s: ^Server, t: ^Toplevel) -> [4]int {
 }
 
 // snap_keyboard is Super+Left/Right/Up/Down (UX.md P0-5). On a floating
-// window it walks the snap table; on a tiled one the keys keep their tiling
-// meaning: Up maximizes, Down restores, Left and Right move focus.
+// window it walks the snap table. On a tiled one Up maximizes and Down
+// restores, and Left and Right snap it to that half, out of the layout: the
+// same keys do the same thing to whatever window has focus, which is what
+// two windows side by side (and their shared boundary, P1-10) need. Moving
+// focus is Super+H/J/K/L, which never changes meaning.
 snap_keyboard :: proc(s: ^Server, dir: Cfg_Dir) {
 	t := s.focus
 	if t == nil {
@@ -408,11 +428,7 @@ snap_keyboard :: proc(s: ^Server, dir: Cfg_Dir) {
 				minimize_window(s, t)
 			}
 		case .Left, .Right:
-			if t.maximized {
-				snap_apply(s, t, dir == .Left ? .Left : .Right)
-			} else {
-				ws_focus_dir(s, dir)
-			}
+			snap_apply(s, t, dir == .Left ? .Left : .Right)
 		}
 		return
 	}
@@ -657,34 +673,50 @@ snap_partner :: proc(s: ^Server, t: ^Toplevel) -> ^Toplevel {
 	return nil
 }
 
+// snap_group_span is the outer extent of a snap pair, left frame edge to
+// right frame edge, from the sizes the windows were *asked* to be. It is
+// taken once when the boundary drag begins: recomputing it every motion
+// from the committed buffers fed each frame's half-applied move back into
+// the next (the right window drifted off the screen, the left one never
+// grew), because a client's new buffer arrives a frame or more after its
+// configure.
+snap_group_span :: proc(left, right: ^Toplevel) -> [2]int {
+	return {left.x - ws_border(left), right.x + right.req_w + ws_border(right)}
+}
+
 // snap_group_drag moves the shared boundary of a snap pair to `bx` (an x in
-// compositor pixels), within both windows' minimum widths.
-snap_group_drag :: proc(s: ^Server, left, right: ^Toplevel, bx: int) {
-	lf := frame_rect(left)
-	rf := frame_rect(right)
+// compositor pixels), within both windows' minimum widths; `span` is
+// snap_group_span from the start of the drag, and stays fixed throughout.
+snap_group_drag :: proc(s: ^Server, left, right: ^Toplevel, span: [2]int, bx: int) {
 	g := s.cfg.gaps_in
-	lo := int(lf.x) + tile_need_w(left)
-	hi := int(rf.x + rf.w) - tile_need_w(right) - g
+	lo := span[0] + tile_need_w(left)
+	hi := span[1] - tile_need_w(right) - g
 	if lo > hi {
 		return
 	}
 	b := clamp(bx - g / 2, lo, hi)
-	lw := b - int(lf.x)
-	rx := b + g
-	rw := int(rf.x + rf.w) - rx
 	lbw := ws_border(left)
 	rbw := ws_border(right)
-	nl := lw - 2 * lbw
-	nr := rw - 2 * rbw
-	if nl != left.req_w {
+	nl := b - span[0] - 2 * lbw
+	rx := b + g
+	nr := span[1] - rx - 2 * rbw
+	if nl != left.req_w || left.x != span[0] + lbw {
+		left.x = span[0] + lbw
 		left.req_w = nl
+		left.anchor_x = false
 		send_configure(s, left, nl, left.req_h)
 	}
-	if nr != right.req_w || right.x != rx + rbw {
-		right.x = rx + rbw
+	if nr != right.req_w {
 		right.req_w = nr
 		send_configure(s, right, nr, right.req_h)
 	}
+	// The right window keeps its right edge on the end of the pair: until
+	// its new buffer arrives the old one is drawn flush against that edge
+	// rather than hanging off the screen, and the anchor puts the new one
+	// there too (proto.odin, the commit that changes its size).
+	right.anchor_x = true
+	right.anchor_right = span[1] - rbw
+	right.x = right.anchor_right - right.w
 	s.dirty = true
 }
 

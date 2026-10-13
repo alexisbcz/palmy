@@ -12,8 +12,10 @@
 // symbol is the delivered one, or the key's level-one (unshifted) symbol, or —
 // for the digits, on layouts whose number row is not digits at level one,
 // such as French AZERTY — the key that sits where that digit sits on a US
-// keyboard, which is what GNOME and KDE do. A binding can also name a
-// keycode outright: `code:10`.
+// keyboard, which is what GNOME and KDE do. Punctuation the layout only
+// types shifted (`/` on AZERTY) gets the same US-position fallback, and the
+// shifted chord that types it fires the unshifted binding. A binding can
+// also name a keycode outright: `code:10`.
 package wm
 
 import "core:fmt"
@@ -60,10 +62,6 @@ handle_keys :: proc(s: ^Server, app: ^p.App) {
 		}
 		if k.sym != KEY_SUPER_L && k.sym != KEY_SUPER_R {
 			ix.typed_at = wall_now()
-			if ix.reveal_t != nil {
-				ix.reveal_t = nil
-				s.dirty = true
-			}
 		}
 		forward_key(s, k)
 	}
@@ -116,9 +114,44 @@ us_digit_of :: proc(code: u32) -> u32 {
 	return 0
 }
 
+// us_punct_of is the punctuation printed on a key on a US keyboard, by evdev
+// code. A binding to a symbol the current layout cannot type without Shift
+// or AltGr — `$mod, Slash` on French AZERTY, where / is Shift+: — also
+// matches the key in the US position, so the default table works on every
+// layout (P0-11), as the digits already did.
+us_punct_of :: proc(code: u32) -> u32 {
+	switch code {
+	case 12:
+		return '-'
+	case 13:
+		return '='
+	case 26:
+		return '['
+	case 27:
+		return ']'
+	case 39:
+		return ';'
+	case 40:
+		return '\''
+	case 41:
+		return '`'
+	case 43:
+		return '\\'
+	case 51:
+		return ','
+	case 52:
+		return '.'
+	case 53:
+		return '/'
+	}
+	return 0
+}
+
 // bind_matches_key is the matching rule, pure: a binding's symbol against
 // what the key delivered, what it types unshifted, and where it sits.
-bind_matches_key :: proc(b: ^Cfg_Bind, sym, level1, code: u32) -> bool {
+// `us_ok` says the binding's symbol is not on any key's first level in the
+// current layout, so the US position may stand in for it.
+bind_matches_key :: proc(b: ^Cfg_Bind, sym, level1, code: u32, us_ok := false) -> bool {
 	if b.code != 0 {
 		return code != 0 && b.code == code + 8
 	}
@@ -137,7 +170,33 @@ bind_matches_key :: proc(b: ^Cfg_Bind, sym, level1, code: u32) -> bool {
 			return true
 		}
 	}
+	if us_ok && b.sym != 0 {
+		if c := us_punct_of(code); c != 0 && cfg_sym_matches(b.sym, c) {
+			return true
+		}
+	}
 	return false
+}
+
+// bind_shift_consumed says Shift was spent producing the symbol rather than
+// meant as a modifier: the binding names exactly what was delivered, and the
+// key does not type that unshifted. `$mod, Slash` then fires on AZERTY's
+// Super+Shift+: — the chord that types / there — as it does on Super+/ in
+// the US position.
+bind_shift_consumed :: proc(b: ^Cfg_Bind, sym, level1: u32) -> bool {
+	return b.code == 0 && b.sym != 0 && cfg_sym_matches(b.sym, sym) && (level1 == 0 || !cfg_sym_matches(b.sym, level1))
+}
+
+// bind_us_ok is bind_matches_key's `us_ok` for the live layout.
+bind_us_ok :: proc(kt: ^Key_Table, b: ^Cfg_Bind) -> bool {
+	if !kt.ok || b.sym == 0 || b.code != 0 {
+		return false
+	}
+	if b.sym >= 'a' && b.sym <= 'z' || b.sym >= 'A' && b.sym <= 'Z' {
+		return false // letters are found by name on every Latin layout
+	}
+	rev, ok := kt.rev[b.sym]
+	return !ok || rev.shift || rev.level3
 }
 
 // wm_bind_for prefers a binding whose modifiers match exactly. An `ANY`
@@ -145,9 +204,9 @@ bind_matches_key :: proc(b: ^Cfg_Bind, sym, level1, code: u32) -> bool {
 // modified one wins when the modifier is actually held.
 wm_bind_for :: proc(s: ^Server, mods: p.Modifiers, sym, code: u32) -> ^Cfg_Bind {
 	level1 := level1_of(&s.kt, code)
-	fallback: ^Cfg_Bind
+	fallback, consumed: ^Cfg_Bind
 	for &b in s.cfg.binds {
-		if !bind_matches_key(&b, sym, level1, code) {
+		if !bind_matches_key(&b, sym, level1, code, bind_us_ok(&s.kt, &b)) {
 			continue
 		}
 		if b.any_mods {
@@ -159,6 +218,12 @@ wm_bind_for :: proc(s: ^Server, mods: p.Modifiers, sym, code: u32) -> ^Cfg_Bind 
 		if b.mods == mods {
 			return &b
 		}
+		if consumed == nil && .Shift in mods && b.mods == mods - {.Shift} && bind_shift_consumed(&b, sym, level1) {
+			consumed = &b
+		}
+	}
+	if consumed != nil {
+		return consumed
 	}
 	return fallback
 }

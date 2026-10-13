@@ -160,9 +160,9 @@ draw :: proc(s: ^Server, app: ^p.App, cv: ^p.Canvas) {
 			p.pop_clip(cv)
 			continue
 		}
-		if !anim_ws_draw(s, app, cv, oi, idx) {
-			draw_workspace(s, app, cv, idx, 0)
-		}
+		// The empty-workspace label and the welcome card belong to the
+		// desktop, so they go down before the windows: the last window's
+		// close animation then fades out over them, not under them.
 		stack := ws_stack(s, idx)
 		if len(stack) == 0 && !session.kiosk && !anim_ws_busy() {
 			// The welcome card is for an empty *session*. A workspace you
@@ -173,6 +173,9 @@ draw :: proc(s: ^Server, app: ^p.App, cv: ^p.Canvas) {
 			} else {
 				draw_empty_workspace(s, app, cv, o, idx)
 			}
+		}
+		if !anim_ws_draw(s, app, cv, oi, idx) {
+			draw_workspace(s, app, cv, idx, 0)
 		}
 		draw_toast(s, app, cv, o)
 		draw_debug_hud(s, app, cv, o)
@@ -199,8 +202,12 @@ draw :: proc(s: ^Server, app: ^p.App, cv: ^p.Canvas) {
 draw_workspace :: proc(s: ^Server, app: ^p.App, cv: ^p.Canvas, idx: int, dx: int) {
 	stack := ws_stack(s, idx)
 	dragging := s.drag == .Move && idx == s.cur_ws ? s.drag_t : nil
+	// A tiled window the keyboard just focused under floating windows is
+	// lifted over them while it keeps focus (interact.odin, ix_reveal):
+	// drawn last, whole, rather than seen through translucent windows.
+	lifted := idx == s.cur_ws ? ix_lifted(s) : nil
 	for t in stack {
-		if !t.mapped {
+		if !t.mapped || t == lifted {
 			continue
 		}
 		if t.minimized && !anim_has(t) {
@@ -217,14 +224,16 @@ draw_workspace :: proc(s: ^Server, app: ^p.App, cv: ^p.Canvas, idx: int, dx: int
 		}
 		draw_window_at(s, app, cv, t, dx)
 	}
+	if lifted != nil {
+		draw_window_at(s, app, cv, lifted, dx)
+	}
 	if dx == 0 {
 		anim_draw_ghosts(s, cv, idx)
 	}
 }
 
 // draw_window_at draws a window through whatever is in effect for it: an
-// animation, a translucency (a rule's opacity, or being drawn see-through
-// over a revealed window), or plainly.
+// animation, a rule's opacity, or plainly.
 draw_window_at :: proc(s: ^Server, app: ^p.App, cv: ^p.Canvas, t: ^Toplevel, dx: int) {
 	if dx != 0 {
 		t.x += dx
@@ -238,9 +247,6 @@ draw_window_at :: proc(s: ^Server, app: ^p.App, cv: ^p.Canvas, t: ^Toplevel, dx:
 	alpha := f32(1)
 	if m, ok := ws_peek(t); ok && m.opacity > 0 && m.opacity < 1 {
 		alpha = m.opacity
-	}
-	if ix_veiled(s, t) {
-		alpha = min(alpha, 0.3)
 	}
 	if alpha < 1 {
 		draw_window_alpha(s, app, cv, t, alpha)

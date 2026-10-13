@@ -168,9 +168,11 @@ move — and, for a tiled window, floating it — begins only after the pointer
 travels 6 px (logical) with the button held. A press and release without
 travel is a click and changes nothing but focus. Click-to-focus raises the
 window within its layer (tiled stay below floating, as now) and a focused
-tiled window that is covered by a floating one is revealed: the floating
-windows above it are drawn at 30% opacity while focus arrived by keyboard
-(Super+Tab, directional focus) until the pointer moves or a key is typed.
+tiled window that is covered by a floating one is revealed when focus
+arrives without a click (Alt+Tab, the overview, directional focus, a new
+window): it is drawn, and hit, above the floating windows for as long as it
+keeps focus. (Drawing the floating windows at 30% instead was tried; two
+windows' text printed over each other read as a rendering fault.)
 
 **Test:** master layout, three windows. `move:900,60 click wait:0.5 shot:a.png`
 — every window's frame rectangle is identical to the previous screendump;
@@ -269,8 +271,10 @@ On a tiled workspace, dragging a window onto another tiled window swaps them
 instead (the drop target outlined), and dragging it to an edge snaps it
 floating as above.
 
-From the keyboard, for floating windows (on tiled ones these keys keep their
-current focus/swap meaning, see P0-11):
+From the keyboard, for floating windows. On a tiled window Super+Up
+maximizes, Super+Down restores or minimizes, and Super+Left/Right snap it to
+that half, out of the layout, so two windows side by side (P1-10) are two
+keystrokes whatever the workspace; moving focus is Super+H/J/K/L.
 
 | key           | floating window                                         |
 | ------------- | ------------------------------------------------------- |
@@ -418,7 +422,7 @@ The default table is reconciled with the new model:
 | Super+Return          | terminal                                               |
 | Super+Space / Super+D | launcher (layout cycling moves to Super+Backslash)     |
 | Super+Q               | close                                                  |
-| Super+Up / Down / Left / Right | P0-5 on floating windows; on tiled: Up maximize, Down restore, Left/Right move focus |
+| Super+Up / Down / Left / Right | P0-5 on floating windows; on tiled: Up maximize, Down restore, Left/Right snap to that half |
 | Super+H/J/K/L         | focus left/down/up/right (always)                      |
 | Super+Shift+H/J/K/L   | move/swap window                                       |
 | Super+Ctrl+Left/Right | previous/next workspace                                |
@@ -437,6 +441,11 @@ Today's Super+F (`toggletiling`, workspace floating/tiled) moves to
 Super+Shift+Space and Super+Space (`nextlayout`) to Super+Backslash;
 `windowmode` survives on Super+Alt+W; the bare F-key twins move out of the
 default config into a `demo.conf` used by the recorder.
+
+Bindings to punctuation work the same way: a symbol the layout types only
+with Shift or AltGr (`/` on AZERTY is Shift+:) matches its key in the US
+position, and also the chord that types it — Super+Shift+: fires `$mod,
+Slash` there, the Shift spent on the symbol.
 
 **Test:** focus terminal, `key:meta_l+shift+2 wait:0.4 shot:` — terminal gone
 from workspace 1, no `@` typed anywhere; `key:meta_l+2 shot:` — terminal there,
@@ -600,7 +609,7 @@ client's last buffer, scaled with nearest/bilinear during the animation
 | --------------------------- | ----------------------------------------------- | --- | ---------- |
 | open                        | scale 0.95 → 1 about centre, opacity 0 → 1      | 160 | ease-out   |
 | close                       | scale 1 → 0.95, opacity 1 → 0 (from a snapshot) | 120 | ease-in    |
-| minimize / restore          | rect ↔ its taskbar entry, opacity               | 180 | ease-out   |
+| minimize / restore          | rect ↔ its taskbar entry, opacity (minimize: solid while it shrinks, fades on arrival) | 200 | in-out / ease-out |
 | maximize / snap / tile      | frame rect old → new (client gets the final configure up front; old buffer stretched until the new one arrives) | 160 | ease-out |
 | workspace switch            | both workspaces slide horizontally by output width | 200 | ease-out (cubic) |
 | switcher / menus            | opacity 0 → 1, 4 px drop                        | 100 | ease-out   |
