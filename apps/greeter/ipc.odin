@@ -346,3 +346,14 @@ req_start_session :: proc(cmd: []string, env: []string, allocator := context.all
 req_cancel_session :: proc(allocator := context.allocator) -> string {
 	return strings.clone(`{"type":"cancel_session"}`, allocator)
 }
+
+// req_power is not greetd: it is palm-login's one extension, a request to run
+// /sbin/poweroff or /sbin/reboot as root on the greeter's behalf. `action` is
+// "poweroff" or "reboot". Only sent under palm-login; see `power_request`.
+req_power :: proc(action: string, allocator := context.allocator) -> string {
+	sb := strings.builder_make(allocator)
+	strings.write_string(&sb, `{"type":"power","action":`)
+	json_quote(&sb, action)
+	strings.write_string(&sb, "}")
+	return strings.to_string(sb)
+}

@@ -3,7 +3,8 @@ package main
 // Everything the greeter reads off the real machine: the accounts that can log
 // in, the sessions that can be started, the hostname, and the power actions.
 //
-// The power actions are deliberately inert. See `power_request`.
+// The power actions are inert everywhere except one place: the installed
+// login screen of Palmframe, under palm-login. See `power_request`.
 
 import "core:encoding/json"
 import "core:fmt"
@@ -147,8 +148,25 @@ Session :: struct {
 WAYLAND_SESSION_DIRS := [?]string{"/usr/share/wayland-sessions", "/usr/local/share/wayland-sessions"}
 X11_SESSION_DIRS := [?]string{"/usr/share/xsessions", "/usr/local/share/xsessions"}
 
-// read_sessions reads the real session desktop entries. A shell fallback is
-// always appended so there is something to start on a machine with none.
+// PALMFRAME_SESSION is the session Palmframe's login screen offers first: the
+// palmy window manager on the bare-metal backend. It is built in rather than
+// read from a .desktop file so the login screen can never come up with
+// nothing to start, whatever the image did or did not install.
+PALMFRAME_SESSION :: Session {
+	name    = "Palmframe",
+	comment = "The palmy window manager",
+	exec    = "wm --drm",
+	desktop = "palmframe",
+	kind    = .Wayland,
+}
+
+// read_sessions reads the real session desktop entries.
+//
+// Under palm-login the built-in Palmframe session comes first (unless an
+// installed entry already starts `wm`), and there is no shell fallback: a
+// palm-login session has no terminal to put a shell on, so offering one would
+// only bounce straight back to this screen. Everywhere else a shell fallback
+// is appended so there is something to start on a machine with none.
 read_sessions :: proc() -> []Session {
 	out := make([dynamic]Session)
 	for dir in WAYLAND_SESSION_DIRS {
@@ -163,6 +181,12 @@ read_sessions :: proc() -> []Session {
 		}
 		return a.name < b.name
 	})
+	if under_palm_login() {
+		if default_session(out[:]) < 0 {
+			inject_at(&out, 0, PALMFRAME_SESSION)
+		}
+		return out[:]
+	}
 	append(
 		&out,
 		Session {
@@ -173,6 +197,25 @@ read_sessions :: proc() -> []Session {
 		},
 	)
 	return out[:]
+}
+
+// default_session is the entry selected when the screen opens: the first one
+// that starts the palmy window manager, or -1 when there is none.
+default_session :: proc(sessions: []Session) -> int {
+	for s, i in sessions {
+		words := strings.fields(s.exec, context.temp_allocator)
+		if len(words) == 0 {
+			continue
+		}
+		exe := words[0]
+		if slash := strings.last_index_byte(exe, '/'); slash >= 0 {
+			exe = exe[slash + 1:]
+		}
+		if exe == "wm" {
+			return i
+		}
+	}
+	return -1
 }
 
 @(private = "file")
@@ -346,13 +389,22 @@ local_utc_offset :: proc() -> time.Duration {
 }
 
 // ---------------------------------------------------------------------------
-// Power actions — wired to nothing
+// Power actions
 // ---------------------------------------------------------------------------
 
 Power :: enum u8 {
 	Suspend,
 	Reboot,
 	Shutdown,
+}
+
+// under_palm_login reports whether this greeter is Palmframe's installed login
+// screen. palm-login sets both variables for the greeter session it starts;
+// a greeter run by hand on a development machine — even one pointed at a real
+// greetd, which sets only GREETD_SOCK — keeps its power buttons inert.
+under_palm_login :: proc() -> bool {
+	return os.get_env("GREETD_SOCK", context.temp_allocator) != "" &&
+		os.get_env("PALM_LOGIN", context.temp_allocator) == "1"
 }
 
 power_label :: proc(pw: Power) -> string {
@@ -379,8 +431,29 @@ power_icon :: proc(pw: Power) -> p.Icon {
 	return GI_POWER
 }
 
-// The command a real greeter would run. Recorded, never executed.
+// power_available is false for an action this machine cannot carry out, so
+// its button is not offered at all. That is only ever Suspend under
+// palm-login: Palmframe has no suspend path yet. A stub greeter keeps all
+// three, since none of them do anything there.
+power_available :: proc(pw: Power) -> bool {
+	return !(pw == .Suspend && under_palm_login())
+}
+
+// power_command is what the action means on this machine: busybox's
+// /sbin/poweroff and /sbin/reboot under palm-login, the systemd verbs a
+// greeter elsewhere would use.
 power_command :: proc(pw: Power) -> string {
+	if under_palm_login() {
+		switch pw {
+		case .Suspend:
+			return "" // Palmframe has no suspend path yet
+		case .Reboot:
+			return "/sbin/reboot"
+		case .Shutdown:
+			return "/sbin/poweroff"
+		}
+		return ""
+	}
 	switch pw {
 	case .Suspend:
 		return "systemctl suspend"
@@ -392,13 +465,47 @@ power_command :: proc(pw: Power) -> string {
 	return ""
 }
 
-// power_request is the stub. It logs the intent and returns the line to show
-// in the UI. Nothing is spawned, no dbus call is made, and the machine is not
-// touched — this greeter is a demonstration, not an installed login manager.
-power_request :: proc(pw: Power) -> string {
-	msg := fmt.aprintf("power: would run `%s` (stub — nothing executed)", power_command(pw))
-	fmt.eprintfln("greeter: %s", msg)
-	return msg
+// power_request carries out a power action and returns the line to show.
+//
+// Anywhere but under palm-login it is a stub: it logs the intent and nothing
+// is spawned, no dbus call is made, and the machine is not touched.
+//
+// Under palm-login the action is real, but the greeter does not run
+// /sbin/poweroff itself: busybox's poweroff is a kill(2) of PID 1, which the
+// unprivileged `greeter` account is not allowed to send. palm-login, which is
+// root, runs it on the greeter's behalf when asked with a `power` request — an
+// extension to the greetd protocol that only palm-login understands, sent on a
+// connection of its own so it never disturbs a login in progress.
+power_request :: proc(pw: Power, sock: string) -> string {
+	cmd := power_command(pw)
+	if !under_palm_login() {
+		msg := fmt.aprintf("power: would run `%s` (stub — nothing executed)", cmd)
+		fmt.eprintfln("greeter: %s", msg)
+		return msg
+	}
+	if cmd == "" {
+		return fmt.aprintf("%s is not available on this machine", power_label(pw))
+	}
+
+	c: Client
+	if e := client_connect(&c, sock); e != "" {
+		return fmt.aprintf("power: %s", e)
+	}
+	defer client_close(&c)
+	if e := send(&c, req_power(pw == .Shutdown ? "poweroff" : "reboot", context.temp_allocator)); e != "" {
+		return fmt.aprintf("power: %s", e)
+	}
+	if !readable(&c, 3000) {
+		return "power: palm-login did not answer"
+	}
+	r, e := recv(&c)
+	if e != "" {
+		return fmt.aprintf("power: %s", e)
+	}
+	if r.kind != .Success {
+		return fmt.aprintf("power: %s", r.description == "" ? "refused" : r.description)
+	}
+	return pw == .Shutdown ? "Shutting down…" : "Restarting…"
 }
 
 // ---------------------------------------------------------------------------
@@ -412,6 +519,13 @@ power_request :: proc(pw: Power) -> string {
 // asking, so the size has to be requested explicitly. The compositor is asked
 // through whatever control tool it ships; the fallback is 1080p.
 detect_output_size :: proc() -> (w: int, h: int) {
+	if under_palm_login() {
+		// Palmframe's wm sizes a zero-sized layer surface anchored to all
+		// four edges to the output it is on — whatever that output is in a
+		// QEMU window or on real hardware — and palmy now passes 0 through.
+		// There is no swaymsg or hyprctl to ask there anyway.
+		return 0, 0
+	}
 	if out, ok := kit.run({"swaymsg", "-t", "get_outputs", "-r"}, context.temp_allocator); ok {
 		if ww, hh, found := first_rect(out, "rect"); found {
 			return ww, hh

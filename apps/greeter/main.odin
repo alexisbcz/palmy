@@ -8,8 +8,14 @@ package main
 //
 // The login itself is the greetd IPC conversation in ipc.odin. Everything the
 // screen shows about the machine — the accounts, the sessions, the hostname —
-// is read off the real system in system.odin. The power buttons are stubs; see
-// `power_request`.
+// is read off the real system in system.odin. The power buttons are stubs
+// except under Palmframe's palm-login, where they really power off and
+// reboot; see `power_request`.
+//
+// Under palm-login the greeter runs inside `wm --drm --kiosk` and covers
+// whatever output that gives it: the layer surface asks for 0x0 anchored to
+// every edge, and if the compositor has no layer shell at all it falls back
+// to an ordinary fullscreen window.
 //
 //	greeter [--mock] [--sock PATH] [--demo-users] [--log]
 //
@@ -177,6 +183,9 @@ main :: proc() {
 		st.users = merged[:]
 	}
 	st.sessions = read_sessions()
+	if d := default_session(st.sessions); d >= 0 {
+		st.session_i = d
+	}
 	st.hostname = read_hostname()
 	st.tz = local_utc_offset()
 
@@ -193,24 +202,37 @@ main :: proc() {
 	st.secret = true // a login screen starts by asking for a password
 
 	ow, oh := detect_output_size()
-	app, err := kit.start(
-		{
-			title = "greeter",
-			app_id = "palmy-greeter",
-			// A layer surface anchored to all four edges fills the output when
-			// it asks for 0x0, but palmy clamps a zero size up to 960x640
-			// before asking, so the output is measured and requested exactly.
-			width = ow,
-			height = oh,
-			root_class = "w-full h-full bg-background text-foreground",
-			always = true, // the clock ticks and the spinner spins
-			layer = true,
-			layer_level = .Overlay,
-			layer_keyboard = .Exclusive,
-			layer_anchor = {.Top, .Bottom, .Left, .Right},
-			exclusive_zone = -1, // sit over panels rather than beside them
-		},
-	)
+	cfg := p.Config {
+		title = "greeter",
+		app_id = "palmy-greeter",
+		// A layer surface anchored to all four edges fills the output when
+		// it asks for 0x0. On a host compositor the output is measured and
+		// requested exactly (see detect_output_size); under palm-login the
+		// size is 0x0 and the window manager fills it in.
+		width = ow,
+		height = oh,
+		root_class = "w-full h-full bg-background text-foreground",
+		always = true, // the clock ticks and the spinner spins
+		layer = true,
+		layer_level = .Overlay,
+		layer_keyboard = .Exclusive,
+		layer_anchor = {.Top, .Bottom, .Left, .Right},
+		exclusive_zone = -1, // sit over panels rather than beside them
+	}
+	app, err := kit.start(cfg)
+	if err != "" && under_palm_login() {
+		// A login screen that cannot open is a machine nobody can log in to,
+		// so a compositor without wlr-layer-shell still gets one: an ordinary
+		// toplevel, asked to go fullscreen. wm --kiosk fullscreens its first
+		// client regardless.
+		fmt.eprintfln("greeter: %s; falling back to a fullscreen window", err)
+		cfg.layer = false
+		cfg.width, cfg.height = 1280, 800
+		app, err = kit.start(cfg)
+		if err == "" {
+			p.set_fullscreen(app, true)
+		}
+	}
 	if err != "" {
 		fmt.eprintfln("greeter: %s", err)
 		os.exit(1)
@@ -495,6 +517,10 @@ focus_step :: proc(st: ^St, delta: int) {
 	}
 	n := len(FOCUS_ORDER)
 	st.focus = FOCUS_ORDER[(at + delta + n) % n]
+	if st.focus == .Suspend && !power_available(.Suspend) {
+		// A button that is not drawn is not in the focus ring either.
+		st.focus = FOCUS_ORDER[(at + 2 * delta + n) % n]
+	}
 }
 
 rune_back :: proc(b: []u8, at: int) -> int {
@@ -569,23 +595,23 @@ handle_keys :: proc(st: ^St, ui: ^p.Ctx) {
 			case .User, .Session:
 				st.focus = .Answer
 			case .Suspend:
-				st.note = power_request(.Suspend)
+				st.note = power_request(.Suspend, st.sock)
 			case .Reboot:
-				st.note = power_request(.Reboot)
+				st.note = power_request(.Reboot, st.sock)
 			case .Shutdown:
-				st.note = power_request(.Shutdown)
+				st.note = power_request(.Shutdown, st.sock)
 			}
 			continue
 		case p.KEY_SPACE:
 			switch st.focus {
 			case .Suspend:
-				st.note = power_request(.Suspend)
+				st.note = power_request(.Suspend, st.sock)
 				continue
 			case .Reboot:
-				st.note = power_request(.Reboot)
+				st.note = power_request(.Reboot, st.sock)
 				continue
 			case .Shutdown:
-				st.note = power_request(.Shutdown)
+				st.note = power_request(.Shutdown, st.sock)
 				continue
 			case .User, .Answer, .Session:
 			// a space in the answer: fall through to typed text
@@ -1000,15 +1026,19 @@ footer :: proc(st: ^St, ui: ^p.Ctx) {
 		p.end(ui)
 	}
 
-	// Power actions. Every one of these calls a stub.
+	// Power actions. Every one of these calls a stub, except under
+	// palm-login, where the ones that exist are real (see power_request).
 	for act in Power {
+		if !power_available(act) {
+			continue
+		}
 		focused := (act == .Suspend && st.focus == .Suspend) ||
 			(act == .Reboot && st.focus == .Reboot) ||
 			(act == .Shutdown && st.focus == .Shutdown)
 		b := sc.button_open(ui, .Outline, .LG, {focus = focused, hover = false})
 		p.apply(ui, "px-3 gap-2")
 		if p.clickable(ui, b) {
-			st.note = power_request(act)
+			st.note = power_request(act, st.sock)
 		}
 		p.icon(ui, power_icon(act), "size-4")
 		p.text(ui, power_label(act), "whitespace-nowrap")
