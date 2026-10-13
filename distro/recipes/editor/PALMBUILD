@@ -7,6 +7,9 @@ pkgver   = 0.1.0
 pkgrel   = 0
 pkgdesc  = Text editor
 license  = MIT
+category = Development
+icon     = code
+details  = A plain-text editor for code and notes, with syntax colouring and the keyboard shortcuts you would expect.
 depend   = glibc fonts libxkbcommon
 provides = cmd:editor
 

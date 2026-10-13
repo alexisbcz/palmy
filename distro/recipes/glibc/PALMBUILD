@@ -11,6 +11,9 @@ pkgrel   = 0
 pkgdesc  = GNU C Library runtime (from the build host)
 license  = LGPL-2.1-or-later
 url      = https://www.gnu.org/software/libc
+category = System
+icon     = binary
+details  = The C library and the dynamic loader every palmy program links against, copied from the machine that built the distribution so the binaries run unchanged.
 depend   = palmframe-base
 provides = so:libc.so.6 so:libm.so.6 so:ld-linux-x86-64.so.2
 

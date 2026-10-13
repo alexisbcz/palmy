@@ -1,0 +1,18 @@
+# palmd (distro/palmd): the root daemon behind Software. It listens on
+# /run/palmd.sock and runs palm for root and for members of group wheel,
+# and nobody else. The service file it ships is what makes palm-init start
+# it; removing this package removes the service with it.
+pkgname  = palmd
+pkgver   = 0.1.0
+pkgrel   = 0
+pkgdesc  = Lets members of wheel install and remove software
+license  = MIT
+category = System
+icon     = shield-check
+details  = Palmframe has no polkit, no D-Bus and no su, so changing the system from the desktop goes through palmd: a small daemon, running as root, that answers only root and group wheel (checked from the socket's peer credentials against /etc/group) and only three questions -- plan a change, apply a plan that was shown, refresh the indexes.
+details  = It builds palm's command line itself from validated package names, runs one operation at a time, and logs every request with the uid that made it to /var/log/palmd.log.
+depend   = palmframe-base glibc palm
+provides = cmd:palmd
+
+file     = ${PALMFRAME_OUT}/bin/palmd -> /usr/bin/palmd mode 0755
+file     = ${PALMFRAME_ROOT}/distro/palmd/palmd.service -> /etc/palm/services/palmd mode 0644

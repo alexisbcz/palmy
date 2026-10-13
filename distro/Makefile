@@ -79,6 +79,10 @@ $(BIN)/palm-login: $(call srcs,distro/login)
 	@mkdir -p $(BIN)
 	cd $(ROOT) && $(ODIN) build distro/login -o:speed $(COLL) -out:$@
 
+$(BIN)/palmd: $(call srcs,distro/palmd)
+	@mkdir -p $(BIN)
+	cd $(ROOT) && $(ODIN) build distro/palmd -o:speed -out:$@
+
 $(BIN)/wm: $(call srcs,apps/wm) $(TOOLKIT)
 	@mkdir -p $(BIN)
 	cd $(ROOT) && $(ODIN) build apps/wm -o:speed $(COLL) -out:$@
@@ -86,7 +90,7 @@ $(BIN)/wm: $(call srcs,apps/wm) $(TOOLKIT)
 # The applications: every distro/out/bin/<name> a recipe names, built by
 # distro/apps/build.sh (which knows that palm-apps comes from apps/palm and
 # prose from apps/prose/cli).
-APP_BINS := $(filter-out palm palm-init palm-login wm palm-install installer, \
+APP_BINS := $(filter-out palm palm-init palm-login palmd wm palm-install installer, \
 	$(sort $(shell grep -ho 'PALMFRAME_OUT}/bin/[a-z0-9-]*' $(DISTRO)/recipes/*/PALMBUILD | sed 's|.*/||')))
 app_dir = $(if $(filter palm-apps,$(1)),palm,$(if $(filter prose,$(1)),prose,$(1)))
 app_src = $(if $(filter palm-apps,$(1)),palm,$(if $(filter prose,$(1)),prose/cli,$(1)))
@@ -110,7 +114,7 @@ $(BIN)/installer: $(call srcs,apps/installer) $(call srcs,distro/installer/core)
 	@mkdir -p $(BIN)
 	cd $(ROOT) && $(ODIN) build apps/installer -o:speed $(ICOLL) -out:$@
 
-binaries: $(BIN)/palm $(BIN)/palm-init $(BIN)/palm-login $(BIN)/wm $(addprefix $(BIN)/,$(APP_BINS)) $(INSTALLER_BINS)
+binaries: $(BIN)/palm $(BIN)/palm-init $(BIN)/palm-login $(BIN)/palmd $(BIN)/wm $(addprefix $(BIN)/,$(APP_BINS)) $(INSTALLER_BINS)
 
 # --- the signing key ----------------------------------------------------------
 # Made once per checkout and kept out of git (distro/build/ is ignored). The
@@ -179,7 +183,7 @@ serve:
 # Every dynamic binary a recipe ships must need nothing beyond what the glibc
 # and libxkbcommon packages carry.
 check-libs: binaries
-	@bad=0; for b in $(BIN)/palm $(BIN)/palm-login $(BIN)/wm $(addprefix $(BIN)/,$(APP_BINS)) $(INSTALLER_BINS); do \
+	@bad=0; for b in $(BIN)/palm $(BIN)/palm-login $(BIN)/palmd $(BIN)/wm $(addprefix $(BIN)/,$(APP_BINS)) $(INSTALLER_BINS); do \
 		for l in $$(ldd $$b | awk '/=>/ {print $$1} /^\t\// {print $$1}'); do \
 			case "$$l" in libc.so.6|libm.so.6|/lib64/ld-linux-x86-64.so.2) ;; \
 			*) echo "check-libs: $$b needs $$l"; bad=1 ;; esac; \

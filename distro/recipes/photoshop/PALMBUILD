@@ -7,6 +7,9 @@ pkgver   = 0.1.0
 pkgrel   = 0
 pkgdesc  = Image editor
 license  = MIT
+category = Graphics
+icon     = palette
+details  = A raster image editor with layers, brushes and selections.
 depend   = glibc fonts libxkbcommon
 provides = cmd:photoshop
 
