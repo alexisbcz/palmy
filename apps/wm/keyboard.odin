@@ -374,7 +374,7 @@ kbd_install :: proc(km: Xkb_Keymap) {
 			continue
 		}
 		if k := xkb_key_by_code(&xkb_km, c); k != nil {
-			xkb_st.depressed |= xkb_km.modmap[k.name]
+			xkb_st.depressed |= xkb_key_mods(&xkb_km, k)
 		}
 	}
 }
@@ -829,6 +829,28 @@ kbd_selftest :: proc() -> int {
 			delete(kt2.rev)
 			delete(kt2.text)
 
+			// The client's half: libxkbcommon (what palmy clients use) reading
+			// the text we send, told group two by a modifiers event, must
+			// land on the same keysym. Skipped where libxkbcommon is absent.
+			if xkb_load() {
+				ctx := xkb.xkb_context_new(0)
+				ctext := strings.clone_to_cstring(km2.text, context.temp_allocator)
+				ckm := xkb.xkb_keymap_new_from_string(ctx, ctext, 1, 0)
+				kbd_check(ckm != nil, "libxkbcommon compiles our us,ru keymap text")
+				if ckm != nil {
+					st := xkb.xkb_state_new(ckm)
+					xkb.xkb_state_update_mask(st, 0, 0, 0, 0, 0, 1)
+					got := xkb.xkb_state_key_get_one_sym(st, 16 + 8)
+					kbd_check(got == 0x6ca, "and in group two Q is й there too, got 0x%x", got)
+					xkb.xkb_state_update_mask(st, 0, 0, 0, 0, 0, 0)
+					got = xkb.xkb_state_key_get_one_sym(st, 16 + 8)
+					kbd_check(got == 'q', "and q in group one, got 0x%x", got)
+					xkb.xkb_state_unref(st)
+					xkb.xkb_keymap_unref(ckm)
+				}
+				xkb.xkb_context_unref(ctx)
+			}
+
 			// The toggle itself, through the state machine: Shift held, then Alt.
 			saved := xkb_km
 			saved_st := xkb_st
@@ -848,6 +870,19 @@ kbd_selftest :: proc() -> int {
 			xkb_update_key(42, true)
 			xkb_update_key(42, false)
 			kbd_check(xkb_effective_group(&xkb_km, &xkb_st) == 0, "Shift alone does nothing")
+			// AltGr through the state machine, on de: RALT carries
+			// ISO_Level3_Shift and no modifier_map, so its Mod5 comes from
+			// the interpret's SetMods action.
+			kde, _ := kbd_compile({layout = "de"})
+			xkb_km = kde
+			xkb_sort_km = &xkb_km
+			xkb_state_reset()
+			xkb_update_key(100, true) // RIGHTALT
+			kbd_check(xkb_effective(&xkb_st) & XKB_MOD_MOD5 != 0, "de: holding AltGr sets Mod5, state 0x%x", xkb_effective(&xkb_st))
+			kbd_check(xkb_sym_for(16) == '@', "and AltGr+Q types @, got %s", xkb_sym_to_name(xkb_sym_for(16)))
+			xkb_update_key(100, false)
+			kbd_check(xkb_effective(&xkb_st) == 0 && xkb_sym_for(16) == 'q', "released, Q is q again")
+			kbd_check(!xkb_repeats(100), "and AltGr itself does not auto-repeat")
 			xkb_km = saved
 			xkb_st = saved_st
 			xkb_sort_km = &xkb_km

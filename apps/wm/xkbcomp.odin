@@ -419,6 +419,11 @@ Xkb_Keymap :: struct {
 
 	compat:       [dynamic]string, // statements, verbatim
 	compat_vmod_of: map[string]string, // keysym name -> virtual modifier
+	// keysym name -> the modifier its interpret's SetMods action names
+	// explicitly (`action= SetMods(modifiers=LevelThree)`), as opposed to
+	// modMapMods. This is where AltGr's Mod5 comes from: <RALT> is not in
+	// any modifier_map, its action is.
+	compat_setmods_of: map[string]string,
 
 	keys:         [dynamic]Xkb_Key,
 	key_of:       map[string]int,
@@ -947,6 +952,25 @@ xkb_compat_body :: proc(km: ^Xkb_Keymap, s: ^Xkb_Src, lo, hi: int, merge: Xkb_Me
 		// carrying that keysym is mapped to.
 		if t.kind == .Ident && t.text == "interpret" && i + 1 < e && s.toks[i + 1].kind == .Ident {
 			sym := s.toks[i + 1].text
+			// `action= SetMods(modifiers=LevelThree, ...)`, or LatchMods.
+			for j in i ..< e - 3 {
+				tj := s.toks[j]
+				if tj.kind != .Ident || !(strings.equal_fold(tj.text, "SetMods") || strings.equal_fold(tj.text, "LatchMods")) {
+					continue
+				}
+				for k in j + 1 ..< e - 2 {
+					if s.toks[k].kind == .Ident && (strings.equal_fold(s.toks[k].text, "modifiers") || strings.equal_fold(s.toks[k].text, "mods")) && s.toks[k + 1].text == "=" && s.toks[k + 2].kind == .Ident {
+						if name := s.toks[k + 2].text; !strings.equal_fold(name, "modMapMods") {
+							km.compat_setmods_of[strings.clone(sym)] = strings.clone(name)
+						}
+						break
+					}
+					if s.toks[k].text == ")" {
+						break
+					}
+				}
+				break
+			}
 			for j in i ..< e {
 				if s.toks[j].kind == .Ident && strings.equal_fold(s.toks[j].text, "virtualModifier") {
 					for k in j + 1 ..< e {
@@ -1646,6 +1670,7 @@ xkb_keymap_free :: proc(km: ^Xkb_Keymap) {
 	delete(km.modmap)
 	delete(km.vmod_mask)
 	delete(km.compat_vmod_of)
+	delete(km.compat_setmods_of)
 	km^ = {}
 }
 
@@ -1659,6 +1684,7 @@ xkb_keymap_init :: proc(km: ^Xkb_Keymap) {
 	km.modmap = make(map[string]u32)
 	km.vmod_mask = make(map[string]u32)
 	km.compat_vmod_of = make(map[string]string)
+	km.compat_setmods_of = make(map[string]string)
 	km.indicators = make([dynamic]Xkb_Indicator)
 	km.types = make([dynamic]Xkb_Type)
 	km.compat = make([dynamic]string)
@@ -2278,6 +2304,27 @@ xkb_sym_upper :: proc(sym: u32) -> u32 {
 	return sym
 }
 
+// xkb_key_mods is the real modifiers holding this key down sets: its
+// modifier_map entry, or, for a key that has none, what the interpret for its
+// first keysym sets explicitly. The second is how <RALT> carrying
+// ISO_Level3_Shift becomes Mod5 (LevelThree) — no modifier_map names it.
+xkb_key_mods :: proc(km: ^Xkb_Keymap, k: ^Xkb_Key) -> u32 {
+	if m := km.modmap[k.name]; m != 0 {
+		return m
+	}
+	if len(km.compat_setmods_of) == 0 || k.ngroups == 0 || len(k.groups[0].vals) == 0 {
+		return 0
+	}
+	name, ok := km.compat_setmods_of[xkb_sym_to_name(k.groups[0].vals[0])]
+	if !ok {
+		return 0
+	}
+	if m, real := xkb_real_mod(name); real {
+		return m
+	}
+	return km.vmod_mask[name] & 0xff
+}
+
 // xkb_update_key feeds one key transition into the state. It takes an *evdev*
 // keycode, because that is what the input backend has.
 xkb_update_key :: proc(evdev_code: u32, down: bool) {
@@ -2297,7 +2344,7 @@ xkb_update_key :: proc(evdev_code: u32, down: bool) {
 		}
 		xkb_st.down[code] = true
 		if k != nil {
-			xkb_st.depressed |= km.modmap[k.name]
+			xkb_st.depressed |= xkb_key_mods(km, k)
 			// Locking modifiers and group switches act on press. The level
 			// that counts is the one the current modifiers select, because
 			// toggles like grp:alt_shift_toggle put ISO_Next_Group on the
@@ -2337,7 +2384,7 @@ xkb_update_key :: proc(evdev_code: u32, down: bool) {
 				continue
 			}
 			if kk := xkb_key_by_code(km, c); kk != nil {
-				xkb_st.depressed |= km.modmap[kk.name]
+				xkb_st.depressed |= xkb_key_mods(km, kk)
 			}
 		}
 	}
@@ -2389,7 +2436,7 @@ xkb_repeats :: proc(evdev_code: u32) -> bool {
 	if k.repeat >= 0 {
 		return k.repeat == 1
 	}
-	if km.modmap[k.name] != 0 {
+	if xkb_key_mods(km, k) != 0 {
 		return false
 	}
 	if len(k.groups[0].vals) > 0 {

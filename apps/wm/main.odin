@@ -1725,9 +1725,20 @@ draw_bar :: proc(s: ^Server, app: ^p.App, cv: ^p.Canvas, oi, ws_idx: int) {
 		p.fill_round_rect(cv, {right - tw - 26, Y + H / 2 - 10, tw + 20, 20}, {6, 6, 6, 6}, p.hex(0x1e1b4b))
 		p.draw_text(cv, f, s.status, right - tw - 16, Y + H / 2 + 4, 12, p.hex(0xc7d2fe), .Sans, .Medium)
 	} else {
+		// Entries come off the end until the legend fits next to the clock,
+		// so a narrow screen shows the first few rather than none.
 		hint := bar_hint(s)
 		hw := p.text_width(f, hint, 11)
-		if hw < W - (x - X) - 24 {
+		for hw >= W - (x - X) - 24 {
+			cut := strings.last_index(hint, "  ")
+			if cut <= 0 {
+				hint = ""
+				break
+			}
+			hint = hint[:cut]
+			hw = p.text_width(f, hint, 11)
+		}
+		if hint != "" {
 			p.draw_text(cv, f, hint, right - hw - 12, mid, 11, p.hex(0x6b6b76))
 		}
 	}
