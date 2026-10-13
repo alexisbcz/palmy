@@ -1282,9 +1282,18 @@ wm_do :: proc(s: ^Server, app: ^p.App, b: Cfg_Bind) {
 	case .Quit:
 		p.quit_app(app)
 	case .Session:
-		// Intent only. Power and session changes are logged and never run:
-		// this compositor is a nested guest on a live desktop.
 		name := cfg_session_name(b.arg)
+		// On bare metal this compositor *is* the session, and ending it is
+		// how the user gets back to the greeter: palm-login is waiting on
+		// our exit. Power actions stay intent-only — they belong to the
+		// greeter, which runs them through palm-login's privileges.
+		if session.bare && (name == "exit" || name == "logout") {
+			fmt.printfln("wm: session %q — leaving", name)
+			p.quit_app(app)
+			return
+		}
+		// Intent only. Power and session changes are logged and never run:
+		// nested, this compositor is a guest on a live desktop.
 		fmt.printfln("wm: session intent %q — logged, not executed", name)
 		log_line("session intent %q (not executed)", name)
 		note(s, fmt.tprintf("%s: logged, not executed", name))
@@ -1296,6 +1305,9 @@ wm_do :: proc(s: ^Server, app: ^p.App, b: Cfg_Bind) {
 // retuning, so this is a first-class operation and not a debugging aid.
 wm_reload :: proc(s: ^Server) {
 	cfg_load(&s.cfg)
+	if session.kiosk {
+		session_kiosk_preset(&s.cfg)
+	}
 	if len(s.workspaces) != s.cfg.workspaces {
 		ws_build_workspaces(s)
 	}
@@ -1457,8 +1469,10 @@ cascade_all :: proc(s: ^Server) {
 
 // spawn runs a configured command. The command is resolved against $PATH —
 // never against a path compiled into this binary — and nothing runs that the
-// configuration did not ask for.
-spawn :: proc(s: ^Server, argv_in: []string) {
+// configuration (or the --exec command line) did not ask for. The child gets
+// WAYLAND_DISPLAY pointing here and inherits XDG_RUNTIME_DIR, which is where
+// the socket lives. The pid comes back so the session can watch it.
+spawn :: proc(s: ^Server, argv_in: []string) -> (pid: linux.Pid, ok: bool) {
 	if len(argv_in) == 0 {
 		return
 	}
@@ -1466,6 +1480,7 @@ spawn :: proc(s: ^Server, argv_in: []string) {
 	if !found {
 		note(s, fmt.tprintf("%s: not found on $PATH", argv_in[0]))
 		log_line("spawn %q: not on $PATH", argv_in[0])
+		fmt.eprintfln("wm: %s: not found on $PATH", argv_in[0])
 		return
 	}
 	argv := make([]string, len(argv_in), context.temp_allocator)
@@ -1483,14 +1498,17 @@ spawn :: proc(s: ^Server, argv_in: []string) {
 		}
 	}
 	append(&env, fmt.tprintf("WAYLAND_DISPLAY=%s", s.display_name))
-	_, perr := os.process_start(
+	proc_, perr := os.process_start(
 		{command = argv, env = env[:], stdout = os.stderr, stderr = os.stderr},
 	)
 	if perr != nil {
 		note(s, fmt.tprintf("could not launch %s: %v", argv_in[0], perr))
+		fmt.eprintfln("wm: could not launch %s: %v", argv_in[0], perr)
 		return
 	}
 	note(s, fmt.tprintf("launched %s", argv_in[0]))
+	log_line("spawned %s as pid %d", exe, proc_.pid)
+	return linux.Pid(proc_.pid), true
 }
 
 // ---------------------------------------------------------------------------
@@ -1562,7 +1580,7 @@ draw :: proc(s: ^Server, app: ^p.App, cv: ^p.Canvas) {
 			}
 			draw_window(s, app, cv, t)
 		}
-		if len(stack) == 0 {
+		if len(stack) == 0 && !session.kiosk {
 			// The welcome card is for an empty *session*. A workspace you
 			// have just switched to that happens to be empty, while three
 			// windows run next door, gets a quiet label instead.
@@ -1722,7 +1740,39 @@ draw_welcome :: proc(s: ^Server, app: ^p.App, cv: ^p.Canvas, o: Ws_Output) {
 	cx := f32(o.x) + f32(o.w) / 2
 	cy := f32(o.y) + f32(o.h) / 2
 	first := "no bindings configured"
+	// On bare metal every modifier reaches us, so the hint can name the real
+	// binding — and it should name one whose program is actually installed.
+	if session.bare {
+		for bind in s.cfg.binds {
+			if bind.act != .Spawn || len(bind.argv) == 0 || bind.any_mods {
+				continue
+			}
+			if _, found := cfg_which(bind.argv[0]); !found {
+				continue
+			}
+			key := ""
+			for e in CFG_KEYNAMES {
+				if e.sym == bind.sym {
+					key = e.name
+					break
+				}
+			}
+			if key == "" {
+				continue
+			}
+			mods := ""
+			if .Super in bind.mods {mods = strings.concatenate({mods, "SUPER+"}, context.temp_allocator)}
+			if .Ctrl in bind.mods {mods = strings.concatenate({mods, "CTRL+"}, context.temp_allocator)}
+			if .Alt in bind.mods {mods = strings.concatenate({mods, "ALT+"}, context.temp_allocator)}
+			if .Shift in bind.mods {mods = strings.concatenate({mods, "SHIFT+"}, context.temp_allocator)}
+			first = fmt.tprintf("press %s%s to run %s", mods, key, bind.argv[0])
+			break
+		}
+	}
 	for bind in s.cfg.binds {
+		if session.bare && first != "no bindings configured" {
+			break
+		}
 		if bind.act == .Spawn && bind.any_mods {
 			for e in CFG_KEYNAMES {
 				if e.sym == bind.sym {
@@ -1739,7 +1789,7 @@ draw_welcome :: proc(s: ^Server, app: ^p.App, cv: ^p.Canvas, o: Ws_Output) {
 		wt:   p.Font_Weight,
 		col:  u32,
 	} {
-		{"A Wayland compositor, nested", 26, .Bold, 0xe8e8ef},
+		{session.bare ? "Palmframe" : "A Wayland compositor, nested", 26, .Bold, 0xe8e8ef},
 		{fmt.tprintf("listening on %s", s.path), 13, .Regular, 0x8b8b93},
 		{first, 14, .Medium, 0xa5b4fc},
 		{
@@ -1797,6 +1847,15 @@ draw_dock :: proc(s: ^Server, app: ^p.App, cv: ^p.Canvas, ws_idx: int, o: Ws_Out
 }
 
 draw_window :: proc(s: ^Server, app: ^p.App, cv: ^p.Canvas, t: ^Toplevel) {
+	// A kiosk client is the whole screen: no shadow, no ring, no frame.
+	if session.kiosk {
+		p.push_clip(cv, content_rect(t))
+		if t.xdg != nil && t.xdg.surf != nil {
+			blit_surface(cv, t.xdg.surf, t.x, t.y)
+		}
+		p.pop_clip(cv)
+		return
+	}
 	f := &app.fonts
 	focused := s.focus == t
 	fr := frame_rect(t)
@@ -2095,12 +2154,31 @@ main :: proc() {
 			os.exit(ws_shots(i + 1 < len(args) ? args[i + 1] : "shots"))
 		}
 	}
-	for a in args {
+	use_drm, use_nested := false, false
+	for i := 0; i < len(args); i += 1 {
+		a := args[i]
 		switch {
 		case a == "-v" || a == "--verbose":
 			VERBOSE = true
 		case a == "--overlay":
 			overlay = true
+		case a == "--drm":
+			use_drm = true
+		case a == "--nested":
+			use_nested = true
+		case a == "--kiosk":
+			session.kiosk = true
+		case a == "--exec" && i + 1 < len(args):
+			// One argument, word-split the way a config `exec =` line is, so
+			// `--exec "greeter --demo"` and `--exec term` both do the obvious.
+			i += 1
+			if argv := cfg_argv(args[i]); len(argv) > 0 {
+				append(&session.execs, argv)
+			}
+		case strings.has_prefix(a, "--exec="):
+			if argv := cfg_argv(a[len("--exec="):]); len(argv) > 0 {
+				append(&session.execs, argv)
+			}
 		case strings.has_prefix(a, "--display="):
 			display = a[len("--display="):]
 		case strings.has_prefix(a, "--seconds="):
@@ -2108,6 +2186,13 @@ main :: proc() {
 		case strings.has_prefix(a, "--config="):
 			conf = a[len("--config="):]
 		}
+	}
+
+	// Bare metal when asked, or when there is nothing to nest inside and a
+	// KMS node to drive — which is how palm-login starts a session. Nested
+	// stays exactly what it was otherwise.
+	if use_drm || (!use_nested && !overlay && bare_auto()) {
+		os.exit(bare_main(display, conf))
 	}
 
 	// --overlay opens the compositor as a layer-shell surface instead of an
@@ -2168,6 +2253,9 @@ main :: proc() {
 		s.cfg.tiling ? tile_layout_name(s.cfg.layout) : "floating",
 	)
 
+	if session.kiosk {
+		session_kiosk_preset(&s.cfg)
+	}
 	if !keytable_build(&s.kt, p.host_keymap(app), host_layout()) {
 		fmt.eprintfln("wm: no usable keymap; nested clients will have no keyboard")
 	}
@@ -2186,11 +2274,18 @@ main :: proc() {
 
 	// Autostart runs only what the configuration asked for, and the default
 	// configuration asks for nothing.
-	ws_autostart(s)
+	if !session.kiosk {
+		ws_autostart(s)
+	}
+	session_spawn_execs(s)
 
 	deadline := seconds > 0 ? wall_now() + f64(seconds) : 0
 	for cv in p.direct_frames(app) {
 		if deadline > 0 && wall_now() > deadline {
+			p.quit_app(app)
+		}
+		session_reap()
+		if session_should_end() {
 			p.quit_app(app)
 		}
 		s.out_w, s.out_h = cv.w, cv.h

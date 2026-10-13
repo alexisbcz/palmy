@@ -181,3 +181,54 @@ mod_bit :: proc(idx: u32) -> u32 {
 	}
 	return u32(1) << idx
 }
+
+// keytable_from_compiled fills the same table from the keymap xkbcomp.odin
+// compiled, with no libxkbcommon at all. This is the bare-metal path: the
+// keymap handed to clients is `xkb_km.text`, the keysyms the input layer
+// produces come out of `xkb_lookup` over the same tables, and so the reverse
+// lookup `forward_key` does lands on exactly the key that was pressed.
+//
+// Modifier indices are the real modifiers' bit positions. A client's
+// libxkbcommon always numbers Shift, Lock, Control and Mod1..Mod5 as 0..7,
+// before any virtual modifier, so a mask built from them means the same thing
+// on both sides of the socket.
+keytable_from_compiled :: proc(kt: ^Key_Table, km: ^Xkb_Keymap) -> bool {
+	if !km.ok || km.text == "" {
+		return false
+	}
+	first_bit :: proc(m: u32, fallback: u32) -> u32 {
+		for i in u32(0) ..< 8 {
+			if m & (1 << i) != 0 {
+				return i
+			}
+		}
+		return fallback
+	}
+	kt.m_shift = 0
+	kt.m_caps = 1
+	kt.m_ctrl = 2
+	kt.m_alt = first_bit(xkb_mod_mask(km, {"Alt"}), 3)
+	kt.m_super = first_bit(xkb_mod_mask(km, {"Super"}), 6)
+
+	kt.rev = make(map[u32]Rev)
+	for level in 0 ..< 2 {
+		mods := level == 0 ? u32(0) : XKB_MOD_SHIFT
+		for code in km.min_code ..= km.max_code {
+			if code < EV_XKB_OFFSET {
+				continue
+			}
+			sym, _, _ := xkb_lookup(km, code, mods, 0)
+			if sym == XKB_SYM_NO || sym == XKB_SYM_VOID {
+				continue
+			}
+			if _, taken := kt.rev[sym]; taken {
+				continue
+			}
+			kt.rev[sym] = Rev{code = code - EV_XKB_OFFSET, shift = level == 1}
+		}
+	}
+	kt.text = strings.clone(km.text)
+	kt.source = km.source != "" ? km.source : "the compositor's own XKB compiler"
+	kt.ok = true
+	return true
+}

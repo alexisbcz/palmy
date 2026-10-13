@@ -18,8 +18,15 @@
 // SAFETY
 //
 // Everything that can take over the display is behind `drm_live`, which is off
-// unless PALMY_WM_DRM_LIVE=1 is in the environment: SET_MASTER, DROP_MASTER,
-// SETCRTC, PAGE_FLIP. Nothing in this file touches a VT, /dev/tty* or
+// unless PALMY_WM_DRM_LIVE=1 is in the environment or `wm --drm` opened it
+// with drm_enable_live (bare.odin, which first refuses to run inside a
+// graphical session): SET_MASTER, DROP_MASTER, SETCRTC, PAGE_FLIP, DIRTYFB.
+//
+// It has run, inside QEMU (apps/wm/qemu-test.sh): virtio-gpu, 1280x800,
+// direct open of /dev/dri/card0 as a non-root user in `video`, master by the
+// first-opener rule, legacy PAGE_FLIP with real completion events. virtio-gpu
+// completes a flip as soon as the host has the pixels, so flips do not pace
+// anything there; bare.odin spaces frames by the refresh period as well. Nothing in this file touches a VT, /dev/tty* or
 // /sys/class/vtconsole. The enumeration half — GET_CAP, GETRESOURCES,
 // GETCONNECTOR, GETENCODER, GETCRTC, GETPROPERTY, GETPROPBLOB — needs no
 // master, affects nothing, and is what `--drm-probe` exercises.
@@ -30,7 +37,6 @@ import "core:fmt"
 import "core:os"
 import "core:strings"
 import "core:sys/linux"
-import "core:time"
 import p "palmy:."
 
 // ----------------------------------------------------------------------------
@@ -60,6 +66,7 @@ DRM_IOCTL_MODE_CREATE_DUMB :: u32(0xc02064b2)
 DRM_IOCTL_MODE_MAP_DUMB :: u32(0xc01064b3)
 DRM_IOCTL_MODE_DESTROY_DUMB :: u32(0xc00464b4)
 DRM_IOCTL_MODE_GETPLANERESOURCES :: u32(0xc01064b5)
+DRM_IOCTL_MODE_DIRTYFB :: u32(0xc01864b1)
 DRM_IOCTL_MODE_ADDFB2 :: u32(0xc06864b8)
 DRM_IOCTL_MODE_OBJ_GETPROPERTIES :: u32(0xc02064b9)
 DRM_IOCTL_MODE_ATOMIC :: u32(0xc03864bc)
@@ -257,6 +264,17 @@ Drm_Mode_Crtc_Page_Flip :: struct {
 	user_data: u64,
 }
 
+// struct drm_mode_fb_dirty_cmd. With no clips the whole framebuffer is
+// flushed, which is what a virtual GPU whose scanout is a host-side copy of
+// the dumb buffer (virtio-gpu, the QXL family) needs before anything shows.
+Drm_Mode_Fb_Dirty_Cmd :: struct {
+	fb_id:     u32,
+	flags:     u32,
+	color:     u32,
+	num_clips: u32,
+	clips_ptr: u64,
+}
+
 Drm_Mode_Create_Dumb :: struct {
 	height: u32,
 	width:  u32,
@@ -362,6 +380,7 @@ Drm_Head :: struct {
 
 	refresh_ns:    i64, // from the mode's timings
 	last_flip_ns:  i64,
+	flip_sent_ns:  i64, // when the outstanding PAGE_FLIP went to the kernel
 	frames:        u64,
 	missed:        u64,
 }
@@ -384,6 +403,10 @@ Drm_Card :: struct {
 	// the index into `crtcs`. Keeps two heads off one CRTC.
 	crtcs_taken:      u32,
 	master:           bool,
+	// Page flip does not work on this card — the ioctl was refused, or its
+	// completion event never arrived — so every frame is shown with SETCRTC
+	// onto the new buffer followed by DIRTYFB. Tears, but shows.
+	no_flip:          bool,
 	// The fd came from the seat layer, so it is the seat layer's to close and
 	// the seat layer's master to drop.
 	from_seat:        bool,
@@ -523,6 +546,16 @@ drm_live_gate :: proc() -> bool {
 	return drm_state.live
 }
 
+// drm_enable_live opens the modeset gate for this process without the
+// environment variable. It is what `wm --drm` calls: asking for the bare-metal
+// backend on the command line is the explicit, per-run consent the variable
+// stands for, and main.odin refuses --drm inside a graphical session before
+// it gets here.
+drm_enable_live :: proc() {
+	drm_state.live_read = true
+	drm_state.live = true
+}
+
 @(private = "file")
 drm_log :: proc(f: string, args: ..any) {
 	if !drm_state.verbose {
@@ -541,9 +574,13 @@ drm_cstr :: proc(b: []u8) -> string {
 	return string(b[:n])
 }
 
+// drm_now_ns is CLOCK_MONOTONIC, the clock page-flip events are stamped with
+// (DRM_CAP_TIMESTAMP_MONOTONIC), so a deadline computed from an event's
+// timestamp and one computed from now are on the same axis.
 @(private = "file")
 drm_now_ns :: proc() -> i64 {
-	return i64(time.now()._nsec)
+	ts, _ := linux.clock_gettime(.MONOTONIC)
+	return i64(ts.time_sec) * 1_000_000_000 + i64(ts.time_nsec)
 }
 
 // ----------------------------------------------------------------------------
@@ -1716,6 +1753,9 @@ drm_present :: proc(h: ^Drm_Head) -> bool {
 		h.missed += 1
 		return false
 	}
+	if h.card.no_flip {
+		return drm_present_noflip(h)
+	}
 
 	req := Drm_Mode_Crtc_Page_Flip {
 		crtc_id   = h.crtc_id,
@@ -1729,12 +1769,65 @@ drm_present :: proc(h: ^Drm_Head) -> bool {
 		// here. Treat it as a pause rather than spinning on a dead CRTC.
 		if e == 13 {
 			drm_pause()
+			return false
+		}
+		// EINVAL or ENOSYS from a driver without page flip (simpledrm,
+		// some fbdev-era KMS drivers). EBUSY is a flip already in flight,
+		// which the bookkeeping above should have prevented; either way the
+		// frame is still worth showing, so show it the slow way.
+		if e != 16 {
+			drm_log("%s: page flip unsupported, falling back to SETCRTC + DIRTYFB", h.name)
+			h.card.no_flip = true
+			return drm_present_noflip(h)
 		}
 		return false
 	}
 	h.queued = h.back
 	h.awaiting_flip = true
+	h.flip_sent_ns = drm_now_ns()
 	return true
+}
+
+// drm_present_noflip shows the back buffer without a page flip: point the
+// CRTC at it with SETCRTC — on an atomic driver with the same mode that is a
+// plane update, not a modeset — then DIRTYFB so a virtual GPU copies the
+// pixels to wherever its scanout really lives. Synchronous, so there is no
+// event to wait for and the buffer is on screen when this returns.
+@(private = "file")
+drm_present_noflip :: proc(h: ^Drm_Head) -> bool {
+	fb := &h.fbs[h.back]
+	conn := h.conn_id
+	req := Drm_Mode_Crtc {
+		crtc_id            = h.crtc_id,
+		fb_id              = fb.fb_id,
+		set_connectors_ptr = u64(uintptr(&conn)),
+		count_connectors   = 1,
+		mode               = h.mode,
+		mode_valid         = 1,
+	}
+	if e := drm_ioctl(h.card.fd, DRM_IOCTL_MODE_SETCRTC, &req); e != 0 {
+		drm_log("%s: SETCRTC (no-flip present) errno %d", h.name, e)
+		if e == 13 {
+			drm_pause()
+		}
+		return false
+	}
+	drm_dirty(h.card, fb.fb_id)
+	h.front = h.back
+	h.queued = -1
+	h.frames += 1
+	h.last_flip_ns = drm_now_ns()
+	return true
+}
+
+// drm_dirty flushes a whole framebuffer. ENOSYS means the driver scans out of
+// the buffer directly and needs no flush, which is the common case on real
+// hardware; nothing else is worth reporting more than once.
+drm_dirty :: proc(card: ^Drm_Card, fb_id: u32) {
+	cmd := Drm_Mode_Fb_Dirty_Cmd {
+		fb_id = fb_id,
+	}
+	drm_ioctl(card.fd, DRM_IOCTL_MODE_DIRTYFB, &cmd)
 }
 
 // drm_modeset programs the mode. Gated: this is the call that would take over
@@ -1764,6 +1857,7 @@ drm_modeset :: proc(h: ^Drm_Head) -> bool {
 	}
 	h.enabled = true
 	h.front = h.back
+	drm_dirty(h.card, h.fbs[h.back].fb_id)
 	drm_log("%s: mode %s set on crtc %d", h.name, drm_cstr(h.mode.name[:]), h.crtc_id)
 	return true
 }
@@ -1938,6 +2032,19 @@ drm_head_ready :: proc(h: ^Drm_Head) -> bool {
 		return false
 	}
 	if h.awaiting_flip {
+		// A completion that has not arrived in half a second is not going
+		// to. Some virtual GPUs accept PAGE_FLIP and never send the event;
+		// waiting for it forever would freeze the screen on the first frame.
+		if h.flip_sent_ns != 0 && drm_now_ns() - h.flip_sent_ns > 500_000_000 {
+			drm_log("%s: no page-flip event after 500 ms; falling back to SETCRTC + DIRTYFB", h.name)
+			h.card.no_flip = true
+			h.awaiting_flip = false
+			if h.queued >= 0 {
+				h.front = h.queued
+				h.queued = -1
+			}
+			return true
+		}
 		return false
 	}
 	return true
@@ -2609,6 +2716,11 @@ drm_selftest :: proc() {
 		size_of(Drm_Mode_Crtc_Page_Flip),
 	)
 	drm_check(
+		size_of(Drm_Mode_Fb_Dirty_Cmd) == 24,
+		"Drm_Mode_Fb_Dirty_Cmd is %d, want 24",
+		size_of(Drm_Mode_Fb_Dirty_Cmd),
+	)
+	drm_check(
 		size_of(Drm_Mode_Create_Dumb) == 32,
 		"Drm_Mode_Create_Dumb is %d, want 32",
 		size_of(Drm_Mode_Create_Dumb),
@@ -2724,6 +2836,12 @@ drm_selftest :: proc() {
 		"PAGE_FLIP encodes 0x%x, declared 0x%x",
 		iowr(0xb0, size_of(Drm_Mode_Crtc_Page_Flip)),
 		DRM_IOCTL_MODE_PAGE_FLIP,
+	)
+	drm_check(
+		DRM_IOCTL_MODE_DIRTYFB == iowr(0xb1, size_of(Drm_Mode_Fb_Dirty_Cmd)),
+		"DIRTYFB encodes 0x%x, declared 0x%x",
+		iowr(0xb1, size_of(Drm_Mode_Fb_Dirty_Cmd)),
+		DRM_IOCTL_MODE_DIRTYFB,
 	)
 	drm_check(
 		DRM_IOCTL_MODE_CREATE_DUMB == iowr(0xb2, size_of(Drm_Mode_Create_Dumb)),
