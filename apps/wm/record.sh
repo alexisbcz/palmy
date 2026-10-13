@@ -22,7 +22,7 @@ mkdir -p "$(dirname "$OUT")"
 pkill -9 -x wm.bin 2>/dev/null
 sleep 0.5
 
-"$BIN" --overlay --seconds=120 & APP=$!
+"$BIN" --overlay --seconds=120 --config="$HERE/demo.conf" & APP=$!
 sleep 2.4
 
 read X Y W H <<< "$(hyprctl layers -j | python3 -c '

@@ -10,7 +10,17 @@
 #   key:<qcode>[+<qcode>...]  press a chord, release in reverse (key:meta_l+ret)
 #   move:<x>,<y>              absolute pointer to output pixel x,y (virtio-tablet)
 #   click[:left|right|middle] press and release a button where the pointer is
+#   down:<btn> / up:<btn>     press, or release, a button and leave it there,
+#                             so a drag can be held across moves and shots
+#   drag:x1,y1,x2,y2          move to x1,y1, press left, then twenty
+#                             interpolated moves to x2,y2; no release
+#   dbl                       two left press/release pairs 60 ms apart
+#   wheel:up|down             one scroll detent where the pointer is
+#   hold:<qcode> / release:<qcode>
+#                             press, or release, a key and leave it there
+#                             (hold:alt key:tab key:tab release:alt)
 #   until:<s>:<file>:<text>   wait up to <s> seconds until <file> contains <text>
+#   burst:<n>:<ms>:<prefix>   n screendumps <ms> apart, <prefix>-NN.png
 #
 # The absolute axis is 0..0x7fff across the output whatever its mode, so a
 # pixel position needs the output size: --size WxH (default 1280x800).
@@ -93,6 +103,15 @@ def key_ev(code, down):
     return {"type": "key", "data": {"down": down, "key": {"type": "qcode", "data": code}}}
 
 
+def abs_ev(size, x, y):
+    ax = x * 0x7FFF // max(size[0] - 1, 1)
+    ay = y * 0x7FFF // max(size[1] - 1, 1)
+    return [
+        {"type": "abs", "data": {"axis": "x", "value": ax}},
+        {"type": "abs", "data": {"axis": "y", "value": ay}},
+    ]
+
+
 def main():
     args = sys.argv[1:]
     size = (1280, 800)
@@ -132,12 +151,7 @@ def main():
                 time.sleep(0.03)
         elif kind == "move":
             x, y = (int(v) for v in rest.split(","))
-            ax = x * 0x7FFF // max(size[0] - 1, 1)
-            ay = y * 0x7FFF // max(size[1] - 1, 1)
-            q.events([
-                {"type": "abs", "data": {"axis": "x", "value": ax}},
-                {"type": "abs", "data": {"axis": "y", "value": ay}},
-            ])
+            q.events(abs_ev(size, x, y))
             time.sleep(0.05)
         elif kind == "click":
             btn = rest or "left"
@@ -145,6 +159,45 @@ def main():
             time.sleep(0.08)
             q.events([{"type": "btn", "data": {"down": False, "button": btn}}])
             time.sleep(0.05)
+        elif kind in ("down", "up"):
+            btn = rest or "left"
+            q.events([{"type": "btn", "data": {"down": kind == "down", "button": btn}}])
+            time.sleep(0.05)
+        elif kind == "drag":
+            x1, y1, x2, y2 = (int(v) for v in rest.split(","))
+            q.events(abs_ev(size, x1, y1))
+            time.sleep(0.05)
+            q.events([{"type": "btn", "data": {"down": True, "button": "left"}}])
+            time.sleep(0.05)
+            for i in range(1, 21):
+                x = x1 + (x2 - x1) * i // 20
+                y = y1 + (y2 - y1) * i // 20
+                q.events(abs_ev(size, x, y))
+                time.sleep(0.02)
+            time.sleep(0.05)
+        elif kind == "dbl":
+            for _ in range(2):
+                q.events([{"type": "btn", "data": {"down": True, "button": "left"}}])
+                time.sleep(0.03)
+                q.events([{"type": "btn", "data": {"down": False, "button": "left"}}])
+                time.sleep(0.06)
+        elif kind == "wheel":
+            btn = "wheel-up" if rest == "up" else "wheel-down"
+            q.events([{"type": "btn", "data": {"down": True, "button": btn}}])
+            q.events([{"type": "btn", "data": {"down": False, "button": btn}}])
+            time.sleep(0.05)
+        elif kind in ("hold", "release"):
+            q.events([key_ev(rest, kind == "hold")])
+            time.sleep(0.03)
+        elif kind == "burst":
+            n_s, ms_s, prefix = rest.split(":", 2)
+            for i in range(int(n_s)):
+                t0 = time.time()
+                q.cmd("screendump", filename=f"{prefix}-{i:02d}.png", format="png")
+                left = int(ms_s) / 1000 - (time.time() - t0)
+                if left > 0:
+                    time.sleep(left)
+            print(f"burst {prefix} x{n_s}", flush=True)
         elif kind == "until":
             limit_s, path, text = rest.split(":", 2)
             limit = float(limit_s)

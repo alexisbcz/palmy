@@ -24,6 +24,7 @@ import "core:fmt"
 import "core:math"
 import "core:os"
 import "core:strings"
+import "core:text/regex"
 import p "palmy:."
 
 // ---------------------------------------------------------------------------
@@ -68,6 +69,41 @@ Ws_Win :: struct {
 	want_ws:    int, // 1-based, from a rule; applied on the next tick
 	float_rect: [4]int,
 	have_float: bool,
+
+	// Where the window is when it is not where the user left it (snap.odin).
+	// `snap` is the zone a floating window is snapped to, and `pre_snap` the
+	// content rectangle it had before, which is what un-snapping returns to.
+	// `max_snap` is the zone to go back to when a snapped window is maximized
+	// and then restored: restore means "what it was", not "floating".
+	snap:       Snap,
+	pre_snap:   [4]int,
+	max_snap:   Snap,
+	// Floated by the layout itself, because the client's minimum size did not
+	// fit any cell. It goes back into the layout once it fits again.
+	auto_float: bool,
+
+	// Stacking and visibility (P1-4).
+	on_top:     bool,
+	sticky:     bool,
+	fullscreen: bool,
+	fs_saved:   [4]int,
+	fs_was_max: bool,
+
+	// Focus bookkeeping: `mru` is a stamp from the last time the window was
+	// focused, which is the order the switcher lists windows in; `urgent` is
+	// a window that mapped, or asked for attention, while the user was busy
+	// elsewhere, and stays marked until it is focused.
+	mru:        u64,
+	urgent:     bool,
+
+	// From rules (P1-11). Zero opacity means "unset", which is opaque.
+	opacity:    f32,
+	no_anim:    bool,
+	no_focus:   bool,
+	want_fullscreen: bool, // a rule asked for fullscreen; applied once mapped
+	placement_rule: int, // 0 config default, 1 centre, 2 pointer
+	output_rule: string, // a rule's `output NAME`, borrowed from the config
+	rule_title: string, // the title the rules last matched against (rerule)
 }
 
 ws_meta: map[^Toplevel]^Ws_Win
@@ -100,6 +136,7 @@ ws_peek :: proc(t: ^Toplevel) -> (^Ws_Win, bool) {
 
 ws_forget :: proc(t: ^Toplevel) {
 	if m, ok := ws_meta[t]; ok {
+		delete(m.rule_title)
 		free(m)
 		delete_key(&ws_meta, t)
 	}
@@ -153,14 +190,14 @@ ws_title_h :: proc(t: ^Toplevel) -> int {
 	if !server.cfg.title_bar {
 		return 0
 	}
-	if m, ok := ws_peek(t); ok && m.no_title {
+	if m, ok := ws_peek(t); ok && (m.no_title || m.fullscreen) {
 		return 0
 	}
 	return server.cfg.title_h
 }
 
 ws_border :: proc(t: ^Toplevel) -> int {
-	if m, ok := ws_peek(t); ok && m.no_border {
+	if m, ok := ws_peek(t); ok && (m.no_border || m.fullscreen) {
 		return 0
 	}
 	return server.cfg.border
@@ -175,6 +212,63 @@ ws_floating :: proc(t: ^Toplevel) -> bool {
 		return m.floating
 	}
 	return false
+}
+
+ws_fullscreen :: proc(t: ^Toplevel) -> bool {
+	if m, ok := ws_peek(t); ok {
+		return m.fullscreen
+	}
+	return false
+}
+
+// ws_in_layout says whether the layout engine places this window: it is on
+// a tiling workspace and has not been floated. A maximized tiled window is
+// still in the layout — it holds its cell — it is just drawn over it.
+ws_in_layout :: proc(s: ^Server, t: ^Toplevel) -> bool {
+	if t == nil || ws_floating(t) {
+		return false
+	}
+	ws_ensure(s)
+	idx := ws_index_of(s, t)
+	if idx < 0 {
+		idx = s.cur_ws
+	}
+	return s.workspaces[idx].tiling
+}
+
+// ws_layer is the stacking band a window lives in, bottom to top: tiled
+// windows, then floating ones (maximized tiled windows among them, since they
+// cover the layout), then always-on-top, then fullscreen. Raising and
+// lowering only ever move a window within its band.
+ws_layer :: proc(s: ^Server, t: ^Toplevel) -> int {
+	m, ok := ws_peek(t)
+	if ok && m.fullscreen {
+		return 3
+	}
+	if ok && m.on_top {
+		return 2
+	}
+	if !t.maximized && ws_in_layout(s, t) {
+		return 0
+	}
+	return 1
+}
+
+// ws_restack restores the band order after a window changed band (floated,
+// pinned on top, fullscreened). It is a stable sort, so the order inside each
+// band — which is the user's stacking — survives.
+ws_restack :: proc(s: ^Server) {
+	for i in 1 ..< len(s.stack) {
+		v := s.stack[i]
+		k := ws_layer(s, v)
+		j := i - 1
+		for j >= 0 && ws_layer(s, s.stack[j]) > k {
+			s.stack[j + 1] = s.stack[j]
+			j -= 1
+		}
+		s.stack[j + 1] = v
+	}
+	s.dirty = true
 }
 
 // ---------------------------------------------------------------------------
@@ -543,6 +637,11 @@ ws_switch :: proc(s: ^Server, idx: int) {
 	}
 	cur := &s.workspaces[s.cur_ws]
 	cur.last_focus = s.focus
+	was_focus_sticky := false
+	if m, ok := ws_peek(s.focus); ok && m.sticky {
+		was_focus_sticky = true
+		cur.last_focus = nil
+	}
 
 	// Hand the keyboard and the pointer back before the windows vanish; the
 	// client must see a leave, not simply stop receiving events.
@@ -554,10 +653,24 @@ ws_switch :: proc(s: ^Server, idx: int) {
 		ws_cancel_drag(s)
 	}
 
+	// Sticky windows (P1-4) travel with the switch: they leave the stack
+	// being parked and join the one being shown, on top.
+	travellers := make([dynamic]^Toplevel, 0, 2, context.temp_allocator)
+	for i := len(s.stack) - 1; i >= 0; i -= 1 {
+		if m, ok := ws_peek(s.stack[i]); ok && m.sticky && s.stack[i].mapped {
+			inject_at(&travellers, 0, s.stack[i])
+			ordered_remove(&s.stack, i)
+		}
+	}
+	anim_ws_switch(s, s.cur_ws, idx)
 	cur.stack = s.stack
 	s.stack = s.workspaces[idx].stack
 	s.workspaces[idx].stack = nil
+	for t in travellers {
+		append(&s.stack, t)
+	}
 	s.cur_ws = idx
+	ws_restack(s)
 	oi := s.workspaces[idx].output
 	if oi >= 0 && oi < len(s.outputs) {
 		s.cur_out = oi
@@ -565,8 +678,11 @@ ws_switch :: proc(s: ^Server, idx: int) {
 	}
 
 	want := s.workspaces[idx].last_focus
+	if len(travellers) > 0 && was_focus_sticky {
+		want = travellers[len(travellers) - 1]
+	}
 	if !ws_on_current(s, want) {
-		want = topmost_other(s, nil)
+		want = mru_next(s, nil)
 	}
 	focus_window(s, want)
 	s.needs_layout = true
@@ -616,9 +732,13 @@ ws_move_to :: proc(s: ^Server, t: ^Toplevel, idx: int) {
 		return
 	}
 	append(&s.workspaces[idx].stack, t)
-	if was_focus {
-		focus_window(s, topmost_other(s, nil))
+	if m, ok := ws_peek(t); ok {
+		m.sticky = false // moving it somewhere means it lives there now
 	}
+	if was_focus {
+		focus_window(s, mru_next(s, nil))
+	}
+	ix_note_reflow(s)
 	s.needs_layout = true
 	s.dirty = true
 	note(s, fmt.tprintf("%s → workspace %s", title_of(t), s.workspaces[idx].name))
@@ -683,11 +803,10 @@ ws_apply_rules :: proc(s: ^Server, t: ^Toplevel) {
 		return
 	}
 	m.ruled = true
-	for r in s.cfg.rules {
-		if r.app_id != "" && r.app_id != t.app_id {
-			continue
-		}
-		if r.title != "" && !strings.contains(t.title, r.title) {
+	delete(m.rule_title)
+	m.rule_title = strings.clone(t.title)
+	for &r in s.cfg.rules {
+		if !rule_matches(&r, t) {
 			continue
 		}
 		if r.set_float {
@@ -709,7 +828,92 @@ ws_apply_rules :: proc(s: ^Server, t: ^Toplevel) {
 		if r.maximize {
 			set_maximized(s, t, true)
 		}
+		if r.opacity > 0 {
+			m.opacity = r.opacity
+		}
+		if r.on_top {
+			m.on_top = true
+		}
+		if r.sticky {
+			m.sticky = true
+			m.floating = true
+		}
+		if r.placement != 0 {
+			m.placement_rule = r.placement
+		}
+		if r.no_anim {
+			m.no_anim = true
+		}
+		if r.no_focus {
+			m.no_focus = true
+		}
+		if r.output != "" {
+			m.output_rule = r.output
+		}
+		if r.fullscreen {
+			m.want_fullscreen = true
+		}
 	}
+}
+
+// rule_matches is one rule against one window: every matcher the rule names
+// must hold. app_id= is exact, title~ a substring, class~ a regular
+// expression searched in the app_id.
+rule_matches :: proc(r: ^Cfg_Rule, t: ^Toplevel) -> bool {
+	if r.app_id != "" && r.app_id != t.app_id {
+		return false
+	}
+	if r.title != "" && !strings.contains(t.title, r.title) {
+		return false
+	}
+	if r.app_re != "" {
+		re, err := regex.create(r.app_re, {}, context.temp_allocator, context.temp_allocator)
+		if err != nil {
+			return false
+		}
+		_, ok := regex.match_and_allocate_capture(re, t.app_id, context.temp_allocator, context.temp_allocator)
+		if !ok {
+			return false
+		}
+	}
+	return true
+}
+
+// rule_output is the output a rule asked a window to open on, if any.
+rule_output :: proc(s: ^Server, t: ^Toplevel) -> (int, bool) {
+	m, ok := ws_peek(t)
+	if !ok || m.output_rule == "" {
+		return 0, false
+	}
+	i := ws_output_find(s, m.output_rule)
+	if i < 0 || !s.outputs[i].enabled {
+		return 0, false
+	}
+	return i, true
+}
+
+// ws_rerule runs the rules again for a window whose title changed, when a
+// matching rule asked for it with `rerule` (a browser's title is the page,
+// and the page is what the user wants to match).
+ws_rerule :: proc(s: ^Server, t: ^Toplevel) {
+	m, ok := ws_peek(t)
+	if !ok || !m.ruled || m.rule_title == t.title {
+		return
+	}
+	any := false
+	for &r in s.cfg.rules {
+		if r.rerule {
+			any = true
+			break
+		}
+	}
+	if !any {
+		return
+	}
+	m.ruled = false
+	ws_apply_rules(s, t)
+	ws_restack(s)
+	s.needs_layout = true
 }
 
 // ---------------------------------------------------------------------------
@@ -723,7 +927,11 @@ Tile_Rect :: struct {
 	x, y, w, h: int,
 }
 
-Tile_Fn :: proc(s: ^Server, ws: ^Ws_Workspace, area: Tile_Rect, wins: []^Toplevel)
+// A layout returns nil when every window fits its cell, or the window whose
+// minimum size could not be honoured however the cells were shared out. The
+// caller floats that one and runs the layout again: overlapping two tiles is
+// the one thing a tiling layout must never do (UX.md 1.7, P0-13).
+Tile_Fn :: proc(s: ^Server, ws: ^Ws_Workspace, area: Tile_Rect, wins: []^Toplevel) -> ^Toplevel
 
 Tile_Layout :: struct {
 	name: string,
@@ -769,6 +977,9 @@ tile_area :: proc(s: ^Server, oi: int) -> Tile_Rect {
 // tile_place turns a cell — which contains the whole frame — into the content
 // rectangle the client is configured with.
 tile_place :: proc(s: ^Server, t: ^Toplevel, cell: Tile_Rect) {
+	if t.maximized || ws_fullscreen(t) {
+		return
+	}
 	th := ws_title_h(t)
 	bw := ws_border(t)
 	w := max(cell.w - 2 * bw, max(MIN_W, t.min_w))
@@ -810,54 +1021,168 @@ tile_place :: proc(s: ^Server, t: ^Toplevel, cell: Tile_Rect) {
 	}
 }
 
-// tile_split_v hands out n vertical slices of a column, with gaps between.
-tile_split_v :: proc(s: ^Server, col: Tile_Rect, wins: []^Toplevel) {
-	n := len(wins)
-	if n == 0 {
-		return
-	}
-	g := s.cfg.gaps_in
-	total := col.h - g * (n - 1)
-	if total < n * MIN_H {
-		total = max(total, n * MIN_H)
-	}
-	each := total / n
-	y := col.y
-	for t, i in wins {
-		h := i == n - 1 ? col.y + col.h - y : each
-		tile_place(s, t, {col.x, y, col.w, max(h, MIN_H)})
-		y += each + g
-	}
+// tile_need_w / tile_need_h are the smallest cell, frame included, that
+// holds a window at its client's minimum size.
+tile_need_w :: proc(t: ^Toplevel) -> int {
+	return max(MIN_W, t.min_w) + 2 * ws_border(t)
 }
 
-tile_master_stack :: proc(s: ^Server, ws: ^Ws_Workspace, area: Tile_Rect, wins: []^Toplevel) {
+tile_need_h :: proc(t: ^Toplevel) -> int {
+	return max(MIN_H, t.min_h) + ws_title_h(t) + ws_border(t)
+}
+
+// tile_share splits `total` pixels among cells with minimums, as evenly as
+// the minimums allow: a cell whose minimum exceeds the even share gets its
+// minimum, and the rest is shared again among the others. ok is false when
+// the minimums alone do not fit, and `worst` is then the greediest cell.
+// Pure, so the selftest can hold it to that.
+tile_share :: proc(total: int, need: []int, out: []int) -> (ok: bool, worst: int) {
+	n := len(need)
+	worst = -1
+	sum := 0
+	for v, i in need {
+		sum += v
+		if worst < 0 || v > need[worst] {
+			worst = i
+		}
+	}
+	if n == 0 {
+		return true, -1
+	}
+	if sum > total {
+		return false, worst
+	}
+	fixed := make([]bool, n, context.temp_allocator)
+	for {
+		left := total
+		free_n := 0
+		for i in 0 ..< n {
+			if fixed[i] {
+				left -= need[i]
+			} else {
+				free_n += 1
+			}
+		}
+		if free_n == 0 {
+			break
+		}
+		each := left / free_n
+		changed := false
+		for i in 0 ..< n {
+			if !fixed[i] && need[i] > each {
+				fixed[i] = true
+				changed = true
+			}
+		}
+		if changed {
+			continue
+		}
+		// Hand out the even share; the last free cell takes the remainder so
+		// the column is filled to the pixel.
+		rem := left - each * free_n
+		for i in 0 ..< n {
+			if fixed[i] {
+				out[i] = need[i]
+			} else {
+				out[i] = each
+			}
+		}
+		for i := n - 1; i >= 0; i -= 1 {
+			if !fixed[i] {
+				out[i] += rem
+				break
+			}
+		}
+		return true, -1
+	}
+	for i in 0 ..< n {
+		out[i] = need[i]
+	}
+	out[n - 1] += total - sum
+	return true, -1
+}
+
+// tile_split_v hands out n vertical slices of a column, with gaps between,
+// each at least as tall as its window needs.
+tile_split_v :: proc(s: ^Server, col: Tile_Rect, wins: []^Toplevel) -> ^Toplevel {
 	n := len(wins)
 	if n == 0 {
-		return
+		return nil
+	}
+	g := s.cfg.gaps_in
+	need := make([]int, n, context.temp_allocator)
+	hs := make([]int, n, context.temp_allocator)
+	for t, i in wins {
+		need[i] = tile_need_h(t)
+	}
+	ok, worst := tile_share(col.h - g * (n - 1), need, hs)
+	if !ok {
+		return wins[worst]
+	}
+	y := col.y
+	for t, i in wins {
+		tile_place(s, t, {col.x, y, col.w, hs[i]})
+		y += hs[i] + g
+	}
+	return nil
+}
+
+tile_master_stack :: proc(s: ^Server, ws: ^Ws_Workspace, area: Tile_Rect, wins: []^Toplevel) -> ^Toplevel {
+	n := len(wins)
+	if n == 0 {
+		return nil
 	}
 	mc := clamp(ws.master_count, 1, n)
-	if n <= mc {
-		tile_split_v(s, area, wins)
+	widest :: proc(wins: []^Toplevel) -> (need: int, who: ^Toplevel) {
+		for t in wins {
+			if v := tile_need_w(t); v > need {
+				need, who = v, t
+			}
+		}
 		return
+	}
+	if n <= mc {
+		if need, who := widest(wins); need > area.w {
+			return who
+		}
+		return tile_split_v(s, area, wins)
 	}
 	g := s.cfg.gaps_in
 	ratio := clamp(ws.master_ratio, 0.15, 0.85)
 	mw := int(f32(area.w - g) * ratio)
-	mw = clamp(mw, MIN_W, area.w - g - MIN_W)
-	tile_split_v(s, {area.x, area.y, mw, area.h}, wins[:mc])
-	tile_split_v(s, {area.x + mw + g, area.y, area.w - mw - g, area.h}, wins[mc:])
+	need_m, who_m := widest(wins[:mc])
+	need_s, who_s := widest(wins[mc:])
+	lo := max(MIN_W, need_m)
+	hi := area.w - g - max(MIN_W, need_s)
+	if lo > hi {
+		// Both columns cannot have what they need. The greedier window goes.
+		return need_m >= need_s ? who_m : who_s
+	}
+	// The ratio is what the user asked for; a minimum only overrides it as
+	// far as it must.
+	mw = clamp(mw, lo, hi)
+	if who := tile_split_v(s, {area.x, area.y, mw, area.h}, wins[:mc]); who != nil {
+		return who
+	}
+	return tile_split_v(s, {area.x + mw + g, area.y, area.w - mw - g, area.h}, wins[mc:])
 }
 
-tile_monocle :: proc(s: ^Server, ws: ^Ws_Workspace, area: Tile_Rect, wins: []^Toplevel) {
+tile_monocle :: proc(s: ^Server, ws: ^Ws_Workspace, area: Tile_Rect, wins: []^Toplevel) -> ^Toplevel {
+	for t in wins {
+		if tile_need_w(t) > area.w || tile_need_h(t) > area.h {
+			return t
+		}
+	}
 	for t in wins {
 		tile_place(s, t, area)
 	}
+	return nil
 }
 
-tile_grid :: proc(s: ^Server, ws: ^Ws_Workspace, area: Tile_Rect, wins: []^Toplevel) {
+tile_grid :: proc(s: ^Server, ws: ^Ws_Workspace, area: Tile_Rect, wins: []^Toplevel) -> ^Toplevel {
 	n := len(wins)
 	if n == 0 {
-		return
+		return nil
 	}
 	g := s.cfg.gaps_in
 	cols := int(math.ceil(math.sqrt(f32(n))))
@@ -865,6 +1190,24 @@ tile_grid :: proc(s: ^Server, ws: ^Ws_Workspace, area: Tile_Rect, wins: []^Tople
 	rows := (n + cols - 1) / cols
 	cw := (area.w - g * (cols - 1)) / cols
 	ch := (area.h - g * (rows - 1)) / rows
+	// Check every cell before placing any, so a window that does not fit is
+	// found before its neighbours have been configured to sizes that are
+	// about to change again.
+	worst: ^Toplevel
+	worst_over := 0
+	for t, i in wins {
+		cx := i % cols
+		cy := i / cols
+		w := cx == cols - 1 ? area.w - cx * (cw + g) : cw
+		h := cy == rows - 1 ? area.h - cy * (ch + g) : ch
+		over := max(tile_need_w(t) - w, 0) + max(tile_need_h(t) - h, 0)
+		if over > worst_over {
+			worst, worst_over = t, over
+		}
+	}
+	if worst != nil {
+		return worst
+	}
 	for t, i in wins {
 		cx := i % cols
 		cy := i / cols
@@ -875,6 +1218,7 @@ tile_grid :: proc(s: ^Server, ws: ^Ws_Workspace, area: Tile_Rect, wins: []^Tople
 		h := cy == rows - 1 ? area.y + area.h - y : ch
 		tile_place(s, t, {x, y, max(w, MIN_W), max(h, MIN_H)})
 	}
+	return nil
 }
 
 // tile_windows is the ordered list a layout sees: mapped, not minimised, not
@@ -882,7 +1226,10 @@ tile_grid :: proc(s: ^Server, ws: ^Ws_Workspace, area: Tile_Rect, wins: []^Tople
 tile_windows :: proc(s: ^Server, idx: int, allocator := context.temp_allocator) -> []^Toplevel {
 	out := make([dynamic]^Toplevel, 0, 8, allocator)
 	for t in ws_stack(s, idx) {
-		if !t.mapped || t.minimized || ws_floating(t) || t.maximized {
+		// A maximized window keeps its cell, so maximizing and restoring a
+		// tiled window never moves the others (UX.md P0-2); tile_place leaves
+		// its geometry alone while it is maximized.
+		if !t.mapped || t.minimized || ws_floating(t) {
 			continue
 		}
 		append(&out, t)
@@ -927,12 +1274,62 @@ tile_apply :: proc(s: ^Server) {
 		if oi < 0 || oi >= len(s.outputs) || !s.outputs[oi].enabled {
 			oi = s.cur_out
 		}
+		// A window the layout floated because it did not fit gets another
+		// chance every pass: the output may have grown, or a neighbour gone.
+		for t in ws_stack(s, idx) {
+			if m, ok := ws_peek(t); ok && m.auto_float && m.floating {
+				m.floating = false
+			}
+		}
 		wins := tile_windows(s, idx)
 		if len(wins) == 0 {
 			continue
 		}
-		TILE_LAYOUTS[clamp(w.layout, 0, len(TILE_LAYOUTS) - 1)].fn(s, w, tile_area(s, oi), wins)
+		area := tile_area(s, oi)
+		fn := TILE_LAYOUTS[clamp(w.layout, 0, len(TILE_LAYOUTS) - 1)].fn
+		for _ in 0 ..< 32 {
+			who := fn(s, w, area, wins)
+			if who == nil {
+				break
+			}
+			tile_auto_float(s, who, area)
+			wins = tile_windows(s, idx)
+			if len(wins) == 0 {
+				break
+			}
+		}
+		for t in ws_stack(s, idx) {
+			if m, ok := ws_peek(t); ok && m.auto_float && !m.floating {
+				m.auto_float = false // it fits again, and is tiled like any other
+			}
+		}
 	}
+}
+
+// tile_auto_float takes a window out of the layout because its minimum size
+// fits no cell, and floats it centred at that minimum, on top of the layout
+// rather than overlapping a tile.
+tile_auto_float :: proc(s: ^Server, t: ^Toplevel, area: Tile_Rect) {
+	m := ws_win(t)
+	m.floating = true
+	if m.auto_float {
+		return // it was already floating this way: leave it where it is
+	}
+	m.auto_float = true
+	w := min(max(t.req_w, t.min_w, MIN_W), area.w - 2 * ws_border(t))
+	h := min(max(t.req_h, t.min_h, MIN_H), area.h - ws_title_h(t) - ws_border(t))
+	w = max(w, t.min_w)
+	h = max(h, t.min_h)
+	t.x = area.x + max((area.w - w) / 2, 0)
+	t.y = area.y + ws_title_h(t) + max((area.h - h - ws_title_h(t)) / 2, 0)
+	if w != t.req_w || h != t.req_h {
+		t.req_w, t.req_h = w, h
+		if ws_alive(s, t) || s.listen == 0 {
+			send_configure(s, t, w, h)
+		}
+	}
+	raise_window(s, t)
+	s.dirty = true
 }
 
 // ws_tick is the once-per-frame housekeeping: prune dead windows, honour any
@@ -978,6 +1375,11 @@ ws_toggle_float :: proc(s: ^Server, t: ^Toplevel) {
 	}
 	m := ws_win(t)
 	m.floating = !m.floating
+	m.auto_float = false
+	m.snap = .None
+	if t.maximized {
+		t.maximized = false
+	}
 	if m.floating {
 		if m.have_float {
 			t.x, t.y = m.float_rect[0], m.float_rect[1]
@@ -994,7 +1396,9 @@ ws_toggle_float :: proc(s: ^Server, t: ^Toplevel) {
 	} else {
 		m.float_rect = {t.x, t.y, t.req_w, t.req_h}
 		m.have_float = true
+		t.last_cfg_w = -1
 	}
+	ws_restack(s)
 	s.needs_layout = true
 	s.dirty = true
 	note(s, fmt.tprintf("%s %s", title_of(t), m.floating ? "floating" : "tiled"))
@@ -1849,6 +2253,9 @@ ws_selftest :: proc() -> int {
 		ws_check(hw == 1280 && hh == 720, "the host output follows the nested canvas")
 		ws_sync_host(s, 1600, 940)
 	}
+
+	// --- the interaction model (ux_test.odin) -----------------------------
+	ux_selftest(s, c)
 
 	fmt.printfln("wm --selftest: %d passed, %d failed", ws_test_pass, ws_test_fail)
 	return ws_test_fail == 0 ? 0 : 1

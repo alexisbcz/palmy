@@ -37,10 +37,17 @@ Edge :: enum u8 {
 }
 Edges :: bit_set[Edge;u8]
 
+// Drag is what the pointer is doing to a window while a button is held.
+// `Armed` is a press on a title bar that has not travelled far enough to be
+// a move yet (UX.md P0-1): a click must never re-tile anything, so nothing
+// changes until the pointer has moved. `Split` drags the boundary between
+// tiled columns or snapped neighbours.
 Drag :: enum u8 {
 	None,
 	Move,
 	Resize,
+	Armed,
+	Split,
 }
 
 Server :: struct {
@@ -98,6 +105,8 @@ Server :: struct {
 
 	status:       string,
 	status_at:    f64,
+	toast:        string,
+	toast_at:     f64,
 	cascade_at:   [2]int,
 }
 
@@ -246,6 +255,7 @@ client_free :: proc(s: ^Server, c: ^Client) {
 		}
 	}
 
+	cursor_client_gone(c)
 	delete(c.objs)
 	delete(c.out)
 	delete(c.out_fds)
@@ -389,34 +399,89 @@ sane_size :: proc(s: ^Server, t: ^Toplevel) {
 	t.req_h = clamp(t.req_h, 1, max(oh * 4, 4096))
 }
 
+// place_new_window decides where a window first appears (UX.md P0-13): on
+// the output under the pointer; centred when it is the first window of a
+// floating workspace, otherwise cascaded 32 px down-right from the last one
+// placed, wrapping before it reaches an edge; never under the bar, never off
+// the screen. A window larger than the work area is shrunk to it — and asked
+// to be that size — rather than centred off its edges.
 place_new_window :: proc(s: ^Server, t: ^Toplevel) {
 	ws_ensure(s)
 	sane_size(s, t)
+	s.cur_out = ws_output_at(s, s_pointer.x, s_pointer.y)
 	ws_apply_rules(s, t)
+	m := ws_win(t)
 
-	ox, oy, ow, oh := ws_output_rect(s, s.cur_out)
-	top := oy + ws_bar_h(s) + ws_title_h(t)
-	avail_h := oh - ws_bar_h(s)
-
-	switch {
-	case t.w >= ow - 40 || t.h >= avail_h - ws_title_h(t) - 40:
-		// Something nearly screen sized: centre it and let it be.
-		t.x = max(ox, ox + (ow - t.w) / 2)
-		t.y = max(top, oy + (oh - t.h) / 2)
-	case s.cfg.placement == .Center:
-		t.x = ox + max(0, (ow - t.w) / 2)
-		t.y = max(top, oy + (oh - t.h) / 2)
-	case s.cfg.placement == .Pointer:
-		t.x = s_pointer.x - t.w / 2
-		t.y = s_pointer.y - t.h / 2
-	case:
-		step := s.place_n % 6
-		t.x = ox + 56 + step * 44
-		t.y = top + 24 + step * 38
-		s.place_n += 1
+	oi := s.cur_out
+	if r, ok := rule_output(s, t); ok {
+		oi = r
 	}
-	clamp_window(s, t)
+	wa := ws_work_area(s, oi)
+	th := ws_title_h(t)
+	bw := ws_border(t)
+
+	// Shrink to the work area first: everything after this can assume the
+	// frame fits.
+	maxw := wa.w - 2 * bw
+	maxh := wa.h - th - bw
+	if t.req_w > maxw || t.req_h > maxh {
+		nw := max(min(t.req_w, maxw), t.min_w)
+		nh := max(min(t.req_h, maxh), t.min_h)
+		t.req_w, t.req_h = nw, nh
+		if ws_alive(s, t) {
+			send_configure(s, t, nw, nh)
+		}
+	}
+	fw := t.req_w + 2 * bw
+	fh := t.req_h + th + bw
+
+	placement := s.cfg.placement
+	switch m.placement_rule {
+	case 1:
+		placement = .Center
+	case 2:
+		placement = .Pointer
+	}
+	first := true
+	for o in s.stack {
+		if o != t && o.mapped && !o.minimized && ws_floating_now(s, o) {
+			first = false
+			break
+		}
+	}
+	fx, fy: int
+	switch {
+	case placement == .Center || (placement == .Cascade && first):
+		fx = wa.x + (wa.w - fw) / 2
+		fy = wa.y + (wa.h - fh) / 2
+		s.cascade_at = {fx, fy}
+	case placement == .Pointer:
+		fx = s_pointer.x - fw / 2
+		fy = s_pointer.y - th / 2
+	case:
+		step := 32
+		fx = s.cascade_at.x + step
+		fy = s.cascade_at.y + step
+		// Wrap before any edge, back to the top-left of the work area, so a
+		// tenth window does not end up half off the screen.
+		if s.cascade_at == {} || fx + fw > wa.x + wa.w || fy + fh > wa.y + wa.h || fx < wa.x || fy < wa.y {
+			s.place_n += 1
+			fx = wa.x + 48 + (s.place_n % 4) * 24
+			fy = wa.y + 32 + (s.place_n % 4) * 16
+		}
+		s.cascade_at = {fx, fy}
+	}
+	fx = clamp(fx, wa.x, max(wa.x, wa.x + wa.w - fw))
+	fy = clamp(fy, wa.y, max(wa.y, wa.y + wa.h - fh))
+	t.x = fx + bw
+	t.y = fy + th
 	s.needs_layout = true
+}
+
+// ws_floating_now says whether a window is placed by hand rather than by the
+// layout, on the workspace the user is looking at.
+ws_floating_now :: proc(s: ^Server, t: ^Toplevel) -> bool {
+	return !ws_in_layout(s, t)
 }
 
 clamp_window :: proc(s: ^Server, t: ^Toplevel) {
@@ -428,36 +493,73 @@ clamp_window :: proc(s: ^Server, t: ^Toplevel) {
 	t.y = min(t.y, oy + oh - 40)
 }
 
-// raise_window moves a window to the top of the *stacking* order. Under a
-// tiling layout the tiled windows do not overlap, so raising one of them must
-// not lift it over the floating windows — those always stay on top.
+// raise_window moves a window to the top of its stacking band (ws_layer):
+// a tiled window rises above the other tiled ones but stays under every
+// floating window, and nothing rises above an always-on-top one.
 raise_window :: proc(s: ^Server, t: ^Toplevel) {
 	for w, i in s.stack {
 		if w != t {
 			continue
 		}
 		ordered_remove(&s.stack, i)
-		if wm_tiled_now(s, t) {
-			pos := len(s.stack)
-			for other, j in s.stack {
-				if ws_floating(other) {
-					pos = j
-					break
-				}
+		band := ws_layer(s, t)
+		pos := len(s.stack)
+		for other, j in s.stack {
+			if ws_layer(s, other) > band {
+				pos = j
+				break
 			}
-			inject_at(&s.stack, pos, t)
-		} else {
-			append(&s.stack, t)
 		}
+		inject_at(&s.stack, pos, t)
 		s.dirty = true
 		return
 	}
 }
 
+// lower_window sends a window to the bottom of its band (middle-click on a
+// title bar, UX.md P0-3).
+lower_window :: proc(s: ^Server, t: ^Toplevel) {
+	for w, i in s.stack {
+		if w != t {
+			continue
+		}
+		ordered_remove(&s.stack, i)
+		band := ws_layer(s, t)
+		pos := 0
+		for other, j in s.stack {
+			if ws_layer(s, other) >= band {
+				pos = j
+				break
+			}
+			pos = j + 1
+		}
+		inject_at(&s.stack, pos, t)
+		s.dirty = true
+		if s.focus == t {
+			// Lowering the focused window hands focus to what is now on top,
+			// or the window would keep the keyboard from under the others.
+			if top := topmost_other(s, nil); top != nil && top != t {
+				focus_window(s, top)
+			}
+		}
+		return
+	}
+}
+
+focus_mru: u64
+
 focus_window :: proc(s: ^Server, t: ^Toplevel) {
 	if t != nil {
-		t.minimized = false
+		if t.minimized {
+			t.minimized = false
+			anim_restore(s, t)
+			s.needs_layout = true
+		}
 		raise_window(s, t)
+		m := ws_win(t)
+		focus_mru += 1
+		m.mru = focus_mru
+		m.urgent = false
 	}
 	if s.focus == t {
 		if t != nil {
@@ -477,6 +579,52 @@ focus_window :: proc(s: ^Server, t: ^Toplevel) {
 		set_kbd_focus(s, t.xdg != nil ? t.xdg.surf : nil)
 	} else {
 		set_kbd_focus(s, nil)
+	}
+	s.dirty = true
+}
+
+// map_focus is the focus decision for a window that has just mapped
+// (UX.md P0-13, `focus_new`). A window the user did not just ask for, that
+// maps while they are typing, opens behind the focused one with its taskbar
+// entry marked instead of taking the rest of their sentence.
+map_focus :: proc(s: ^Server, t: ^Toplevel) {
+	m := ws_win(t)
+	take := true
+	switch s.cfg.focus_new {
+	case .Always:
+		take = true
+	case .Never:
+		take = s.focus == nil
+	case .Smart:
+		now := wall_now()
+		launched := now - ix.launch_at < 2.0
+		typing := now - ix.typed_at < 1.0
+		take = s.focus == nil || launched || !typing
+	}
+	if m.no_focus {
+		take = false
+	}
+	if take {
+		focus_window(s, t)
+		return
+	}
+	// Behind the focused window: just under it in the same band, so it is
+	// on screen but does not cover what the user is working in.
+	m.urgent = true
+	if f := s.focus; f != nil {
+		raise_window(s, t)
+		for w, i in s.stack {
+			if w == t {
+				ordered_remove(&s.stack, i)
+				break
+			}
+		}
+		for w, i in s.stack {
+			if w == f {
+				inject_at(&s.stack, i, t)
+				break
+			}
+		}
 	}
 	s.dirty = true
 }
@@ -521,6 +669,9 @@ unmap_window :: proc(s: ^Server, t: ^Toplevel) {
 	if t == nil {
 		return
 	}
+	if t.mapped && ws_on_current(s, t) && !t.minimized {
+		anim_close(s, t)
+	}
 	ws_detach(s, t)
 	t.mapped = false
 	t.resizing = false
@@ -534,6 +685,7 @@ unmap_window :: proc(s: ^Server, t: ^Toplevel) {
 		s.hover_t = nil
 		s.hover_btn = 0
 	}
+	ix_forget(s, t)
 	ws_drop_pointer(s, t)
 	for &w in s.workspaces {
 		if w.last_focus == t {
@@ -550,41 +702,56 @@ unmap_window :: proc(s: ^Server, t: ^Toplevel) {
 		if t.xdg != nil && s.kbd_surf == t.xdg.surf {
 			s.kbd_surf = nil
 		}
-		focus_window(s, topmost_other(s, t))
+		focus_window(s, mru_next(s, t))
 	}
+	ix_note_reflow(s)
 	s.needs_layout = true
 	s.dirty = true
 }
 
-set_maximized :: proc(s: ^Server, t: ^Toplevel, on: bool) {
-	if on == t.maximized {
+// mru_next is the window focus falls back to when the focused one goes
+// away: the one used most recently, which is what the user was in before.
+mru_next :: proc(s: ^Server, skip: ^Toplevel) -> ^Toplevel {
+	best: ^Toplevel
+	best_mru: u64
+	for t in s.stack {
+		if t == skip || !t.mapped || t.minimized {
+			continue
+		}
+		m := ws_win(t)
+		if best == nil || m.mru > best_mru {
+			best, best_mru = t, m.mru
+		}
+	}
+	if best == nil {
+		return topmost_other(s, skip)
+	}
+	return best
+}
+
+// minimize_window hides a window to the taskbar, from any entry point (the
+// button, Super+N, Super+Down, the window menu, the taskbar, the client).
+minimize_window :: proc(s: ^Server, t: ^Toplevel) {
+	if t == nil || t.minimized {
 		return
 	}
-	if on {
-		t.saved = {t.x, t.y, t.req_w, t.req_h}
-		t.maximized = true
-		oi := ws_output_at(s, t.x + t.w / 2, t.y)
-		ox, oy, ow, oh := ws_output_rect(s, oi)
-		bw := ws_border(t)
-		th := ws_title_h(t)
-		w := ow - 2 * bw
-		h := oh - ws_bar_h(s) - th - bw
-		t.req_w, t.req_h = w, h
-		t.x, t.y = ox + bw, oy + ws_bar_h(s) + th
-		t.anchor_x, t.anchor_y = false, false
-		send_configure(s, t, w, h)
-	} else {
-		t.maximized = false
-		t.x, t.y = t.saved[0], t.saved[1]
-		t.req_w, t.req_h = max(t.saved[2], MIN_W), max(t.saved[3], MIN_H)
-		send_configure(s, t, t.req_w, t.req_h)
+	anim_minimize(s, t)
+	t.minimized = true
+	if s.drag_t == t {
+		ws_cancel_drag(s)
 	}
+	if s.focus == t {
+		focus_window(s, mru_next(s, t))
+	}
+	ix_note_reflow(s)
 	s.needs_layout = true
 	s.dirty = true
+	note(s, fmt.tprintf("minimised %s", title_of(t)))
 }
 
 close_window :: proc(s: ^Server, t: ^Toplevel) {
 	if t == nil {
+		toast(s, "nothing to close")
 		return
 	}
 	event(t.client, t.id, 1) // xdg_toplevel.close
@@ -611,19 +778,21 @@ cycle_focus :: proc(s: ^Server, backwards: bool) {
 	step := backwards ? -1 : 1
 	next := at < 0 ? (backwards ? len(live) - 1 : 0) : (at + step + len(live)) % len(live)
 	focus_window(s, live[next])
+	ix_reveal(s, live[next])
 	note(s, fmt.tprintf("focus %s", title_of(live[next])))
 }
 
+// begin_move is xdg_toplevel.move: the client asked for an interactive move
+// on a press it received, so the move starts at once, with no travel
+// threshold. A maximized, snapped or tiled window is restored under the
+// pointer first (P0-4).
 begin_move :: proc(s: ^Server, t: ^Toplevel) {
 	if t == nil {
 		return
 	}
-	ws_float_for_drag(s, t)
-	s.drag = .Move
-	s.drag_t = t
-	s.drag_from = s_pointer
-	s.drag_orig = {t.x, t.y, t.w, t.h}
 	focus_window(s, t)
+	ix_begin_drag(s, t, .Move, {})
+	ix_start_move(s, t)
 }
 
 begin_resize_edges :: proc(s: ^Server, t: ^Toplevel, edges: u32) {
@@ -648,20 +817,30 @@ begin_resize_edges :: proc(s: ^Server, t: ^Toplevel, edges: u32) {
 	case:
 		return
 	}
-	ws_float_for_drag(s, t)
-	s.drag = .Resize
-	s.drag_t = t
-	s.drag_edges = e
-	s.drag_from = s_pointer
-	s.drag_orig = {t.x, t.y, t.w, t.h}
-	t.resizing = true
 	focus_window(s, t)
+	ws_float_for_drag(s, t)
+	ix_begin_drag(s, t, .Resize, e)
 }
 
+// note records what the window manager just did. It is a log line and the
+// debug HUD's last line, not a toast: most actions have a visible result,
+// and announcing each one in the bar was noise (UX.md 1.22).
 note :: proc(s: ^Server, msg: string) {
 	delete(s.status)
 	s.status = strings.clone(msg)
 	s.status_at = wall_now()
+	log_line("note: %s", msg)
+}
+
+// toast is for the few actions with no other visible result (a reload,
+// "nothing to close", a command that is not installed): a small card under
+// the bar for two seconds.
+toast :: proc(s: ^Server, msg: string) {
+	note(s, msg)
+	delete(s.toast)
+	s.toast = strings.clone(msg)
+	s.toast_at = wall_now()
+	s.dirty = true
 }
 
 wall_now :: proc() -> f64 {
@@ -684,95 +863,6 @@ title_of :: proc(t: ^Toplevel) -> string {
 // ---------------------------------------------------------------------------
 // Geometry
 // ---------------------------------------------------------------------------
-
-content_rect :: proc(t: ^Toplevel) -> p.Rect {
-	return {f32(t.x), f32(t.y), f32(t.w), f32(t.h)}
-}
-
-// The title bar height and the border width come from the config, and a rule
-// can switch either off for one application, so these are per window.
-title_rect :: proc(t: ^Toplevel) -> p.Rect {
-	bw := ws_border(t)
-	th := ws_title_h(t)
-	return {f32(t.x - bw), f32(t.y - th), f32(t.w + 2 * bw), f32(th)}
-}
-
-frame_rect :: proc(t: ^Toplevel) -> p.Rect {
-	bw := ws_border(t)
-	th := ws_title_h(t)
-	return {f32(t.x - bw), f32(t.y - th), f32(t.w + 2 * bw), f32(t.h + th + bw)}
-}
-
-// The three frame buttons, right to left: close, maximise, minimise.
-button_rect :: proc(t: ^Toplevel, which: int) -> p.Rect {
-	tr := title_rect(t)
-	size := f32(20)
-	gap := f32(6)
-	right := tr.x + tr.w - 8
-	x := right - f32(which) * (size + gap) - size
-	return {x, tr.y + (tr.h - size) / 2, size, size}
-}
-
-Region :: enum u8 {
-	None,
-	Title,
-	Content,
-	Close,
-	Maximise,
-	Minimise,
-	Edge,
-}
-
-hit_window :: proc(s: ^Server, t: ^Toplevel, mx, my: int) -> (Region, Edges) {
-	px := f32(mx)
-	py := f32(my)
-	fr := frame_rect(t)
-	outer := p.rect_inset(fr, -GRAB)
-	if !p.rect_contains(outer, px, py) {
-		return .None, {}
-	}
-	if !p.rect_contains(fr, px, py) {
-		e: Edges
-		if px < fr.x + GRAB {e += {.Left}}
-		if px > fr.x + fr.w - GRAB {e += {.Right}}
-		if py < fr.y + GRAB {e += {.Top}}
-		if py > fr.y + fr.h - GRAB {e += {.Bottom}}
-		if e == {} {
-			return .None, {}
-		}
-		return .Edge, e
-	}
-	// Inside the frame: the bottom and side strips are still resize grips.
-	e: Edges
-	if px < fr.x + GRAB {e += {.Left}}
-	if px > fr.x + fr.w - GRAB {e += {.Right}}
-	if py > fr.y + fr.h - GRAB {e += {.Bottom}}
-	if py < fr.y + 3 {e += {.Top}}
-	if e != {} {
-		return .Edge, e
-	}
-	for i in 0 ..< 3 {
-		if p.rect_contains(button_rect(t, i), px, py) {
-			return i == 0 ? .Close : (i == 1 ? .Maximise : .Minimise), {}
-		}
-	}
-	if p.rect_contains(title_rect(t), px, py) {
-		return .Title, {}
-	}
-	return .Content, {}
-}
-
-window_at :: proc(s: ^Server, mx, my: int) -> (^Toplevel, Region, Edges) {
-	#reverse for t in s.stack {
-		if !t.mapped || t.minimized {
-			continue
-		}
-		if r, e := hit_window(s, t, mx, my); r != .None {
-			return t, r, e
-		}
-	}
-	return nil, .None, {}
-}
 
 // ---------------------------------------------------------------------------
 // Input
@@ -864,199 +954,6 @@ BTN_LEFT :: u32(0x110)
 BTN_RIGHT :: u32(0x111)
 BTN_MIDDLE :: u32(0x112)
 
-handle_pointer :: proc(s: ^Server, app: ^p.App, scale: f32) {
-	in_ := &app.win.input
-	mp := [2]int{int(in_.mouse.x * scale), int(in_.mouse.y * scale)}
-	s_pointer = mp
-
-	// A drag owns the pointer outright, including off the surface: the drop
-	// target is decided by where the cursor is, not by what we are hovering.
-	if dnd_active() {
-		dnd_update(s, mp.x, mp.y, in_.down[.Left] || in_.down[.Middle] || in_.down[.Right])
-		return
-	}
-
-	if !in_.over_surface {
-		set_ptr_focus(s, nil, 0, 0)
-		s.hover_t = nil
-		s.hover_btn = 0
-		return
-	}
-
-	// A lock surface, or a layer surface above the windows, owns the pointer
-	// before the window manager's own hit testing gets a look.
-	if overlay_pointer(s, app, mp) {
-		s.hover_t = nil
-		s.hover_btn = 0
-		return
-	}
-
-	// An in-progress drag owns the pointer — unless the window it was
-	// dragging has gone. A client that crashes mid-drag used to leave
-	// `drag_t` pointing at freed memory and the next motion dereferenced it.
-	if s.drag != .None && (s.drag_t == nil || !ws_alive(s, s.drag_t) || !s.drag_t.mapped) {
-		s.drag = .None
-		s.drag_t = nil
-		s.drag_edges = {}
-	}
-	if s.drag != .None && s.drag_t != nil {
-		t := s.drag_t
-		d := mp - s.drag_from
-		if s.drag == .Move {
-			t.x = s.drag_orig[0] + d.x
-			t.y = s.drag_orig[1] + d.y
-			clamp_window(s, t)
-		} else {
-			ow, oh := s.drag_orig[2], s.drag_orig[3]
-			nw, nh := ow, oh
-			if .Right in s.drag_edges {nw = ow + d.x}
-			if .Left in s.drag_edges {nw = ow - d.x}
-			if .Bottom in s.drag_edges {nh = oh + d.y}
-			if .Top in s.drag_edges {nh = oh - d.y}
-			nw = max(nw, max(MIN_W, t.min_w))
-			nh = max(nh, max(MIN_H, t.min_h))
-			if t.max_w > 0 {nw = min(nw, t.max_w)}
-			if t.max_h > 0 {nh = min(nh, t.max_h)}
-			t.anchor_x = .Left in s.drag_edges
-			t.anchor_y = .Top in s.drag_edges
-			t.anchor_right = s.drag_orig[0] + ow
-			t.anchor_bottom = s.drag_orig[1] + oh
-			if nw != t.last_cfg_w || nh != t.last_cfg_h {
-				t.req_w, t.req_h = nw, nh
-				send_configure(s, t, nw, nh)
-			}
-		}
-		if in_.released[.Left] || !in_.down[.Left] {
-			if t.resizing {
-				t.resizing = false
-				send_configure(s, t, t.req_w, t.req_h)
-			}
-			if m, ok := ws_peek(t); ok && m.floating {
-				m.float_rect = {t.x, t.y, t.req_w, t.req_h}
-				m.have_float = true
-			}
-			s.drag = .None
-			s.drag_t = nil
-			s.drag_edges = {}
-		}
-		s.dirty = true
-		return
-	}
-
-	t, region, edges := window_at(s, mp.x, mp.y)
-	s.hover_t = t
-	s.hover_btn = 0
-	s.cur_out = ws_output_at(s, mp.x, mp.y)
-
-	// Focus follows the mouse when the config says so, which is the one
-	// setting people who have it never give up.
-	if s.cfg.focus_follows_mouse && t != nil && t != s.focus && region != .None {
-		focus_window(s, t)
-	}
-	switch region {
-	case .Close:
-		s.hover_btn = 1
-	case .Maximise:
-		s.hover_btn = 2
-	case .Minimise:
-		s.hover_btn = 3
-	case .None, .Title, .Content, .Edge:
-	}
-
-	// Pointer focus for clients: only the content area forwards input.
-	if region == .Content && t != nil && t.xdg != nil && t.xdg.surf != nil {
-		surf, lx, ly := pick_surface(t.xdg.surf, t.x, t.y, mp.x, mp.y)
-		if surf != nil {
-			if surf != s.ptr_surf {
-				set_ptr_focus(s, surf, lx, ly)
-			} else if in_.mouse_delta != {0, 0} {
-				ptr_motion(s, lx, ly)
-			}
-		} else {
-			set_ptr_focus(s, nil, 0, 0)
-		}
-	} else {
-		set_ptr_focus(s, nil, 0, 0)
-	}
-
-	// mod+drag moves, mod+right-drag resizes. Without this a window whose
-	// rule turned the title bar off could not be moved at all.
-	if t != nil && s.cfg.mod <= in_.mods && s.cfg.mod != {} {
-		if in_.pressed[.Left] {
-			ws_float_for_drag(s, t)
-			begin_move(s, t)
-			return
-		}
-		if in_.pressed[.Right] {
-			ws_float_for_drag(s, t)
-			focus_window(s, t)
-			s.drag = .Resize
-			s.drag_t = t
-			s.drag_edges = {.Right, .Bottom}
-			s.drag_from = mp
-			s.drag_orig = {t.x, t.y, t.w, t.h}
-			t.resizing = true
-			return
-		}
-	}
-
-	if in_.pressed[.Left] {
-		switch region {
-		case .Title:
-			ws_float_for_drag(s, t)
-			begin_move(s, t)
-			note(s, fmt.tprintf("moving %s", title_of(t)))
-		case .Edge:
-			ws_float_for_drag(s, t)
-			focus_window(s, t)
-			s.drag = .Resize
-			s.drag_t = t
-			s.drag_edges = edges
-			s.drag_from = mp
-			s.drag_orig = {t.x, t.y, t.w, t.h}
-			t.resizing = true
-			note(s, fmt.tprintf("resizing %s", title_of(t)))
-		case .Close:
-			focus_window(s, t)
-			close_window(s, t)
-		case .Maximise:
-			focus_window(s, t)
-			set_maximized(s, t, !t.maximized)
-		case .Minimise:
-			t.minimized = true
-			if s.focus == t {
-				focus_window(s, topmost_other(s, t))
-			}
-			s.needs_layout = true
-			note(s, fmt.tprintf("minimised %s", title_of(t)))
-		case .Content:
-			focus_window(s, t)
-			ptr_button(s, BTN_LEFT, true)
-		case .None:
-			focus_window(s, nil)
-		}
-	}
-	if in_.released[.Left] && region == .Content {
-		ptr_button(s, BTN_LEFT, false)
-	}
-	if in_.pressed[.Right] && region == .Content {
-		focus_window(s, t)
-		ptr_button(s, BTN_RIGHT, true)
-	}
-	if in_.released[.Right] && region == .Content {
-		ptr_button(s, BTN_RIGHT, false)
-	}
-	if in_.pressed[.Middle] && region == .Content {
-		ptr_button(s, BTN_MIDDLE, true)
-	}
-	if in_.released[.Middle] && region == .Content {
-		ptr_button(s, BTN_MIDDLE, false)
-	}
-	if in_.scroll != {0, 0} {
-		ptr_axis(s, in_.scroll.x, in_.scroll.y)
-	}
-}
-
 // mods_mask turns palmy's modifier set into the bitmask wl_keyboard.modifiers
 // carries, using this keymap's own modifier indices.
 mods_mask :: proc(s: ^Server, m: p.Modifiers, extra_shift: bool) -> u32 {
@@ -1113,85 +1010,6 @@ forward_key :: proc(s: ^Server, k: p.Key_Event) {
 	}
 }
 
-handle_keys :: proc(s: ^Server, app: ^p.App) {
-	if overlay_keys(s, app) {
-		return
-	}
-	in_ := &app.win.input
-	send_mods(s, mods_mask(s, in_.mods, false))
-
-	for k in in_.keys {
-		log_line("key sym 0x%x mods %v repeat %v", k.sym, k.mods, k.repeat)
-		if wm_shortcut(s, app, k) {
-			continue
-		}
-		forward_key(s, k)
-	}
-}
-
-// wm_shortcut consults the binding table the configuration produced. It
-// returns true when the key was consumed and must not reach the focused
-// client.
-//
-// There is no hardcoded binding left except one: Ctrl+Alt+Q leaves the
-// compositor. A config file that bound nothing at all would otherwise be a
-// trap, because --overlay takes the host keyboard exclusively.
-wm_shortcut :: proc(s: ^Server, app: ^p.App, k: p.Key_Event) -> bool {
-	if .Alt in k.mods && .Ctrl in k.mods && (k.sym == 'q' || k.sym == 'Q') {
-		p.quit_app(app)
-		return true
-	}
-
-	mods := k.mods - {.Caps}
-	if b := wm_bind_for(s, mods, k.sym); b != nil {
-		wm_do(s, app, b^)
-		return true
-	}
-
-	// Window mode is a sticky layer on top of the table: while it is on the
-	// bare arrow keys belong to the compositor rather than to the client.
-	if s.wm_mode {
-		switch k.sym {
-		case p.KEY_LEFT, p.KEY_RIGHT, p.KEY_UP, p.KEY_DOWN:
-			nudge(s, k.sym, .Shift in k.mods)
-			return true
-		case p.KEY_PAGE_UP:
-			grow(s, s.cfg.resize_step)
-			return true
-		case p.KEY_PAGE_DOWN:
-			grow(s, -s.cfg.resize_step)
-			return true
-		case p.KEY_ESCAPE:
-			s.wm_mode = false
-			note(s, "window mode off")
-			return true
-		}
-	}
-	return false
-}
-
-// wm_bind_for prefers a binding whose modifiers match exactly. An `ANY`
-// binding is the fallback, so `$mod, F11` and `ANY, F11` can coexist and the
-// modified one wins when the modifier is actually held.
-wm_bind_for :: proc(s: ^Server, mods: p.Modifiers, sym: u32) -> ^Cfg_Bind {
-	fallback: ^Cfg_Bind
-	for &b in s.cfg.binds {
-		if !cfg_sym_matches(b.sym, sym) {
-			continue
-		}
-		if b.any_mods {
-			if fallback == nil {
-				fallback = &b
-			}
-			continue
-		}
-		if b.mods == mods {
-			return &b
-		}
-	}
-	return fallback
-}
-
 dir_sym :: proc(d: Cfg_Dir) -> u32 {
 	switch d {
 	case .Left:
@@ -1221,6 +1039,7 @@ wm_do :: proc(s: ^Server, app: ^p.App, b: Cfg_Bind) {
 	switch b.act {
 	case .None:
 	case .Spawn:
+		ix.launch_at = wall_now()
 		spawn(s, b.argv)
 	case .Close:
 		close_window(s, s.focus)
@@ -1255,17 +1074,9 @@ wm_do :: proc(s: ^Server, app: ^p.App, b: Cfg_Bind) {
 	case .Toggle_Float:
 		ws_toggle_float(s, s.focus)
 	case .Toggle_Maximize:
-		if s.focus != nil {
-			set_maximized(s, s.focus, !s.focus.maximized)
-			note(s, s.focus.maximized ? "maximised" : "restored")
-		}
+		toggle_maximize(s, s.focus)
 	case .Minimize:
-		if t := s.focus; t != nil {
-			t.minimized = true
-			focus_window(s, topmost_other(s, t))
-			s.needs_layout = true
-			note(s, fmt.tprintf("minimised %s", title_of(t)))
-		}
+		minimize_window(s, s.focus)
 	case .Toggle_Tiling:
 		ws_toggle_tiling(s)
 	case .Next_Layout:
@@ -1282,6 +1093,14 @@ wm_do :: proc(s: ^Server, app: ^p.App, b: Cfg_Bind) {
 		ws_switch_rel(s, b.arg)
 	case .Move_To_Workspace:
 		ws_move_to(s, s.focus, b.arg - 1)
+	case .Move_To_Workspace_Follow:
+		if t := s.focus; t != nil {
+			ws_move_to(s, t, b.arg - 1)
+			ws_switch(s, b.arg - 1)
+			if ws_on_current(s, t) {
+				focus_window(s, t)
+			}
+		}
 	case .Move_To_Workspace_Rel:
 		ws_move_rel(s, s.focus, b.arg)
 	case .Cascade:
@@ -1289,11 +1108,39 @@ wm_do :: proc(s: ^Server, app: ^p.App, b: Cfg_Bind) {
 		note(s, "re-cascaded every window")
 	case .Window_Mode:
 		s.wm_mode = !s.wm_mode
-		note(s, s.wm_mode ? "window mode: arrows move, PgUp/PgDn resize" : "window mode off")
+		toast(s, s.wm_mode ? "window mode: arrows move, PgUp/PgDn resize, Esc leaves" : "window mode off")
 	case .Reload:
 		wm_reload(s)
 	case .Quit:
 		p.quit_app(app)
+	case .Snap_Dir:
+		snap_keyboard(s, Cfg_Dir(b.arg))
+	case .Toggle_Fullscreen:
+		toggle_fullscreen(s, s.focus)
+	case .Toggle_On_Top:
+		toggle_on_top(s, s.focus)
+	case .Toggle_Sticky:
+		toggle_sticky(s, s.focus)
+	case .Lower:
+		if s.focus != nil {
+			lower_window(s, s.focus)
+		}
+	case .Switcher:
+		switcher_open(s, b)
+	case .Overview:
+		overview_toggle(s)
+	case .Cheat_Sheet:
+		cheat_open(s)
+	case .Window_Menu:
+		if t := s.focus; t != nil {
+			tr := title_rect(t)
+			menu_open_window(s, t, int(tr.x) + 4, int(tr.y + tr.h))
+			// Opened from the keyboard, so the keyboard starts on an item.
+			menu.hover = 0
+		}
+	case .Debug_Hud:
+		s.cfg.debug_hud = !s.cfg.debug_hud
+		s.dirty = true
 	case .Session:
 		name := cfg_session_name(b.arg)
 		// On bare metal this compositor *is* the session, and ending it is
@@ -1309,8 +1156,37 @@ wm_do :: proc(s: ^Server, app: ^p.App, b: Cfg_Bind) {
 		// nested, this compositor is a guest on a live desktop.
 		fmt.printfln("wm: session intent %q — logged, not executed", name)
 		log_line("session intent %q (not executed)", name)
-		note(s, fmt.tprintf("%s: logged, not executed", name))
+		toast(s, fmt.tprintf("%s: logged, not executed", name))
 	}
+}
+
+// toggle_on_top pins a window above every ordinary one (P1-4).
+toggle_on_top :: proc(s: ^Server, t: ^Toplevel) {
+	if t == nil {
+		return
+	}
+	m := ws_win(t)
+	m.on_top = !m.on_top
+	ws_restack(s)
+	raise_window(s, t)
+	note(s, fmt.tprintf("%s %s", title_of(t), m.on_top ? "always on top" : "no longer on top"))
+}
+
+// toggle_sticky shows a window on every workspace: it travels with each
+// switch (ws_switch carries it over).
+toggle_sticky :: proc(s: ^Server, t: ^Toplevel) {
+	if t == nil {
+		return
+	}
+	m := ws_win(t)
+	m.sticky = !m.sticky
+	if m.sticky && ws_in_layout(s, t) {
+		// A window on every workspace cannot hold a cell in each layout.
+		m.floating = true
+		s.needs_layout = true
+	}
+	s.dirty = true
+	note(s, fmt.tprintf("%s %s", title_of(t), m.sticky ? "on all workspaces" : "on this workspace only"))
 }
 
 // wm_reload re-reads the configuration while the compositor is running. A
@@ -1351,11 +1227,11 @@ wm_reload :: proc(s: ^Server) {
 	}
 	switch {
 	case !s.cfg.loaded:
-		note(s, fmt.tprintf("no %s — built-in defaults", s.cfg.path))
+		toast(s, fmt.tprintf("no %s — built-in defaults", s.cfg.path))
 	case len(s.cfg.errors) > 0:
-		note(s, fmt.tprintf("config reloaded, %d problem(s)", len(s.cfg.errors)))
+		toast(s, fmt.tprintf("config reloaded, %d problem(s)", len(s.cfg.errors)))
 	case:
-		note(s, "config reloaded")
+		toast(s, "config reloaded")
 	}
 	fmt.printfln(
 		"wm: config %s (%d bindings, %d rules, %d workspaces)",
@@ -1491,7 +1367,7 @@ spawn :: proc(s: ^Server, argv_in: []string) -> (pid: linux.Pid, ok: bool) {
 	}
 	exe, found := cfg_which(argv_in[0])
 	if !found {
-		note(s, fmt.tprintf("%s: not found on $PATH", argv_in[0]))
+		toast(s, fmt.tprintf("%s is not installed", argv_in[0]))
 		log_line("spawn %q: not on $PATH", argv_in[0])
 		fmt.eprintfln("wm: %s: not found on $PATH", argv_in[0])
 		return
@@ -1515,7 +1391,7 @@ spawn :: proc(s: ^Server, argv_in: []string) -> (pid: linux.Pid, ok: bool) {
 		{command = argv, env = env[:], stdout = os.stderr, stderr = os.stderr},
 	)
 	if perr != nil {
-		note(s, fmt.tprintf("could not launch %s: %v", argv_in[0], perr))
+		toast(s, fmt.tprintf("could not launch %s: %v", argv_in[0], perr))
 		fmt.eprintfln("wm: could not launch %s: %v", argv_in[0], perr)
 		return
 	}
@@ -1527,522 +1403,6 @@ spawn :: proc(s: ^Server, argv_in: []string) -> (pid: linux.Pid, ok: bool) {
 // ---------------------------------------------------------------------------
 // Drawing
 // ---------------------------------------------------------------------------
-
-DESK_TOP :: 0x0b1020
-DESK_BOT :: 0x141c30
-BAR_BG :: 0x0a0a0c
-FRAME_ON :: 0x27272a
-FRAME_OFF :: 0x18181b
-EDGE_ON :: 0x52525b
-EDGE_OFF :: 0x27272a
-TEXT_ON :: 0xfafafa
-TEXT_OFF :: 0x8b8b93
-ACCENT :: 0x6366f1
-
-// build_desktop rasterizes the wallpaper once per resize.
-build_desktop :: proc(s: ^Server, w, h: int) {
-	if s.bg_w == w && s.bg_h == h && s.bg != nil {
-		return
-	}
-	delete(s.bg)
-	s.bg = make([]u32, w * h)
-	s.bg_w, s.bg_h = w, h
-	bc := p.canvas_from(s.bg, w, h)
-	defer p.canvas_destroy(&bc)
-	p.fill_rect_paint(&bc, {0, 0, f32(w), f32(h)}, p.gradient(p.hex(DESK_TOP), p.hex(DESK_BOT), true))
-	for y := ws_bar_h(s) + 16; y < h; y += 32 {
-		for x := 16; x < w; x += 32 {
-			p.blend(&bc, x, y, p.hex(0x2a3550), 0.5)
-		}
-	}
-	// A soft glow behind the middle, so the desktop is not perfectly flat.
-	p.drop_shadow(&bc, {f32(w) / 2 - 240, f32(h) / 2 - 150, 480, 300}, {180, 180, 180, 180}, 320, 0, {0, 0}, p.hexa(0x4338ca22))
-}
-
-// draw paints every enabled output in turn. With one output — which is all
-// the nested host can give us — this is exactly what it did before: the
-// output's rectangle is the whole canvas.
-draw :: proc(s: ^Server, app: ^p.App, cv: ^p.Canvas) {
-	ws_ensure(s)
-
-	p.reset_clip(cv)
-	build_desktop(s, cv.w, cv.h)
-	copy(cv.px[:cv.w * cv.h], s.bg)
-
-	layer_arrange(s)
-	if lock_active() {
-		lock_draw(s, app, cv)
-		return
-	}
-	layer_draw(s, cv, false)
-
-	for o, oi in s.outputs {
-		if !o.enabled {
-			continue
-		}
-		idx := ws_active_of_output(s, oi)
-		p.reset_clip(cv)
-		p.push_clip(cv, {f32(o.x), f32(o.y), f32(o.w), f32(o.h)})
-
-		draw_bar(s, app, cv, oi, idx)
-
-		stack := ws_stack(s, idx)
-		for t in stack {
-			if !t.mapped || t.minimized {
-				continue
-			}
-			draw_window(s, app, cv, t)
-		}
-		if len(stack) == 0 && !session.kiosk {
-			// The welcome card is for an empty *session*. A workspace you
-			// have just switched to that happens to be empty, while three
-			// windows run next door, gets a quiet label instead.
-			if ws_total_windows(s) == 0 {
-				draw_welcome(s, app, cv, o)
-			} else {
-				draw_empty_workspace(s, app, cv, o, idx)
-			}
-		}
-		// Minimised windows get a small dock at the bottom.
-		draw_dock(s, app, cv, idx, o)
-		p.pop_clip(cv)
-	}
-	p.reset_clip(cv)
-	layer_draw(s, cv, true)
-
-	// The drag icon follows the cursor above everything, including overlays.
-	dnd_draw(s, cv)
-}
-
-draw_bar :: proc(s: ^Server, app: ^p.App, cv: ^p.Canvas, oi, ws_idx: int) {
-	if !s.cfg.bar {
-		return
-	}
-	f := &app.fonts
-	o := s.outputs[oi]
-	X := f32(o.x)
-	Y := f32(o.y)
-	W := f32(o.w)
-	H := f32(s.cfg.bar_h)
-	p.fill_rect(cv, {X, Y, W, H}, p.hex(BAR_BG))
-	p.fill_rect(cv, {X, Y + H - 1, W, 1}, p.hex(0x27272a))
-
-	mid := Y + H / 2 + 4.5
-	p.fill_round_rect(cv, {X + 12, Y + H / 2 - 7, 14, 14}, {4, 4, 4, 4}, p.hex(ACCENT))
-	x := X + 34
-	x += p.draw_text(cv, f, "palmy wm", x, mid, 13, p.hex(TEXT_ON), .Sans, .Semibold)
-	x += 12
-
-	// The workspace strip. A daily driver has to answer "where am I and what
-	// else is running" without being asked, so every workspace that exists is
-	// drawn: filled when it is the one on screen, outlined when it holds
-	// windows you cannot see, and dimmed when it is empty.
-	for w, i in s.workspaces {
-		if w.output != oi {
-			continue
-		}
-		lw := max(p.text_width(f, w.name, 11, .Sans, .Semibold) + 14, 22)
-		r := p.Rect{x, Y + H / 2 - 9, lw, 18}
-		occupied := ws_count_on(s, i) > 0
-		switch {
-		case i == ws_idx:
-			p.fill_round_rect(cv, r, {5, 5, 5, 5}, p.hex(ACCENT))
-		case occupied:
-			p.fill_round_rect(cv, r, {5, 5, 5, 5}, p.hex(0x1e1b4b))
-			p.stroke_round_rect(cv, r, {5, 5, 5, 5}, 1, p.hex(0x4338ca))
-		case:
-			p.stroke_round_rect(cv, r, {5, 5, 5, 5}, 1, p.hex(0x27272a))
-		}
-		col := u32(i == ws_idx ? 0xffffff : (occupied ? 0xc7d2fe : 0x52525b))
-		tw := p.text_width(f, w.name, 11, .Sans, .Semibold)
-		p.draw_text(cv, f, w.name, r.x + (lw - tw) / 2, Y + H / 2 + 4, 11, p.hex(col), .Sans, .Semibold)
-		x += lw + 4
-	}
-	x += 10
-
-	// The layout badge: which automatic layout this workspace is running, or
-	// that it is floating.
-	ws := &s.workspaces[ws_idx]
-	mode := ws.tiling ? tile_layout_name(ws.layout) : "floating"
-	mw := p.text_width(f, mode, 11, .Sans, .Medium) + 14
-	p.fill_round_rect(cv, {x, Y + H / 2 - 9, mw, 18}, {5, 5, 5, 5}, p.hex(0x18181b))
-	p.stroke_round_rect(cv, {x, Y + H / 2 - 9, mw, 18}, {5, 5, 5, 5}, 1, p.hex(0x3f3f46))
-	p.draw_text(cv, f, mode, x + 7, Y + H / 2 + 4, 11, p.hex(0xa5b4fc), .Sans, .Medium)
-	x += mw + 10
-
-	mapped := 0
-	for t in ws_stack(s, ws_idx) {
-		if t.mapped {mapped += 1}
-	}
-	x += p.draw_text(
-		cv,
-		f,
-		fmt.tprintf(
-			"%d window%s  %d client%s  %.0f fps",
-			mapped,
-			mapped == 1 ? "" : "s",
-			len(s.clients),
-			len(s.clients) == 1 ? "" : "s",
-			app.fps,
-		),
-		x,
-		mid,
-		12,
-		p.hex(TEXT_OFF),
-	)
-
-	if s.wm_mode {
-		lbl := "WINDOW MODE"
-		w := p.text_width(f, lbl, 11, .Sans, .Semibold) + 16
-		p.fill_round_rect(cv, {x + 14, Y + H / 2 - 9, w, 18}, {5, 5, 5, 5}, p.hex(ACCENT))
-		p.draw_text(cv, f, lbl, x + 22, Y + H / 2 + 4, 11, p.hex(0xffffff), .Sans, .Semibold)
-		x += w + 18
-	}
-
-	// The clock is the rightmost thing, in local time (clock.odin); the
-	// keyboard layout sits just left of it whenever it is not plain US, or
-	// there is more than one to switch between, so a French keyboard is never
-	// a surprise. The legend or a status note fills what is left.
-	right := X + W
-	{
-		local, _ := clock_now()
-		ct := clock_text(local)
-		cw := p.text_width(f, ct, 12, .Sans, .Medium)
-		p.draw_text(cv, f, ct, right - cw - 12, mid, 12, p.hex(TEXT_ON), .Sans, .Medium)
-		right -= cw + 24
-		if session.bare && (kbd.label != "us" || xkb_km.ngroups > 1) && kbd.label != "" {
-			lbl := strings.to_upper(kbd.label, context.temp_allocator)
-			lw := p.text_width(f, lbl, 11, .Sans, .Semibold) + 14
-			r := p.Rect{right - lw, Y + H / 2 - 9, lw, 18}
-			p.stroke_round_rect(cv, r, {5, 5, 5, 5}, 1, p.hex(0x3f3f46))
-			p.draw_text(cv, f, lbl, r.x + 7, Y + H / 2 + 4, 11, p.hex(0xa5b4fc), .Sans, .Semibold)
-			right -= lw + 10
-		}
-	}
-	W = right - X
-	if s.status != "" && wall_now() - s.status_at < 3.0 {
-		tw := p.text_width(f, s.status, 12, .Sans, .Medium)
-		p.fill_round_rect(cv, {right - tw - 26, Y + H / 2 - 10, tw + 20, 20}, {6, 6, 6, 6}, p.hex(0x1e1b4b))
-		p.draw_text(cv, f, s.status, right - tw - 16, Y + H / 2 + 4, 12, p.hex(0xc7d2fe), .Sans, .Medium)
-	} else {
-		// Entries come off the end until the legend fits next to the clock,
-		// so a narrow screen shows the first few rather than none.
-		hint := bar_hint(s)
-		hw := p.text_width(f, hint, 11)
-		for hw >= W - (x - X) - 24 {
-			cut := strings.last_index(hint, "  ")
-			if cut <= 0 {
-				hint = ""
-				break
-			}
-			hint = hint[:cut]
-			hw = p.text_width(f, hint, 11)
-		}
-		if hint != "" {
-			p.draw_text(cv, f, hint, right - hw - 12, mid, 11, p.hex(0x6b6b76))
-		}
-	}
-}
-
-// bar_hint is built from the live binding table rather than from a string
-// literal, so it cannot describe keys the configuration no longer binds.
-bar_hint :: proc(s: ^Server) -> string {
-	b := strings.builder_make(context.temp_allocator)
-	shown := 0
-	for bind in s.cfg.binds {
-		if !bind.any_mods {
-			continue
-		}
-		name := ""
-		for e in CFG_KEYNAMES {
-			if e.sym == bind.sym {
-				name = e.name
-				break
-			}
-		}
-		if name == "" {
-			continue
-		}
-		if shown > 0 {
-			strings.write_string(&b, "  ")
-		}
-		strings.write_string(&b, name)
-		strings.write_byte(&b, ' ')
-		strings.write_string(&b, bind.label)
-		shown += 1
-	}
-	if shown == 0 {
-		return "no bindings configured"
-	}
-	return strings.to_string(b)
-}
-
-draw_welcome :: proc(s: ^Server, app: ^p.App, cv: ^p.Canvas, o: Ws_Output) {
-	f := &app.fonts
-	cx := f32(o.x) + f32(o.w) / 2
-	cy := f32(o.y) + f32(o.h) / 2
-	first := "no bindings configured"
-	// On bare metal every modifier reaches us, so the hint can name the real
-	// binding — and it should name one whose program is actually installed.
-	if session.bare {
-		for bind in s.cfg.binds {
-			if bind.act != .Spawn || len(bind.argv) == 0 || bind.any_mods {
-				continue
-			}
-			if _, found := cfg_which(bind.argv[0]); !found {
-				continue
-			}
-			key := ""
-			for e in CFG_KEYNAMES {
-				if e.sym == bind.sym {
-					key = e.name
-					break
-				}
-			}
-			if key == "" {
-				continue
-			}
-			mods := ""
-			if .Super in bind.mods {mods = strings.concatenate({mods, "SUPER+"}, context.temp_allocator)}
-			if .Ctrl in bind.mods {mods = strings.concatenate({mods, "CTRL+"}, context.temp_allocator)}
-			if .Alt in bind.mods {mods = strings.concatenate({mods, "ALT+"}, context.temp_allocator)}
-			if .Shift in bind.mods {mods = strings.concatenate({mods, "SHIFT+"}, context.temp_allocator)}
-			first = fmt.tprintf("press %s%s to run %s", mods, key, bind.argv[0])
-			break
-		}
-	}
-	for bind in s.cfg.binds {
-		if session.bare && first != "no bindings configured" {
-			break
-		}
-		if bind.act == .Spawn && bind.any_mods {
-			for e in CFG_KEYNAMES {
-				if e.sym == bind.sym {
-					first = fmt.tprintf("press %s to run %s inside it", e.name, bind.argv[0])
-					break
-				}
-			}
-			break
-		}
-	}
-	lines := [?]struct {
-		text: string,
-		size: f32,
-		wt:   p.Font_Weight,
-		col:  u32,
-	} {
-		{session.bare ? "Palmframe" : "A Wayland compositor, nested", 26, .Bold, 0xe8e8ef},
-		{fmt.tprintf("listening on %s", s.path), 13, .Regular, 0x8b8b93},
-		{first, 14, .Medium, 0xa5b4fc},
-		{
-			s.cfg.loaded 			? fmt.tprintf("configuration: %s", s.cfg.path) 			: fmt.tprintf("no %s — built-in defaults", s.cfg.path),
-			12,
-			.Regular,
-			0x6b6b76,
-		},
-	}
-	y := cy - 48
-	for l in lines {
-		w := p.text_width(f, l.text, l.size, .Sans, l.wt)
-		p.draw_text(cv, f, l.text, cx - w / 2, y, l.size, p.hex(l.col), .Sans, l.wt)
-		y += l.size + 18
-	}
-}
-
-draw_empty_workspace :: proc(s: ^Server, app: ^p.App, cv: ^p.Canvas, o: Ws_Output, idx: int) {
-	f := &app.fonts
-	label := fmt.tprintf("workspace %s", s.workspaces[idx].name)
-	w := p.text_width(f, label, 15, .Sans, .Medium)
-	cx := f32(o.x) + f32(o.w) / 2
-	cy := f32(o.y) + f32(o.h) / 2
-	p.draw_text(cv, f, label, cx - w / 2, cy, 15, p.hex(0x4b4b57), .Sans, .Medium)
-	sub := "empty"
-	sw := p.text_width(f, sub, 12)
-	p.draw_text(cv, f, sub, cx - sw / 2, cy + 22, 12, p.hex(0x3a3a44))
-}
-
-draw_dock :: proc(s: ^Server, app: ^p.App, cv: ^p.Canvas, ws_idx: int, o: Ws_Output) {
-	f := &app.fonts
-	stack := ws_stack(s, ws_idx)
-	n := 0
-	for t in stack {
-		if t.mapped && t.minimized {n += 1}
-	}
-	if n == 0 {
-		return
-	}
-	x := f32(o.x) + 16
-	y := f32(o.y + o.h) - 38
-	for t in stack {
-		if !t.mapped || !t.minimized {
-			continue
-		}
-		label := title_of(t)
-		w := min(p.text_width(f, label, 12, .Sans, .Medium) + 24, 220)
-		p.fill_round_rect(cv, {x, y, w, 26}, {7, 7, 7, 7}, p.hex(0x1f1f25))
-		p.stroke_round_rect(cv, {x, y, w, 26}, {7, 7, 7, 7}, 1, p.hex(0x3f3f46))
-		p.push_clip(cv, {x + 10, y, w - 20, 26})
-		p.draw_text(cv, f, label, x + 12, y + 17, 12, p.hex(0xc7c7cf), .Sans, .Medium)
-		p.pop_clip(cv)
-		x += w + 8
-	}
-}
-
-draw_window :: proc(s: ^Server, app: ^p.App, cv: ^p.Canvas, t: ^Toplevel) {
-	// A kiosk client is the whole screen: no shadow, no ring, no frame.
-	if session.kiosk {
-		p.push_clip(cv, content_rect(t))
-		if t.xdg != nil && t.xdg.surf != nil {
-			blit_surface(cv, t.xdg.surf, t.x, t.y)
-		}
-		p.pop_clip(cv)
-		return
-	}
-	f := &app.fonts
-	focused := s.focus == t
-	fr := frame_rect(t)
-	th := f32(ws_title_h(t))
-	bw := f32(ws_border(t))
-	rad := p.Radius{th > 0 ? 9 : 4, th > 0 ? 9 : 4, 0, 0}
-
-	ring_shadow(
-		cv,
-		fr,
-		{rad[0], rad[1], 3, 3},
-		focused ? 26 : 14,
-		focused ? 2 : 0,
-		{0, focused ? 10 : 5},
-		p.hexa(focused ? 0x00000099 : 0x00000066),
-	)
-
-	// Frame plate. Only the title bar and the border are painted: the
-	// client's own pixels cover everything inside.
-	plate := p.hex(focused ? FRAME_ON : FRAME_OFF)
-	if th > 0 {
-		p.fill_round_rect(cv, {fr.x, fr.y, fr.w, th + 10}, rad, plate)
-	}
-	if bw > 0 {
-		edge := p.hex(focused ? s.cfg.border_focus : s.cfg.border_unfocus)
-		p.fill_rect(cv, {fr.x, f32(t.y), bw, f32(t.h) + bw}, edge)
-		p.fill_rect(cv, {f32(t.x + t.w), f32(t.y), bw, f32(t.h) + bw}, edge)
-		p.fill_rect(cv, {fr.x, f32(t.y + t.h), fr.w, bw}, edge)
-		if th == 0 {
-			p.fill_rect(cv, {fr.x, fr.y, fr.w, bw}, edge)
-		}
-	}
-
-	// Client pixels.
-	cr := content_rect(t)
-	p.push_clip(cv, cr)
-	if t.xdg != nil && t.xdg.surf != nil {
-		blit_surface(cv, t.xdg.surf, t.x, t.y)
-	}
-	p.pop_clip(cv)
-
-	// Title.
-	if th <= 0 {
-		p.stroke_round_rect(cv, fr, rad, 1, p.hex(focused ? s.cfg.border_focus : s.cfg.border_unfocus))
-		if focused {
-			p.stroke_round_rect(cv, p.rect_inset(fr, -1.5), rad, 1, p.hexa(s.cfg.border_focus << 8 | 0x66))
-		}
-		return
-	}
-	tr := title_rect(t)
-	p.push_clip(cv, tr)
-	if focused {
-		p.fill_rect(cv, {tr.x, tr.y + tr.h - 1, tr.w, 1}, p.hex(0x3f3f46))
-	}
-	label := title_of(t)
-	avail := tr.w - 120
-	txt := label
-	for p.text_width(f, txt, 12.5, .Sans, .Semibold) > avail && len(txt) > 1 {
-		txt = txt[:len(txt) - 1]
-	}
-	if len(txt) < len(label) && len(txt) > 2 {
-		txt = fmt.tprintf("%s...", txt[:len(txt) - 2])
-	}
-	p.draw_text(
-		cv,
-		f,
-		txt,
-		tr.x + 12,
-		tr.y + tr.h / 2 + 4.5,
-		12.5,
-		p.hex(focused ? TEXT_ON : TEXT_OFF),
-		.Sans,
-		.Semibold,
-	)
-	p.pop_clip(cv)
-
-	// Frame buttons.
-	for i in 0 ..< 3 {
-		br := button_rect(t, i)
-		hot := s.hover_t == t && s.hover_btn == i + 1
-		bg := u32(0)
-		switch i {
-		case 0:
-			bg = hot ? 0xe7000b : 0x3f3f46
-		case 1:
-			bg = hot ? 0x16a34a : 0x3f3f46
-		case 2:
-			bg = hot ? 0xca8a04 : 0x3f3f46
-		}
-		if !focused && !hot {
-			bg = 0x2a2a30
-		}
-		p.fill_circle(cv, br.x + br.w / 2, br.y + br.h / 2, br.w / 2 - 1, p.hex(bg))
-		gl := p.hex(hot ? 0xffffff : (focused ? 0xd4d4d8 : 0x71717a))
-		cxp := br.x + br.w / 2
-		cyp := br.y + br.h / 2
-		switch i {
-		case 0:
-			p.draw_line(cv, cxp - 3.5, cyp - 3.5, cxp + 3.5, cyp + 3.5, 1.4, gl)
-			p.draw_line(cv, cxp + 3.5, cyp - 3.5, cxp - 3.5, cyp + 3.5, 1.4, gl)
-		case 1:
-			p.stroke_round_rect(cv, {cxp - 3.5, cyp - 3.5, 7, 7}, {1.5, 1.5, 1.5, 1.5}, 1.3, gl)
-		case 2:
-			p.draw_line(cv, cxp - 3.5, cyp, cxp + 3.5, cyp, 1.4, gl)
-		}
-	}
-
-	// Outline last, so it sits over both the bar and the client pixels.
-	p.stroke_round_rect(
-		cv,
-		fr,
-		{rad[0], rad[1], 3, 3},
-		1,
-		p.hex(focused ? s.cfg.border_focus : s.cfg.border_unfocus),
-	)
-	if focused {
-		// The halo is the focus colour, not a colour baked in here.
-		p.stroke_round_rect(cv, p.rect_inset(fr, -1.5), {10, 10, 4, 4}, 1, p.hexa(s.cfg.border_focus << 8 | 0x66))
-	}
-}
-
-// ring_shadow draws a drop shadow only in the band around a window.
-//
-// The interior is about to be covered by the client's own pixels, and the
-// signed-distance evaluation is the expensive part of the frame, so skipping
-// it there is most of the compositor's frame budget.
-ring_shadow :: proc(cv: ^p.Canvas, r: p.Rect, rad: p.Radius, blur, spread: f32, offset: [2]f32, col: p.Color) {
-	pad := blur + spread + 2
-	o := p.Rect{r.x + offset.x - pad, r.y + offset.y - pad, r.w + 2 * pad, r.h + 2 * pad}
-	in_ := p.rect_inset(r, 1)
-	strips := [4]p.Rect {
-		{o.x, o.y, o.w, in_.y - o.y},
-		{o.x, in_.y + in_.h, o.w, p.rect_bottom(o) - (in_.y + in_.h)},
-		{o.x, in_.y, in_.x - o.x, in_.h},
-		{in_.x + in_.w, in_.y, p.rect_right(o) - (in_.x + in_.w), in_.h},
-	}
-	for st in strips {
-		if st.w <= 0 || st.h <= 0 {
-			continue
-		}
-		p.push_clip(cv, st)
-		p.drop_shadow(cv, r, rad, blur, spread, offset, col)
-		p.pop_clip(cv)
-	}
-}
 
 // blit_surface copies a client's pixels into the output, then its subsurfaces.
 blit_surface :: proc(cv: ^p.Canvas, surf: ^Surface, ox, oy: int) {
@@ -2348,6 +1708,7 @@ main :: proc() {
 
 		ws_tick(s)
 		draw(s, app, cv)
+		cursor_nested(s, app)
 		send_frames(s)
 		flush_all(s)
 	}
