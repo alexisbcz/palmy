@@ -42,8 +42,15 @@ Rule_Names :: struct {
 xkb: Xkb_Api
 
 Rev :: struct {
-	code:  u32, // wayland keycode (evdev code, i.e. xkb keycode - 8)
-	shift: bool,
+	code:    u32, // wayland keycode (evdev code, i.e. xkb keycode - 8)
+	shift:   bool,
+	// AltGr. Only the bare-metal table fills this in: on a French or German
+	// keyboard @, |, {, [ and \ all live on level three, and a table of the
+	// first two levels alone could not type them.
+	level3:  bool,
+	// With Caps Lock on, Lock by itself already produces this keysym, so the
+	// extra Shift must not be added: Shift+Lock on a letter is lowercase.
+	lock_ok: bool,
 }
 
 Key_Table :: struct {
@@ -56,6 +63,10 @@ Key_Table :: struct {
 	m_alt:     u32,
 	m_super:   u32,
 	m_caps:    u32,
+	m_level3:  u32,
+	// The XKB group (layout, when several are configured) the reverse table
+	// was built for, and the one wl_keyboard.modifiers announces.
+	group:     u32,
 	rev:       map[u32]Rev,
 
 	// The keymap text handed to nested clients. It is either the one the host
@@ -128,6 +139,7 @@ keytable_build :: proc(kt: ^Key_Table, host_text: string, names: Rule_Names) -> 
 	kt.m_alt = xkb.xkb_keymap_mod_get_index(kt.km, "Mod1")
 	kt.m_super = xkb.xkb_keymap_mod_get_index(kt.km, "Mod4")
 	kt.m_caps = xkb.xkb_keymap_mod_get_index(kt.km, "Lock")
+	kt.m_level3 = XKB_MOD_INVALID
 
 	kt.rev = make(map[u32]Rev)
 	lo := xkb.xkb_keymap_min_keycode(kt.km)
@@ -192,7 +204,12 @@ mod_bit :: proc(idx: u32) -> u32 {
 // libxkbcommon always numbers Shift, Lock, Control and Mod1..Mod5 as 0..7,
 // before any virtual modifier, so a mask built from them means the same thing
 // on both sides of the socket.
-keytable_from_compiled :: proc(kt: ^Key_Table, km: ^Xkb_Keymap) -> bool {
+//
+// `group` picks the layout the table is for when the keymap has several; the
+// compositor rebuilds it on a group switch (keyboard.odin). Levels three and
+// four (AltGr, Shift+AltGr) are included so that every character the layout
+// can type reaches the client.
+keytable_from_compiled :: proc(kt: ^Key_Table, km: ^Xkb_Keymap, group := 0) -> bool {
 	if !km.ok || km.text == "" {
 		return false
 	}
@@ -209,22 +226,35 @@ keytable_from_compiled :: proc(kt: ^Key_Table, km: ^Xkb_Keymap) -> bool {
 	kt.m_ctrl = 2
 	kt.m_alt = first_bit(xkb_mod_mask(km, {"Alt"}), 3)
 	kt.m_super = first_bit(xkb_mod_mask(km, {"Super"}), 6)
+	l3 := xkb_mod_mask(km, {"LevelThree"}) & 0xff
+	kt.m_level3 = l3 != 0 ? first_bit(l3, 7) : XKB_MOD_INVALID
+	kt.group = u32(max(group, 0))
 
 	kt.rev = make(map[u32]Rev)
-	for level in 0 ..< 2 {
-		mods := level == 0 ? u32(0) : XKB_MOD_SHIFT
+	for level in 0 ..< 4 {
+		shift := level == 1 || level == 3
+		third := level >= 2
+		if third && l3 == 0 {
+			break
+		}
+		mods := (shift ? XKB_MOD_SHIFT : 0) | (third ? l3 : 0)
 		for code in km.min_code ..= km.max_code {
 			if code < EV_XKB_OFFSET {
 				continue
 			}
-			sym, _, _ := xkb_lookup(km, code, mods, 0)
+			sym, _, _ := xkb_lookup(km, code, mods, group)
 			if sym == XKB_SYM_NO || sym == XKB_SYM_VOID {
 				continue
 			}
 			if _, taken := kt.rev[sym]; taken {
 				continue
 			}
-			kt.rev[sym] = Rev{code = code - EV_XKB_OFFSET, shift = level == 1}
+			lock_ok := false
+			if shift {
+				lsym, _, _ := xkb_lookup(km, code, XKB_MOD_LOCK | (third ? l3 : 0), group)
+				lock_ok = lsym == sym
+			}
+			kt.rev[sym] = Rev{code = code - EV_XKB_OFFSET, shift = shift, level3 = third, lock_ok = lock_ok}
 		}
 	}
 	kt.text = strings.clone(km.text)

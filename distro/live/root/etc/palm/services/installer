@@ -1,0 +1,10 @@
+# The live system's only graphical session: the installer, fullscreen in a
+# kiosk window manager, as root (it partitions disks and writes efivars).
+# It takes the place of palm-login, whose service file distro/live/build.sh
+# removes from the live root. The session script sets up what palm-login
+# would have (XDG_RUNTIME_DIR, LANG) and honours palm.live.serial and
+# palm.live.exec= on the kernel command line. When the installer exits the
+# kiosk wm exits with it, and palm-init starts it again.
+cmd     = /usr/lib/palm-live/installer-session
+user    = root
+restart = always

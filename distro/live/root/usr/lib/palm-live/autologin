@@ -1,0 +1,5 @@
+#!/bin/sh
+# getty's login program on the live serial console (getty -n -l): log root
+# in without asking. busybox login -f skips authentication but still sets up
+# the session (HOME, SHELL, the login shell that reads /etc/profile).
+exec /bin/login -f root

@@ -1684,6 +1684,33 @@ xkb_compile :: proc(km: ^Xkb_Keymap, rmlvo: Xkb_Rmlvo) -> bool {
 	km.rules, km.model, km.layout, km.variant = strings.clone(m.rules), strings.clone(m.model), strings.clone(m.layout), strings.clone(m.variant)
 	km.options = strings.clone(strings.join(m.options, ",", context.temp_allocator))
 
+	// Several layouts (`us,ru`, variants `,phonetic`) become several groups.
+	// The rules file's layout[N] sections are not interpreted here; instead
+	// the first layout is resolved as a single one and the others are spliced
+	// in after it as `+ru(phonetic):2`, which is the symbols line libxkbcommon
+	// produces from the same rules for every multi-layout case in evdev.
+	layouts := strings.split(m.layout, ",", context.temp_allocator)
+	variants := strings.split(m.variant, ",", context.temp_allocator)
+	extra := ""
+	if len(layouts) > 1 {
+		b := strings.builder_make(context.temp_allocator)
+		for l, i in layouts[1:] {
+			l := strings.trim_space(l)
+			v := i + 1 < len(variants) ? strings.trim_space(variants[i + 1]) : ""
+			if l == "" {
+				continue
+			}
+			if v != "" {
+				fmt.sbprintf(&b, "+%s(%s):%d", l, v, i + 2)
+			} else {
+				fmt.sbprintf(&b, "+%s:%d", l, i + 2)
+			}
+		}
+		extra = strings.to_string(b)
+		m.layout = strings.trim_space(layouts[0])
+		m.variant = len(variants) > 0 ? strings.trim_space(variants[0]) : ""
+	}
+
 	kc, ty, cm, sy := "evdev", "complete", "complete", ""
 	rules, rok := xkb_rules_parse(fmt.tprintf("%s/rules/%s", xkb_root(), m.rules))
 	if rok {
@@ -1701,6 +1728,23 @@ xkb_compile :: proc(km: ^Xkb_Keymap, rmlvo: Xkb_Rmlvo) -> bool {
 			sy = fmt.tprintf("pc+%s+inet(evdev)", m.layout)
 		}
 	}
+	if extra != "" {
+		first := m.variant != "" ? fmt.tprintf("%s(%s)", m.layout, m.variant) : m.layout
+		parts := strings.split(sy, "+", context.temp_allocator)
+		at := -1
+		for part, i in parts {
+			if part == first {
+				at = i
+				break
+			}
+		}
+		if at >= 0 {
+			sy = fmt.tprintf("%s%s+%s", strings.join(parts[:at + 1], "+", context.temp_allocator), extra, strings.join(parts[at + 1:], "+", context.temp_allocator))
+			sy = strings.trim_suffix(sy, "+")
+		} else {
+			sy = fmt.tprintf("%s%s", sy, extra)
+		}
+	}
 	km.comp_keycodes = strings.clone(kc)
 	km.comp_types = strings.clone(ty)
 	km.comp_compat = strings.clone(cm)
@@ -1716,7 +1760,7 @@ xkb_compile :: proc(km: ^Xkb_Keymap, rmlvo: Xkb_Rmlvo) -> bool {
 	}
 
 	xkb_finish(km)
-	km.source = fmt.aprintf("%s/%s (%s%s)", xkb_root(), m.rules, m.layout, m.variant != "" ? fmt.tprintf(":%s", m.variant) : "")
+	km.source = fmt.aprintf("%s/%s (%s%s)", xkb_root(), m.rules, km.layout, km.variant != "" ? fmt.tprintf(":%s", km.variant) : "")
 	km.ok = true
 	return true
 }
@@ -2254,8 +2298,18 @@ xkb_update_key :: proc(evdev_code: u32, down: bool) {
 		xkb_st.down[code] = true
 		if k != nil {
 			xkb_st.depressed |= km.modmap[k.name]
-			// Locking modifiers and group switches act on press.
-			sym, _, _ := xkb_lookup(km, code, 0, xkb_effective_group(km, &xkb_st))
+			// Locking modifiers and group switches act on press. The level
+			// that counts is the one the current modifiers select, because
+			// toggles like grp:alt_shift_toggle put ISO_Next_Group on the
+			// second level of Alt and of Shift; the unmodified level is the
+			// fallback for keys whose action sits on level one regardless.
+			g := xkb_effective_group(km, &xkb_st)
+			sym, _, _ := xkb_lookup(km, code, xkb_effective(&xkb_st), g)
+			switch sym {
+			case XKB_SYM_CAPS_LOCK, XKB_SYM_SHIFT_LOCK, XKB_SYM_NUM_LOCK, XKB_SYM_ISO_NEXT_GROUP, XKB_SYM_ISO_PREV_GROUP:
+			case:
+				sym, _, _ = xkb_lookup(km, code, 0, g)
+			}
 			switch sym {
 			case XKB_SYM_CAPS_LOCK:
 				xkb_st.locked ~= XKB_MOD_LOCK

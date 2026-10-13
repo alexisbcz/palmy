@@ -1,0 +1,8 @@
+# The keyboard layout the window manager compiles from /usr/share/X11/xkb at
+# start (and again on SIGHUP or when this file changes). Names are
+# xkeyboard-config's, as listed in /usr/share/X11/xkb/rules/base.lst; the
+# installer rewrites this file with the layout picked. XKB_DEFAULT_LAYOUT and
+# XKB_DEFAULT_VARIANT in the environment override it.
+layout  = us
+variant =
+options =

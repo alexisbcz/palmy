@@ -13,6 +13,14 @@
 #   apps/wm/qemu-test.sh --wm-args "..."  run wm with these arguments instead
 #   apps/wm/qemu-test.sh --sigterm-after N   (as root) SIGTERM wm after N s
 #   apps/wm/qemu-test.sh --interactive   boot with a GTK window and stop there
+#   apps/wm/qemu-test.sh --out DIR       build, stage and screenshot in DIR
+#   apps/wm/qemu-test.sh --keyboard fr[:variant[:options]]
+#                                        write /etc/palm/keyboard in the guest
+#   apps/wm/qemu-test.sh --localtime Europe/Paris
+#                                        /etc/localtime -> that tzdata zone
+#   apps/wm/qemu-test.sh --guest-script F  run shell script F as root in the
+#                                        guest once wm listens (e.g. rewrite
+#                                        /etc/palm/keyboard, killall -HUP wm)
 #   apps/wm/qemu-test.sh -- <steps>      replace the default QMP script
 #
 # The steps are qemu-qmp.py's (wait:, shot:, type:, key:, move:, click:,
@@ -29,11 +37,8 @@ set -eu
 
 ROOT=$(cd "$(dirname "$0")/../.." && pwd)
 OUT="$ROOT/distro/build/wm"
-STAGE="$OUT/root"
 KERNEL="$ROOT/distro/out/bzImage"
 BUSYBOX="$ROOT/distro/out/busybox"
-QMP="$OUT/qmp.sock"
-SERIAL="$OUT/serial.log"
 
 as_user=1
 kiosk=0
@@ -42,8 +47,15 @@ interactive=0
 timeout_s=120
 wm_args=""
 sigterm_after=0
+keyboard=""
+localtime=""
+guest_script=""
 while [ $# -gt 0 ]; do
 	case "$1" in
+	--out) OUT=$(mkdir -p "$2" && cd "$2" && pwd); shift ;;
+	--keyboard) keyboard=$2; shift ;;
+	--localtime) localtime=$2; shift ;;
+	--guest-script) guest_script=$2; shift ;;
 	--root) as_user=0 ;;
 	--kiosk) kiosk=1 ;;
 	--no-xkb) xkb=0 ;;
@@ -56,6 +68,10 @@ while [ $# -gt 0 ]; do
 	esac
 	shift
 done
+
+STAGE="$OUT/root"
+QMP="$OUT/qmp.sock"
+SERIAL="$OUT/serial.log"
 
 [ -f "$KERNEL" ] || { echo "qemu-test: no $KERNEL (distro/kernel/build.sh)" >&2; exit 1; }
 [ -x "$BUSYBOX" ] || { echo "qemu-test: no $BUSYBOX (distro/busybox/build.sh)" >&2; exit 1; }
@@ -111,6 +127,29 @@ if [ "$xkb" = 1 ] && [ -d /usr/share/X11/xkb ]; then
 	cp -rL /usr/share/X11/xkb "$STAGE/usr/share/X11/xkb"
 fi
 
+# The system settings the installer writes (distro/INSTALLER.md).
+if [ -n "$keyboard" ]; then
+	mkdir -p "$STAGE/etc/palm"
+	kl=$(echo "$keyboard" | cut -d: -f1)
+	kv=$(echo "$keyboard" | cut -s -d: -f2)
+	ko=$(echo "$keyboard" | cut -s -d: -f3-)
+	printf 'layout = %s\nvariant = %s\noptions = %s\n' "$kl" "$kv" "$ko" > "$STAGE/etc/palm/keyboard"
+fi
+if [ -n "$localtime" ]; then
+	[ -f "/usr/share/zoneinfo/$localtime" ] || { echo "qemu-test: no zone $localtime" >&2; exit 2; }
+	mkdir -p "$STAGE/usr/share/zoneinfo/$(dirname "$localtime")"
+	cp -L "/usr/share/zoneinfo/$localtime" "$STAGE/usr/share/zoneinfo/$localtime"
+	ln -s "../usr/share/zoneinfo/$localtime" "$STAGE/etc/localtime"
+fi
+GUEST_SCRIPT_RUN=""
+if [ -n "$guest_script" ]; then
+	cp "$guest_script" "$STAGE/guest-script"
+	chmod 0755 "$STAGE/guest-script"
+	# Waits for wm's socket, then runs as root in the background, its output
+	# on the console (serial.log) prefixed so the QMP steps can wait for it.
+	GUEST_SCRIPT_RUN='( while [ ! -S /run/user/1000/wayland-palmy ] && [ ! -S /run/user/0/wayland-palmy ]; do sleep 0.2; done; /guest-script 2>&1 | sed "s/^/guest: /" ) &'
+fi
+
 cat > "$STAGE/etc/passwd" <<'EOF'
 root:x:0:0:root:/root:/bin/sh
 palm:x:1000:1000:palm:/home/palm:/bin/sh
@@ -154,6 +193,7 @@ for d in /sys/class/input/event*; do
 done
 mkdir -p /run/user/1000 /run/user/0
 chown palm:palm /run/user/1000 /home/palm; chmod 0700 /run/user/1000 /run/user/0
+$GUEST_SCRIPT_RUN
 ENVS="HOME=/home/palm USER=palm SHELL=/bin/sh PATH=/usr/bin XDG_RUNTIME_DIR=/run/user/1000 XDG_SESSION_TYPE=wayland PALMY_WM_DRM_DEBUG=1"
 if [ $as_user = 1 ]; then
 	echo "init: starting wm $WMARGS as palm (\$(id palm))"

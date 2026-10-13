@@ -14,8 +14,9 @@
 # output is committed anyway, so a reader sees exactly what each package
 # holds without running anything.
 #
-# Hand-written recipes (linux, palm-init, palm, palm-login, greeter and
-# palmy-wm) are left alone.
+# Hand-written recipes (linux, palm-init, palm, palm-login, greeter,
+# palmy-wm, and the installer's palm-install, installer and palmframe-live)
+# are left alone.
 #
 # Sources in the recipes are spelled ${PALMFRAME_ROOT} (the checkout),
 # ${PALMFRAME_OUT} (distro/out) and ${PALMFRAME_KEYS} (distro/build/keys);
@@ -287,6 +288,193 @@ EOF
 	} | emit "$app"
 done
 
+# --- tzdata: the time zone database ------------------------------------------
+# The installer's time zone step lists zone1970.tab and links /etc/localtime
+# into this tree; glibc reads the TZif files. The host's right/ (leap-second
+# variants) and posix/ (a second copy of every zone under another name)
+# directories are left out: nothing on Palmframe asks for them, and they
+# would triple the package.
+{
+	header " from the build host's /usr/share/zoneinfo"
+	cat <<EOF
+#
+# Compiled TZif files and the zone tables, taken from the build host. Only
+# the canonical tree is shipped -- not right/ or posix/.
+pkgname  = tzdata
+pkgver   = $(host_version tzdata 2026)
+pkgrel   = 0
+pkgdesc  = Time zone database (from the build host)
+license  = Public-Domain
+url      = https://www.iana.org/time-zones
+
+EOF
+	for p in /usr/share/zoneinfo/*; do
+		n="$(basename "$p")"
+		case "$n" in right | posix) continue ;; esac
+		if [ -d "$p" ]; then
+			echo "tree     = $p -> /usr/share/zoneinfo/$n"
+		else
+			echo "file     = $p -> /usr/share/zoneinfo/$n mode 0644"
+		fi
+	done
+} | emit tzdata
+
+# --- e2fsprogs and dosfstools: what the installer formats with --------------
+# Host binaries, like glibc. Their shared libraries are whatever `ldd` says
+# beyond glibc (libext2fs, libe2p, libcom_err, and util-linux's libblkid and
+# libuuid), each shipped as the real file plus its soname link, so the
+# package is complete exactly the way `check-libs` means for our own
+# binaries. Names busybox already owns as applets (mke2fs, mkfs.ext2,
+# mkfs.vfat, mkdosfs, chattr, lsattr) are left to busybox: palm refuses two
+# packages claiming one path, and the installer calls mkfs.ext4 and mkfs.fat,
+# which busybox does not have.
+host_libs() { # host_libs <binary>...: one "<soname> <real path>" per non-glibc library
+	ldd "$@" 2>/dev/null | awk '$1 !~ /^\// && /=> \// {print $1, $3}' |
+		{ grep -v -E '^(libc\.so\.6|libm\.so\.6|ld-linux-x86-64\.so\.2) ' || true; } | sort -u
+}
+lib_lines() { # lib_lines <binary>...: file + soname symlink lines for host_libs
+	host_libs "$@" | while read -r soname path; do
+		real="$(readlink -f "$path")"
+		echo "file     = $real -> /usr/lib/$(basename "$real") mode 0755"
+		if [ "$(basename "$real")" != "$soname" ]; then
+			echo "symlink  = /usr/lib/$soname -> $(basename "$real")"
+		fi
+	done
+}
+lib_provides() { host_libs "$@" | awk '{printf " so:%s", $1}'; }
+
+E2_BINS="/usr/bin/mke2fs /usr/bin/e2fsck /usr/bin/tune2fs /usr/bin/resize2fs /usr/bin/dumpe2fs"
+# shellcheck disable=SC2086
+{
+	header " from the build host's e2fsprogs"
+	cat <<EOF
+#
+# mkfs.ext4 is mke2fs under the name that selects ext4 (mke2fs looks at
+# argv[0]); /etc/mke2fs.conf carries the host's feature defaults, which the
+# Palmframe kernel supports in full.
+pkgname  = e2fsprogs
+pkgver   = $(host_version e2fsprogs 1.47)
+pkgrel   = 0
+pkgdesc  = ext2/3/4 filesystem utilities (from the build host)
+license  = GPL-2.0-or-later AND LGPL-2.0-or-later AND BSD-3-Clause
+url      = https://e2fsprogs.sourceforge.net
+depend   = glibc
+provides = cmd:mkfs.ext4 cmd:e2fsck$(lib_provides $E2_BINS)
+
+file     = /usr/bin/mke2fs -> /usr/bin/mkfs.ext4 mode 0755
+symlink  = /usr/bin/mkfs.ext3 -> mkfs.ext4
+file     = /usr/bin/e2fsck -> /usr/bin/e2fsck mode 0755
+symlink  = /usr/bin/fsck.ext4 -> e2fsck
+symlink  = /usr/bin/fsck.ext3 -> e2fsck
+symlink  = /usr/bin/fsck.ext2 -> e2fsck
+file     = /usr/bin/tune2fs -> /usr/bin/tune2fs mode 0755
+symlink  = /usr/bin/e2label -> tune2fs
+file     = /usr/bin/resize2fs -> /usr/bin/resize2fs mode 0755
+file     = /usr/bin/dumpe2fs -> /usr/bin/dumpe2fs mode 0755
+file     = /etc/mke2fs.conf -> /etc/mke2fs.conf mode 0644
+EOF
+	lib_lines $E2_BINS
+} | emit e2fsprogs
+
+FAT_BINS="/usr/bin/mkfs.fat /usr/bin/fsck.fat /usr/bin/fatlabel"
+# shellcheck disable=SC2086
+{
+	header " from the build host's dosfstools"
+	cat <<EOF
+#
+# mkfs.fat formats the EFI system partition the installer creates.
+pkgname  = dosfstools
+pkgver   = $(host_version dosfstools 4.2)
+pkgrel   = 0
+pkgdesc  = FAT filesystem utilities (from the build host)
+license  = GPL-3.0-or-later
+url      = https://github.com/dosfstools/dosfstools
+depend   = glibc
+provides = cmd:mkfs.fat cmd:fsck.fat$(lib_provides $FAT_BINS)
+
+file     = /usr/bin/mkfs.fat -> /usr/bin/mkfs.fat mode 0755
+file     = /usr/bin/fsck.fat -> /usr/bin/fsck.fat mode 0755
+file     = /usr/bin/fatlabel -> /usr/bin/fatlabel mode 0755
+EOF
+	lib_lines $FAT_BINS
+} | emit dosfstools
+
+# --- limine: the boot loader files the installer writes to a new ESP --------
+{
+	header " from the build host's limine"
+	cat <<EOF
+#
+# The installer copies BOOTX64.EFI onto the EFI system partition it creates
+# (EFI/BOOT and EFI/palmframe); the BIOS stages ride along for a later
+# legacy-boot install. The same files distro/image/build.sh and
+# distro/live/build.sh take from the host.
+pkgname  = limine
+pkgver   = $(host_version limine 12.8)
+pkgrel   = 0
+pkgdesc  = The Limine boot loader's x86_64 boot files (from the build host)
+license  = BSD-2-Clause
+url      = https://limine-bootloader.org
+
+file     = /usr/share/limine/BOOTX64.EFI -> /usr/share/limine/BOOTX64.EFI mode 0644
+file     = /usr/share/limine/limine-bios.sys -> /usr/share/limine/limine-bios.sys mode 0644
+EOF
+} | emit limine
+
+# --- fonts-cjk: Japanese (and Chinese, Korean) text --------------------------
+# One weight of Noto Sans CJK, as the host ships it: a TrueType collection of
+# 19 MB whose first face is Japanese. palmy loads .ttc files and lists
+# NotoSansCJK-Regular first among its fallback faces. Not in the default
+# `palmframe` set -- every palmy process maps its fallbacks, and most
+# machines never show a kanji -- but the live image carries it so the
+# installer can offer 日本語 (distro/notes/live.md).
+CJK_TTC=/usr/share/fonts/noto-cjk/NotoSansCJK-Regular.ttc
+if [ -f "$CJK_TTC" ]; then
+	{
+		header " from the build host's noto-fonts-cjk"
+		cat <<EOF
+#
+# Noto Sans CJK Regular (Japanese, Simplified and Traditional Chinese,
+# Korean in one collection), for palmy's fallback chain.
+pkgname  = fonts-cjk
+pkgver   = $(host_version noto-fonts-cjk 20240730)
+pkgrel   = 0
+pkgdesc  = Noto Sans CJK Regular: Japanese, Chinese and Korean text
+license  = OFL-1.1
+
+file     = $CJK_TTC -> /usr/share/fonts/noto-cjk/NotoSansCJK-Regular.ttc mode 0644
+EOF
+		if [ -f /usr/share/licenses/noto-fonts-cjk/LICENSE ]; then
+			echo "file     = /usr/share/licenses/noto-fonts-cjk/LICENSE -> /usr/share/licenses/fonts/NotoSansCJK-OFL.txt mode 0644"
+		fi
+	} | emit fonts-cjk
+fi
+
+# --- palm-locale: the translation catalogues --------------------------------
+# distro/locale/<lang>/<domain>.msg -> /usr/share/palm/locale/<lang>/<domain>.msg
+# (INSTALLER.md). Listed file by file so only catalogues ship; with no
+# catalogues yet the package is just the directory, and kit.i18n falls back
+# to the source strings.
+{
+	header " from distro/locale"
+	cat <<EOF
+#
+# Message catalogues read by kit.i18n (apps/kit/i18n.odin).
+pkgname  = palm-locale
+pkgver   = $OWN_VER
+pkgrel   = 0
+pkgdesc  = Translations for the Palmframe installer and applications
+license  = MIT
+
+dir      = /usr/share/palm/locale
+EOF
+	if [ -d "$DISTRO/locale" ]; then
+		(cd "$DISTRO/locale" && find . -name '*.msg' -type f | LC_ALL=C sort) | while read -r f; do
+			f="${f#./}"
+			echo "file     = \${PALMFRAME_ROOT}/distro/locale/$f -> /usr/share/palm/locale/$f mode 0644"
+		done
+	fi
+} | emit palm-locale
+
 # --- palmframe: the meta-package ---------------------------------------------
 {
 	header " from distro/apps/default.list"
@@ -301,6 +489,7 @@ pkgdesc  = The Palmframe system: kernel, init, login, window manager and the def
 license  = MIT
 depend   = palmframe-base linux busybox glibc palm-init palm palm-login
 depend   = palmy-wm greeter fonts libxkbcommon xkeyboard-config
+depend   = tzdata palm-locale
 depend   = $(grep -v '^#' "$DISTRO/apps/default.list" | grep -vx -e wm -e greeter -e '' | tr '\n' ' ' | sed 's/ $//')
 EOF
 } | emit palmframe

@@ -1,0 +1,23 @@
+# The live installer system (distro/live): everything a Palmframe machine
+# has, plus the installer and the tools it formats with, plus the services
+# that turn the machine into an installer -- the graphical installer as root
+# in a kiosk wm, and a root shell on the serial port. Only
+# distro/live/build.sh installs it; it never goes onto an installed disk.
+#
+# Packages cannot remove another package's files and palm runs no scripts,
+# so the two base services this replaces (palm-login and getty-ttyS0) are
+# deleted from the live root by distro/live/build.sh, not here.
+#
+# /init is what the kernel runs from an initramfs; it is palm-init, as
+# /sbin/init is on a disk.
+pkgname  = palmframe-live
+pkgver   = 0.1.0
+pkgrel   = 0
+pkgdesc  = The Palmframe live installer system (services and session)
+license  = MIT
+depend   = palmframe palm-install installer
+depend   = e2fsprogs dosfstools limine tzdata xkeyboard-config palm-locale fonts-cjk
+
+tree     = ${PALMFRAME_ROOT}/distro/live/root/etc -> /etc
+tree     = ${PALMFRAME_ROOT}/distro/live/root/usr -> /usr
+symlink  = /init -> usr/bin/palm-init

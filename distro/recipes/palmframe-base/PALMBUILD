@@ -64,6 +64,7 @@ owner    = /var/lib/greeter greeter:greeter
 symlink  = /var/run -> ../run
 symlink  = /var/lock -> ../run/lock
 symlink  = /etc/mtab -> ../proc/self/mounts
+symlink  = /etc/localtime -> ../usr/share/zoneinfo/UTC
 mode     = /etc/shadow 0600
 mode     = /usr/share/udhcpc/default.script 0755
 dir      = /etc/palm/keys mode 0755

@@ -9,6 +9,7 @@ package main
 //	kernel cmdline     palm.single, palm.autologin, quoted values
 //	uevents            a real kernel datagram, a libudev one, garbage
 //	device rules       which /dev names get which group and mode
+//	locale.conf        which variables services get from /etc/locale.conf
 //
 // It touches nothing on the machine and needs no privileges.
 
@@ -150,6 +151,25 @@ palm:x:1000:
 			good := ok == want_ok && (!ok || (rule.group == c.group && rule.mode == c.mode))
 			check(fmt.tprintf("device rule: %s", c.name), good, ok ? fmt.tprintf("%s %o", rule.group, rule.mode) : "no rule")
 		}
+	}
+
+	// --- /etc/locale.conf ------------------------------------------------------
+	{
+		env := parse_locale_conf(`# written by palm-install
+LANG="fr_FR.UTF-8"
+LANGUAGE=fr:en
+PATH=/tmp/evil
+LC_TIME=has space
+export LC_MESSAGES='de_DE.UTF-8'
+`, context.temp_allocator)
+		check(
+			"locale.conf: LANG, LANGUAGE, LC_*, quotes stripped",
+			len(env) == 3 && env[0] == "LANG=fr_FR.UTF-8" && env[1] == "LANGUAGE=fr:en" && env[2] == "LC_MESSAGES=de_DE.UTF-8",
+			fmt.tprint(env),
+		)
+		again := parse_locale_conf("LANG=C.UTF-8\nLANG=ja_JP.UTF-8\n", context.temp_allocator)
+		check("locale.conf: the last LANG wins", len(again) == 1 && again[0] == "LANG=ja_JP.UTF-8", fmt.tprint(again))
+		check("locale.conf: empty file, nothing exported", len(parse_locale_conf("", context.temp_allocator)) == 0)
 	}
 
 	// --- helpers ---------------------------------------------------------------

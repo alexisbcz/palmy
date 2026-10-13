@@ -76,6 +76,7 @@ Server :: struct {
 	repeat_rate:  int,
 	repeat_delay: int,
 	mod_mask:     u32,
+	mod_group:    u32, // the XKB group last sent in wl_keyboard.modifiers
 	kt:           Key_Table,
 	keymap_fd:    linux.Fd,
 	keymap_size:  int,
@@ -494,8 +495,9 @@ set_kbd_focus :: proc(s: ^Server, surf: ^Surface) {
 		empty: []u8
 		for k in surf.client.keyboards {
 			event(surf.client, k, 1, next_serial(s), surf.id, empty)
-			event(surf.client, k, 4, next_serial(s), s.mod_mask, u32(0), u32(0), u32(0))
+			event(surf.client, k, 4, next_serial(s), s.mod_mask, u32(0), u32(0), s.kt.group)
 		}
+		s.mod_group = s.kt.group
 		// The clipboard follows keyboard focus, as the protocol requires.
 		offer_selection(s, surf.client)
 	}
@@ -1067,17 +1069,21 @@ mods_mask :: proc(s: ^Server, m: p.Modifiers, extra_shift: bool) -> u32 {
 	return v
 }
 
+// send_mods announces the modifier mask and the XKB group. The group is
+// part of it because a layout switch (several layouts in /etc/palm/keyboard)
+// changes what every keycode means without any modifier changing.
 send_mods :: proc(s: ^Server, mask: u32) {
-	if mask == s.mod_mask {
+	if mask == s.mod_mask && s.kt.group == s.mod_group {
 		return
 	}
 	s.mod_mask = mask
+	s.mod_group = s.kt.group
 	surf := s.kbd_surf
 	if surf == nil || surf.client == nil || surf.client.dead {
 		return
 	}
 	for k in surf.client.keyboards {
-		event(surf.client, k, 4, next_serial(s), mask, u32(0), u32(0), u32(0))
+		event(surf.client, k, 4, next_serial(s), mask, u32(0), u32(0), s.kt.group)
 	}
 }
 
@@ -1092,7 +1098,14 @@ forward_key :: proc(s: ^Server, k: p.Key_Event) {
 	if !ok {
 		return
 	}
-	send_mods(s, mods_mask(s, k.mods, rev.shift))
+	// Caps Lock already uppercases a letter; adding Shift on top would turn
+	// it back to lowercase in the client.
+	shift := rev.shift && !(rev.lock_ok && .Caps in k.mods)
+	mask := mods_mask(s, k.mods, shift)
+	if rev.level3 {
+		mask |= mod_bit(s.kt.m_level3)
+	}
+	send_mods(s, mask)
 	t := now_ms()
 	for kb in surf.client.keyboards {
 		event(surf.client, kb, 3, next_serial(s), t, rev.code, u32(1))
@@ -1686,9 +1699,27 @@ draw_bar :: proc(s: ^Server, app: ^p.App, cv: ^p.Canvas, oi, ws_idx: int) {
 		x += w + 18
 	}
 
-	// The key legend sits on the right; a transient status note replaces it so
-	// the two never collide.
+	// The clock is the rightmost thing, in local time (clock.odin); the
+	// keyboard layout sits just left of it whenever it is not plain US, or
+	// there is more than one to switch between, so a French keyboard is never
+	// a surprise. The legend or a status note fills what is left.
 	right := X + W
+	{
+		local, _ := clock_now()
+		ct := clock_text(local)
+		cw := p.text_width(f, ct, 12, .Sans, .Medium)
+		p.draw_text(cv, f, ct, right - cw - 12, mid, 12, p.hex(TEXT_ON), .Sans, .Medium)
+		right -= cw + 24
+		if session.bare && (kbd.label != "us" || xkb_km.ngroups > 1) && kbd.label != "" {
+			lbl := strings.to_upper(kbd.label, context.temp_allocator)
+			lw := p.text_width(f, lbl, 11, .Sans, .Semibold) + 14
+			r := p.Rect{right - lw, Y + H / 2 - 9, lw, 18}
+			p.stroke_round_rect(cv, r, {5, 5, 5, 5}, 1, p.hex(0x3f3f46))
+			p.draw_text(cv, f, lbl, r.x + 7, Y + H / 2 + 4, 11, p.hex(0xa5b4fc), .Sans, .Semibold)
+			right -= lw + 10
+		}
+	}
+	W = right - X
 	if s.status != "" && wall_now() - s.status_at < 3.0 {
 		tw := p.text_width(f, s.status, 12, .Sans, .Medium)
 		p.fill_round_rect(cv, {right - tw - 26, Y + H / 2 - 10, tw + 20, 20}, {6, 6, 6, 6}, p.hex(0x1e1b4b))

@@ -17,15 +17,23 @@ package main
 // every edge, and if the compositor has no layer shell at all it falls back
 // to an ordinary fullscreen window.
 //
-//	greeter [--mock] [--sock PATH] [--demo-users] [--log]
+//	greeter [--mock] [--sock PATH] [--demo-users] [--log] [--lang LANG]
 //
 // --mock points the client at the mock greetd in ./mock and labels the screen
 // so there is no doubt about what is being talked to.
+//
+// Every word on the screen goes through kit.tr, from the catalogue
+// <locale root>/<lang>/greeter.msg (distro/locale/*/greeter.msg in the
+// repository). The language is LANG as palm-login exports it from
+// /etc/locale.conf, or --lang; the weekday and month names and the order of
+// the date are in the catalogue too. Arabic mirrors the layout. The clock is
+// local time from /etc/localtime (see local_zone in system.odin).
 
 import "core:fmt"
 import "core:os"
 import "core:strings"
 import "core:time"
+import "core:time/datetime"
 import kit "kit:."
 import p "palmy:."
 import sc "shadcn:."
@@ -68,7 +76,7 @@ St :: struct {
 	user_i:        int,
 	session_i:     int,
 	hostname:      string,
-	tz:            time.Duration,
+	zone:          ^datetime.TZ_Region, // nil = UTC
 
 	// The answer field. `secret` decides whether it is masked.
 	answer:        [dynamic]u8,
@@ -106,6 +114,10 @@ main :: proc() {
 	test_password := "palmy"
 	st.sock = os.get_env("GREETD_SOCK", context.allocator)
 
+	// The language comes from the environment palm-login built from
+	// /etc/locale.conf; --lang below can still override it, before --shots.
+	kit.i18n_init("greeter")
+
 	args := os.args[1:]
 	for i := 0; i < len(args); i += 1 {
 		switch args[i] {
@@ -120,6 +132,11 @@ main :: proc() {
 			demo_users = true
 		case "--log":
 			st.show_log = true
+		case "--lang":
+			i += 1
+			if i < len(args) {
+				kit.i18n_set_language(args[i])
+			}
 		case "--selftest":
 			run_selftest = true
 		case "--shots":
@@ -140,8 +157,8 @@ main :: proc() {
 			}
 		case "-h", "--help":
 			fmt.println(
-				"greeter [--mock] [--sock PATH] [--demo-users] [--log]\n" +
-				"        --shots DIR                                offscreen PNGs, no window\n" +
+				"greeter [--mock] [--sock PATH] [--demo-users] [--log] [--lang LANG]\n" +
+				"        [--lang LANG] --shots DIR                  offscreen PNGs, no window\n" +
 				"        --selftest [--user NAME] [--password PW]   headless protocol test",
 			)
 			return
@@ -187,7 +204,7 @@ main :: proc() {
 		st.session_i = d
 	}
 	st.hostname = read_hostname()
-	st.tz = local_utc_offset()
+	st.zone = local_zone()
 
 	// Prefer the account the greeter is running as, if it is in the list.
 	if me := os.get_env("USER", context.allocator); me != "" {
@@ -293,14 +310,14 @@ register_dark_theme :: proc() {
 
 cur_user :: proc(st: ^St) -> User {
 	if len(st.users) == 0 {
-		return {name = "", real = "no local accounts"}
+		return {name = "", real = kit.tr("no local accounts")}
 	}
 	return st.users[clamp(st.user_i, 0, len(st.users) - 1)]
 }
 
 cur_session :: proc(st: ^St) -> Session {
 	if len(st.sessions) == 0 {
-		return {name = "no sessions found"}
+		return {name = kit.tr("no sessions found")}
 	}
 	return st.sessions[clamp(st.session_i, 0, len(st.sessions) - 1)]
 }
@@ -326,13 +343,13 @@ submit :: proc(st: ^St, ui: ^p.Ctx) {
 		return
 	}
 	if !st.connected {
-		st.err = fmt.aprintf("not connected to greetd at %s", st.sock)
+		st.err = fmt.aprintf(kit.tr("not connected to greetd at %s"), st.sock)
 		st.err_fatal = true
 		return
 	}
 	u := cur_user(st)
 	if u.name == "" {
-		st.err = "there is no account to log in to"
+		st.err = kit.tr("there is no account to log in to")
 		return
 	}
 
@@ -367,7 +384,7 @@ submit :: proc(st: ^St, ui: ^p.Ctx) {
 	// first secret question, so one Enter is enough for the common case.
 	if u.synthetic {
 		st.err = fmt.aprintf(
-			"%s is a --demo-users placeholder, not a real account; it is never sent to greetd",
+			kit.tr("%s is a --demo-users placeholder, not a real account; it is never sent to greetd"),
 			u.name,
 		)
 		return
@@ -421,7 +438,7 @@ apply_reply :: proc(st: ^St, r: Reply, ui: ^p.Ctx) {
 
 	switch r.kind {
 	case .None:
-		st.err = "greetd sent an empty reply"
+		st.err = kit.tr("greetd sent an empty reply")
 		st.stage = .Idle
 
 	case .Auth_Message:
@@ -491,10 +508,10 @@ apply_reply :: proc(st: ^St, r: Reply, ui: ^p.Ctx) {
 		if r.error_type == "auth_error" {
 			// Not fatal: wrong credentials. greetd drops the session, so the
 			// next attempt starts a fresh one.
-			st.err = r.description == "" ? "Authentication failed" : r.description
+			st.err = r.description == "" ? kit.tr("Authentication failed") : r.description
 			st.err_fatal = false
 		} else {
-			st.err = r.description == "" ? "greetd reported an error" : r.description
+			st.err = r.description == "" ? kit.tr("greetd reported an error") : r.description
 			st.err_fatal = true
 		}
 		st.session_live = false
@@ -741,6 +758,7 @@ header :: proc(st: ^St, ui: ^p.Ctx) {
 	h, m, s := local_clock(st)
 	y, mon, d := local_date(st)
 	wd := local_weekday(st)
+	rtl := kit.i18n_is_rtl()
 
 	p.col(ui, "w-full items-center pt-[64] gap-1")
 	defer p.end(ui)
@@ -750,15 +768,23 @@ header :: proc(st: ^St, ui: ^p.Ctx) {
 	p.textf(ui, "text-2xl font-medium text-muted-foreground pb-[14]", ":%02d", s)
 	p.end(ui)
 
-	p.textf(ui, "text-lg text-muted-foreground", "%s, %d %s %d", wd, d, mon, y)
+	// The order of the parts is the translator's: the msgid is the English
+	// order, and a catalogue rearranges it with explicit argument indices.
+	p.text(ui, kit.trf("%[0]s, %[1]d %[2]s %[3]d", wd, d, mon, y), "text-lg text-muted-foreground")
 
 	p.row(ui, "items-center gap-2 mt-3")
-	p.icon(ui, GI_SERVER, "size-3.5 text-muted-foreground")
-	p.text(ui, st.hostname, "text-sm text-muted-foreground")
-	if st.mock {
+	if st.mock && rtl {
+		sc.badge(ui, kit.tr("MOCK greetd"), .Destructive)
 		p.div(ui, "w-2")
 		p.end(ui)
-		sc.badge(ui, "MOCK greetd", .Destructive)
+	}
+	if !rtl {p.icon(ui, GI_SERVER, "size-3.5 text-muted-foreground")}
+	p.text(ui, st.hostname, "text-sm text-muted-foreground")
+	if rtl {p.icon(ui, GI_SERVER, "size-3.5 text-muted-foreground")}
+	if st.mock && !rtl {
+		p.div(ui, "w-2")
+		p.end(ui)
+		sc.badge(ui, kit.tr("MOCK greetd"), .Destructive)
 	}
 	p.end(ui)
 }
@@ -769,37 +795,47 @@ card :: proc(st: ^St, ui: ^p.Ctx) {
 	p.col(ui, CARD)
 	defer p.end(ui)
 
+	// Right to left, every row below is laid out mirrored: palmy's rows run
+	// left to right, so the children are emitted in the other order and the
+	// text columns hug the right edge. The password field itself is not
+	// mirrored — what is typed into it is not Arabic text.
+	rtl := kit.i18n_is_rtl()
+	text_col := "flex-1 gap-0.5"
+
 	// --- the account -------------------------------------------------------
 	u := cur_user(st)
 	p.row(ui, "items-center gap-4")
 	{
-		sc.avatar_open(ui, .LG)
-		sc.avatar_fallback(ui, u.initials == "" ? "?" : u.initials, .LG)
-		sc.avatar_end(ui)
+		if rtl {stepper(ui, st.focus == .User, len(st.users))}
+		if !rtl {account_avatar(ui, u)}
 
-		p.col(ui, "flex-1 gap-0.5")
-		p.text(ui, u.real == "" ? "no local accounts" : u.real, "text-base font-semibold text-foreground")
+		p.col(ui, text_col)
+		p.text(ui, u.real == "" ? kit.tr("no local accounts") : u.real, rcls("text-base font-semibold text-foreground", rtl))
 		if u.name != "" {
-			p.textf(ui, "text-xs text-muted-foreground", "%s · uid %d · %s", u.name, u.uid, u.shell)
+			p.text(ui, fmt.tprintf("%s · uid %d · %s", u.name, u.uid, u.shell), rcls("text-xs text-muted-foreground", rtl))
 		}
 		p.end(ui)
 
-		stepper(ui, st.focus == .User, len(st.users))
+		if rtl {account_avatar(ui, u)}
+		if !rtl {stepper(ui, st.focus == .User, len(st.users))}
 	}
 	p.end(ui)
 
 	sc.separator(ui)
 
 	// --- the question ------------------------------------------------------
-	label := st.prompt
+	// greetd's question is translated too when the catalogue knows it:
+	// palm-login asks "Password:", which is the same msgid as the default.
+	label := strings.trim_right(st.prompt, ": ")
 	if label == "" {
 		label = "Password"
 	}
 	p.col(ui, "gap-2")
 	{
-		p.row(ui, "items-center gap-2")
-		p.icon(ui, st.secret ? GI_LOCK : GI_KEY_ROUND, "size-3.5 text-muted-foreground")
-		p.text(ui, strings.trim_right(label, ": "), "text-xs font-medium text-muted-foreground")
+		p.row(ui, rtl ? "items-center gap-2 justify-end" : "items-center gap-2")
+		if !rtl {p.icon(ui, st.secret ? GI_LOCK : GI_KEY_ROUND, "size-3.5 text-muted-foreground")}
+		p.text(ui, kit.tr(label), "text-xs font-medium text-muted-foreground")
+		if rtl {p.icon(ui, st.secret ? GI_LOCK : GI_KEY_ROUND, "size-3.5 text-muted-foreground")}
 		p.end(ui)
 
 		answer_field(st, ui)
@@ -812,44 +848,70 @@ card :: proc(st: ^St, ui: ^p.Ctx) {
 	// --- the action --------------------------------------------------------
 	p.row(ui, "items-center gap-3")
 	{
-		p.col(ui, "flex-1 gap-0.5")
-		p.text(ui, "Enter to sign in · Tab to move · Esc to clear", "text-xs text-muted-foreground")
-		p.textf(
+		if rtl {sign_in_button(st, ui)}
+
+		p.col(ui, text_col)
+		p.text(ui, kit.tr("Enter to sign in · Tab to move · Esc to clear"), rcls("text-xs text-muted-foreground", rtl))
+		p.text(
 			ui,
-			"text-xs text-muted-foreground",
-			"%d account%s · %d session%s",
-			len(st.users),
-			len(st.users) == 1 ? "" : "s",
-			len(st.sessions),
-			len(st.sessions) == 1 ? "" : "s",
+			strings.concatenate(
+				{
+					kit.trnf("%d account", "%d accounts", len(st.users), len(st.users)),
+					" · ",
+					kit.trnf("%d session", "%d sessions", len(st.sessions), len(st.sessions)),
+				},
+				context.temp_allocator,
+			),
+			rcls("text-xs text-muted-foreground", rtl),
 		)
 		p.end(ui)
 
-		busy := st.stage == .Busy
-		done := st.stage == .Started
-		idx := sc.button_open(
-			ui,
-			done ? .Secondary : .Default,
-			.LG,
-			{focus = st.focus == .Answer, disabled = busy || done},
-		)
-		p.apply(ui, "px-4 gap-2")
-		if p.clickable(ui, idx) && !busy && !done {
-			submit(st, ui)
-		}
-		if busy {
-			sc.spinner(ui, "size-4")
-			p.text(ui, "Authenticating", "whitespace-nowrap")
-		} else if done {
-			p.icon(ui, GI_CIRCLE_CHECK, "size-4")
-			p.text(ui, "Session ready", "whitespace-nowrap")
-		} else {
-			p.icon(ui, GI_ARROW_RIGHT, "size-4")
-			p.text(ui, "Sign in", "whitespace-nowrap")
-		}
-		sc.button_end(ui)
+		if !rtl {sign_in_button(st, ui)}
 	}
 	p.end(ui)
+}
+
+// rcls sets a text flush right when the screen is mirrored: Latin names and
+// paths included, so a column reads from one edge.
+rcls :: proc(cls: string, rtl: bool) -> string {
+	return rtl ? strings.concatenate({cls, " text-right"}, context.temp_allocator) : cls
+}
+
+account_avatar :: proc(ui: ^p.Ctx, u: User) {
+	sc.avatar_open(ui, .LG)
+	sc.avatar_fallback(ui, u.initials == "" ? "?" : u.initials, .LG)
+	sc.avatar_end(ui)
+}
+
+sign_in_button :: proc(st: ^St, ui: ^p.Ctx) {
+	busy := st.stage == .Busy
+	done := st.stage == .Started
+	idx := sc.button_open(
+		ui,
+		done ? .Secondary : .Default,
+		.LG,
+		{focus = st.focus == .Answer, disabled = busy || done},
+	)
+	p.apply(ui, "px-4 gap-2")
+	if p.clickable(ui, idx) && !busy && !done {
+		submit(st, ui)
+	}
+	// The arrow points the way the text reads.
+	rtl := kit.i18n_is_rtl()
+	if busy {
+		sc.spinner(ui, "size-4")
+		p.text(ui, kit.tr("Authenticating"), "whitespace-nowrap")
+	} else if done {
+		p.icon(ui, GI_CIRCLE_CHECK, "size-4")
+		p.text(ui, kit.tr("Session ready"), "whitespace-nowrap")
+	} else if rtl {
+		p.text(ui, kit.tr("Sign in"), "whitespace-nowrap")
+		p.icon(ui, GI_ARROW_LEFT, "size-4")
+	} else {
+		p.icon(ui, GI_ARROW_RIGHT, "size-4")
+		p.text(ui, kit.tr("Sign in"), "whitespace-nowrap")
+	}
+	sc.button_end(ui)
 }
 
 // stepper is the `‹ n ›` affordance that says a row is a selector.
@@ -889,8 +951,18 @@ answer_field :: proc(st: ^St, ui: ^p.Ctx) {
 
 	content := string(st.answer[:])
 	if len(content) == 0 {
+		ph := st.secret ? kit.tr("Password") : kit.tr("Answer")
+		if kit.i18n_is_rtl() {
+			// The placeholder is the only text here that is in the screen's
+			// language, so only it moves: flush right, caret where an Arabic
+			// line starts.
+			p.spacer(ui)
+			p.text(ui, ph, "text-muted-foreground whitespace-nowrap")
+			p.style(ui).shrink = 0
+			caret_bar(ui, focused)
+			return
+		}
 		caret_bar(ui, focused)
-		ph := st.secret ? "Password" : "Answer"
 		p.text(ui, ph, "text-muted-foreground whitespace-nowrap")
 		p.style(ui).shrink = 0
 		return
@@ -934,50 +1006,56 @@ bullets :: proc(s: string) -> string {
 }
 
 banner :: proc(st: ^St, ui: ^p.Ctx) {
+	rtl := kit.i18n_is_rtl()
+	// One notice: an icon beside a column of text, the icon on the side the
+	// text starts from.
+	notice :: proc(ui: ^p.Ctx, rtl: bool, row_cls: string, icon: p.Icon, icon_cls: string) {
+		p.row(ui, row_cls)
+		if !rtl {p.icon(ui, icon, icon_cls)}
+		p.col(ui, "flex-1 gap-0.5")
+	}
+	notice_end :: proc(ui: ^p.Ctx, rtl: bool, icon: p.Icon, icon_cls: string) {
+		p.end(ui)
+		if rtl {p.icon(ui, icon, icon_cls)}
+		p.end(ui)
+	}
+
 	if st.err != "" {
 		cls :=
 			st.err_fatal \
 			? "w-full flex-row items-start gap-2 p-3 rounded-lg border border-destructive/50 bg-destructive/10" \
 			: "w-full flex-row items-start gap-2 p-3 rounded-lg border border-destructive/60 bg-destructive/15"
-		p.row(ui, cls)
-		p.icon(ui, st.err_fatal ? GI_TRIANGLE_ALERT : GI_CIRCLE_ALERT, "size-4 text-destructive mt-px")
-		p.col(ui, "flex-1 gap-0.5")
+		icon := st.err_fatal ? GI_TRIANGLE_ALERT : GI_CIRCLE_ALERT
+		notice(ui, rtl, cls, icon, "size-4 text-destructive mt-px")
 		p.text(
 			ui,
-			st.err_fatal ? "greetd error" : "Authentication failed",
-			"text-xs font-semibold text-destructive",
+			st.err_fatal ? kit.tr("greetd error") : kit.tr("Authentication failed"),
+			rcls("text-xs font-semibold text-destructive", rtl),
 		)
-		p.text(ui, st.err, "text-xs text-destructive/90")
-		p.end(ui)
-		p.end(ui)
+		// greetd's own words, translated when the catalogue has them (palm-
+		// login's "The password was not accepted." is there).
+		p.text(ui, kit.tr(st.err), rcls("text-xs text-destructive/90", rtl))
+		notice_end(ui, rtl, icon, "size-4 text-destructive mt-px")
 	}
 	if st.info != "" {
-		p.row(ui, "w-full flex-row items-start gap-2 p-3 rounded-lg border border-border bg-muted")
-		p.icon(ui, GI_INFO, "size-4 text-muted-foreground mt-px")
-		p.text(ui, st.info, "flex-1 text-xs text-muted-foreground")
-		p.end(ui)
+		notice(ui, rtl, "w-full flex-row items-start gap-2 p-3 rounded-lg border border-border bg-muted", GI_INFO, "size-4 text-muted-foreground mt-px")
+		p.text(ui, kit.tr(st.info), rcls("text-xs text-muted-foreground", rtl))
+		notice_end(ui, rtl, GI_INFO, "size-4 text-muted-foreground mt-px")
 	}
 	if st.note != "" {
-		p.row(ui, "w-full flex-row items-start gap-2 p-3 rounded-lg border border-border bg-muted")
-		p.icon(ui, GI_POWER, "size-4 text-muted-foreground mt-px")
-		p.text(ui, st.note, "flex-1 text-xs text-muted-foreground")
-		p.end(ui)
+		notice(ui, rtl, "w-full flex-row items-start gap-2 p-3 rounded-lg border border-border bg-muted", GI_POWER, "size-4 text-muted-foreground mt-px")
+		p.text(ui, st.note, rcls("text-xs text-muted-foreground", rtl))
+		notice_end(ui, rtl, GI_POWER, "size-4 text-muted-foreground mt-px")
 	}
 	if st.stage == .Started {
-		p.row(
+		notice(ui, rtl, "w-full flex-row items-center gap-2 p-3 rounded-lg border border-emerald-700 bg-emerald-950", GI_CIRCLE_CHECK, "size-4 text-emerald-400")
+		p.text(ui, kit.tr("Signed in"), rcls("text-xs font-semibold text-emerald-300", rtl))
+		p.text(
 			ui,
-			"w-full flex-row items-center gap-2 p-3 rounded-lg border border-emerald-700 bg-emerald-950",
+			kit.tr("greetd accepted the session; it starts as soon as the greeter exits"),
+			rcls("text-xs text-emerald-400/90", rtl),
 		)
-		p.icon(ui, GI_CIRCLE_CHECK, "size-4 text-emerald-400")
-		p.col(ui, "flex-1 gap-0.5")
-		p.text(ui, "Signed in", "text-xs font-semibold text-emerald-300")
-		p.textf(
-			ui,
-			"text-xs text-emerald-400/90",
-			"greetd accepted the session; it starts as soon as the greeter exits",
-		)
-		p.end(ui)
-		p.end(ui)
+		notice_end(ui, rtl, GI_CIRCLE_CHECK, "size-4 text-emerald-400")
 	}
 }
 
@@ -992,43 +1070,79 @@ footer :: proc(st: ^St, ui: ^p.Ctx) {
 	p.row(ui, "w-full items-center gap-4")
 	defer p.end(ui)
 
-	// Session selector.
+	// Left to right: the session selector, then the power actions at the far
+	// end. Right to left the whole row is mirrored.
+	if kit.i18n_is_rtl() {
+		power_buttons(st, ui, true)
+		no_greetd_notice(st, ui, true)
+		p.spacer(ui)
+		session_selector(st, ui, true)
+	} else {
+		session_selector(st, ui, false)
+		p.spacer(ui)
+		no_greetd_notice(st, ui, false)
+		power_buttons(st, ui, false)
+	}
+}
+
+session_selector :: proc(st: ^St, ui: ^p.Ctx, rtl: bool) {
 	s := cur_session(st)
 	cls := st.focus == .Session ? "items-center gap-3 px-3 py-2 rounded-lg border border-ring ring-3 ring-ring/50 bg-card" : "items-center gap-3 px-3 py-2 rounded-lg border border-border bg-card/60"
 	idx := p.row(ui, cls)
 	if p.clickable(ui, idx) {
 		st.focus = .Session
 	}
-	{
-		p.icon(ui, s.kind == .Shell ? GI_TERMINAL : GI_MONITOR, "size-4 text-muted-foreground")
-		p.col(ui, "gap-0.5")
-		p.text(ui, s.name, "text-sm font-medium text-foreground whitespace-nowrap")
-		p.textf(
-			ui,
-			"text-xs text-muted-foreground whitespace-nowrap",
-			"%s · %s",
-			session_kind_label(s.kind),
-			s.exec,
-		)
-		p.end(ui)
+	kind_icon := s.kind == .Shell ? GI_TERMINAL : GI_MONITOR
+	if rtl {
+		p.icon(ui, GI_CHEVRONS_UP_DOWN, "size-4 text-muted-foreground")
+	} else {
+		p.icon(ui, kind_icon, "size-4 text-muted-foreground")
+	}
+	p.col(ui, "gap-0.5")
+	p.text(ui, s.name, rcls("text-sm font-medium text-foreground whitespace-nowrap", rtl))
+	p.text(
+		ui,
+		fmt.tprintf("%s · %s", session_kind_label(s.kind), s.exec),
+		rcls("text-xs text-muted-foreground whitespace-nowrap", rtl),
+	)
+	p.end(ui)
+	if rtl {
+		p.icon(ui, kind_icon, "size-4 text-muted-foreground")
+	} else {
 		p.icon(ui, GI_CHEVRONS_UP_DOWN, "size-4 text-muted-foreground")
 	}
 	p.end(ui)
+}
 
-	p.spacer(ui)
-
-	if !st.connected {
-		p.row(ui, "items-center gap-2 px-3 py-2 rounded-lg border border-destructive/50 bg-destructive/10")
-		p.icon(ui, GI_TRIANGLE_ALERT, "size-4 text-destructive")
-		p.textf(ui, "text-xs text-destructive whitespace-nowrap", "no greetd on %s", st.sock)
-		p.end(ui)
+no_greetd_notice :: proc(st: ^St, ui: ^p.Ctx, rtl: bool) {
+	if st.connected {
+		return
+	}
+	if rtl {
 		p.div(ui, "w-4")
 		p.end(ui)
 	}
+	p.row(ui, "items-center gap-2 px-3 py-2 rounded-lg border border-destructive/50 bg-destructive/10")
+	if !rtl {p.icon(ui, GI_TRIANGLE_ALERT, "size-4 text-destructive")}
+	p.text(ui, kit.trf("no greetd on %s", st.sock), "text-xs text-destructive whitespace-nowrap")
+	if rtl {p.icon(ui, GI_TRIANGLE_ALERT, "size-4 text-destructive")}
+	p.end(ui)
+	if !rtl {
+		p.div(ui, "w-4")
+		p.end(ui)
+	}
+}
 
-	// Power actions. Every one of these calls a stub, except under
-	// palm-login, where the ones that exist are real (see power_request).
-	for act in Power {
+// power_buttons draws the actions this machine has. Every one of these calls
+// a stub, except under palm-login, where the ones that exist are real (see
+// power_request). Right to left, Shut Down comes first so it stays at the
+// outer edge.
+power_buttons :: proc(st: ^St, ui: ^p.Ctx, rtl: bool) {
+	order := [?]Power{.Suspend, .Reboot, .Shutdown}
+	if rtl {
+		order = {.Shutdown, .Reboot, .Suspend}
+	}
+	for act in order {
 		if !power_available(act) {
 			continue
 		}
@@ -1040,8 +1154,9 @@ footer :: proc(st: ^St, ui: ^p.Ctx) {
 		if p.clickable(ui, b) {
 			st.note = power_request(act, st.sock)
 		}
-		p.icon(ui, power_icon(act), "size-4")
+		if !rtl {p.icon(ui, power_icon(act), "size-4")}
 		p.text(ui, power_label(act), "whitespace-nowrap")
+		if rtl {p.icon(ui, power_icon(act), "size-4")}
 		sc.button_end(ui)
 	}
 }
@@ -1052,13 +1167,14 @@ protocol_log :: proc(st: ^St, ui: ^p.Ctx) {
 	p.col(ui, "w-full gap-1 p-3 rounded-lg border border-border bg-card/60")
 	defer p.end(ui)
 
+	// The protocol lines themselves are JSON and stay left to right; only
+	// the caption is translated.
 	p.row(ui, "items-center gap-2")
 	p.icon(ui, GI_TERMINAL, "size-3.5 text-muted-foreground")
-	p.textf(
+	p.text(
 		ui,
-		"text-xs font-medium text-muted-foreground",
-		"greetd IPC · %s  (F2 hides this)",
-		st.sock == "" ? "no socket" : st.sock,
+		kit.trf("greetd IPC · %s  (F2 hides this)", st.sock == "" ? kit.tr("no socket") : st.sock),
+		"text-xs font-medium text-muted-foreground whitespace-nowrap",
 	)
 	p.end(ui)
 
@@ -1075,16 +1191,20 @@ protocol_log :: proc(st: ^St, ui: ^p.Ctx) {
 		p.text(ui, line, cls)
 	}
 	if n == 0 {
-		p.text(ui, "nothing sent yet", "text-xs font-mono text-muted-foreground")
+		p.text(ui, kit.tr("nothing sent yet"), "text-xs font-mono text-muted-foreground")
 	}
 }
 
 // ---------------------------------------------------------------------------
 // Clock
+//
+// Local time from the zone local_zone loaded (system.odin), recomputed on
+// every frame so a daylight-saving change shows at the minute it happens.
+// The names are English msgids, translated where they are drawn.
 // ---------------------------------------------------------------------------
 
 local_now :: proc(st: ^St) -> time.Time {
-	return time.time_add(time.now(), st.tz)
+	return time.time_add(time.now(), zone_offset(st.zone, time.now()))
 }
 
 local_clock :: proc(st: ^St) -> (h, m, s: int) {
@@ -1093,11 +1213,11 @@ local_clock :: proc(st: ^St) -> (h, m, s: int) {
 
 local_date :: proc(st: ^St) -> (y: int, month: string, d: int) {
 	yy, mm, dd := time.date(local_now(st))
-	return yy, MONTHS[int(mm) - 1], dd
+	return yy, kit.tr(MONTHS[int(mm) - 1]), dd
 }
 
 local_weekday :: proc(st: ^St) -> string {
-	return DAYS[int(time.weekday(local_now(st)))]
+	return kit.tr(DAYS[int(time.weekday(local_now(st)))])
 }
 
 MONTHS := [?]string {

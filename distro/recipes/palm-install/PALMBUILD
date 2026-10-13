@@ -1,0 +1,15 @@
+# The installer's command-line front end (distro/installer/cli): the same
+# install_core the graphical installer uses, driven by flags or questions on
+# a terminal. It partitions, formats (mkfs.ext4, mkfs.fat), runs palm into
+# the new root and writes limine onto the new ESP, so it depends on the
+# packages that carry those tools. Built by distro/Makefile into
+# distro/out/bin/palm-install.
+pkgname  = palm-install
+pkgver   = 0.1.0
+pkgrel   = 0
+pkgdesc  = Install Palmframe onto a disk (command line)
+license  = MIT
+depend   = glibc palm e2fsprogs dosfstools limine tzdata
+provides = cmd:palm-install
+
+file     = ${PALMFRAME_OUT}/bin/palm-install -> /usr/bin/palm-install mode 0755

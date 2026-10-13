@@ -426,11 +426,17 @@ user_groups :: proc(d: ^Daemon, acct: Account) -> []u32 {
 }
 
 launch :: proc(d: ^Daemon, kind: Child_Kind, acct: Account, groups: []u32, cmd, env: []string) {
+	// The system's language (and, rarely, TZ) under whatever the caller
+	// adds: the greeter may ask for its own LANG in start_session, and that
+	// request wins, as greetd's would. See locale.odin.
+	full := make([dynamic]string, context.temp_allocator)
+	append(&full, ..system_locale_env(d.paths, context.temp_allocator))
+	append(&full, ..env)
 	spec := Session_Spec {
 		acct   = acct,
 		groups = groups,
 		cmd    = cmd,
-		env    = env,
+		env    = full[:],
 		log    = fmt.tprintf("/var/log/session-%s.log", acct.name),
 	}
 	pid, err := spawn_session(spec)

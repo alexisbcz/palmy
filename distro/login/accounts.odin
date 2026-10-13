@@ -35,15 +35,22 @@ Group :: struct {
 }
 
 Paths :: struct {
-	passwd: string,
-	shadow: string,
-	group:  string,
+	passwd:      string,
+	shadow:      string,
+	group:       string,
+	// The language and time zone every session inherits (locale.odin).
+	locale_conf: string,
+	timezone:    string,
+	localtime:   string,
 }
 
 SYSTEM_PATHS :: Paths {
-	passwd = "/etc/passwd",
-	shadow = "/etc/shadow",
-	group  = "/etc/group",
+	passwd      = "/etc/passwd",
+	shadow      = "/etc/shadow",
+	group       = "/etc/group",
+	locale_conf = "/etc/locale.conf",
+	timezone    = "/etc/timezone",
+	localtime   = "/etc/localtime",
 }
 
 // colon_fields splits one line of a colon-separated database. Comments and
