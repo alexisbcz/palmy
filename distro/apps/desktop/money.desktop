@@ -1,0 +1,8 @@
+[Desktop Entry]
+Type=Application
+Name=Money
+Comment=Accounts and budgets
+Exec=money
+Icon=money
+Terminal=false
+Categories=Office;Finance;

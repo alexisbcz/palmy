@@ -1,0 +1,8 @@
+[Desktop Entry]
+Type=Application
+Name=Image Viewer
+Comment=View images
+Exec=image
+Icon=image
+Terminal=false
+Categories=Graphics;Viewer;

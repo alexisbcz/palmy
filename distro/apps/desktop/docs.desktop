@@ -1,0 +1,8 @@
+[Desktop Entry]
+Type=Application
+Name=Docs
+Comment=Write documents
+Exec=docs
+Icon=docs
+Terminal=false
+Categories=Office;WordProcessor;

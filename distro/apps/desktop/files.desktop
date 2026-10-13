@@ -1,0 +1,8 @@
+[Desktop Entry]
+Type=Application
+Name=Files
+Comment=Browse files and folders
+Exec=files
+Icon=files
+Terminal=false
+Categories=System;FileManager;

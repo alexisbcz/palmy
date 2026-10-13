@@ -1,0 +1,8 @@
+[Desktop Entry]
+Type=Application
+Name=Calculator
+Comment=Expressions, functions and variables
+Exec=calc
+Icon=calc
+Terminal=false
+Categories=Utility;Calculator;

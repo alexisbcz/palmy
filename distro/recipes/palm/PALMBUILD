@@ -1,0 +1,18 @@
+# palm, the package manager (distro/palm). The CONTRACT's /sbin/palm is this
+# file through /sbin -> usr/bin.
+#
+# Any first word that is not one of palm's verbs is handed to
+# /usr/lib/palm/palm-surface: the application command dispatcher from
+# apps/palm, which distro/apps/build.sh builds as palm-apps because the name
+# palm belongs to the package manager.
+pkgname  = palm
+pkgver   = 0.1.0
+pkgrel   = 0
+pkgdesc  = The Palmframe package manager
+license  = MIT
+depend   = palmframe-base glibc
+provides = cmd:palm
+
+file     = ${PALMFRAME_OUT}/bin/palm -> /usr/bin/palm mode 0755
+file     = ${PALMFRAME_OUT}/bin/palm-apps -> /usr/lib/palm/palm-surface mode 0755
+dir      = /var/cache/palm

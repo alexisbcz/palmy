@@ -1,0 +1,9 @@
+[Desktop Entry]
+Type=Application
+Name=Launcher
+Comment=Find and start applications
+Exec=launcher
+Icon=launcher
+Terminal=false
+Categories=Utility;
+NoDisplay=true

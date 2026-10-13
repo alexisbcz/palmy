@@ -1,0 +1,8 @@
+[Desktop Entry]
+Type=Application
+Name=Reader
+Comment=Read books and documents
+Exec=reader
+Icon=reader
+Terminal=false
+Categories=Office;Viewer;

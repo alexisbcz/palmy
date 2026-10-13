@@ -1,0 +1,8 @@
+[Desktop Entry]
+Type=Application
+Name=Calendar
+Comment=Your schedule
+Exec=calendar
+Icon=calendar
+Terminal=false
+Categories=Office;Calendar;

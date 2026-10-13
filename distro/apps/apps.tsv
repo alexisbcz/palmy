@@ -1,0 +1,48 @@
+app	binary	builds	runtime_deps	works_minimal	notes
+ai	ai	yes	HTTP to ollama on 127.0.0.1:11434	no	UI comes up (verified in minimal chroot) and says the model server is not answering; useless without ollama, which Palmframe does not ship
+archive	archive	yes	bsdtar (libarchive)	no	every list/extract/create goes through bsdtar; busybox tar/unzip are not used. Ship bsdtar to enable
+audio	audio	yes	ffmpeg, ffprobe, pw-cat (PipeWire)	no	decodes with ffmpeg and plays through pw-cat; neither exists. UI renders
+bluetooth	bluetooth	yes	bluetoothctl, rfkill (BlueZ, D-Bus)	no	applet over bluetoothctl; no BlueZ/D-Bus on Palmframe
+calc	calc	yes	none	yes	verified: renders and evaluates typed input in the minimal chroot, with and without libxkbcommon
+calendar	calendar	yes	date (busybox)	yes	local store under ~/.local/share; date +%z is busybox-compatible
+call	call	yes	links libopus.so.0; ffmpeg, pw-play, pw-record, wpctl, v4l2-ctl	no	does not start at all without libopus.so.0 (verified: loader error); then needs PipeWire and a camera
+captions	captions	yes	ffmpeg, ffprobe, ffplay, whisper-cli	no	transcription needs whisper.cpp and ffmpeg
+chat	chat	yes	chat-server on 127.0.0.1:8787; date	partial	works against the bundled chat-server (apps/chat/server, built as chat-server); without it shows reconnecting
+chat/server	chat-server	yes	none	yes	the local relay chat talks to; a plain TCP server, no UI
+chatbot	chatbot	yes	ollama; chat-server	no	headless bot that answers in chat via ollama
+clipboard	clipboard	yes	wl-copy, wl-paste (wl-clipboard), sh	no	history is captured through wl-paste; palmy has no native clipboard yet
+colorpick	colorpick	yes	grim, hyprctl, wl-copy	partial	the picker/converter UI works; picking from the screen needs grim+hyprctl, copying needs wl-copy
+docs	docs	yes	optional: vale (prose checks)	yes	word processor works with no deps; the prose-style panel shells out to vale
+editor	editor	yes	none	yes	verified: typing with built-in US layout and with libxkbcommon. Redraws continuously while a caret is shown (thousands of commits/4 s against an unthrottled compositor)
+emoji	emoji	yes	wl-copy	partial	browsing works; its one action (copy the emoji) needs wl-copy
+files	files	yes	optional: xdg-open, foot, wl-copy	yes	browsing, rename, trash work with no deps. 'Open terminal here' runs foot (should be term), 'open' runs xdg-open, 'copy path' runs wl-copy
+greeter	greeter	yes	wlr-layer-shell from the wm; GREETD_SOCK (palm-login)	yes	session component: needs the wm (layer-shell) and palm-login; exits 1 against a compositor without layer-shell (verified)
+image	image	yes	none	yes	stb_image decode, no external tools
+launcher	launcher	yes	wlr-layer-shell from the wm; .desktop files in /usr/share/applications; optional wl-copy, xdg-open	yes	needs .desktop entries to list anything (distro/apps/desktop/ provides them); its terminal list knows foot/alacritty/kitty, not term
+mail	mail	yes	mailcore for real accounts (libssl); date	partial	opens on built-in fixtures; real IMAP/SMTP goes through mailcore, which needs OpenSSL
+mailcore	mailcore	yes	links libssl.so.3, libcrypto.so.3, libz, libbrotli*, libzstd	no	does not start without OpenSSL and friends (verified: loader error). Ship them or drop it
+maps	maps	yes	none	yes	offline by design: no network code, renders a generated city
+mixer	mixer	yes	wpctl, pactl (PipeWire/Pulse), sh	no	no audio server on Palmframe
+money	money	yes	none	yes	local ledger
+network	network	yes	nmcli (NetworkManager)	no	Palmframe configures eth0 with udhcpc from palm-init; no NetworkManager
+notes	notes	yes	none	yes	verified. First-run welcome note fails when ~/.local is missing (store.odin uses make_directory, not make_directory_all); create ~/.local/share in the skeleton home
+ocr	ocr	yes	links libssl.so.3 et al; Mistral API over HTTPS; pdftoppm/pdfinfo/pdftotext	no	does not start without OpenSSL (verified: loader error)
+palm	palm-apps	yes	sh	partial	the application command dispatcher (palm schema / palm notes ...). Renamed: /usr/bin/palm is the package manager
+photoshop	photoshop	yes	none	yes	raster editor, no external tools
+pickdemo	pickdemo	yes	none	yes	demo of the kit file picker; not for the default install
+pkg	pkg	yes	pacman, yay, snapper, sudo, limine	no	Arch-specific declarative layer over pacman; meaningless on Palmframe (palm replaces it)
+power	power	yes	upower, loginctl, systemctl (all optional)	partial	reads /sys/class/power_supply directly; session actions are stubbed in the app
+prose/cli	prose	yes	optional: espeak-ng, vale styles	partial	the prose engine CLI; core checks need nothing
+reader	reader	yes	pdftoppm/pdftotext/pdftohtml (poppler), ddjvu/djvused/djvutxt	partial	EPUB/text read natively; PDF and DjVu need poppler/djvulibre
+screenshot	screenshot	yes	grim, slurp, hyprctl	no	capture is entirely grim/slurp; needs screencopy in the wm as well
+sheets	sheets	yes	optional: wl-copy via sh	yes	spreadsheet works; copying a range out of the app needs wl-copy
+shop	shop	yes	none	yes	demo storefront/feed generator, no external tools
+slides	slides	yes	none	yes	presentations, no external tools
+sysmon	sysmon	yes	/proc, /sys	yes	verified in the minimal chroot (host /proc bound in). User column shows uid? without /etc/passwd entries
+term	term	yes	a shell ($SHELL or /bin/sh), /dev/ptmx	yes	verified: runs busybox sh and takes typed input in the minimal chroot
+torrent	torrent	yes	network (plain sockets)	yes	no external tools
+track	track	yes	sh, timeout (busybox)	yes	file-based issue tracker; mostly a CLI
+vault	vault	yes	wl-copy, wl-paste	partial	password store works; copying a secret needs wl-copy
+video	video	yes	ffmpeg, ffprobe, pw-cat	no	decoding is ffmpeg
+videoedit	videoedit	yes	ffmpeg, ffprobe, pw-cat; media under the dev tree	no	decoding/export is ffmpeg; MEDIA_DIR is a /home/alex path
+wm	wm	yes	libxkbcommon.so.0 (its own keymap), /dev/dri, /dev/input	yes	the session; bare-metal backend owned and verified by the wm agent, not here

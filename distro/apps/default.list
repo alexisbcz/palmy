@@ -1,0 +1,24 @@
+# The applications in Palmframe's default install: works_minimal = yes in
+# apps.tsv and worth having on a fresh system. One binary name per line; each
+# is distro/out/bin/<name> -> /usr/bin/<name>, with
+# distro/apps/desktop/<name>.desktop -> /usr/share/applications/ where one
+# exists (wm and greeter are the session, not launchable applications).
+wm
+greeter
+term
+launcher
+files
+editor
+notes
+calc
+sysmon
+image
+docs
+sheets
+slides
+calendar
+reader
+photoshop
+maps
+money
+torrent

@@ -1,0 +1,8 @@
+NAME="Palmframe"
+PRETTY_NAME="Palmframe"
+ID=palmframe
+ID_LIKE=alpine
+VERSION_ID=0.1
+VERSION="0.1"
+HOME_URL="https://github.com/alexisbcz/palmy"
+ANSI_COLOR="0;32"

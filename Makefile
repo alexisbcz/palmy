@@ -4,13 +4,14 @@
 #   make test       run the headless test suite
 #   make run-todo   build and run one example
 #   make shots      render the documentation screenshots
+#   make distro     build the Palmframe distribution (see distro/Makefile)
 
 ODIN ?= odin
 FLAGS ?= -o:speed
 BIN := bin
 EXAMPLES := counter todo gallery pixels
 
-.PHONY: all test clean shots check $(addprefix run-,$(EXAMPLES))
+.PHONY: all test clean shots check distro $(addprefix run-,$(EXAMPLES))
 
 all: $(addprefix $(BIN)/,$(EXAMPLES))
 
@@ -38,3 +39,6 @@ shots: $(BIN)/gallery
 
 clean:
 	rm -rf $(BIN)
+
+distro:
+	$(MAKE) -C distro

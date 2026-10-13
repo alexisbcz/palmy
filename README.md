@@ -12,9 +12,13 @@ The toolkit came first because the rest is not worth attempting on a stack you
 cannot see the bottom of. What exists today is that toolkit and the
 applications built on it — a window manager, a login manager, a file browser,
 a mail client, an office suite, media players, a torrent client, a local-model
-chat client, and others. The distribution and everything under *Where this is
-going* below is a plan, not a shipped thing, and is written here so the
-direction is on the record rather than implied.
+chat client, and others. A first version of the distribution exists too: a
+kernel, a busybox userland, and an init, a login daemon and a package manager
+written in Odin, built by `make distro` into a disk image that boots in QEMU to
+the greeter and the window manager. It has not run on real hardware, and what
+it lacks is listed in [`distro/README.md`](distro/README.md). Everything under
+*Where this is going* below is still a plan, not a shipped thing, and is
+written here so the direction is on the record rather than implied.
 
 ```odin
 for ui in palmy.frames(app) {
@@ -96,6 +100,7 @@ window in the wrong place.
 make            # build every example into ./bin
 make run-todo   # or run-counter, run-gallery, run-pixels
 make test       # the headless test suite
+make distro     # the Palmframe disk image; distro/run-qemu.sh boots it
 ```
 
 Built and tested with Odin `dev-2026-09` on Hyprland; any compositor with
@@ -452,6 +457,11 @@ plainly is the point: the toolkit above is measured against a browser and has
 a test suite, and this does not yet.
 
 ### A distribution where AI is part of the system
+
+The distribution underneath it now exists: `distro/` boots under QEMU from
+firmware to a login screen and a desktop, with its own package manager. None
+of what this section describes runs on it yet; that is the part that would
+make it more than a small Linux distribution.
 
 The assistant on most machines today is a browser tab. It cannot see your
 files, cannot act on your mail, and forgets you between sessions — so the work
