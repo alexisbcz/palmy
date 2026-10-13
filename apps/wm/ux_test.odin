@@ -147,6 +147,51 @@ ux_selftest :: proc(s: ^Server, c: ^Client) {
 		ws_check(a.x + a.req_w <= b.x, "without overlapping the master")
 	}
 
+	{
+		// Super+Left on a tile puts it beside the layout, never over it: the
+		// layout yields the snapped half and tiles into the rest, and every
+		// other window stays in view (UX.md P0-5, principle 2).
+		ws_test_reset(s)
+		a := ws_test_win(s, c, "a", "app", 400, 300)
+		b := ws_test_win(s, c, "b", "app", 400, 300)
+		g := ws_test_win(s, c, "g", "app", 400, 300)
+		g.min_w = 720
+		append(&s.stack, a, b, g)
+		tile_apply(s)
+		s.focus = g
+		snap_keyboard(s, .Left)
+		tile_apply(s)
+		gr := target_frame(g)
+		ok := true
+		for t in ([]^Toplevel{a, b}) {
+			if p.rect_overlaps(target_frame(t), gr) {
+				ok = false
+			}
+		}
+		ws_check(ws_win(g).snap == .Left, "Super+Left snaps the tile to the left")
+		ws_check(ok, "and the tiles left behind sit beside it, not under it")
+		snap_keyboard(s, .Down)
+		tile_apply(s)
+		ws_check(!ws_floating(g) && s.workspaces[0].tiled_in == tile_area(s, 0), "Super+Down gives the layout its whole area back")
+	}
+	{
+		// A new window cascades from the window that is there, not from a
+		// position remembered from one long closed (UX.md P0-13).
+		ws_test_reset(s)
+		s.workspaces[0].tiling = false
+		a := ws_test_win(s, c, "a", "app", 700, 480)
+		ws_win(a).floating = true
+		a.x, a.y = 400, 260
+		append(&s.stack, a)
+		b := ws_test_win(s, c, "b", "app", 1000, 670)
+		place_new_window(s, b)
+		af, bf := frame_rect(a), target_frame(b)
+		covered := bf.x <= af.x && bf.y <= af.y && bf.x + bf.w >= af.x + af.w && bf.y + bf.h >= af.y + af.h
+		ws_check(!covered, "a large new window does not cover the one below it whole")
+		ws_check(bf.y >= af.y + f32(ws_title_h(a)), "the window below keeps its title bar in view")
+		s.workspaces[0].tiling = s.cfg.tiling
+	}
+
 	// --- maximize and restore, exactly -----------------------------------
 	{
 		ws_test_reset(s)

@@ -274,7 +274,10 @@ floating as above.
 From the keyboard, for floating windows. On a tiled window Super+Up
 maximizes, Super+Down restores or minimizes, and Super+Left/Right snap it to
 that half, out of the layout, so two windows side by side (P1-10) are two
-keystrokes whatever the workspace; moving focus is Super+H/J/K/L.
+keystrokes whatever the workspace; moving focus is Super+H/J/K/L. The
+layout yields the side a full-height snapped window holds and tiles the rest
+beside it, so a snap never hides a tile under it; Super+Down hands the side
+back.
 
 | key           | floating window                                         |
 | ------------- | ------------------------------------------------------- |
@@ -474,7 +477,10 @@ released (at its maximum) and does not follow the pointer afterwards.
   `focus_new = smart | always | never`.
 - Placement: on the output under the pointer; centred if it is the first
   window of a floating workspace, otherwise cascaded 32 px down-right from the
-  last placed window, wrapping before any edge; never off-screen, never under
+  window there (the topmost floating one on that output — never a remembered
+  position of one since closed), shortened to keep the title bar of the one
+  below in view when it would run past the bottom, wrapping when even that
+  leaves less than half the height; never off-screen, never under
   the bar; a window larger than the work area is shrunk to it (and asked to
   be that size), not centred off its edges.
 - When a tiled layout cannot honour a client's minimum size, the layout gives
