@@ -285,6 +285,11 @@ measure :: proc(ctx: ^Ctx, idx: int, avail: [2]f32) -> [2]f32 {
 
 		run_main := f32(0)
 		run_cross := f32(0)
+		// Baseline-aligned children are shifted down to share the deepest
+		// baseline, so the line must hold the tallest part above it plus the
+		// deepest part below it, not just the tallest child.
+		run_above := f32(0)
+		run_below := f32(0)
 		total_cross := f32(0)
 		count := 0
 		lines := 1
@@ -319,6 +324,8 @@ measure :: proc(ctx: ^Ctx, idx: int, avail: [2]f32) -> [2]f32 {
 				// Start a new flex line.
 				total_cross += run_cross + gap_cross
 				run_cross = 0
+				run_above = 0
+				run_below = 0
 				run_main = 0
 				lines += 1
 			}
@@ -327,6 +334,12 @@ measure :: proc(ctx: ^Ctx, idx: int, avail: [2]f32) -> [2]f32 {
 			}
 			run_main += kid_main
 			run_cross = max(run_cross, kid_cross)
+			if main == 0 && align == .Baseline {
+				base := cs.margin[TOP] + baseline_of(ctx, c, kid[cross])
+				run_above = max(run_above, base)
+				run_below = max(run_below, kid_cross - base)
+				run_cross = max(run_cross, run_above + run_below)
+			}
 			content[main] = max(content[main], run_main)
 			count += 1
 		}
@@ -580,6 +593,24 @@ arrange :: proc(ctx: ^Ctx, idx: int, box: Rect, clip: Rect) {
 			k.size[main] = size
 			k.size[cross] = cross_size
 			line_cross[ln] = max(line_cross[ln], cross_size + margin_of(cs, cross))
+		}
+
+		// Make room for the baseline shift, as measure does.
+		if main == 0 {
+			above, below := f32(0), f32(0)
+			for k in kids {
+				if k.line != ln {
+					continue
+				}
+				cs := ctx.nodes[k.idx].style
+				if (cs.self != .Auto ? cs.self : s.items) != .Baseline {
+					continue
+				}
+				base := cs.margin[TOP] + baseline_of(ctx, k.idx, k.size[cross])
+				above = max(above, base)
+				below = max(below, k.size[cross] + margin_of(cs, cross) - base)
+			}
+			line_cross[ln] = max(line_cross[ln], above + below)
 		}
 	}
 
