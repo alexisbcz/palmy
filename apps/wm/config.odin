@@ -277,6 +277,10 @@ hot_corner          = on
 # The window counts and frame rate, for whoever is tuning the compositor.
 debug_hud           = off
 
+# Bindings. A wm.conf adds to these: a bind on a chord used here replaces
+# it, "unbind = $mod, Q" removes one, and "default_binds = replace" starts
+# from an empty table instead.
+#
 # Launchers. Commands are resolved against $PATH, so no absolute paths.
 bind = $mod,       Return, spawn term
 bind = $mod,       T,      spawn term
@@ -507,11 +511,12 @@ cfg_load :: proc(c: ^Cfg) {
 		c.mtime = time.to_unix_nanoseconds(fi.modification_time)
 	}
 	c.loaded = true
-	// A user file replaces the default bindings wholesale rather than adding
-	// to them; otherwise there is no way to *remove* one.
-	// ...unless it says `default_binds = keep`, which is how demo.conf adds
-	// the recorder's bare function keys on top of the default table.
-	if cfg_has_binds(string(data)) && !cfg_keeps_default_binds(string(data)) {
+	// A user file adds to the default bindings: a `bind` on a chord the
+	// default already uses replaces that one (cfg_bind), `unbind` removes
+	// one, and everything else is kept. Adding one shortcut must never cost
+	// the cheat sheet, close and the workspace keys. A file that wants a
+	// table of its own from scratch says `default_binds = replace`.
+	if cfg_has_binds(string(data)) && cfg_replaces_default_binds(string(data)) {
 		for b in c.binds {
 			for a in b.argv {delete(a)}
 			delete(b.argv)
@@ -543,13 +548,19 @@ cfg_has_binds :: proc(text: string) -> bool {
 	return false
 }
 
-cfg_keeps_default_binds :: proc(text: string) -> bool {
+// cfg_replaces_default_binds is `default_binds = replace` (or none, off).
+// `keep`, the old opt-in for adding, is the default now and still accepted.
+cfg_replaces_default_binds :: proc(text: string) -> bool {
 	rest := text
 	for line in strings.split_lines_iterator(&rest) {
 		t := cfg_strip_comment(line)
 		eq := strings.index_byte(t, '=')
 		if eq > 0 && strings.trim_space(t[:eq]) == "default_binds" {
-			return strings.to_lower(strings.trim_space(t[eq + 1:]), context.temp_allocator) == "keep"
+			switch strings.to_lower(strings.trim_space(t[eq + 1:]), context.temp_allocator) {
+			case "replace", "none", "off":
+				return true
+			}
+			return false
 		}
 	}
 	return false
@@ -733,6 +744,8 @@ cfg_set :: proc(c: ^Cfg, name, val, src: string, n: int) {
 		c.wallpaper_flat = true
 	case "bind":
 		cfg_bind(c, val, src, n)
+	case "unbind":
+		cfg_unbind(c, val, src, n)
 	case "rule":
 		cfg_rule(c, val, src, n)
 	case "output":
@@ -878,30 +891,8 @@ cfg_bind :: proc(c: ^Cfg, val, src: string, n: int) {
 	act_s := strings.trim_space(rest[b + 1:])
 
 	bind: Cfg_Bind
-	if strings.to_lower(mods_s, context.temp_allocator) == "any" {
-		bind.any_mods = true
-	} else {
-		m, ok := cfg_mods(c, mods_s)
-		if !ok {
-			cfg_err(c, src, n, "unknown modifier in %q", mods_s)
-			return
-		}
-		bind.mods = m
-	}
-	if strings.has_prefix(strings.to_lower(key_s, context.temp_allocator), "code:") {
-		code := cfg_int(key_s[5:], 0)
-		if code <= 8 || code > 255 {
-			cfg_err(c, src, n, "a keycode is 9..255, not %q", key_s)
-			return
-		}
-		bind.code = u32(code)
-	} else {
-		sym, ok := cfg_keysym(key_s)
-		if !ok {
-			cfg_err(c, src, n, "unknown key %q", key_s)
-			return
-		}
-		bind.sym = sym
+	if !cfg_chord(c, &bind, mods_s, key_s, src, n) {
+		return
 	}
 	if !cfg_action(c, &bind, act_s, src, n) {
 		return
@@ -910,16 +901,81 @@ cfg_bind :: proc(c: ^Cfg, val, src: string, n: int) {
 
 	// A later binding on the same chord replaces an earlier one, so a user
 	// file can override one default without clearing the rest.
-	for &old, i in c.binds {
-		if old.sym == bind.sym && old.code == bind.code && old.mods == bind.mods && old.any_mods == bind.any_mods {
-			for s2 in old.argv {delete(s2)}
-			delete(old.argv)
-			delete(old.label)
-			c.binds[i] = bind
-			return
-		}
+	if i := cfg_find_chord(c, &bind); i >= 0 {
+		old := &c.binds[i]
+		for s2 in old.argv {delete(s2)}
+		delete(old.argv)
+		delete(old.label)
+		c.binds[i] = bind
+		return
 	}
 	append(&c.binds, bind)
+}
+
+// cfg_unbind parses `<mods>, <key>` and removes the binding on that chord,
+// a default one included.
+cfg_unbind :: proc(c: ^Cfg, val, src: string, n: int) {
+	a := strings.index_byte(val, ',')
+	if a < 0 {
+		cfg_err(c, src, n, "unbind needs <mods>, <key>")
+		return
+	}
+	key_s := strings.trim_space(val[a + 1:])
+	if b := strings.index_byte(key_s, ','); b >= 0 {
+		key_s = strings.trim_space(key_s[:b]) // an action after it is ignored
+	}
+	bind: Cfg_Bind
+	if !cfg_chord(c, &bind, strings.trim_space(val[:a]), key_s, src, n) {
+		return
+	}
+	i := cfg_find_chord(c, &bind)
+	if i < 0 {
+		return // nothing on that chord: already unbound
+	}
+	old := c.binds[i]
+	for s2 in old.argv {delete(s2)}
+	delete(old.argv)
+	delete(old.label)
+	ordered_remove(&c.binds, i)
+}
+
+cfg_find_chord :: proc(c: ^Cfg, bind: ^Cfg_Bind) -> int {
+	for &old, i in c.binds {
+		if old.sym == bind.sym && old.code == bind.code && old.mods == bind.mods && old.any_mods == bind.any_mods {
+			return i
+		}
+	}
+	return -1
+}
+
+// cfg_chord parses the `<mods>, <key>` half of a binding into `bind`.
+cfg_chord :: proc(c: ^Cfg, bind: ^Cfg_Bind, mods_s, key_s, src: string, n: int) -> bool {
+	if strings.to_lower(mods_s, context.temp_allocator) == "any" {
+		bind.any_mods = true
+	} else {
+		m, ok := cfg_mods(c, mods_s)
+		if !ok {
+			cfg_err(c, src, n, "unknown modifier in %q", mods_s)
+			return false
+		}
+		bind.mods = m
+	}
+	if strings.has_prefix(strings.to_lower(key_s, context.temp_allocator), "code:") {
+		code := cfg_int(key_s[5:], 0)
+		if code <= 8 || code > 255 {
+			cfg_err(c, src, n, "a keycode is 9..255, not %q", key_s)
+			return false
+		}
+		bind.code = u32(code)
+	} else {
+		sym, ok := cfg_keysym(key_s)
+		if !ok {
+			cfg_err(c, src, n, "unknown key %q", key_s)
+			return false
+		}
+		bind.sym = sym
+	}
+	return true
 }
 
 cfg_action :: proc(c: ^Cfg, bind: ^Cfg_Bind, s, src: string, n: int) -> bool {
@@ -1172,11 +1228,21 @@ cfg_rule :: proc(c: ^Cfg, val, src: string, n: int) {
 		case strings.has_prefix(t, "workspace"):
 			r.workspace = cfg_int(strings.trim_space(t[len("workspace"):]), 0)
 		case strings.has_prefix(t, "size"):
+			// `size 400x300`, or `size 400 300` as Hyprland writes it. A size
+			// that does not parse is reported: silently ignoring it left a
+			// window at its own size with no hint why.
 			dims := strings.trim_space(t[len("size"):])
-			if x := strings.index_byte(dims, 'x'); x > 0 {
-				r.w = cfg_int(dims[:x], 0)
-				r.h = cfg_int(dims[x + 1:], 0)
+			sep := strings.index_byte(dims, 'x')
+			if sep < 0 {
+				sep = strings.index_byte(dims, ' ')
+			}
+			if sep > 0 {
+				r.w = cfg_int(strings.trim_space(dims[:sep]), 0)
+				r.h = cfg_int(strings.trim_space(dims[sep + 1:]), 0)
 				r.set_size = r.w > 0 && r.h > 0
+			}
+			if !r.set_size {
+				cfg_err(c, src, n, "size is <w>x<h>, not %q", dims)
 			}
 		case:
 			cfg_err(c, src, n, "unknown rule clause %q", t)

@@ -1203,6 +1203,8 @@ toggle_sticky :: proc(s: ^Server, t: ^Toplevel) {
 // window manager you have to restart to retune is a window manager you stop
 // retuning, so this is a first-class operation and not a debugging aid.
 wm_reload :: proc(s: ^Server) {
+	old_tiling, old_layout := s.cfg.tiling, s.cfg.layout
+	old_ratio, old_count := s.cfg.master_ratio, s.cfg.master_count
 	cfg_load(&s.cfg)
 	if session.kiosk {
 		session_kiosk_preset(&s.cfg)
@@ -1210,14 +1212,16 @@ wm_reload :: proc(s: ^Server) {
 	if len(s.workspaces) != s.cfg.workspaces {
 		ws_build_workspaces(s)
 	}
-	// Re-apply the layout settings to every workspace. Editing master_ratio
-	// and watching it move is the whole point of live reload, so the file
-	// wins over a runtime toggle rather than the other way round.
+	// Re-apply the layout settings the file changed to every workspace.
+	// Editing master_ratio and watching it move is the whole point of live
+	// reload, so a changed value wins over a runtime toggle; but a value the
+	// file did not change leaves the workspaces alone — adding a bind line
+	// must not re-tile a workspace the user had set floating.
 	for &w in s.workspaces {
-		w.tiling = s.cfg.tiling
-		w.layout = s.cfg.layout
-		w.master_ratio = s.cfg.master_ratio
-		w.master_count = s.cfg.master_count
+		if s.cfg.tiling != old_tiling {w.tiling = s.cfg.tiling}
+		if s.cfg.layout != old_layout {w.layout = s.cfg.layout}
+		if s.cfg.master_ratio != old_ratio {w.master_ratio = s.cfg.master_ratio}
+		if s.cfg.master_count != old_count {w.master_count = s.cfg.master_count}
 	}
 	// Heads named in the file take their geometry from it; the host-backed
 	// one keeps tracking the nested window.

@@ -205,8 +205,14 @@ draw_workspace :: proc(s: ^Server, app: ^p.App, cv: ^p.Canvas, idx: int, dx: int
 	// A tiled window the keyboard just focused under floating windows is
 	// lifted over them while it keeps focus (interact.odin, ix_reveal):
 	// drawn last, whole, rather than seen through translucent windows.
+	// It is lifted only over the floating band: always-on-top and
+	// fullscreen windows stay above it, or "on top" would mean nothing.
 	lifted := idx == s.cur_ws ? ix_lifted(s) : nil
 	for t in stack {
+		if lifted != nil && ws_layer(s, t) >= 2 {
+			draw_window_at(s, app, cv, lifted, dx)
+			lifted = nil
+		}
 		if !t.mapped || t == lifted {
 			continue
 		}

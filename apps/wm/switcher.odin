@@ -240,31 +240,35 @@ switcher_draw :: proc(s: ^Server, app: ^p.App, cv: ^p.Canvas) {
 			p.stroke_round_rect(cv, p.rect_inset(cell, 2), {10, 10, 10, 10}, 2, p.hex(ACCENT))
 		}
 		box := p.Rect{cx + 8, cy + 8, SW_THUMB_W, SW_THUMB_H}
-		draw_thumb(cv, t, box, t.minimized ? 0.45 : 1)
-		draw_app_icon(cv, f, t, box.x + box.w - 26, box.y + box.h - 26, 22, t.minimized ? 0.5 : 1)
+		// The badge sits on the thumbnail's own corner, not the box's: a
+		// narrow window is drawn centred in the box and its badge would
+		// otherwise float beside it.
+		tr := draw_thumb(cv, t, box, t.minimized ? 0.45 : 1)
+		draw_app_icon(cv, f, t, tr.x + tr.w - 26, tr.y + tr.h - 26, 22, t.minimized ? 0.5 : 1)
 		label := ellipsize_end(f, title_of(t), 12, .Medium, cell_w - 20)
 		lw := p.text_width(f, label, 12, .Sans, .Medium)
 		p.draw_text(cv, f, label, cx + (cell_w - lw) / 2, cy + cell_h - 14, 12, p.hex(t.minimized ? 0x71717a : 0xe4e4e7), .Sans, .Medium)
 		if sw.all {
 			if idx := ws_index_of(s, t); idx >= 0 {
 				tag := s.workspaces[idx].name
-				p.fill_round_rect(cv, {box.x + 4, box.y + 4, 18, 16}, {4, 4, 4, 4}, p.hexa(0x000000aa))
-				p.draw_text(cv, f, tag, box.x + 9, box.y + 16, 10.5, p.hex(0xc7d2fe), .Sans, .Semibold)
+				p.fill_round_rect(cv, {tr.x + 4, tr.y + 4, 18, 16}, {4, 4, 4, 4}, p.hexa(0x000000aa))
+				p.draw_text(cv, f, tag, tr.x + 9, tr.y + 16, 10.5, p.hex(0xc7d2fe), .Sans, .Semibold)
 			}
 		}
 	}
 }
 
-// draw_thumb draws a window's last buffer scaled to fit a box, centred.
-draw_thumb :: proc(cv: ^p.Canvas, t: ^Toplevel, box: p.Rect, alpha: f32) {
+// draw_thumb draws a window's last buffer scaled to fit a box, centred,
+// and returns the rectangle it drew into.
+draw_thumb :: proc(cv: ^p.Canvas, t: ^Toplevel, box: p.Rect, alpha: f32) -> p.Rect {
 	if t.xdg == nil || t.xdg.surf == nil || t.xdg.surf.img == nil {
 		p.fill_round_rect(cv, box, {6, 6, 6, 6}, p.hex(0x18181b))
-		return
+		return box
 	}
 	surf := t.xdg.surf
 	iw, ih := f32(surf.iw), f32(surf.ih)
 	if iw <= 0 || ih <= 0 {
-		return
+		return box
 	}
 	sc := min(box.w / iw, box.h / ih, 1)
 	w := iw * sc
@@ -272,4 +276,5 @@ draw_thumb :: proc(cv: ^p.Canvas, t: ^Toplevel, box: p.Rect, alpha: f32) {
 	r := p.Rect{box.x + (box.w - w) / 2, box.y + (box.h - h) / 2, w, h}
 	p.drop_shadow(cv, r, {4, 4, 4, 4}, 10, 0, {0, 3}, p.hexa(0x00000080))
 	blit_scaled(cv, surf.img, surf.iw, surf.ih, r, alpha)
+	return r
 }

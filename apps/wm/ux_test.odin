@@ -56,7 +56,7 @@ ux_selftest :: proc(s: ^Server, c: ^Client) {
 	ws_check(snap_key(.None, true, .Down).restore, "Down on a maximized window restores")
 	ws_check(snap_key(.Left, false, .Down).restore, "Down on a snapped window restores")
 	ws_check(snap_key(.None, false, .Down).minimize, "Down on a free window minimizes")
-	ws_check(snap_key(.Top_Left, false, .Down).zone == .Bottom_Left, "Down from a top quarter is the bottom one")
+	ws_check(snap_key(.Top_Left, false, .Down).restore, "Down from a top quarter restores")
 
 	// --- restore under the pointer --------------------------------------
 	{
@@ -297,6 +297,30 @@ ux_selftest :: proc(s: ^Server, c: ^Client) {
 		cfg_destroy(&cfg)
 	}
 	{
+		// A user file adds to the default table (P1-8): one new bind keeps
+		// the other defaults, a bind on a default chord replaces it, and
+		// unbind removes one.
+		cfg: Cfg
+		cfg_scalars(&cfg)
+		cfg_parse(&cfg, CFG_DEFAULT, "<built-in>")
+		n := len(cfg.binds)
+		user :: "bind = $mod, Z, spawn todo\nbind = $mod, Q, minimize\nunbind = ALT, F4\n"
+		ws_check(!cfg_replaces_default_binds(user), "a user file with binds keeps the defaults")
+		ws_check(cfg_replaces_default_binds("default_binds = replace\n" + user), "unless it says default_binds = replace")
+		ws_check(!cfg_replaces_default_binds("default_binds = keep\n"), "keep still means keep")
+		cfg_parse(&cfg, user, "t")
+		ws_eq(len(cfg.errors), 0, "the user lines parse")
+		ws_eq(len(cfg.binds), n, "one added, one replaced, one removed")
+		sup_q, alt_f4, sup_z := false, false, false
+		for b in cfg.binds {
+			if b.mods == {.Super} && (b.sym == 'q' || b.sym == 'Q') {sup_q = b.act == .Minimize}
+			if b.mods == {.Alt} && b.sym == p.KEY_F4 {alt_f4 = true}
+			if b.mods == {.Super} && (b.sym == 'z' || b.sym == 'Z') {sup_z = true}
+		}
+		ws_check(sup_q && sup_z && !alt_f4, "Super+Q rebound, Super+Z added, Alt+F4 gone")
+		cfg_destroy(&cfg)
+	}
+	{
 		c2: Cfg
 		cfg_scalars(&c2)
 		cfg_parse(&c2, CFG_DEFAULT, "<built-in>")
@@ -343,6 +367,12 @@ ux_selftest :: proc(s: ^Server, c: ^Client) {
 			}
 		}
 		ws_check(ok, "the overview lays windows out without overlap and never enlarges them")
+		r0 := rects[0].w / sizes[0].x
+		r2 := rects[2].w / sizes[2].x
+		ws_check(abs(r0 - r2) < 0.001, "every window is scaled by the same factor")
+		if abs(rects[0].y - rects[1].y) < 1 {
+			ws_check(abs((rects[0].y + rects[0].h / 2) - (rects[1].y + rects[1].h / 2)) < 1, "a row shares a centre line")
+		}
 	}
 	_ = strings.contains
 }

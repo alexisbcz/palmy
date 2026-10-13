@@ -11,6 +11,7 @@
 // also runs.
 package wm
 
+import "core:strconv"
 import "core:strings"
 import p "palmy:."
 
@@ -58,9 +59,9 @@ Cheat_Row :: struct {
 	alt:   string, // other chords for the same action, as text
 }
 
-// cheat_rows builds the rows from the binding table, filtered.
-cheat_rows :: proc(s: ^Server) -> []Cheat_Row {
-	q := strings.to_lower(strings.to_string(cheat.filter), context.temp_allocator)
+// cheat_rows builds the rows from the binding table, filtered by `filter`.
+cheat_rows :: proc(s: ^Server, filter: string) -> []Cheat_Row {
+	q := strings.to_lower(filter, context.temp_allocator)
 	rows := make([dynamic]Cheat_Row, 0, 96, context.temp_allocator)
 	seen := make(map[string]int, 96, context.temp_allocator)
 	for g in CHEAT_GROUPS {
@@ -148,7 +149,9 @@ cheat_draw :: proc(s: ^Server, app: ^p.App, cv: ^p.Canvas) {
 	}
 	f := &app.fonts
 	o := s.outputs[s.cur_out]
-	rows := cheat_rows(s)
+	q := strings.to_string(cheat.filter)
+	all := cheat_rows(s, "")
+	rows := q == "" ? all : cheat_rows(s, q)
 	HEAD :: f32(27)
 	TOP :: f32(66)
 	max_h := f32(o.h - ws_bar_h(s)) - 60
@@ -156,16 +159,24 @@ cheat_draw :: proc(s: ^Server, app: ^p.App, cv: ^p.Canvas) {
 
 	// Rows are 19 px, and tighten (down to 17 px) when that saves a whole
 	// column — otherwise one overflowing row sits alone in a column.
+	//
+	// The panel's size comes from the whole table, not the filtered rows:
+	// a panel that shrinks and jumps with every letter typed makes the
+	// field being typed into move under the eyes.
 	ROW := f32(19)
-	placed, cols := cheat_layout(rows, avail_h, ROW, HEAD)
+	full, cols := cheat_layout(all, avail_h, ROW, HEAD)
 	if cols > 1 {
-		_, tight := cheat_layout(rows, avail_h, 17, HEAD)
+		_, tight := cheat_layout(all, avail_h, 17, HEAD)
 		for ROW > 17 && cols > tight {
 			ROW -= 1
-			placed, cols = cheat_layout(rows, avail_h, ROW, HEAD)
+			full, cols = cheat_layout(all, avail_h, ROW, HEAD)
 		}
 	}
-	col_w := min(f32(330), (f32(o.w) - 72) / f32(cols))
+	placed := full
+	if q != "" {
+		placed, _ = cheat_layout(rows, avail_h, ROW, HEAD)
+	}
+	col_w := min(f32(380), (f32(o.w) - 72) / f32(cols))
 	// Each column's labels start on one line: past the widest run of key
 	// caps in that column, so a four-cap chord does not push its label out
 	// of line with its neighbours'. A gesture whose text is wider than half
@@ -181,7 +192,7 @@ cheat_draw :: proc(s: ^Server, app: ^p.App, cv: ^p.Canvas) {
 		}
 	}
 	used_h := f32(0)
-	for pl in placed {
+	for pl in full {
 		used_h = max(used_h, pl.y + (pl.row < 0 ? HEAD : ROW))
 	}
 	pw := col_w * f32(cols) + 40
@@ -194,7 +205,6 @@ cheat_draw :: proc(s: ^Server, app: ^p.App, cv: ^p.Canvas) {
 	p.fill_round_rect(cv, panel, {14, 14, 14, 14}, p.hex(0x0f0f12))
 	p.stroke_round_rect(cv, panel, {14, 14, 14, 14}, 1, p.hex(0x27272a))
 	p.draw_text(cv, f, "Keyboard shortcuts", panel.x + 20, panel.y + 34, 17, p.hex(0xfafafa), .Sans, .Semibold)
-	q := strings.to_string(cheat.filter)
 	hint := q != "" ? q : "type to filter"
 	hw := max(p.text_width(f, hint, 12.5, .Sans, .Regular) + 28, 200)
 	fr := p.Rect{panel.x + panel.w - hw - 20, panel.y + 16, hw, 28}
@@ -232,13 +242,36 @@ cheat_draw :: proc(s: ^Server, app: ^p.App, cv: ^p.Canvas) {
 		p.draw_text(cv, f, label, lx, yy + 13, 11.5, p.hex(0xd4d4d8), .Sans, .Regular)
 		if r.alt != "" {
 			ax := lx + p.text_width(f, label, 11.5, .Sans, .Regular) + 8
-			if room := x + col_w - 10 - ax; room > 40 {
-				alt := ellipsize_end(f, strings.concatenate({"also ", r.alt}, context.temp_allocator), 10.5, .Regular, room)
+			if alt := cheat_alt_text(f, r.alt, x + col_w - 10 - ax); alt != "" {
 				p.draw_text(cv, f, alt, ax, yy + 13, 10.5, p.hex(0x71717a), .Sans, .Regular)
 			}
 		}
 	}
 	p.pop_clip(cv)
+}
+
+// cheat_alt_text is "also A, B" cut to whole chords: as many as fit in
+// `room`, then "+n" for the rest. A chord cut in the middle ("also
+// Super+P…") names a key that does not exist.
+cheat_alt_text :: proc(f: ^p.Fonts, alt: string, room: f32) -> string {
+	parts := strings.split(alt, ", ", context.temp_allocator)
+	for k := len(parts); k >= 0; k -= 1 {
+		rest := len(parts) - k
+		text := k > 0 ? strings.concatenate({"also ", strings.join(parts[:k], ", ", context.temp_allocator)}, context.temp_allocator) : ""
+		if rest > 0 {
+			more := strings.concatenate({"+", fmt_int(rest)}, context.temp_allocator)
+			text = text == "" ? more : strings.concatenate({text, " ", more}, context.temp_allocator)
+		}
+		if p.text_width(f, text, 10.5, .Sans, .Regular) <= room {
+			return text
+		}
+	}
+	return ""
+}
+
+fmt_int :: proc(n: int) -> string {
+	buf := make([]u8, 20, context.temp_allocator)
+	return strconv.write_int(buf, i64(n), 10)
 }
 
 // cheat_caps_w is the width a row's key caps take, as cheat_draw lays them.

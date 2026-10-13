@@ -728,6 +728,12 @@ ws_move_to :: proc(s: ^Server, t: ^Toplevel, idx: int) {
 		focus_window(s, nil)
 	}
 	ws_drop_pointer(s, t)
+	// A tiled window's rect is its cell: a narrow strip flush with the
+	// screen edge. Taken to a workspace that does not tile, it gets the
+	// size it floats at (as leaving tiling gives it), centred, and on top
+	// of what is there — the window you just sent is the one to see.
+	was_tiled := ws_in_layout(s, t) && !t.maximized
+	float_r := snap_default_float(s, t)
 	if !ws_detach(s, t) {
 		return
 	}
@@ -735,10 +741,22 @@ ws_move_to :: proc(s: ^Server, t: ^Toplevel, idx: int) {
 	if m, ok := ws_peek(t); ok {
 		m.sticky = false // moving it somewhere means it lives there now
 	}
+	// It is the last thing done on that workspace, so going there focuses
+	// it, rather than raising whatever had focus there over it.
+	if !t.minimized {
+		s.workspaces[idx].last_focus = t
+	}
 	if !ws_in_layout(s, t) && !t.maximized && !ws_fullscreen(t) {
 		oi := s.workspaces[idx].output
 		if oi < 0 || oi >= len(s.outputs) {
 			oi = s.cur_out
+		}
+		if was_tiled {
+			m := ws_win(t)
+			m.snap = .None
+			wa := ws_work_area(s, oi)
+			w, h := float_r[2], float_r[3]
+			win_set_rect(s, t, wa.x + (wa.w - w) / 2, wa.y + ws_title_h(t) + (wa.h - ws_title_h(t) - h) / 2, w, h)
 		}
 		win_fit_work_area(s, t, oi)
 	}
