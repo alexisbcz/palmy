@@ -1567,6 +1567,7 @@ ws_focus_dir :: proc(s: ^Server, dir: Cfg_Dir) {
 	}
 	if best != nil {
 		focus_window(s, best)
+		ix_reveal(s, best)
 		note(s, fmt.tprintf("focus %s", title_of(best)))
 	}
 }

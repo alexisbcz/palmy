@@ -373,6 +373,13 @@ ix_resize_to :: proc(s: ^Server, t: ^Toplevel, d: [2]int) {
 	nh = max(nh, max(MIN_H, t.min_h))
 	if t.max_w > 0 {nw = min(nw, t.max_w)}
 	if t.max_h > 0 {nh = min(nh, t.max_h)}
+	// Growing upwards stops where the title bar would slide under the bar:
+	// a window whose title bar is out of reach cannot be moved again.
+	if .Top in s.drag_edges {
+		wa := ws_work_area(s, win_output(s, t))
+		room := s.drag_orig[1] + oh - (wa.y + ws_title_h(t))
+		nh = max(min(nh, room), max(MIN_H, t.min_h))
+	}
 	t.anchor_x = .Left in s.drag_edges
 	t.anchor_y = .Top in s.drag_edges
 	t.anchor_right = s.drag_orig[0] + ow
