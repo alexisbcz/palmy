@@ -10,4 +10,5 @@ pkgdesc  = The Palmframe system: kernel, init, login, window manager and the def
 license  = MIT
 depend   = palmframe-base linux busybox glibc palm-init palm palm-login
 depend   = palmy-wm greeter fonts libxkbcommon xkeyboard-config
+depend   = tzdata palm-locale
 depend   = term launcher files editor notes calc sysmon image docs sheets slides calendar reader photoshop maps money torrent

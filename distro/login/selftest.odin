@@ -145,6 +145,72 @@ selftest :: proc() -> int {
 		)
 	}
 
+	// --- 2b. language and time zone (locale.odin) --------------------------
+	{
+		got := parse_locale_conf(`# written by palm-install
+LANG="fr_FR.UTF-8"
+LANGUAGE=fr:en
+export LC_TIME='de_DE.UTF-8'
+PATH=/tmp/evil
+LD_PRELOAD=/tmp/x.so
+LC_PAPER=has space
+LANG=fr_CA.UTF-8
+`, context.temp_allocator)
+		joined := strings.join(got, " ", context.temp_allocator)
+		check(
+			"locale.conf: LANG (last wins), LANGUAGE, LC_*, quotes stripped",
+			len(got) == 3 && got[0] == "LANG=fr_CA.UTF-8" && got[1] == "LANGUAGE=fr:en" && got[2] == "LC_TIME=de_DE.UTF-8",
+			joined,
+		)
+		check(
+			"locale.conf: unknown keys and odd values are not exported",
+			!strings.contains(joined, "PATH") && !strings.contains(joined, "LD_PRELOAD") && !strings.contains(joined, "LC_PAPER"),
+			joined,
+		)
+		check("timezone: a zone name", parse_timezone_file("Europe/Paris\n") == "Europe/Paris")
+		check(
+			"timezone: paths and junk are refused",
+			parse_timezone_file("/etc/passwd") == "" && parse_timezone_file("../../x") == "" && parse_timezone_file("a b") == "",
+		)
+
+		dir := fmt.tprintf("/tmp/palm-login-selftest-%d", linux.getpid())
+		os.make_directory(dir)
+		conf := fmt.tprintf("%s/locale.conf", dir)
+		tzf := fmt.tprintf("%s/timezone", dir)
+		ltf := fmt.tprintf("%s/localtime", dir)
+		_ = os.write_entire_file(conf, transmute([]u8)string("LANG=ar_EG.UTF-8\n"))
+		_ = os.write_entire_file(tzf, transmute([]u8)string("Africa/Cairo\n"))
+		paths := Paths{locale_conf = conf, timezone = tzf, localtime = ltf}
+
+		e := system_locale_env(paths, context.temp_allocator)
+		check(
+			"session env: LANG from locale.conf, TZ from /etc/timezone when localtime is missing",
+			len(e) == 2 && e[0] == "LANG=ar_EG.UTF-8" && e[1] == "TZ=Africa/Cairo",
+			strings.join(e, " ", context.temp_allocator),
+		)
+		_ = os.write_entire_file(ltf, transmute([]u8)string("TZif"))
+		e = system_locale_env(paths, context.temp_allocator)
+		check("session env: no TZ once localtime exists", len(e) == 1 && e[0] == "LANG=ar_EG.UTF-8", strings.join(e, " ", context.temp_allocator))
+
+		a, _ := parse_passwd(FIXTURE_PASSWD, "greeter")
+		env := base_env(a, context.temp_allocator)
+		merge_env(&env, e, context.temp_allocator)
+		merge_env(&env, {"GREETD_SOCK=/run/palm-login.sock"}, context.temp_allocator)
+		joined = strings.join(env[:], " ", context.temp_allocator)
+		check(
+			"session env: locale.conf's LANG replaces the C.UTF-8 default",
+			strings.contains(joined, "LANG=ar_EG.UTF-8") && !strings.contains(joined, "LANG=C.UTF-8"),
+			joined,
+		)
+		e = system_locale_env(Paths{locale_conf = fmt.tprintf("%s/missing", dir)}, context.temp_allocator)
+		check("session env: no locale.conf exports nothing", len(e) == 0)
+
+		os.remove(conf)
+		os.remove(tzf)
+		os.remove(ltf)
+		os.remove(dir)
+	}
+
 	// --- 3. IPC round trip --------------------------------------------------
 	ipc_round_trip()
 

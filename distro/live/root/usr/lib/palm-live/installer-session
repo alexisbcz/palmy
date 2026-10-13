@@ -1,0 +1,42 @@
+#!/bin/sh
+# The live installer session, started by palm-init's `installer` service.
+#
+# palm-login normally prepares a graphical session: a private runtime
+# directory for the Wayland socket and LANG from /etc/locale.conf. In the
+# live system there is no palm-login, so this does the same for root and
+# then becomes the kiosk window manager, which starts the installer and
+# exits when it does.
+#
+# Kernel command line switches (limine's menu sets the first):
+#   palm.live.serial        no graphical session at all; the serial console
+#                           and palm-install are the installer
+#   palm.live.exec=<cmd>    run <cmd> in the kiosk instead of `installer`
+#                           (e.g. palm.live.exec=term to debug the session)
+
+exec_cmd=installer
+for word in $(cat /proc/cmdline); do
+	case "$word" in
+	palm.live.serial)
+		echo "palm-live: serial console only (palm.live.serial); run palm-install there"
+		# Stay alive: an exit would only make palm-init start us again.
+		exec sleep 2147483647
+		;;
+	palm.live.exec=*) exec_cmd="${word#palm.live.exec=}" ;;
+	esac
+done
+
+if ! command -v "$exec_cmd" >/dev/null 2>&1; then
+	echo "palm-live: $exec_cmd is not installed; falling back to term"
+	exec_cmd=term
+fi
+
+XDG_RUNTIME_DIR=/run/user/0
+mkdir -p "$XDG_RUNTIME_DIR" && chmod 0700 "$XDG_RUNTIME_DIR"
+export XDG_RUNTIME_DIR XDG_SESSION_TYPE=wayland XDG_CURRENT_DESKTOP=palmframe
+
+LANG=C.UTF-8
+if [ -r /etc/locale.conf ]; then . /etc/locale.conf; fi
+export LANG
+
+cd /root 2>/dev/null || cd /
+exec /usr/bin/wm --drm --kiosk --exec "$exec_cmd"

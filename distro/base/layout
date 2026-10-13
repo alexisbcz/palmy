@@ -57,6 +57,11 @@ dir     var/lib/greeter 0750  900:900
 symlink var/run         ../run
 symlink var/lock        ../run/lock
 symlink etc/mtab        ../proc/self/mounts
+# The time zone, as glibc and the greeter's clock read it: a symlink into
+# tzdata. UTC until the installer points it at the zone picked (and writes
+# /etc/timezone beside it). Without the tzdata package installed the link
+# dangles, and everything that reads it falls back to UTC — the same answer.
+symlink etc/localtime   ../usr/share/zoneinfo/UTC
 
 mode    etc/shadow      0600
 mode    usr/share/udhcpc/default.script 0755

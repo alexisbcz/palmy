@@ -14,6 +14,8 @@ import "core:slice"
 import "core:strconv"
 import "core:strings"
 import "core:time"
+import "core:time/datetime"
+import "core:time/timezone"
 import p "palmy:."
 
 // ---------------------------------------------------------------------------
@@ -375,17 +377,50 @@ read_hostname :: proc() -> string {
 	return "localhost"
 }
 
-// local_utc_offset asks `date` once for the zone offset, so the clock can be
-// local without linking a tzdata parser. Seconds east of UTC.
-local_utc_offset :: proc() -> time.Duration {
-	out, ok := kit.run({"date", "+%z"})
-	if !ok || len(out) < 5 {
+// local_zone loads the machine's time zone the way glibc finds it: TZ when it
+// is set (palm-login exports it only when /etc/localtime is missing and
+// /etc/timezone names a zone), otherwise /etc/localtime itself — a TZif file,
+// on Palmframe a symlink into /usr/share/zoneinfo that the installer points
+// at the zone picked. It used to ask `date +%z` once at start, which missed a
+// daylight-saving change while the screen stayed up and depended on a
+// `date` that reads the zone the same way. nil means UTC, which is also the
+// answer when nothing can be read.
+local_zone :: proc() -> ^datetime.TZ_Region {
+	if tz := os.get_env("TZ", context.temp_allocator); tz != "" {
+		name := strings.trim_prefix(tz, ":")
+		if strings.has_prefix(name, "/") {
+			if reg, ok := timezone.region_load_from_file(name, name); ok {
+				return reg
+			}
+		} else if reg, ok := timezone.region_load(name); ok {
+			return reg // nil for "UTC", which is right
+		}
+	}
+	if reg, ok := timezone.region_load_from_file("/etc/localtime", "localtime"); ok {
+		return reg
+	}
+	return nil
+}
+
+// zone_offset is how far `zone`'s wall clock is ahead of UTC at instant t.
+zone_offset :: proc(zone: ^datetime.TZ_Region, t: time.Time) -> time.Duration {
+	if zone == nil {
 		return 0
 	}
-	sign := out[0] == '-' ? -1 : 1
-	hh, _ := strconv.parse_int(out[1:3])
-	mm, _ := strconv.parse_int(out[3:5])
-	return time.Duration(sign * (hh * 3600 + mm * 60)) * time.Second
+	utc, ok := time.time_to_datetime(t)
+	if !ok {
+		return 0
+	}
+	local, lok := timezone.datetime_to_tz(utc, zone)
+	if !lok {
+		return 0
+	}
+	local.tz = nil
+	wall, wok := time.datetime_to_time(local)
+	if !wok {
+		return 0
+	}
+	return time.diff(t, wall)
 }
 
 // ---------------------------------------------------------------------------
@@ -410,11 +445,11 @@ under_palm_login :: proc() -> bool {
 power_label :: proc(pw: Power) -> string {
 	switch pw {
 	case .Suspend:
-		return "Suspend"
+		return kit.tr("Suspend")
 	case .Reboot:
-		return "Restart"
+		return kit.tr("Restart")
 	case .Shutdown:
-		return "Shut Down"
+		return kit.tr("Shut Down")
 	}
 	return "?"
 }
@@ -479,33 +514,33 @@ power_command :: proc(pw: Power) -> string {
 power_request :: proc(pw: Power, sock: string) -> string {
 	cmd := power_command(pw)
 	if !under_palm_login() {
-		msg := fmt.aprintf("power: would run `%s` (stub — nothing executed)", cmd)
+		msg := fmt.aprintf(kit.tr("power: would run `%s` (stub — nothing executed)"), cmd)
 		fmt.eprintfln("greeter: %s", msg)
 		return msg
 	}
 	if cmd == "" {
-		return fmt.aprintf("%s is not available on this machine", power_label(pw))
+		return fmt.aprintf(kit.tr("%s is not available on this machine"), power_label(pw))
 	}
 
 	c: Client
 	if e := client_connect(&c, sock); e != "" {
-		return fmt.aprintf("power: %s", e)
+		return fmt.aprintf(kit.tr("power: %s"), e)
 	}
 	defer client_close(&c)
 	if e := send(&c, req_power(pw == .Shutdown ? "poweroff" : "reboot", context.temp_allocator)); e != "" {
-		return fmt.aprintf("power: %s", e)
+		return fmt.aprintf(kit.tr("power: %s"), e)
 	}
 	if !readable(&c, 3000) {
-		return "power: palm-login did not answer"
+		return kit.tr("power: palm-login did not answer")
 	}
 	r, e := recv(&c)
 	if e != "" {
-		return fmt.aprintf("power: %s", e)
+		return fmt.aprintf(kit.tr("power: %s"), e)
 	}
 	if r.kind != .Success {
-		return fmt.aprintf("power: %s", r.description == "" ? "refused" : r.description)
+		return fmt.aprintf(kit.tr("power: %s"), r.description == "" ? kit.tr("refused") : kit.tr(r.description))
 	}
-	return pw == .Shutdown ? "Shutting down…" : "Restarting…"
+	return pw == .Shutdown ? kit.tr("Shutting down…") : kit.tr("Restarting…")
 }
 
 // ---------------------------------------------------------------------------

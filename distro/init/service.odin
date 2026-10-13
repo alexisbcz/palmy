@@ -402,6 +402,9 @@ prepare :: proc(s: ^Service) -> (p: Prepared, err: string) {
 	if sup.autologin != "" {
 		append(&env, fmt.tprintf("PALM_AUTOLOGIN=%s", sup.autologin))
 	}
+	// The system language (locale.odin), before the service's own env lines
+	// so that `env = LANG=...` in a service file still overrides it.
+	append(&env, ..system_locale_env(context.temp_allocator))
 	for e in s.env {
 		key := e[:strings.index_byte(e, '=') + 1]
 		for i := len(env) - 1; i >= 0; i -= 1 {

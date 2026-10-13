@@ -53,6 +53,11 @@ session: Session
 
 // A signal only sets this; the loop reads it. SIGTERM is how palm-login ends
 // a session, and leaving through the loop is what restores the CRTCs.
+//
+// SIGHUP is not among them: on bare metal it means "read /etc/palm/keyboard
+// again" (keyboard.odin), which is what the installer sends when the user
+// picks a layout. palm-login follows its SIGHUP to a finished session with a
+// SIGTERM, so a session is still ended the way it always was.
 session_stop_signal: i32
 
 session_on_signal :: proc "c" (sig: linux.Signal) {
@@ -63,7 +68,7 @@ session_install_signals :: proc() {
 	sa := linux.Sig_Action {
 		handler = session_on_signal,
 	}
-	for sig in ([?]linux.Signal{.SIGTERM, .SIGINT, .SIGHUP}) {
+	for sig in ([?]linux.Signal{.SIGTERM, .SIGINT}) {
 		act := sa
 		linux.rt_sigaction(sig, &act, nil)
 	}
@@ -480,14 +485,9 @@ bare_main :: proc(display, conf: string) -> int {
 	ws_ensure(s)
 	ws_sync_host(s, s.out_w, s.out_h)
 
-	// The keyboard: our own XKB compiler, our own keymap fd, no libxkbcommon.
-	xkb_init_default()
-	if !keytable_from_compiled(&s.kt, &xkb_km) {
-		fmt.eprintfln("wm: no usable keymap; clients will have no keyboard")
-	}
-	if !make_keymap_fd(s, s.kt.text) {
-		fmt.eprintfln("wm: could not publish the keymap; clients will have no keyboard")
-	}
+	// The keyboard: /etc/palm/keyboard through our own XKB compiler, our own
+	// keymap fd, no libxkbcommon; SIGHUP and changes to the file reload it.
+	kbd_start(s)
 
 	opened, found := ev_start()
 	ev_screen = {f64(s.out_w), f64(s.out_h)}
@@ -544,6 +544,9 @@ bare_main :: proc(display, conf: string) -> int {
 		if via_logind && seat.conn != nil {
 			append(&pfds, linux.Poll_Fd{fd = seat_fd(), events = {.IN}})
 		}
+		if kfd := kbd_poll_fd(); kfd > 0 {
+			append(&pfds, linux.Poll_Fd{fd = kfd, events = {.IN}})
+		}
 
 		// A second is the longest anything waits: the bar's clock, a status
 		// note expiring, children reaped. A pending frame with every head
@@ -578,12 +581,15 @@ bare_main :: proc(display, conf: string) -> int {
 			want_frame = true
 		}
 
-		// Devices first, so this frame's input is this frame's.
+		// Devices first, so this frame's input is this frame's. Then the
+		// keyboard layout: a reload or a group switch has to be in place
+		// before those keys are handed on.
 		for d in ev_devices {
 			if d.opened && !d.paused {
 				ev_read_once(d)
 			}
 		}
+		kbd_pump(s)
 		// drm_dispatch says "redraw" for a flip completion as well as for a
 		// hotplug; only the second changes what should be on screen, and
 		// treating the first as news is a sixty-frames-a-second idle loop.

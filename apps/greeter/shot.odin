@@ -35,7 +35,7 @@ shots :: proc(dir: string) -> int {
 	st.users = shot_users()
 	st.sessions = shot_sessions()
 	st.hostname = "atelier"
-	st.tz = 0
+	st.zone = nil // UTC: the picture must not say where it was taken
 	st.sock = "/run/greetd/greetd.sock"
 	st.connected = true
 	st.answer = make([dynamic]u8)

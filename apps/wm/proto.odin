@@ -1323,7 +1323,7 @@ req_seat :: proc(s: ^Server, c: ^Client, o: Object, id: u32, op: u16, r: ^Reader
 				keys: [dynamic]u8
 				event(c, kid, 1, next_serial(s), s.kbd_surf.id, keys[:])
 				delete(keys)
-				event(c, kid, 4, next_serial(s), s.mod_mask, u32(0), u32(0), u32(0))
+				event(c, kid, 4, next_serial(s), s.mod_mask, u32(0), u32(0), s.kt.group)
 			}
 		}
 	case 2:

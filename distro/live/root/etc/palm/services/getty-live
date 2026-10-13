@@ -1,0 +1,8 @@
+# A root shell on the first serial port, without a password: the live system
+# has nothing to protect, and this is the console for palm-install, for
+# watching /var/log/installer.log, and for the serial-only boot entry. It
+# replaces palmframe-base's getty-ttyS0 (removed by distro/live/build.sh),
+# which would fight it for the same tty.
+cmd     = /sbin/getty -n -l /usr/lib/palm-live/autologin -L 115200 ttyS0 vt100
+tty     = /dev/ttyS0
+restart = always
