@@ -17,6 +17,12 @@
 // `ev_resume_all`. The default implementations just open() the node, which
 // works when the process happens to have permission (a seat session with the
 // device ACL, or root) and fails cleanly when it does not.
+//
+// On Palmframe the direct open *is* the path: there is no logind, and a
+// session user is in `input`. It has run inside QEMU (apps/wm/qemu-test.sh)
+// against virtio-keyboard, virtio-tablet — which needed the Abs_Pointer kind,
+// because it advertises BTN_TOUCH and was being taken for a touchpad — and the
+// PS/2 keyboard and mouse the machine also has.
 package wm
 
 import "base:runtime"
@@ -200,6 +206,10 @@ Ev_Kind :: enum u8 {
 	Tablet,
 	Switch,
 	Joystick,
+	// An absolute pointer that is not a touch surface: QEMU's virtio-tablet,
+	// a KVM switch's emulated mouse, a VNC console. ABS_X/ABS_Y name a point
+	// on the screen, scaled by absinfo, and the buttons are mouse buttons.
+	Abs_Pointer,
 }
 Ev_Kinds :: bit_set[Ev_Kind;u8]
 
@@ -222,9 +232,17 @@ ev_classify :: proc(c: ^Ev_Caps, name: string) -> Ev_Kinds {
 	touch := ev_bit(c.key[:], EV_BTN_TOUCH)
 
 	if has_ev(c, EV_ABS) && (abs_x || mt) {
+		mouse_btn := ev_bit(c.key[:], EV_BTN_LEFT) || ev_bit(c.key[:], EV_BTN_RIGHT)
 		switch {
 		case pen:
 			k += {.Tablet}
+		case !mt && !finger && !buttonpad && !direct && mouse_btn:
+			// No fingers, no MT, just a position and mouse buttons: this is
+			// a pointer that reports where it is rather than how far it
+			// moved. QEMU's virtio-tablet also advertises BTN_TOUCH, so the
+			// touch bit cannot rule it out. Treating it as a touchpad would
+			// turn every jump into a swipe.
+			k += {.Abs_Pointer}
 		case direct && touch:
 			k += {.Touchscreen}
 		case finger || buttonpad || pointer_prop:
@@ -511,6 +529,9 @@ Ev_Device :: struct {
 	gesture_on:   bool,
 	gesture_fingers: int,
 	clicked_btn:  u32,
+
+	// Absolute pointer: an ABS_X or ABS_Y arrived this frame.
+	abs_dirty:    bool,
 }
 
 // Package-level state. The package already uses this idiom (`server` in
@@ -1168,6 +1189,38 @@ ev_emit_motion :: proc(d: ^Ev_Device, dx, dy, udx, udy: f64, t: u32) {
 	)
 }
 
+// ev_emit_absolute maps an absolute pointer's ABS_X/ABS_Y onto the output
+// layout. The axis range comes from the device's absinfo — QEMU's tablet says
+// 0..32767 — and the far end of the range is the last pixel, not one past it.
+// Relative mice share `ev_pointer`, so moving one after the other picks up
+// where the other left the cursor.
+ev_emit_absolute :: proc(d: ^Ev_Device, t: u32) {
+	ax, ay := d.absinfo[EV_ABS_X], d.absinfo[EV_ABS_Y]
+	spanx := f64(max(ax.maximum - ax.minimum, 1))
+	spany := f64(max(ay.maximum - ay.minimum, 1))
+	x := f64(d.slots[0].x - ax.minimum) / spanx * max(ev_screen[0] - 1, 0)
+	y := f64(d.slots[0].y - ay.minimum) / spany * max(ev_screen[1] - 1, 0)
+	x = clamp(x, 0, max(ev_screen[0] - 1, 0))
+	y = clamp(y, 0, max(ev_screen[1] - 1, 0))
+	dx, dy := x - ev_pointer[0], y - ev_pointer[1]
+	if dx == 0 && dy == 0 {
+		return
+	}
+	ev_pointer = {x, y}
+	append(
+		&ev_queue,
+		Ev_Event {
+			kind = .Pointer_Motion_Absolute,
+			time_ms = t,
+			device = d,
+			dx = dx,
+			dy = dy,
+			x = x,
+			y = y,
+		},
+	)
+}
+
 ev_emit_axis :: proc(d: ^Ev_Device, axis: Ev_Axis_Kind, value: f64, v120: i32, src: Ev_Axis_Source, t: u32) {
 	v := value
 	n := v120
@@ -1234,11 +1287,13 @@ ev_abs_event :: proc(d: ^Ev_Device, e: Ev_Input_Event, t: u32) {
 			d.slots[0].x = e.value
 			d.slots[0].used = true
 		}
+		d.abs_dirty = true
 	case EV_ABS_Y:
 		if !ev_bit(d.caps.abs[:], EV_ABS_MT_POSITION_Y) {
 			d.slots[0].y = e.value
 			d.slots[0].used = true
 		}
+		d.abs_dirty = true
 	case EV_ABS_PRESSURE:
 		d.slots[0].pressure = e.value
 	}
@@ -1307,6 +1362,7 @@ ev_frame :: proc(d: ^Ev_Device, t: u32) {
 		d.wheel = {}
 		d.wheel_hi = {}
 		d.have_hi = {}
+		d.abs_dirty = false
 	}
 
 	dt := f64(t - d.last_frame_ms)
@@ -1321,6 +1377,10 @@ ev_frame :: proc(d: ^Ev_Device, t: u32) {
 	if d.have_rel {
 		dx, dy := ev_accel(d.rel[0], d.rel[1], dt)
 		ev_emit_motion(d, dx, dy, d.rel[0], d.rel[1], t)
+	}
+
+	if d.abs_dirty && .Abs_Pointer in d.kinds {
+		ev_emit_absolute(d, t)
 	}
 
 	for ax in 0 ..< 2 {
@@ -2121,6 +2181,65 @@ ev_selftest :: proc() -> int {
 		huge := [?]Ev_Rec{{EV_REL, EV_REL_X, -500, 5200}, {EV_SYN, EV_SYN_REPORT, 0, 5200}}
 		ev_play(m, huge[:])
 		ev_check(ev_pointer[0] == 0, "the pointer clamps at the left edge, at %v", ev_pointer[0])
+	}
+
+	// --- Absolute pointer ---------------------------------------------------
+	// QEMU's virtio-tablet, as its sysfs capabilities describe it: ABS_X and
+	// ABS_Y over 0..32767, the three mouse buttons, a wheel, no contact and
+	// no MT axes. It must classify as an absolute pointer, land on the pixel
+	// the axis value names, and click where it stands.
+	fmt.println("absolute pointer (virtio-tablet)")
+	{
+		d := new(Ev_Device)
+		d.name = "QEMU Virtio Tablet"
+		d.synthetic = true
+		ev_set_bit(d.caps.ev[:], EV_KEY)
+		ev_set_bit(d.caps.ev[:], EV_REL)
+		ev_set_bit(d.caps.ev[:], EV_ABS)
+		ev_set_bit(d.caps.rel[:], EV_REL_WHEEL)
+		ev_set_bit(d.caps.abs[:], EV_ABS_X)
+		ev_set_bit(d.caps.abs[:], EV_ABS_Y)
+		// The real device's key bitmap is `30400 1f0000 0 0 0 0`: the five
+		// mouse buttons, and BTN_TOUCH plus the two gear buttons.
+		for b in ([?]int{EV_BTN_LEFT, EV_BTN_RIGHT, EV_BTN_MIDDLE, EV_BTN_SIDE, EV_BTN_EXTRA, EV_BTN_TOUCH, 0x150, 0x151}) {
+			ev_set_bit(d.caps.key[:], b)
+		}
+		for a in ([?]int{EV_ABS_X, EV_ABS_Y}) {
+			d.absinfo[a] = {minimum = 0, maximum = 32767}
+			d.has_abs[a] = true
+		}
+		d.kinds = ev_classify(&d.caps, d.name)
+		ev_check(d.kinds == {.Abs_Pointer}, "classified as an absolute pointer only, got %v", d.kinds)
+
+		saved_screen := ev_screen
+		ev_screen = {1281, 801}
+		ev_pointer = {0, 0}
+		ev_q_reset()
+		mid := [?]Ev_Rec{{EV_ABS, EV_ABS_X, 16384, 7000}, {EV_ABS, EV_ABS_Y, 32767, 7000}, {EV_SYN, EV_SYN_REPORT, 0, 7000}}
+		ev_play(d, mid[:])
+		e, ok := ev_first(.Pointer_Motion_Absolute)
+		ev_check(ok, "an absolute motion came out")
+		ev_check(ev_near(e.x, 640.0, 0.1) && ev_near(e.y, 800, 0.001), "scaled to the output, got %v,%v", e.x, e.y)
+		ev_check(ev_near(e.dx, e.x, 0.001), "the delta is from where the pointer was")
+
+		ev_q_reset()
+		click := [?]Ev_Rec{{EV_KEY, EV_BTN_LEFT, 1, 7010}, {EV_SYN, EV_SYN_REPORT, 0, 7010}}
+		ev_play(d, click[:])
+		ev_check(ev_count(.Pointer_Motion_Absolute) == 0, "a click without motion does not move the pointer")
+		b, bok := ev_first(.Button)
+		ev_check(bok && b.button == EV_BTN_LEFT && b.down, "and is a left press")
+
+		in_: p.Input
+		ev_q_reset()
+		again := [?]Ev_Rec{{EV_ABS, EV_ABS_X, 0, 7020}, {EV_SYN, EV_SYN_REPORT, 0, 7020}}
+		ev_play(d, again[:])
+		ev_apply_to_input(&in_)
+		ev_check(in_.mouse == {0, 800}, "p.Input carries the absolute position, got %v", in_.mouse)
+		ev_check(in_.mouse_delta.x < 0, "with a delta, so the compositor sends wl_pointer.motion")
+		delete(in_.keys)
+		ev_screen = saved_screen
+		ev_buttons = {}
+		free(d)
 	}
 
 	// --- Wheel --------------------------------------------------------------

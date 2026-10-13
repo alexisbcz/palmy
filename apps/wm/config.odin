@@ -180,8 +180,9 @@ move_step           = 36
 resize_step         = 48
 
 # Launchers. Commands are resolved against $PATH, so no absolute paths.
-bind = $mod,       Return, spawn foot
-bind = $mod,       T,      spawn foot
+bind = $mod,       Return, spawn term
+bind = $mod,       T,      spawn term
+bind = $mod,       D,      spawn launcher
 bind = $mod,       C,      spawn counter
 bind = $mod,       G,      spawn gallery
 bind = $mod,       O,      spawn todo
@@ -253,7 +254,7 @@ bind = $mod ALT,   Q,      quit
 bind = ANY, F1,  spawn counter
 bind = ANY, F2,  spawn gallery
 bind = ANY, F3,  spawn todo
-bind = ANY, F4,  spawn foot
+bind = ANY, F4,  spawn term
 bind = ANY, F5,  spawn pixels
 bind = ANY, F6,  focusnext
 bind = ANY, F7,  focusprev
@@ -266,7 +267,7 @@ bind = ANY, F13, workspacerel +1
 bind = ANY, F14, workspacerel -1
 
 # Per-application rules. Matched once, when the window maps.
-#   rule = app_id=foot, float
+#   rule = app_id=palmy-term, float
 #   rule = title~Volume Control, float, noborder
 #   rule = app_id=pixels, workspace 3
 #   rule = app_id=gallery, size 900x600
