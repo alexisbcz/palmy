@@ -660,6 +660,12 @@ handle_pointer :: proc(s: ^Server, app: ^p.App, scale: f32) {
 		}
 	}
 
+	// Client popups (menus, <select>, tooltips) sit above the windows and
+	// the bar, and a grabbing one closes on a click elsewhere.
+	if popup_pointer(s, app, mp, moved) {
+		return
+	}
+
 	// The bar.
 	if bar_pointer(s, app, in_, mp) {
 		set_ptr_focus(s, nil, 0, 0)
@@ -695,7 +701,8 @@ handle_pointer :: proc(s: ^Server, app: ^p.App, scale: f32) {
 
 	// Pointer focus for clients: only the content area forwards input.
 	if region == .Content && t != nil && t.xdg != nil && t.xdg.surf != nil {
-		surf, lx, ly := pick_surface(t.xdg.surf, t.x, t.y, mp.x, mp.y)
+		ox, oy := top_origin(t)
+		surf, lx, ly := pick_surface(t.xdg.surf, ox, oy, mp.x, mp.y)
 		if surf != nil {
 			if surf != s.ptr_surf {
 				set_ptr_focus(s, surf, lx, ly)

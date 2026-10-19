@@ -1435,6 +1435,7 @@ tile_auto_float :: proc(s: ^Server, t: ^Toplevel, area: Tile_Rect) {
 ws_tick :: proc(s: ^Server) {
 	ws_ensure(s)
 	ws_prune(s)
+	popup_tick(s)
 
 	// A rule may have asked for a workspace this window is not on yet.
 	for {
@@ -2367,6 +2368,13 @@ ws_selftest :: proc() -> int {
 
 	// --- the interaction model (ux_test.odin) -----------------------------
 	ux_selftest(s, c)
+
+	// --- xdg_positioner placement (popup.odin) ----------------------------
+	{
+		pp, pf := popup_selftest()
+		ws_test_pass += pp
+		ws_test_fail += pf
+	}
 
 	fmt.printfln("wm --selftest: %d passed, %d failed", ws_test_pass, ws_test_fail)
 	return ws_test_fail == 0 ? 0 : 1

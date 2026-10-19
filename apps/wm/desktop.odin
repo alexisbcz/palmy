@@ -193,6 +193,7 @@ draw :: proc(s: ^Server, app: ^p.App, cv: ^p.Canvas) {
 	}
 	wm_reset_clip(cv)
 	layer_draw(s, cv, true)
+	popup_draw(s, cv)
 
 	switcher_draw(s, app, cv)
 	cheat_draw(s, app, cv)

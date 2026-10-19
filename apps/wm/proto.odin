@@ -73,6 +73,8 @@ Kind :: enum u8 {
 	// wp-cursor-shape-v1 (cursor.odin).
 	Cursor_Shape_Mgr,
 	Cursor_Shape_Dev,
+	// xdg_popup (popup.odin).
+	Popup,
 }
 
 Object :: struct {
@@ -177,6 +179,7 @@ Xdg_Surface :: struct {
 	id:           u32,
 	surf:         ^Surface,
 	top:          ^Toplevel,
+	popup:        ^Popup,
 	initial_sent: bool,
 	serial:       u32,
 	acked:        u32,
@@ -374,9 +377,9 @@ handle_request :: proc(s: ^Server, c: ^Client, id: u32, op: u16, r: ^Reader) {
 	case .Wm_Base:
 		req_wm_base(s, c, o, id, op, r)
 	case .Positioner:
-		if op == 0 {
-			obj_drop(c, id)
-		}
+		req_positioner(s, c, o, id, op, r)
+	case .Popup:
+		req_popup(s, c, o, id, op, r)
 	case .Xdg_Surface:
 		req_xdg_surface(s, c, o, id, op, r)
 	case .Toplevel:
@@ -1137,7 +1140,7 @@ req_wm_base :: proc(s: ^Server, c: ^Client, o: Object, id: u32, op: u16, r: ^Rea
 		}
 		obj_drop(c, id)
 	case 1:
-		obj_new(c, r_u32(r), .Positioner, o.ver, nil)
+		positioner_new(c, r_u32(r), o.ver)
 	case 2:
 		// get_xdg_surface(id, surface)
 		xid := r_u32(r)
@@ -1172,6 +1175,10 @@ req_xdg_surface :: proc(s: ^Server, c: ^Client, o: Object, id: u32, op: u16, r: 
 			x.surf.role = .None
 			x.surf.xdg = nil
 		}
+		popup_xdg_gone(s, x)
+		if x.popup != nil {
+			x.popup.xdg = nil
+		}
 		obj_drop(c, id)
 		free(x)
 	case 1:
@@ -1191,7 +1198,11 @@ req_xdg_surface :: proc(s: ^Server, c: ^Client, o: Object, id: u32, op: u16, r: 
 		x.top = t
 		log_line("client %d: toplevel %d created", c.index, tid)
 	case 2:
-		post_error(c, id, 0, "this compositor does not implement xdg_popup")
+		// get_popup(id, parent, positioner)
+		pid := r_u32(r)
+		parent := r_u32(r)
+		pos := r_u32(r)
+		popup_create(s, c, x, pid, parent, pos, o.ver)
 	case 3:
 		// set_window_geometry(x, y, w, h)
 		x.gx = int(r_i32(r))
@@ -1233,6 +1244,10 @@ send_configure :: proc(s: ^Server, t: ^Toplevel, w, h: int) {
 }
 
 xdg_commit :: proc(s: ^Server, x: ^Xdg_Surface) {
+	if x.popup != nil {
+		popup_commit(s, x.popup)
+		return
+	}
 	t := x.top
 	if t == nil {
 		return
@@ -1249,8 +1264,7 @@ xdg_commit :: proc(s: ^Server, x: ^Xdg_Surface) {
 
 	if has && !t.mapped {
 		t.mapped = true
-		t.w = surf.iw / max(surf.scale, 1)
-		t.h = surf.ih / max(surf.scale, 1)
+		t.w, t.h = top_geom_size(t)
 		t.req_w, t.req_h = t.w, t.h
 		place_new_window(s, t)
 		append(&s.stack, t)
@@ -1270,8 +1284,7 @@ xdg_commit :: proc(s: ^Server, x: ^Xdg_Surface) {
 			}
 		}
 	} else if has && t.mapped {
-		nw := surf.iw / max(surf.scale, 1)
-		nh := surf.ih / max(surf.scale, 1)
+		nw, nh := top_geom_size(t)
 		if nw != t.w || nh != t.h {
 			if t.anchor_x {
 				t.x = t.anchor_right - nw
@@ -1284,6 +1297,39 @@ xdg_commit :: proc(s: ^Server, x: ^Xdg_Surface) {
 	} else if !has && t.mapped {
 		unmap_window(s, t)
 	}
+}
+
+// Window geometry. A client that draws its own shadow (GTK, Chromium,
+// Firefox, libdecor) says with xdg_surface.set_window_geometry which part of
+// its surface is the window. The toplevel's rectangle (t.x, t.y, t.w, t.h) is
+// that part: it is what is laid out, tiled, snapped, framed and configured.
+// The surface is drawn offset so the geometry lands there, and clipped to it,
+// so the client's shadow does not double the wm's.
+
+// top_geom_size is the size the client committed, as window geometry.
+top_geom_size :: proc(t: ^Toplevel) -> (w, h: int) {
+	x := t.xdg
+	surf := x.surf
+	sw := surf.iw / max(surf.scale, 1)
+	sh := surf.ih / max(surf.scale, 1)
+	if x.geom_set {
+		// Clamped to the surface, as the protocol says the geometry is.
+		gx0, gy0 := clamp(x.gx, 0, sw), clamp(x.gy, 0, sh)
+		gx1, gy1 := clamp(x.gx + x.gw, 0, sw), clamp(x.gy + x.gh, 0, sh)
+		if gx1 > gx0 && gy1 > gy0 {
+			return gx1 - gx0, gy1 - gy0
+		}
+	}
+	return sw, sh
+}
+
+// top_origin is where the toplevel's surface is drawn so that its window
+// geometry sits at t.x, t.y.
+top_origin :: proc(t: ^Toplevel) -> (int, int) {
+	if x := t.xdg; x != nil && x.geom_set && x.gw > 0 && x.gh > 0 {
+		return t.x - max(x.gx, 0), t.y - max(x.gy, 0)
+	}
+	return t.x, t.y
 }
 
 find_output :: proc(c: ^Client) -> u32 {

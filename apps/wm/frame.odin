@@ -396,7 +396,8 @@ draw_window :: proc(s: ^Server, app: ^p.App, cv: ^p.Canvas, t: ^Toplevel, shadow
 	if session.kiosk || ws_fullscreen(t) {
 		p.push_clip(cv, content_rect(t))
 		if t.xdg != nil && t.xdg.surf != nil {
-			blit_surface(cv, t.xdg.surf, t.x, t.y)
+			ox, oy := top_origin(t)
+			blit_surface(cv, t.xdg.surf, ox, oy)
 		}
 		p.pop_clip(cv)
 		return
@@ -436,7 +437,8 @@ draw_window :: proc(s: ^Server, app: ^p.App, cv: ^p.Canvas, t: ^Toplevel, shadow
 	// (and the top ones too when a rule removed the title bar).
 	if t.xdg != nil && t.xdg.surf != nil {
 		cr := content_rect(t)
-		blit_rounded(cv, t.xdg.surf, t.x, t.y, cr, th > 0 ? 0 : r, r)
+		ox, oy := top_origin(t)
+		blit_rounded(cv, t.xdg.surf, ox, oy, cr, th > 0 ? 0 : r, r)
 	}
 
 	if th > 0 {

@@ -187,6 +187,7 @@ accept_clients :: proc(s: ^Server) {
 
 client_free :: proc(s: ^Server, c: ^Client) {
 	c.dead = true
+	popup_client_gone(s, c)
 
 	for _, o in c.objs {
 		if o.kind == .Toplevel {
@@ -199,7 +200,11 @@ client_free :: proc(s: ^Server, c: ^Client) {
 	}
 	for _, o in c.objs {
 		if o.kind == .Xdg_Surface {
+			popup_xdg_gone(s, (^Xdg_Surface)(o.p))
 			free((^Xdg_Surface)(o.p))
+		}
+		if o.kind == .Positioner && o.p != nil {
+			free((^Positioner)(o.p))
 		}
 	}
 	for _, o in c.objs {

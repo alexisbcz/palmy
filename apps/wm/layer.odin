@@ -478,9 +478,8 @@ req_layer_surface :: proc(s: ^Server, c: ^Client, o: Object, id: u32, op: u16, r
 		}
 		ls.p_kbd = Layer_Kbd(m)
 	case 5:
-		// get_popup(popup)
-		r_u32(r)
-		post_error(c, id, 0, "this compositor does not implement xdg_popup")
+		// get_popup(popup): a popup made with a null parent hangs off this
+		popup_layer_parent(s, c, ls, r_u32(r))
 	case 6:
 		// ack_configure(serial)
 		ls.acked = r_u32(r)
@@ -573,6 +572,7 @@ layer_reflow :: proc(s: ^Server) {
 }
 
 layer_destroy :: proc(s: ^Server, c: ^Client, ls: ^Layer_Surface, id: u32) {
+	popup_layer_gone(s, ls)
 	if ls.surf != nil {
 		if s.ptr_surf == ls.surf {
 			set_ptr_focus(s, nil, 0, 0)

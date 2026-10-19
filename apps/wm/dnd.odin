@@ -211,7 +211,8 @@ dnd_retarget :: proc(s: ^Server) {
 
 	t, region, _ := window_at(s, dnd.x, dnd.y)
 	if region == .Content && t != nil && t.xdg != nil && t.xdg.surf != nil {
-		surf, lx, ly = pick_surface(t.xdg.surf, t.x, t.y, dnd.x, dnd.y)
+		ox, oy := top_origin(t)
+		surf, lx, ly = pick_surface(t.xdg.surf, ox, oy, dnd.x, dnd.y)
 	}
 
 	// A client with no wl_data_device cannot be a drop target.
