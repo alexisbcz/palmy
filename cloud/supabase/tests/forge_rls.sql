@@ -6,7 +6,7 @@
 -- dies with its token.
 begin;
 create extension if not exists pgtap with schema extensions;
-select plan(58);
+select plan(66);
 
 -- Two people. Alice has a personal and a work identity; Bob has one.
 insert into auth.users (id, email) values
@@ -158,7 +158,7 @@ reset role;
 
 -- Anonymous.
 select pg_temp.become(null, null, 'anon');
-select is((select count(*)::int from forge_repo_list), 1, 'anonymously, only the public repository is listed');
+select is((select count(*)::int from forge_repo_list where id::text like 'f0000000-%'), 1, 'anonymously, only the public repository is listed');
 select is((select count(*)::int from forge_issues where repo_id = 'f0000000-0000-0000-0000-000000000002'), 2, 'and its issues are readable');
 select throws_ok($$ insert into forge_issues (repo_id, author_identity_id, title)
 	values ('f0000000-0000-0000-0000-000000000002', null, 'anon') $$,
@@ -191,6 +191,37 @@ reset role;
 select pg_temp.become('a0000000-0000-0000-0000-000000000001', 'a1000000-0000-0000-0000-000000000001', 'forge_pat',
 	(select t ->> 'id' from wtok));
 select is((select count(*)::int from forge_repos), 0, 'a revoked token''s session sees nothing, not even public repositories');
+reset role;
+
+-- Release assets and LFS objects in Storage follow the repository: the
+-- first path segment is the repository id.
+select pg_temp.become('a0000000-0000-0000-0000-000000000001', 'a1000000-0000-0000-0000-000000000001');
+select lives_ok($$ insert into storage.objects (bucket_id, name) values
+	('forge-releases', 'f0000000-0000-0000-0000-000000000001/v1/notes.tar'),
+	('forge-releases', 'f0000000-0000-0000-0000-000000000002/v1/site.zip') $$,
+	'the owner stores release assets for her repositories');
+select throws_ok($$ insert into storage.objects (bucket_id, name) values ('forge-releases', 'releases/loose.tar') $$,
+	'42501', null, 'an object outside any repository folder is refused');
+-- A webhook is disabled by default and never sent: an event records a
+-- delivery that says so.
+insert into public.forge_webhooks (repo_id, url) values ('f0000000-0000-0000-0000-000000000001', 'https://example.invalid/hook');
+insert into public.forge_issues (repo_id, author_identity_id, title)
+values ('f0000000-0000-0000-0000-000000000001', 'a1000000-0000-0000-0000-000000000001', 'with a hook');
+select is((select status from forge_webhook_deliveries limit 1), 'disabled', 'a matching event records a disabled delivery, nothing is sent');
+reset role;
+
+select pg_temp.become('b0000000-0000-0000-0000-000000000002', 'b1000000-0000-0000-0000-000000000001');
+select is((select count(*)::int from storage.objects where bucket_id = 'forge-releases' and name like 'f0000000-0000-0000-0000-000000000001/%'), 0,
+	'Bob cannot see the private repository''s assets');
+select is((select count(*)::int from storage.objects where bucket_id = 'forge-releases' and name like 'f0000000-0000-0000-0000-000000000002/%'), 1,
+	'but sees the public one''s');
+select throws_ok($$ insert into storage.objects (bucket_id, name) values ('forge-releases', 'f0000000-0000-0000-0000-000000000002/v2/evil.zip') $$,
+	'42501', null, 'and cannot upload to a repository he can only read');
+select is((select count(*)::int from forge_webhooks), 0, 'nor see its webhooks');
+reset role;
+
+select pg_temp.become(null, null, 'anon');
+select is((select count(*)::int from storage.objects where bucket_id = 'forge-releases' and name like 'f0000000-%'), 1, 'anonymously, only the public repository''s assets are visible');
 reset role;
 
 -- A token presented for exchange.
