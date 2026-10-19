@@ -13,6 +13,7 @@ import "auth"
 import "core:sys/posix"
 import "core:fmt"
 import "core:os"
+import "core:slice"
 import "core:strings"
 import "core:sys/linux"
 
@@ -24,6 +25,50 @@ Session_Spec :: struct {
 	cmd:    []string,
 	env:    []string, // added on top of the base environment, and wins
 	log:    string, // stdout and stderr; "" keeps palm-login's own
+	// Programs started in the background beside the session (session_hooks):
+	// as the user, with the session's environment, in its process group.
+	hooks:  []string,
+}
+
+// SESSION_HOOK_DIR holds what packages want running for the length of every
+// user session, PipeWire's 50-pipewire among them.
+SESSION_HOOK_DIR :: "/etc/palm/session.d"
+
+// session_hooks lists the executables in `dir` in name order: regular files
+// with an execute bit, not hidden, not editor leftovers (`~`, `.new`,
+// `.bak`). A missing directory is no hooks.
+session_hooks :: proc(dir: string, allocator := context.allocator) -> []string {
+	if dir == "" {
+		return nil
+	}
+	f, err := os.open(dir)
+	if err != nil {
+		return nil
+	}
+	defer os.close(f)
+	infos, rerr := os.read_dir(f, -1, context.temp_allocator)
+	if rerr != nil {
+		return nil
+	}
+	out := make([dynamic]string, allocator)
+	for fi in infos {
+		name := fi.name
+		if strings.has_prefix(name, ".") || strings.has_suffix(name, "~") ||
+		   strings.has_suffix(name, ".new") || strings.has_suffix(name, ".bak") {
+			continue
+		}
+		full := fmt.tprintf("%s/%s", dir, name)
+		st: linux.Stat
+		if linux.stat(strings.clone_to_cstring(full, context.temp_allocator), &st) != .NONE {
+			continue
+		}
+		if !linux.S_ISREG(st.mode) || (transmute(u32)st.mode & 0o111) == 0 {
+			continue
+		}
+		append(&out, strings.clone(full, allocator))
+	}
+	slice.sort(out[:])
+	return out[:]
 }
 
 // base_env is the environment the contract promises every session.
@@ -160,6 +205,10 @@ spawn_session :: proc(spec: Session_Spec) -> (pid: linux.Pid, err: string) {
 		gids[i] = linux.Gid(g)
 	}
 	home := strings.clone_to_cstring(spec.acct.home, context.temp_allocator)
+	hooks := make([]cstring, len(spec.hooks), context.temp_allocator)
+	for h, i in spec.hooks {
+		hooks[i] = strings.clone_to_cstring(h, context.temp_allocator)
+	}
 	uid := linux.Uid(spec.acct.uid)
 	gid := linux.Gid(spec.acct.gid)
 
@@ -168,7 +217,7 @@ spawn_session :: proc(spec: Session_Spec) -> (pid: linux.Pid, err: string) {
 		return 0, fmt.tprintf("fork: %v", fe)
 	}
 	if child == 0 {
-		child_exec(cprog, argv, envp, gids, uid, gid, home, log_fd)
+		child_exec(cprog, argv, envp, gids, uid, gid, home, log_fd, hooks)
 	}
 	return child, ""
 }
@@ -184,6 +233,7 @@ child_exec :: proc(
 	gid: linux.Gid,
 	home: cstring,
 	log_fd: linux.Fd,
+	hooks: []cstring,
 ) -> ! {
 	die :: proc(what: string, e: linux.Errno) -> ! {
 		buf: [256]u8
@@ -232,6 +282,22 @@ child_exec :: proc(
 	if linux.chdir(home) != .NONE {
 		linux.chdir("/")
 	}
+
+	// The session hooks, forked from here, already the user and already in
+	// the session's process group, so the signals palm-login sends that
+	// group when the session ends (session_ended) end them too. Their
+	// output goes to the session log. Nobody waits for them here: the
+	// session's own program inherits them as children (wm reaps), and
+	// palm-init adopts any that outlive it.
+	for h in hooks {
+		hp, he := linux.fork()
+		if he == .NONE && hp == 0 {
+			hargv := [2]cstring{h, nil}
+			linux.execve(h, raw_data(hargv[:]), envp)
+			linux.exit(127)
+		}
+	}
+
 	e := linux.execve(prog, argv, envp)
 	die("execve", e)
 }

@@ -23,7 +23,8 @@ package login
 // Two more variables, for images and tests rather than for users:
 // PALM_GREETER_CMD replaces the greeter session's command line, and
 // PALM_DEFAULT_SESSION the command an autologin session runs (both split on
-// spaces, no shell).
+// spaces, no shell). PALM_SESSION_D replaces /etc/palm/session.d, the
+// directory whose executables run beside every user session (session.odin).
 //
 //	palm-login                                   the daemon; must be root
 //	palm-login --test --sock PATH --shadow F [--passwd F] [--group F]
@@ -75,6 +76,8 @@ Daemon :: struct {
 	child_kind:     Child_Kind,
 	child_user:     string,
 	child_started:  time.Tick,
+	// The tty lent to the session, given back to root when it ends.
+	vt_lent:        bool,
 
 	// What the greeter asked for, waiting for the greeter to get out of the
 	// way. Set by start_session; consumed when the greeter session ends.
@@ -98,6 +101,12 @@ Daemon :: struct {
 // The graphical seat's line in utmp and wtmp, and its utmp slot id.
 SEAT_LINE :: "seat0"
 SEAT_ID :: "s0"
+
+// The virtual terminal every graphical session (the greeter's and the
+// user's, one after the other) runs on. wm switches VTs itself when it may
+// open the tty (apps/wm/vt.odin): the tty is lent to the session's user, as
+// login(1) lends a console, and XDG_VTNR says which one it is.
+SESSION_VT :: 1
 
 @(private = "file")
 stop_requested: i32
@@ -188,6 +197,9 @@ main :: proc() {
 	posix.signal(.SIGINT, on_term)
 	posix.signal(.SIGHUP, on_term)
 
+	if hooks := os.get_env("PALM_SESSION_D", context.allocator); hooks != "" {
+		d.paths.session_d = hooks
+	}
 	cmdline := os.get_env("PALM_GREETER_CMD", context.allocator)
 	d.greeter_cmd = strings.fields(cmdline != "" ? cmdline : GREETER_CMD)
 
@@ -416,6 +428,7 @@ session_ended :: proc(d: ^Daemon, status: u32) {
 		auth.record_logout(d.utmp, i32(d.child), SEAT_LINE, SEAT_ID)
 		auth.logf(.Info, "session of %q closed", d.child_user)
 	}
+	vt_return(d)
 
 	if d.child_kind == .Greeter && d.pending == nil {
 		if ran < 3 * time.Second {
@@ -482,6 +495,9 @@ launch :: proc(d: ^Daemon, kind: Child_Kind, acct: auth.Account, groups: []u32, 
 	// request wins, as greetd's would. See locale.odin.
 	full := make([dynamic]string, context.temp_allocator)
 	append(&full, ..system_locale_env(d.paths, context.temp_allocator))
+	if vt_lend(d, acct) {
+		append(&full, fmt.tprintf("XDG_VTNR=%d", SESSION_VT))
+	}
 	append(&full, ..env)
 	spec := Session_Spec {
 		acct   = acct,
@@ -489,9 +505,16 @@ launch :: proc(d: ^Daemon, kind: Child_Kind, acct: auth.Account, groups: []u32, 
 		cmd    = cmd,
 		env    = full[:],
 		log    = fmt.tprintf("/var/log/session-%s.log", acct.name),
+		// Only a user's session: the greeter needs no sound or anything
+		// else a package might want running for a person.
+		hooks  = kind == .User ? session_hooks(d.paths.session_d, context.temp_allocator) : nil,
+	}
+	if len(spec.hooks) > 0 {
+		fmt.eprintfln("palm-login: session hooks for %q: %v", acct.name, spec.hooks)
 	}
 	pid, err := spawn_session(spec)
 	if err != "" {
+		vt_return(d)
 		fmt.eprintfln("palm-login: could not start %v for %q: %s", cmd, acct.name, err)
 		// Without a delay a missing `wm` would spin here forever.
 		d.quick_deaths += 1
@@ -509,6 +532,44 @@ launch :: proc(d: ^Daemon, kind: Child_Kind, acct: auth.Account, groups: []u32, 
 	d.child_started = time.tick_now()
 	d.term_sent = false
 	d.kill_sent = false
+}
+
+// vt_lend gives /dev/tty<SESSION_VT> to the session's user (owner the user,
+// group tty, 0620), so wm may open it, make it its controlling terminal and
+// switch VTs. It is false when the tty cannot be lent (no such tty, or not
+// allowed, as in the e2e namespace), and the session then runs without VT
+// switching, as it did before.
+vt_lend :: proc(d: ^Daemon, acct: auth.Account) -> bool {
+	if d.test {
+		return false
+	}
+	path := fmt.ctprintf("/dev/tty%d", SESSION_VT)
+	if linux.chown(path, linux.Uid(acct.uid), linux.Gid(tty_gid(d))) != .NONE {
+		return false
+	}
+	linux.chmod(path, {.IRUSR, .IWUSR, .IWGRP})
+	d.vt_lent = true
+	return true
+}
+
+// vt_return gives the tty back to root:tty 0620 once the session is over.
+vt_return :: proc(d: ^Daemon) {
+	if !d.vt_lent {
+		return
+	}
+	path := fmt.ctprintf("/dev/tty%d", SESSION_VT)
+	linux.chown(path, 0, linux.Gid(tty_gid(d)))
+	linux.chmod(path, {.IRUSR, .IWUSR, .IWGRP})
+	d.vt_lent = false
+}
+
+tty_gid :: proc(d: ^Daemon) -> u32 {
+	if text, ok := read_text(d.paths.group); ok {
+		if g, found := auth.group_id(text, "tty"); found {
+			return g
+		}
+	}
+	return 5
 }
 
 // daemon_start is the real start_session: remember the request and let the
@@ -598,6 +659,7 @@ shutdown :: proc(d: ^Daemon) {
 		if d.child_kind == .User {
 			auth.record_logout(d.utmp, i32(d.child), SEAT_LINE, SEAT_ID)
 		}
+		vt_return(d)
 	}
 	for c in d.conns {
 		conn_close(c)

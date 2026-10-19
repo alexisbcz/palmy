@@ -45,6 +45,12 @@ chmod 755 /run/test/fake-reboot
 mount --bind /run/test/fake-reboot "$(readlink -f /sbin/reboot)"
 printf '#!/bin/sh\n{ echo autologin; id; } > /run/test/autologin.txt; sleep 1\n' >/run/test/autosession.sh
 chmod 755 /run/test/autosession.sh
+# A session hook (/etc/palm/session.d in the system): it records who it runs
+# as and its process group, then outlives the session unless it is ended.
+mkdir -p /run/test/session.d
+printf '#!/bin/sh\necho "hook uid=$(id -u) pgid=$(cut -d" " -f5 /proc/$$/stat) xdg=$XDG_RUNTIME_DIR" > /run/test/hook.txt\necho $$ > /run/test/hook.pid\nexec sleep 60\n' >/run/test/session.d/50-hook
+printf '#!/bin/sh\necho ran > /run/test/not-executable.txt\n' >/run/test/session.d/10-not-executable
+chmod 755 /run/test/session.d/50-hook
 
 daemon() {
 	secs="$1"; shift
@@ -57,7 +63,7 @@ expect() { # expect <description> <command...>
 }
 
 echo "=== 1. login, user session, back to the greeter, Restart"
-daemon 9 PALM_GREETER_CMD="/usr/bin/python3 /run/test/greeter-client.py" | tee /run/test/daemon1.log
+daemon 9 PALM_SESSION_D=/run/test/session.d PALM_GREETER_CMD="/usr/bin/python3 /run/test/greeter-client.py" | tee /run/test/daemon1.log
 echo "--- what the greeter saw"; cat /run/test/greeter-runs.txt
 echo "--- what the user session saw"; cat /run/test/user-session.txt
 ls -ln /run/user /var/log
@@ -79,6 +85,11 @@ expect "last (wtmp) has this boot's reboot record"  grep -q "^reboot  *system bo
 expect "utmp's seat0 slot is free again after logout" sh -c '! /run/test/busybox who | grep -q seat0'
 expect "lastlog has palm's login (uid 1000's record)" sh -c 'test "$(od -An -tu4 -j $((1000 * 292)) -N4 /var/log/lastlog)" -gt 0'
 expect "the wrong password was logged with its count" grep -q 'authentication failure for "palm" (1 in a row' /run/test/daemon1.log
+echo "--- the session hook"; cat /run/test/hook.txt
+expect "session.d hook ran as palm with the session env" grep -q "^hook uid=1000 .* xdg=/run/user/1000" /run/test/hook.txt
+expect "session.d hook is in the session's process group" sh -c 'grep -q "pgid=$(sed -n "s/^session-pid=//p" /run/test/user-session.txt) " /run/test/hook.txt'
+expect "session.d hook was ended with the session"   sh -c '! kill -0 "$(cat /run/test/hook.pid)" 2>/dev/null'
+expect "session.d skips a file that is not executable" sh -c '! test -e /run/test/not-executable.txt'
 
 echo "=== 2. palm.autologin"
 daemon 3 PALM_AUTOLOGIN=palm PALM_DEFAULT_SESSION=/run/test/autosession.sh PALM_GREETER_CMD="/bin/sleep 30"

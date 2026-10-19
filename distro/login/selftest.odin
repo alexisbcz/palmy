@@ -213,6 +213,34 @@ LANG=fr_CA.UTF-8
 		os.remove(conf)
 		os.remove(tzf)
 		os.remove(ltf)
+
+		// session.d: executables only, in name order, no hidden files or
+		// editor leftovers, and a missing directory is no hooks.
+		hd := fmt.tprintf("%s/session.d", dir)
+		os.make_directory(hd)
+		mk :: proc(dir, name: string, exec: bool) {
+			p := fmt.tprintf("%s/%s", dir, name)
+			_ = os.write_entire_file(p, transmute([]u8)string("#!/bin/sh\n"))
+			linux.chmod(fmt.ctprintf("%s", p), exec ? {.IRUSR, .IWUSR, .IXUSR, .IRGRP, .IXGRP, .IROTH, .IXOTH} : {.IRUSR, .IWUSR})
+		}
+		mk(hd, "50-pipewire", true)
+		mk(hd, "10-first", true)
+		mk(hd, "20-not-executable", false)
+		mk(hd, ".hidden", true)
+		mk(hd, "30-old~", true)
+		mk(hd, "40-x.new", true)
+		os.make_directory(fmt.tprintf("%s/60-dir", hd))
+		hooks := session_hooks(hd, context.temp_allocator)
+		check(
+			"session.d: executables in name order, nothing else",
+			len(hooks) == 2 && hooks[0] == fmt.tprintf("%s/10-first", hd) && hooks[1] == fmt.tprintf("%s/50-pipewire", hd),
+			fmt.tprintf("%v", hooks),
+		)
+		check("session.d: a missing directory is no hooks", len(session_hooks(fmt.tprintf("%s/none", dir), context.temp_allocator)) == 0)
+		for n in ([]string{"50-pipewire", "10-first", "20-not-executable", ".hidden", "30-old~", "40-x.new", "60-dir"}) {
+			os.remove(fmt.tprintf("%s/%s", hd, n))
+		}
+		os.remove(hd)
 		os.remove(dir)
 	}
 

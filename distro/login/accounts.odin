@@ -18,6 +18,8 @@ Paths :: struct {
 	locale_conf: string,
 	timezone:    string,
 	localtime:   string,
+	// The session hooks (session.odin); "" runs none.
+	session_d:   string,
 }
 
 SYSTEM_PATHS :: Paths {
@@ -27,6 +29,7 @@ SYSTEM_PATHS :: Paths {
 	locale_conf = "/etc/locale.conf",
 	timezone    = "/etc/timezone",
 	localtime   = "/etc/localtime",
+	session_d   = SESSION_HOOK_DIR,
 }
 
 read_text :: auth.read_text
