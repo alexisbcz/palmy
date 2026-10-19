@@ -251,10 +251,13 @@ changes :: proc(c: ^Client, since: i64) -> (items: []Item, e: Error) {
 	return
 }
 
-list_children :: proc(c: ^Client, parent: string, trashed := false) -> (items: []Item, e: Error) {
+// list_children lists a folder. `owner` is the identity whose drive it is in,
+// when that is not the caller's own: a folder shared with this identity.
+list_children :: proc(c: ^Client, parent: string, trashed := false, owner := "") -> (items: []Item, e: Error) {
 	pf := parent == "" ? "parent_id=is.null" : fmt.tprintf("parent_id=eq.%s", parent)
 	tf := trashed ? "trashed_at=not.is.null" : "trashed_at=is.null"
-	path := fmt.tprintf("/drive_items?identity_id=eq.%s&%s&%s&order=kind.desc,name.asc", c.identity, pf, tf)
+	who := owner != "" ? owner : c.identity
+	path := fmt.tprintf("/drive_items?identity_id=eq.%s&%s&%s&order=kind.desc,name.asc", who, pf, tf)
 	e = rest(c, "GET", path, "", &items)
 	return
 }

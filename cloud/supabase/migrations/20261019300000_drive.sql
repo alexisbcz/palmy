@@ -279,7 +279,7 @@ language sql stable security definer
 set search_path = ''
 as $$
 	select coalesce((select q.bytes_limit from public.drive_quotas q where q.identity_id = p_identity),
-	                15::bigint * 1024 * 1024 * 1024)
+	                15::bigint * 1000 * 1000 * 1000)
 $$;
 
 -- Lock the helpers down: they are building blocks for policies, and the
