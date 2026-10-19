@@ -8,29 +8,45 @@ package palm
 // why `del` cleans up orphaned dependencies without a separate command: a
 // dependency nobody in the world reaches is simply not in the answer.
 //
-// The resolver is greedy, with one repair:
+// The resolver is a depth-first search with backtracking:
 //
-//   - Each constraint is met by a package of that name if one satisfies it,
-//     else by something that provides it.
-//   - Among candidates, an installed package that satisfies wins (nothing
-//     moves unless asked), except under `upgrade`, where the highest version
-//     wins and an installed one only breaks ties.
-//   - A package's dependencies are resolved before it is appended, so the
-//     resulting order is install order: dependencies first. A cycle is cut
-//     where it closes; with no install scripts, nothing depends on the order
-//     inside a cycle.
-//   - If a later constraint conflicts with an earlier choice (world has foo,
-//     installed foo is 1.0, bar needs foo>=2), the constraint is pinned onto
-//     that package name and resolution restarts, so the second pass chooses a
-//     foo that satisfies both. A conflict that pinning cannot fix is reported
-//     with both sides named.
+//   - Goals are constraints: the world's entries, then the dependencies of
+//     each package chosen, in the order they appear.
+//   - A goal already met by a chosen package (by name or by something it
+//     provides) is met. Otherwise its candidates are tried in order of
+//     preference: packages of that name, then packages that provide it.
+//     Among those, an installed package wins (nothing moves unless asked),
+//     except under `upgrade`, where the highest version wins and an
+//     installed one only breaks ties.
+//   - A candidate is refused if another version of its name is already
+//     chosen, or if it and a chosen package conflict: either names the other
+//     in `conflicts` or `replaces` (replacing a package implies not being
+//     installed beside it).
+//   - When no candidate works, the search goes back to the most recent
+//     choice that has another candidate and tries that. So "world has foo,
+//     installed foo is 1.0, bar needs foo>=2" settles on foo 2.0, and two
+//     providers of the same thing are tried one after the other.
+//   - When nothing works, the error reported is the deepest failure the
+//     search met, naming the constraint, who wanted it and what stood in its
+//     way: the most specific explanation there is. A step budget keeps a
+//     pathological repository from searching forever.
+//   - Under `upgrade`, an installed package that an available package
+//     `replaces` (pacman's meaning: the project was renamed or merged) is
+//     tried last, after its replacement, so the replacement takes over.
+//
+// The answer is put in install order afterwards: dependencies first, the
+// world's own entries in the order given; a cycle is cut where it closes,
+// and with no install scripts nothing depends on the order inside one.
 
 import "core:fmt"
-import "core:strings"
+import "core:slice"
 
 Universe :: struct {
 	by_name:    map[string][dynamic]^Pkg,
 	by_provide: map[string][dynamic]^Pkg,
+	// Installed packages that an available package `replaces` (filled for
+	// upgrade only): their name -> the replacement.
+	replaced:   map[string]^Pkg,
 }
 
 universe_add :: proc(u: ^Universe, p: ^Pkg) {
@@ -60,65 +76,128 @@ build_universe :: proc(db: ^DB, repos: []^Repo) -> ^Universe {
 	return u
 }
 
+// find_replacements fills u.replaced: for each installed package, the newest
+// available package of another name whose `replaces` matches it.
+find_replacements :: proc(u: ^Universe, db: ^DB) {
+	for x in db.pkgs {
+		best: ^Pkg
+		for _, cands in u.by_name {
+			for y in cands {
+				if y.installed || y.name == x.name {continue}
+				for rep in y.replaces {
+					c, okc := parse_constraint(rep)
+					if okc && pkg_satisfies(x, c) && (best == nil || version_compare(y.version, best.version) > 0) {
+						best = y
+					}
+				}
+			}
+		}
+		if best != nil {
+			u.replaced[x.name] = best
+		}
+	}
+}
+
 Resolution :: struct {
 	order:  [dynamic]^Pkg,
 	chosen: map[string]^Pkg,
 }
 
+// RESOLVE_BUDGET bounds the search: every goal looked at counts one.
+RESOLVE_BUDGET :: 200_000
+
+@(private = "file")
+Goal :: struct {
+	c:  Constraint,
+	by: string,
+}
+
 @(private = "file")
 Resolver :: struct {
-	u:       ^Universe,
-	upgrade: bool,
-	pins:    map[string][dynamic]Constraint,
-	res:     Resolution,
-	// set when a conflict can be repaired by a pin and a restart
-	retry:   bool,
+	u:         ^Universe,
+	upgrade:   bool,
+	chosen:    map[string]^Pkg,
+	chosen_by: map[string]string,
+	steps:     int,
+	aborted:   bool,
+	err:       Err,
+	err_depth: int,
 }
 
 resolve :: proc(u: ^Universe, world: []string, upgrade: bool) -> (Resolution, Err) {
 	r := Resolver {
-		u       = u,
-		upgrade = upgrade,
+		u         = u,
+		upgrade   = upgrade,
+		err_depth = -1,
 	}
-	for attempt := 0; attempt < 64; attempt += 1 {
-		r.res = Resolution{}
-		r.retry = false
-		failed := Err{}
-		for w in world {
-			c, okc := parse_constraint(w)
-			if !okc {
-				return {}, fail(EXIT_USAGE, "world entry %q is not a valid constraint", w)
-			}
-			if _, e := resolve_one(&r, c, "world"); !ok(e) {
-				failed = e
-				break
+	goals := make([dynamic]Goal, context.temp_allocator)
+	for w in world {
+		c, okc := parse_constraint(w)
+		if !okc {
+			return {}, fail(EXIT_USAGE, "world entry %q is not a valid constraint", w)
+		}
+		append(&goals, Goal{c, "world"})
+	}
+	if !solve(&r, &goals, 0, 0) {
+		if r.aborted {
+			return {}, fail(EXIT_REFUSED, "dependency resolution gave up after %d steps: too many alternatives to search", RESOLVE_BUDGET)
+		}
+		if ok(r.err) {
+			return {}, fail(EXIT_REFUSED, "dependency resolution failed")
+		}
+		return {}, r.err
+	}
+
+	// Install order: depth-first over dependencies within the chosen set.
+	res: Resolution
+	res.chosen = r.chosen
+	state := make(map[string]bool, context.temp_allocator)
+	visit :: proc(r: ^Resolver, res: ^Resolution, state: ^map[string]bool, p: ^Pkg) {
+		if p.name in state {return}
+		state[p.name] = true
+		for d in p.depends {
+			c, okc := parse_constraint(d)
+			if !okc {continue}
+			if q := chosen_meeting(r, c); q != nil {
+				visit(r, res, state, q)
 			}
 		}
-		if ok(failed) {
-			return r.res, Err{}
-		}
-		if !r.retry {
-			return {}, failed
+		append(&res.order, p)
+	}
+	for g in goals {
+		if q := chosen_meeting(&r, g.c); q != nil {
+			visit(&r, &res, &state, q)
 		}
 	}
-	return {}, fail(EXIT_REFUSED, "dependency resolution did not settle")
+	return res, Err{}
 }
 
+// chosen_meeting returns the chosen package that meets c, by name first.
 @(private = "file")
-pinned_ok :: proc(r: ^Resolver, p: ^Pkg) -> bool {
-	if pins, has := r.pins[p.name]; has {
-		for c in pins {
-			if !pkg_satisfies(p, c) {
-				return false
+chosen_meeting :: proc(r: ^Resolver, c: Constraint) -> ^Pkg {
+	if p, has := r.chosen[c.name]; has && pkg_satisfies(p, c) {
+		return p
+	}
+	if provs, has := r.u.by_provide[c.name]; has {
+		for p in provs {
+			if q, chosen := r.chosen[p.name]; chosen && q == p && pkg_satisfies(p, c) {
+				return p
 			}
 		}
 	}
-	return true
+	return nil
 }
 
 @(private = "file")
 better :: proc(r: ^Resolver, a, b: ^Pkg) -> bool {
 	// is a a better choice than b?
+	if r.upgrade {
+		ar := a.name in r.u.replaced
+		br := b.name in r.u.replaced
+		if ar != br {
+			return br // a package being replaced is the last resort
+		}
+	}
 	if !r.upgrade && a.installed != b.installed {
 		return a.installed
 	}
@@ -132,222 +211,139 @@ better :: proc(r: ^Resolver, a, b: ^Pkg) -> bool {
 }
 
 @(private = "file")
-resolve_one :: proc(r: ^Resolver, c: Constraint, wanted_by: string) -> (^Pkg, Err) {
-	// Already met by an earlier choice?
-	if p, has := r.res.chosen[c.name]; has && pkg_satisfies(p, c) {
-		return p, Err{}
-	}
-	if provs, has := r.u.by_provide[c.name]; has {
-		for p in provs {
-			if q, chosen := r.res.chosen[p.name]; chosen && q == p && pkg_satisfies(p, c) {
-				return p, Err{}
-			}
+sort_candidates :: proc(r: ^Resolver, s: []^Pkg) {
+	// insertion sort: stable, and the lists are short
+	for i in 1 ..< len(s) {
+		for j := i; j > 0 && better(r, s[j], s[j - 1]); j -= 1 {
+			s[j], s[j - 1] = s[j - 1], s[j]
 		}
 	}
+}
 
-	best: ^Pkg
-	consider :: proc(r: ^Resolver, best: ^^Pkg, p: ^Pkg, c: Constraint) {
-		if !pkg_satisfies(p, c) || !pinned_ok(r, p) {
-			return
-		}
-		if q, chosen := r.res.chosen[p.name]; chosen && q.version != p.version {
-			return
-		}
-		if best^ == nil || better(r, p, best^) {
-			best^ = p
-		}
-	}
+@(private = "file")
+candidates :: proc(r: ^Resolver, c: Constraint) -> []^Pkg {
+	named := make([dynamic]^Pkg, context.temp_allocator)
 	if cands, has := r.u.by_name[c.name]; has {
 		for p in cands {
-			consider(r, &best, p, c)
+			if pkg_satisfies(p, c) {append(&named, p)}
 		}
 	}
-	if best == nil {
-		if provs, has := r.u.by_provide[c.name]; has {
-			for p in provs {
-				consider(r, &best, p, c)
+	provs := make([dynamic]^Pkg, context.temp_allocator)
+	if ps, has := r.u.by_provide[c.name]; has {
+		for p in ps {
+			if p.name != c.name && pkg_satisfies(p, c) {append(&provs, p)}
+		}
+	}
+	sort_candidates(r, named[:])
+	sort_candidates(r, provs[:])
+	out := make([dynamic]^Pkg, context.temp_allocator)
+	if r.upgrade {
+		// The replacement of a replaced package is tried before it.
+		for p in named {
+			if rep, has := r.u.replaced[p.name]; has && pkg_satisfies(rep, c) && !slice.contains(out[:], rep) {
+				append(&out, rep)
 			}
 		}
 	}
-	if best == nil {
-		// Is it a conflict with an earlier choice that a pin can repair?
-		if q, chosen := r.res.chosen[c.name]; chosen {
-			if !pin_has(r, c.name, c) && any_candidate(r, c) {
-				append_pin(r, c.name, c)
-				r.retry = true
-			}
-			return nil, fail(
-				EXIT_REFUSED,
-				"conflict: %s wants %s, but %s is already required",
-				wanted_by,
-				constraint_string(c),
-				pkg_id(q),
-			)
-		}
-		if c.op != .Any && (c.name in r.u.by_name || c.name in r.u.by_provide) {
-			return nil, fail(EXIT_NOT_FOUND, "no version of %s satisfies %s (wanted by %s)", c.name, constraint_string(c), wanted_by)
-		}
-		return nil, fail(EXIT_NOT_FOUND, "nothing provides %s (wanted by %s)", constraint_string(c), wanted_by)
-	}
+	for p in named {if !slice.contains(out[:], p) {append(&out, p)}}
+	for p in provs {if !slice.contains(out[:], p) {append(&out, p)}}
+	return out[:]
+}
 
-	r.res.chosen[best.name] = best
-	for d in best.depends {
-		dc, okd := parse_constraint(d)
-		if !okd {
-			return nil, fail(EXIT_FAILED, "%s has an invalid dependency %q", pkg_id(best), d)
+// conflicts_with: does a's conflicts or replaces list name b?
+conflicts_with :: proc(a, b: ^Pkg) -> (how: string, yes: bool) {
+	if a.name == b.name {return "", false}
+	for s in a.conflicts {
+		c, okc := parse_constraint(s)
+		if okc && pkg_satisfies(b, c) {return "conflicts with", true}
+	}
+	for s in a.replaces {
+		c, okc := parse_constraint(s)
+		if okc && pkg_satisfies(b, c) {return "replaces", true}
+	}
+	return "", false
+}
+
+// clash explains why p cannot join the chosen set, or returns "".
+@(private = "file")
+clash :: proc(r: ^Resolver, p: ^Pkg) -> string {
+	if q, has := r.chosen[p.name]; has && q != p {
+		return fmt.tprintf("%s is already required by %s", pkg_id(q), r.chosen_by[q.name])
+	}
+	for _, q in r.chosen {
+		if q == p {continue}
+		if how, yes := conflicts_with(p, q); yes {
+			return fmt.tprintf("%s %s %s (required by %s)", pkg_id(p), how, pkg_id(q), r.chosen_by[q.name])
 		}
-		if _, e := resolve_one(r, dc, best.name); !ok(e) {
-			return nil, e
+		if how, yes := conflicts_with(q, p); yes {
+			return fmt.tprintf("%s (required by %s) %s %s", pkg_id(q), r.chosen_by[q.name], how, pkg_id(p))
 		}
 	}
-	append(&r.res.order, best)
-	return best, Err{}
+	return ""
 }
 
 @(private = "file")
-pin_has :: proc(r: ^Resolver, name: string, c: Constraint) -> bool {
-	if pins, has := r.pins[name]; has {
-		for p in pins {
-			if p == c {
-				return true
-			}
-		}
+note_failure :: proc(r: ^Resolver, depth: int, e: Err) {
+	if depth > r.err_depth {
+		r.err = e
+		r.err_depth = depth
 	}
-	return false
 }
 
 @(private = "file")
-append_pin :: proc(r: ^Resolver, name: string, c: Constraint) {
-	if name not_in r.pins {
-		r.pins[name] = make([dynamic]Constraint)
+solve :: proc(r: ^Resolver, goals: ^[dynamic]Goal, i: int, depth: int) -> bool {
+	if i == len(goals) {
+		return true
 	}
-	append(&r.pins[name], c)
-}
-
-@(private = "file")
-any_candidate :: proc(r: ^Resolver, c: Constraint) -> bool {
-	if cands, has := r.u.by_name[c.name]; has {
-		for p in cands {
-			if pkg_satisfies(p, c) && pinned_ok(r, p) {
-				return true
-			}
-		}
+	r.steps += 1
+	if r.steps > RESOLVE_BUDGET {
+		r.aborted = true
+		return false
 	}
-	return false
-}
-
-// ---------------------------------------------------------------------------
-// The plan: a resolution compared with what is installed
-// ---------------------------------------------------------------------------
-
-Change :: struct {
-	old: ^Pkg, // nil for a new install
-	new: ^Pkg,
-}
-
-Plan :: struct {
-	changes: [dynamic]Change, // install order
-	remove:  [dynamic]^Pkg,
-}
-
-make_plan :: proc(db: ^DB, res: Resolution) -> Plan {
-	plan: Plan
-	for p in res.order {
-		old := db_find(db, p.name)
-		if old == p {
-			continue
-		}
-		if old != nil && old.version == p.version && old.sha256 == p.sha256 {
-			continue
-		}
-		append(&plan.changes, Change{old, p})
+	g := goals[i]
+	if chosen_meeting(r, g.c) != nil {
+		return solve(r, goals, i + 1, depth)
 	}
-	for p in db.pkgs {
-		if _, keep := res.chosen[p.name]; !keep {
-			append(&plan.remove, p)
-		}
-	}
-	return plan
-}
-
-plan_empty :: proc(plan: Plan) -> bool {
-	return len(plan.changes) == 0 && len(plan.remove) == 0
-}
-
-plan_print :: proc(plan: Plan) {
-	for c in plan.changes {
-		if c.old == nil {
-			say("  install   %s %s", c.new.name, c.new.version)
+	cands := candidates(r, g.c)
+	if len(cands) == 0 {
+		if q, has := r.chosen[g.c.name]; has {
+			note_failure(r, depth, fail(EXIT_REFUSED, "conflict: %s wants %s, but %s is already required by %s", g.by, constraint_string(g.c), pkg_id(q), r.chosen_by[q.name]))
+		} else if g.c.op != .Any && (g.c.name in r.u.by_name || g.c.name in r.u.by_provide) {
+			note_failure(r, depth, fail(EXIT_NOT_FOUND, "no version of %s satisfies %s (wanted by %s)", g.c.name, constraint_string(g.c), g.by))
 		} else {
-			verb := version_compare(c.new.version, c.old.version) < 0 ? "downgrade" : (c.new.version == c.old.version ? "reinstall" : "upgrade")
-			say("  %-10s%s %s -> %s", verb, c.new.name, c.old.version, c.new.version)
+			note_failure(r, depth, fail(EXIT_NOT_FOUND, "nothing provides %s (wanted by %s)", constraint_string(g.c), g.by))
+		}
+		return false
+	}
+	for p in cands {
+		if why := clash(r, p); why != "" {
+			note_failure(r, depth, fail(EXIT_REFUSED, "conflict: %s wants %s, but %s", g.by, constraint_string(g.c), why))
+			continue
+		}
+		bad_dep := ""
+		for d in p.depends {
+			if _, okd := parse_constraint(d); !okd {bad_dep = d}
+		}
+		if bad_dep != "" {
+			note_failure(r, depth, fail(EXIT_FAILED, "%s has an invalid dependency %q", pkg_id(p), bad_dep))
+			continue
+		}
+		r.chosen[p.name] = p
+		r.chosen_by[p.name] = g.by
+		n := len(goals)
+		for d in p.depends {
+			dc, _ := parse_constraint(d)
+			append(goals, Goal{dc, p.name})
+		}
+		if solve(r, goals, i + 1, depth + 1) {
+			return true
+		}
+		resize(goals, n)
+		delete_key(&r.chosen, p.name)
+		delete_key(&r.chosen_by, p.name)
+		if r.aborted {
+			return false
 		}
 	}
-	for p in plan.remove {
-		say("  remove    %s %s", p.name, p.version)
-	}
-}
-
-plan_json :: proc(plan: Plan, dry_run: bool) -> string {
-	// Sizes ride along so a front end can say "download 4.2 MB, uses 11 MB"
-	// before anything happens: csize is what fetching costs (the .palm),
-	// size what the files take once unpacked.
-	download: i64 = 0
-	growth: i64 = 0
-	b := strings.builder_make(context.temp_allocator)
-	strings.write_string(&b, "{\"install\":[")
-	n := 0
-	for c in plan.changes {
-		if c.old != nil {continue}
-		if n > 0 {strings.write_byte(&b, ',')}
-		fmt.sbprintf(&b, "{{\"name\":%s,\"version\":%s,\"size\":%d,\"csize\":%d}}", json_str(c.new.name), json_str(c.new.version), c.new.size, c.new.csize)
-		download += c.new.csize
-		growth += c.new.size
-		n += 1
-	}
-	strings.write_string(&b, "],\"upgrade\":[")
-	n = 0
-	for c in plan.changes {
-		if c.old == nil {continue}
-		if n > 0 {strings.write_byte(&b, ',')}
-		fmt.sbprintf(&b, "{{\"name\":%s,\"from\":%s,\"to\":%s,\"size\":%d,\"csize\":%d}}", json_str(c.new.name), json_str(c.old.version), json_str(c.new.version), c.new.size, c.new.csize)
-		download += c.new.csize
-		growth += c.new.size - c.old.size
-		n += 1
-	}
-	strings.write_string(&b, "],\"remove\":[")
-	for p, i in plan.remove {
-		if i > 0 {strings.write_byte(&b, ',')}
-		fmt.sbprintf(&b, "{{\"name\":%s,\"version\":%s,\"size\":%d}}", json_str(p.name), json_str(p.version), p.size)
-		growth -= p.size
-	}
-	fmt.sbprintf(&b, "],\"download_size\":%d,\"size_change\":%d,\"dry_run\":%v}}", download, growth, dry_run)
-	return strings.to_string(b)
-}
-
-json_str :: proc(s: string) -> string {
-	b := strings.builder_make(context.temp_allocator)
-	strings.write_byte(&b, '"')
-	for c in transmute([]byte)s {
-		switch c {
-		case '"':
-			strings.write_string(&b, "\\\"")
-		case '\\':
-			strings.write_string(&b, "\\\\")
-		case '\n':
-			strings.write_string(&b, "\\n")
-		case '\t':
-			strings.write_string(&b, "\\t")
-		case '\r':
-			strings.write_string(&b, "\\r")
-		case:
-			if c < 0x20 {
-				fmt.sbprintf(&b, "\\u%04x", c)
-			} else {
-				strings.write_byte(&b, c)
-			}
-		}
-	}
-	strings.write_byte(&b, '"')
-	return strings.to_string(b)
+	return false
 }

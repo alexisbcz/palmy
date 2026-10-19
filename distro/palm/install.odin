@@ -53,6 +53,7 @@ Txn :: struct {
 	owners:    map[string]^Owner_Entry,
 	as_root:   bool,
 	dir_cache: map[string]string, // in-root directory -> resolved host path
+	fetched:   []Fetched, // what stage put on disk, for cleaning up
 }
 
 txn_begin :: proc(o: ^Opts, db: ^DB) -> ^Txn {
@@ -211,19 +212,32 @@ apply_meta :: proc(t: ^Txn, path: string, mode: u32, uid, gid: int, is_link := f
 
 Staged :: struct {
 	change: Change,
-	data:   []byte, // the verified .palm
+	file:   Fetched, // the verified .palm on disk
 	paths:  []File_Rec, // type and path only, for the conflict check
 }
 
+// stage is phase 1. Packages are fetched to disk (several at once, see
+// fetch_packages) rather than into memory, then each is opened once to check
+// that it is what the index says and to list its paths. Only one package is
+// ever held decompressed.
 stage :: proc(t: ^Txn, changes: []Change, steps: int = 0) -> ([]Staged, Err) {
+	pkgs := make([]^Pkg, len(changes), context.temp_allocator)
+	for c, i in changes {
+		pkgs[i] = c.new
+	}
+	fetched, fe := fetch_packages(t.o, pkgs, steps)
+	if !ok(fe) {
+		return nil, fe
+	}
+	t.fetched = fetched
 	out := make([dynamic]Staged)
 	for c, i in changes {
-		progress("fetch", c.new.name, c.new.version, i + 1, steps)
-		data, e := fetch_package(t.o, c.new)
-		if !ok(e) {
-			return nil, e
+		data, err := os.read_entire_file_from_path(fetched[i].path, context.allocator)
+		if err != nil {
+			return nil, fail(EXIT_FAILED, "cannot read %s", fetched[i].path)
 		}
 		raw, okz := gzip_decompress(data)
+		delete(data)
 		if !okz {
 			return nil, fail(EXIT_FAILED, "%s is not a valid .palm (gzip)", c.new.filename)
 		}
@@ -247,7 +261,7 @@ stage :: proc(t: ^Txn, changes: []Change, steps: int = 0) -> ([]Staged, Err) {
 			append(&paths, File_Rec{path = strings.clone(en.path), type = en.type})
 		}
 		delete(raw)
-		append(&out, Staged{c, data, paths[:]})
+		append(&out, Staged{c, fetched[i], paths[:]})
 	}
 	return out[:], Err{}
 }
@@ -342,7 +356,18 @@ extract :: proc(t: ^Txn, s: ^Staged) -> ([]File_Rec, Err) {
 			old_recs[f.path] = f
 		}
 	}
-	raw, okz := gzip_decompress(s.data)
+	// Read again, and checked again: the file sat on disk between staging
+	// and now.
+	data, rerr := os.read_entire_file_from_path(s.file.path, context.allocator)
+	if rerr != nil {
+		return nil, fail(EXIT_FAILED, "cannot read %s", s.file.path)
+	}
+	if got := sha256_hex(data, context.temp_allocator); got != s.change.new.sha256 {
+		delete(data)
+		return nil, fail(EXIT_REFUSED, "%s changed on disk after it was verified; refusing", s.file.path)
+	}
+	raw, okz := gzip_decompress(data)
+	delete(data)
 	if !okz {
 		return nil, fail(EXIT_FAILED, "%s: gzip stream failed on second read", s.change.new.filename)
 	}
@@ -557,6 +582,7 @@ run_plan :: proc(t: ^Txn, plan: Plan) -> Err {
 	steps := 2 * len(plan.changes) + len(plan.remove)
 	step := len(plan.changes)
 	staged, e := stage(t, plan.changes[:], steps)
+	defer remove_temp_downloads(t.fetched)
 	if !ok(e) {
 		return e
 	}

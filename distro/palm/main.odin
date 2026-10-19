@@ -44,8 +44,9 @@ import "core:fmt"
 import "core:os"
 import "core:slice"
 import "core:strings"
+import "core:time"
 
-VERSION :: "0.1.0"
+VERSION :: "0.2.0"
 
 SURFACE_PATH :: "/usr/lib/palm/palm-surface"
 
@@ -59,6 +60,7 @@ Opts :: struct {
 	json:            bool,
 	yes:             bool,
 	dry_run:         bool,
+	refresh:         bool, // -U: refresh the indexes first (add, upgrade)
 	// verb options
 	list_files:      bool,
 	who_owns:        string,
@@ -193,6 +195,8 @@ parse_args :: proc(args: []string) -> (o: Opts, e: Err) {
 			o.json = true
 		case "--yes", "-y":
 			o.yes = true
+		case "-U", "--update-cache":
+			o.refresh = true
 		case "--dry-run", "-s", "--simulate":
 			o.dry_run = true
 		case "-L", "--contents":
@@ -308,6 +312,9 @@ dispatch :: proc(args: []string) -> int {
 @(private = "file")
 transact :: proc(o: ^Opts, db: ^DB, repos: []^Repo, world: []string, upgrade: bool) -> Err {
 	u := build_universe(db, repos)
+	if upgrade {
+		find_replacements(u, db)
+	}
 	res, e := resolve(u, world, upgrade)
 	if !ok(e) {
 		return e
@@ -316,7 +323,7 @@ transact :: proc(o: ^Opts, db: ^DB, repos: []^Repo, world: []string, upgrade: bo
 	if o.json {
 		fmt.println(plan_json(plan, o.dry_run))
 	} else if plan_empty(plan) {
-		say("nothing to do")
+		say(upgrade ? "nothing to upgrade: every installed package is the newest the indexes offer" : "nothing to do")
 	} else {
 		plan_print(plan)
 	}
@@ -342,9 +349,16 @@ transact :: proc(o: ^Opts, db: ^DB, repos: []^Repo, world: []string, upgrade: bo
 		return we
 	}
 	if !plan_empty(plan) {
-		say("OK: %d package(s) installed", len(db.pkgs))
+		say("OK: %s; %d packages installed", plan_summary(plan_totals(plan), true), len(db.pkgs))
 	}
 	return Err{}
+}
+
+// repo_mode is how far a changing verb goes for indexes: the cached ones,
+// or fresh ones with -U.
+@(private = "file")
+repo_mode :: proc(o: ^Opts) -> Repo_Mode {
+	return o.refresh ? .Refresh : .Cached
 }
 
 @(private = "file")
@@ -355,7 +369,7 @@ cmd_add :: proc(o: ^Opts) -> Err {
 	db, e := db_open(o)
 	if !ok(e) {return e}
 	repos: []^Repo
-	repos, e = open_repos(o, false)
+	repos, _, e = open_repos(o, repo_mode(o))
 	if !ok(e) {return e}
 	extra := make([dynamic]^Repo)
 	append(&extra, ..repos)
@@ -391,7 +405,7 @@ cmd_del :: proc(o: ^Opts) -> Err {
 	if !ok(e) {return e}
 	// Removing needs no repository, but resolving the remaining world must
 	// not fail because a mirror is down: repositories are best effort here.
-	repos, re := open_repos(o, false)
+	repos, _, re := open_repos(o, .Cached)
 	if !ok(re) {
 		warn("%s; resolving against installed packages only", re.msg)
 		repos = nil
@@ -436,41 +450,87 @@ cmd_del :: proc(o: ^Opts) -> Err {
 	return transact(o, db, repos, world[:], false)
 }
 
+// cmd_upgrade resolves the world preferring the newest versions. A world
+// entry naming a package that an available package replaces is renamed to
+// the replacement, so a renamed project follows its new name.
 @(private = "file")
 cmd_upgrade :: proc(o: ^Opts) -> Err {
 	db, e := db_open(o)
 	if !ok(e) {return e}
 	repos: []^Repo
-	repos, e = open_repos(o, false)
+	skipped: int
+	repos, skipped, e = open_repos(o, repo_mode(o))
 	if !ok(e) {return e}
-	return transact(o, db, repos, db.world[:], true)
+	if skipped > 0 && o.refresh {
+		warn("%d repositories could not be refreshed; upgrading from what was cached", skipped)
+	}
+	if !o.json {
+		for r in repos {
+			if !r.remote {continue}
+			fi, err := os.stat(fmt.tprintf("%s/PALMINDEX", r.cache), context.temp_allocator)
+			if err == nil {
+				age := time.since(fi.modification_time)
+				if age > 24 * time.Hour && !o.refresh {
+					say("note: the index of %s was fetched %d days ago; `palm upgrade -U` (or `palm update`) gets the current one", r.url, int(age / (24 * time.Hour)))
+				}
+			}
+		}
+	}
+	u := build_universe(db, repos)
+	find_replacements(u, db)
+	world := make([dynamic]string)
+	for w in db.world {
+		name := world_name(w)
+		if by, has := u.replaced[name]; has && db_find(db, name) != nil {
+			say("%s is replaced by %s", name, by.name)
+			if !slice.contains(world[:], by.name) {append(&world, by.name)}
+			continue
+		}
+		append(&world, w)
+	}
+	return transact(o, db, repos, world[:], true)
 }
 
 @(private = "file")
 cmd_update :: proc(o: ^Opts) -> Err {
-	repos, e := open_repos(o, true)
-	if !ok(e) {return e}
-	urls := repo_urls(o)
-	if len(urls) == 0 {
+	lines := repo_lines(o)
+	if len(lines) == 0 {
 		return fail(EXIT_NOT_FOUND, "no repositories configured (%s or --repo)", rooted(o.root, "/etc/palm/repositories", context.temp_allocator))
+	}
+	repos, skipped, e := open_repos(o, .Refresh)
+	if !ok(e) {return e}
+	db, _ := db_open(o)
+	upgradable := 0
+	if db != nil {
+		avail := newest_available(repos)
+		for p in db.pkgs {
+			if a, has := avail[p.name]; has && version_compare(a.version, p.version) > 0 {upgradable += 1}
+		}
 	}
 	if o.json {
 		b := strings.builder_make(context.temp_allocator)
 		strings.write_string(&b, "{\"repositories\":[")
 		for r, i in repos {
 			if i > 0 {strings.write_byte(&b, ',')}
-			fmt.sbprintf(&b, "{{\"url\":%s,\"packages\":%d,\"signed_by\":%s}}", json_str(r.url), len(r.pkgs), json_str(r.signed_by))
+			fmt.sbprintf(&b, "{{\"url\":%s,\"base\":%s,\"packages\":%d,\"signed_by\":%s,\"generated\":%d}}", json_str(r.url), json_str(r.base), len(r.pkgs), json_str(r.signed_by), r.generated)
 		}
-		strings.write_string(&b, "]}")
+		fmt.sbprintf(&b, "],\"upgradable\":%d}}", upgradable)
 		fmt.println(strings.to_string(b))
 	} else {
 		for r in repos {
 			signer := r.signed_by != "" ? fmt.tprintf("signed by %s", r.signed_by) : "UNTRUSTED"
-			say("%s: %d packages, %s", r.url, len(r.pkgs), signer)
+			from := ""
+			if r.remote && !strings.has_prefix(r.base, strings.trim_right(r.url, "/")) {
+				from = fmt.tprintf(" (from mirror %s)", r.base)
+			}
+			say("%s: %d packages, %s, published %s%s", r.url, len(r.pkgs), signer, format_date(r.generated), from)
+		}
+		if db != nil && upgradable > 0 {
+			say("%d installed package(s) can be upgraded: palm upgrade", upgradable)
 		}
 	}
-	if len(repos) < len(urls) {
-		return fail(EXIT_UNAVAILABLE, "%d of %d repositories could not be reached", len(urls) - len(repos), len(urls))
+	if skipped > 0 {
+		return fail(EXIT_UNAVAILABLE, "%d of %d repositories could not be reached", skipped, len(lines))
 	}
 	return Err{}
 }
@@ -481,7 +541,6 @@ cmd_update :: proc(o: ^Opts) -> Err {
 
 // newest_available returns the highest version of each package name across
 // every repository.
-@(private = "file")
 newest_available :: proc(repos: []^Repo) -> map[string]^Pkg {
 	m := make(map[string]^Pkg)
 	for r in repos {
@@ -502,7 +561,10 @@ open_for_query :: proc(o: ^Opts) -> (^DB, []^Repo, Err) {
 		db = new(DB)
 		db.root = o.root
 	}
-	repos, re := open_repos(o, false)
+	// Queries never touch the network: they read the indexes `palm update`
+	// cached (and local repositories), and a repository not yet fetched is
+	// simply not in the answer.
+	repos, _, re := open_repos(o, .Offline)
 	if !ok(re) {
 		return nil, nil, re
 	}
@@ -529,6 +591,14 @@ pkg_json :: proc(b: ^strings.Builder, p: ^Pkg, installed: ^Pkg, db: ^DB) {
 		strings.write_string(b, json_str(d))
 	}
 	strings.write_string(b, "]")
+	for list, k in ([2][]string{p.conflicts, p.replaces}) {
+		strings.write_string(b, k == 0 ? ",\"conflicts\":[" : ",\"replaces\":[")
+		for d, i in list {
+			if i > 0 {strings.write_byte(b, ',')}
+			strings.write_string(b, json_str(d))
+		}
+		strings.write_string(b, "]")
+	}
 	if installed != nil {
 		fmt.sbprintf(b, ",\"installed\":%s,\"installed_size\":%d", json_str(installed.version), installed.size)
 		explicit := false
@@ -649,8 +719,14 @@ cmd_info :: proc(o: ^Opts) -> Err {
 		files := p.files
 		if o.list_files && inst == nil {
 			// Not installed: read the file list out of the package itself.
-			data, fe := fetch_package(o, p)
+			// This is the one query that may download: the list is in the
+			// package and nowhere else. From the cache or a local
+			// repository it stays offline.
+			fetched, fe := fetch_package(o, p)
 			if !ok(fe) {return fe}
+			data, rerr := os.read_entire_file_from_path(fetched.path, context.temp_allocator)
+			remove_temp_downloads({fetched})
+			if rerr != nil {return fail(EXIT_FAILED, "cannot read %s", fetched.path)}
 			raw, _ := gzip_decompress(data, context.temp_allocator)
 			entries, _ := tar_read(raw, context.temp_allocator)
 			recs := make([dynamic]File_Rec, context.temp_allocator)
@@ -702,6 +778,8 @@ cmd_info :: proc(o: ^Opts) -> Err {
 		fmt.printf("  size:        %s\n", human_size(p.size))
 		if len(p.depends) > 0 {fmt.printf("  depends:     %s\n", strings.join(p.depends, " ", context.temp_allocator))}
 		if len(p.provides) > 0 {fmt.printf("  provides:    %s\n", strings.join(p.provides, " ", context.temp_allocator))}
+		if len(p.conflicts) > 0 {fmt.printf("  conflicts:   %s\n", strings.join(p.conflicts, " ", context.temp_allocator))}
+		if len(p.replaces) > 0 {fmt.printf("  replaces:    %s\n", strings.join(p.replaces, " ", context.temp_allocator))}
 		if inst != nil {
 			fmt.printf("  installed:   %s (%d files)\n", inst.version, len(inst.files))
 			if a, has := avail[name]; has && version_compare(a.version, inst.version) > 0 {
@@ -820,8 +898,10 @@ verify_packages :: proc(o: ^Opts, db: ^DB, only: []string) -> []Problem {
 				if sum != f.sha {
 					etc := strings.has_prefix(f.path, "/etc/")
 					append(&out, Problem{p.name, f.path, etc ? "modified (config)" : "sha256 mismatch", etc})
-				} else if u32(transmute(u32)fi.mode) & 0o777 != f.mode & 0o777 {
-					append(&out, Problem{p.name, f.path, fmt.aprintf("mode %04o, want %04o", u32(transmute(u32)fi.mode) & 0o777, f.mode & 0o777), false})
+				} else if disk_mode(host) != f.mode & 0o7777 {
+					// The setuid, setgid and sticky bits count: a lost setuid
+					// bit breaks doas as surely as a changed byte.
+					append(&out, Problem{p.name, f.path, fmt.aprintf("mode %04o, want %04o", disk_mode(host), f.mode & 0o7777), false})
 				}
 			}
 		}
@@ -869,7 +949,7 @@ cmd_fix :: proc(o: ^Opts) -> Err {
 	db, e := db_open(o)
 	if !ok(e) {return e}
 	repos: []^Repo
-	repos, e = open_repos(o, false)
+	repos, _, e = open_repos(o, repo_mode(o))
 	if !ok(e) {return e}
 	targets := make([dynamic]string, context.temp_allocator)
 	if len(o.args) > 0 {

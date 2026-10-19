@@ -80,6 +80,12 @@ Pkg :: struct {
 	sha256:        string, // of the .palm
 	depends:       []string,
 	provides:      []string,
+	// conflicts: constraints no package installed beside this one may meet.
+	// replaces: packages this one takes over (pacman's meaning: a rename or
+	// a merge); `palm upgrade` installs it in their place, and like a
+	// conflict it is never installed beside them.
+	conflicts:     []string,
+	replaces:      []string,
 	install_users: []string,
 	filename:      string, // in the repository
 	repo:          ^Repo, // nil when only installed
@@ -103,6 +109,8 @@ pkg_from_record :: proc(rec: []KV, allocator := context.allocator) -> (Pkg, Err)
 	deps := make([dynamic]string)
 	provs := make([dynamic]string)
 	users := make([dynamic]string)
+	confl := make([dynamic]string)
+	repl := make([dynamic]string)
 	files := make([dynamic]File_Rec)
 	paras := make([dynamic]string, context.temp_allocator)
 	for kv in rec {
@@ -140,6 +148,14 @@ pkg_from_record :: proc(rec: []KV, allocator := context.allocator) -> (Pkg, Err)
 			for d in strings.fields(v) {
 				append(&provs, d)
 			}
+		case "conflicts":
+			for d in strings.fields(v) {
+				append(&confl, d)
+			}
+		case "replaces":
+			for d in strings.fields(v) {
+				append(&repl, d)
+			}
 		case "install_user":
 			append(&users, v)
 		case "filename":
@@ -155,6 +171,8 @@ pkg_from_record :: proc(rec: []KV, allocator := context.allocator) -> (Pkg, Err)
 	p.depends = deps[:]
 	p.provides = provs[:]
 	p.install_users = users[:]
+	p.conflicts = confl[:]
+	p.replaces = repl[:]
 	p.files = files[:]
 	if len(paras) > 0 {
 		p.details = strings.join(paras[:], "\n")
@@ -168,9 +186,11 @@ pkg_from_record :: proc(rec: []KV, allocator := context.allocator) -> (Pkg, Err)
 	if p.version == "" || !version_valid(p.version) {
 		return p, fail(EXIT_FAILED, "%s: invalid pkgver %q", p.name, p.version)
 	}
-	for d in p.depends {
-		if _, ok := parse_constraint(d); !ok {
-			return p, fail(EXIT_FAILED, "%s: invalid dependency %q", p.name, d)
+	for list in ([3][]string{p.depends, p.conflicts, p.replaces}) {
+		for d in list {
+			if _, ok := parse_constraint(d); !ok {
+				return p, fail(EXIT_FAILED, "%s: invalid constraint %q", p.name, d)
+			}
 		}
 	}
 	return p, Err{}
@@ -204,6 +224,8 @@ pkg_write :: proc(b: ^strings.Builder, p: ^Pkg, form: Pkg_Form) {
 	}
 	for d in p.depends {fmt.sbprintf(b, "depend = %s\n", d)}
 	for d in p.provides {fmt.sbprintf(b, "provides = %s\n", d)}
+	for d in p.conflicts {fmt.sbprintf(b, "conflicts = %s\n", d)}
+	for d in p.replaces {fmt.sbprintf(b, "replaces = %s\n", d)}
 	for u in p.install_users {fmt.sbprintf(b, "install_user = %s\n", u)}
 	if form == .Index {
 		fmt.sbprintf(b, "filename = %s\n", p.filename != "" ? p.filename : pkg_filename(p, context.temp_allocator))
@@ -309,9 +331,16 @@ pkg_satisfies :: proc(p: ^Pkg, c: Constraint) -> bool {
 
 INDEX_HEADER :: "# PALMINDEX format 1. Integrity: the detached ed25519 signature in PALMINDEX.sig.\n"
 
-index_write :: proc(pkgs: []Pkg, allocator := context.allocator) -> string {
+// index_write writes the index. `generated` (unix seconds) goes into the
+// header comment, inside the signed bytes, where palm reads it back to refuse
+// an index older than one it has already seen (repo.odin); a comment, so an
+// older palm reads past it.
+index_write :: proc(pkgs: []Pkg, generated: i64 = 0, allocator := context.allocator) -> string {
 	b := strings.builder_make(allocator)
 	strings.write_string(&b, INDEX_HEADER)
+	if generated > 0 {
+		fmt.sbprintf(&b, "# generated = %d\n", generated)
+	}
 	sorted := slice.clone(pkgs, context.temp_allocator)
 	slice.sort_by(sorted, proc(a, b: Pkg) -> bool {
 		if a.name != b.name {

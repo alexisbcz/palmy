@@ -26,7 +26,9 @@ package palm
 import "core:fmt"
 import "core:os"
 import "core:slice"
+import "core:strconv"
 import "core:strings"
+import "core:time"
 
 // The accounts CONTRACT.md fixes, so a recipe may say `palm:palm` and get the
 // right numbers in the archive without a passwd file to read them from.
@@ -253,6 +255,8 @@ parse_recipe :: proc(dir: string) -> (^Recipe, Err) {
 	deps := make([dynamic]string)
 	provs := make([dynamic]string)
 	users := make([dynamic]string)
+	confl := make([dynamic]string)
+	repl := make([dynamic]string)
 	Override :: struct {
 		path:      string,
 		recursive: bool,
@@ -310,6 +314,13 @@ parse_recipe :: proc(dir: string) -> (^Recipe, Err) {
 						return nil, recipe_err(kv.line, "invalid provides %q", d)
 					}
 					append(&provs, d)
+				}
+			case "conflicts", "replaces":
+				for d in strings.fields(v) {
+					if _, okc := parse_constraint(d); !okc {
+						return nil, recipe_err(kv.line, "invalid %s %q", kv.key, d)
+					}
+					append(kv.key == "conflicts" ? &confl : &repl, d)
 				}
 			case "install_user":
 				append(&users, v)
@@ -424,6 +435,15 @@ parse_recipe :: proc(dir: string) -> (^Recipe, Err) {
 	r.pkg.depends = deps[:]
 	r.pkg.provides = provs[:]
 	r.pkg.install_users = users[:]
+	r.pkg.conflicts = confl[:]
+	r.pkg.replaces = repl[:]
+	for d in ([2][]string{r.pkg.conflicts, r.pkg.replaces}) {
+		for s in d {
+			if c, _ := parse_constraint(s); c.name == r.pkg.name {
+				return nil, fail(EXIT_USAGE, "PALMBUILD: %s names itself in conflicts or replaces", r.pkg.name)
+			}
+		}
+	}
 	if r.pkg.arch == "" {r.pkg.arch = DEFAULT_ARCH}
 
 	// Every parent directory is an entry, so a package carries its own
@@ -547,7 +567,13 @@ build_index :: proc(dir, key_path: string) -> (int, Err) {
 		delete(data)
 		append(&pkgs, p)
 	}
-	text := index_write(pkgs[:])
+	// SOURCE_DATE_EPOCH pins the date for a reproducible index; otherwise
+	// it is now, which is what makes a newer index newer.
+	generated := time.time_to_unix(time.now())
+	if v, found := os.lookup_env("SOURCE_DATE_EPOCH", context.temp_allocator); found {
+		if n, okn := strconv.parse_i64(v); okn && n > 0 {generated = n}
+	}
+	text := index_write(pkgs[:], generated)
 	index_path := fmt.tprintf("%s/PALMINDEX", dir)
 	sig_path := fmt.tprintf("%s/PALMINDEX.sig", dir)
 	if !write_file_atomic(index_path, transmute([]byte)text) {

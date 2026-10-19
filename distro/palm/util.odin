@@ -22,6 +22,7 @@ import "core:fmt"
 import "core:os"
 import "core:strconv"
 import "core:strings"
+import "core:sys/linux"
 
 foreign import libc "system:c"
 
@@ -178,12 +179,33 @@ sha256_hex :: proc(data: []byte, allocator := context.allocator) -> string {
 	return hex_encode(digest[:], allocator)
 }
 
+// sha256_file_hex reads in pieces, so checking a large cached package costs
+// no memory.
 sha256_file_hex :: proc(path: string, allocator := context.allocator) -> (string, bool) {
-	data, err := os.read_entire_file_from_path(path, context.temp_allocator)
+	f, err := os.open(path, {.Read})
 	if err != nil {
 		return "", false
 	}
-	return sha256_hex(data, allocator), true
+	defer os.close(f)
+	h: hash.Context
+	hash.init(&h, .SHA256)
+	buf: [64 * 1024]byte
+	for {
+		n, rerr := os.read(f, buf[:])
+		if n > 0 {
+			hash.update(&h, buf[:n])
+		}
+		if rerr == .EOF || n == 0 {
+			break
+		}
+		if rerr != nil {
+			hash.reset(&h)
+			return "", false
+		}
+	}
+	digest: [32]byte
+	hash.final(&h, digest[:])
+	return hex_encode(digest[:], allocator), true
 }
 
 // ---------------------------------------------------------------------------
@@ -364,6 +386,16 @@ write_file_atomic :: proc(path: string, data: []byte, mode: u32 = 0o644) -> bool
 }
 
 _ :: runtime
+
+// disk_mode is a path's permission bits including setuid, setgid and sticky,
+// which core:os's Permissions does not carry.
+disk_mode :: proc(path: string) -> u32 {
+	st: linux.Stat
+	if linux.lstat(strings.clone_to_cstring(path, context.temp_allocator), &st) != .NONE {
+		return 0
+	}
+	return transmute(u32)st.mode & 0o7777
+}
 
 // mkdir_p is make_directory_all that counts an existing directory as success.
 mkdir_p :: proc(path: string) -> bool {
