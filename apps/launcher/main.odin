@@ -8,10 +8,10 @@ package main
 // context menu on the selected entry: see menu.odin.
 
 import "core:fmt"
-import "core:math"
 import "core:os"
 import "core:slice"
 import "core:strings"
+import "core:time"
 import kit "kit:."
 import p "palmy:."
 import sc "shadcn:."
@@ -79,7 +79,7 @@ St :: struct {
 	terms:      []Term,
 	have_clip:  bool,
 	toast:      string,
-	toast_t:    f64,
+	toast_until: time.Time,
 	mouse:      [2]f32,
 	moved:      bool,
 	started:    bool,
@@ -165,10 +165,13 @@ main :: proc() {
 		build(ui, &st)
 
 		if st.toast != "" {
-			if ui.now > st.toast_t {
+			// A real clock and one wake at the deadline: `ui.now` is
+			// clamped per frame and cannot time anything, and redrawing
+			// every frame to watch it held the loop at vsync for 4.5 s.
+			if time.since(st.toast_until) >= 0 {
 				st.toast = ""
 			} else {
-				p.redraw(ui)
+				p.wake_at(ui, st.toast_until)
 			}
 		}
 	}
@@ -587,7 +590,7 @@ place_menu :: proc(st: ^St, size: [2]f32) {
 
 toast :: proc(st: ^St, ui: ^p.Ctx, msg: string) {
 	st.toast = strings.clone(msg, context.allocator)
-	st.toast_t = ui.now + 4.5
+	st.toast_until = time.time_add(time.now(), 4500 * time.Millisecond)
 }
 
 invoke :: proc(st: ^St, ui: ^p.Ctx, app: ^p.App, m: MI) {
@@ -939,10 +942,10 @@ search_bar :: proc(ui: ^p.Ctx, st: ^St) {
 	// The caret is the only thing that animates, and it stops while the menu
 	// has the keyboard — an idle palmy window costs nothing.
 	caret_x := p.text_width(ui.fonts, txt[:clamp(st.caret, 0, len(txt))], 16, .Sans, .Regular)
-	if !st.menu {
-		ui.animating = true
-	}
-	if !st.menu && math.mod_f32(f32(ui.now), 1.1) < 0.62 {
+	// palmy's caret_on wakes the loop once per blink edge on a real clock,
+	// where `animating = true` held the whole launcher at vsync -- 40% of a
+	// core measured on a headless compositor -- just to blink this.
+	if !st.menu && p.caret_on(ui) {
 		car := p.div(ui, "absolute w-[2] rounded-full bg-foreground")
 		cs := p.style(ui, car)
 		cs.inset[p.LEFT] = p.px(caret_x)
