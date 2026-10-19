@@ -14,7 +14,12 @@ predictive codec costs and what is done about it.
 
 Implementation: [`proto.odin`](proto.odin). Header round-trips, rejection
 cases, fragmentation arithmetic, codec negotiation, the keyframe flag and the
-loss path are asserted in `call --self-test` — 345 checks, up from 229 before the codec work.
+loss path are asserted in `call --self-test` — 345 checks, up from 229 before the codec work
+(430 now that it also covers SFU mode).
+
+**Calls with more than two people** go through `palm-sfu` and speak PCP2, a
+superset of this header, end-to-end encrypted with SFrame. That is the second
+half of this document: see **PCP2** below.
 
 ## Transport
 
@@ -728,3 +733,370 @@ source for anything that touches hardware unless that flag is present, and
 codecs name no `/dev/video`, no `v4l2`, no `pulse` and no `alsa`. The H.264
 decoder's command line is asserted the same way: it has no input of its own at
 all.
+
+---
+
+# PCP2 — calls with more than two people, through palm-sfu
+
+Everything above is the two-party call: one socket, one peer, loopback only.
+This part is the multi-party call, which is a different topology and so a
+different header, built from the same engines.
+
+```
+           join token (from the chat gateway's call_join)
+               │
+ call A ──PCP2──┐                       ┌──PCP2── call B
+                ├── palm-sfu (UDP) ─────┤
+ call C ──PCP2──┘   stamps sources,     └──PCP2── call D
+                    picks a layer per receiver,
+                    names the dominant speaker,
+                    relays sealed keys it cannot open
+```
+
+Implementation:
+
+| | |
+| --- | --- |
+| [`cloud/rtc/pcp/`](../../cloud/rtc/pcp) | the shared library: header, control framing, SFrame, key sealing, safety code, dominant speaker, tier policy, join tokens |
+| [`cloud/rtc/sfu/main.odin`](../../cloud/rtc/sfu/main.odin) | `palm-sfu` |
+| [`room.odin`](room.odin), [`room_ui.odin`](room_ui.odin) | the client side of SFU mode in this app |
+
+`call --self-test` runs the library's checks too: **430 checks** now, up from
+345 (58 library checks, 23 for the client's PCP2/SFrame path through a relay
+that plays the SFU, 4 for echo-cancel routing). `palm-sfu --selftest` runs the
+library's checks and then a real SFU on a loopback port with fake participants
+speaking PCP2 over real sockets: **100 checks**.
+
+What is reused unchanged from the two-party path: the capture processes, the
+Opus encoder, the H.264 encoder and its keyframe-by-restart, the jitter buffer,
+the reassembler, the H.264 decoder child. `send_media` has one new branch —
+when the session belongs to a room, frames go to `room_send_media` instead of
+to a peer — and the video encoder takes a per-instance size, rate and bitrate
+so two of them can run.
+
+## Joining
+
+The chat gateway (`cloud/rtc`) decides who may join a call: it checks, as the
+caller's identity-scoped Postgres session, that the identity can post in the
+call's channel, records the participation, and mints a **join token**:
+
+```
+token   = b64url(payload) "." b64url(HMAC-SHA256(secret, b64url(payload)))
+payload = {"v":1,"call":…,"ch":…,"id":…,"handle":…,"name":…,"color":…,"exp":…,"e2ee":true}
+```
+
+The token lives 60 seconds. The SFU holds the secret and nothing else — no
+database credentials, no account keys, no media keys — and admits exactly the
+identity a valid, unexpired token names into exactly the call it names. A
+participant's session outlives its token: the token opens the door, it is not
+a lease. An address that has not joined gets no answer at all, to anything, so
+the port is not an oracle.
+
+```
+call --sfu 127.0.0.1:47900 --join-token TOKEN
+```
+
+The call app needs no database and no chat connection: display names, handles
+and identity colours of everyone in the call come from the SFU's roster, which
+comes from their tokens.
+
+The SFU also keeps an optional control link to the gateway (`--gateway
+HOST:PORT`, the chat wire framing, authenticated by `HMAC(secret,
+"sfu-hello:"+ts)`), over which it reports each room's roster (`sfu_room`), its
+end (`sfu_end`) and its dominant speaker (`sfu_speaker`), and receives
+`sfu_kick` when someone's channel membership is revoked mid-call. A kick is
+immediate: the participant is told, removed, and — because everyone else sees
+the new roster — every remaining sender rotates its key, so the person who was
+removed cannot decrypt anything said after.
+
+## Header
+
+```
+ 0       4    5     6     8                 16      20     22     24    26     27     28
++-------+----+-----+-----+-----------------+-------+------+------+-----+------+------+
+| "PCP2"| pt |flags| seq | capture ts (us) | frame | frag |nfrag | src |layer |level |
++-------+----+-----+-----+-----------------+-------+------+------+-----+------+------+
+```
+
+PCP1's 24 bytes, with four more:
+
+| field | | |
+| --- | --- | --- |
+| `src` | u16 | the sender, **stamped by the SFU** from the session the datagram arrived on. A sender writes 0; whatever it writes is overwritten, so nobody can speak as somebody else. |
+| `layer` | u8 | simulcast layer of a video frame: 0 high, 1 low |
+| `level` | u8 | RFC 6464's audio-level octet: bit 7 voice activity, low seven bits the level in −dBov (0 loudest, 127 silence) |
+
+`flags` gains bit 2, `E2EE`: the reassembled frame is an SFrame ciphertext.
+
+These travel in the clear on purpose. They are what a forwarder needs and
+cannot read once the payload is encrypted: the dominant speaker comes from
+`level`, the layer choice from `layer` and the keyframe bit.
+
+## Control
+
+Payload type 0, one datagram, one kind byte and a small JSON object. JSON
+because control is a few messages a second and has to be readable in
+`tcpdump -X`; media, thousands a second, is binary.
+
+| kind | | |
+| --- | --- | --- |
+| `JOIN` | c→s | `{"token","pub"}` — repeated every 400 ms until welcomed |
+| `WELCOME` | s→c | `{"src","call","ch","e2ee","gen"}` |
+| `PEER` | s→c | `{"src","id","handle","name","color","pub","muted","cam_off"}`, one per participant |
+| `ROSTER` | s→c | `{"gen","srcs":[…],"speaker"}`, on every change and every second |
+| `STATE` | c→s | `{"muted","cam_off"}`, every 500 ms; doubles as the keepalive (6 s of silence and you are dropped) |
+| `LEAVE` | c→s | sent three times |
+| `KEYFRAME` | c→s `{"src"}` / s→c `{"layer"}` | a receiver's PLI, turned by the SFU into a request for the layer that receiver is actually getting |
+| `FEEDBACK` | c→s | `{"loss","kbps","cap"}`, every 500 ms |
+| `KEY` | c→s `{"to","kid","sealed"}` / s→c `{"from","kid","sealed"}` | a sealed SFrame base key, relayed |
+| `SPEAKER` | s→c | `{"src"}` |
+| `TIER` | s→c | `{"tier":"high"\|"low"\|"audio","est"}` |
+| `ERROR` | s→c | `{"code","msg"}`: `bad_token`, `token_expired`, `bad_key`, `room_full`, `kicked` |
+
+Every control message fits one datagram, which is why the roster is one `PEER`
+per person plus a list of who is current, rather than one message.
+
+## Simulcast and bandwidth
+
+Every sender runs two encoders and publishes both:
+
+| layer | | measured |
+| --- | --- | --- |
+| 0 | 640x360 @ 30 fps, H.264 300 kbit/s | 285-304 kbit/s |
+| 1 | 320x180 @ 15 fps, H.264 90 kbit/s | 85-90 kbit/s |
+
+Per receiver the SFU forwards one layer of every sender, or none:
+
+| tier | forwards | needs (per other sender, with audio and overhead) |
+| --- | --- | --- |
+| high | layer 0 | 375 kbit/s |
+| low | layer 1 — a quarter of the pixels, **half the frame rate** | 160 kbit/s |
+| audio | no video | 45 kbit/s |
+
+H.264 baseline has no temporal layers, so frames cannot be dropped from a
+layer without breaking the ones that reference them; the frame-rate drop is
+the low layer itself, which is encoded at 15 fps.
+
+The choice runs on the receiver's own reports (`FEEDBACK`: percentage of
+expected packets missing, by sequence number per stream, and the received
+rate), loss-based in the way libwebrtc's loss controller is: under loss, what
+did arrive is close to what the link carries, so the estimate drops to it;
+while the reports are clean the estimate creeps up, and an upgrade is tried
+only after three clean reports and an exponentially backed-off probe interval
+(2 s doubling to 20 s), so a link that cannot carry `high` does not flap.
+Reports from the first 1.5 s after a join are ignored: that is every sender's
+first keyframe at once, and says more about the start than about the link.
+
+A switch happens **only at a keyframe of the new layer**: until one arrives the
+receiver keeps getting the old layer (no gap), and the SFU asks the sender for
+one (rate-limited to four a second per sender layer). A downgrade to audio is
+immediate. A receiver notices the switch from `layer` and resets its
+reassembler and decoder.
+
+Not done: TWCC-style delay-based estimation (this is loss-based only), last-N,
+and pausing a layer nobody is receiving ("dynacast"): every sender always
+sends both layers.
+
+## Dominant speaker
+
+From the `level` byte alone, so it works on encrypted audio: activity is
+scored over a 200 ms and a 1 s window, and a challenger takes the floor only
+when it beats the incumbent by a margin **for 400 ms**. That is a simplified
+form of Volfin & Cohen's dominant speaker identification, which Jitsi
+Videobridge and mediasoup run with a binomial speech model over three windows;
+this keeps the shape and drops the statistics. A 120 ms interjection does not
+steal the floor (asserted in the self-test).
+
+## End-to-end encryption
+
+**Status: implemented, with one stated limit.** Media is encrypted end to end;
+the SFU forwards ciphertext and never holds a media key. What protects the
+*public keys* is a safety code that people compare, not an authenticated
+identity key — so an active attacker controlling the SFU or the gateway could
+substitute keys, and the comparison is what detects it.
+
+**Frames.** Each media frame is encrypted with SFrame (RFC 9605) before it is
+fragmented, cipher suite `AES_128_GCM_SHA256_128` (0x0004): HKDF-SHA256 key and
+salt derivation from a per-sender base key exactly as §4.4.2, nonce = salt XOR
+counter, header plus metadata as AAD. The implementation is checked against
+the RFC's own Appendix C vectors: all **289** header encodings of C.1 in both
+directions, and the 0x0004 case of C.3 byte for byte. The metadata bound into
+every frame is the payload type, the keyframe bit, the layer and the capture
+timestamp — so the SFU can read all four but cannot change any of them (mark a
+predicted frame as a keyframe, say) without the frame failing to open. Each
+receiver keeps an SRTP-style 64-frame replay window per key.
+
+**KID.** `src << 16 | generation`. A receiver that opens a frame knows whose key
+opened it, and a frame whose KID names a different participant from the `src`
+the SFU stamped is refused — so the SFU cannot relabel one person's media as
+another's. A clear frame in an encrypted call is refused too, so the SFU cannot
+inject media.
+
+**Keys.** Each participant makes an X25519 keypair when it joins and discards
+it when it leaves; the public key rides in `JOIN` and the SFU repeats it in
+`PEER`. Each sender picks a random 16-byte base key per generation and seals it
+to every other participant separately:
+
+```
+shared = X25519(my_secret, their_public)
+wrap   = HKDF-SHA256(salt "palm-call-wrap-v1", shared,
+                     info = sender_pub || recipient_pub || kid || call id)
+blob   = nonce || ChaCha20-Poly1305(wrap, nonce, aad = kid || call id, base_key)
+```
+
+The SFU relays `blob` (and stamps who it came from); binding both public keys,
+the KID and the call into the derivation means a blob cannot be replayed into
+another call, generation or recipient. Keys are resent every second, because
+this is UDP.
+
+**Rotation.** A sender starts a new generation whenever the set of people in
+the room changes — anyone joins or leaves, or is kicked — and seals it only to
+the people now there. So someone who left cannot read what is said after, and
+someone who joined never had the key to what was said before. A new key is
+used for encryption 300 ms after it is sent, so receivers have it first, and a
+superseded key still decrypts for 2 s at the receivers, for frames in flight.
+The cost is visible in the measurements: 13-19 frames per stream at the start
+of the call arrive before their key (`no key` below), about half a second.
+
+**Safety code.** Every participant hashes the sorted list of `(identity id,
+public key)` for everyone in the call, itself included, with SHA-256, and
+shows five groups of five digits in the header and the People panel. Every
+participant computes the same code from the same roster; a substituted key at
+any participant makes the codes differ. In every run below, the three codes
+were identical.
+
+**What this is not, and the upgrade.** It is not MLS. The group key schedule
+is per-sender keys sealed pairwise, which is O(n²) blobs per rotation — fine
+for the rooms of 16 the SFU allows, poor for hundreds. Public keys are not
+bound to anything enrolled in the account, which is why the safety code
+exists. The upgrade path is the one the research points at: device keys
+enrolled in the account and signed, then MLS (RFC 9420) with those as
+credentials and SFrame keyed from the MLS exporter per sender, as Discord's
+DAVE and Webex do; `libdave` ships a C API that could sit behind the same
+`pcp` seam. The SFrame layer here would not change.
+
+Chat is a different matter and is not end-to-end encrypted: the gateway
+stores messages in Postgres and searches them. That is the documented
+trade-off in `cloud/docs/chat-calls.md`.
+
+## Screen sharing
+
+`--share-screen --allow-screen` replaces the camera with the screen. A loop of
+`grim` writes one PPM per capture into ffmpeg's `image2pipe`, stamped with the
+wall clock and resampled to the call's rate, into the same encoder a camera
+uses — so simulcast, SFrame and the SFU do not know the difference. It needs
+its own flag, like a camera needs `--allow-real-devices`.
+
+It works on a compositor with **wlr-screencopy** (sway, Hyprland, any wlroots
+one), and it was tested on one: `cloud/rtc/sfu/screenshare.sh` starts a
+private headless sway with a terminal on it, Bob shares that screen into a
+call, and Alice's window, rendered offscreen, shows it in speaker view
+(`shots/sfu-screen-share-dark.png`).
+
+It does **not** work under Palmframe's own window manager today: `apps/wm`
+implements no screen-capture protocol, neither wlr-screencopy nor
+`ext-image-copy-capture-v1`, so there is nothing for a capture tool to ask.
+That is the wm's gap to close (plus a portal for the permission prompt), and
+the source here is ready for it.
+
+## Echo cancellation
+
+Not implemented in this app, deliberately. The realistic path is PipeWire's
+`module-echo-cancel`, which runs WebRTC's AEC3 (`libspa-aec-webrtc.so`, which
+is installed on this machine) between a virtual source and a virtual sink.
+`--echo-cancel` makes the real-device path record from `echo-cancel-source` and
+play into `echo-cancel-sink`; the synthetic sources are untouched, and nothing
+changes unless the module is loaded, which belongs in Palmframe's PipeWire
+configuration. It is not loaded here, and no real microphone was opened to
+test it — the self-test asserts the command lines only. In-process AEC3 would
+mean linking webrtc-audio-processing (C++ only) behind a C shim; speexdsp's
+echo canceller is C but clearly worse with speakers and double talk.
+
+## Measured
+
+Three headless participants on loopback, synthetic camera and a scheduled
+synthetic talker each (Alice 0-4 s, Bob 4-8 s, Carol 8-12 s, repeating every
+12 s on one shared clock), playing into a paced null sink, end-to-end
+encrypted, 20 s. `cloud/rtc/sfu/demo3.sh OUTDIR 20`:
+
+| receiver ← sender | audio capture→received | max | jitter (RFC 3550) | capture→played | video frames (L0) | capture→decoded | lost | no key |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| alice ← bob | 2.99 ms | 6.3 | 1.03 ms | 36.5 ms | 587 | 7.45 ms | 0 | 17 |
+| alice ← carol | 2.27 ms | 8.1 | 0.59 ms | 44.6 ms | 587 | 6.93 ms | 0 | 15 |
+| bob ← carol | 2.48 ms | 11.1 | 0.58 ms | 39.5 ms | 587 | 7.06 ms | 0 | 15 |
+| bob ← alice | 3.30 ms | 6.4 | 1.18 ms | 33.4 ms | 587 | 8.06 ms | 0 | 16 |
+| carol ← bob | 2.61 ms | 7.4 | 0.35 ms | 34.9 ms | 587 | 7.25 ms | 0 | 17 |
+| carol ← alice | 2.74 ms | 9.6 | 0.43 ms | 35.3 ms | 587 | 8.00 ms | 0 | 16 |
+
+Every figure is a subtraction on one `CLOCK_MONOTONIC_RAW`, through the SFU
+and through SFrame both ways. Capture→received includes up to 4 ms of the
+headless loop's tick; capture→played adds the 40 ms jitter-buffer target.
+Each sender sent 594 L0 frames (~300 kbit/s), 298 L1 frames (~90 kbit/s) and
+996 audio frames; the SFU forwarded 11,610 datagrams for 7,007 received. The
+safety code was the same at all three.
+
+Dominant speaker, against the schedule:
+
+| turn begins | SFU names | lag |
+| --- | --- | --- |
+| alice, 0 s | alice | +0.69 s |
+| bob, 4 s | bob | +0.67 s |
+| carol, 8 s | carol | +0.71 s |
+| alice, 12 s | alice | +0.68 s |
+| bob, 16 s | bob | +0.66 s |
+
+The lag is the 400 ms hold plus the short window filling; no false switch in
+any run.
+
+**A constrained receiver.** The same call with Carol's downlink emulated at
+400 kbit/s (`demo3.sh OUTDIR 20 400`; a token bucket with a 250 ms burst on
+what she receives — what it drops is real loss to everything downstream):
+
+- t=1.5 s (end of warm-up): Carol → **low**, estimate 363 kbit/s from 14.9 %
+  loss. From then on she receives layer 1 from both senders: 268 + 267 L1
+  frames against 35 + 26 L0 frames from before the switch, 427 KB of L1 and
+  161 KB of L0 forwarded to her.
+- t=18.1 s: a probe up to **high** (estimate 859), refused by the link within
+  half a second: back to **low** at 18.6 s, and the next probe backs off.
+- Alice and Bob stay on high throughout; nobody else is affected.
+
+At 150 kbit/s (`demo3.sh OUTDIR 20 150`): Carol → **audio** at 1.9 s (estimate
+129 kbit/s, 39.8 % loss), receives 984 and 982 of 985 audio frames from the
+others and no video; one probe to low at 14 s falls back at 14.5 s.
+
+## Running it
+
+```sh
+B=/path/to/bin
+odin build cloud/rtc/sfu -out:$B/palm-sfu.bin -o:speed
+odin build apps/call -collection:palmy=… -collection:shadcn=… -collection:kit=… -out:$B/call.bin -o:speed
+
+$B/palm-sfu.bin --selftest                       # 100 checks
+$B/call.bin --self-test                          # 430 checks
+bash cloud/rtc/sfu/demo3.sh /tmp/out 20          # the measurement above
+bash cloud/rtc/sfu/demo3.sh /tmp/out 20 400      # Carol on a 400 kbit/s downlink
+bash cloud/rtc/sfu/shots.sh /tmp/shots dark      # screenshots, offscreen
+bash cloud/rtc/sfu/screenshare.sh /tmp/share     # screen share on a private sway
+
+# by hand:
+echo some-long-random-secret > secret
+$B/palm-sfu.bin --secret-file secret --port 47900 --stats
+T=$($B/palm-sfu.bin --mint-token --secret-file secret --call c1 --id u1 --handle alice --name Alice)
+$B/call.bin --sfu 127.0.0.1:47900 --join-token "$T"
+```
+
+In a real deployment the token comes from the chat gateway's `call_join`, and
+`palm-sfu` is started with `--gateway` so membership changes reach running
+calls.
+
+**Deployment, not done.** `palm-sfu` binds 127.0.0.1 unless told otherwise. A
+public deployment needs a public bind (it is one UDP port; with ICE-lite-style
+latching it would get through most NATs), a TURN relay or a TCP/TLS-443
+fallback for networks that block UDP, and the token secret managed as a
+secret. None of that is built. There is also no recording: the schema has the
+metadata table, and a recorder would be a participant that holds keys — which
+is a product decision before it is code.
+
+Screenshots: `shots/sfu-grid-dark.png`, `shots/sfu-grid-light.png`,
+`shots/sfu-speaker-dark.png`, `shots/sfu-speaker-people-light.png` (with the
+People and encryption panel), `shots/sfu-screen-share-dark.png`.

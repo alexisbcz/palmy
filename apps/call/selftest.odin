@@ -21,6 +21,7 @@ import "core:strings"
 import "core:time"
 import kit "kit:."
 import p "palmy:."
+import pcp "../../cloud/rtc/pcp"
 
 Tally :: struct {
 	checks: int,
@@ -78,6 +79,8 @@ run_self_test :: proc() -> int {
 	test_keyframe_flag()
 	test_h264_split()
 	test_keyframe_loss_path()
+	test_pcp2_library()
+	test_room_e2ee()
 
 	fmt.printfln("\n%d checks, %d failures", T.checks, T.fails)
 	if T.fails == 0 {
@@ -1685,4 +1688,263 @@ shuffle_fixed :: proc(a: []int) {
 		j := int(next(&state) % u64(i + 1))
 		a[i], a[j] = a[j], a[i]
 	}
+}
+
+// ---------------------------------------------------------------------------
+// SFU mode
+//
+// The protocol library's own checks (PCP2, the RFC 9605 vectors, sealing,
+// the safety code, dominant speaker, tier choice, tokens), then the client's
+// half of SFU mode over real sockets: two rooms and a relay standing in for
+// the SFU, which stamps sources and turns KEY{to} into KEY{from} exactly as
+// palm-sfu does. The SFU itself is tested by `palm-sfu --selftest`.
+// ---------------------------------------------------------------------------
+
+test_pcp2_library :: proc() {
+	group("PCP2 library (cloud/rtc/pcp), as palm-sfu runs it")
+	pt: pcp.Tally
+	pt.quiet = true
+	pcp.run_selftest(&pt)
+	T.checks += pt.pass + pt.fail
+	T.fails += pt.fail
+	fmt.printfln("  ok    %d library checks, %d failures (RFC 9605 header and AES-GCM vectors included)", pt.pass + pt.fail, pt.fail)
+}
+
+relay_forward :: proc(relay: net.UDP_Socket, to: net.Endpoint, src: u16, mutate: proc(b: []u8) = nil) -> (n: int, last: [pcp.MAX_PACKET]u8, last_n: int) {
+	buf: [pcp.MAX_PACKET + 64]u8
+	for _ in 0 ..< 200 {
+		k, _, err := net.recv_udp(relay, buf[:])
+		if err != nil || k <= 0 {
+			break
+		}
+		h, payload, ok := pcp.parse(buf[:k])
+		if !ok {
+			continue
+		}
+		out := buf[:k]
+		if h.ptype == .Control {
+			kind, o, cok := pcp.control_parse(payload)
+			if !cok {
+				continue
+			}
+			if kind == .Key {
+				// What the SFU does with a KEY: forward it to `to`, saying who
+				// it came from.
+				ob: pcp.Obj
+				pcp.obj_begin(&ob)
+				pcp.obj_int(&ob, "from", i64(src))
+				pcp.obj_int(&ob, "kid", pcp.oint(o, "kid"))
+				pcp.obj_str(&ob, "sealed", pcp.ostr(o, "sealed"))
+				tmp: [pcp.MAX_PACKET]u8
+				dg := pcp.control_into(tmp[:], .Key, pcp.obj_end(&ob), 1, 0)
+				net.send_udp(relay, dg, to)
+				n += 1
+			}
+			continue
+		}
+		pcp.stamp_src(out, src)
+		if mutate != nil {
+			mutate(out)
+		}
+		copy(last[:], out)
+		last_n = k
+		net.send_udp(relay, out, to)
+		n += 1
+	}
+	return
+}
+
+test_room_e2ee :: proc() {
+	group("SFU mode: the client's PCP2 + SFrame path, through a relay")
+
+	talk := talk_expression("0-4,12-16", 24, 554, 0)
+	check(strings.contains(talk, "between(mod(") && strings.contains(talk, "554*t"), "a talk schedule builds an aevalsrc expression")
+	check(strings.count(talk, "between(") == 2, "with one window per range")
+
+	relay, rerr := net.make_bound_udp_socket(LOOPBACK, 0)
+	check(rerr == nil, "a relay socket stands in for the SFU")
+	if rerr != nil {
+		return
+	}
+	defer net.close(relay)
+	net.set_blocking(relay, false)
+	rep, _ := net.bound_endpoint(relay)
+	secret := transmute([]u8)string("room-test")
+	tok_a := pcp.token_mint(secret, pcp.Join{call = "call-x", id = "id-a", handle = "alice", name = "Alice", color = "indigo", e2ee = true}, context.temp_allocator)
+	tok_b := pcp.token_mint(secret, pcp.Join{call = "call-x", id = "id-b", handle = "bob", name = "Bob", color = "emerald", e2ee = true}, context.temp_allocator)
+	app_a, app_b := new(App), new(App)
+	defer free(app_a)
+	defer free(app_b)
+	ra, ea := room_open(app_a, net.endpoint_to_string(rep), tok_a, 0)
+	rb, eb := room_open(app_b, net.endpoint_to_string(rep), tok_b, 0)
+	check(ea == "" && eb == "", "two rooms open")
+	if ea != "" || eb != "" {
+		return
+	}
+	check(ra.me.name == "Alice" && rb.me.handle == "bob", "each reads its own name from its token")
+	bep, _ := net.bound_endpoint(rb.sock)
+	aep, _ := net.bound_endpoint(ra.sock)
+	b_at := net.Endpoint{LOOPBACK, bep.port}
+	a_at := net.Endpoint{LOOPBACK, aep.port}
+
+	// As if the SFU had welcomed both and introduced them to each other.
+	for pair in ([?]struct {
+		r:   ^Room,
+		src: u16,
+	}{{ra, 1}, {rb, 2}}) {
+		pair.r.state = .Joined
+		pair.r.src = pair.src
+		pair.r.call = strings.clone("call-x")
+		pair.r.e2ee = true
+	}
+	ma := remote_new(1)
+	ma.present, ma.has_pub, ma.pub = true, true, ra.kp.public
+	delete(ma.id)
+	ma.id = strings.clone("id-a")
+	append(&rb.remotes, ma)
+	mb := remote_new(2)
+	mb.present, mb.has_pub, mb.pub = true, true, rb.kp.public
+	delete(mb.id)
+	mb.id = strings.clone("id-b")
+	append(&ra.remotes, mb)
+	// The relay talks to rb from its own port; the room only accepts the SFU's.
+	rb.sfu = rep
+	ra.sfu = rep
+
+	ra.t = 10
+	room_keys_tick(ra)
+	check(ra.next != nil && ra.gen == 1, "Alice makes generation 1 and seals it to Bob")
+	ra.t = 10 + pcp.ROTATE_DELAY + 0.01
+	room_keys_tick(ra)
+	check(ra.cur != nil && ra.cur.kid == pcp.kid_of(1, 1), "after the delay she encrypts with it (KID src 1, generation 1)")
+	time.sleep(5 * time.Millisecond)
+	n, _, _ := relay_forward(relay, b_at, 1)
+	check(n >= 1, "the sealed key crosses the relay (%d messages)", n)
+	time.sleep(5 * time.Millisecond)
+	rb.t = 10
+	room_pump_receive(rb)
+	check(pcp.keyring_find(&rb.ring, pcp.kid_of(1, 1)) != nil, "Bob opens it and can now decrypt Alice")
+
+	room_update_safety(ra)
+	room_update_safety(rb)
+	check(ra.safety != "" && ra.safety == rb.safety, "both compute the same safety code (%s)", ra.safety)
+
+	// Audio, encrypted, through the relay.
+	plain := transmute([]u8)string("OPUS-PLAINTEXT-FOR-THE-TEST")
+	room_send_media(ra, .Audio_Opus, plain, now_us(), 0, 0, pcp.level_byte(0.1))
+	time.sleep(5 * time.Millisecond)
+	_, last, last_n := relay_forward(relay, b_at, 1)
+	wire := last[:last_n]
+	h, payload, pok := pcp.parse(wire)
+	check(pok && h.flags & pcp.FLAG_E2EE != 0, "what crosses the relay is flagged as an SFrame ciphertext")
+	check(!bytes_contains(payload, plain[:12]), "and does not contain the plaintext")
+	check(level_vad_byte(h.level), "while the audio level rides in the clear for the SFU (%d)", h.level & 0x7f)
+	time.sleep(5 * time.Millisecond)
+	room_pump_receive(rb)
+	check_eq_int(ma.a_rx, 1, "Bob decrypts one audio frame")
+	check_eq_int(ma.bad_auth + ma.no_key + ma.wrong_src, 0, "with no failures")
+
+	// The same datagram again: a replay.
+	net.send_udp(relay, wire, b_at)
+	time.sleep(5 * time.Millisecond)
+	room_pump_receive(rb)
+	check_eq_int(ma.replays, 1, "a replayed frame is refused")
+
+	// Tampered in flight.
+	room_send_media(ra, .Audio_Opus, plain, now_us(), 0, 0, 127)
+	time.sleep(5 * time.Millisecond)
+	relay_forward(relay, b_at, 1, proc(b: []u8) {b[len(b) - 3] ~= 0x10})
+	time.sleep(5 * time.Millisecond)
+	room_pump_receive(rb)
+	check_eq_int(ma.bad_auth, 1, "a frame altered in flight fails authentication")
+
+	// Relabelled as someone else.
+	mc := remote_new(3)
+	mc.present = true
+	append(&rb.remotes, mc)
+	room_send_media(ra, .Audio_Opus, plain, now_us(), 0, 0, 127)
+	time.sleep(5 * time.Millisecond)
+	relay_forward(relay, b_at, 3)
+	time.sleep(5 * time.Millisecond)
+	room_pump_receive(rb)
+	check_eq_int(mc.wrong_src, 1, "a frame stamped with another source is refused: its KID names Alice")
+
+	// A clear frame in an encrypted call.
+	{
+		hh := pcp.Header{ptype = .Audio_Opus, nfrag = 1, src = 1, seq = 900, ts_us = now_us()}
+		buf: [pcp.MAX_PACKET]u8
+		dg := pcp.fragment_into(buf[:], plain, 0, hh)
+		net.send_udp(relay, dg, b_at)
+		time.sleep(5 * time.Millisecond)
+		room_pump_receive(rb)
+		check_eq_int(ma.bad_auth, 2, "a clear frame injected into an encrypted call is refused")
+	}
+
+	// Video: a three-fragment keyframe on layer 0, then the layer switch.
+	frame := make([]u8, 3000, context.temp_allocator)
+	for i in 0 ..< len(frame) {
+		frame[i] = u8(i)
+	}
+	room_send_media(ra, .Video_JPEG, frame, now_us(), FLAG_KEYFRAME, 0, 127)
+	time.sleep(5 * time.Millisecond)
+	relay_forward(relay, b_at, 1)
+	time.sleep(5 * time.Millisecond)
+	room_pump_receive(rb)
+	check_eq_int(ma.v_layer_frames[0], 1, "a fragmented video frame reassembles and decrypts")
+	room_send_media(ra, .Video_JPEG, frame[:900], now_us(), FLAG_KEYFRAME, 1, 127)
+	time.sleep(5 * time.Millisecond)
+	relay_forward(relay, b_at, 1)
+	time.sleep(5 * time.Millisecond)
+	room_pump_receive(rb)
+	check(ma.layer == 1 && ma.v_layer_frames[1] == 1, "the switch to the low layer is followed at its keyframe")
+
+	// Someone leaves: Alice rotates, and the new key goes to nobody.
+	mb.present = false
+	ra.t = 20
+	room_keys_tick(ra)
+	check(ra.gen == 2, "a leave starts a new key generation")
+	room_keys_tick(ra)
+	check(ra.cur != nil && ra.cur.kid == pcp.kid_of(1, 2) && len(ra.keyed_srcs) == 0, "alone, she switches at once and sealed it to no one")
+
+	room_close(ra)
+	room_close(rb)
+
+	group("echo cancellation is PipeWire's: --echo-cancel targets its nodes")
+	aec_nodes = true
+	cap := audio_capture_argv(Device{kind = .Audio_Source, id = 42, real = true})
+	play := audio_playback_argv(Device{kind = .Audio_Sink, id = 43, real = true}, 0.5)
+	synth := audio_capture_argv(Device{kind = .Synthetic})
+	aec_nodes = false
+	has :: proc(argv: []string, want: string) -> bool {
+		for x in argv {
+			if x == want {
+				return true
+			}
+		}
+		return false
+	}
+	check(has(cap, "--target=echo-cancel-source"), "a real microphone is recorded through echo-cancel-source")
+	check(has(play, "--target=echo-cancel-sink"), "playback goes into echo-cancel-sink, so AEC3 hears the far end")
+	check(synth[0] == "ffmpeg", "the synthetic microphone is untouched")
+	plain_cap := audio_capture_argv(Device{kind = .Audio_Source, id = 42, real = true})
+	check(has(plain_cap, "--target=42"), "without the flag the chosen device is used as before")
+}
+
+bytes_contains :: proc(hay, needle: []u8) -> bool {
+	if len(needle) == 0 || len(needle) > len(hay) {
+		return false
+	}
+	outer: for i in 0 ..= len(hay) - len(needle) {
+		for j in 0 ..< len(needle) {
+			if hay[i + j] != needle[j] {
+				continue outer
+			}
+		}
+		return true
+	}
+	return false
+}
+
+level_vad_byte :: proc(l: u8) -> bool {
+	return pcp.level_vad(l)
 }

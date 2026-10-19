@@ -934,6 +934,10 @@ draw_controls :: proc(app: ^App, ui: ^p.Ctx) {
 // ---------------------------------------------------------------------------
 
 draw_ui :: proc(app: ^App, ui: ^p.Ctx) {
+	if app.room != nil {
+		draw_room_ui(app, ui)
+		return
+	}
 	// The meters are read by the draw procedures, which run after the tree is
 	// built, so they are refreshed here rather than inside the layout.
 	app.meter_tx = {level = app.a.tx_level, peak = app.a.tx_peak, live = app.a.cap.running}

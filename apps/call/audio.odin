@@ -183,6 +183,31 @@ Audio :: struct {
 SYNTH_TONE ::
 	"aevalsrc=0.75*sin(2*PI*440*t)*(0.55+0.45*sin(2*PI*0.4*t)):s=48000:c=mono,arealtime"
 
+// synth_tone is what the synthetic microphone actually plays. SFU mode
+// replaces it with a scheduled talker (`--talk`), so three headless
+// participants can take turns and the dominant-speaker detector has turns to
+// find.
+synth_tone := SYNTH_TONE
+
+// null_audio sends playout to a paced null sink instead of pw-play, so a
+// headless multi-party measurement never makes a sound on this machine. The
+// sink still consumes at exactly 48 kHz (`-re`), so the playout clock and the
+// queue model behave as they do with a sound card.
+null_audio := false
+
+// Echo cancellation is the system's job here, not this program's. PipeWire's
+// module-echo-cancel runs WebRTC's AEC3 (libspa-aec-webrtc, installed on
+// this machine) between a virtual source and a virtual sink; an application
+// that records from the one and plays into the other gets the far end's
+// voice removed from its microphone. `--echo-cancel` makes the real-device
+// path target those nodes by their default names. It changes nothing for the
+// synthetic sources, which have no acoustic path to cancel, and nothing at
+// all unless the module is loaded — Palmframe's PipeWire config is where that
+// belongs (see apps/call/PROTOCOL.md, "Echo cancellation").
+aec_nodes := false
+AEC_SOURCE :: "echo-cancel-source"
+AEC_SINK :: "echo-cancel-sink"
+
 // Both argv builders allocate in the temp allocator, which palmy resets every
 // frame. The strings outlive the `process_start` that copies them, which is
 // all they have to do.
@@ -195,7 +220,7 @@ audio_capture_argv :: proc(dev: Device) -> []string {
 			// and every read returns stale audio. The `arealtime` filter in
 			// SYNTH_TONE is the pacing; see the note there for why it is not
 			// `-re`.
-			"-f", "lavfi", "-i", SYNTH_TONE,
+			"-f", "lavfi", "-i", synth_tone,
 			"-f", "s16le", "-ar", "48000", "-ac", "1", "-",
 		}, context.temp_allocator)
 	}
@@ -203,11 +228,26 @@ audio_capture_argv :: proc(dev: Device) -> []string {
 	return slice.clone([]string{
 		"pw-record", "--raw",
 		"--rate=48000", "--channels=1", "--format=s16", "--latency=20ms",
-		fmt.tprintf("--target=%d", dev.id), "-",
+		aec_nodes ? "--target=" + AEC_SOURCE : fmt.tprintf("--target=%d", dev.id), "-",
 	}, context.temp_allocator)
 }
 
 audio_playback_argv :: proc(dev: Device, volume: f32) -> []string {
+	if null_audio {
+		return slice.clone([]string{
+			"ffmpeg", "-nostdin", "-hide_banner", "-loglevel", "error",
+			"-re", "-f", "s16le", "-ar", "48000", "-ac", "1", "-i", "-",
+			"-f", "null", "-",
+		}, context.temp_allocator)
+	}
+	if aec_nodes {
+		return slice.clone([]string{
+			"pw-play", "--raw",
+			"--rate=48000", "--channels=1", "--format=s16", "--latency=10ms",
+			fmt.tprintf("--volume=%.2f", volume),
+			"--target=" + AEC_SINK, "-",
+		}, context.temp_allocator)
+	}
 	if dev.id > 0 {
 		return slice.clone([]string{
 			"pw-play", "--raw",
@@ -424,10 +464,14 @@ audio_pump_capture :: proc(a: ^Audio, s: ^Session, dt: f32) {
 			}
 		}
 
+		// The RFC 6464 level octet rides in the clear in SFU mode, where the
+		// forwarder picks the dominant speaker from it without decoding.
+		lvl := s.room != nil ? room_level_byte(pcm) : 127
+
 		if a.use_opus {
 			nb := opus_encode(a.enc, raw_data(pcm), A_FRAME_SAMPLES, raw_data(pkt[:]), A_MAX_PACKET)
 			if nb > 0 {
-				send_media(s, .Audio_Opus, pkt[:nb], ts)
+				send_media(s, .Audio_Opus, pkt[:nb], ts, 0, 0, lvl)
 				a.frames_sent += 1
 			}
 		} else {

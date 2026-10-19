@@ -47,6 +47,7 @@ import "core:fmt"
 import "core:math"
 import "core:mem"
 import "core:slice"
+import "core:strings"
 import p "palmy:."
 
 // The call resolution. 640x360 is 16:9, and it fills the video tile of a
@@ -450,6 +451,15 @@ Video :: struct {
 
 	source_label: string,
 	cap_error:    string,
+
+	// SFU mode. Each simulcast layer is its own Video with its own encoder.
+	// `room_mode` skips the peer decoder (remote pictures belong to the
+	// room's participants, not to this struct) and `no_self` skips the
+	// self-view decoder on the low layer, which would only duplicate it.
+	enc_w, enc_h, enc_fps, enc_kbps: int,
+	layer:     u8,
+	room_mode: bool,
+	no_self:   bool,
 }
 
 // ---------------------------------------------------------------------------
@@ -465,10 +475,16 @@ Video :: struct {
 // not the same picture.
 synth_source := "testsrc2"
 
-synth_pattern :: proc() -> string {
+synth_pattern :: proc(w := 0, h := 0, fps := 0) -> string {
 	// `realtime` paces on the frame count, the way `arealtime` paces the
 	// synthetic microphone; `-re` gates on wall clock and runs fast.
-	return fmt.tprintf("%s=size=%dx%d:rate=%d,realtime", synth_source, v_width, v_height, v_fps)
+	return fmt.tprintf(
+		"%s=size=%dx%d:rate=%d,realtime",
+		synth_source,
+		w > 0 ? w : v_width,
+		h > 0 ? h : v_height,
+		fps > 0 ? fps : v_fps,
+	)
 }
 
 // h264_encode_args is the encoder settings, stated once.
@@ -490,14 +506,16 @@ synth_pattern :: proc() -> string {
 //	                          them the parameter sets exist only in the first
 //	                          datagrams of the call, and losing those means
 //	                          losing the stream for its whole duration.
-h264_encode_args :: proc() -> []string {
-	keyint := fmt.tprintf("%d", max(1, v_fps * V_GOP_SECONDS))
-	rate := fmt.tprintf("%dk", v_bitrate_kbps)
+h264_encode_args :: proc(fps := 0, kbps := 0) -> []string {
+	fps := fps > 0 ? fps : v_fps
+	kbps := kbps > 0 ? kbps : v_bitrate_kbps
+	keyint := fmt.tprintf("%d", max(1, fps * V_GOP_SECONDS))
+	rate := fmt.tprintf("%dk", kbps)
 	return slice.clone([]string {
 			"-c:v", "libx264", "-preset", "ultrafast", "-tune", "zerolatency",
 			"-profile:v", "baseline", "-pix_fmt", "yuv420p",
 			"-g", keyint, "-keyint_min", keyint, "-sc_threshold", "0", "-bf", "0",
-			"-b:v", rate, "-maxrate", rate, "-bufsize", fmt.tprintf("%dk", v_bitrate_kbps / 2),
+			"-b:v", rate, "-maxrate", rate, "-bufsize", fmt.tprintf("%dk", kbps / 2),
 			"-x264-params", "aud=1:repeat-headers=1",
 			"-bsf:v", "dump_extra=freq=keyframe",
 			"-flush_packets", "1", "-f", "h264", "-",
@@ -509,18 +527,58 @@ mjpeg_encode_args :: proc() -> []string {
 		context.temp_allocator)
 }
 
-video_capture_argv :: proc(dev: Device, codec: Video_Codec) -> []string {
-	enc := codec == .H264 ? h264_encode_args() : mjpeg_encode_args()
+// screen_share replaces the camera with the screen (`--share-screen`).
+//
+// It works on a compositor that speaks wlr-screencopy — sway, Hyprland, any
+// wlroots one — through `grim`, which writes one PPM per capture; a loop of
+// grim feeds ffmpeg's image2pipe, stamped with the wall clock and resampled
+// to the call's frame rate, into the same encoder a camera would use. So a
+// shared screen is just another video source to everything downstream:
+// simulcast, SFrame and the SFU do not know the difference.
+//
+// It does **not** work under Palmframe's own window manager today: apps/wm
+// implements no screen-capture protocol (neither wlr-screencopy nor
+// ext-image-copy-capture-v1), so there is nothing for grim to ask. That is
+// the wm's gap, stated in apps/call/PROTOCOL.md; the source here is ready for
+// it.
+screen_share := false
+
+screen_capture_argv :: proc(codec: Video_Codec, w, h, fps, kbps: int) -> []string {
+	enc := codec == .H264 ? h264_encode_args(fps, kbps) : mjpeg_encode_args()
+	b := strings.builder_make(context.temp_allocator)
+	fmt.sbprintf(
+		&b,
+		"while grim -t ppm - 2>/dev/null; do :; done | ffmpeg -nostdin -hide_banner -loglevel error " +
+		"-use_wallclock_as_timestamps 1 -f image2pipe -c:v ppm -i - -vf fps=%d,scale=%d:%d ",
+		fps > 0 ? fps : v_fps,
+		w > 0 ? w : v_width,
+		h > 0 ? h : v_height,
+	)
+	for a in enc {
+		strings.write_string(&b, a)
+		strings.write_byte(&b, ' ')
+	}
+	return slice.clone([]string{"sh", "-c", strings.to_string(b)}, context.temp_allocator)
+}
+
+// `w`, `h`, `fps` and `kbps` override the call-wide settings for one encoder.
+// SFU mode runs two encoders, one per simulcast layer, and the low layer is
+// a quarter of the pixels at half the frame rate.
+video_capture_argv :: proc(dev: Device, codec: Video_Codec, w := 0, h := 0, fps := 0, kbps := 0) -> []string {
+	if screen_share {
+		return screen_capture_argv(codec, w, h, fps, kbps)
+	}
+	enc := codec == .H264 ? h264_encode_args(fps, kbps) : mjpeg_encode_args()
 	out := make([dynamic]string, 0, 32, context.temp_allocator)
 	append(&out, "ffmpeg", "-nostdin", "-hide_banner", "-loglevel", "error")
 	if dev.kind == .Synthetic {
-		append(&out, "-f", "lavfi", "-i", synth_pattern())
+		append(&out, "-f", "lavfi", "-i", synth_pattern(w, h, fps))
 	} else {
 		// A real camera. The Brio advertises YUYV and MJPG at 640x480/30; let
 		// ffmpeg negotiate and scale down to the call resolution.
 		append(&out, "-f", "v4l2", "-framerate", fmt.tprintf("%d", v_fps))
 		append(&out, "-video_size", "640x480", "-i", dev.path)
-		append(&out, "-vf", fmt.tprintf("scale=%d:%d", v_width, v_height))
+		append(&out, "-vf", fmt.tprintf("scale=%d:%d", w > 0 ? w : v_width, h > 0 ? h : v_height))
 	}
 	append(&out, ..enc)
 	return out[:]
@@ -597,10 +655,19 @@ video_start :: proc(v: ^Video, dev: Device, codec: Video_Codec) {
 	// The decoders are started here rather than on the first datagram so a
 	// failure to start one is reported while the call is coming up.
 	if codec == .H264 {
-		dw, dh := decoder_output_size(v_width, v_height)
-		h264_dec_start(&v.dec, dw, dh)
-		sw, sh := self_view_size()
-		h264_dec_start(&v.dec_self, sw, sh)
+		if !v.room_mode {
+			dw, dh := decoder_output_size(v_width, v_height)
+			h264_dec_start(&v.dec, dw, dh)
+		}
+		if !v.no_self {
+			sw, sh := self_view_size()
+			if v.room_mode {
+				// In a grid the self tile is as big as anyone's, so it is
+				// decoded at a size that does not pixelate there.
+				sw, sh = 480, 270
+			}
+			h264_dec_start(&v.dec_self, sw, sh)
+		}
 	}
 }
 
@@ -612,7 +679,7 @@ video_spawn_capture :: proc(v: ^Video) {
 		kind = v.src_kind,
 		path = v.src_path,
 	}
-	argv := video_capture_argv(dev, v.codec)
+	argv := video_capture_argv(dev, v.codec, v.enc_w, v.enc_h, v.enc_fps, v.enc_kbps)
 	// Two frames of pipe. An MJPEG frame is ~15 KB, so 64 KiB would be four
 	// frames of backlog before we even look; an H.264 frame is 1.2 KB, so the
 	// same pipe is a quarter of a second of it and the bound has to be lower.
@@ -828,14 +895,16 @@ video_pump_capture :: proc(v: ^Video, s: ^Session, t: f64) {
 
 		if !v.camera_off {
 			flags: u8 = kf ? FLAG_KEYFRAME : 0
-			send_media(s, video_codec_payload(v.codec), frame, now_us(), flags)
+			send_media(s, video_codec_payload(v.codec), frame, now_us(), flags, v.layer)
 			v.frames_sent += 1
 			v.bytes_sent += n
 			if kf {
 				v.keyframes_sent += 1
 			}
 
-			video_self_view(v, frame)
+			if !v.no_self {
+				video_self_view(v, frame)
+			}
 		} else if v.has_local {
 			p.image_destroy(&v.local)
 			v.has_local = false

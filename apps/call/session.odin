@@ -109,6 +109,12 @@ Session :: struct {
 	frame_video: u32,
 
 	txbuf: [MAX_PACKET]u8,
+
+	// Set in SFU mode (`--sfu`). The capture engines are the same ones the
+	// two-party call uses; what changes is where their frames go, and this
+	// pointer is that switch: `send_media` hands everything to the room,
+	// which encrypts, frames as PCP2 and sends to the SFU instead.
+	room: ^Room,
 }
 
 // now_us is CLOCK_MONOTONIC_RAW in microseconds. Two processes on one machine
@@ -175,7 +181,19 @@ send_datagram :: proc(s: ^Session, dg: []u8) {
 // `extra_flags` is header flags that belong to the frame rather than to the
 // fragment — today that is FLAG_KEYFRAME, which goes on every fragment of the
 // frame so that losing the first one does not lose the fact.
-send_media :: proc(s: ^Session, ptype: Payload_Type, data: []u8, ts_us: u64, extra_flags: u8 = 0) {
+send_media :: proc(
+	s: ^Session,
+	ptype: Payload_Type,
+	data: []u8,
+	ts_us: u64,
+	extra_flags: u8 = 0,
+	layer: u8 = 0,
+	level: u8 = 127,
+) {
+	if s.room != nil {
+		room_send_media(s.room, ptype, data, ts_us, extra_flags, layer, level)
+		return
+	}
 	nf := fragment_count(len(data))
 	frame: u32
 	switch ptype {

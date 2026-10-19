@@ -87,6 +87,18 @@ App :: struct {
 	// Snapshots the pixel draw procedures read, refreshed once per frame.
 	meter_tx: Meter,
 	meter_rx: Meter,
+
+	// SFU mode (`--sfu`): the room, the second simulcast encoder, and the
+	// scheduled synthetic talker used by the multi-party measurement.
+	room:        ^Room,
+	v_lo:        Video,
+	layout:      Room_Layout,
+	side:        bool,
+	light:       bool,
+	talk:        string,
+	talk_period: f64,
+	tone:        int,
+	epoch:       f64,
 }
 
 log_line :: proc(app: ^App, format: string, args: ..any) {
@@ -127,6 +139,24 @@ Args :: struct {
 	no_pli:     bool,
 	volume:     f64,
 	quit_after: f64,
+
+	// SFU mode.
+	sfu:          string,
+	join_token:   string,
+	json_out:     string,
+	talk:         string,
+	talk_period:  f64,
+	tone:         int,
+	epoch:        f64,
+	null_audio:   bool,
+	recv_cap:     f64,
+	speaker_view: bool,
+	light:        bool,
+	start_muted:  bool,
+	start_cam_off: bool,
+	share_screen: bool,
+	allow_screen: bool,
+	echo_cancel:  bool,
 }
 
 // parse_codec_offer reads `--video-codec` into an offer bitmask. The flag is
@@ -275,12 +305,99 @@ parse_args :: proc() -> (a: Args, err: string) {
 				return a, "--volume needs a number in 0..1"
 			}
 			a.volume = f
+		case "--sfu":
+			v, ok := next(args, &i)
+			if !ok {
+				return a, "--sfu needs HOST:PORT"
+			}
+			a.sfu = v
+		case "--join-token":
+			v, ok := next(args, &i)
+			if !ok {
+				return a, "--join-token needs a token"
+			}
+			a.join_token = v
+		case "--join-token-file":
+			v, ok := next(args, &i)
+			if !ok {
+				return a, "--join-token-file needs a path"
+			}
+			data, rerr := os.read_entire_file_from_path(v, context.allocator)
+			if rerr != nil {
+				return a, fmt.aprintf("cannot read %s", v)
+			}
+			a.join_token = strings.trim_space(string(data))
+		case "--json-out":
+			v, ok := next(args, &i)
+			if !ok {
+				return a, "--json-out needs a path"
+			}
+			a.json_out = v
+		case "--talk":
+			v, ok := next(args, &i)
+			if !ok {
+				return a, "--talk needs windows like 0-4,12-16"
+			}
+			a.talk = v
+		case "--talk-period":
+			v, ok := next(args, &i)
+			f, good := strconv.parse_f64(v)
+			if !ok || !good {
+				return a, "--talk-period needs seconds"
+			}
+			a.talk_period = f
+		case "--tone":
+			v, ok := next(args, &i)
+			n, good := strconv.parse_int(v)
+			if !ok || !good {
+				return a, "--tone needs Hz"
+			}
+			a.tone = n
+		case "--epoch":
+			v, ok := next(args, &i)
+			f, good := strconv.parse_f64(v)
+			if !ok || !good {
+				return a, "--epoch needs unix seconds"
+			}
+			a.epoch = f
+		case "--null-audio":
+			a.null_audio = true
+		case "--recv-cap":
+			v, ok := next(args, &i)
+			f, good := strconv.parse_f64(v)
+			if !ok || !good {
+				return a, "--recv-cap needs kbit/s"
+			}
+			a.recv_cap = f
+		case "--speaker-view":
+			a.speaker_view = true
+		case "--muted":
+			a.start_muted = true
+		case "--camera-off":
+			a.start_cam_off = true
+		case "--share-screen":
+			a.share_screen = true
+		case "--echo-cancel":
+			a.echo_cancel = true
+		case "--allow-screen":
+			a.allow_screen = true
+		case "--light":
+			a.light = true
 		case "-h", "--help":
 			return a, "help"
 		case:
 			return a, fmt.aprintf("unknown argument %q", args[i])
 		}
 		i += 1
+	}
+	if a.share_screen && !a.allow_screen {
+		return a, "--share-screen sends your screen to everyone in the call; it also needs --allow-screen, the way a camera needs --allow-real-devices"
+	}
+	if a.sfu != "" {
+		if a.join_token == "" {
+			return a, "--sfu needs --join-token (the chat gateway's call_join hands one out)"
+		}
+		return a, ""
 	}
 	if a.bind == a.peer {
 		return a, "--bind and --peer must differ: two instances, two ports"
@@ -296,6 +413,26 @@ USAGE :: `call — real-time audio and video calling over loopback UDP
   call --bind 47811 --peer 47812 --name Alice
   call --bind 47812 --peer 47811 --name Bob
 
+  call --sfu 127.0.0.1:47900 --join-token TOKEN     multi-party, through palm-sfu
+
+  --sfu HOST:PORT         join a call through an SFU (PCP2, end-to-end encrypted)
+  --join-token TOKEN      the token the chat gateway's call_join returned
+  --join-token-file PATH  the same, read from a file
+  --speaker-view          start in the speaker layout (L toggles)
+  --muted, --camera-off   join muted, or with the camera off
+  --echo-cancel           record from / play to PipeWire's echo-cancel nodes
+                          (module-echo-cancel, WebRTC AEC3) on real devices
+  --share-screen --allow-screen
+                          send the screen instead of the camera (wlr-screencopy
+                          compositors only: sway, Hyprland; not apps/wm yet)
+  --light                 light theme (SFU mode)
+  --null-audio            play into a paced null sink (headless measurements)
+  --recv-cap KBPS         emulate a constrained downlink (drop above the rate)
+  --talk 0-4,12-16        synthetic talker: loud inside these windows
+  --talk-period S         ... repeating every S seconds
+  --tone HZ               ... at this pitch
+  --epoch UNIX            ... on a clock shared with other processes
+  --json-out PATH         write the measured summary as JSON (headless)
   --bind PORT             UDP port to bind on 127.0.0.1   (default 47811)
   --peer PORT             the other instance's port         (default 47812)
   --name NAME             display name                      (default Alice)
@@ -610,6 +747,7 @@ renegotiate_video :: proc(app: ^App) {
 stop_media :: proc(app: ^App) {
 	audio_stop(&app.a)
 	video_stop(&app.v)
+	video_stop(&app.v_lo)
 	video_clear_remote(&app.v)
 	jb_reset(&app.a.jb)
 }
@@ -646,6 +784,10 @@ try_select :: proc(app: ^App, list: []Device, sel: ^int, delta: int) {
 }
 
 handle_keys :: proc(app: ^App, ui: ^p.Ctx) {
+	if app.room != nil {
+		room_handle_keys(app, ui)
+		return
+	}
 	s := &app.s
 
 	// Letter keys are plain keysyms; there is no text field in this window, so
@@ -760,6 +902,10 @@ handle_keys :: proc(app: ^App, ui: ^p.Ctx) {
 // ---------------------------------------------------------------------------
 
 step :: proc(app: ^App, t: f64, dt: f32) {
+	if app.room != nil {
+		room_step(app, t, dt)
+		return
+	}
 	app.t = t
 	app.dt = dt
 
@@ -846,7 +992,11 @@ headless_run :: proc(app: ^App, seconds: f64) {
 
 	// Summarise before tearing the pipelines down, so the figures describe the
 	// call rather than the moment after it.
-	print_summary(app)
+	if app.room != nil {
+		room_print_summary(app)
+	} else {
+		print_summary(app)
+	}
 	if call_active(&app.s) {
 		for _ in 0 ..< 3 {
 			send_control(&app.s, .Bye, false, false)
@@ -1029,6 +1179,9 @@ main :: proc() {
 	if args.self_test {
 		os.exit(run_self_test())
 	}
+	null_audio = args.null_audio
+	screen_share = args.share_screen
+	aec_nodes = args.echo_cancel
 
 	app := new(App)
 	defer free(app)
@@ -1047,6 +1200,17 @@ main :: proc() {
 	}
 	defer audio_destroy(&app.a)
 	video_init(&app.v)
+	video_init(&app.v_lo)
+	defer video_destroy(&app.v_lo)
+	app.talk = args.talk
+	app.talk_period = args.talk_period
+	app.tone = args.tone > 0 ? args.tone : 440
+	app.epoch = args.epoch
+	app.light = args.light
+	app.layout = args.speaker_view ? .Speaker : .Grid
+	app.a.muted = args.start_muted
+	app.v.camera_off = args.start_cam_off
+	app.v_lo.camera_off = args.start_cam_off
 	if args.pattern != "" {
 		synth_source = args.pattern
 	}
@@ -1069,6 +1233,40 @@ main :: proc() {
 		app.v.offer = mask
 	}
 	defer video_destroy(&app.v)
+
+	if args.sfu != "" {
+		r, rerr := room_open(app, args.sfu, args.join_token, args.recv_cap)
+		if rerr != "" {
+			fmt.eprintfln("call: %s", rerr)
+			os.exit(1)
+		}
+		app.room = r
+		app.s.room = r
+		app.s.name = r.me.name
+		defer room_close(r)
+		app.v.offer = CODEC_ALL
+		log_line(app, "joining %s through %s", short_call(r.me.call), args.sfu)
+		if args.shot != "" {
+			sw, sh := 1280, 800
+			if args.shot_size != "" {
+				if x := strings.index_byte(args.shot_size, 'x'); x > 0 {
+					w, wok := strconv.parse_int(args.shot_size[:x])
+					h, hok := strconv.parse_int(args.shot_size[x + 1:])
+					if wok && hok && w >= 320 && h >= 240 {
+						sw, sh = w, h
+					}
+				}
+			}
+			shot_run(app, args.shot, args.shot_at, args.quit_after, sw, sh)
+			return
+		}
+		if args.headless {
+			room_headless_run(app, args.quit_after, args.json_out)
+			return
+		}
+		room_window(app)
+		return
+	}
 
 	if e := session_open(&app.s, args.bind, args.peer, args.name); e != "" {
 		fmt.eprintfln("call: %s", e)
@@ -1257,7 +1455,7 @@ shot_run :: proc(app: ^App, prefix, spec: string, seconds: f64, width, height: i
 			break
 		}
 	}
-	sc.register_shadcn_theme(true)
+	sc.register_shadcn_theme(!app.light)
 	p.set_text_gamma(1.8)
 
 	start := time.tick_now()
@@ -1309,7 +1507,11 @@ shot_run :: proc(app: ^App, prefix, spec: string, seconds: f64, width, height: i
 		time.sleep(8 * time.Millisecond)
 	}
 
-	print_summary(app)
+	if app.room != nil {
+		room_print_summary(app)
+	} else {
+		print_summary(app)
+	}
 	if call_active(&app.s) {
 		for _ in 0 ..< 3 {
 			send_control(&app.s, .Bye, false, false)
