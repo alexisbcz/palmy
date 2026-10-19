@@ -75,6 +75,8 @@ Bookmark_File :: struct {
 	// the largest clock this file has pushed to the account; everything with
 	// a newer clock is waiting to be sent
 	pushed_through:  string `json:"pushed_through"`,
+	// the largest server change counter pulled so far
+	pulled_seq:      i64 `json:"pulled_seq"`,
 	items:           [dynamic]Bookmark `json:"items"`,
 }
 
@@ -162,7 +164,7 @@ record_clock :: proc(r: ^Bookmark) -> string {
 // Fractional positions
 // ---------------------------------------------------------------------------
 
-DIGITS :: "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz"
+DIGITS := "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz"
 
 @(private = "file")
 digit_of :: proc(c: u8) -> int {

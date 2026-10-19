@@ -284,11 +284,11 @@ edit_draw :: proc(ui: ^p.Ctx, e: ^Line_Edit, focused: bool, placeholder: string,
 caret :: proc(ui: ^p.Ctx, size: f32) {
 	if p.caret_on(ui) {
 		idx := p.div(ui, "w-px bg-foreground shrink-0")
-		p.style(ui, idx).height = p.px(size + 3)
+		p.style(ui, idx).h = p.px(size + 3)
 		p.end(ui)
 	} else {
 		idx := p.div(ui, "w-px shrink-0")
-		p.style(ui, idx).height = p.px(size + 3)
+		p.style(ui, idx).h = p.px(size + 3)
 		p.end(ui)
 	}
 }

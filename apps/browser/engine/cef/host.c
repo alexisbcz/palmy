@@ -14,8 +14,7 @@
  * Threads. CEF's browser-process message loop runs on the main thread
  * (cef_run_message_loop). A second thread only reads the socket and posts
  * each message to CEF's UI thread as a task, so every View is touched from
- * the UI thread alone. (`multi_threaded_message_loop` was tried first; with
- * the headless ozone platform cef_initialize never returned.) Writes to the socket come from the UI thread too,
+ * the UI thread alone. Writes to the socket come from the UI thread too,
  * but take a mutex anyway, because CEF calls a few handlers (downloads among
  * them) from wherever it likes.
  *
@@ -65,6 +64,7 @@
 #include "include/capi/cef_load_handler_capi.h"
 #include "include/capi/cef_menu_model_capi.h"
 #include "include/capi/cef_render_handler_capi.h"
+#include "include/capi/cef_request_context_capi.h"
 #include "include/capi/cef_request_handler_capi.h"
 #include "include/capi/cef_task_capi.h"
 #include "include/capi/cef_values_capi.h"
@@ -306,6 +306,7 @@ struct View {
 };
 
 static View* g_views[MAX_VIEWS];
+static int g_dark = -1; /* -1: follow whatever the system says */
 static int g_open_browsers;
 static int g_quitting;
 static char* g_profile;
@@ -776,6 +777,34 @@ static int CEF_CALLBACK ls_on_before_popup(cef_life_span_handler_t* self, cef_br
 	rel(b);
 	return 1; /* cancel CEF's own popup */
 }
+/* prefers-color-scheme follows the chrome's theme. CEF's
+ * set_chrome_color_scheme() only reaches Chrome-style browsers, and these are
+ * Alloy-style (windowless), so ask DevTools to emulate the media feature. */
+static void apply_theme(View* v) {
+	if (g_dark < 0 || !v || !v->browser) return;
+	cef_browser_host_t* h = v->browser->get_host(v->browser);
+	cef_dictionary_value_t* feature = cef_dictionary_value_create();
+	cef_string_t k = {0}, val = {0};
+	set16(&k, "name");
+	set16(&val, "prefers-color-scheme");
+	feature->set_string(feature, &k, &val);
+	set16(&k, "value");
+	set16(&val, g_dark ? "dark" : "light");
+	feature->set_string(feature, &k, &val);
+	cef_list_value_t* list = cef_list_value_create();
+	list->set_dictionary(list, 0, feature);
+	cef_dictionary_value_t* params = cef_dictionary_value_create();
+	set16(&k, "features");
+	params->set_list(params, &k, list);
+	cef_string_t method = {0};
+	set16(&method, "Emulation.setEmulatedMedia");
+	h->execute_dev_tools_method(h, 0, &method, params);
+	cef_string_clear(&method);
+	cef_string_clear(&k);
+	cef_string_clear(&val);
+	rel(h);
+}
+
 static void CEF_CALLBACK ls_on_after_created(cef_life_span_handler_t* self, cef_browser_t* b) {
 	View* v = VIEW_OF(Life, self);
 	v->browser = b; /* keep the reference we were given */
@@ -786,6 +815,7 @@ static void CEF_CALLBACK ls_on_after_created(cef_life_span_handler_t* self, cef_
 	if (!v->visible) h->was_hidden(h, 1);
 	if (v->focused) h->set_focus(h, 1);
 	rel(h);
+	apply_theme(v);
 	if (v->pending_url) {
 		cef_frame_t* f = b->get_main_frame(b);
 		cef_string_t s = {0};
@@ -1473,6 +1503,12 @@ static void handle(uint16_t op, uint16_t view, Rd* r) {
 		free(text);
 		break;
 	}
+	case PB_THEME: {
+		g_dark = rd_u8(r);
+		for (int i = 1; i < MAX_VIEWS; i++)
+			if (g_views[i]) apply_theme(g_views[i]);
+		break;
+	}
 	case PB_QUIT:
 		close_all();
 		break;
@@ -1554,6 +1590,13 @@ static void CEF_CALLBACK app_on_before_command_line_processing(cef_app_t* self, 
 		/* No GNOME keyring or KWallet on Palmframe; passwords stay in the
 		 * profile, encrypted with a fixed key (Chromium's "basic" store). */
 		add_switch(cl, "password-store", "basic");
+		/* On a new profile Chromium's first-run code shows an EULA dialog and
+		 * waits for it in a nested message loop; with no window system that
+		 * dialog never appears and cef_initialize() never returns. Found with
+		 * gdb against the unstripped libcef: ShowEulaDialog() under
+		 * PreMainMessageLoopRun. */
+		add_switch(cl, "no-first-run", NULL);
+		add_switch(cl, "no-default-browser-check", NULL);
 		add_switch(cl, "use-mock-keychain", NULL);
 		/* Without dmabuf there is nothing to gain from GPU compositing in an
 		 * off-screen view; WebGL still runs, on SwiftShader if need be. */
@@ -1652,12 +1695,26 @@ int main(int argc, char** argv) {
 	/* The API version this file was written against; CEF checks it. */
 	cef_api_hash(CEF_API_VERSION, 0);
 
-	/* No session bus. With the headless ozone platform and a live session
-	 * bus, cef_initialize() was observed never to return (CEF 152 under
-	 * Hyprland: the main thread parked in a GLib iteration waiting on a D-Bus
-	 * reply); without one it starts at once. Nothing an off-screen view needs
-	 * lives on the session bus -- and Palmframe does not run one anyway. */
+	/* No session bus. Nothing an off-screen view needs lives there --
+	 * Palmframe does not run one -- and on a desktop that does, Chromium
+	 * would read the colour scheme and other settings from the desktop's
+	 * portal instead of from the chrome. PALM_BROWSER_KEEP_DBUS=1 keeps it
+	 * (MPRIS media keys, notifications). */
 	if (!getenv("PALM_BROWSER_KEEP_DBUS")) unsetenv("DBUS_SESSION_BUS_ADDRESS");
+
+	/* A parent may start us with stdin closed. Then our socket would be fd 0,
+	 * and Chromium, which points the standard descriptors at /dev/null during
+	 * startup, would quietly replace it. Fill 0..2 first. */
+	for (;;) {
+		int fd = open("/dev/null", O_RDWR | O_CLOEXEC);
+		if (fd < 0) break;
+		if (fd > 2) {
+			close(fd);
+			break;
+		}
+		/* keep it: it now occupies a standard slot (without CLOEXEC there) */
+		fcntl(fd, F_SETFD, 0);
+	}
 
 	memset(&g_app, 0, sizeof g_app);
 	init_static(&g_app.base, sizeof g_app);

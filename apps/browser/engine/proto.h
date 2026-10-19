@@ -62,6 +62,7 @@ enum {
 	PB_QUIT = 19,          /* - */
 	PB_MENU_REPLY = 20,    /* u32 id, i32 command (-1 dismissed) */
 	PB_EDIT = 21,          /* u8 action (PB_EDIT_*), str text (for INSERT) */
+	PB_THEME = 22,         /* u8 dark: what prefers-color-scheme answers */
 };
 
 /* host -> chrome */

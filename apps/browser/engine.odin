@@ -85,6 +85,15 @@ exe_dir :: proc(allocator := context.temp_allocator) -> string {
 	return "."
 }
 
+own_binary :: proc() -> string {
+	buf: [4096]u8
+	n, err := linux.readlink("/proc/self/exe", buf[:])
+	if err != .NONE || n <= 0 {
+		return "browser"
+	}
+	return strings.clone(string(buf[:n]), context.temp_allocator)
+}
+
 // Engine_Info describes what is installed, for the settings page and
 // `browser engines`.
 Engine_Info :: struct {
@@ -209,10 +218,7 @@ engine_start :: proc(kind: Engine_Kind, prof: ^Profile, app: ^p.App, keymap := "
 	}
 	e.listen_fd = lfd
 
-	engine_dir := profile_path(prof, kind == .Chromium ? "" : "gecko")
-	if kind == .Chromium {
-		engine_dir = prof.dir
-	}
+	engine_dir := prof.dir
 	dl := downloads_dir(prof, context.temp_allocator)
 	args := make([dynamic]string, context.temp_allocator)
 	append(&args, e.host_path)
@@ -240,15 +246,20 @@ engine_start :: proc(kind: Engine_Kind, prof: ^Profile, app: ^p.App, keymap := "
 		return e
 	}
 	e.process = proc_
+	// a host that started but did not come up must not linger: it would hold
+	// the profile's lock and the next start would find the profile in use
+	defer if !e.ok {
+		_ = os.process_kill(e.process)
+		_, _ = os.process_wait(e.process, 2 * time.Second)
+	}
 
 	// Wait for the host to connect: Chromium's first start on a new profile
 	// takes a few seconds; Firefox's longer.
 	timeout := kind == .Chromium ? 20 : 40
-	fds := [1]linux.Poll_Fd{{fd = lfd, events = {.IN}}}
-	n, _ := linux.poll(fds[:], i32(timeout * 1000))
+	n := poll_for(lfd, timeout * 1000)
 	if n <= 0 {
 		e.error = fmt.aprintf("%s did not connect within %d s (see %s)", e.name, timeout, log_path)
-		os.process_kill(e.process)
+		_ = os.process_kill(e.process)
 		return e
 	}
 	cfd, aerr := linux.accept(lfd, cast(^linux.Sock_Addr_Un)nil, {.CLOEXEC})
@@ -262,8 +273,7 @@ engine_start :: proc(kind: Engine_Kind, prof: ^Profile, app: ^p.App, keymap := "
 	e.conn.fd = cfd
 
 	// the first message is HELLO
-	hfds := [1]linux.Poll_Fd{{fd = cfd, events = {.IN}}}
-	if hn, _ := linux.poll(hfds[:], i32(timeout * 1000)); hn <= 0 {
+	if poll_for(cfd, timeout * 1000) <= 0 {
 		e.error = fmt.aprintf("%s connected but never said hello (see %s)", e.name, log_path)
 		return e
 	}
@@ -289,6 +299,27 @@ engine_start :: proc(kind: Engine_Kind, prof: ^Profile, app: ^p.App, keymap := "
 	return e
 }
 
+// poll_for waits until `fd` is readable or the time is up, through signals:
+// a child exiting (SIGCHLD) must not read as a timeout.
+poll_for :: proc(fd: linux.Fd, ms: int) -> int {
+	start := time.tick_now()
+	for {
+		left := ms - int(time.duration_milliseconds(time.tick_since(start)))
+		if left <= 0 {
+			return 0
+		}
+		fds := [1]linux.Poll_Fd{{fd = fd, events = {.IN}}}
+		n, err := linux.poll(fds[:], i32(left))
+		if err == .EINTR {
+			continue
+		}
+		if err != .NONE {
+			return -1
+		}
+		return int(n)
+	}
+}
+
 engine_stop :: proc(e: ^Engine) {
 	if e == nil {
 		return
@@ -304,8 +335,8 @@ engine_stop :: proc(e: ^Engine) {
 				break
 			}
 		}
-		os.process_kill(e.process)
-		os.process_wait(e.process, 500 * time.Millisecond)
+		_ = os.process_kill(e.process)
+		_, _ = os.process_wait(e.process, 500 * time.Millisecond)
 		pb.conn_close(&e.conn)
 		if e.reader != nil {
 			thread.join(e.reader)
@@ -504,4 +535,5 @@ engine_dialog_reply :: proc(e: ^Engine, view: int, id: u32, ok: bool, text: stri
 }
 engine_menu_reply :: proc(e: ^Engine, view: int, id: u32, command: i32) {send(e, pb.req_menu_reply(view, id, command))}
 engine_edit :: proc(e: ^Engine, view: int, action: pb.Edit_Action, text := "") {send(e, pb.req_edit(view, action, text))}
+engine_theme :: proc(e: ^Engine, dark: bool) {send(e, pb.req_flag(.Theme, 0, dark))}
 engine_download_cancel :: proc(e: ^Engine, id: u32) {send(e, pb.req_u32(.Download_Cancel, 0, id))}

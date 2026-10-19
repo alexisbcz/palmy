@@ -32,6 +32,7 @@ Op :: enum u16 {
 	Quit            = 19,
 	Menu_Reply      = 20,
 	Edit            = 21,
+	Theme           = 22,
 	// host -> chrome
 	Hello           = 100,
 	Buffer          = 101,
@@ -424,7 +425,7 @@ decode_request :: proc(raw: []u8) -> (q: Request, ok: bool) {
 		q.w = r_i32(&r)
 		q.h = r_i32(&r)
 		q.scale = r_f32(&r)
-	case .Show, .Focus:
+	case .Show, .Focus, .Theme:
 		q.flag = r_u8(&r) != 0
 	case .Mouse:
 		q.mouse = Mouse_Kind(r_u8(&r))
@@ -678,7 +679,7 @@ keysym_rune :: proc(sym: u32) -> (r: rune, ok: bool) {
 	switch {
 	case sym >= 0x20 && sym <= 0x7e, sym >= 0xa0 && sym <= 0xff:
 		return rune(sym), true
-	case sym >= 0x01000100 && sym <= 0x0110ffff:
+	case sym >= 0x01000020 && sym <= 0x0110ffff:
 		return rune(sym - 0x01000000), true
 	}
 	return 0, false

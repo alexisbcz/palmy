@@ -327,7 +327,7 @@ downloads_dir :: proc(p: ^Profile, allocator := context.allocator) -> string {
 // write_atomic replaces a file in one step: write beside it, then rename, so a
 // crash leaves either the old file or the new one and never half of each.
 write_atomic :: proc(path: string, data: []u8) -> bool {
-	dir := filepath.dir(path, context.temp_allocator)
+	dir := filepath.dir(path)
 	if !os.exists(dir) {
 		os.make_directory_all(dir, os.perm(0o700))
 	}

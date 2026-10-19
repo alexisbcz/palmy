@@ -44,6 +44,9 @@ history_open :: proc(path, device: string) -> History {
 	}
 	forget_before: i64
 	forget := make(map[string]i64, context.temp_allocator)
+	// a visit whose title arrived later is written again with the same id;
+	// the later line wins
+	by_id := make(map[string]int, context.temp_allocator)
 	lines := strings.split_lines(string(data), context.temp_allocator)
 	for line in lines {
 		if strings.trim_space(line) == "" {
@@ -61,10 +64,15 @@ history_open :: proc(path, device: string) -> History {
 			forget[v.forget_url] = max(forget[v.forget_url], v.at)
 			continue
 		}
+		if i, ok := by_id[v.id]; ok && v.id != "" {
+			h.visits[i] = v
+			continue
+		}
+		by_id[v.id] = len(h.visits)
 		append(&h.visits, v)
 	}
 	// apply tombstones
-	keep := h.visits[:0]
+	n := 0
 	for v in h.visits {
 		if v.at <= forget_before {
 			continue
@@ -72,9 +80,10 @@ history_open :: proc(path, device: string) -> History {
 		if t, ok := forget[v.url]; ok && v.at <= t {
 			continue
 		}
-		append(&keep, v)
+		h.visits[n] = v
+		n += 1
 	}
-	resize(&h.visits, len(keep))
+	resize(&h.visits, n)
 	slice.sort_by(h.visits[:], proc(a, b: Visit) -> bool {return a.at < b.at})
 	if len(h.visits) > HISTORY_KEEP {
 		remove_range(&h.visits, 0, len(h.visits) - HISTORY_KEEP)
@@ -148,15 +157,16 @@ history_forget_all :: proc(h: ^History) -> int {
 
 history_forget_url :: proc(h: ^History, url: string) -> int {
 	n := 0
-	keep := h.visits[:0]
+	w := 0
 	for v in h.visits {
 		if v.url == url {
 			n += 1
 			continue
 		}
-		append(&keep, v)
+		h.visits[w] = v
+		w += 1
 	}
-	resize(&h.visits, len(keep))
+	resize(&h.visits, w)
 	history_append_line(h, Visit{forget_url = url, at = now_ms(), device = h.device})
 	return n
 }
