@@ -1,0 +1,36 @@
+# apps/browser autofill demo: keyboard only, Chromium, an account identity.
+#   recorded with apps/tools/headless-record.sh, a headless `vault autofill`
+#   (--allow once --delay 1500: the vault "thinks" for a moment, so the
+#   browser's waiting states show) and testdata/autofill/server.py
+wait 7
+# the email field has autofocus: Down opens the list; first use, so it offers to connect
+key Down
+wait 1.2
+key Return
+wait 4
+# paired: the logins of this identity for this site
+key Down
+wait 1.4
+key Return
+wait 3
+# filled; sign in
+key Return
+wait 3
+chord ctrl+l
+type https://bank.localhost:18444/change
+key Return
+wait 3.5
+# the current-password field: fill it from the vault too
+key Down
+wait 1.2
+key Return
+wait 3
+key Tab
+type a-brand-new-Pass-77
+key Tab
+type a-brand-new-Pass-77
+key Return
+wait 3
+# "Update the password?" has the keyboard
+key Return
+wait 4.5
