@@ -6,7 +6,7 @@
 -- dies with its token.
 begin;
 create extension if not exists pgtap with schema extensions;
-select plan(57);
+select plan(58);
 
 -- Two people. Alice has a personal and a work identity; Bob has one.
 insert into auth.users (id, email) values
@@ -39,6 +39,8 @@ insert into public.forge_issues (repo_id, author_identity_id, title)
 values ('f0000000-0000-0000-0000-000000000001', 'a1000000-0000-0000-0000-000000000001', 'private bug'),
        ('f0000000-0000-0000-0000-000000000002', 'a1000000-0000-0000-0000-000000000001', 'public bug');
 select is((select forge_repo_role('f0000000-0000-0000-0000-000000000001')), 'admin', 'the owner is admin of her repository');
+select lives_ok($$ insert into public.forge_repos (identity_id, name) values ('a1000000-0000-0000-0000-000000000001', 'scratch') returning id $$,
+	'creating a repository can return the new row (as PostgREST asks)');
 select is((select number from forge_issues where title = 'public bug'), 1, 'issues are numbered per repository');
 select lives_ok($$ select forge_record_push('f0000000-0000-0000-0000-000000000001', 'refs/heads/main',
 	repeat('0', 40), repeat('a', 40), '[{"sha":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","summary":"first"}]') $$,

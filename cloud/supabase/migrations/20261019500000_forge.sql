@@ -322,6 +322,16 @@ as $$
 	   and coalesce(public.forge_token_cap(), 'write') = 'write'
 $$;
 
+-- May this session see rows owned by `who`? can_access_identity, unless the
+-- session comes from a revoked or expired token.
+create function public.forge_owner_sees(who uuid) returns boolean
+language sql stable security definer
+set search_path = ''
+as $$
+	select public.can_access_identity(who)
+	   and coalesce(public.forge_token_cap(), '') <> 'none'
+$$;
+
 create function public.forge_role_rank(r text) returns integer
 language sql immutable
 as $$ select case r when 'admin' then 3 when 'write' then 2 when 'read' then 1 else 0 end $$;
@@ -626,9 +636,11 @@ begin
 end
 $$;
 
--- Repositories
+-- Repositories. The owner clause reads the row's own column rather than
+-- going through forge_repo_role, because a row inserted by the statement
+-- being checked (INSERT ... RETURNING) is not yet visible to a subquery.
 create policy forge_repos_select on public.forge_repos
-	for select using (public.forge_can_read(id));
+	for select using (public.forge_owner_sees(identity_id) or public.forge_can_read(id));
 create policy forge_repos_insert on public.forge_repos
 	for insert with check (public.forge_can_act(identity_id));
 create policy forge_repos_update on public.forge_repos
@@ -639,8 +651,8 @@ create policy forge_repos_delete on public.forge_repos
 
 -- Collaborators: the owner side manages; the grantee sees its own grants.
 create policy forge_collaborators_select on public.forge_collaborators
-	for select using (public.can_access_identity(identity_id)
-	                  or public.can_access_identity(grantee_identity_id));
+	for select using (public.forge_owner_sees(identity_id)
+	                  or public.forge_owner_sees(grantee_identity_id));
 create policy forge_collaborators_insert on public.forge_collaborators
 	for insert with check (public.forge_can_act(identity_id));
 create policy forge_collaborators_update on public.forge_collaborators
@@ -781,7 +793,7 @@ select c.id, c.repo_id, c.role, c.created_at, c.revoked_at, c.grantee_identity_i
        g.handle as grantee_handle, g.display_name as grantee_name, g.color as grantee_color
 from public.forge_collaborators c
 join public.identities g on g.id = c.grantee_identity_id
-where public.can_access_identity(c.identity_id) or public.can_access_identity(c.grantee_identity_id);
+where public.forge_owner_sees(c.identity_id) or public.forge_owner_sees(c.grantee_identity_id);
 
 --------------------------------------------------------------------------------
 -- Functions the server and the clients call
