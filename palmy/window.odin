@@ -75,6 +75,10 @@ Key_Event :: struct {
 	sym:    u32,
 	mods:   Modifiers,
 	repeat: bool,
+	// The keysym at the key's first shift level in the active layout, with
+	// whatever modifiers are held ignored: `'2'` when Shift+2 arrives as
+	// `sym = '@'`. 0 when unknown (synthetic input that did not say).
+	unshifted: u32,
 }
 
 // Input holds everything that happened since the previous frame. Edge state
@@ -659,7 +663,15 @@ window_pump :: proc(w: ^Window) -> bool {
 @(private)
 feed_key :: proc(w: ^Window, code: u32, repeat: bool) {
 	sym := keymap_sym(&w.keymap, code)
-	append(&w.input.keys, Key_Event{sym = sym, mods = w.input.mods, repeat = repeat})
+	append(
+		&w.input.keys,
+		Key_Event {
+			sym = sym,
+			mods = w.input.mods,
+			repeat = repeat,
+			unshifted = keymap_unshifted_sym(&w.keymap, code),
+		},
+	)
 
 	// Printable input, resolved through the keymap so that layouts and dead
 	// keys behave the way the rest of the desktop does.
@@ -762,6 +774,13 @@ is_maximized :: proc(app: ^App) -> bool {
 
 is_fullscreen :: proc(app: ^App) -> bool {
 	return app.win.fullscreen
+}
+
+// window_size is the window's size in logical pixels, readable outside a
+// frame -- `size(ui)` is the same thing from inside one. The offscreen half
+// is `offscreen_size`.
+window_size :: proc(app: ^App) -> [2]int {
+	return {app.win.width, app.win.height}
 }
 
 // window_focused reports whether the window has keyboard focus, which is worth

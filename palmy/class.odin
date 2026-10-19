@@ -1,7 +1,10 @@
 package palmy
 
+import "base:runtime"
+import "core:fmt"
 import "core:strconv"
 import "core:strings"
+import "core:sync"
 
 Direction :: enum u8 {
 	Row,
@@ -314,11 +317,80 @@ scale :: proc(t: string) -> (f32, bool) {
 		return 0, false
 	}
 	if len(t) >= 3 && t[0] == '[' && t[len(t) - 1] == ']' {
-		v, ok := strconv.parse_f32(t[1:len(t) - 1])
-		return v, ok
+		v, unit, ok := bracket_value(t)
+		if ok && unit == .Px {
+			return v, true
+		}
+		if ok && unit == .Pct {
+			class_warn(t, "a percentage only means something as a width, height or inset (`w-[50%]`)")
+		}
+		return 0, false
 	}
 	v, ok := strconv.parse_f32(t)
 	return v * 4, ok
+}
+
+// Bracket_Unit is the unit an arbitrary value was written in.
+@(private)
+Bracket_Unit :: enum u8 {
+	Px, // `[12]` or `[12px]`: palmy's bracket values are exact pixels
+	Pct, // `[50%]`
+}
+
+// bracket_value reads `[N]`, `[Npx]` or `[N%]`. `px` is accepted because it
+// is the real Tailwind spelling and means exactly what the bare number
+// already does here. `%` is returned as such, for the callers where it means
+// something. `rem` and `em` are refused: they need a root font size this
+// toolkit does not have, and guessing 16 would be right on some screens and
+// silently wrong on others. Every refusal is reported (see `class_warn`):
+// the class used to vanish without a word, which is how `max-w-[420px]` made
+// a real bug look fixed.
+@(private)
+bracket_value :: proc(t: string) -> (v: f32, unit: Bracket_Unit, ok: bool) {
+	if len(t) < 3 || t[0] != '[' || t[len(t) - 1] != ']' {
+		return 0, .Px, false
+	}
+	inner := t[1:len(t) - 1]
+	switch {
+	case strings.has_suffix(inner, "px"):
+		inner = inner[:len(inner) - 2]
+	case strings.has_suffix(inner, "%"):
+		inner = inner[:len(inner) - 1]
+		unit = .Pct
+	case strings.has_suffix(inner, "rem"), strings.has_suffix(inner, "em"):
+		if _, isnum := strconv.parse_f32(strings.trim_right(inner, "rem")); isnum {
+			class_warn(t, "rem and em need a root font size palmy does not have; write pixels")
+		}
+		return 0, .Px, false
+	}
+	n, nok := strconv.parse_f32(inner)
+	if !nok {
+		// Not reported: the same brackets carry colours (`text-[#fff]`),
+		// which the caller tries next.
+		return 0, .Px, false
+	}
+	return n, unit, true
+}
+
+// class_warn reports a class value palmy had to drop, once per value, on
+// stderr. A dropped class changes nothing on screen, so without this the
+// only symptom is a layout that quietly ignores what it was told.
+@(private)
+g_class_warned: map[string]bool
+@(private)
+g_class_warn_lock: sync.Mutex
+
+@(private)
+class_warn :: proc(t, why: string) {
+	sync.mutex_lock(&g_class_warn_lock)
+	defer sync.mutex_unlock(&g_class_warn_lock)
+	if t in g_class_warned {
+		return
+	}
+	// Process-lifetime bookkeeping, not the caller's allocation.
+	context.allocator = runtime.heap_allocator()
+	g_class_warned[strings.clone(t)] = true
+	fmt.eprintfln("palmy: dropped the class value %s: %s", t, why)
 }
 
 @(private)
@@ -340,6 +412,13 @@ dim_of :: proc(t: string) -> (Dim, bool) {
 		b, bok := strconv.parse_f32(t[slash + 1:])
 		if aok && bok && b != 0 {
 			return pct(a / b * 100), true
+		}
+		return AUTO, false
+	}
+	if len(t) >= 3 && t[0] == '[' {
+		// `w-[420px]`, `w-[420]`, `max-h-[86%]`.
+		if v, unit, ok := bracket_value(t); ok {
+			return unit == .Pct ? pct(v) : px(v), true
 		}
 		return AUTO, false
 	}

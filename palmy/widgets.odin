@@ -10,11 +10,17 @@ import "core:time"
 push_styled :: proc(ctx: ^Ctx, kind: Node_Kind, base, user: string, disabled := false) -> int {
 	idx := push_node(ctx, kind, base, disabled)
 	if user != "" {
+		// `current` in the caller's classes means the colour the widget's
+		// text ends up with, as it does for everything built with `div`:
+		// `button(ui, "Save", "border-current")` used to keep the sentinel
+		// and draw no border at all.
+		before := ctx.nodes[idx].style.fg
 		apply_classes(
 			&ctx.nodes[idx].style,
 			user,
 			interaction_of(ctx, ctx.nodes[idx].id, disabled),
 		)
+		resolve_current(&ctx.nodes[idx].style, before)
 	}
 	return idx
 }

@@ -270,6 +270,14 @@ key_event_from :: proc(k: p.Key_Event, buf: []u8) -> vt.Key_Event {
 		n := vt.utf8_encode(buf, cp)
 		ev.utf8 = string(buf[:n])
 		ev.unshifted_codepoint = unshift_us(cp)
+		// palmy reports the key's own first-level keysym now, which is
+		// right on every layout; the US reverse table is only the fallback
+		// for input that did not carry it.
+		if k.unshifted != 0 {
+			if r := p.keysym_to_rune(k.unshifted); r != 0 {
+				ev.unshifted_codepoint = r
+			}
+		}
 	}
 	// A control chord has no text: the layout would have produced the
 	// control character and the encoder works that out for itself.

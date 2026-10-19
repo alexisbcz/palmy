@@ -97,6 +97,14 @@ Xkb :: struct {
 	xkb_state_key_get_utf8:     proc "c" (st: rawptr, key: u32, buf: [^]u8, size: uint) -> i32,
 	xkb_state_key_get_one_sym:  proc "c" (st: rawptr, key: u32) -> u32,
 	xkb_state_mod_name_is_active: proc "c" (st: rawptr, name: cstring, type: u32) -> i32,
+	xkb_state_key_get_layout:   proc "c" (st: rawptr, key: u32) -> u32,
+	xkb_keymap_key_get_syms_by_level: proc "c" (
+		km: rawptr,
+		key: u32,
+		layout: u32,
+		level: u32,
+		syms_out: ^[^]u32,
+	) -> i32,
 	__handle:                   dynlib.Library,
 }
 
@@ -249,6 +257,36 @@ keymap_sym :: proc(k: ^Keymap, code: u32) -> u32 {
 		return xkb_api.xkb_state_key_get_one_sym(k.state, code + 8)
 	}
 	return fallback_sym(code, .Shift in k.mods)
+}
+
+// keymap_unshifted_sym is the keysym a key produces at its first shift
+// level, in the layout currently active, whatever modifiers are held: `2` for
+// the key that gives `@` with Shift on a US board, `é` on a French one. A
+// terminal's key encoder needs it to tell Ctrl+Shift+2 from Ctrl+@.
+keymap_unshifted_sym :: proc(k: ^Keymap, code: u32) -> u32 {
+	if k.x_syms != nil {
+		kc := code + 8
+		if k.x_per <= 0 || kc < k.x_first {
+			return 0
+		}
+		row := int(kc - k.x_first) * k.x_per
+		if row >= len(k.x_syms) {
+			return 0
+		}
+		// A single keysym in a group stands for a cased pair; its first
+		// level is the lower case.
+		return keysym_lower(k.x_syms[row])
+	}
+	if k.state != nil && k.keymap != nil &&
+	   xkb_api.xkb_state_key_get_layout != nil && xkb_api.xkb_keymap_key_get_syms_by_level != nil {
+		layout := xkb_api.xkb_state_key_get_layout(k.state, code + 8)
+		syms: [^]u32
+		if xkb_api.xkb_keymap_key_get_syms_by_level(k.keymap, code + 8, layout, 0, &syms) > 0 {
+			return syms[0]
+		}
+		return 0
+	}
+	return fallback_sym(code, false)
 }
 
 // keymap_utf8 writes the text produced by a keycode, if any.
