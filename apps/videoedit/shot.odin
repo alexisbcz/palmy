@@ -18,13 +18,18 @@ import "core:os"
 import "core:strconv"
 import "core:strings"
 import "core:time"
+import kit "kit:."
 import p "palmy:."
 import sc "shadcn:."
 
 SHOT_W :: 1500
 SHOT_H :: 900
 
-FONT_DIR :: "/home/alex/Work/palmy/parity/web/public/fonts"
+// Geist, where the fonts package installs it, else where kit loads it from
+// in a checkout.
+font_dir :: proc() -> string {
+	return os.is_dir(SYSTEM_GEIST) ? SYSTEM_GEIST : kit.FONT_DIR
+}
 MONO_CANDIDATES := [?]string {
 	"/usr/share/fonts/TTF/JetBrainsMonoNerdFont-Regular.ttf",
 	"/usr/share/fonts/TTF/DejaVuSansMono.ttf",
@@ -43,7 +48,7 @@ load_shot_fonts :: proc(f: ^p.Fonts) {
 		{"Geist-600.ttf", .Semibold},
 		{"Geist-700.ttf", .Bold},
 	}) {
-		p.load_font(f, fmt.tprintf("%s/%s", FONT_DIR, pair.file), .Sans, pair.wt)
+		p.load_font(f, fmt.tprintf("%s/%s", font_dir(), pair.file), .Sans, pair.wt)
 	}
 	for path in MONO_CANDIDATES {
 		if p.load_font(f, path, .Mono, .Regular) {
@@ -214,13 +219,13 @@ shot :: proc(out_path: string, at: f64) {
 	ed.sel = -1
 	ed.cur_track = 1
 	project_init(&ed.pr)
-	// DEFAULT_EXPORT and DEFAULT_PROJECT are this development tree's own
-	// paths, and the export and project fields render them in full. A frame
-	// that goes into the documentation must not carry the name of whoever
-	// built the binary, so a screenshot run can point them somewhere
-	// innocuous. Unset, which is the normal case, nothing changes.
-	set_str(&ed.buf_export, shot_path_env("PALMY_VIDEOEDIT_EXPORT", DEFAULT_EXPORT))
-	set_str(&ed.buf_project, shot_path_env("PALMY_VIDEOEDIT_PROJECT", DEFAULT_PROJECT))
+	// default_export and default_project are under the home directory of
+	// whoever runs this, and the export and project fields render them in
+	// full. A frame that goes into the documentation must not carry that
+	// name, so a screenshot run can point them somewhere innocuous. Unset,
+	// which is the normal case, nothing changes.
+	set_str(&ed.buf_export, shot_path_env("PALMY_VIDEOEDIT_EXPORT", default_export()))
+	set_str(&ed.buf_project, shot_path_env("PALMY_VIDEOEDIT_PROJECT", default_project()))
 	set_str(&ed.buf_caption, shot_path_env("PALMY_VIDEOEDIT_CAPTION", default_caption_path()))
 	set_str(&ed.buf_title, "VIDEOEDIT")
 

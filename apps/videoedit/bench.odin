@@ -238,7 +238,7 @@ bench_editor :: proc(probe: bool) -> ^Editor {
 			append(
 				&ed.pr.media,
 				Media {
-					path = strings.clone(fmt.tprintf("%s/%s", MEDIA_DIR, name)),
+					path = strings.clone(fmt.tprintf("%s/%s", media_dir(), name)),
 					name = strings.clone(name),
 					duration = 8,
 					width = 1280,
@@ -414,7 +414,7 @@ audio_bench :: proc(secs: f64, silent: bool) {
 	ed := bench_editor(true)
 	defer bench_editor_destroy(ed)
 	if len(ed.pr.media) == 0 {
-		fmt.println("  no media in", MEDIA_DIR, "— nothing to measure")
+		fmt.println("  no media in", media_dir(), "— nothing to measure")
 		os.exit(1)
 	}
 	auto_layout(ed)

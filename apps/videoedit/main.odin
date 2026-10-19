@@ -176,8 +176,8 @@ main :: proc() {
 	ed.cur_track = 1
 	project_init(&ed.pr)
 
-	set_str(&ed.buf_export, DEFAULT_EXPORT)
-	set_str(&ed.buf_project, DEFAULT_PROJECT)
+	set_str(&ed.buf_export, default_export())
+	set_str(&ed.buf_project, default_project())
 	set_str(&ed.buf_caption, default_caption_path())
 	set_str(&ed.buf_title, "VIDEOEDIT")
 
@@ -328,20 +328,62 @@ buf_str :: proc(buf: ^[dynamic]u8) -> string {
 // Discovery helpers
 // ---------------------------------------------------------------------------
 
-MEDIA_DIR :: "/home/alex/Work/palmy/apps/videoedit/media"
-// Absolute, because the app may be started from anywhere — a relative export
-// path that silently lands in someone else's working directory is worse than
-// a long one in the field.
-DEFAULT_EXPORT :: "/home/alex/Work/palmy/apps/videoedit/export.mp4"
-DEFAULT_PROJECT :: "/home/alex/Work/palmy/apps/videoedit/project.vep"
-// Where the captioning app's output turns up. It writes next to the media it
-// transcribed, and its own working files land in the XDG cache directory, so
-// both are searched — the interop is "read the file it wrote", nothing more.
-CAPTIONS_DIR :: "/home/alex/Work/palmy/apps/captions"
+// Where the editor looks for media, writes its export and keeps its project.
+// They used to be this checkout's absolute paths, which exist on exactly one
+// machine. Now: $PALMY_VIDEOEDIT_MEDIA if set; else the checkout's bundled
+// test media when run from the repository root (the selftest and the bench
+// use it); else the user's videos folder, ~/Videos, or the home directory.
+// The export and project paths stay absolute, because the app may be started
+// from anywhere: a relative export path that silently lands in someone
+// else's working directory is worse than a long one in the field.
+CHECKOUT_MEDIA :: "apps/videoedit/media"
+CHECKOUT_CAPTIONS :: "apps/captions"
+
+media_dir :: proc() -> string {
+	if d := os.get_env("PALMY_VIDEOEDIT_MEDIA", context.temp_allocator); d != "" {
+		return d
+	}
+	if os.is_dir(CHECKOUT_MEDIA) {
+		if abs, err := os.get_absolute_path(CHECKOUT_MEDIA, context.temp_allocator); err == nil {
+			return abs
+		}
+	}
+	return videos_dir()
+}
+
+// videos_dir is ~/Videos when it exists, else the home directory.
+videos_dir :: proc() -> string {
+	home := os.get_env("HOME", context.temp_allocator)
+	if home == "" {
+		home = "/tmp"
+	}
+	v := fmt.tprintf("%s/Videos", home)
+	return os.is_dir(v) ? v : home
+}
+
+default_export :: proc() -> string {
+	return fmt.tprintf("%s/export.mp4", videos_dir())
+}
+
+default_project :: proc() -> string {
+	return fmt.tprintf("%s/project.vep", videos_dir())
+}
+
+// captions_dir is where the captioning app's output turns up. It writes next
+// to the media it transcribed, and its own working files land in the XDG
+// cache directory, so those are searched too (default_caption_path) — the
+// interop is "read the file it wrote", nothing more. Its development tree
+// only when run from the checkout.
+captions_dir :: proc() -> string {
+	if d := os.get_env("PALMY_CAPTIONS_DIR", context.temp_allocator); d != "" {
+		return d
+	}
+	return os.is_dir(CHECKOUT_CAPTIONS) ? CHECKOUT_CAPTIONS : ""
+}
 
 discover_media :: proc() -> []string {
 	out := make([dynamic]string, context.temp_allocator)
-	infos, rerr := os.read_all_directory_by_path(MEDIA_DIR, context.temp_allocator)
+	infos, rerr := os.read_all_directory_by_path(media_dir(), context.temp_allocator)
 	if rerr != nil {
 		return out[:]
 	}
@@ -377,7 +419,10 @@ default_caption_path :: proc() -> string {
 		cache = fmt.tprintf("%s/.cache", os.get_env("HOME", context.temp_allocator))
 	}
 	captions_cache := fmt.tprintf("%s/palmy-captions", cache)
-	for dir in ([?]string{CAPTIONS_DIR, captions_cache, MEDIA_DIR}) {
+	for dir in ([?]string{captions_dir(), captions_cache, media_dir()}) {
+		if dir == "" {
+			continue
+		}
 		infos, rerr := os.read_all_directory_by_path(dir, context.temp_allocator)
 		if rerr != nil {
 			continue

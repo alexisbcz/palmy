@@ -30,9 +30,17 @@ import "core:strconv"
 import "core:strings"
 import "core:sync"
 import "core:thread"
+import kit "kit:."
 import p "palmy:."
 
-TITLE_FONT :: "/home/alex/Work/palmy/parity/web/public/fonts/Geist-600.ttf"
+// The title card's font, for ffmpeg's drawtext: Geist SemiBold where the
+// fonts package installs it, else in the checkout kit loads it from.
+SYSTEM_GEIST :: "/usr/share/fonts/geist"
+
+title_font :: proc() -> string {
+	sys := SYSTEM_GEIST + "/Geist-600.ttf"
+	return os.exists(sys) ? sys : fmt.tprintf("%s/Geist-600.ttf", kit.FONT_DIR)
+}
 
 Export_Quality :: enum u8 {
 	Draft,
@@ -249,7 +257,7 @@ build_export :: proc(
 			"box=1:boxcolor=black@0.45:boxborderw=10:" +
 			"enable='between(t\\,%.4f\\,%.4f)'[t%d];",
 			cur,
-			quote_path(TITLE_FONT),
+			quote_path(title_font()),
 			quote_path(tf),
 			max(8, size),
 			c.color & 0xffffff,

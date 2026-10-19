@@ -985,7 +985,7 @@ test_audio_mix :: proc() {
 
 test_audio_live :: proc() {
 	section("the live mixer and the seek flush")
-	src := fmt.tprintf("%s/bars.mp4", MEDIA_DIR)
+	src := fmt.tprintf("%s/bars.mp4", media_dir())
 	if _, err := os.stat(src, context.temp_allocator); err != nil {
 		fmt.println("  skipped: the bundled test media is not present")
 		return
@@ -1120,7 +1120,7 @@ test_audio_live :: proc() {
 
 test_reprobe :: proc() {
 	section("re-probing a loaded project")
-	src := fmt.tprintf("%s/bars.mp4", MEDIA_DIR)
+	src := fmt.tprintf("%s/bars.mp4", media_dir())
 	if _, err := os.stat(src, context.temp_allocator); err != nil {
 		fmt.println("  skipped: the bundled test media is not present")
 		return
