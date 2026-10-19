@@ -210,6 +210,26 @@ Cfg :: struct {
 	wallpaper_color: u32,
 	wallpaper_flat:  bool,
 
+	// The shell's look (theme.odin) and the start menu (start.odin).
+	light:           bool, // theme = light
+	accent:          u32,
+	border_focus_user:   bool, // the file set border_focus: it no longer follows the accent
+	border_unfocus_user: bool,
+	super_menu:      bool, // super_tap = menu (on): the tap opens the start menu, not the overview
+	bar_pins:        bool, // the bar shows the apps pinned to it
+
+	// Pointer and keyboard (evdev.odin's Ev_Config, which bare metal reads).
+	natural_scroll:  bool,
+	tap_to_click:    bool,
+	left_handed:     bool,
+	pointer_speed:   f32, // -1 slow .. 0 default .. 1 fast
+	repeat_rate:     int, // keys per second
+	repeat_delay:    int, // milliseconds
+
+	// The session's time zone (a tzdata name, "" for the system's), which
+	// the clock shows and every program the wm starts inherits as TZ.
+	timezone:        string,
+
 	binds:           [dynamic]Cfg_Bind,
 	rules:           [dynamic]Cfg_Rule,
 	outputs:         [dynamic]Cfg_Output,
@@ -263,10 +283,34 @@ focus_new           = smart
 # Motion. off, on, or reduced (fades only).
 animations          = on
 
-# A lone tap of SUPER opens the overview, as does pushing the pointer into
-# the top-left corner.
+# A lone tap of SUPER opens the start menu (super_tap = overview opens the
+# overview instead, off neither); pushing the pointer into the top-left
+# corner and waiting opens the overview, and SUPER+W always does.
 super_tap           = on
 hot_corner          = on
+
+# The look of the bar, the title bars and the menus -- dark or light -- and
+# the accent that marks the current workspace, the focused window and
+# selections. Settings writes these.
+theme               = dark
+accent              = #6366f1
+
+# The apps pinned to the bar, beside the start button (pin them from the
+# start menu or a window's menu).
+bar_pins            = on
+
+# Mouse, touchpad and keyboard repeat, on bare metal (nested, the host's
+# settings apply).
+natural_scroll      = off
+tap_to_click        = on
+left_handed         = off
+pointer_speed       = 0
+repeat_rate         = 25
+repeat_delay        = 400
+
+# The time zone the clock shows and every program started here inherits as
+# TZ, when it is not the system's (/etc/localtime):
+#   timezone        = Europe/Paris
 
 # The desktop: a picture (fill, fit, center or tile), or a flat colour, or
 # by default a generated gradient.
@@ -483,12 +527,75 @@ cfg_scalars :: proc(c: ^Cfg) {
 	c.wallpaper_mode = .Fill
 	c.wallpaper_color = 0
 	c.wallpaper_flat = false
+	c.light = false
+	c.accent = ACCENT_DEFAULT
+	c.border_focus_user = false
+	c.border_unfocus_user = false
+	c.super_menu = true
+	c.bar_pins = true
+	c.natural_scroll = false
+	c.tap_to_click = true
+	c.left_handed = false
+	c.pointer_speed = 0
+	c.repeat_rate = 25
+	c.repeat_delay = 400
+	if c.timezone != "" {delete(c.timezone)}
+	c.timezone = ""
 }
 
 // cfg_load resets `c` to the compiled-in default and then, if a file exists,
 // layers it on top. A broken line is reported and skipped: a typo in one
 // binding must never cost you every other binding.
 cfg_load :: proc(c: ^Cfg) {
+	cfg_load_file(c)
+	cfg_apply_shell(c)
+}
+
+// cfg_apply_shell hands what the file says about the look, the pointer, the
+// keyboard repeat and the time zone to the places that use them, which are
+// not the Cfg: the shell palette, the evdev settings bare metal reads, and
+// the TZ every spawned program inherits.
+cfg_apply_shell :: proc(c: ^Cfg) {
+	pal_apply(c.light, c.accent)
+	if !c.border_focus_user {
+		c.border_focus = c.accent
+	}
+	if !c.border_unfocus_user {
+		c.border_unfocus = c.light ? 0xd4d4d8 : 0x27272a
+	}
+	ev_cfg.natural_scroll = c.natural_scroll
+	ev_cfg.tap_to_click = c.tap_to_click
+	ev_cfg.left_handed = c.left_handed
+	ev_cfg.accel_speed = f64(c.pointer_speed)
+	ev_cfg.repeat_rate = c.repeat_rate
+	ev_cfg.repeat_delay = c.repeat_delay
+	cfg_apply_timezone(c.timezone)
+}
+
+// The TZ the session started with, so `timezone =` removed from the file
+// gives back what was there rather than nothing.
+@(private = "file")
+tz_saved: struct {
+	done:  bool,
+	value: string,
+}
+
+cfg_apply_timezone :: proc(zone: string) {
+	if !tz_saved.done {
+		tz_saved.done = true
+		tz_saved.value = strings.clone(os.get_env("TZ", context.temp_allocator))
+	}
+	z := strings.trim_space(zone)
+	if z != "" && !strings.contains(z, "..") && os.exists(fmt.tprintf("/usr/share/zoneinfo/%s", z)) {
+		os.set_env("TZ", fmt.tprintf(":%s", z))
+	} else if tz_saved.value != "" {
+		os.set_env("TZ", tz_saved.value)
+	} else {
+		os.unset_env("TZ")
+	}
+}
+
+cfg_load_file :: proc(c: ^Cfg) {
 	cfg_free(c)
 	cfg_scalars(c)
 	cfg_parse(c, CFG_DEFAULT, "<built-in>")
@@ -638,8 +745,38 @@ cfg_set :: proc(c: ^Cfg, name, val, src: string, n: int) {
 		c.border = clamp(cfg_int(val, c.border), 0, 32)
 	case "border_focus":
 		c.border_focus = cfg_color(val, c.border_focus)
+		c.border_focus_user = src != "<built-in>"
 	case "border_unfocus":
 		c.border_unfocus = cfg_color(val, c.border_unfocus)
+		c.border_unfocus_user = src != "<built-in>"
+	case "theme":
+		switch strings.to_lower(val, context.temp_allocator) {
+		case "light":
+			c.light = true
+		case "dark":
+			c.light = false
+		case:
+			cfg_err(c, src, n, "theme is dark or light, not %q", val)
+		}
+	case "accent":
+		c.accent = cfg_color(val, c.accent) & 0xffffff
+	case "bar_pins":
+		c.bar_pins = cfg_bool(val, c.bar_pins)
+	case "natural_scroll":
+		c.natural_scroll = cfg_bool(val, c.natural_scroll)
+	case "tap_to_click":
+		c.tap_to_click = cfg_bool(val, c.tap_to_click)
+	case "left_handed":
+		c.left_handed = cfg_bool(val, c.left_handed)
+	case "pointer_speed":
+		c.pointer_speed = clamp(cfg_f32(val, c.pointer_speed), -1, 1)
+	case "repeat_rate":
+		c.repeat_rate = clamp(cfg_int(val, c.repeat_rate), 0, 100)
+	case "repeat_delay":
+		c.repeat_delay = clamp(cfg_int(val, c.repeat_delay), 100, 2000)
+	case "timezone":
+		if c.timezone != "" {delete(c.timezone)}
+		c.timezone = strings.clone(val)
 	case "title_bar":
 		c.title_bar = cfg_bool(val, c.title_bar)
 	case "title_h":
@@ -723,7 +860,16 @@ cfg_set :: proc(c: ^Cfg, name, val, src: string, n: int) {
 	case "hot_corner":
 		c.hot_corner = cfg_bool(val, c.hot_corner)
 	case "super_tap":
-		c.super_tap = cfg_bool(val, c.super_tap)
+		// on/menu: the start menu; overview: the overview, as it was; off.
+		switch strings.to_lower(strings.trim_space(val), context.temp_allocator) {
+		case "menu", "start":
+			c.super_tap, c.super_menu = true, true
+		case "overview":
+			c.super_tap, c.super_menu = true, false
+		case:
+			c.super_tap = cfg_bool(val, c.super_tap)
+			c.super_menu = true
+		}
 	case "wallpaper":
 		delete(c.wallpaper)
 		c.wallpaper = cfg_expand_home(val)

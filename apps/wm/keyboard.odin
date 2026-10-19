@@ -52,11 +52,29 @@ KBD_CONF_DEFAULT :: "/etc/palm/keyboard"
 
 // kbd_conf_path is the file, or PALMY_WM_KEYBOARD_CONF so the self test and
 // a nested run can point it elsewhere without touching /etc.
+//
+// Between the two, a person's own choice: $XDG_CONFIG_HOME/palmy/keyboard
+// (same format), which Settings writes when someone picks a layout for their
+// session rather than for the machine. When it exists it is the file; when
+// it is removed the system's applies again, within the second.
 kbd_conf_path :: proc() -> string {
 	if v := os.get_env("PALMY_WM_KEYBOARD_CONF", context.temp_allocator); v != "" {
 		return v
 	}
+	if u := kbd_user_conf_path(); u != "" && os.exists(u) {
+		return u
+	}
 	return KBD_CONF_DEFAULT
+}
+
+kbd_user_conf_path :: proc() -> string {
+	if x := os.get_env("XDG_CONFIG_HOME", context.temp_allocator); x != "" {
+		return fmt.tprintf("%s/palmy/keyboard", x)
+	}
+	if h := os.get_env("HOME", context.temp_allocator); h != "" {
+		return fmt.tprintf("%s/.config/palmy/keyboard", h)
+	}
+	return ""
 }
 
 // ---------------------------------------------------------------------------

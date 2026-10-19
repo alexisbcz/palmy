@@ -64,6 +64,7 @@ overview_toggle :: proc(s: ^Server) {
 		return
 	}
 	menu_close(s)
+	start_close(s)
 	ov.open = true
 	ov.out = s.cur_out
 	ov.sel = 0

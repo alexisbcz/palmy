@@ -995,11 +995,12 @@ bare_main :: proc(display, conf: string) -> int {
 		if now := wall_now(); now - s.cfg_check_at > 1.0 {
 			s.cfg_check_at = now
 			if cfg_changed(&s.cfg) {
-				wm_reload(s)
+				wm_reload(s, quiet = true)
 			}
 			want_frame = true
 		}
 		ws_tick(s)
+		state_publish(s)
 		// Every place that changes what the compositor draws says so with
 		// s.dirty; on bare metal that is a full repaint. Commits and the
 		// pointer over a client have already added their own, smaller damage.

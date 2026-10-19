@@ -120,6 +120,13 @@ shots :: proc(dir: string) -> int {
 	step(s, app, cv)
 	shot(off, dir, "04-wm-maximised", &n)
 
+	// The start menu, the desktop menu and the power menu, dark and light
+	// (shell_shot.odin), over the windows as they are.
+	gallery.maximized = false
+	gallery.x, gallery.y, gallery.w, gallery.h = gallery.saved[0], gallery.saved[1], gallery.saved[2], gallery.saved[3]
+	repaint(gallery, paint_gallery)
+	shell_shots(s, app, cv, off, dir, &n)
+
 	// And the empty desktop, which is what a nested compositor shows before
 	// anything has connected to it.
 	clear(&s.stack)

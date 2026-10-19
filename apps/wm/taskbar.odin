@@ -19,10 +19,12 @@ package wm
 
 import "core:fmt"
 import "core:strings"
+import ai "kit:appindex"
 import p "palmy:."
 
 Bar_Hit_Kind :: enum u8 {
-	Brand,
+	Brand, // the start button
+	Pin, // idx: an app pinned to the bar (start.odin's entry index)
 	Workspace,
 	Layout,
 	Entry,
@@ -74,8 +76,8 @@ draw_bar :: proc(s: ^Server, app: ^p.App, cv: ^p.Canvas, oi, ws_idx: int) {
 	Y := f32(o.y)
 	W := f32(o.w)
 	H := f32(s.cfg.bar_h)
-	p.fill_rect(cv, {X, Y, W, H}, p.hex(BAR_BG))
-	p.fill_rect(cv, {X, Y + H - 1, W, 1}, p.hex(0x27272a))
+	p.fill_rect(cv, {X, Y, W, H}, p.hex(pal.bar_bg))
+	p.fill_rect(cv, {X, Y + H - 1, W, 1}, p.hex(pal.bar_line))
 	cy := Y + H / 2
 	mid := cy + 4.5
 
@@ -84,15 +86,56 @@ draw_bar :: proc(s: ^Server, app: ^p.App, cv: ^p.Canvas, oi, ws_idx: int) {
 		return bar_hover == len(bar_hits) - 1
 	}
 
-	// The brand.
+	// The start button: the brand, which opens the start menu (start.odin).
+	// Its hit area runs to the corner of the screen, so a pointer thrown
+	// into the corner and clicked lands on it.
 	brand := session.bare ? "Palmframe" : "palmy wm"
 	bw := p.text_width(f, brand, 13, .Sans, .Semibold)
-	hit(.Brand, {X + 4, Y, bw + 40, H}, 0, nil, oi)
+	bhot := hit(.Brand, {X, Y, bw + 46, H}, 0, nil, oi)
+	{
+		r := p.Rect{X + 5, cy - 12, bw + 38, 24}
+		open_here := start.open && start.out == oi
+		if open_here || bhot {
+			p.fill_round_rect(cv, r, {6, 6, 6, 6}, p.hex(open_here ? pal.entry_focus : pal.chip_hover))
+		}
+	}
 	p.fill_round_rect(cv, {X + 12, cy - 7, 14, 14}, {4, 4, 4, 4}, p.hex(ACCENT))
-	p.fill_round_rect(cv, {X + 16, cy - 3, 6, 6}, {2, 2, 2, 2}, p.hexa(0xffffffcc))
+	p.fill_round_rect(cv, {X + 16, cy - 3, 6, 6}, {2, 2, 2, 2}, with_alpha(pal.on_accent, 0.8))
 	x := X + 34
-	x += p.draw_text(cv, f, brand, x, mid, 13, p.hex(TEXT_ON), .Sans, .Semibold)
-	x += 12
+	x += p.draw_text(cv, f, brand, x, mid, 13, p.hex(pal.bar_text), .Sans, .Semibold)
+	x += 14
+
+	// The apps pinned to the bar: one click opens the app, or brings its
+	// window forward when it already has one; a dot under it says it is
+	// running.
+	if s.cfg.bar_pins && !session.kiosk {
+		start_index_ensure()
+		drew := false
+		for id in start.bar_pins {
+			i := ai.find_id(start.entries, id)
+			if i < 0 {
+				continue
+			}
+			r := p.Rect{x, cy - 13, 26, 26}
+			hot := hit(.Pin, r, i, nil, oi)
+			if hot {
+				p.fill_round_rect(cv, r, {6, 6, 6, 6}, p.hex(pal.chip_hover))
+			}
+			e := &start.entries[i]
+			hue := ai.hue_for(e.id)
+			ink := pal.dark ? mix(hue, 0xffffff, 0.35) : mix(hue, 0x000000, 0.15)
+			p.draw_icon(cv, wm_icons(), ai.icon_for(e), r.x + 5, r.y + 5, 16, p.hex(ink))
+			if _, running := entry_running(s, i); running {
+				p.fill_round_rect(cv, {r.x + 10, r.y + r.h - 1, 6, 2}, {1, 1, 1, 1}, p.hex(pal.accent))
+			}
+			x += 28
+			drew = true
+		}
+		if drew {
+			p.fill_rect(cv, {x + 4, cy - 8, 1, 16}, p.hex(pal.bar_line))
+			x += 14
+		}
+	}
 
 	// The workspace strip. Every workspace that exists is drawn: filled when
 	// it is the one on screen, outlined when it holds windows you cannot
@@ -109,15 +152,15 @@ draw_bar :: proc(s: ^Server, app: ^p.App, cv: ^p.Canvas, oi, ws_idx: int) {
 		case i == ws_idx:
 			p.fill_round_rect(cv, r, {5, 5, 5, 5}, p.hex(ACCENT))
 		case occupied:
-			p.fill_round_rect(cv, r, {5, 5, 5, 5}, p.hex(hot ? 0x312e81 : 0x1e1b4b))
-			p.stroke_round_rect(cv, r, {5, 5, 5, 5}, 1, p.hex(0x4338ca))
+			p.fill_round_rect(cv, r, {5, 5, 5, 5}, p.hex(hot ? mix(pal.accent_wash, pal.accent, 0.15) : pal.accent_wash))
+			p.stroke_round_rect(cv, r, {5, 5, 5, 5}, 1, p.hex(pal.accent_edge))
 		case:
 			if hot {
-				p.fill_round_rect(cv, r, {5, 5, 5, 5}, p.hex(0x1f1f23))
+				p.fill_round_rect(cv, r, {5, 5, 5, 5}, p.hex(pal.chip_hover))
 			}
-			p.stroke_round_rect(cv, r, {5, 5, 5, 5}, 1, p.hex(0x27272a))
+			p.stroke_round_rect(cv, r, {5, 5, 5, 5}, 1, p.hex(pal.chip_line))
 		}
-		col := u32(i == ws_idx ? 0xffffff : (occupied ? 0xc7d2fe : (hot ? 0xa1a1aa : 0x52525b)))
+		col := u32(i == ws_idx ? pal.on_accent : (occupied ? pal.accent_text : (hot ? pal.pop_dim : pal.bar_dim)))
 		tw := p.text_width(f, w.name, 11, .Sans, .Semibold)
 		p.draw_text(cv, f, w.name, r.x + (lw - tw) / 2, cy + 4, 11, p.hex(col), .Sans, .Semibold)
 		x += lw + 4
@@ -130,16 +173,16 @@ draw_bar :: proc(s: ^Server, app: ^p.App, cv: ^p.Canvas, oi, ws_idx: int) {
 	mode := ws.tiling ? tile_layout_name(ws.layout) : "floating"
 	mw := p.text_width(f, mode, 11, .Sans, .Medium) + 14
 	lhot := hit(.Layout, {x - 2, Y, mw + 4, H}, ws_idx, nil, oi)
-	p.fill_round_rect(cv, {x, cy - 9, mw, 18}, {5, 5, 5, 5}, p.hex(lhot ? 0x27272a : 0x18181b))
-	p.stroke_round_rect(cv, {x, cy - 9, mw, 18}, {5, 5, 5, 5}, 1, p.hex(0x3f3f46))
-	p.draw_text(cv, f, mode, x + 7, cy + 4, 11, p.hex(0xa5b4fc), .Sans, .Medium)
+	p.fill_round_rect(cv, {x, cy - 9, mw, 18}, {5, 5, 5, 5}, p.hex(lhot ? pal.chip_hover : pal.chip_fill))
+	p.stroke_round_rect(cv, {x, cy - 9, mw, 18}, {5, 5, 5, 5}, 1, p.hex(pal.chip_line))
+	p.draw_text(cv, f, mode, x + 7, cy + 4, 11, p.hex(pal.accent_soft), .Sans, .Medium)
 	x += mw + 14
 
 	if s.wm_mode {
 		lbl := "WINDOW MODE"
 		w := p.text_width(f, lbl, 11, .Sans, .Semibold) + 16
 		p.fill_round_rect(cv, {x, cy - 9, w, 18}, {5, 5, 5, 5}, p.hex(ACCENT))
-		p.draw_text(cv, f, lbl, x + 8, cy + 4, 11, p.hex(0xffffff), .Sans, .Semibold)
+		p.draw_text(cv, f, lbl, x + 8, cy + 4, 11, p.hex(pal.on_accent), .Sans, .Semibold)
 		x += w + 10
 	}
 
@@ -151,14 +194,14 @@ draw_bar :: proc(s: ^Server, app: ^p.App, cv: ^p.Canvas, oi, ws_idx: int) {
 		local, _ := clock_now()
 		ct := clock_text(local)
 		cw := p.text_width(f, ct, 12, .Sans, .Medium)
-		p.draw_text(cv, f, ct, right - cw - 12, mid, 12, p.hex(TEXT_ON), .Sans, .Medium)
+		p.draw_text(cv, f, ct, right - cw - 12, mid, 12, p.hex(pal.bar_text), .Sans, .Medium)
 		right -= cw + 24
 		if session.bare && (kbd.label != "us" || xkb_km.ngroups > 1) && kbd.label != "" {
 			lbl := strings.to_upper(kbd.label, context.temp_allocator)
 			lw := p.text_width(f, lbl, 11, .Sans, .Semibold) + 14
 			r := p.Rect{right - lw, cy - 9, lw, 18}
-			p.stroke_round_rect(cv, r, {5, 5, 5, 5}, 1, p.hex(0x3f3f46))
-			p.draw_text(cv, f, lbl, r.x + 7, cy + 4, 11, p.hex(0xa5b4fc), .Sans, .Semibold)
+			p.stroke_round_rect(cv, r, {5, 5, 5, 5}, 1, p.hex(pal.chip_line))
+			p.draw_text(cv, f, lbl, r.x + 7, cy + 4, 11, p.hex(pal.accent_soft), .Sans, .Semibold)
 			right -= lw + 10
 		}
 	}
@@ -182,19 +225,19 @@ draw_bar :: proc(s: ^Server, app: ^p.App, cv: ^p.Canvas, oi, ws_idx: int) {
 		focused := s.focus == t
 		switch {
 		case focused:
-			p.fill_round_rect(cv, r, {6, 6, 6, 6}, p.hex(0x27272a))
+			p.fill_round_rect(cv, r, {6, 6, 6, 6}, p.hex(pal.entry_focus))
 			p.fill_round_rect(cv, {r.x + 8, r.y + r.h - 2, r.w - 16, 2}, {1, 1, 1, 1}, p.hex(ACCENT))
 		case m.urgent:
-			p.fill_round_rect(cv, r, {6, 6, 6, 6}, p.hex(hot ? 0x3730a3 : 0x312e81))
+			p.fill_round_rect(cv, r, {6, 6, 6, 6}, p.hex(hot ? mix(pal.accent_wash, pal.accent, 0.2) : pal.accent_wash))
 		case hot:
-			p.fill_round_rect(cv, r, {6, 6, 6, 6}, p.hex(0x1f1f23))
+			p.fill_round_rect(cv, r, {6, 6, 6, 6}, p.hex(pal.chip_hover))
 		}
 		dim := t.minimized
 		draw_app_icon(cv, f, t, r.x + 7, cy - 8, 16, dim ? 0.4 : 1)
 		label := ellipsize_end(f, title_of(t), 12, .Medium, r.w - 34)
-		col := u32(focused ? 0xfafafa : 0xd4d4d8)
+		col := focused ? pal.bar_text : pal.entry_text
 		if dim {
-			col = 0x71717a
+			col = pal.pop_dim
 		}
 		p.draw_text(cv, f, label, r.x + 29, cy + 4.2, 12, p.hex(col), .Sans, .Medium)
 		x += ew + gap
@@ -244,7 +287,34 @@ bar_pointer :: proc(s: ^Server, app: ^p.App, in_: ^p.Input, mp: [2]int) -> bool 
 	switch h.kind {
 	case .Brand:
 		if in_.pressed[.Left] {
-			overview_toggle(s)
+			s.cur_out = oi
+			start_toggle(s)
+		}
+		if in_.pressed[.Right] {
+			menu_open_start_button(s, mp.x, mp.y)
+		}
+	case .Pin:
+		switch {
+		case in_.pressed[.Left]:
+			if t, running := entry_running(s, h.idx); running {
+				if !ws_on_current(s, t) {
+					for w, wi in s.workspaces {
+						for x in ws_stack(s, wi) {
+							if x == t {
+								ws_switch(s, wi)
+							}
+						}
+						_ = w
+					}
+				}
+				focus_window(s, t)
+			} else {
+				start_launch(s, h.idx)
+			}
+		case in_.pressed[.Middle]:
+			start_launch(s, h.idx)
+		case in_.pressed[.Right]:
+			menu_open_pin(s, h.idx, mp.x, mp.y)
 		}
 	case .Workspace:
 		if in_.pressed[.Left] {
@@ -316,10 +386,10 @@ draw_toast :: proc(s: ^Server, app: ^p.App, cv: ^p.Canvas, o: Ws_Output) {
 	tw := p.text_width(f, s.toast, 12.5, .Sans, .Medium)
 	w := tw + 28
 	r := p.Rect{f32(o.x) + (f32(o.w) - w) / 2, f32(o.y + ws_bar_h(s)) + 10, w, 30}
-	p.drop_shadow(cv, r, {8, 8, 8, 8}, 16, 0, {0, 6}, p.hexa(0x00000080))
-	p.fill_round_rect(cv, r, {8, 8, 8, 8}, p.hex(0x18181b))
-	p.stroke_round_rect(cv, r, {8, 8, 8, 8}, 1, p.hex(0x3f3f46))
-	p.draw_text(cv, f, s.toast, r.x + 14, r.y + 19.5, 12.5, p.hex(0xe4e4e7), .Sans, .Medium)
+	p.drop_shadow(cv, r, {8, 8, 8, 8}, 16, 0, {0, 6}, p.hexa(pal.shadow))
+	p.fill_round_rect(cv, r, {8, 8, 8, 8}, p.hex(pal.pop_bg))
+	p.stroke_round_rect(cv, r, {8, 8, 8, 8}, 1, p.hex(pal.pop_line))
+	p.draw_text(cv, f, s.toast, r.x + 14, r.y + 19.5, 12.5, p.hex(pal.pop_text), .Sans, .Medium)
 }
 
 // draw_debug_hud is the instrumentation the bar used to carry, now behind

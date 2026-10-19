@@ -32,21 +32,31 @@ wall_hash :: proc(x, y: int) -> f32 {
 	return f32(h & 0xffff) / 65535
 }
 
-// wall_pixel is the generated wallpaper at (x, y) of a w x h output.
-wall_pixel :: proc(x, y, w, h: int) -> u32 {
+// wall_pixel is the generated wallpaper at (x, y) of a w x h output: deep
+// navy to indigo for the dark look, a pale blue-grey for the light one, the
+// same two glows on both.
+wall_pixel :: proc(x, y, w, h: int, light := false) -> u32 {
 	fx := f32(x) / f32(max(w, 1))
 	fy := f32(y) / f32(max(h, 1))
 	t := clamp((fx * 0.45 + fy * 0.55), 0, 1)
-	// Base: #0b1020 → #1e1b4b along the diagonal.
-	r := 0x0b + (0x1e - 0x0b) * t
-	g := 0x10 + (0x1b - 0x10) * t
-	b := 0x20 + (0x4b - 0x20) * t
+	// Base: #0b1020 → #1e1b4b along the diagonal (light: #eef1f8 → #d9ddf0).
+	r, g, b: f32
+	if light {
+		r = 0xee + (0xd9 - 0xee) * t
+		g = 0xf1 + (0xdd - 0xf1) * t
+		b = 0xf8 + (0xf0 - 0xf8) * t
+	} else {
+		r = 0x0b + (0x1e - 0x0b) * t
+		g = 0x10 + (0x1b - 0x10) * t
+		b = 0x20 + (0x4b - 0x20) * t
+	}
 	// Two very soft glows: the accent top-left, teal bottom-right.
 	big := f32(max(w, h))
 	d1 := math.sqrt(math.pow(f32(x) - f32(w) * 0.18, 2) + math.pow(f32(y) - f32(h) * 0.12, 2)) / (big * 0.55)
 	d2 := math.sqrt(math.pow(f32(x) - f32(w) * 0.85, 2) + math.pow(f32(y) - f32(h) * 0.92, 2)) / (big * 0.5)
-	g1 := 0.12 * math.exp(-d1 * d1 * 2.2)
-	g2 := 0.08 * math.exp(-d2 * d2 * 2.2)
+	k := f32(light ? 1.6 : 1)
+	g1 := 0.12 * k * math.exp(-d1 * d1 * 2.2)
+	g2 := 0.08 * k * math.exp(-d2 * d2 * 2.2)
 	r = r * (1 - g1 - g2) + 0x63 * g1 + 0x0d * g2
 	g = g * (1 - g1 - g2) + 0x66 * g1 + 0x94 * g2
 	b = b * (1 - g1 - g2) + 0xf1 * g1 + 0x88 * g2
@@ -118,7 +128,7 @@ build_desktop :: proc(s: ^Server, w, h: int) {
 		for y in 0 ..< h {
 			row := s.bg[y * w:][:w]
 			for x in 0 ..< w {
-				row[x] = wall_pixel(x, y, w, h)
+				row[x] = wall_pixel(x, y, w, h, s.cfg.light)
 			}
 		}
 	}
@@ -197,6 +207,7 @@ draw :: proc(s: ^Server, app: ^p.App, cv: ^p.Canvas) {
 
 	switcher_draw(s, app, cv)
 	cheat_draw(s, app, cv)
+	start_draw(s, app, cv)
 	draw_menu(s, app, cv)
 	if text, r, ok := ix_tooltip(s); ok {
 		draw_tooltip(s, app, cv, text, r)
@@ -322,7 +333,9 @@ draw_welcome :: proc(s: ^Server, app: ^p.App, cv: ^p.Canvas, o: Ws_Output) {
 	cx := f32(o.x) + f32(o.w) / 2
 	cy := f32(o.y) + f32(o.h) / 2
 	hint := "right-click the desktop to begin"
-	if k := menu_spawn_key(s, "term"); k != "" {
+	if s.cfg.super_tap && s.cfg.super_menu {
+		hint = "tap Super for your apps"
+	} else if k := menu_spawn_key(s, "term"); k != "" {
 		hint = fmt.tprintf("press %s for a terminal", k)
 	}
 	more := "right-click the desktop for more"
@@ -335,10 +348,10 @@ draw_welcome :: proc(s: ^Server, app: ^p.App, cv: ^p.Canvas, o: Ws_Output) {
 		wt:   p.Font_Weight,
 		col:  u32,
 	} {
-		{session.bare ? "Palmframe" : "A Wayland compositor, nested", 28, .Bold, 0xe8e8ef},
-		{hint, 14, .Medium, 0xa5b4fc},
-		{more, 12.5, .Regular, 0x8b8b93},
-		{s.cfg.loaded ? fmt.tprintf("configuration: %s", s.cfg.path) : fmt.tprintf("no %s — built-in defaults", s.cfg.path), 11.5, .Regular, 0x5b5b66},
+		{session.bare ? "Palmframe" : "A Wayland compositor, nested", 28, .Bold, pal.dark ? 0xe8e8ef : 0x18181b},
+		{hint, 14, .Medium, pal.dark ? 0xa5b4fc : pal.accent_text},
+		{more, 12.5, .Regular, pal.dark ? 0x8b8b93 : 0x52525b},
+		{s.cfg.loaded ? fmt.tprintf("configuration: %s", s.cfg.path) : fmt.tprintf("no %s — built-in defaults", s.cfg.path), 11.5, .Regular, pal.dark ? 0x5b5b66 : 0x71717a},
 	}
 	y := cy - 44
 	for l in lines {
@@ -354,8 +367,8 @@ draw_empty_workspace :: proc(s: ^Server, app: ^p.App, cv: ^p.Canvas, o: Ws_Outpu
 	w := p.text_width(f, label, 15, .Sans, .Medium)
 	cx := f32(o.x) + f32(o.w) / 2
 	cy := f32(o.y) + f32(o.h) / 2
-	p.draw_text(cv, f, label, cx - w / 2, cy, 15, p.hex(0x6b6b80), .Sans, .Medium)
+	p.draw_text(cv, f, label, cx - w / 2, cy, 15, p.hex(pal.dark ? 0x6b6b80 : 0x52525b), .Sans, .Medium)
 	sub := "empty"
 	sw := p.text_width(f, sub, 12)
-	p.draw_text(cv, f, sub, cx - sw / 2, cy + 22, 12, p.hex(0x4b4b5c))
+	p.draw_text(cv, f, sub, cx - sw / 2, cy + 22, 12, p.hex(pal.dark ? 0x4b4b5c : 0x71717a))
 }

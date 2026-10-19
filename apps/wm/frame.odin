@@ -280,14 +280,7 @@ window_at :: proc(s: ^Server, mx, my: int) -> (^Toplevel, Region, Edges) {
 // Colours (UX.md P0-9)
 // ---------------------------------------------------------------------------
 
-DESK_TOP :: 0x0b1020
-DESK_BOT :: 0x1e1b4b
-BAR_BG :: 0x0a0a0c
-FRAME_ON :: 0x27272a
-FRAME_OFF :: 0x18181b
-TEXT_ON :: 0xfafafa
-TEXT_OFF :: 0x71717a
-ACCENT :: 0x6366f1
+// The colours themselves are in theme.odin's `pal`, dark or light.
 
 // with_alpha mixes an 0xRRGGBB colour with an alpha in 0..1.
 with_alpha :: proc(rgb: u32, a: f32) -> p.Color {
@@ -422,7 +415,7 @@ draw_window :: proc(s: ^Server, app: ^p.App, cv: ^p.Canvas, t: ^Toplevel, shadow
 
 	// Frame plate. Only the title bar and the border are painted: the
 	// client's own pixels cover everything inside.
-	plate := p.hex(focused ? FRAME_ON : FRAME_OFF)
+	plate := p.hex(focused ? pal.frame_on : pal.frame_off)
 	if th > 0 {
 		p.fill_round_rect(cv, {fr.x, fr.y, fr.w, th + 2}, {r, r, 0, 0}, plate)
 	}
@@ -454,11 +447,7 @@ draw_title :: proc(s: ^Server, app: ^p.App, cv: ^p.Canvas, t: ^Toplevel, focused
 	f := &app.fonts
 	tr := title_rect(t)
 	m := ws_win(t)
-	if focused {
-		p.fill_rect(cv, {tr.x + 1, tr.y + tr.h - 1, tr.w - 2, 1}, p.hex(0x3f3f46))
-	} else {
-		p.fill_rect(cv, {tr.x + 1, tr.y + tr.h - 1, tr.w - 2, 1}, p.hex(0x27272a))
-	}
+	p.fill_rect(cv, {tr.x + 1, tr.y + tr.h - 1, tr.w - 2, 1}, p.hex(focused ? pal.frame_rule_on : pal.frame_rule_off))
 
 	// The title is centred on the frame with the icon to its left, and
 	// shortened in the middle rather than run into the buttons.
@@ -476,9 +465,9 @@ draw_title :: proc(s: ^Server, app: ^p.App, cv: ^p.Canvas, t: ^Toplevel, focused
 	p.push_clip(cv, tr)
 	draw_app_icon(cv, f, t, x, cy - 8, 16, focused ? 1 : 0.55)
 	x += 22
-	p.draw_text(cv, f, label, x, cy + 4.5, size, p.hex(focused ? TEXT_ON : TEXT_OFF), .Sans, .Semibold)
+	p.draw_text(cv, f, label, x, cy + 4.5, size, p.hex(focused ? pal.frame_text_on : pal.frame_text_off), .Sans, .Semibold)
 	if m.on_top {
-		draw_pin(cv, x + tw + 8, cy - 6, focused ? 0xa5b4fc : 0x71717a)
+		draw_pin(cv, x + tw + 8, cy - 6, focused ? pal.accent_soft : pal.frame_text_off)
 	}
 	p.pop_clip(cv)
 
@@ -508,7 +497,7 @@ draw_frame_btn :: proc(s: ^Server, cv: ^p.Canvas, t: ^Toplevel, b: Frame_Btn, r:
 	plate.w -= 2
 	plate.y += 1
 	plate.h -= 2
-	glyph := u32(0xa1a1aa)
+	glyph := pal.frame_glyph
 	alpha := f32(focused ? 1 : 0.6)
 	switch {
 	case !enabled:
@@ -518,8 +507,8 @@ draw_frame_btn :: proc(s: ^Server, cv: ^p.Canvas, t: ^Toplevel, b: Frame_Btn, r:
 		glyph = 0xffffff
 		alpha = 1
 	case hot:
-		p.fill_round_rect(cv, plate, {6, 6, 6, 6}, p.hexa(down ? 0xffffff0d : 0xffffff1a))
-		glyph = 0xfafafa
+		p.fill_round_rect(cv, plate, {6, 6, 6, 6}, p.hexa(down ? pal.frame_btn_down : pal.frame_btn_hover))
+		glyph = pal.frame_text_on
 		alpha = 1
 	}
 	gl := with_alpha(glyph, alpha)
@@ -571,10 +560,10 @@ draw_tooltip :: proc(s: ^Server, app: ^p.App, cv: ^p.Canvas, text: string, ancho
 		y = anchor.y - h - 6
 	}
 	r := p.Rect{x, y, w, h}
-	p.drop_shadow(cv, r, {6, 6, 6, 6}, 10, 0, {0, 3}, p.hexa(0x00000080))
-	p.fill_round_rect(cv, r, {6, 6, 6, 6}, p.hex(0x18181b))
-	p.stroke_round_rect(cv, r, {6, 6, 6, 6}, 1, p.hex(0x3f3f46))
-	p.draw_text(cv, f, text, x + 8, y + 16, 12, p.hex(0xe4e4e7), .Sans, .Medium)
+	p.drop_shadow(cv, r, {6, 6, 6, 6}, 10, 0, {0, 3}, p.hexa(pal.shadow))
+	p.fill_round_rect(cv, r, {6, 6, 6, 6}, p.hex(pal.pop_bg))
+	p.stroke_round_rect(cv, r, {6, 6, 6, 6}, 1, p.hex(pal.pop_line))
+	p.draw_text(cv, f, text, x + 8, y + 16, 12, p.hex(pal.pop_text), .Sans, .Medium)
 }
 
 // ring_shadow draws a drop shadow only in the band around a window.

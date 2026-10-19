@@ -76,11 +76,16 @@ cheat_rows :: proc(s: ^Server, filter: string) -> []Cheat_Row {
 		base := make([dynamic]Cheat_Row, 0, 48, context.temp_allocator)
 		seen := make(map[string]int, 48, context.temp_allocator)
 		if g == "Focus" && s.cfg.super_tap && !session.kiosk {
-			// The overview's main way in has no binding to read: a lone tap
-			// of Super (keys.odin). It is the first thing worth knowing.
+			// The start menu's (or the overview's) main way in has no binding
+			// to read: a lone tap of Super (keys.odin). It is the first
+			// thing worth knowing.
 			keys := make([]string, 1, context.temp_allocator)
 			keys[0] = "Super"
-			append(&base, Cheat_Row{keys = keys, label = "Overview (tap alone)", group = g, search = "super tap overview"})
+			if s.cfg.super_menu {
+				append(&base, Cheat_Row{keys = keys, label = "Start menu (tap alone)", group = g, search = "super tap start menu apps launcher"})
+			} else {
+				append(&base, Cheat_Row{keys = keys, label = "Overview (tap alone)", group = g, search = "super tap overview"})
+			}
 		}
 		for &b in s.cfg.binds {
 			if bind_group(b.act) != g {

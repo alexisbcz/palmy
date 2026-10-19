@@ -180,6 +180,18 @@ accept_clients :: proc(s: ^Server) {
 		c.index = s.next_index
 		c.objs = make(map[u32]Object)
 		c.objs[DISPLAY_ID] = Object{kind = .Display, ver = 1}
+		// Who is on the other end (SO_PEERCRED), so a window can be traced
+		// back to the program behind it: the start menu's "Pin" on a
+		// taskbar entry, and later the identity a window was launched with
+		// (cloud/docs/shell.md).
+		cred: struct {
+			pid: i32,
+			uid: u32,
+			gid: u32,
+		}
+		if _, e := linux.getsockopt_base(fd, 1, linux.Socket_Option.PEERCRED, &cred); e == .NONE {
+			c.pid = int(cred.pid)
+		}
 		append(&s.clients, c)
 		log_line("client %d connected", c.index)
 	}
@@ -1278,22 +1290,26 @@ wm_do :: proc(s: ^Server, app: ^p.App, b: Cfg_Bind) {
 		s.cfg.debug_hud = !s.cfg.debug_hud
 		s.dirty = true
 	case .Session:
-		name := cfg_session_name(b.arg)
-		// On bare metal this compositor *is* the session, and ending it is
-		// how the user gets back to the greeter: palm-login is waiting on
-		// our exit. Power actions stay intent-only — they belong to the
-		// greeter, which runs them through palm-login's privileges.
-		if session.bare && (name == "exit" || name == "logout") {
-			fmt.printfln("wm: session %q — leaving", name)
-			p.quit_app(app)
-			return
-		}
-		// Intent only. Power and session changes are logged and never run:
-		// nested, this compositor is a guest on a live desktop.
-		fmt.printfln("wm: session intent %q — logged, not executed", name)
-		log_line("session intent %q (not executed)", name)
-		toast(s, fmt.tprintf("%s: logged, not executed", name))
+		session_end(s, cfg_session_name(b.arg), app)
 	}
+}
+
+// session_end carries out a session action from a binding, the start menu's
+// power button or anywhere else. On bare metal this compositor *is* the
+// session, and ending it is how the user gets back to the greeter: palm-login
+// is waiting on our exit. Power actions stay intent-only — they belong to the
+// greeter, which runs them through palm-login's privileges. Nested, every one
+// is an intent: this compositor is a guest on a live desktop.
+session_end :: proc(s: ^Server, name: string, app: ^p.App = nil) {
+	a := app != nil ? app : menu_app
+	if session.bare && (name == "exit" || name == "logout") && a != nil {
+		fmt.printfln("wm: session %q — leaving", name)
+		p.quit_app(a)
+		return
+	}
+	fmt.printfln("wm: session intent %q — logged, not executed", name)
+	log_line("session intent %q (not executed)", name)
+	toast(s, fmt.tprintf("%s: logged, not executed", name))
 }
 
 // toggle_on_top pins a window above every ordinary one (P1-4).
@@ -1342,7 +1358,11 @@ toggle_sticky :: proc(s: ^Server, t: ^Toplevel) {
 // wm_reload re-reads the configuration while the compositor is running. A
 // window manager you have to restart to retune is a window manager you stop
 // retuning, so this is a first-class operation and not a debugging aid.
-wm_reload :: proc(s: ^Server) {
+// wm_reload re-reads the configuration. A reload the person asked for
+// (Super+Shift+R) says so in a toast; one that follows the file being saved
+// -- by an editor or by Settings -- is quiet unless something in it is
+// wrong, since what it changed is already on screen.
+wm_reload :: proc(s: ^Server, quiet := false) {
 	old_tiling, old_layout := s.cfg.tiling, s.cfg.layout
 	old_ratio, old_count := s.cfg.master_ratio, s.cfg.master_count
 	cfg_load(&s.cfg)
@@ -1373,13 +1393,18 @@ wm_reload :: proc(s: ^Server) {
 			s.outputs[i].enabled = co.w > 0 && co.h > 0
 		}
 	}
-	s.bg_w, s.bg_h = -1, -1 // the wallpaper bakes in the bar height
+	s.bg_w, s.bg_h = -1, -1 // the wallpaper bakes in the bar height (and the theme)
+	if session.bare {
+		s.repeat_rate = ev_cfg.repeat_rate
+		s.repeat_delay = ev_cfg.repeat_delay
+	}
 	s.needs_layout = true
 	s.dirty = true
 	for e in s.cfg.errors {
 		fmt.eprintfln("wm: %s", e)
 	}
 	switch {
+	case quiet && len(s.cfg.errors) == 0:
 	case !s.cfg.loaded:
 		toast(s, fmt.tprintf("no %s — built-in defaults", s.cfg.path))
 	case len(s.cfg.errors) > 0:
@@ -1867,11 +1892,12 @@ main :: proc() {
 		if now := wall_now(); now - s.cfg_check_at > 1.0 {
 			s.cfg_check_at = now
 			if cfg_changed(&s.cfg) {
-				wm_reload(s)
+				wm_reload(s, quiet = true)
 			}
 		}
 
 		ws_tick(s)
+		state_publish(s)
 		draw(s, app, cv)
 		cursor_nested(s, app)
 		send_frames(s)

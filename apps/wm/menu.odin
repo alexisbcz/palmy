@@ -18,6 +18,7 @@
 package wm
 
 import "core:fmt"
+import "core:os"
 import "core:strings"
 import p "palmy:."
 
@@ -42,6 +43,21 @@ Menu_Act :: enum u8 {
 	Layout, // arg: TILE_LAYOUTS index, or -1 for floating
 	Arrange,
 	Fullscreen,
+
+	// The start menu's (start.odin), the bar's pins and the desktop's.
+	Start_Open, // arg: entry
+	Start_Action, // arg: entry * 16 + desktop action
+	Start_Pin, // arg: entry
+	Bar_Pin, // arg: entry
+	Start_File_Open, // arg: recent file
+	Start_File_Folder, // arg: recent file
+	Logout,
+	Power_Intent, // arg: 0 restart, 1 shut down (nested: logged, never run)
+	Spawn_Settings_Page, // arg: SETTINGS_PAGES index
+	Spawn_Files_Here,
+	Start_Menu,
+	Overview,
+	Cheat_Sheet,
 }
 
 Menu_Kind :: enum u8 {
@@ -200,6 +216,14 @@ menu_add :: proc(items: ^[dynamic]Menu_Item, label: string, act: Menu_Act, key :
 	append(items, Menu_Item{label = label, key = strings.clone(key), kind = .Action, act = act, arg = arg, disabled = disabled})
 }
 
+// menu_add_owned is menu_add with a label the menu keeps its own copy of:
+// an application's name, which lives in the start menu's index and must not
+// be pulled out from under an open menu by a rescan.
+menu_add_owned :: proc(items: ^[dynamic]Menu_Item, label: string, act: Menu_Act, arg := 0) {
+	menu_add(items, strings.clone(label), act, arg = arg)
+	items[len(items) - 1].own = true
+}
+
 menu_add_check :: proc(items: ^[dynamic]Menu_Item, label: string, act: Menu_Act, on: bool, key := "") {
 	append(items, Menu_Item{label = label, key = strings.clone(key), kind = .Check, act = act, checked = on})
 }
@@ -232,9 +256,62 @@ menu_open_window :: proc(s: ^Server, t: ^Toplevel, x, y: int) {
 	menu_add_sep(&sub.sub)
 	menu_add(&sub.sub, "New (first empty)", .Move_Ws_New)
 	append(it, sub)
+	// The application behind the window, when it can be told: another
+	// window of it, and its pins.
+	if ei := window_entry(t); ei >= 0 && !session.kiosk {
+		menu_add_sep(it)
+		menu_add_owned(it, fmt.tprintf("New %s window", start.entries[ei].name), .Start_Open, arg = ei)
+		menu_add(it, start_pinned(.Start, ei) ? "Unpin from Start" : "Pin to Start", .Start_Pin, arg = ei)
+		menu_add(it, start_pinned(.Bar, ei) ? "Unpin from bar" : "Pin to bar", .Bar_Pin, arg = ei)
+	}
 	menu_add_sep(it)
 	menu_add(it, "Close", .Close, key_for_act(s, .Close, 0))
 	menu.target = t
+	menu_place(s, x, y)
+}
+
+// menu_open_pin is the menu of an app pinned to the bar.
+menu_open_pin :: proc(s: ^Server, ei: int, x, y: int) {
+	if menu_app == nil || ei < 0 || ei >= len(start.entries) {
+		return
+	}
+	menu_close(s)
+	it := &menu.items
+	_, running := entry_running(s, ei)
+	menu_add(it, running ? "New window" : "Open", .Start_Open, arg = ei)
+	e := &start.entries[ei]
+	for a, k in e.actions {
+		if k >= 15 {
+			break
+		}
+		menu_add_owned(it, a.name, .Start_Action, arg = ei * 16 + k)
+	}
+	menu_add_sep(it)
+	menu_add(it, start_pinned(.Start, ei) ? "Unpin from Start" : "Pin to Start", .Start_Pin, arg = ei)
+	menu_add(it, "Unpin from bar", .Bar_Pin, arg = ei)
+	menu_place(s, x, y)
+}
+
+// menu_open_start_button is the start button's right-click: the other ways
+// around the desktop, for whoever reaches for the corner with the mouse.
+menu_open_start_button :: proc(s: ^Server, x, y: int) {
+	if menu_app == nil || session.kiosk {
+		return
+	}
+	start_close(s)
+	menu_close(s)
+	it := &menu.items
+	menu_add(it, "Overview", .Overview, key_for_act(s, .Overview, 0))
+	if _, ok := cfg_which("launcher"); ok {
+		menu_add(it, "Launcher", .Spawn_Launcher, menu_spawn_key(s, "launcher"))
+	}
+	menu_add(it, "Keyboard shortcuts", .Cheat_Sheet, key_for_act(s, .Cheat_Sheet, 0))
+	if _, ok := cfg_which("settings"); ok {
+		menu_add_sep(it)
+		menu_add(it, "Settings", .Spawn_Settings)
+	}
+	menu_add_sep(it)
+	menu_add(it, "Log out", .Logout)
 	menu_place(s, x, y)
 }
 
@@ -245,10 +322,39 @@ menu_open_desktop :: proc(s: ^Server, x, y: int) {
 		return
 	}
 	menu_close(s)
+	start_close(s)
 	it := &menu.items
-	menu_add(it, "Open Terminal", .Spawn_Term, menu_spawn_key(s, "term"))
+	if _, ok := cfg_which("term"); ok {
+		menu_add(it, "Open Terminal", .Spawn_Term, menu_spawn_key(s, "term"))
+	}
+	if _, ok := cfg_which("files"); ok {
+		menu_add(it, "Open Files here", .Spawn_Files_Here)
+	}
+	menu_add(it, "Apps", .Start_Menu, s.cfg.super_tap && s.cfg.super_menu ? "Super" : "")
 	if _, ok := cfg_which("launcher"); ok {
 		menu_add(it, "Launcher", .Spawn_Launcher, menu_spawn_key(s, "launcher"))
+	}
+	// Another window of something already running, which is the one thing
+	// a right-click on the desktop is most often for after "a terminal".
+	{
+		sub := Menu_Item{label = "New window of", kind = .Sub}
+		seen := make(map[int]bool, 8, context.temp_allocator)
+		for t in s.stack {
+			if !t.mapped {
+				continue
+			}
+			ei := window_entry(t)
+			if ei < 0 || seen[ei] {
+				continue
+			}
+			seen[ei] = true
+			menu_add_owned(&sub.sub, start.entries[ei].name, .Start_Open, arg = ei)
+		}
+		if len(sub.sub) > 0 {
+			append(it, sub)
+		} else {
+			delete(sub.sub)
+		}
 	}
 	// The Software app is installed as `store` (apps/store).
 	if _, ok := cfg_which("store"); ok {
@@ -259,6 +365,8 @@ menu_open_desktop :: proc(s: ^Server, x, y: int) {
 	menu_add(it, "Arrange windows", .Arrange, key_for_act(s, .Cascade, 0))
 	if _, ok := cfg_which("settings"); ok {
 		menu_add_sep(it)
+		menu_add(it, "Change wallpaper…", .Spawn_Settings_Page, arg = 1)
+		menu_add(it, "Display settings…", .Spawn_Settings_Page, arg = 2)
 		menu_add(it, "Settings", .Spawn_Settings)
 	}
 	menu_place(s, x, y)
@@ -357,7 +465,50 @@ menu_do :: proc(s: ^Server, it: Menu_Item) {
 		}
 	case .Arrange:
 		cascade_all(s)
+	case .Start_Open:
+		start_index_ensure()
+		start_launch(s, it.arg)
+	case .Start_Action:
+		start_index_ensure()
+		start_launch(s, it.arg / 16, action = it.arg % 16)
+	case .Start_Pin:
+		start_toggle_pin(s, .Start, it.arg)
+	case .Bar_Pin:
+		start_toggle_pin(s, .Bar, it.arg)
+	case .Start_File_Open:
+		start_open_file(s, it.arg)
+	case .Start_File_Folder:
+		start_open_folder(s, it.arg)
+	case .Logout:
+		start_close(s)
+		session_end(s, "logout")
+	case .Power_Intent:
+		start_close(s)
+		session_end(s, it.arg == 0 ? "reboot" : "poweroff")
+	case .Spawn_Settings_Page:
+		if it.arg >= 0 && it.arg < len(SETTINGS_PAGES) {
+			spawn(s, {"settings", SETTINGS_PAGES[it.arg].page})
+		}
+	case .Spawn_Files_Here:
+		spawn(s, {"files", desktop_folder()})
+	case .Start_Menu:
+		start_open(s)
+	case .Overview:
+		overview_toggle(s)
+	case .Cheat_Sheet:
+		cheat_open(s)
 	}
+}
+
+// desktop_folder is the folder "Open Files here" means: ~/Desktop when there
+// is one, else home.
+desktop_folder :: proc() -> string {
+	home := os.get_env("HOME", context.temp_allocator)
+	d := fmt.tprintf("%s/Desktop", home)
+	if os.is_dir(d) {
+		return d
+	}
+	return home != "" ? home : "/"
 }
 
 // menu_activate runs the item under the cursor, or opens its submenu.
@@ -567,37 +718,37 @@ draw_menu_list :: proc(app: ^p.App, cv: ^p.Canvas, items: []Menu_Item, x, y, w: 
 	f := &app.fonts
 	h := menu_height(items)
 	r := p.Rect{x, y, w, h}
-	p.drop_shadow(cv, r, {8, 8, 8, 8}, 22, 0, {0, 8}, p.hexa(0x00000099))
-	p.fill_round_rect(cv, r, {8, 8, 8, 8}, p.hex(0x0f0f12))
-	p.stroke_round_rect(cv, r, {8, 8, 8, 8}, 1, p.hex(0x27272a))
+	p.drop_shadow(cv, r, {8, 8, 8, 8}, 22, 0, {0, 8}, p.hexa(pal.shadow))
+	p.fill_round_rect(cv, r, {8, 8, 8, 8}, p.hex(pal.pop_bg))
+	p.stroke_round_rect(cv, r, {8, 8, 8, 8}, 1, p.hex(pal.pop_line))
 	yy := y + MENU_PAD
 	for it, i in items {
 		if it.kind == .Sep {
-			p.fill_rect(cv, {x + 1, yy + MENU_SEP / 2, w - 2, 1}, p.hex(0x27272a))
+			p.fill_rect(cv, {x + 1, yy + MENU_SEP / 2, w - 2, 1}, p.hex(pal.pop_line))
 			yy += MENU_SEP
 			continue
 		}
 		row := p.Rect{x + MENU_PAD, yy, w - 2 * MENU_PAD, MENU_ROW}
 		if (i == hover || i == open_sub) && !it.disabled {
-			p.fill_round_rect(cv, row, {5, 5, 5, 5}, p.hex(0x27272a))
+			p.fill_round_rect(cv, row, {5, 5, 5, 5}, p.hex(pal.pop_hover))
 		}
-		col := u32(it.disabled ? 0x52525b : 0xfafafa)
+		col := it.disabled ? pal.pop_faint : pal.pop_text
 		if it.kind == .Check && it.checked {
 			cx := row.x + 12
 			cy := yy + MENU_ROW / 2
-			p.draw_line(cv, cx - 4, cy, cx - 1.5, cy + 3, 1.5, p.hex(0xa5b4fc))
-			p.draw_line(cv, cx - 1.5, cy + 3, cx + 4, cy - 3.5, 1.5, p.hex(0xa5b4fc))
+			p.draw_line(cv, cx - 4, cy, cx - 1.5, cy + 3, 1.5, p.hex(pal.accent_soft))
+			p.draw_line(cv, cx - 1.5, cy + 3, cx + 4, cy - 3.5, 1.5, p.hex(pal.accent_soft))
 		}
 		p.draw_text(cv, f, it.label, row.x + 26, yy + 18, 12.5, p.hex(col), .Sans, .Regular)
 		if it.key != "" {
 			kw := p.text_width(f, it.key, 11.5, .Sans, .Regular)
-			p.draw_text(cv, f, it.key, row.x + row.w - kw - (it.kind == .Sub ? 22 : 8), yy + 18, 11.5, p.hex(0x71717a), .Sans, .Regular)
+			p.draw_text(cv, f, it.key, row.x + row.w - kw - (it.kind == .Sub ? 22 : 8), yy + 18, 11.5, p.hex(pal.pop_dim), .Sans, .Regular)
 		}
 		if it.kind == .Sub {
 			ax := row.x + row.w - 12
 			ay := yy + MENU_ROW / 2
-			p.draw_line(cv, ax - 2, ay - 4, ax + 2, ay, 1.4, p.hex(0xa1a1aa))
-			p.draw_line(cv, ax + 2, ay, ax - 2, ay + 4, 1.4, p.hex(0xa1a1aa))
+			p.draw_line(cv, ax - 2, ay - 4, ax + 2, ay, 1.4, p.hex(pal.pop_dim))
+			p.draw_line(cv, ax + 2, ay, ax - 2, ay + 4, 1.4, p.hex(pal.pop_dim))
 		}
 		yy += MENU_ROW
 	}

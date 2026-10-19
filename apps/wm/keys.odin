@@ -198,7 +198,7 @@ handle_keys_bare :: proc(s: ^Server, app: ^p.App) {
 	if ix.super_armed && .Super not_in in_.mods {
 		ix.super_armed = false
 		if wall_now() - ix.super_at <= SUPER_TAP && s.cfg.super_tap && !session.kiosk && s.drag == .None {
-			overview_toggle(s)
+			super_tap_fire(s)
 		}
 	}
 }
@@ -247,7 +247,7 @@ handle_keys :: proc(s: ^Server, app: ^p.App) {
 	if ix.super_armed && .Super not_in in_.mods {
 		ix.super_armed = false
 		if wall_now() - ix.super_at <= SUPER_TAP && s.cfg.super_tap && !session.kiosk && s.drag == .None {
-			overview_toggle(s)
+			super_tap_fire(s)
 		}
 	}
 }
@@ -449,9 +449,27 @@ wm_shortcut :: proc(s: ^Server, app: ^p.App, k: p.Key_Event, code: u32) -> bool 
 	return false
 }
 
+// super_tap_fire is what a lone tap of Super does: the start menu, or the
+// overview for `super_tap = overview`. A tap closes whichever is open.
+super_tap_fire :: proc(s: ^Server) {
+	switch {
+	case start.open:
+		start_close(s)
+	case ov.open:
+		overview_toggle(s)
+	case s.cfg.super_menu:
+		start_open(s)
+	case:
+		overview_toggle(s)
+	}
+}
+
 // overlays_key gives each open overlay the key, topmost first.
 overlays_key :: proc(s: ^Server, app: ^p.App, k: p.Key_Event, code: u32) -> bool {
 	if menu_key(s, app, k) {
+		return true
+	}
+	if start_key(s, app, k) {
 		return true
 	}
 	if cheat_key(s, app, k, code) {

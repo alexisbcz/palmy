@@ -2533,6 +2533,9 @@ ws_selftest :: proc() -> int {
 		ws_test_fail += pf
 	}
 
+	// --- the start menu, the shell's look, the shared app index -----------
+	start_selftest(s)
+
 	fmt.printfln("wm --selftest: %d passed, %d failed", ws_test_pass, ws_test_fail)
 	return ws_test_fail == 0 ? 0 : 1
 }
