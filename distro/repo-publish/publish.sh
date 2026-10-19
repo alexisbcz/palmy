@@ -131,6 +131,23 @@ for f in $(find "$site" -type f ! -path '*/.vercel/*'); do
 	if grep -qF "$(cat "$key_abs")" "$f" 2>/dev/null; then
 		die "$f contains the private key"
 	fi
+done
+
+# A package over Vercel's per-file limit (the largest firmware packages) goes
+# to the GitHub mirror only. The index still lists it: palm fetches each
+# package from the mirror that served the index first and from the others if
+# that fails, so it installs from GitHub. Only packages may be this large.
+GH_ONLY="$STAGE/github-only"
+rm -rf "$GH_ONLY"
+mkdir -p "$GH_ONLY"
+for f in "$site"/x86_64/*.palm; do
+	size=$(stat -c %s "$f")
+	if [ "$size" -gt "$MAX_FILE" ]; then
+		say "$(basename "$f") is $size bytes, over Vercel's per-file limit: GitHub mirror only"
+		mv "$f" "$GH_ONLY/"
+	fi
+done
+for f in "$site"/x86_64/PALMINDEX "$site"/x86_64/PALMINDEX.sig "$site/palmy-release.pub"; do
 	size=$(stat -c %s "$f")
 	[ "$size" -le "$MAX_FILE" ] || die "$f is $size bytes, over the per-file limit"
 done
@@ -247,10 +264,13 @@ if [ $do_github = 1 ]; then
 	old_assets=$(gh release view "$GITHUB_TAG" --repo "$GITHUB_REPO" --json assets --jq '.assets[].name')
 	say "uploading $count packages to $GITHUB_REPO release $GITHUB_TAG"
 	gh release upload "$GITHUB_TAG" --repo "$GITHUB_REPO" --clobber "$site"/x86_64/*.palm "$site/palmy-release.pub"
+	if ls "$GH_ONLY"/*.palm >/dev/null 2>&1; then
+		gh release upload "$GITHUB_TAG" --repo "$GITHUB_REPO" --clobber "$GH_ONLY"/*.palm
+	fi
 	gh release upload "$GITHUB_TAG" --repo "$GITHUB_REPO" --clobber "$site/x86_64/PALMINDEX.sig" "$site/x86_64/PALMINDEX"
 	for a in $old_assets; do
 		case "$a" in PALMINDEX | PALMINDEX.sig | palmy-release.pub) continue ;; esac
-		[ -f "$site/x86_64/$a" ] || gh release delete-asset "$GITHUB_TAG" "$a" --repo "$GITHUB_REPO" --yes
+		[ -f "$site/x86_64/$a" ] || [ -f "$GH_ONLY/$a" ] || gh release delete-asset "$GITHUB_TAG" "$a" --repo "$GITHUB_REPO" --yes
 	done
 	check_repo "https://github.com/$GITHUB_REPO/releases/download/$GITHUB_TAG" "GitHub"
 fi
