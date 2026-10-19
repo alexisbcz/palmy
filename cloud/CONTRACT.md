@@ -13,11 +13,14 @@ cloud/
     tests/             pgTAP tests, one file prefix per area
   mail/                the mail server (owned by mail)
   drive/               the drive service and sync daemon (owned by drive)
+  forge/               the git forge server (owned by forge)
   docs/                product and design notes (owned by product)
 apps/accounts/         sign-in, identities, switcher (owned by accounts)
 apps/cloudkit/         Odin client for Supabase: auth, PostgREST, Storage (owned by accounts)
 apps/drive/            the drive app (owned by drive)
 apps/home/             the unified hub prototype (owned by product)
+apps/browser/          the browser, bookmarks synced per identity (owned by browser)
+apps/forge/            the forge client (owned by forge)
 ```
 
 Migration file names are `<timestamp>_<name>.sql`. The ranges are:
@@ -28,6 +31,8 @@ Migration file names are `<timestamp>_<name>.sql`. The ranges are:
 | accounts | `20261019110000`–`20261019199999` | `accounts_` |
 | mail     | `20261019200000`–`20261019299999` | `mail_`     |
 | drive    | `20261019300000`–`20261019399999` | `drive_`    |
+| browser  | `20261019400000`–`20261019499999` | `browser_`  |
+| forge    | `20261019500000`–`20261019599999` | `forge_`    |
 
 ## Identities
 
