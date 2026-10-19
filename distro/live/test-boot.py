@@ -133,7 +133,7 @@ def main():
         # /boot/vmlinuz is left out of the initramfs on purpose (build.sh: the
         # kernel is on the ISO beside it), so verify reports exactly that.
         out, _ = m.run("ls /etc/palm/services.off; ps -o args | grep -c '[p]alm-login'; "
-                       "palm verify | grep -v -e 'modified (config)' -e 'problem(s) found' -e '^linux: /boot/vmlinuz: missing$' -e '^linux: /boot/efi/vmlinuz: missing$'; echo verify-other=$?")
+                       "palm verify | grep -v -e 'modified (config)' -e 'problem(s) found' -e '^linux: /boot/vmlinuz: missing$' -e '^linux: /boot/efi/vmlinuz: missing$' -e '^linux: /boot/efi: missing$'; echo verify-other=$?")
         m.check("palm-login and getty-ttyS0 masked (palm-login not running); palm verify finds only the left-out kernel",
                 "palm-login" in out and "getty-ttyS0" in out and re.search(r"^0$", out, re.M) is not None
                 and "verify-other=1" in out, out)
@@ -148,8 +148,19 @@ def main():
                         "ls /usr/share/zoneinfo/right /usr/share/zoneinfo/posix 2>&1 | head -2")
         m.check("tzdata (without right/ and posix/)", "Europe/Paris" in out and "No such file" in out, out)
 
-        out, rc = m.run("ls /usr/share/palm/locale; ls /usr/share/fonts/noto-cjk")
-        m.check("catalogues and the CJK font", "NotoSansCJK-Regular.ttc" in out, out)
+        # The live root has a Japanese subset of the CJK font (build.sh); the
+        # whole font is a package in the medium's repository, for installs.
+        out, rc = m.run("ls /usr/share/palm/locale; ls /usr/share/fonts/palm-live; ls /usr/share/palm/repo | grep fonts-cjk")
+        m.check("catalogues, the CJK subset, and fonts-cjk in the repository",
+                "ja" in out and "NotoSansCJKjp-Regular.otf" in out and "fonts-cjk-" in out, out)
+        # Firmware: the parts build.sh's LIVE_FIRMWARE names are installed, so
+        # the live kernel finds them, and carried for an offline install.
+        out, rc = m.run("ls /usr/lib/firmware | head -400 | wc -l; ls /usr/lib/firmware/regulatory.db*; "
+                        "palm list --installed | grep -c -E '^(linux-firmware|wireless-regdb)'; "
+                        "ls /usr/share/palm/repo | grep -c -E '^(linux-firmware|wireless-regdb)'")
+        print("  ....  firmware: " + out.strip().replace("\n", " | "))
+        m.check("firmware installed in the live root and carried in its repository",
+                "regulatory.db" in out and re.search(r"\|\s*([1-9]\d*)\s*\|\s*([1-9]\d*)\s*$", out.strip().replace("\n", " | ")) is not None, out)
 
         out, rc = m.run("cd /sys/block && echo *; cat /sys/block/vda/size; cd")
         m.check("the blank target is /dev/vda (8 GiB), the CD /dev/sr0",

@@ -122,6 +122,7 @@ selftest :: proc() -> int {
 	test_disks()
 	test_efi_load_option()
 	test_validate()
+	test_firmware()
 	test_install_image()
 	test_full_install()
 	test_cli()
@@ -970,6 +971,31 @@ check_bios_boot :: proc(img: string, size: i64, g: core.Gpt, root: string, have_
 	check(code2 == 0 && strings.contains(out, "No errors"), "sfdisk --verify after bios-install: %s", strings.trim_space(out))
 }
 
+// ---------------------------------------------------------------- firmware --
+
+// What an install adds for firmware: linux-firmware when the repository has
+// it, else the parts it has (the live medium's), else nothing.
+@(private = "file")
+test_firmware :: proc() {
+	full := "pkgname = glibc\nfilename = glibc.palm\n\npkgname = linux-firmware-intel\n\npkgname = linux-firmware\npkgname = wireless-regdb\n"
+	fw := core.firmware_from_index(full, context.temp_allocator)
+	check(len(fw) == 1 && fw[0] == "linux-firmware", "firmware: linux-firmware when the index has it (%v)", fw)
+	live := "pkgname = palmframe\npkgname = linux-firmware-intel\npkgname = linux-firmware-amdgpu\npkgname = linux-firmware-whence\npkgname = wireless-regdb\npkgname = sof-firmware\npkgname = firmware-tools\n"
+	fw = core.firmware_from_index(live, context.temp_allocator)
+	check(len(fw) == 5 && fw[0] == "linux-firmware-intel" && fw[4] == "sof-firmware", "firmware: else every part the index has, nothing else (%v)", fw)
+	fw = core.firmware_from_index("pkgname = palmframe\n", context.temp_allocator)
+	check(len(fw) == 0, "firmware: none in an index without any")
+	fw = core.firmware_for_repo("https://palmframe-packages.vercel.app/x86_64", context.temp_allocator)
+	check(len(fw) == 1 && fw[0] == "linux-firmware", "firmware: a network repository is taken to have linux-firmware")
+	dir := core.join(scratch_dir, "fwrepo")
+	_ = os.make_directory_all(core.join(dir, "x86_64"))
+	put(core.join(dir, "x86_64/PALMINDEX"), live)
+	fw = core.firmware_for_repo(fmt.tprintf("file://%s", dir), context.temp_allocator)
+	check(len(fw) == 5, "firmware: a file:// repository's <base>/x86_64/PALMINDEX is read (%v)", fw)
+	fw = core.firmware_for_repo(core.join(dir, "missing"), context.temp_allocator)
+	check(len(fw) == 0, "firmware: an unreadable repository is no firmware, not an error")
+}
+
 // ------------------------------------------------- the real packages, too --
 
 // With distro/out built, run the whole installation into a directory: our
@@ -1000,6 +1026,9 @@ test_full_install :: proc() {
 	p.timezone = "Asia/Tokyo"
 	p.repo = fmt.tprintf("file://%s", abs_repo)
 	p.efi_boot_entry = true
+	// The build's repository has linux-firmware (440 MB); test_firmware
+	// checks the choice, this install leaves it out.
+	p.no_firmware = true
 	o := core.default_options()
 	o.disk_image = true
 	o.target = root

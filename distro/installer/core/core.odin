@@ -83,6 +83,9 @@ Plan :: struct {
 	packages:       []string, // default: {"palmframe"}
 	efi_boot_entry: bool, // write a UEFI Boot#### variable via efivarfs
 	swap_bytes:     u64, // a /swapfile of this size on the root; 0 = none
+	// No firmware packages. By default the install adds linux-firmware, or
+	// the parts of it the repository has (firmware.odin).
+	no_firmware:    bool,
 }
 
 Step :: enum {

@@ -324,6 +324,10 @@ def gui():
         out, _ = t.run("palm list --installed 2>/dev/null | wc -l; palm list --installed 2>/dev/null | tr '\\n' ' '", 30)
         print("        palm list --installed: " + out.strip()[:900])
         t.check("palm list shows the installed set (palmframe and its dependencies)", "palmframe" in out and "palmframe-demo" not in out, out)
+        # The medium carries the firmware parts live/build.sh's LIVE_FIRMWARE
+        # names, and install_core adds what the repository has.
+        t.check("the medium's firmware parts are installed (linux-firmware-intel, wireless-regdb)",
+                "linux-firmware-intel" in out and "wireless-regdb" in out, out)
         out, _ = t.run("df -h / /boot/efi 2>&1; cat /sys/block/vda/size; cat /sys/block/vda/vda2/size; ls /home | cat")
         print("        " + out.strip().replace("\n", "\n        "))
         sizes = re.findall(r"^(\d+)$", out, re.M)

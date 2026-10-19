@@ -61,6 +61,8 @@ BIOS boot partition so the disk starts under UEFI and under a BIOS)
   --swap <size>                 a swap file on the root: 2G, 512M (default none)
   --no-efi-entry                do not write a UEFI Boot#### variable
   --no-bios-boot                do not install limine's BIOS boot code
+  --no-firmware                 install no firmware (default: linux-firmware,
+                                or the parts of it the repository carries)
   --answers <file>              key = value lines with the same names as the
                                 options (password = ... allowed); options win
   --yes                         really do it
@@ -355,6 +357,7 @@ apply :: proc(a: ^Args, key, val: string, has_val: bool, from_answers: bool) -> 
 		if !ok {return usage_error("--swap: %s", core.message_text(core.msg(.Swap_Invalid, val)))}
 		a.plan.swap_bytes = n
 	case "no-bios-boot": a.opts.no_bios_boot = true
+	case "no-firmware": a.plan.no_firmware = true
 	case "limine-tool": a.opts.limine_tool = val
 	case "no-efi-entry":
 		a.plan.efi_boot_entry = false
@@ -498,6 +501,11 @@ print_summary :: proc(a: ^Args) {
 	fmt.printf("  language %s, keyboard %s, time zone %s\n", p.language, kb, p.timezone)
 	fmt.printf("  user %s (%s), host name %s\n", p.user, p.full_name != "" ? p.full_name : p.user, p.hostname)
 	fmt.printf("  packages %s from %s\n", strings.join(pk, " ", context.temp_allocator), p.repo)
+	if p.no_firmware {
+		fmt.printf("  firmware: none\n")
+	} else if fw := core.firmware_for_repo(p.repo, context.temp_allocator); len(fw) > 0 {
+		fmt.printf("  firmware: %s\n", strings.join(fw, " ", context.temp_allocator))
+	}
 	fmt.printf("  UEFI boot entry: %s\n", p.efi_boot_entry ? "yes" : "no")
 }
 

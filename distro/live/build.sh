@@ -6,6 +6,8 @@
 #
 # Environment:
 #	ZSTD_LEVEL=19            initramfs compression level
+#	LIVE_FIRMWARE="..."      the firmware packages the medium carries (below);
+#	                         "linux-firmware" for all of it, "" for none
 #	LIVE_WITHOUT_INSTALLER=1 a test build for when palm-install/installer are
 #	                         not in the repository yet: everything else is
 #	                         installed by palm, distro/live/root is copied in
@@ -37,6 +39,11 @@
 #    palm itself works out that set (`add --dry-run`), so it follows the
 #    recipes. The rest of the build's repository (the live-only packages,
 #    palmframe-demo, fonts-emoji...) stays off the medium.
+#    Firmware (LIVE_FIRMWARE) is both installed in the live root, so the
+#    live system's own GPU, Wi-Fi and Ethernet start, and carried in that
+#    repository, so an offline install gets the same parts; install_core
+#    adds whatever firmware the repository has, or linux-firmware, all of
+#    it, from a network repository (distro/installer/core/firmware.odin).
 # 4. The root is packed as a newc cpio, still inside the same fakeroot
 #    session so the owners palm recorded (root, palm 1000, greeter 900) and
 #    modes such as /etc/shadow's 0600 are what the archive says, and
@@ -63,7 +70,16 @@ ISO="$OUT/palmframe-live.iso"
 LIMINE_SHARE="${LIMINE_SHARE:-/usr/share/limine}"
 ZSTD_LEVEL="${ZSTD_LEVEL:-19}"
 LIVE_WITHOUT_INSTALLER="${LIVE_WITHOUT_INSTALLER:-0}"
-LIVE_REPO_PACKAGES="${LIVE_REPO_PACKAGES:-palmframe fonts-cjk}"
+# Firmware on the medium (distro/notes/kernel.md, Firmware). The whole
+# medium sits in RAM, and firmware is in it twice (installed, and as
+# packages), so not all 440 MB of linux-firmware: the parts for the common
+# laptop GPUs, Wi-Fi and Ethernet (Intel, AMD, Realtek, MediaTek) and the
+# regulatory database, about 215 MB. The installed system gets the rest
+# with `palm add linux-firmware`, or at install time from a network
+# repository. One variable: LIVE_FIRMWARE=linux-firmware for everything,
+# LIVE_FIRMWARE= for none.
+LIVE_FIRMWARE="${LIVE_FIRMWARE-linux-firmware-intel linux-firmware-amdgpu linux-firmware-realtek linux-firmware-mediatek wireless-regdb}"
+LIVE_REPO_PACKAGES="${LIVE_REPO_PACKAGES:-palmframe fonts-cjk} $LIVE_FIRMWARE"
 LIVE_REPO="$WORK/repo"
 CJK_SUBSET="$HERE/root/usr/share/fonts/palm-live/NotoSansCJKjp-Regular.otf"
 CMDLINE="${CMDLINE:-console=tty0 console=ttyS0,115200 quiet loglevel=3}"
@@ -83,7 +99,7 @@ done
 # the two front ends that are not in the repository.
 if [ "$LIVE_WITHOUT_INSTALLER" = 1 ]; then
 	echo "live: test build WITHOUT palm-install and installer (LIVE_WITHOUT_INSTALLER=1)" >&2
-	PKGS="palmframe-base linux busybox glibc palm-init palm palmy-wm fonts libxkbcommon xkeyboard-config tzdata palm-locale term e2fsprogs dosfstools limine"
+	PKGS="palmframe-base linux busybox glibc palm-init palm palmy-wm fonts libxkbcommon xkeyboard-config tzdata palm-locale term e2fsprogs dosfstools limine $LIVE_FIRMWARE"
 else
 	for p in palm-install installer palmframe-live; do
 		ls "$REPO/$p"-[0-9]*.palm >/dev/null 2>&1 || {
@@ -92,7 +108,7 @@ else
 			exit 1
 		}
 	done
-	PKGS="palmframe-live"
+	PKGS="palmframe-live $LIVE_FIRMWARE"
 fi
 
 # The Japanese subset must still cover every catalogue; a changed Japanese
@@ -181,4 +197,5 @@ limine bios-install "$ISO.tmp" >"$WORK/limine.log" 2>&1 || { cat "$WORK/limine.l
 mv -f "$ISO.tmp" "$ISO"
 
 unpacked=$(du -s --block-size=1M --exclude=vmlinuz "$ROOTFS" | cut -f1)
+echo "live: firmware: ${LIVE_FIRMWARE:-none}"
 echo "live: $ISO ($(du -h --apparent-size "$ISO" | cut -f1)); initramfs $(du -h --apparent-size "$ISOROOT/boot/initramfs.zst" | cut -f1) compressed, ~${unpacked} MiB in RAM unpacked; $(grep -c '^pkgname' "$ROOTFS/usr/lib/palm/db/installed") packages installed; repository $(wc -l <"$WORK/repo.list") packages, $(du -sh --apparent-size "$LIVE_REPO" | cut -f1)"

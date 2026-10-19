@@ -365,6 +365,20 @@ step_packages :: proc(c: ^Ctx) -> string {
 	argv := make([dynamic]string, context.temp_allocator)
 	append(&argv, palm, "--root", c.t.root, "--initdb", "--repo", repo, "--keys-dir", c.o.keys_dir, "--yes", "add")
 	append(&argv, ..c.p.packages)
+	if !c.p.no_firmware {
+		fw := firmware_for_repo(c.p.repo, context.temp_allocator)
+		outer: for f in fw {
+			for have in c.p.packages {
+				if have == f {continue outer}
+			}
+			append(&argv, f)
+		}
+		if len(fw) == 0 {
+			logf(c, "firmware: %s has no firmware packages; none installed", c.p.repo)
+		} else {
+			logf(c, "firmware: %s", strings.join(fw, " ", context.temp_allocator))
+		}
+	}
 	pkg_state = {}
 	// palm prints its plan first ("  install   <name> <ver>", one per
 	// package), then "installing <name> <ver>" as it goes: the first gives
