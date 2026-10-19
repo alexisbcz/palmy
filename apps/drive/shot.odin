@@ -140,7 +140,7 @@ shots :: proc(dir: string) -> int {
 	step(off, st)
 	shot(off, dir, "07-personal-grid", &n)
 
-	// 8. Bob's view: what alice-work shared with him.
+	// 8. Bob's view: what alice.northwind shared with him.
 	bob := os.get_env("PALM_DRIVE_SHOT_BOB", context.temp_allocator)
 	if bob != "" {
 		bcfg, berr := dc.load_config(bob)

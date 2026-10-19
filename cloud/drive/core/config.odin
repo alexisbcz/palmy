@@ -14,6 +14,7 @@ Identity :: struct {
 	color:  string,
 	token:  string, // a JWT scoped to this identity (claim palm_identity)
 	root:   string, // ~/Drive/<handle> unless the config says otherwise
+	cloudkit: bool, // the token comes from cloudkit's store, refreshed per use
 }
 
 Config :: struct {
@@ -41,9 +42,16 @@ config_path :: proc() -> string {
 // cloud/drive/dev/seed.sh writes. The accounts area will hand these out
 // (sign-in, then one scoped device token per identity); until then the file
 // is the hand-off.
+//
+// Without the file, and without $PALM_DRIVE_CONFIG, the configuration comes
+// from the Palmframe account instead (account.odin), which is the normal case
+// once someone has signed in with Accounts.
 load_config :: proc(path: string) -> (cfg: Config, err: string) {
 	data, rerr := os.read_entire_file(path, context.allocator)
 	if rerr != nil {
+		if os.get_env("PALM_DRIVE_CONFIG", context.temp_allocator) == "" && !os.exists(path) {
+			return config_from_account()
+		}
 		return {}, fmt.aprintf("cannot read %s", path)
 	}
 	cfg.path = path
@@ -143,11 +151,15 @@ find_identity :: proc(cfg: ^Config, handle: string) -> ^Identity {
 }
 
 client_for :: proc(cfg: ^Config, id: ^Identity) -> Client {
+	token := id.token
+	if id.cloudkit {
+		token = account_token(id.handle)
+	}
 	return Client {
 		url = cfg.url,
 		storage = cfg.storage,
 		anon = cfg.anon,
-		token = id.token,
+		token = token,
 		identity = id.id,
 		handle = id.handle,
 		device = cfg.device,

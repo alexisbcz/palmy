@@ -13,7 +13,7 @@ HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 DRIVE="$(cd "$HERE/.." && pwd)"
 BIN="$DRIVE/bin/palm-drive"
 WORK=${DRIVE_TEST_DIR:-/tmp/palm-drive-scenarios}
-ID=alice-work
+ID=alice.northwind
 
 rm -rf "$WORK"
 mkdir -p "$WORK"
@@ -67,7 +67,7 @@ echo "# 2. dedupe: a copy uploads no chunks"
 cp "$A/video.bin" "$A/video copy.bin"
 sync A
 check '[ "$(field A chunks_sent)" = 0 ] && [ "$(field A chunks_deduped)" = 3 ]' "the copy sent 0 chunks, deduped 3"
-STORED=$(psql_ "select count(*) from storage.objects where bucket_id='drive' and name like '22222222%'")
+STORED=$(psql_ "select count(*) from storage.objects where bucket_id='drive' and name like 'd2222222%'")
 check '[ "$STORED" = 6 ]' "Storage holds 6 chunks for 5 files (got $STORED)"
 sync B
 check 'same' "A and B are identical"
@@ -115,7 +115,7 @@ sync A
 check '[ ! -e "$A/video copy.bin" ]' "A deleted its copy"
 check 'same' "A and B are identical"
 VID=$(psql_ "select id from drive_items where name='video copy.bin'")
-psql_ "set request.jwt.claims = '{\"sub\":\"00000000-0000-0000-0000-0000000a11ce\",\"role\":\"authenticated\"}'; set role authenticated; select name from drive_restore('$VID')" >/dev/null
+psql_ "set request.jwt.claims = '{\"sub\":\"d0000000-0000-4000-8000-0000000a11ce\",\"role\":\"authenticated\"}'; set role authenticated; select name from drive_restore('$VID')" >/dev/null
 sync A
 check '[ -e "$A/video copy.bin" ]' "restored from the trash, it reappears"
 sync B
@@ -189,7 +189,7 @@ sed 's/^/       /' "$WORK/watch.log" | head -12
 
 echo "# 13. identities stay apart"
 CFGX="$WORK/conf/cross.conf"
-# A device for alice-work handed the *personal* identity's token by mistake.
+# A device for alice.northwind handed the *personal* identity's token by mistake.
 TOKP=$(awk '/^\[identity\]/{n++} n==1 && /^token/{print $3}' "$CONF")
 awk -v t="$TOKP" '/^\[identity\]/{n++} n==2 && /^token/{print "token = " t; next} {print}' "$CONF" >"$CFGX"
 echo "should not land" >"$A/misdirected.md"

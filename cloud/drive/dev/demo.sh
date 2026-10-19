@@ -59,8 +59,8 @@ done
 cp "$ROOT/site/public/film/palmframe-poster.jpg" "$S/palmframe-poster.jpg"
 cp "$ROOT/site/public/shots/app-photoshop.png" "$S/Old logo.png"
 
-# --- alice-work ----------------------------------------------------------------
-W() { PALM_IDENTITY=alice-work "$DRIVE" "$@" >/dev/null; }
+# --- alice.northwind (work) ----------------------------------------------------------------
+W() { PALM_IDENTITY=alice.northwind "$DRIVE" "$@" >/dev/null; }
 for f in "Board deck.pptx" "Budget 2026.xlsx" "Board memo.md" "Q3 results.pdf" "Draft memo v1.md"; do W upload "$S/$f" "Q3 Board pack"; done
 for f in "Northwind MSA.md" "Vendor list.csv"; do W upload "$S/$f" "Contracts"; done
 for f in "files mockup.png" "slides mockup.png" "sheets mockup.png" "maps mockup.png" "palmframe-poster.jpg" "Old logo.png"; do W upload "$S/$f" "Design"; done
@@ -72,23 +72,23 @@ printf '\nAction: approve the Q4 hiring plan.\n' >>"$S/Board memo.md"
 W upload "$S/Board memo.md" "Q3 Board pack"
 W star "Q3 Board pack"
 W star "Q3 Board pack/Budget 2026.xlsx"
-W share "Q3 Board pack" bob --role viewer
-W share "Contracts" bob --role editor
-W share "Onboarding.md" alice --role viewer # work to personal: a deliberate crossing
+W share "Q3 Board pack" bob.chen --role viewer
+W share "Contracts" bob.chen --role editor
+W share "Onboarding.md" alice.martin --role viewer # work to personal: a deliberate crossing
 W link "Q3 Board pack" --expires "7 days"
 W trash "Design/Old logo.png"
 W trash "Q3 Board pack/Draft memo v1.md"
 
-# --- alice (personal) ------------------------------------------------------------
-P() { PALM_IDENTITY=alice "$DRIVE" "$@" >/dev/null; }
+# --- alice.martin (personal) ------------------------------------------------------------
+P() { PALM_IDENTITY=alice.martin "$DRIVE" "$@" >/dev/null; }
 cp "$ROOT/site/public/shots/app-maps.png" "$S/Lisbon map.png"
 cp "$ROOT/site/public/shots/app-video.png" "$S/Holiday video still.png"
 for f in "palmframe-poster.jpg" "Lisbon map.png" "Holiday video still.png"; do P upload "$S/$f" "Photos"; done
 for f in "Taxes 2025.csv" "Recipes.md" "Trip to Lisbon.md"; do P upload "$S/$f" /; done
 P star "Trip to Lisbon.md"
 
-# --- bob ---------------------------------------------------------------------------
-PALM_DRIVE_CONFIG="$DIR/conf/bob.conf" PALM_IDENTITY=bob "$DRIVE" upload "$S/Garden plan.md" / >/dev/null
+# --- bob.chen ---------------------------------------------------------------------------
+PALM_DRIVE_CONFIG="$DIR/conf/bob.conf" PALM_IDENTITY=bob.chen "$DRIVE" upload "$S/Garden plan.md" / >/dev/null
 
 # Recent: what alice opened at work, most recent last.
 for f in "Budget 2026.xlsx" "Board memo.md" "Board deck.pptx"; do

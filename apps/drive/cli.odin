@@ -52,7 +52,7 @@ COMMANDS := []kit.Command {
 		args = {{name = "path", kind = .String, help = "a folder, from the root of the drive", def = "/"}},
 		flags = {{name = "trash", kind = .Bool, help = "list the trash instead"}},
 		out = LIST_FIELDS,
-		examples = {"drive ls --json", "drive ls \"Q3 Board pack\" --identity alice-work --json", "drive ls --trash --json"},
+		examples = {"drive ls --json", "drive ls \"Q3 Board pack\" --identity alice.northwind --json", "drive ls --trash --json"},
 		run = cmd_ls,
 	},
 	{
@@ -94,7 +94,7 @@ COMMANDS := []kit.Command {
 		summary = "what other identities have shared with this one",
 		effect = .Read,
 		out = {{name = "identity", kind = .String}, {name = "shared", kind = .Array}},
-		examples = {"drive shared --identity bob --json"},
+		examples = {"drive shared --identity bob.chen --json"},
 		run = cmd_shared,
 	},
 	{
@@ -196,7 +196,7 @@ COMMANDS := []kit.Command {
 			{name = "expires", kind = .String, help = "an ISO time after which the share stops working"},
 		},
 		out = {{name = "share", kind = .Object}},
-		examples = {"drive share \"Q3 Board pack\" bob --role viewer --json"},
+		examples = {"drive share \"Q3 Board pack\" bob.chen --role viewer --json"},
 		run = cmd_share,
 	},
 	{
@@ -205,7 +205,7 @@ COMMANDS := []kit.Command {
 		effect = .Mutate,
 		args = {{name = "path", kind = .String, required = true}, {name = "handle", kind = .String, required = true}},
 		out = {{name = "revoked", kind = .Int}},
-		examples = {"drive unshare \"Q3 Board pack\" bob --json"},
+		examples = {"drive unshare \"Q3 Board pack\" bob.chen --json"},
 		run = cmd_unshare,
 	},
 	{

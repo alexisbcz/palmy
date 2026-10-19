@@ -13,7 +13,7 @@ key Down
 wait 0.8
 key s
 wait 1.2
-type alice
+type alice.martin
 wait 0.8
 key Tab
 wait 0.8
