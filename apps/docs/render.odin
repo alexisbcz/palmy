@@ -21,6 +21,18 @@ PAGE_GAP :: f32(26)
 PAGE_PAD :: f32(28)
 
 COL_DESK :: u32(0xc8c8c9)
+COL_DESK_DARK :: u32(0x1c1c20)
+
+// dark_chrome says whether the window's theme is dark. The page stays paper
+// white either way — it is the document — but the desk and the ruler around
+// it follow the chrome, or a dark window would hold a light-grey slab.
+dark_chrome :: proc() -> bool {
+	c, ok := p.parse_color("background")
+	if !ok {
+		return false
+	}
+	return int(c.r) + int(c.g) + int(c.b) < 3 * 96
+}
 COL_PAGE :: u32(0xffffff)
 COL_INK :: u32(0x121212)
 COL_SEL :: u32(0x2563eb)
@@ -143,7 +155,7 @@ pos_at_view :: proc(st: ^State, vx, vy: f32) -> Pos {
 
 draw_workspace :: proc(c: ^p.Canvas, r: p.Rect, st: ^State) {
 	sc := c.scale
-	p.fill_rect(c, r, p.hex(COL_DESK))
+	p.fill_rect(c, r, p.hex(dark_chrome() ? COL_DESK_DARK : COL_DESK))
 	p.push_clip(c, r)
 	defer p.pop_clip(c)
 
@@ -453,8 +465,9 @@ draw_ruler :: proc(c: ^p.Canvas, r: p.Rect, st: ^State) {
 	sc := c.scale
 	h := f32(20)
 	dr := p.Rect{r.x, r.y, r.w, h * sc}
-	p.fill_rect(c, dr, p.hex(0xe9e9ea))
-	p.fill_rect(c, {dr.x, dr.y + dr.h - sc, dr.w, sc}, p.hex(0xc0c0c1))
+	dark := dark_chrome()
+	p.fill_rect(c, dr, p.hex(dark ? 0x232327 : 0xe9e9ea))
+	p.fill_rect(c, {dr.x, dr.y + dr.h - sc, dr.w, sc}, p.hex(dark ? 0x34343a : 0xc0c0c1))
 
 	z := st.zoom
 	pw := PAGE_W * z
@@ -463,11 +476,11 @@ draw_ruler :: proc(c: ^p.Canvas, r: p.Rect, st: ^State) {
 	defer p.pop_clip(c)
 
 	// The measure in white, the margins in grey.
-	p.fill_rect(c, {px, dr.y + 4 * sc, pw * sc, dr.h - 8 * sc}, p.hex(0xbdbdbe))
+	p.fill_rect(c, {px, dr.y + 4 * sc, pw * sc, dr.h - 8 * sc}, p.hex(dark ? 0x3a3a40 : 0xbdbdbe))
 	p.fill_rect(
 		c,
 		{px + MARGIN * z * sc, dr.y + 4 * sc, CONTENT_W * z * sc, dr.h - 8 * sc},
-		p.hex(0xfdfdfd),
+		p.hex(dark ? 0x52525a : 0xfdfdfd),
 	)
 
 	inch := 96 * z * sc

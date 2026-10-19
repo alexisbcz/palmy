@@ -209,7 +209,12 @@ collab_tick :: proc(ui: ^p.Ctx, st: ^State) {
 	}
 	if ev.peers || ev.changed || ev.status {
 		collab_refresh_peers(st)
-		if ui != nil {p.redraw(ui)}
+		if ui != nil {
+			// palmy drops a frame when no buffer is free and does not retry;
+			// ask for a follow-up so a lone cursor move is not lost
+			p.redraw(ui)
+			p.wake_after(ui, 120 * time.Millisecond)
+		}
 	}
 	collab_publish(st)
 	// keep the server's copy of the token fresh
@@ -850,7 +855,7 @@ panel_comments :: proc(ui: ^p.Ctx, st: ^State) {
 		monogram(ui, who, peer_color_for(st, dc.id), "size-5")
 		p.text(ui, tfmt("%s suggested %s", who, dc.kind == .Sugg_Ins ? "adding" : "deleting"), "text-[11.5] font-medium")
 		p.end(ui)
-		p.text(ui, tfmt("“%s”", frag), dc.kind == .Sugg_Del ? "text-[12] text-muted-foreground line-through" : "text-[12]")
+		p.text(ui, tfmt("“%s”", strings.trim_space(frag)), dc.kind == .Sugg_Del ? "text-[12] text-muted-foreground line-through" : "text-[12]")
 		p.text(ui, "Ctrl+Alt+A accept · Ctrl+Alt+D reject (at the caret)", "text-[10.5] text-muted-foreground")
 		p.end(ui)
 	}
@@ -871,7 +876,7 @@ panel_comments :: proc(ui: ^p.Ctx, st: ^State) {
 		if c.resolved {sc.badge(ui, "Resolved", .Secondary)}
 		p.end(ui)
 		if c.quote != "" {
-			q := c.quote
+			q := strings.trim_space(c.quote)
 			if len(q) > 60 {q = tfmt("%s…", q[:57])}
 			p.row(ui, "w-full gap-2")
 			p.div(ui, "w-[2] self-stretch rounded-full bg-amber-400 shrink-0")

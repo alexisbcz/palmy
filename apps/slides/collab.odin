@@ -375,7 +375,7 @@ collab_tick :: proc(ui: ^p.Ctx, st: ^St) {
 		st.dirty = true
 		if ui != nil {p.redraw(ui)}
 	}
-	if (ev.status || ev.peers) && ui != nil {p.redraw(ui)}
+	if ev.status || ev.peers || ev.changed {collabui.settle(ui)}
 	sk, ek := "", ""
 	if st.slide >= 0 && st.slide < len(st.deck.slides) {
 		sl := &st.deck.slides[st.slide]

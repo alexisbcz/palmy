@@ -32,6 +32,7 @@ import "core:strconv"
 import "core:strings"
 import "core:time"
 import p "palmy:."
+import sc "shadcn:."
 import client "../../cloud/collab/client"
 
 run_script :: proc(ca: Collab_Args, path: string, seed_file := "") -> int {
@@ -89,6 +90,7 @@ run_script :: proc(ca: Collab_Args, path: string, seed_file := "") -> int {
 			}
 		case "start":
 			st.caret, st.anchor = pos(0, 0), pos(0, 0)
+			st.scroll = 0
 		case "end":
 			st.caret = doc_end(&st.doc)
 			st.anchor = st.caret
@@ -147,6 +149,24 @@ run_script :: proc(ca: Collab_Args, path: string, seed_file := "") -> int {
 			do_undo(st)
 		case "redo":
 			do_redo(st)
+		case "shot":
+			parts := strings.fields(arg, context.temp_allocator)
+			if len(parts) > 0 {
+				collab_shot(st, parts[0], len(parts) > 1 && parts[1] == "dark")
+			}
+		case "panel":
+			switch strings.trim_space(arg) {
+			case "comments":
+				st.collab.panel = .Comments
+			case "history":
+				st.collab.panel = .History
+				collab_load_history(st)
+			case "share":
+				st.collab.panel = .Share
+				collab_load_people(st)
+			case:
+				st.collab.panel = .None
+			}
 		case "quit":
 			step(st)
 			pump(st, 3, proc(st: ^State) -> bool {return client.pending_count(st.collab.sess) == 0})
@@ -160,6 +180,32 @@ run_script :: proc(ca: Collab_Args, path: string, seed_file := "") -> int {
 	pump(st, 3, proc(st: ^State) -> bool {return client.pending_count(st.collab.sess) == 0})
 	state_destroy(st)
 	return 0
+}
+
+// collab_shot renders the window as it is now — the real chrome, the real
+// collaborators — offscreen, and writes a PNG.
+collab_shot :: proc(st: ^State, path: string, dark: bool) {
+	off := p.offscreen_create(1440, 900, 1, "w-full h-full bg-background text-foreground")
+	defer p.offscreen_destroy(off)
+	shot_fonts(&off.fonts)
+	sc.register_shadcn_theme(dark)
+	p.set_text_gamma(1.8)
+	st.caret_on = true
+	st.focus_doc = true
+	collab_refresh_peers(st)
+	for _ in 0 ..< 2 {
+		ui := p.offscreen_begin(off)
+		measure(ui, st)
+		if st.dirty {
+			relayout(st)
+			st.dirty = false
+		}
+		frame(ui, st)
+		p.offscreen_end(off)
+	}
+	if p.offscreen_write_png(off, path) {
+		fmt.printfln("  wrote %s", path)
+	}
 }
 
 encode_rune :: proc(buf: []u8, r: rune) -> string {

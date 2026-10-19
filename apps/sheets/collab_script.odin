@@ -19,6 +19,7 @@ import "core:strconv"
 import "core:strings"
 import "core:time"
 import p "palmy:."
+import sc "shadcn:."
 import client "../../cloud/collab/client"
 import collabui "../../cloud/collab/ui"
 
@@ -84,6 +85,25 @@ run_script :: proc(app: ^App, win: ^p.App, ca: collabui.Args) -> int {
 			do_undo(app)
 		case "redo":
 			do_redo(app)
+		case "shot":
+			parts := strings.fields(arg, context.temp_allocator)
+			if len(parts) > 0 {
+				collab_shot(app, parts[0], len(parts) > 1 && parts[1] == "dark")
+			}
+		case "panel":
+			switch strings.trim_space(arg) {
+			case "comments":
+				collab.ui.panel = .Comments
+				collab_refresh_comments(app)
+			case "history":
+				collab.ui.panel = .History
+				collabui.load_history(&collab.ui)
+			case "share":
+				collab.ui.panel = .Share
+				collabui.load_people(&collab.ui)
+			case:
+				collab.ui.panel = .None
+			}
 		case "quit":
 			spin(app, 3, proc(app: ^App) -> bool {return client.pending_count(collab.ui.sess) == 0})
 			collabui.destroy(&collab.ui)
@@ -96,6 +116,28 @@ run_script :: proc(app: ^App, win: ^p.App, ca: collabui.Args) -> int {
 	spin(app, 3, proc(app: ^App) -> bool {return client.pending_count(collab.ui.sess) == 0})
 	collabui.destroy(&collab.ui)
 	return 0
+}
+
+collab_shot :: proc(app: ^App, path: string, dark: bool) {
+	off := p.offscreen_create(1440, 900, 1, "w-full h-full bg-background text-foreground")
+	defer p.offscreen_destroy(off)
+	load_sans(&off.fonts)
+	load_italics(&off.fonts)
+	sc.register_shadcn_theme(dark)
+	p.set_text_gamma(1.8)
+	saved_fonts := app.fonts
+	app.fonts = &off.fonts
+	app.pal = palette_build()
+	for _ in 0 ..< 2 {
+		ui := p.offscreen_begin(off)
+		measure_viewport(app, p.size(ui))
+		frame(ui, app)
+		p.offscreen_end(off)
+	}
+	app.fonts = saved_fonts
+	if p.offscreen_write_png(off, path) {
+		fmt.printfln("  wrote %s", path)
+	}
 }
 
 spin :: proc(app: ^App, seconds: f64, until: proc(app: ^App) -> bool) {

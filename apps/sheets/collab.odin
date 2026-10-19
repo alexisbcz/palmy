@@ -829,8 +829,13 @@ collab_tick :: proc(ui: ^p.Ctx, app: ^App) {
 	} else {
 		collab.saved = false
 	}
-	if (ev.status || ev.peers) && ui != nil {
-		p.redraw(ui)
+	if ev.status && s.doc_title != "" && s.doc_title != app.name {
+		// the window is named after the shared document, not a file
+		delete(app.name)
+		app.name = strings.clone(s.doc_title)
+	}
+	if ev.status || ev.peers || ev.changed {
+		collabui.settle(ui)
 	}
 	// presence: the sheet and the cells this window has selected
 	cur := cell_anchor(app, app.cur)
@@ -901,17 +906,20 @@ draw_peer_cells :: proc(c: ^p.Canvas, app: ^App, g: ^Grid_Geom, body: p.Rect, s:
 		p.draw_text(c, app.fonts, pc.name, r0.x + 4 * s, r0.y - fh * 0.3, fs, p.hex(0xffffff), .Sans, .Medium)
 		p.pop_clip(c)
 	}
-	// comment markers: a small triangle in the cell's top-right corner
+	// comment markers: a filled triangle in the cell's top-right corner, as
+	// every spreadsheet draws them
 	for cm in collab.comments {
 		if !cm.alive || cm.resolved || cm.sheet != app.book.active {continue}
 		r, ok := geom_cell(app, g, cm.addr)
 		if !ok {continue}
-		k := 7 * s
+		k := 9 * s
 		col := p.hex(0xf59e0b)
-		for i in 0 ..< int(k) {
-			p.fill_rect(c, {r.x + r.w - k + f32(i), r.y, k - f32(i), 1 * s}, col)
-			p.fill_rect(c, {r.x + r.w - k + f32(i), r.y + f32(i) * 0, 1, k - f32(i)}, col)
+		p.push_clip(c, p.rect_intersect(c.clip, body))
+		for i := f32(0); i < k; i += 1 {
+			// row i of the triangle runs from the corner leftwards, shrinking
+			p.fill_rect(c, {r.x + r.w - (k - i), r.y + i, k - i, 1}, col)
 		}
+		p.pop_clip(c)
 	}
 }
 

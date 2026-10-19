@@ -18,6 +18,7 @@ import "core:os"
 import "core:strconv"
 import "core:strings"
 import "core:time"
+import p "palmy:."
 import client "../../cloud/collab/client"
 import collabui "../../cloud/collab/ui"
 
@@ -87,6 +88,14 @@ run_script :: proc(st: ^St, ca: collabui.Args) -> int {
 				push_history(st, nil)
 				e.fill = next_paint(e.fill, 1)
 			}
+		case "peers":
+			// what this replica sees of everyone else, for tests and debugging
+			for &peer in collab.ui.sess.peers {
+				fmt.printfln("  peer %s state=%s", peer.identity.handle, client.jstr(peer.state, "s"))
+			}
+			for pm in peer_marks(st) {
+				fmt.printfln("  mark %s slide=%d elem=%d typing=%v", pm.name, pm.slide, pm.elem, pm.typing)
+			}
 		case "new-slide":
 			push_history(st, nil)
 			st.slide = slide_add(&st.deck, st.slide + 1, .Title_Content)
@@ -98,6 +107,22 @@ run_script :: proc(st: ^St, ca: collabui.Args) -> int {
 			collab_undo(st, false)
 		case "redo":
 			collab_undo(st, true)
+		case "shot":
+			parts := strings.fields(arg, context.temp_allocator)
+			if len(parts) > 0 {
+				collab_shot(st, parts[0])
+			}
+		case "panel":
+			switch strings.trim_space(arg) {
+			case "history":
+				collab.ui.panel = .History
+				collabui.load_history(&collab.ui)
+			case "share":
+				collab.ui.panel = .Share
+				collabui.load_people(&collab.ui)
+			case:
+				collab.ui.panel = .None
+			}
 		case "quit":
 			spin(st, 3, proc(st: ^St) -> bool {return client.pending_count(collab.ui.sess) == 0})
 			collabui.destroy(&collab.ui)
@@ -110,6 +135,32 @@ run_script :: proc(st: ^St, ca: collabui.Args) -> int {
 	spin(st, 3, proc(st: ^St) -> bool {return client.pending_count(collab.ui.sess) == 0})
 	collabui.destroy(&collab.ui)
 	return 0
+}
+
+collab_shot :: proc(st: ^St, path: string) {
+	off := p.offscreen_create(1440, 900, 1, "w-full h-full flex-col bg-background text-foreground overflow-hidden")
+	defer p.offscreen_destroy(off)
+	shot_fonts(&off.fonts)
+	register_chrome_theme()
+	p.set_text_gamma(1.8)
+	if st.exe_dir == "" {st.exe_dir = exe_directory()}
+	if st.imgs.m == nil {
+		root := st.exe_dir
+		if !os.exists(fmt.tprintf("%s/assets/vista.png", root)) {root = #directory}
+		st.imgs = img_cache_make(root)
+	}
+	if st.guides == nil {st.guides = make([dynamic]Guide)}
+	for i in 0 ..< MAX_THUMBS {st.thumbs[i] = {st, i}}
+	for _ in 0 ..< 2 {
+		ui := p.offscreen_begin(off)
+		st.fonts = ui.fonts
+		clamp_state(st)
+		build(ui, st)
+		p.offscreen_end(off)
+	}
+	if p.offscreen_write_png(off, path) {
+		fmt.printfln("  wrote %s", path)
+	}
 }
 
 spin :: proc(st: ^St, seconds: f64, until: proc(st: ^St) -> bool) {

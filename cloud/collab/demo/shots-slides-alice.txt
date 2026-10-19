@@ -1,0 +1,6 @@
+wait 6
+slide 0
+shot @OUT@/slides-presence.png
+panel share
+shot @OUT@/slides-share.png
+quit

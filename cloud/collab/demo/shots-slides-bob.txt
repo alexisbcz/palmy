@@ -1,0 +1,9 @@
+wait 1
+slide 1
+select 0
+text Northwind Q4: the plan
+slide 0
+select 1
+text Reviewed by Bob
+sync 5
+wait 60

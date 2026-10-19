@@ -324,7 +324,10 @@ status_bar :: proc(ui: ^p.Ctx, app: ^App) {
 	stat(ui, "Filled", int_text(st.counta))
 
 	p.spacer(ui)
-	if app.path != "" {
+	if collab.on {
+		text, tone := collabui.status_text(&collab.ui)
+		p.text(ui, fmt.tprintf("Shared · %s", text), fmt.tprintf("text-xs whitespace-nowrap shrink-0 %s", tone))
+	} else if app.path != "" {
 		p.text(ui, app.path, "text-xs text-muted-foreground whitespace-nowrap truncate max-w-[340] shrink-0")
 	} else {
 		p.text(ui, "not saved", "text-xs text-muted-foreground whitespace-nowrap shrink-0")

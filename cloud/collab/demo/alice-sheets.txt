@@ -1,0 +1,20 @@
+# Alice, the filmed workbook window.
+wait 3.5
+key Right
+key Right
+key Right
+key Right
+key Right
+key Down
+type Margin
+key Return
+wait 0.3
+type =D3*0.2
+key Return
+wait 6
+chord ctrl+alt+c
+wait 4
+chord ctrl+alt+h
+wait 3
+chord ctrl+alt+k
+wait 4

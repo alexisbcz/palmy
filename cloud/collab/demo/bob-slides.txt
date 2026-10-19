@@ -1,0 +1,20 @@
+# Bob, headless, while Alice's deck window is filmed.
+wait 1.5
+slide 1
+select 0
+text Northwind Q4: the plan
+sync 3
+slide 2
+select 1
+move 60 0
+fill
+sync 3
+offline
+slide 0
+select 1
+text Reviewed offline by Bob
+wait 4
+online
+sync 6
+wait 40
+quit

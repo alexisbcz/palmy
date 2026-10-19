@@ -1,0 +1,15 @@
+wait 1
+find Publish the migration guide two weeks before general availability.
+enter
+type Write the rollback runbook and rehearse it once.
+suggest on
+find ships to every
+type  paying
+suggest off
+find The migration touches
+select 14
+comment Which documents migrate first?
+find Cut median page load
+select 9
+sync 5
+wait 60

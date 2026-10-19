@@ -1,0 +1,13 @@
+wait 1
+goto F2
+set Margin
+goto F3
+set =D3*0.2
+goto F4
+wait 6
+panel comments
+shot @OUT@/sheets-comments-light.png
+shot @OUT@/sheets-comments-dark.png dark
+panel history
+shot @OUT@/sheets-history-light.png
+quit

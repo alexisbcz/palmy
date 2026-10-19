@@ -1,0 +1,15 @@
+wait 1
+goto A4
+insert-row
+set Coastal
+goto B4
+set 64
+goto C4
+set 4.75
+goto D4
+set =B4*C4
+goto D10
+comment Does the total include Coastal now?
+goto C5
+sync 5
+wait 60

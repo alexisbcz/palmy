@@ -1,0 +1,13 @@
+# Alice, the filmed deck window. J and K walk the slides.
+wait 3.5
+key j
+wait 3
+key j
+wait 5
+key k
+key k
+wait 6
+chord ctrl+alt+h
+wait 3
+chord ctrl+alt+k
+wait 4

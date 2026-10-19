@@ -1,0 +1,14 @@
+wait 1
+end
+enter
+type Owners confirm their dates by Friday.
+wait 6
+start
+panel comments
+shot @OUT@/docs-comments-light.png
+shot @OUT@/docs-comments-dark.png dark
+panel history
+shot @OUT@/docs-history-light.png
+panel share
+shot @OUT@/docs-share-dark.png dark
+quit

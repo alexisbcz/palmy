@@ -1,0 +1,27 @@
+# Bob, headless, while Alice's workbook window is filmed.
+wait 1.5
+# A new region, in a row inserted inside the totals' range.
+goto A4
+insert-row
+set Coastal
+goto B4
+set 64
+goto C4
+set 4.75
+goto D4
+set =B4*C4
+sync 4
+wait 1
+# Offline for a moment: a price change waits in the outbox.
+offline
+goto C3
+set 4.60
+wait 4
+online
+sync 6
+wait 1
+goto D10
+comment Does the total include Coastal now?
+sync 4
+wait 40
+quit

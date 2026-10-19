@@ -171,6 +171,16 @@ publish :: proc(s: ^State, state_json: string) {
 	client.set_awareness(s.sess, state_json)
 }
 
+// settle asks for one more frame shortly after a remote change. palmy drops a
+// frame when the compositor has not released a buffer yet and does not retry
+// it; a change that arrives alone (someone moving their cursor) would then
+// sit unseen until the next input. One follow-up frame closes that gap.
+settle :: proc(ui: ^p.Ctx) {
+	if ui == nil {return}
+	p.redraw(ui)
+	p.wake_after(ui, 120 * time.Millisecond)
+}
+
 may_edit :: proc(s: ^State) -> bool {
 	if s.sess == nil {return true}
 	switch s.sess.role {
