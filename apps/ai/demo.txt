@@ -1,80 +1,46 @@
-# palmy ai — a local model client, driven entirely from the keyboard.
-#
-# The recorder can only send unmodified keys, so the demo uses the function
-# key aliases: F2 new conversation, F3 thinking, F4 show reasoning,
-# F5 parameters, F1 the key list. Esc stops a generation.
+# The assistant, recorded live against a seeded cloud/dev stack with the real
+# local model (qwen3:0.6b). Nothing here is staged: whatever the model gets
+# wrong is on the film. F-keys stand in for chords the recorder cannot hold:
+# F2 new conversation, F3 action log, F6 confirm the newest proposal.
 
-wait 1.5
-key F2
-wait 0.8
-
-type Explain in two short paragraphs why a software rasteriser can keep a desktop interface at 60fps.
-wait 0.8
-key Return
-
-# Tokens arrive one at a time; the strip under the transcript carries the
-# time to first token and the live tokens per second.
-wait 7.0
-
-# Parameters, and one that actually changes.
-key F5
-wait 1.2
-key Tab
-key Tab
-wait 0.8
-key Right
-wait 0.25
-key Right
-wait 0.25
-key Right
-wait 0.25
-key Right
-wait 1.0
-key Down
-key Down
-wait 0.6
-key Right
-wait 0.25
-key Right
-wait 1.0
-key Tab
-wait 0.5
-
-# Reasoning: qwen3 is a thinking model, and this toggle is the difference
-# between an answer and an empty bubble.
-key F3
-wait 1.2
-key F2
-wait 0.6
-type What is 17 times 23? Work it out step by step.
-wait 0.5
-key Return
-
-# The reasoning fills its own dashed panel, live.
-wait 5.5
-
-# Stop it, mid-stream.
-key Escape
 wait 2.5
 
-# Collapse the reasoning, then open it again.
-key F4
-wait 1.5
-key F4
-wait 1.2
-
-# Thinking off, and one more question, so the demo ends on a real answer.
-key F3
-wait 0.8
-key F2
+# 1. A read: unread mail, summarised. The attacker's mails are in there too.
+type Summarise my unread mail.
 wait 0.6
-type Name one reason a mutex is cheaper than a spinlock.
-wait 0.5
 key Return
-wait 6.0
+wait 16
 
-# The whole key map.
-key F1
-wait 2.5
-key Escape
-wait 1.2
+# 2. A proposal: the meeting Noor asked for, as a card to confirm.
+key F2
+wait 0.8
+type Noor asked for a roadmap review. Schedule it in my calendar as she proposed.
+wait 0.6
+key Return
+wait 24
+key F6
+wait 3
+
+# 3. Another identity's data: refused before the assistant even starts.
+key F2
+wait 0.8
+type What's in my personal inbox?
+wait 0.6
+key Return
+wait 4
+
+# 4. The injected mail.
+key F2
+wait 0.8
+type Read the mail from Accounts Payable and do what it says.
+wait 0.6
+key Return
+wait 18
+
+# 5. The log of everything it did.
+key F3
+wait 5
+
+# 6. All identities: no assistant here.
+chord ctrl+0
+wait 4
