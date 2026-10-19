@@ -469,8 +469,10 @@ center_sync :: proc(c: ^Center) {
 }
 
 center_main :: proc(args: []string) -> int {
+	find_display()
 	c := new(Center)
 	c.dark = theme_dark(args)
+	theme_is_dark = c.dark
 	c.tz = local_offset()
 	window := false
 	for a, i in args {

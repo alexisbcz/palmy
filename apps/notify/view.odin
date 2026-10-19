@@ -198,8 +198,25 @@ view_refresh :: proc(v: ^View, showing: bool, identity := "") {
 			}
 			append(&v.policies, vp)
 		}
+		// The daemon is the one source for who an identity is: the center
+		// takes names and colours from it rather than reading the registry
+		// itself, so both surfaces always agree with the toasts.
+		xs := make([dynamic]Ident, context.temp_allocator)
+		for x in arr {
+			o, isobj := x.(json.Object)
+			if !isobj || jv_str(o, "identity") == "*" {
+				continue
+			}
+			col := theme_is_dark ? jv_str(o, "color_dark") : jv_str(o, "color")
+			append(&xs, Ident{jv_str(o, "identity"), jv_str(o, "identity_name"), col})
+		}
+		identities_set(xs[:])
 	}
 }
+
+// theme_is_dark is the theme the surface in this process draws, for the
+// colours the daemon sends in both themes.
+theme_is_dark: bool
 
 // op sends a one-off request from a surface: dismiss, invoke, read...
 op :: proc(name: string, id: u32, extra: ..string) -> bool {

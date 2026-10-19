@@ -17,6 +17,7 @@ import "base:runtime"
 import "core:fmt"
 import "core:os"
 import "core:strings"
+import "core:time"
 
 Ident :: struct {
 	handle: string,
@@ -81,10 +82,37 @@ identities_set :: proc(xs: []Ident) {
 		append(&g_idents, Ident{strings.clone(x.handle), strings.clone(x.name), strings.clone(x.color)})
 	}
 	g_idents_loaded = true
+	g_idents_fixed = true
+}
+
+g_idents_fixed: bool // set by identities_set: the screenshots' invented ones
+g_idents_mtime: i64
+g_idents_checked: i64
+
+// identities_changed notices Accounts rewriting the registry during a
+// session, looking at the file at most every two seconds.
+identities_changed :: proc() -> bool {
+	if g_idents_fixed {
+		return false
+	}
+	now := time.to_unix_nanoseconds(time.now())
+	if now - g_idents_checked < 2_000_000_000 {
+		return false
+	}
+	g_idents_checked = now
+	mt := i64(0)
+	if fi, err := os.stat(identities_path(), context.temp_allocator); err == nil {
+		mt = time.to_unix_nanoseconds(fi.modification_time)
+	}
+	if mt == g_idents_mtime {
+		return false
+	}
+	g_idents_mtime = mt
+	return true
 }
 
 identity_lookup :: proc(handle: string) -> (Ident, bool) {
-	if !g_idents_loaded {
+	if !g_idents_loaded || identities_changed() {
 		identities_reload()
 	}
 	for x in g_idents {
@@ -186,7 +214,7 @@ identity_color :: proc(handle: string, dark: bool) -> u32 {
 
 // identity_handles is every identity the device knows, in registry order.
 identity_handles :: proc(allocator := context.temp_allocator) -> []string {
-	if !g_idents_loaded {
+	if !g_idents_loaded || identities_changed() {
 		identities_reload()
 	}
 	out := make([]string, len(g_idents), allocator)

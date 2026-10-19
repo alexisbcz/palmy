@@ -804,6 +804,21 @@ wayland_env :: proc() -> []string {
 	return env[:]
 }
 
+// find_display sets WAYLAND_DISPLAY for this process when it is unset and
+// the window manager's socket is there: `notify center` typed in a shell
+// that was not started by the wm still opens on it.
+find_display :: proc() {
+	if os.get_env("WAYLAND_DISPLAY", context.temp_allocator) != "" {
+		return
+	}
+	for name in ([?]string{"wayland-palmy", "wayland-0", "wayland-1"}) {
+		if os.exists(fmt.tprintf("%s/%s", runtime_dir(), name)) {
+			os.set_env("WAYLAND_DISPLAY", name)
+			return
+		}
+	}
+}
+
 @(private = "file")
 ensure_ui :: proc(d: ^Daemon) {
 	if d.no_ui || d.ui_pid > 0 || wall_ms() < d.ui_retry_at {

@@ -339,6 +339,7 @@ toast_ms_view :: proc(n: ^View_Note) -> int {
 TOAST_ROOT :: "w-full h-full flex-col bg-popover text-popover-foreground border border-border overflow-hidden"
 
 toasts_main :: proc(args: []string) -> int {
+	find_display()
 	t := new(Toasts)
 	t.dark = theme_dark(args)
 	t.tz = local_offset()

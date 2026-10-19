@@ -458,6 +458,7 @@ policies_reply :: proc(d: ^Daemon, c: ^Client, now: i64) -> ^kit.Json {
 			kit.jset_str(o, "hold_ends", hhmm(local_minute(end, d.tz)))
 		}
 		kit.jset_str(o, "color", fmt.tprintf("#%06x", identity_color(ident, false)))
+		kit.jset_str(o, "color_dark", fmt.tprintf("#%06x", identity_color(ident, true)))
 		kit.jpush(arr, o)
 	}
 	for h in identity_handles() {
