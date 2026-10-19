@@ -240,3 +240,20 @@ language sql stable set search_path = ''
 as $$
 	select x from json_array_elements(public.rtc_reads_json(me)) x where x ->> 'ch' = channel::text
 $$;
+
+-- A call as the channel shows it: whether it is live, and who is in it.
+create function public.rtc_call_json(call uuid) returns json
+language sql stable set search_path = ''
+as $$
+	select json_build_object(
+		'call', k.id, 'ch', k.channel_id,
+		'state', case when k.ended_at is null then 'active' else 'ended' end,
+		'started', extract(epoch from k.started_at)::bigint,
+		'e2ee', k.e2ee,
+		'who', coalesce((select json_agg(json_build_object(
+				'id', m.identity_id, 'nick', m.handle, 'name', m.display_name, 'color', m.color) order by p.joined_at)
+			from public.rtc_call_participants p
+			join public.rtc_members m on m.space_id = k.space_id and m.identity_id = p.identity_id
+			where p.call_id = k.id and p.left_at is null), '[]'))
+	from public.rtc_calls k where k.id = call
+$$;
