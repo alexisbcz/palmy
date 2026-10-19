@@ -29,6 +29,8 @@ Driver :: struct {
 	st:    ^St,
 	res:   ^Drive_Result,
 	shots: string,
+	film:  string, // WELCOME_DRIVE_FILM: a numbered PNG per tenth of a second
+	reel:  int,
 	n:     int,
 }
 
@@ -46,6 +48,27 @@ settle :: proc(d: ^Driver, n := 3) {
 	}
 }
 
+// hold puts the current picture on the film for n tenths of a second:
+// apps/welcome/film.sh turns the numbered PNGs into the demo at 10 fps.
+@(private = "file")
+hold :: proc(d: ^Driver, n: int) {
+	if d.film == "" {
+		return
+	}
+	first := fmt.aprintf("%s/%06d.png", d.film, d.reel)
+	defer delete(first)
+	if !p.offscreen_write_png(d.off, first) {
+		return
+	}
+	d.reel += 1
+	for _ in 1 ..< n {
+		next := fmt.aprintf("%s/%06d.png", d.film, d.reel)
+		os.link(first, next)
+		delete(next)
+		d.reel += 1
+	}
+}
+
 @(private = "file")
 key :: proc(d: ^Driver, sym: u32, mods: p.Modifiers = {}) {
 	append(&d.off.input.keys, p.Key_Event{sym = sym, mods = mods})
@@ -54,12 +77,28 @@ key :: proc(d: ^Driver, sym: u32, mods: p.Modifiers = {}) {
 	}
 	d.res.keys += 1
 	settle(d)
+	hold(d, 4)
 }
 
 @(private = "file")
 type :: proc(d: ^Driver, s: string) {
 	strings.write_string(&d.off.input.text, s)
 	d.res.keys += len(s)
+	if d.film != "" {
+		// Typed a letter at a time on film, as a person types. Each frame frees
+		// the temporary allocator, where `s` usually lives: keep a copy.
+		s := strings.clone(s)
+		defer delete(s)
+		strings.builder_reset(&d.off.input.text)
+		for r in s {
+			strings.write_rune(&d.off.input.text, r)
+			settle(d, 1)
+			hold(d, 1)
+		}
+		settle(d)
+		hold(d, 3)
+		return
+	}
 	settle(d)
 }
 
@@ -76,7 +115,8 @@ wait :: proc(d: ^Driver) {
 	deadline := time.tick_now()
 	for d.st.job.running {
 		frame(d)
-		time.sleep(20 * time.Millisecond)
+		hold(d, 1)
+		time.sleep(100 * time.Millisecond)
 		if time.tick_since(deadline) > 180 * time.Second {
 			break
 		}
@@ -95,6 +135,7 @@ expect :: proc(d: ^Driver, want: Step) -> bool {
 	}
 	name := step_file(want)
 	append(&d.res.steps, name)
+	hold(d, want == .Tour || want == .Done ? 30 : 15)
 	if d.shots != "" {
 		d.n += 1
 		out := fmt.aprintf("%s/%02d-%s.png", d.shots, d.n, name)
@@ -138,7 +179,10 @@ drive_flow :: proc(local: bool, email, shots_dir, lang, theme: string) -> Drive_
 	kit_fonts(&off.fonts)
 	p.set_text_gamma(1.8)
 	register_theme(st.dark)
-	d := Driver{off = off, st = st, res = &res, shots = shots_dir}
+	d := Driver{off = off, st = st, res = &res, shots = shots_dir, film = os.get_env("WELCOME_DRIVE_FILM", context.allocator)}
+	if d.film != "" {
+		os.make_directory_all(d.film, os.perm(0o755))
+	}
 
 	// The handles are global, so a run makes its own from the email's local
 	// part: e2e7781@palm.test gives e2e7781 and e2e7781.northwind.
@@ -174,7 +218,11 @@ drive_flow :: proc(local: bool, email, shots_dir, lang, theme: string) -> Drive_
 		return res
 	}
 	// Create account: name, email, password, confirm, Enter.
-	type(&d, who)
+	name := os.get_env("WELCOME_DRIVE_NAME", context.allocator)
+	if name == "" {
+		name = who
+	}
+	type(&d, name)
 	tabs(&d, 1)
 	type(&d, email)
 	tabs(&d, 1)
@@ -188,7 +236,7 @@ drive_flow :: proc(local: bool, email, shots_dir, lang, theme: string) -> Drive_
 
 	// The suggested row is named after the person. A second, for work.
 	key(&d, 'n', {.Ctrl})
-	type(&d, fmt.tprintf("%s at Northwind", who))
+	type(&d, fmt.tprintf("%s at Northwind", name))
 	snap(&d, "identities-typed")
 	key(&d, p.KEY_RETURN)
 	wait(&d)

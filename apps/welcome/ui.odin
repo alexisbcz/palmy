@@ -207,7 +207,20 @@ field :: proc(ui: ^p.Ctx, st: ^St, buf: ^[dynamic]u8, label, placeholder: string
 		txt(ui, label, "text-sm font-medium text-foreground")
 	}
 	n := p.node_count(ui)
-	ch, _ := sc.input(ui, buf, placeholder, {invalid = problem != "", disabled = disabled}, secret ? '•' : 0)
+	ch := false
+	if disabled && secret {
+		// shadcn's disabled input is drawn from its display form, which has
+		// no mask: a password would show in clear while the job runs.
+		dots := make([]u8, len(buf) * 3, context.temp_allocator)
+		k := 0
+		for _ in string(buf[:]) {
+			copy(dots[k:], "•")
+			k += len("•")
+		}
+		sc.input(ui, string(dots[:k]), placeholder, {disabled = true})
+	} else {
+		ch, _ = sc.input(ui, buf, placeholder, {invalid = problem != "", disabled = disabled}, secret ? '•' : 0)
+	}
 	if mono {
 		p.apply(ui, "font-mono", n)
 	}

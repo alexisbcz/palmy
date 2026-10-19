@@ -376,6 +376,32 @@ selftest :: proc() -> int {
 			}
 		}
 		check(&t, shot_unbalanced == before, "every page closes what it opens (%d unbalanced)", shot_unbalanced - before)
+
+		// A password is never on screen in clear, not even while a job runs
+		// and the fields are disabled.
+		set_language("en_US")
+		for step in ([?]Step{.Sign_In, .Passwords}) {
+			st := fixture_state("en_US", true)
+			st.mode = .Account
+			st.step = step
+			set_buf(&st.pw_buf, "hunter2 secret words")
+			set_buf(&st.pw2_buf, "hunter2 secret words")
+			set_buf(&st.vault_pw, "hunter2 secret words")
+			set_buf(&st.vault_pw2, "hunter2 secret words")
+			fixture_identities(st, true)
+			for busy_ in ([?]bool{false, true}) {
+				st.job.running = busy_
+				shot_frame(off, st)
+				leaked := false
+				for n in off.ctx.nodes {
+					if strings.contains(n.text, "hunter2") {
+						leaked = true
+					}
+				}
+				check(&t, !leaked, "%v page, busy=%v: the password is masked", step, busy_)
+			}
+			st.job.running = false
+		}
 		set_language("")
 	}
 

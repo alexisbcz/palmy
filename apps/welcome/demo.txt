@@ -1,0 +1,64 @@
+# The first run, from the keyboard alone (apps/welcome/record.sh).
+wait 2.5
+# Welcome: language and appearance as the installer left them.
+key Return
+wait 1.5
+# Use an account (the first card has the keyboard).
+key Return
+wait 1.5
+type Camille Roux
+wait 0.4
+key Tab
+wait 0.3
+type camille@example.org
+wait 0.4
+key Tab
+wait 0.3
+type correct horse battery
+wait 0.4
+key Tab
+wait 0.3
+type correct horse battery
+wait 1
+key Return
+wait 3
+# The suggested personal identity, and one for work.
+chord ctrl+n
+wait 0.3
+type Camille at Northwind
+wait 2
+key Return
+wait 3
+# Passwords for the personal identity: four Tabs from Mail, then Space.
+key Tab
+key Tab
+key Tab
+key Tab
+key space
+wait 1.5
+key Return
+wait 1.5
+type a long sentence to remember
+wait 0.4
+key Tab
+wait 0.3
+type a long sentence to remember
+wait 0.8
+key Return
+wait 5
+# Save the Emergency Kit, then say it is safe.
+key space
+wait 3
+key space
+wait 1.5
+key Return
+wait 2
+# Set up: each service by its own program, one identity at a time.
+key Return
+wait 9
+key Return
+wait 2
+key Return
+wait 3.5
+key Return
+wait 4

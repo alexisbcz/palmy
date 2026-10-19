@@ -10,11 +10,16 @@
 #
 # and checks what each left behind with the services' own command lines.
 #
-#   cloud/dev/up.sh --name onboarding --port-base 64721
-#   bash apps/welcome/e2e.sh --port-base 64721 [--shots DIR] [--keep]
+#   cloud/dev/up.sh --name onboarding --port-base 51521
+#   bash apps/welcome/e2e.sh --port-base 51521 [--shots DIR] [--keep]
 #
 # The mail server (cloud/mail, palm-maild) is started here on base+70..72,
 # against the stack's PostgREST and GoTrue. Nothing touches the real HOME.
+#
+# Notes sync needs `notes sync` and the sync server palm-collab. When this
+# tree has them (or WELCOME_E2E_NOTES_TREE names a tree that does), notes
+# and palm-collab are built from it, the server runs on base+75, and the
+# notes task is checked too; without them it must say "Coming".
 set -uo pipefail
 ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
 BASE=54321
@@ -32,8 +37,10 @@ done
 WORK=$(mktemp -d /tmp/welcome-e2e.XXXXXX)
 BIN=${WELCOME_E2E_BIN:-$WORK/bin}
 MAILD=""
+COLLAB=""
 cleanup() {
 	[ -n "$MAILD" ] && kill "$MAILD" 2>/dev/null
+	[ -n "$COLLAB" ] && kill "$COLLAB" 2>/dev/null
 	pkill -f "$WORK/" 2>/dev/null
 	[ "$KEEP" = 1 ] || rm -rf "$WORK"
 }
@@ -56,6 +63,12 @@ if [ -z "${WELCOME_E2E_BIN:-}" ]; then
 	odin build "$ROOT/cloud/drive/palm-drive" "${COLL[@]}" -out:"$BIN/palm-drive" >"$WORK/build-palm-drive.log" 2>&1 || echo "build palm-drive failed"
 	odin build "$ROOT/apps/mailcore" -out:"$BIN/mailcore" >"$WORK/build-mailcore.log" 2>&1 || echo "build mailcore failed"
 	odin build "$ROOT/cloud/mail" -out:"$BIN/palm-maild" >"$WORK/build-maild.log" 2>&1 || echo "build palm-maild failed"
+	NT="${WELCOME_E2E_NOTES_TREE:-$ROOT}"
+	if [ -d "$NT/cloud/collab/server" ] && grep -q 'verb = "sync"' "$NT/apps/notes/cli.odin" 2>/dev/null; then
+		NC=(-collection:palmy="$NT/palmy" -collection:kit="$NT/apps/kit" -collection:shadcn="$NT/shadcn")
+		odin build "$NT/apps/notes" "${NC[@]}" -out:"$BIN/notes" >"$WORK/build-notes.log" 2>&1 || echo "build notes ($NT) failed"
+		odin build "$NT/cloud/collab/server" -o:speed -out:"$BIN/palm-collab" >"$WORK/build-collab.log" 2>&1 || echo "build palm-collab failed"
+	fi
 fi
 echo "binaries: $(ls "$BIN" | tr '\n' ' ')"
 
@@ -65,6 +78,12 @@ PALM_REST_PORT=$((BASE + 11)) PALM_AUTH_PORT=$((BASE + 10)) \
 PALM_SMTP_PORT=$((BASE + 70)) PALM_SUBMIT_PORT=$((BASE + 71)) PALM_JMAP_PORT=$((BASE + 72)) \
 PALM_MAIL_DOMAIN=palm.test "$BIN/palm-maild" serve >"$WORK/maild.log" 2>&1 &
 MAILD=$!
+if [ -x "$BIN/palm-collab" ]; then
+	PALM_CLOUD_URL="http://127.0.0.1:$BASE" \
+	PALM_COLLAB_SERVICE_KEY=eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZS1kZW1vIiwicm9sZSI6InNlcnZpY2Vfcm9sZSIsImV4cCI6MTk4MzgxMjk5Nn0.EGIM96RAZx35lJzdJsyH-qQwv8Hdp7fsn3W0YpN81IU \
+	"$BIN/palm-collab" --port $((BASE + 75)) >"$WORK/collab.log" 2>&1 &
+	COLLAB=$!
+fi
 sleep 1
 
 fresh_home() { # name
@@ -79,6 +98,7 @@ as() { # home, command...
 	env -i HOME="$h" PATH="$BIN:/usr/bin:/bin" XDG_RUNTIME_DIR="$h/.run" \
 		PALM_CLOUD_URL="http://127.0.0.1:$BASE" PALM_LOCALE_DIR="$ROOT/distro/locale" \
 		PALM_MAIL_JMAP_PORT=$((BASE + 72)) PALM_MAIL_SUBMIT_PORT=$((BASE + 71)) \
+		PALM_COLLAB_URL="ws://127.0.0.1:$((BASE + 75))" \
 		WELCOME_BIN_DIR="$BIN" "$@"
 }
 
@@ -120,6 +140,15 @@ check "the Emergency Kit was saved (PNG and text)" sh -c "test -s '$H1/Documents
 check "the kit is readable by its owner only" sh -c "stat -c %a '$H1/Documents/Palmframe Emergency Kit.txt' | grep -q '^600$'"
 check "mail: palmframe.conf names both identities" sh -c "grep -q 'handle = gui$tag$' '$H1/.local/share/palmy-mail/palmframe.conf' && grep -q 'handle = gui$tag.northwind' '$H1/.local/share/palmy-mail/palmframe.conf'"
 check "mail: a Maildir per address" sh -c "test -d '$H1/.local/share/palmy-mail/gui$tag@palm.test' && test -d '$H1/.local/share/palmy-mail/gui$tag.northwind@palm.test'"
+if [ -n "$COLLAB" ]; then
+	check "notes: ~/Notes/gui$tag exists after the first sync" test -d "$H1/Notes/gui$tag"
+	ns=$(as "$H1" env PALM_IDENTITY="gui$tag" notes status --json 2>&1)
+	echo "     notes status: $(tr -d '\n' <<<"$ns" | head -c 300)"
+	check "notes: status answers for gui$tag" jq -e . <<<"$ns"
+	check "notes: the work identity was not given notes" test ! -d "$H1/Notes/gui$tag.northwind"
+else
+	check "notes: no sync verb here, the task says Coming" grep -q "Notes .*Coming" "$WORK/drive.err"
+fi
 [ -n "$SHOTS" ] && cp "$H1/Documents/Palmframe Emergency Kit.png" "$SHOTS/account/emergency-kit.png" 2>/dev/null
 
 # --- 2. the same without a window -------------------------------------------------------
