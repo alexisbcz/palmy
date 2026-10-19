@@ -120,7 +120,7 @@ main :: proc() {
 	st := St {
 		apps      = index_apps(),
 		terms     = find_terminals(),
-		have_clip = which("wl-copy") != "",
+		have_clip = which("wl-copy") != "" || p.clipboard_available(app),
 		pinned    = make(map[string]bool),
 	}
 	load_usage(st.apps)
@@ -688,7 +688,17 @@ copy_text :: proc(st: ^St, ui: ^p.Ctx, text, what: string) {
 	if !st.have_clip {
 		return
 	}
-	kit.launch({"wl-copy", "--", text})
+	// wl-copy first when it is installed: its daemon keeps serving after
+	// the launcher closes, which a launcher does seconds after a copy.
+	// Without it (Palmframe ships none) palmy's own clipboard serves for as
+	// long as the launcher stays open.
+	if which("wl-copy") == "" || !kit.launch({"wl-copy", "--", text}) {
+		if !p.clipboard_set(ui, text) {
+			toast(st, ui, "The copy was refused")
+			close_menu(st)
+			return
+		}
+	}
 	toast(st, ui, fmt.tprintf("%s copied to clipboard", what))
 	close_menu(st)
 }

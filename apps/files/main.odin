@@ -652,8 +652,12 @@ do_menu :: proc(st: ^State, a: Menu_Action) {
 		}
 	case .Copy_Path:
 		if has {
-			kit.launch({"wl-copy", "--", e.path})
-			note(st, fmt.tprintf("Copied %s", e.path))
+			// palmy's own clipboard; wl-copy only where there is none.
+			if p.clipboard_set(e.path) || kit.launch({"wl-copy", "--", e.path}) {
+				note(st, fmt.tprintf("Copied %s", e.path))
+			} else {
+				note(st, "There is no clipboard to copy to")
+			}
 		}
 	case .Reveal_Parent:
 		go_up(st)
