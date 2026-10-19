@@ -14,6 +14,8 @@ import "core:strings"
 import "core:time"
 import "core:unicode/utf8"
 
+import "readable"
+
 Addr :: struct {
 	name:  string,
 	email: string,
@@ -33,6 +35,7 @@ Summary :: struct {
 	sent_at:        string, // RFC 3339, or ""
 	preview:        string,
 	has_attachment: bool,
+	parts_differ:   bool, // text/plain and text/html say different things (readable.differ)
 }
 
 // parse_addr_list reads an RFC 5322 address-list: commas outside quotes and
@@ -204,42 +207,6 @@ civil_from_days :: proc(z_in: i64) -> (y, m, d: int) {
 	return int(yy + (mm <= 2 ? 1 : 0)), int(mm), int(dd)
 }
 
-// strip_html is for the preview only: tags dropped, entities for the common
-// five decoded, nothing fetched.
-strip_html :: proc(s: string) -> string {
-	sb := strings.builder_make(context.temp_allocator)
-	in_tag := false
-	lower := strings.to_lower(s, context.temp_allocator)
-	for i := 0; i < len(s); i += 1 {
-		if !in_tag && s[i] == '<' {
-			// Skip <style> and <script> bodies whole.
-			for tag in ([]string{"<style", "<script"}) {
-				if strings.has_prefix(lower[i:], tag) {
-					close := strings.concatenate({"</", tag[1:]}, context.temp_allocator)
-					if e := strings.index(lower[i:], close); e >= 0 {
-						i += e
-					}
-				}
-			}
-			in_tag = true
-			continue
-		}
-		if in_tag {
-			if s[i] == '>' {
-				in_tag = false
-				strings.write_byte(&sb, ' ')
-			}
-			continue
-		}
-		strings.write_byte(&sb, s[i])
-	}
-	out := strings.to_string(sb)
-	for pair in ([][2]string{{"&nbsp;", " "}, {"&amp;", "&"}, {"&lt;", "<"}, {"&gt;", ">"}, {"&quot;", "\""}, {"&#39;", "'"}}) {
-		out, _ = strings.replace_all(out, pair[0], pair[1], context.temp_allocator)
-	}
-	return out
-}
-
 // make_preview: whitespace collapsed, quoted lines skipped, cut at 256 bytes
 // on a UTF-8 boundary (RFC 8621 4.1.4 says "up to 256 characters").
 make_preview :: proc(text: string) -> string {
@@ -364,12 +331,20 @@ summarise :: proc(raw: []u8) -> Summary {
 	root := mm_parse(raw, "", 0, context.temp_allocator)
 	bs := split_body(&root)
 	s.has_attachment = len(bs.attachments) > 0
-	if len(bs.text_body) > 0 {
-		p := bs.text_body[0].part
-		s.preview = make_preview(p.sub == "html" ? strip_html(p.text) : p.text)
-	} else if len(bs.html_body) > 0 {
-		s.preview = make_preview(strip_html(bs.html_body[0].part.text))
+	// The preview is cut from what a reader shows (cloud/mail/readable):
+	// the HTML part's visible text when there is one, else the plain part.
+	// Taking the first text/plain part, as this did, let a sender put words
+	// in the list and in search that the message itself never shows.
+	plain, html := "", ""
+	for l in bs.text_body {
+		if l.part.sub == "plain" {plain = l.part.text; break}
 	}
+	for l in bs.html_body {
+		if l.part.sub == "html" {html = l.part.text; break}
+	}
+	r := readable.of(plain, html, context.temp_allocator)
+	s.preview = make_preview(r.text)
+	s.parts_differ = r.differ
 	return s
 }
 
@@ -387,7 +362,7 @@ addrs_json :: proc(as: []Addr) -> string {
 // summary_meta renders the `p_meta` argument of mail_deliver / mail_submit.
 summary_meta :: proc(s: Summary) -> string {
 	return fmt.tprintf(
-		`{{"subject":%s,"messageId":%s,"inReplyTo":%s,"references":%s,"from":%s,"sender":%s,"replyTo":%s,"to":%s,"cc":%s,"bcc":%s,"sentAt":%s,"preview":%s,"hasAttachment":%v}}`,
+		`{{"subject":%s,"messageId":%s,"inReplyTo":%s,"references":%s,"from":%s,"sender":%s,"replyTo":%s,"to":%s,"cc":%s,"bcc":%s,"sentAt":%s,"preview":%s,"hasAttachment":%v,"partsDiffer":%v}}`,
 		jq(s.subject),
 		jq(s.message_id),
 		jq_list(s.in_reply_to),
@@ -401,6 +376,7 @@ summary_meta :: proc(s: Summary) -> string {
 		jq_null(s.sent_at),
 		jq(s.preview),
 		s.has_attachment,
+		s.parts_differ,
 	)
 }
 

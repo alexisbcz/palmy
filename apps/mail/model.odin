@@ -13,6 +13,8 @@ import "core:strings"
 import "core:time"
 import p "palmy:."
 
+import "../../cloud/mail/readable"
+
 // ---------------------------------------------------------------------------
 // Accounts
 //
@@ -331,6 +333,7 @@ Message :: struct {
 	from_html:    bool,
 	had_plain:    bool,
 	had_html:     bool,
+	parts_differ: bool, // see Body_Result.parts_differ
 	attachments:  []Attachment,
 	size:         int,
 
@@ -1119,8 +1122,12 @@ read_message :: proc(
 	m.from_html = res.from_html
 	m.had_plain = res.had_plain
 	m.had_html = res.had_html
+	m.parts_differ = res.parts_differ
 	m.attachments = res.attachments
-	m.snippet = make_snippet(m.body)
+	// The snippet is cut from the text this reader shows (the plain part when
+	// there is one), invisible characters removed: the list never shows what
+	// the reader would not (cloud/mail/readable).
+	m.snippet = make_snippet(readable.clean_plain(m.body, context.temp_allocator))
 
 	b := strings.builder_make()
 	strings.write_string(&b, strings.to_lower(m.from.name, context.temp_allocator))

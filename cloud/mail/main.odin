@@ -105,6 +105,8 @@ main :: proc() {
 		os.exit(2)
 	}
 	switch args[0] {
+	case "--selftest":
+		os.exit(selftest())
 	case "serve":
 		os.exit(serve())
 	case "mint":
@@ -138,7 +140,7 @@ main :: proc() {
 }
 
 usage :: proc() {
-	fmt.eprintln("usage: palm-maild serve | mint --sub UUID [--identity UUID] [--role ROLE] [--ttl S] | login EMAIL PASSWORD | summary FILE")
+	fmt.eprintln("usage: palm-maild serve | mint --sub UUID [--identity UUID] [--role ROLE] [--ttl S] | login EMAIL PASSWORD | summary FILE | --selftest")
 }
 
 cmd_mint :: proc(args: []string) -> int {

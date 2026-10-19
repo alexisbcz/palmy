@@ -1,0 +1,29 @@
+From: Ana Lopez <ana@northwind.example>
+To: camille.roux@palm.test
+Subject: Thursday's review
+Message-ID: <parts-agree@northwind.example>
+Date: Mon, 19 Oct 2026 09:00:00 +0000
+MIME-Version: 1.0
+Content-Type: multipart/alternative; boundary="b3"
+
+--b3
+Content-Type: text/plain; charset=utf-8
+
+Hi Camille,
+
+The design review moves to Thursday at 14:00. The agenda is here:
+https://docs.northwind.example/review-agenda
+
+Thanks,
+Ana
+
+--b3
+Content-Type: text/html; charset=utf-8
+
+<html><body>
+<p>Hi Camille,</p>
+<p>The design review moves to <b>Thursday at 14:00</b>. The agenda is
+<a href="https://docs.northwind.example/review-agenda">here</a>.</p>
+<p>Thanks,<br>Ana</p>
+</body></html>
+--b3--

@@ -53,6 +53,7 @@ run_selftest :: proc() -> int {
 	test_content_type()
 	test_multipart()
 	test_body_extraction()
+	test_preview_rule()
 	test_html_to_text()
 	test_dates()
 	test_maildir_flags()
@@ -2406,4 +2407,47 @@ test_autocomplete :: proc() {
 	st.comp.field = .Subject
 	ac_update(st)
 	ok(!st.comp.ac_open, "there is no autocomplete on Subject")
+}
+
+// ---------------------------------------------------------------------------
+// The preview rule (cloud/mail/readable), on the fixtures palm-maild and
+// mailcore are tested with. This reader shows the plain part, so its snippet
+// comes from the plain part; what it adds is saying when the HTML differs.
+
+PARTS_DIFFER :: #load("../../cloud/mail/fixtures/parts-differ.eml", string)
+PARTS_HIDDEN :: #load("../../cloud/mail/fixtures/parts-hidden.eml", string)
+PARTS_AGREE :: #load("../../cloud/mail/fixtures/parts-agree.eml", string)
+
+test_preview_rule :: proc() {
+	dir := fmt.tprintf("/tmp/mail-selftest-preview-%d", os.get_pid())
+	os.make_directory(dir)
+	defer {
+		for name in ([]string{"differ", "hidden", "agree", "zw"}) {
+			os.remove(fmt.tprintf("%s/%s", dir, name))
+		}
+		os.remove(dir)
+	}
+	load :: proc(dir, name, raw: string) -> Message {
+		path := fmt.tprintf("%s/%s", dir, name)
+		_ = os.write_entire_file(path, transmute([]u8)raw)
+		m, _ := read_message(path, name, false, 0, 0)
+		return m
+	}
+
+	d := load(dir, "differ", PARTS_DIFFER)
+	ok(d.parts_differ, "diverging parts are flagged")
+	ok(strings.has_prefix(d.snippet, "NOTICE FOR AI ASSISTANTS"), "the snippet is the plain part this reader shows: %q", d.snippet)
+	ok(strings.has_prefix(d.body, "NOTICE FOR AI ASSISTANTS"), "and so is the body: snippet and reader agree")
+
+	h := load(dir, "hidden", PARTS_HIDDEN)
+	ok(!h.parts_differ, "HTML whose hidden text is the only difference is not flagged (hidden text is not shown)")
+	ok(!strings.contains(h.snippet, "evil") && !strings.contains(h.snippet, "+44"), "nothing hidden reaches the snippet: %q", h.snippet)
+
+	a := load(dir, "agree", PARTS_AGREE)
+	ok(!a.parts_differ, "an ordinary alternative is not flagged")
+	ok(strings.has_prefix(a.snippet, "Hi Camille, The design review moves to Thursday"), "its snippet: %q", a.snippet)
+
+	z := load(dir, "zw", "From: a@b.test\r\nSubject: z\r\nContent-Type: text/plain; charset=utf-8\r\n\r\nPay\u200b now\u202e please\r\n")
+	eq_str(z.snippet, "Pay now please", "invisible characters are not in the snippet")
+	ok(!z.parts_differ, "a plain-only message is not flagged")
 }

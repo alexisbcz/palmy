@@ -13,6 +13,8 @@ import "core:mem"
 import "core:strings"
 import "core:time"
 
+import "../../cloud/mail/readable"
+
 // Allocator is spelled out so the MIME walk can take one explicitly.
 Allocator :: mem.Allocator
 
@@ -559,6 +561,10 @@ Body_Result :: struct {
 	from_html:   bool, // true when it came out of the HTML fallback
 	had_plain:   bool,
 	had_html:    bool,
+	// Both parts present and saying different things (cloud/mail/readable).
+	// This reader shows the plain part; other readers, and the assistant,
+	// show the HTML one, so the reader says so.
+	parts_differ: bool,
 	attachments: []Attachment,
 }
 
@@ -600,6 +606,9 @@ extract_body :: proc(head, body: string, allocator := context.allocator) -> Body
 	ht := strings.trim_space(strings.to_string(html))
 	res.had_plain = pt != ""
 	res.had_html = ht != ""
+	if pt != "" && ht != "" {
+		res.parts_differ = readable.of(pt, ht, context.temp_allocator).differ
+	}
 	if pt != "" {
 		res.text = strings.clone(pt, allocator)
 	} else if ht != "" {

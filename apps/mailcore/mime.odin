@@ -30,6 +30,8 @@ import "core:fmt"
 import "core:mem"
 import "core:strings"
 
+import "../../cloud/mail/readable"
+
 MAX_MIME_DEPTH :: 24
 MAX_MIME_PARTS :: 512
 
@@ -92,6 +94,11 @@ Message :: struct {
 	date_raw:    string,
 	text_plain:  string,
 	text_html:   string,
+	// The list line, by the rule in cloud/mail/readable: cut from what a
+	// reader shows (the HTML part's visible text when there is one, else
+	// the plain part), never from a part the reader would not show.
+	preview:      string,
+	parts_differ: bool, // text/plain and text/html say different things
 	attachments: []Attachment,
 	warnings:    []string,
 }
@@ -705,6 +712,10 @@ parse_message :: proc(raw: []u8, allocator := context.allocator) -> Message {
 	atts := make([dynamic]Attachment, 0, 4, allocator)
 	collect_bodies(&m.root, &m, &atts, false)
 	m.attachments = atts[:]
+
+	r := readable.of(m.text_plain, m.text_html, context.temp_allocator)
+	m.preview = readable.preview(r.text, 256, allocator)
+	m.parts_differ = r.differ
 
 	m.warnings = c.warnings[:]
 	return m

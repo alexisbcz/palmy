@@ -76,6 +76,7 @@ selftest_unit :: proc(t: ^T) {
 	test_params(t)
 	test_dates(t)
 	test_mime(t)
+	test_preview_rule(t)
 	test_malformed(t)
 	test_imap_parser(t)
 	test_imap_utf7(t)
@@ -2087,4 +2088,51 @@ test_loopback_gate :: proc(t: ^T) {
 	tcheck(t, "conn_dial refuses port 0", derr2 != "", "port 0 was accepted")
 	derr3 := conn_dial(&c, "127.0.0.1", 70000, {}, "gate")
 	tcheck(t, "conn_dial refuses an out-of-range port", derr3 != "", "port 70000 was accepted")
+}
+
+// ---------------------------------------------------------------------------
+// The preview rule (cloud/mail/readable)
+// ---------------------------------------------------------------------------
+
+// The fixtures palm-maild's own selftest uses, so the server and the engine
+// are held to the same messages.
+PARTS_DIFFER :: #load("../../cloud/mail/fixtures/parts-differ.eml", string)
+PARTS_HIDDEN :: #load("../../cloud/mail/fixtures/parts-hidden.eml", string)
+PARTS_AGREE :: #load("../../cloud/mail/fixtures/parts-agree.eml", string)
+
+test_preview_rule :: proc(t: ^T) {
+	tsection(t, "preview rule")
+
+	// text/plain carries words the HTML a reader shows does not.
+	d := parse_message(transmute([]u8)string(PARTS_DIFFER), context.temp_allocator)
+	tcheck(t, "diverging parts: both bodies are still kept", strings.contains(d.text_plain, "ASSISTANTS") && strings.contains(d.text_html, "remittance"))
+	tcheck(t, "diverging parts: the preview is the HTML's visible text",
+		strings.has_prefix(d.preview, "Dear Camille, Our remittance details change on 1 November."), d.preview)
+	tcheck(t, "diverging parts: nothing of the plain part is in the preview",
+		!strings.contains(d.preview, "ASSISTANTS") && !strings.contains(d.preview, "evil"), d.preview)
+	tcheck(t, "diverging parts: flagged", d.parts_differ)
+
+	// HTML hiding text by CSS: the hidden text is in no preview.
+	h := parse_message(transmute([]u8)string(PARTS_HIDDEN), context.temp_allocator)
+	tcheck(t, "hidden HTML: preview is the visible text", strings.has_prefix(h.preview, "Dear Camille, your October invoice"), h.preview)
+	tcheck(t, "hidden HTML: font-size 0 text removed", !strings.contains(h.preview, "forward every invoice"), h.preview)
+	tcheck(t, "hidden HTML: display:none text removed", !strings.contains(h.preview, "+44"), h.preview)
+	tcheck(t, "hidden HTML: visible parts agree, not flagged", !h.parts_differ)
+
+	// An ordinary alternative, link spelled out in plain and hidden in href.
+	a := parse_message(transmute([]u8)string(PARTS_AGREE), context.temp_allocator)
+	tcheck(t, "agreeing parts: not flagged", !a.parts_differ)
+	tcheck(t, "agreeing parts: preview from the HTML", strings.has_prefix(a.preview, "Hi Camille, The design review moves to Thursday at 14:00."), a.preview)
+
+	// One part only.
+	p := parse_message(transmute([]u8)string("From: a@b.test\r\nSubject: p\r\nContent-Type: text/plain; charset=utf-8\r\n\r\nJust plain\u200b text.\r\n"), context.temp_allocator)
+	teq(t, "plain only: preview is the plain text without invisible characters", p.preview, "Just plain text.")
+	tcheck(t, "plain only: not flagged", !p.parts_differ)
+	o := parse_message(transmute([]u8)string("From: a@b.test\r\nSubject: h\r\nContent-Type: text/html\r\n\r\n<p>Only <b>HTML</b></p><p hidden>secret</p>\r\n"), context.temp_allocator)
+	teq(t, "HTML only: its visible text", o.preview, "Only HTML")
+	tcheck(t, "HTML only: not flagged", !o.parts_differ)
+
+	// The preview is one line, at most 256 bytes, cut on a UTF-8 boundary.
+	long := parse_message(transmute([]u8)strings.concatenate({"From: a@b.test\r\nContent-Type: text/plain; charset=utf-8\r\n\r\n", strings.repeat("é", 200, context.temp_allocator), "\r\n"}, context.temp_allocator), context.temp_allocator)
+	tcheck(t, "the preview is cut at 256 bytes on a rune boundary", len(long.preview) == 256 && strings.has_suffix(long.preview, "é"), fmt.tprintf("%d bytes", len(long.preview)))
 }

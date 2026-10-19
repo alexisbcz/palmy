@@ -123,6 +123,27 @@ inbox behind `Shift+I`, with every conversation carrying the identity it came
 to. Whether the unified view should exist is a product question — it is the
 one view that puts two identities side by side — so it is off by default.
 
+### The preview rule
+
+A message with text/plain and text/html parts says the same thing twice,
+and nothing makes a sender keep the two alike. So (`cloud/mail/readable`):
+
+- **A preview is cut from the text the reader shows.** palm-maild, whose
+  clients and the assistant render HTML, cuts the stored `preview` (and so the
+  `search` column) from the HTML part's *visible* text, with hidden passages
+  and invisible characters removed as `cloud/assistant/untrusted` removes them;
+  with no HTML part, from the plain part. mailcore's parsed `preview` follows
+  the same rule. apps/mail shows the plain part, so its snippet comes from the
+  plain part, invisible characters removed.
+- **When the parts differ significantly** (at least 4 distinct words, and 20%
+  of all, found in only one of them; link addresses are not words), the
+  message is flagged: `partsDiffer` in palm-maild's summary,
+  `mail_messages.parts_differ`, `parts_differ` in mailcore, and a notice in
+  apps/mail's reader ("The HTML version of this message says something else").
+
+Fixtures: `cloud/mail/fixtures/parts-*.eml`, used by `palm-maild --selftest`,
+`mailcore --selftest` and `mail --selftest`; pgTAP `mail_preview.sql`.
+
 ### Running it
 
 ```sh

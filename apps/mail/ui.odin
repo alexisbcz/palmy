@@ -1263,6 +1263,22 @@ reader_pane :: proc(ui: ^p.Ctx, st: ^State) {
 		p.end(ui)
 	}
 
+	// The two versions of this message disagree. This reader shows the plain
+	// one; anyone reading it as HTML, the assistant included, reads the other.
+	if m.parts_differ {
+		p.row(ui, "items-center gap-2 w-full shrink-0 px-3 py-2 rounded-lg bg-amber-500/10 border border-amber-500/30")
+		p.icon(ui, ICON_TRIANGLE_ALERT, "size-3.5 shrink-0 text-amber-600")
+		p.col(ui, "flex-1 min-w-0 gap-0")
+		p.text(ui, "The HTML version of this message says something else", "text-[11.5] font-semibold text-amber-700")
+		p.text(
+			ui,
+			"This is the plain-text version. Mail apps that show HTML, and the assistant, read the other one. A sender who makes them differ may be hiding something.",
+			"w-full text-[11] text-amber-700/80",
+		)
+		p.end(ui)
+		p.end(ui)
+	}
+
 	if st.show_raw {
 		raw_headers(ui, m)
 	}
@@ -1443,7 +1459,7 @@ raw_headers :: proc(ui: ^p.Ctx, m: Message) {
 	raw_line(ui, "In-Reply-To", m.in_reply_to == "" ? "(none)" : m.in_reply_to)
 	raw_line(ui, "References", tfmt("%d", len(m.refs)))
 	raw_line(ui, "Maildir file", m.file)
-	raw_line(ui, "Parts", m.had_plain && m.had_html ? "text/plain + text/html" : m.had_html ? "text/html only" : "text/plain")
+	raw_line(ui, "Parts", m.had_plain && m.had_html ? (m.parts_differ ? "text/plain + text/html, which differ" : "text/plain + text/html") : m.had_html ? "text/html only" : "text/plain")
 }
 
 raw_line :: proc(ui: ^p.Ctx, k, v: string) {

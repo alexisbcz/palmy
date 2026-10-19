@@ -225,6 +225,10 @@ cmd_parse :: proc(args: []string) -> int {
 	dump_part(&m.root, 0)
 	fmt.printfln("\ntext/plain: %d bytes", len(m.text_plain))
 	fmt.printfln("text/html : %d bytes", len(m.text_html))
+	fmt.printfln("preview   : %s", m.preview)
+	if m.parts_differ {
+		fmt.println("parts     : text/plain and text/html DIFFER; the preview is the HTML's visible text")
+	}
 	if len(m.attachments) > 0 {
 		fmt.println("\nattachments:")
 		for a in m.attachments {
