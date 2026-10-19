@@ -379,6 +379,15 @@ spawn_tool :: proc(st: ^St, name: string, args: []string, scope := "") -> bool {
 	return err == nil
 }
 
+// tilde shortens a path in the home directory for display.
+tilde :: proc(path: string) -> string {
+	h := home_dir()
+	if h != "" && h != "/" && strings.has_prefix(path, h) {
+		return fmt.tprintf("~%s", path[len(h):])
+	}
+	return path
+}
+
 last_line :: proc(s: string) -> string {
 	t := strings.trim_space(s)
 	if i := strings.last_index_byte(t, '\n'); i >= 0 {
@@ -591,7 +600,7 @@ do_services :: proc(st: ^St) {
 		switch t.what {
 		case .Sync_Conf:
 			if write_text(sync_conf_path(), sync_conf_text("account", st.c.url_text, st.plans[:])) {
-				set_task(st, i, .Done, sync_conf_path())
+				set_task(st, i, .Done, tilde(sync_conf_path()))
 			} else {
 				set_task(st, i, .Failed, sync_conf_path())
 			}

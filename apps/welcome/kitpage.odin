@@ -117,7 +117,7 @@ kit_page :: proc(ui: ^p.Ctx, secret, email, url, host: string) {
 	p.col(ui, "w-full gap-3")
 	txt(ui, tr("Secret Key"), "text-xl font-medium text-[#71717a]")
 	p.div(ui, "w-full px-8 py-7 rounded-2xl bg-[#f4f4f5] border-2 border-[#d4d4d8]")
-	text(ui, secret, "text-[44px] font-mono font-semibold text-[#18181b] dir-ltr")
+	text(ui, secret, "text-[38px] font-mono font-semibold text-[#18181b] dir-ltr")
 	p.end(ui)
 	p.end(ui)
 	p.col(ui, "w-full gap-3")

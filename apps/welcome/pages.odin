@@ -355,6 +355,12 @@ use_server :: proc(st: ^St) {
 		say(st, err_text(e), true)
 		return
 	}
+	// Kept only if it answers: a typo should not become every app's server.
+	if _, he := ck.call(st.c, "GET", "/auth/v1/health", "", auth = false, allocator = context.temp_allocator); !ck.ok(he) {
+		say(st, err_text(he), true)
+		open_cloud(st)
+		return
+	}
 	// Remembered for every app: cloudkit reads config.json in its store.
 	write_text(fmt.tprintf("%s/config.json", st.c.dir), fmt.tprintf("{{\"url\":%s,\"anon_key\":%s}}\n", ck.quote(st.c.url_text), ck.quote(st.c.anon_key)), private = true)
 	st.url_open = false
@@ -826,7 +832,7 @@ emergency_kit :: proc(st: ^St, ui: ^p.Ctx) {
 			if f != "" {
 				p.row(ui, "items-center gap-2 min-w-0")
 				p.icon(ui, WI_FILE_DOWN, "size-3.5 text-muted-foreground shrink-0")
-				text(ui, f, "min-w-0 text-xs font-mono text-foreground truncate")
+				text(ui, tilde(f), "min-w-0 text-xs font-mono text-foreground truncate")
 				p.end(ui)
 			}
 		}
