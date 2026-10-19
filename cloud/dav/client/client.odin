@@ -41,10 +41,11 @@ ok :: proc(e: Error) -> bool {
 }
 
 // open reads the cloudkit session (PALM_IDENTITY narrows it, as everywhere)
-// and the DAV server's address ($PALM_DAV_URL).
-open :: proc(app := "calendar", dav_url := "") -> (a: ^Account, err: Error) {
+// and the DAV server's address ($PALM_DAV_URL). `scope` narrows to one identity
+// handle, exactly as PALM_IDENTITY does (it can only narrow).
+open :: proc(app := "calendar", dav_url := "", scope := "") -> (a: ^Account, err: Error) {
 	a = new(Account)
-	c, ce := ck.open(app = app)
+	c, ce := ck.open(scope = scope, app = app)
 	a.cloud = c
 	if !ck.ok(ce) {
 		return a, Error{0, ce.message}
