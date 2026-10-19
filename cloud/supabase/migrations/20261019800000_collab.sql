@@ -168,8 +168,11 @@ alter table public.collab_agents    enable row level security;
 alter table public.collab_grants    enable row level security;
 alter table public.collab_links     enable row level security;
 
+-- The owner test is on the row itself as well as through the role function:
+-- an INSERT ... RETURNING checks this policy against a row the function's
+-- snapshot cannot see yet.
 create policy collab_documents_select on public.collab_documents for select
-	using (public.collab_session_role(id) is not null);
+	using (public.can_access_identity(identity_id) or public.collab_session_role(id) is not null);
 create policy collab_documents_insert on public.collab_documents for insert
 	with check (public.can_access_identity(identity_id) and head_seq = 0 and snapshot_seq = 0);
 -- Editors may rename; only the owner may do anything else, which the column
@@ -305,6 +308,47 @@ begin
 		returning * into g;
 	return g;
 end
+$$;
+
+-- collab_unshare revokes the live grant to the identity with `handle`.
+create function public.collab_unshare(p_doc uuid, p_handle text) returns boolean
+language plpgsql security definer
+set search_path = ''
+as $$
+declare
+	d public.collab_documents;
+	n int;
+begin
+	select * into d from public.collab_documents where id = p_doc;
+	if d.id is null or not public.can_access_identity(d.identity_id) then
+		raise exception 'only the owning identity can change sharing' using errcode = '42501';
+	end if;
+	update public.collab_grants g set revoked_at = now()
+		from public.identities i
+		where g.doc_id = p_doc and g.revoked_at is null and i.id = g.grantee_identity and i.handle = lower(p_handle);
+	get diagnostics n = row_count;
+	return n > 0;
+end
+$$;
+
+-- collab_people lists who a document is shared with, by name, for the
+-- share dialog: the owner sees every grant; a grantee sees the owner and
+-- itself.
+create function public.collab_people(p_doc uuid) returns table (
+	identity_id uuid, handle text, display_name text, color text, role text)
+language sql stable security definer
+set search_path = ''
+as $$
+	select i.id, i.handle, i.display_name, i.color, 'owner'
+	from public.collab_documents d join public.identities i on i.id = d.identity_id
+	where d.id = p_doc and public.collab_session_role(p_doc) is not null
+	union all
+	select i.id, i.handle, i.display_name, i.color, g.role
+	from public.collab_grants g
+	join public.collab_documents d on d.id = g.doc_id
+	join public.identities i on i.id = g.grantee_identity
+	where g.doc_id = p_doc and g.revoked_at is null
+	  and (public.can_access_identity(d.identity_id) or public.can_access_identity(g.grantee_identity))
 $$;
 
 -- collab_make_link creates a link share and returns its token, once.
@@ -528,14 +572,14 @@ as $$
 $$;
 
 revoke execute on function public.collab_role_of(uuid, uuid), public.collab_session_role(uuid),
-	public.collab_share(uuid, text, text), public.collab_make_link(uuid, text, int),
+	public.collab_share(uuid, text, text), public.collab_unshare(uuid, text), public.collab_people(uuid), public.collab_make_link(uuid, text, int),
 	public.collab_join(uuid, uuid, text), public.collab_documents_mine(), public.collab_history(uuid),
 	public.collab_state_at(uuid, bigint), public.collab_server_role(uuid, uuid, uuid),
 	public.collab_append(uuid, uuid, uuid, text, text, text), public.collab_put_snapshot(uuid, bigint, text),
 	public.collab_load(uuid)
 	from public, anon, authenticated;
 grant execute on function public.collab_role_of(uuid, uuid), public.collab_session_role(uuid),
-	public.collab_share(uuid, text, text), public.collab_make_link(uuid, text, int),
+	public.collab_share(uuid, text, text), public.collab_unshare(uuid, text), public.collab_people(uuid), public.collab_make_link(uuid, text, int),
 	public.collab_join(uuid, uuid, text), public.collab_documents_mine(), public.collab_history(uuid),
 	public.collab_state_at(uuid, bigint)
 	to authenticated, service_role;
