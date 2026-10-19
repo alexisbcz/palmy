@@ -1,0 +1,8 @@
+[Desktop Entry]
+Type=Application
+Name=Vault
+Comment=Passwords and secrets
+Exec=vault
+Icon=vault
+Terminal=false
+Categories=Utility;Security;

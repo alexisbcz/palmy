@@ -1,0 +1,8 @@
+[Desktop Entry]
+Type=Application
+Name=AI
+Comment=Chat with a local language model
+Exec=ai
+Icon=ai
+Terminal=false
+Categories=Utility;

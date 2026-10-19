@@ -1,0 +1,5 @@
+# bluetoothd, the BlueZ daemon. It needs the system bus and a kernel with
+# Bluetooth (CONFIG_BT); without a controller bluetoothctl says so.
+cmd     = /usr/lib/bluetooth/bluetoothd --nodetach
+after   = dbus
+restart = always

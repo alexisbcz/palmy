@@ -1,0 +1,8 @@
+[Desktop Entry]
+Type=Application
+Name=Archives
+Comment=Open, extract and create archives
+Exec=archive
+Icon=archive
+Terminal=false
+Categories=Utility;Archiving;Compression;

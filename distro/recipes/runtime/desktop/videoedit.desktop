@@ -1,0 +1,8 @@
+[Desktop Entry]
+Type=Application
+Name=Video Editor
+Comment=Cut and export video
+Exec=videoedit
+Icon=videoedit
+Terminal=false
+Categories=AudioVideo;Video;AudioVideoEditing;

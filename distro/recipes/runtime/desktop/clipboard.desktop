@@ -1,0 +1,8 @@
+[Desktop Entry]
+Type=Application
+Name=Clipboard
+Comment=Clipboard history
+Exec=clipboard
+Icon=clipboard
+Terminal=false
+Categories=Utility;

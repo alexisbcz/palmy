@@ -1,0 +1,26 @@
+# The D-Bus message bus, built without systemd, X11, audit, SELinux or
+# AppArmor. BlueZ and iwd need the system bus.
+version=1.16.2
+url=https://dbus.freedesktop.org/releases/dbus/dbus-$version.tar.xz
+# Cross-checked: dbus-$version.tar.xz.asc verifies against Simon McVittie's
+# key 7A073AD1AE694FA25BFF62E5235C099D3EB33076.
+sha256=0ba2a1a4b16afe7bceb2c07e9ce99a8c2c3508e5dec290dbb643384bd6beb7e2
+license="AFL-2.1 OR GPL-2.0-or-later"
+upstream=https://www.freedesktop.org/wiki/Software/dbus
+pkgdesc="Freedesktop.org message bus system (built without systemd)"
+build() {
+	meson setup _build --prefix=/usr --sysconfdir=/etc --localstatedir=/var \
+		--libexecdir=/usr/lib/dbus-1.0 --buildtype=plain -Db_pie=true \
+		-Dsystemd=disabled -Dx11_autolaunch=disabled -Dlibaudit=disabled \
+		-Dselinux=disabled -Dapparmor=disabled -Dmodular_tests=disabled \
+		-Ddoxygen_docs=disabled -Dxml_docs=disabled -Dducktype_docs=disabled \
+		-Dqt_help=disabled -Dinotify=enabled -Depoll=enabled \
+		-Ddbus_user=dbus -Druntime_dir=/run \
+		-Dsystem_pid_file=/run/dbus/pid \
+		-Dsystem_socket=/run/dbus/system_bus_socket \
+		-Dsession_socket_dir=/tmp
+	meson compile -C _build -j "$JOBS"
+	meson install -C _build --destdir "$DESTDIR"
+	# Made at run time: the machine id, the pid file, the socket directory.
+	rm -rf "$DESTDIR/var" "$DESTDIR/run"
+}

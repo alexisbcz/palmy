@@ -1,0 +1,19 @@
+# x264, as a static PIC library linked into ffmpeg (libx264 is what call and
+# videoedit ask ffmpeg to encode H.264 with). Not packaged on its own.
+# x264 publishes no release tarballs; this is the commit Alpine's aports pins
+# (pkgver 0.164.3108), from VideoLAN's GitLab archive endpoint.
+version=0.164.3108
+commit=31e19f92f00c7003fa115047ce50978bc98c3a0d
+url=https://code.videolan.org/videolan/x264/-/archive/$commit/x264-$commit.tar.gz
+# Cross-checked: its sha512 (707ff486...) is the one Alpine's APKBUILD pins.
+sha256=d053c9d86988d6bc78237ca5205865c5ddf99c98ef4cd9927eec8f6d388f6dd9
+license=GPL-2.0-or-later
+builddeps="nasm"
+package=no
+build() {
+	./configure --prefix=/usr --enable-static --enable-pic --disable-cli \
+		--disable-opencl --disable-lavf --disable-swscale --disable-ffms \
+		--disable-gpac --disable-lsmash --bit-depth=all
+	make -j"$JOBS"
+	make DESTDIR="$DESTDIR" install-lib-static
+}

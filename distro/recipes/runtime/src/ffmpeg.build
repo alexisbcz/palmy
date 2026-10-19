@@ -1,0 +1,24 @@
+# FFmpeg with its own decoders and encoders, libopus and libx264, and nothing
+# autodetected from the build host: no X11, SDL, VA-API, ALSA or PulseAudio,
+# so the package needs glibc, zlib and libopus and nothing else. Arch's ffmpeg
+# links some 120 other packages; this one is what audio, video, videoedit,
+# call and captions ask of it (decode anything common; encode H.264, AAC,
+# PNG, MJPEG, PCM; lavfi sources; v4l2 capture; image2pipe).
+version=9.0.2
+url=https://ffmpeg.org/releases/ffmpeg-$version.tar.xz
+# Cross-checked: ffmpeg-$version.tar.xz.asc verifies against the FFmpeg
+# release signing key FCF986EA15E6E293A5644F10B4322F04D67658D8.
+sha256=8c3850283eb25fa026482078a04051e0be17347b09ef81a0849bec15a96e002e
+license=GPL-2.0-or-later
+upstream=https://ffmpeg.org
+pkgdesc="Record, convert and play audio and video (native codecs, libx264, libopus)"
+builddeps="nasm x264 opus"
+build() {
+	./configure --prefix=/usr \
+		--enable-gpl --enable-shared --disable-static \
+		--disable-autodetect --disable-doc --disable-debug --disable-ffplay \
+		--enable-zlib --enable-libopus --enable-libx264 --enable-v4l2-m2m \
+		--extra-cflags="$CPPFLAGS" --extra-ldflags="$LDFLAGS"
+	make -j"$JOBS"
+	make DESTDIR="$DESTDIR" install
+}

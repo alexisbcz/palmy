@@ -1,0 +1,8 @@
+[Desktop Entry]
+Type=Application
+Name=Bluetooth
+Comment=Pair and connect Bluetooth devices
+Exec=bluetooth
+Icon=bluetooth
+Terminal=false
+Categories=Settings;HardwareSettings;

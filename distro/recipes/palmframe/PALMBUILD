@@ -14,4 +14,5 @@ details  = Everything a Palmframe machine has after installation. Removing an ap
 depend   = palmframe-base linux busybox glibc palm-init palm palm-login palmd doas passwd
 depend   = palmy-wm greeter fonts libxkbcommon xkeyboard-config
 depend   = tzdata palm-locale
+depend   = palmframe-runtime
 depend   = term launcher files editor notes calc sysmon image docs sheets slides calendar reader photoshop maps money torrent store

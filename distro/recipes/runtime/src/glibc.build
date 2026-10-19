@@ -1,0 +1,36 @@
+# glibc from source: a prototype, not yet what the glibc package ships.
+#
+# The glibc recipe (distro/recipes/generate.sh, the integrator's block)
+# copies libc.so.6, libm.so.6 and the loader from the build host. This builds
+# the same release from the GNU tarball into distro/build/src/stage/glibc, so
+# the switch is a change of source paths in that recipe. `package=no` keeps
+# it out of the repository until then; distro/notes/runtime.md says how it was
+# checked (the Odin binaries run on this loader and libc) and what is left.
+version=2.44
+url=https://mirrors.kernel.org/gnu/glibc/glibc-$version.tar.xz
+# Cross-checked: glibc-$version.tar.xz.sig verifies against Andreas K.
+# Huettel's key FD19E6D31B192EE4DC63EAD3DC2B16215ED5412A (the release manager).
+sha256=37f600f2bef3c5e8300147059568b2a2e40a7ad6ccc65ce942556d49429cc667
+license="LGPL-2.1-or-later AND GPL-2.0-or-later"
+upstream=https://www.gnu.org/software/libc
+package=no
+auto=no
+build() {
+	mkdir -p _build
+	cd _build
+	# glibc chooses its own hardening flags; the driver's generic ones
+	# (-fno-plt, --as-needed) are not meant for it.
+	echo "slibdir=/usr/lib" >configparms
+	echo "rtlddir=/usr/lib" >>configparms
+	echo "sbindir=/usr/bin" >>configparms
+	echo "rootsbindir=/usr/bin" >>configparms
+	CFLAGS="-O2 -pipe" CXXFLAGS="-O2 -pipe" CPPFLAGS="" LDFLAGS="" \
+		../configure --prefix=/usr --libdir=/usr/lib --libexecdir=/usr/lib \
+		--with-headers=/usr/include --enable-kernel=4.4 \
+		--enable-bind-now --enable-fortify-source \
+		--enable-stack-protector=strong --enable-multi-arch \
+		--disable-nscd --disable-profile --disable-werror \
+		--disable-timezone-tools --disable-build-nscd
+	make -j"$JOBS"
+	make DESTDIR="$DESTDIR" install
+}

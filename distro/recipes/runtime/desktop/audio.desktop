@@ -1,0 +1,8 @@
+[Desktop Entry]
+Type=Application
+Name=Audio
+Comment=Play music and audio files
+Exec=audio
+Icon=audio
+Terminal=false
+Categories=AudioVideo;Audio;Player;

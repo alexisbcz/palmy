@@ -1,0 +1,8 @@
+[Desktop Entry]
+Type=Application
+Name=Volume
+Comment=Output, input and per-application volume
+Exec=mixer
+Icon=mixer
+Terminal=false
+Categories=AudioVideo;Audio;Mixer;Settings;

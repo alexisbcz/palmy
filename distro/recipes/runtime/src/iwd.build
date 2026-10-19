@@ -1,0 +1,19 @@
+# iwd: Wi-Fi without wpa_supplicant, OpenSSL or libnl. Its cryptography is
+# the kernel's (AF_ALG and keyctl), its D-Bus and DHCP client are built in
+# (ell, bundled in the tarball), and it registers on the system bus. iwctl
+# links readline.
+version=3.12
+url=https://www.kernel.org/pub/linux/network/wireless/iwd-$version.tar.xz
+# Cross-checked against https://www.kernel.org/pub/linux/network/wireless/sha256sums.asc
+sha256=d89a5e45c7180170e19be828f9e944a768c593758094fc57a358d0e7c4cb1a49
+license=LGPL-2.1-or-later
+upstream=https://iwd.wiki.kernel.org
+pkgdesc="Internet wireless daemon and its client, iwctl"
+build() {
+	./configure --prefix=/usr --sysconfdir=/etc --localstatedir=/var \
+		--libexecdir=/usr/lib/iwd --disable-systemd-service \
+		--disable-manual-pages --enable-dbus-policy \
+		--with-dbus-datadir=/usr/share --enable-client
+	make -j"$JOBS"
+	make DESTDIR="$DESTDIR" install
+}

@@ -1,0 +1,14 @@
+#!/bin/sh
+# What udev's 78-sound-card.rules would leave behind, for a system without
+# udevd: a udev database entry per sound card saying it is initialised.
+# libudev (systemd-libs) reads /run/udev/data/+sound:cardN when PipeWire asks
+# for the SOUND_INITIALIZED property; without it the card is skipped and only
+# a dummy sink appears. Cards are built into the kernel, so they all exist
+# by the time palm-init runs this; hotplugged (USB) cards are not covered.
+mkdir -p /run/udev/data
+for c in /sys/class/sound/card*; do
+	[ -e "$c" ] || continue
+	n="${c##*/}"
+	printf 'I:1\nE:SOUND_INITIALIZED=1\n' >"/run/udev/data/+sound:$n"
+	echo "sound-cards: $n ($(cat "$c/id" 2>/dev/null))"
+done

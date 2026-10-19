@@ -1,0 +1,8 @@
+[Desktop Entry]
+Type=Application
+Name=Video
+Comment=Play video files
+Exec=video
+Icon=video
+Terminal=false
+Categories=AudioVideo;Video;Player;

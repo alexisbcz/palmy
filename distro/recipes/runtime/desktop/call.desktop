@@ -1,0 +1,8 @@
+[Desktop Entry]
+Type=Application
+Name=Call
+Comment=Audio and video calls
+Exec=call
+Icon=call
+Terminal=false
+Categories=Network;Telephony;

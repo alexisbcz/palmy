@@ -1,0 +1,22 @@
+# libarchive and bsdtar, which the archive app runs for every list, extract
+# and create. Built without libxml2 (which would pull ICU, 40 MB, for xar
+# archives), OpenSSL, nettle and ACL support; compression through the small
+# zlib, bzip2, xz, zstd and lz4 libraries.
+version=3.8.10
+url=https://libarchive.org/downloads/libarchive-$version.tar.xz
+# Cross-checked: libarchive-$version.tar.xz.asc verifies against Martin
+# Matuska's key 659C84C0E23EA1FA97E0B58CC040B508D63D2B36.
+sha256=56cad765459d5ee25a3b761f90c47d99379d28297fbfb72d908880d6b875fb96
+license=BSD-2-Clause
+upstream=https://libarchive.org
+pkgdesc="Multi-format archive library and bsdtar"
+build() {
+	./configure --prefix=/usr --disable-static --enable-bsdtar=shared \
+		--disable-bsdcpio --disable-bsdcat --disable-bsdunzip \
+		--without-xml2 --without-expat --without-openssl --without-nettle \
+		--without-mbedtls --without-libb2 --without-cng --disable-acl \
+		--disable-xattr --with-zlib --with-bz2lib --with-lzma --with-zstd \
+		--with-lz4
+	make -j"$JOBS"
+	make DESTDIR="$DESTDIR" install
+}

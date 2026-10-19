@@ -556,6 +556,17 @@ EOF
 	fi
 } | emit palm-locale
 
+# >>> runtime: system bus, Wi-Fi, audio, Bluetooth, media, TLS ------------------
+# Owned by the runtime-dependencies work (distro/notes/runtime.md). Everything
+# it writes is in distro/recipes/runtime/generate.sh, which builds the
+# source packages (runtime/src/*.build) when they are missing or stale and
+# writes their recipes and those of the host-copied ones it closes over.
+# PALMFRAME_SKIP_SRC=1 skips the source builds (their recipes must then
+# already exist, with distro/out/src filled by an earlier run).
+# shellcheck source=runtime/generate.sh
+source "$HERE/runtime/generate.sh"
+# <<< runtime -------------------------------------------------------------------
+
 # --- palmframe: the meta-package ---------------------------------------------
 {
 	header " from distro/apps/default.list"
@@ -574,6 +585,7 @@ details  = Everything a Palmframe machine has after installation. Removing an ap
 depend   = palmframe-base linux busybox glibc palm-init palm palm-login palmd doas passwd
 depend   = palmy-wm greeter fonts libxkbcommon xkeyboard-config
 depend   = tzdata palm-locale
+depend   = palmframe-runtime
 depend   = $(grep -v '^#' "$DISTRO/apps/default.list" | grep -vx -e wm -e greeter -e '' | tr '\n' ' ' | sed 's/ $//')
 EOF
 } | emit palmframe

@@ -1,0 +1,14 @@
+# libopus: call links libopus.so.0 directly, and ffmpeg links it for Opus.
+version=1.6.1
+url=https://downloads.xiph.org/releases/opus/opus-$version.tar.gz
+# Cross-checked against https://downloads.xiph.org/releases/opus/SHA256SUMS.txt
+sha256=6ffcb593207be92584df15b32466ed64bbec99109f007c82205f0194572411a1
+license=BSD-3-Clause
+upstream=https://opus-codec.org
+pkgdesc="Opus audio codec library"
+build() {
+	./configure --prefix=/usr --disable-static --disable-doc \
+		--disable-extra-programs
+	make -j"$JOBS"
+	make DESTDIR="$DESTDIR" install
+}

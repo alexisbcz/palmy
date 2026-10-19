@@ -1,0 +1,20 @@
+#!/bin/sh
+# The D-Bus system bus, in the foreground, for palm-init
+# (/etc/palm/services/dbus).
+#
+# dbus is built to drop to the user `dbus`. Until the base system's
+# /etc/passwd has that user, the bus runs as `nobody` instead, from a copy of
+# system.conf with the includes made absolute.
+set -e
+mkdir -p /run/dbus
+rm -f /run/dbus/pid /run/dbus/system_bus_socket
+[ -s /etc/machine-id ] || dbus-uuidgen --ensure=/etc/machine-id
+conf=/usr/share/dbus-1/system.conf
+if ! grep -q '^dbus:' /etc/passwd; then
+	echo "dbus-system: no user dbus in /etc/passwd; the bus runs as nobody" >&2
+	sed -e 's|<user>dbus</user>|<user>nobody</user>|' \
+		-e 's|<includedir>system.d</includedir>|<includedir>/usr/share/dbus-1/system.d</includedir>|' \
+		"$conf" >/run/dbus/system.conf
+	conf=/run/dbus/system.conf
+fi
+exec dbus-daemon --nofork --nopidfile --nosyslog --config-file="$conf"

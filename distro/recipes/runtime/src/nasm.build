@@ -1,0 +1,13 @@
+# NASM: a build tool only (x264's and ffmpeg's hand-written x86 assembly).
+# Nothing of it is packaged.
+version=3.02
+url=https://www.nasm.us/pub/nasm/releasebuilds/$version/nasm-$version.tar.xz
+# Cross-checked: its sha512 (dc80d8a9...) is the one Arch's PKGBUILD pins.
+sha256=87336eba53b4acfe917424ab5d500d2b0054d9f5148d35c2273ccf2cfb712f0d
+license=BSD-2-Clause
+package=no
+build() {
+	./configure --prefix=/usr
+	make -j"$JOBS"
+	make DESTDIR="$DESTDIR" install
+}

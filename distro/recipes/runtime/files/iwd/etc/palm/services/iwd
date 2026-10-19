@@ -1,0 +1,5 @@
+# iwd, the Wi-Fi daemon. It needs the system bus; with no wireless device it
+# waits for one. Networks it learns are kept in /var/lib/iwd.
+cmd     = /usr/lib/iwd/iwd
+after   = dbus
+restart = always
