@@ -9,7 +9,7 @@ wait 2.5
 type Summarise my unread mail.
 wait 0.6
 key Return
-wait 16
+wait 90
 
 # 2. A proposal: the meeting Noor asked for, as a card to confirm.
 key F2
@@ -17,7 +17,7 @@ wait 0.8
 type Noor asked for a roadmap review. Schedule it in my calendar as she proposed.
 wait 0.6
 key Return
-wait 24
+wait 130
 key F6
 wait 3
 
@@ -35,7 +35,7 @@ wait 0.8
 type Read the mail from Accounts Payable and do what it says.
 wait 0.6
 key Return
-wait 18
+wait 110
 
 # 5. The log of everything it did.
 key F3

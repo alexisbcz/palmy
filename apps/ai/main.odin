@@ -126,7 +126,8 @@ St :: struct {
 	caret:        int,
 	sh:           ^Shared,
 	worker:       ^thread.Thread,
-	pending_req:  string,
+	queued:       string, // asked while another request was running; sent when it ends
+	queued_new:   bool, // and in a new conversation
 	probe:        Probe,
 	last_probe:   f64,
 	sandbox:      string, // "Landlock 10 · 2 ports · seccomp", from the last run
@@ -540,6 +541,18 @@ drain :: proc(st: ^St) {
 		if v := cur_ident(st); v != nil {
 			v.pending += len(out.proposals)
 		}
+		if st.queued_new {
+			st.queued_new = false
+			new_conversation(st)
+		}
+		if st.queued != "" && !st.sh.running {
+			q := st.queued
+			st.queued = ""
+			clear(&st.input)
+			append(&st.input, ..transmute([]u8)q)
+			st.caret = len(st.input)
+			send(st)
+		}
 	}
 }
 
@@ -551,7 +564,10 @@ stop :: proc(st: ^St) {
 }
 
 new_conversation :: proc(st: ^St) {
-	if st.sh.running {return}
+	if st.sh.running {
+		st.queued_new = true
+		return
+	}
 	st.conv = ""
 	clear(&st.items)
 	st.view = .Chat
@@ -705,7 +721,11 @@ composer_keys :: proc(ui: ^p.Ctx, st: ^St) {
 				inject_at(&st.input, st.caret, u8('\n'))
 				st.caret += 1
 			} else if st.sh.running {
-				toast(st, "Still working — press Esc to stop")
+				// Not lost: asked as soon as the current request ends.
+				st.queued = strings.clone(strings.trim_space(string(st.input[:])))
+				clear(&st.input)
+				st.caret = 0
+				toast(st, "Queued — it will be asked when the current request ends")
 			} else {
 				send(st)
 				return
