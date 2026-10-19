@@ -246,7 +246,17 @@ take_suggestion :: proc(s: ^State, i: int, new_tab_: bool) {
 // build_suggestions ranks what the typed text could mean: the literal URL or
 // search first, then open tabs, bookmarks, history and internal pages.
 build_suggestions :: proc(s: ^State) {
+	// The list outlives the frame, so its strings are owned here: everything
+	// below is gathered from temporary memory and cloned once at the end.
+	for sg in s.suggestions {
+		delete(sg.title)
+		delete(sg.url)
+	}
 	clear(&s.suggestions)
+	defer for &sg in s.suggestions {
+		sg.title = strings.clone(sg.title)
+		sg.url = strings.clone(sg.url)
+	}
 	text := strings.trim_space(edit_text(&s.omni))
 	if text == "" {
 		return

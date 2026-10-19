@@ -611,13 +611,24 @@ bookmarked :: proc(b: ^Bookmarks, url: string) -> ^Bookmark {
 		return nil
 	}
 	for &r in b.file.items {
-		if r.kind == "bookmark" && r.url == url {
+		if r.kind == "bookmark" && url_same(r.url, url) {
 			if _, ok := effective_parent(b, &r); ok {
 				return &r
 			}
 		}
 	}
 	return nil
+}
+
+// url_same compares addresses the way a person would: a bare host and the
+// same host with its root slash are one page.
+url_same :: proc(a, b: string) -> bool {
+	if a == b {
+		return true
+	}
+	ta := strings.trim_suffix(a, "/")
+	tb := strings.trim_suffix(b, "/")
+	return ta == tb && strings.count(ta, "/") == 2
 }
 
 // find_folder resolves a folder by id, or by a case-insensitive title, for

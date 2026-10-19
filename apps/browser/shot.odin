@@ -91,15 +91,22 @@ shot :: proc(prof: ^Profile, opt: Shot_Options) -> (res: Shot_Result) {
 
 	url := opt.url == "" ? PAGE_URLS[.New_Tab] : opt.url
 	_, internal := page_of_url(url)
-	if !internal {
+	// the engine runs for internal pages too, so the chrome shows it running
+	if engine_info(s.engine_kind).available {
 		s.engine = engine_start(s.engine_kind, &s.prof, nil)
-		if !s.engine.ok {
+		if !s.engine.ok && !internal {
 			res.error = s.engine.error
 			return
 		}
 		engine_theme(s.engine, s.dark)
 		res.engine = s.engine.name
 		res.version = s.engine.version
+	}
+	if !internal {
+		if s.engine == nil || !s.engine.ok {
+			res.error = engine_info(s.engine_kind).detail
+			return
+		}
 		u, _ := resolve_input(url, search_engine(s.prof.settings.search))
 		navigate(s, t, u)
 		set_focus(s, .Page)
@@ -127,7 +134,9 @@ shot :: proc(prof: ^Profile, opt: Shot_Options) -> (res: Shot_Result) {
 		if t.page == .New_Tab {
 			set_focus(s, .None)
 		}
-		res.engine = engine_name(s.engine_kind)
+		if res.engine == "" {
+			res.engine = engine_name(s.engine_kind)
+		}
 	}
 
 	if opt.omnibox != "" {
@@ -151,8 +160,10 @@ shot :: proc(prof: ^Profile, opt: Shot_Options) -> (res: Shot_Result) {
 	case "shortcuts":
 		s.overlay = .Shortcuts
 	}
-	for _ in 0 ..< 4 {
+	// transitions run on the clock, so let them finish
+	for _ in 0 ..< 10 {
 		step(off, s)
+		time.sleep(60 * time.Millisecond)
 	}
 	if !p.offscreen_write_png(off, opt.out) {
 		res.error = fmt.tprintf("could not write %s", opt.out)

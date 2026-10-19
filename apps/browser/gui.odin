@@ -189,6 +189,7 @@ gui_main :: proc(opt: Gui_Options) -> int {
 		t := active_tab(s)
 		title := t != nil ? fmt.tprintf("%s — Browser (%s)", tab_title(t), s.prof.identity) : "Browser"
 		if title != last_title {
+			if os.get_env("PALM_BROWSER_VERBOSE", context.temp_allocator) != "" {fmt.eprintfln("title %q %v", title, transmute([]u8)title)}
 			p.set_title(app, title)
 			delete(last_title)
 			last_title = strings.clone(title)
@@ -202,6 +203,9 @@ gui_main :: proc(opt: Gui_Options) -> int {
 		if s.quit {
 			p.quit_app(app)
 		}
+	}
+	if os.get_env("PALM_BROWSER_VERBOSE", context.temp_allocator) != "" {
+		fmt.eprintfln("browser: frame loop ended (close %v, quit %v, fatal %q)", app.win.should_close, s.quit, app.win.conn.fatal)
 	}
 	state_shutdown(s)
 	os.remove(control_path(s.prof.identity))
