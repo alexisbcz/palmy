@@ -20,6 +20,7 @@
 //   wait-bar [save|update|locked]      the save bar is up and decided
 //   wait-saved [saved|updated|refused] the vault answered a save
 //   force-fill <title>         ask the vault for that login on this origin, as a pick would
+//   fill-from-omnibox          the address bar's key (or the menu's "Fill login")
 //   expect-trace <text>        something in the autofill trace contains it
 //   expect-no-trace <text>
 //   shot <file.png>
@@ -63,6 +64,7 @@ step_frame :: proc(r: ^Run) {
 	r.off.input.over_surface = false
 	handle_input(ui, s)
 	frame(ui, s)
+	sync_view_size(ui, s) // the save bar moves the page down, as in the window
 	if rr := p.rect_of(ui, s.page_id); rr.w > 0 {
 		s.page_rect = rr
 	}
@@ -132,6 +134,17 @@ key_sym :: proc(name: string) -> u32 {
 trace_has :: proc(s: ^State, text: string) -> bool {
 	for t in s.af.trace {
 		if strings.contains(t, text) {
+			return true
+		}
+	}
+	return false
+}
+
+// trace_starts: a fresh entry (the ones already checked are marked "(seen)")
+@(private = "file")
+trace_starts :: proc(s: ^State, prefix: string) -> bool {
+	for t in s.af.trace {
+		if strings.has_prefix(t, prefix) {
 			return true
 		}
 	}
@@ -222,6 +235,10 @@ afrun :: proc(prof: ^Profile, opt: Afrun_Options) -> int {
 				step_frame(&r)
 			}
 			run_for(&r, 0.15)
+		case "fill-from-omnibox":
+			// what the address bar's key and the menu's "Fill login" do
+			af_fill_from_omnibox(s)
+			step_frame(&r)
 		case "stamp":
 			// the wall clock, for checks against the test site's log
 			fmt.printfln("# stamp %s %.3f", arg, f64(time.time_to_unix_nano(time.now())) / 1e9)
@@ -270,7 +287,7 @@ afrun :: proc(prof: ^Profile, opt: Afrun_Options) -> int {
 		case "wait-fill":
 			want := arg != "" ? arg : "ok"
 			ok := wait_until(&r, 20, proc(s: ^State, want: string) -> bool {
-				return trace_has(s, "fill result ")
+				return trace_starts(s, "fill result ")
 			}, want)
 			got := ""
 			for x in s.af.trace {
@@ -282,7 +299,7 @@ afrun :: proc(prof: ^Profile, opt: Afrun_Options) -> int {
 			clear_trace_prefix(s, "fill result ")
 		case "wait-vault-fill":
 			ok := wait_until(&r, 20, proc(s: ^State, _: string) -> bool {
-				return trace_has(s, "vault fill: ")
+				return trace_starts(s, "vault fill: ")
 			}, "")
 			got := ""
 			for x in s.af.trace {
@@ -327,7 +344,7 @@ afrun :: proc(prof: ^Profile, opt: Afrun_Options) -> int {
 			verdict(&r, !s.af.bar.active, "no save bar")
 		case "wait-saved":
 			ok := wait_until(&r, 20, proc(s: ^State, _: string) -> bool {
-				return trace_has(s, "save: ")
+				return trace_starts(s, "save: ")
 			}, "")
 			got := ""
 			for x in s.af.trace {

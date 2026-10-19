@@ -1375,9 +1375,10 @@ af_dropdown :: proc(ui: ^p.Ctx, s: ^State) {
 		p.text(ui, fmt.tprintf("No saved logins for %s", host_of_origin(s.af.origin)), "px-2 pb-1 text-[11.5] text-muted-foreground truncate")
 	}
 	// keyboard hints
+	pairing := s.af.vault == .Pairing || s.af.pair_code != ""
 	p.row(ui, "h-6 items-center gap-3 px-2 border-t border-border mt-0.5")
-	hint_pair(ui, "↓ ↑", "choose")
-	hint_pair(ui, "Enter", "fill")
+	if !pairing {hint_pair(ui, "↓ ↑", "choose")}
+	if !pairing {hint_pair(ui, "Enter", "fill")}
 	hint_pair(ui, "Esc", "close")
 	p.end(ui)
 	p.end(ui)
@@ -1403,12 +1404,11 @@ af_bar :: proc(ui: ^p.Ctx, s: ^State) {
 	if !b.active || t == nil || t.id != b.view {
 		return
 	}
-	bar := p.row(ui, "w-full h-[46] shrink-0 items-center gap-3 px-3 bg-background border-b border-border")
-	_ = bar
+	p.row(ui, "w-full h-[46] shrink-0 items-center gap-3 px-3 bg-background border-b border-border")
 	p.div(ui, "size-7 rounded-md items-center justify-center bg-primary/10 shrink-0")
 	p.icon(ui, ICON_KEY, "size-4 text-primary")
 	p.end(ui)
-	p.col(ui, "flex-1 min-w-0 gap-0")
+	p.col(ui, "min-w-0 shrink gap-0")
 	who := b.username != "" ? b.username : "this login"
 	locked := !b.waiting && s.af.vault != .Unlocked
 	switch {
@@ -1432,6 +1432,8 @@ af_bar :: proc(ui: ^p.Ctx, s: ^State) {
 	}
 	p.text(ui, detail, "text-[12] text-muted-foreground truncate")
 	p.end(ui)
+	p.div(ui, "flex-1")
+	p.end(ui)
 	focused := s.focus == .Bar
 	never := p.row(ui, "h-8 px-3 items-center rounded-md border border-border hover:bg-muted cursor-pointer shrink-0")
 	if focused && b.sel == 1 {
@@ -1452,6 +1454,7 @@ af_bar :: proc(ui: ^p.Ctx, s: ^State) {
 		p.text(ui, "Enter", "text-[11] opacity-70")
 	}
 	p.end(ui)
+	p.end(ui) // the bar
 	if p.clickable(ui, never) {
 		af_trace(s, "bar: not now")
 		bar_close(s)

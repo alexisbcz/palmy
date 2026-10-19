@@ -150,7 +150,8 @@ for E in "${ENGINES[@]}"; do
 	#    and "Fill login" from the address bar finds no field in the top page
 	M=$(mark)
 	run iframe "$E" "$RUN/once.sock" "$B/frame" \
-		"sleep 3" "expect-no-trace focus" "expect-closed"
+		"sleep 3" "expect-no-trace focus" "expect-closed" \
+		"fill-from-omnibox" "wait-open" "expect-rows 1" "key Return" "wait-vault-fill allowed" "wait-fill no_field"
 	check "[$E] the framed attacker's page got no post or beacon" "site $M \"not [r for r in L if r['origin'].startswith('https://evil.') and r['kind'] in ('post','beacon')]\""
 
 	# 6. the form's action moves to another origin when a field is focused:

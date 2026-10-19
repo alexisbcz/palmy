@@ -20,7 +20,8 @@ mkdir -p "$OUT"
 # package bundles beside libcef.so (GLib's on PCRE, and so on).
 # CEF_API_VERSION pins the C API this file was written against; CEF refuses
 # to start if the library does not offer it.
-cc -O2 -g0 -Wall -Wextra -Wno-unused-parameter -Wno-missing-field-initializers \
+# C23: host.c #embeds ../autofill.js, the page script both engines share
+cc -std=gnu23 -O2 -g0 -Wall -Wextra -Wno-unused-parameter -Wno-missing-field-initializers \
 	-DCEF_API_VERSION=15200 -I"$CEF" \
 	"$HERE/host.c" -o "$OUT/palm-browser-cef" \
 	-L"$CEF/Release" -lcef -lpthread -lm -Wl,--disable-new-dtags,-rpath,'$ORIGIN'

