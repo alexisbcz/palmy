@@ -178,19 +178,12 @@ keysym_to_key :: proc(sym: u32) -> vt.Key {
 }
 
 // keysym_codepoint turns a keysym into the character it stands for, following
-// the rules in xkbcommon: Latin-1 keysyms are their own codepoint and
-// everything else above 0x01000000 carries one directly.
+// xkbcommon's xkb_keysym_to_utf32: Latin-1 keysyms are their own codepoint,
+// everything above 0x01000000 carries one directly, and the legacy ranges
+// (Cyrillic, Greek, Arabic, Hebrew, the euro sign...) go through the table
+// palmy generates from keysymdef.h. See `p.keysym_to_rune`.
 keysym_codepoint :: proc(sym: u32) -> rune {
-	if sym >= 0x20 && sym <= 0x7E {
-		return rune(sym)
-	}
-	if sym >= 0xA0 && sym <= 0xFF {
-		return rune(sym)
-	}
-	if sym & 0xFF00_0000 == 0x0100_0000 {
-		return rune(sym & 0x00FF_FFFF)
-	}
-	return 0
+	return p.keysym_to_rune(sym)
 }
 
 // unshift_us undoes a US layout's shift for the characters where it matters.

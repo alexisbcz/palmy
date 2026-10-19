@@ -509,9 +509,41 @@ keysym_lower :: proc(s: u32) -> u32 {
 	return s
 }
 
-// keysym_utf8 encodes the character a keysym stands for, if it stands for one.
-// The three ranges that matter are Latin-1 (where keysym and codepoint
-// coincide), the 0x01000000-prefixed Unicode keysyms, and the keypad.
+// keysym_to_rune is the character a keysym stands for, or 0 when it stands
+// for none (a function key, a modifier, the keypad). It covers what
+// xkbcommon's `xkb_keysym_to_utf32` does for character keysyms: Latin-1, where
+// keysym and codepoint coincide; the 0x01000000-prefixed Unicode keysyms; and
+// the legacy ranges 0x0100-0x20ff -- Latin-2 to 4, Katakana, Arabic, Cyrillic,
+// Greek, Hebrew, Thai, Hangul, technical and publishing symbols, the euro
+// sign -- which need a table, `KEYSYM_TABLE`, generated from keysymdef.h.
+keysym_to_rune :: proc(sym: u32) -> rune {
+	switch {
+	case sym >= 0x20 && sym <= 0x7e:
+		return rune(sym)
+	case sym >= 0xa0 && sym <= 0xff:
+		return rune(sym)
+	case sym >= 0x01000100 && sym <= 0x0110ffff:
+		return rune(sym - 0x01000000)
+	case sym >= 0x0100 && sym <= 0x20ff:
+		lo, hi := 0, len(KEYSYM_TABLE)
+		for lo < hi {
+			mid := (lo + hi) / 2
+			s := u32(KEYSYM_TABLE[mid].sym)
+			if s == sym {
+				return rune(KEYSYM_TABLE[mid].cp)
+			}
+			if s < sym {
+				lo = mid + 1
+			} else {
+				hi = mid
+			}
+		}
+	}
+	return 0
+}
+
+// keysym_utf8 encodes the character a keysym stands for, if it stands for one:
+// `keysym_to_rune`, plus the keypad keys that type ordinary characters.
 keysym_utf8 :: proc(sym: u32, buf: []u8) -> int {
 	r := keysym_rune(sym)
 	if r == 0 {
@@ -522,13 +554,8 @@ keysym_utf8 :: proc(sym: u32, buf: []u8) -> int {
 
 @(private)
 keysym_rune :: proc(sym: u32) -> rune {
-	switch {
-	case sym >= 0x20 && sym <= 0x7e:
-		return rune(sym)
-	case sym >= 0xa0 && sym <= 0xff:
-		return rune(sym)
-	case sym >= 0x01000100 && sym <= 0x0110ffff:
-		return rune(sym - 0x01000000)
+	if r := keysym_to_rune(sym); r != 0 {
+		return r
 	}
 	// The keypad, which produces ordinary characters.
 	switch sym {

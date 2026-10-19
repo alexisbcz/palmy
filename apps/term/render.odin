@@ -395,6 +395,31 @@ draw_cursor :: proc(r: ^Grid_Renderer, c: ^p.Canvas, t: ^vt.Terminal, x, y: int,
 // Selection
 // ---------------------------------------------------------------------------
 
+// sel_press starts a selection at a cell. It is not active yet: a click
+// that never leaves its cell selects nothing, where it used to leave a
+// one-cell selection behind -- highlighted, and copied by the next Ctrl+Shift+C.
+// What it does do is clear whatever was selected before.
+sel_press :: proc(col, row: int) -> Selection {
+	return Selection{dragging = true, a = {col, row}, b = {col, row}}
+}
+
+// sel_drag follows the pointer during a drag and reports whether anything
+// changed. The selection becomes active the first time the pointer reaches
+// another cell, and stays active if it comes back to the first one, which
+// then selects that cell -- a deliberate one-cell selection.
+sel_drag :: proc(s: ^Selection, col, row: int) -> bool {
+	if !s.dragging {
+		return false
+	}
+	nb := [2]int{col, row}
+	if s.b == nb {
+		return false
+	}
+	s.b = nb
+	s.active = true
+	return true
+}
+
 sel_normalized :: proc(s: Selection) -> (a, b: [2]int) {
 	a, b = s.a, s.b
 	if a[1] > b[1] || (a[1] == b[1] && a[0] > b[0]) {

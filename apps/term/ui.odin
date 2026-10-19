@@ -463,23 +463,14 @@ handle_mouse :: proc(a: ^Term_App, ui: ^p.Ctx, show_tabs: bool, scale: f32) {
 		if report {
 			send_mouse(a, t, .Left, .Press, col, row, ui)
 		} else {
-			a.sel = Selection {
-				active   = true,
-				dragging = true,
-				a        = {col, abs_row},
-				b        = {col, abs_row},
-			}
+			a.sel = sel_press(col, abs_row)
 			a.rend.full = true
 		}
 	} else if ui.input.down[.Left] {
 		if report {
 			send_mouse(a, t, .Left, .Motion, col, row, ui)
-		} else if a.sel.dragging {
-			nb := [2]int{col, abs_row}
-			if a.sel.b != nb {
-				a.sel.b = nb
-				a.rend.full = true
-			}
+		} else if sel_drag(&a.sel, col, abs_row) {
+			a.rend.full = true
 		}
 	} else if ui.input.released[.Left] {
 		if report {

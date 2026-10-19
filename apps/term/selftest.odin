@@ -83,6 +83,8 @@ selftest :: proc() -> int {
 	test_pty()
 	test_render()
 	test_render_wide()
+	test_keysyms()
+	test_selection_click()
 
 	ms := time.duration_milliseconds(time.since(t0))
 	fmt.printf("\n%d assertions, %d failures, %.0f ms\n", checks, failures, ms)
@@ -90,6 +92,73 @@ selftest :: proc() -> int {
 }
 
 // ---------------------------------------------------------------------------
+
+// The legacy keysyms carry no codepoint in their value; a Cyrillic, Greek,
+// Arabic or Hebrew layout, or a euro key, typed nothing through the encoder
+// while keysym_codepoint knew only Latin-1 and 0x01xxxxxx.
+@(private = "file")
+test_keysyms :: proc() {
+	Case :: struct {
+		sym:  u32,
+		want: rune,
+		what: string,
+	}
+	cases := [?]Case {
+		{'a', 'a', "ASCII"},
+		{0xe9, 'é', "Latin-1 eacute"},
+		{0x01a1, 'Ą', "Latin-2 Aogonek"},
+		{0x06c1, 'а', "Cyrillic_a"},
+		{0x06df, 'ъ', "Cyrillic_hardsign"},
+		{0x06b3, 'Ё', "Cyrillic_IO"},
+		{0x07e1, 'α', "Greek_alpha"},
+		{0x07d9, 'Ω', "Greek_OMEGA"},
+		{0x05c7, 'ا', "Arabic_alef"},
+		{0x05ac, '،', "Arabic_comma"},
+		{0x0ce0, 'א', "hebrew_aleph"},
+		{0x0cfa, 'ת', "hebrew_taw"},
+		{0x0da1, 'ก', "Thai_kokai"},
+		{0x04b1, 'ア', "kana_A"},
+		{0x20ac, '€', "EuroSign"},
+		{0x0aa9, '—', "emdash"},
+		{0x08fb, '←', "leftarrow"},
+		{0x010020ac, '€', "the Unicode keysym for the euro"},
+		{0x0100044f, 'я', "the Unicode keysym for ya"},
+		{0xffbe, 0, "F1 is not a character"},
+		{0xffe1, 0, "Shift_L is not a character"},
+		{0x0100, 0, "an unassigned legacy keysym"},
+	}
+	for c in cases {
+		got := keysym_codepoint(c.sym)
+		check(got == c.want, "keysym 0x%x (%s) is U+%04X, got U+%04X", c.sym, c.what, u32(c.want), u32(got))
+	}
+	// And they reach the encoder as text.
+	buf: [8]u8
+	ev := key_event_from(p.Key_Event{sym = 0x06c1}, buf[:])
+	eq_s(ev.utf8, "а", "Cyrillic_a reaches the encoder as text")
+	ev = key_event_from(p.Key_Event{sym = 0x20ac}, buf[:])
+	eq_s(ev.utf8, "€", "the euro sign reaches the encoder as text")
+}
+
+// A single click selects nothing; a drag selects; a drag that comes back to
+// where it started selects that one cell.
+@(private = "file")
+test_selection_click :: proc() {
+	s := sel_press(3, 10)
+	check(!s.active, "a press alone selects nothing")
+	check(!sel_contains(s, 10, 3), "the clicked cell is not highlighted")
+	check(!sel_drag(&s, 3, 10), "a motion within the same cell changes nothing")
+	check(!s.active, "a click that stays in its cell still selects nothing")
+
+	s = sel_press(3, 10)
+	check(sel_drag(&s, 6, 10), "moving to another cell changes the selection")
+	check(s.active, "a drag selects")
+	check(sel_contains(s, 10, 3) && sel_contains(s, 10, 6), "from the press to the pointer")
+	check(sel_drag(&s, 3, 10), "coming back to the first cell changes it again")
+	check(s.active && sel_contains(s, 10, 3), "and leaves that one cell selected")
+
+	s.dragging = false
+	check(!sel_drag(&s, 9, 10), "after the release, motion does nothing")
+}
 
 test_unicode :: proc() {
 	eq_i(vt.rune_width('a'), 1, "width of a")
