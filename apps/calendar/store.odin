@@ -13,6 +13,7 @@ package main
 import "core:os"
 import "core:strconv"
 import "core:strings"
+import ical "../../cloud/dav/ical"
 
 DIR_NAME :: "palmy-calendar"
 FILE_NAME :: "events.tsv"
@@ -23,6 +24,16 @@ Event :: struct {
 	mins:  int, // duration in minutes, 0 when unset
 	title: string,
 	place: string,
+
+	// Where the entry comes from (see cloud.odin). The device file only ever
+	// holds src 0; these fields are never written to it.
+	src:       int, // index into Cloud.sources; 0 is this device
+	obj:       string, // the calendar object's resource name
+	uid:       string,
+	recurring: bool, // an instance of a recurring object
+	rid:       ical.DT, // its recurrence id, for removing one occurrence
+	cancelled: bool,
+	lidx:      int, // index into the device list, -1 for cloud entries
 }
 
 event_free :: proc(e: Event) {

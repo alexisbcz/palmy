@@ -11,6 +11,7 @@ frame :: proc(ui: ^p.Ctx, c: ^Cal) {
 	header(ui, c)
 
 	p.row(ui, "flex-1 min-h-0 w-full items-stretch")
+	sidebar(ui, c)
 	p.col(ui, "flex-1 min-w-0 h-full overflow-hidden")
 	if c.view == .Month {
 		month_grid(ui, c)
@@ -30,6 +31,10 @@ frame :: proc(ui: ^p.Ctx, c: ^Cal) {
 		delete_dialog(ui, c)
 	case .Help:
 		help_sheet(ui, c)
+	case .Sign_In:
+		sign_in_sheet(ui, c)
+	case .Invites:
+		invites_sheet(ui, c)
 	case .Normal:
 	}
 	toast(ui, c)
@@ -89,6 +94,8 @@ header :: proc(ui: ^p.Ctx, c: ^Cal) {
 	p.end(ui)
 
 	p.spacer(ui, "flex-1")
+
+	account_chip(ui, c)
 
 	p.key(ui, "add")
 	ab := p.row(
@@ -270,43 +277,58 @@ day_cell :: proc(ui: ^p.Ctx, c: ^Cal, d: Date, dow: int) {
 	}
 	p.spacer(ui, "flex-1")
 	n := day_count(c, d)
-	if n > 2 {
-		p.textf(ui, "text-[9.5] text-muted-foreground whitespace-nowrap shrink-0", "+%d", n - 2)
+	if fit := chips_per_day(ui); n > fit {
+		p.textf(ui, "text-[9.5] text-muted-foreground whitespace-nowrap shrink-0", "+%d", n - fit)
 	}
 	p.end(ui)
 
 	// Up to two chips, so a busy day still shows what it is rather than a dot.
+	// Each chip in its calendar's colour: the overlay is how one view holds
+	// several identities without them blurring into one.
 	list := day_events(c, d)
-	shown := min(len(list), 2)
+	shown := min(len(list), chips_per_day(ui))
 	for k in 0 ..< shown {
 		e := c.events[list[k]]
+		col := src_color(c, e.src)
 		p.key(ui, tfmt("e%d", list[k]))
 		p.row(
 			ui,
-			in_month \
-			? "w-full h-[16] shrink-0 items-center gap-1 px-1 rounded overflow-hidden bg-accent-blue/15" \
-			: "w-full h-[16] shrink-0 items-center gap-1 px-1 rounded overflow-hidden bg-accent-blue/10",
+			tfmt("w-full h-[16] shrink-0 items-center gap-1 px-1 rounded overflow-hidden bg-%s/%d", col, in_month ? 16 : 8),
 		)
-		p.div(ui, "w-[3] h-[9] rounded-full shrink-0 bg-accent-blue")
+		p.div(ui, tfmt("w-[3] h-[9] rounded-full shrink-0 bg-%s%s", col, in_month ? "" : "/50"))
 		p.end(ui)
 		if e.start >= 0 {
 			p.text(
 				ui,
 				clock_text(e.start),
 				in_month \
-				? "text-[9.5] font-mono text-accent-blue whitespace-nowrap shrink-0" \
-				: "text-[9.5] font-mono text-accent-blue/50 whitespace-nowrap shrink-0",
+				? "text-[9.5] font-mono text-foreground/70 whitespace-nowrap shrink-0" \
+				: "text-[9.5] font-mono text-muted-foreground/50 whitespace-nowrap shrink-0",
 			)
 		}
 		p.text(
 			ui,
 			e.title,
-			in_month \
+			in_month && !e.cancelled \
 			? "flex-1 min-w-0 truncate text-[10] text-foreground" \
 			: "flex-1 min-w-0 truncate text-[10] text-muted-foreground/60",
 		)
 		p.end(ui)
 	}
+}
+
+// chips_per_day fits as many 16px chips as the row has room for.
+chips_per_day :: proc(ui: ^p.Ctx) -> int {
+	row_h, _ := grid_metrics(ui)
+	return clamp(int((row_h - 28) / 18), 1, 4)
+}
+
+// src_color is the registered colour name of an entry's calendar.
+src_color :: proc(c: ^Cal, src: int) -> string {
+	if src >= 0 && src < len(c.cloud.sources) && c.cloud.sources[src].color_name != "" {
+		return c.cloud.sources[src].color_name
+	}
+	return "accent-blue"
 }
 
 // ---------------------------------------------------------------------------
@@ -500,7 +522,7 @@ day_pane :: proc(ui: ^p.Ctx, c: ^Cal) {
 			c.pane = .Day
 		}
 
-		p.div(ui, focus ? "w-[3] shrink-0 rounded-full bg-white/70" : "w-[3] shrink-0 rounded-full bg-accent-blue")
+		p.div(ui, focus ? "w-[3] shrink-0 rounded-full bg-white/70" : tfmt("w-[3] shrink-0 rounded-full bg-%s", src_color(c, e.src)))
 		p.end(ui)
 
 		p.col(ui, "flex-1 min-w-0 gap-1")
@@ -547,9 +569,81 @@ day_pane :: proc(ui: ^p.Ctx, c: ^Cal) {
 			)
 			p.end(ui)
 		}
+		event_meta(ui, c, e, focus, on)
 		p.end(ui)
 		p.end(ui)
 	}
+}
+
+// event_meta: which calendar, whether it repeats or is read-only, and for
+// the selected entry who is invited and how they answered.
+event_meta :: proc(ui: ^p.Ctx, c: ^Cal, e: Event, focus, on: bool) {
+	if len(c.cloud.sources) <= 1 && e.src == 0 {
+		return
+	}
+	s := c.cloud.sources[e.src]
+	muted := focus ? "text-white/75" : "text-muted-foreground"
+	p.row(ui, "w-full items-center gap-1.5")
+	p.div(ui, tfmt("size-[7] rounded-full shrink-0 %s", focus ? "bg-white/80" : tfmt("bg-%s", src_color(c, e.src))))
+	p.end(ui)
+	label := s.name
+	if !s.device {
+		if ident, ok := ident_of(&c.cloud, s.handle); ok {
+			label = tfmt("%s · %s", s.name, ident.name)
+		}
+		if s.access != "owner" {
+			label = tfmt("%s · shared by %s", s.name, s.owner)
+		}
+	}
+	p.text(ui, label, tfmt("flex-1 min-w-0 truncate text-[11] %s", muted))
+	if e.recurring {
+		p.icon(ui, ICON_REPEAT, tfmt("size-3 shrink-0 %s", muted))
+	}
+	if !writable(&c.cloud.sources[e.src]) {
+		p.icon(ui, ICON_LOCK, tfmt("size-3 shrink-0 %s", muted))
+	}
+	if e.cancelled {
+		p.text(ui, "cancelled", tfmt("text-[10.5] shrink-0 %s", focus ? "text-white" : "text-destructive"))
+	}
+	p.end(ui)
+	if !on || e.src == 0 {
+		return
+	}
+	people := people_of(&c.cloud, e.src, e.obj)
+	if len(people) == 0 {
+		return
+	}
+	p.col(ui, tfmt("w-full gap-1 pt-1.5 mt-0.5 border-t %s", focus ? "border-white/25" : "border-border"))
+	for pp in people {
+		p.row(ui, "w-full items-center gap-1.5")
+		p.icon(ui, pp.organizer ? ICON_USER : ICON_USERS, tfmt("size-3 shrink-0 %s", muted))
+		p.text(ui, pp.address, tfmt("flex-1 min-w-0 truncate text-[11] %s", focus ? "text-white/90" : "text-foreground/85"))
+		p.text(ui, partstat_label(pp.partstat, pp.organizer), tfmt("text-[10.5] shrink-0 %s", focus ? "text-white/80" : partstat_class(pp.partstat)))
+		p.end(ui)
+	}
+	p.end(ui)
+}
+
+partstat_label :: proc(ps: string, organizer: bool) -> string {
+	if organizer {
+		return "organizer"
+	}
+	switch ps {
+	case "ACCEPTED": return "accepted"
+	case "DECLINED": return "declined"
+	case "TENTATIVE": return "maybe"
+	case "DELEGATED": return "delegated"
+	}
+	return "invited"
+}
+
+partstat_class :: proc(ps: string) -> string {
+	switch ps {
+	case "ACCEPTED": return "text-emerald-600"
+	case "DECLINED": return "text-destructive"
+	case "TENTATIVE": return "text-amber-600"
+	}
+	return "text-muted-foreground"
 }
 
 // ---------------------------------------------------------------------------
@@ -605,7 +699,7 @@ status :: proc(ui: ^p.Ctx, c: ^Cal) {
 		len(c.events),
 	)
 	p.text(ui, "·", "text-[11.5] text-muted-foreground/50 shrink-0")
-	p.text(ui, "~/.local/share/palmy-calendar", "text-[11] font-mono text-muted-foreground/70 whitespace-nowrap shrink-0")
+	status_sync(ui, c)
 }
 
 hint :: proc(ui: ^p.Ctx, keys, what: string) {
@@ -646,22 +740,28 @@ FIELD_LABELS := [Field]string {
 	.Date     = "Date",
 	.Time     = "Start",
 	.Duration = "Minutes",
-	.Title    = "Title",
-	.Place    = "Where",
+	.Title     = "Title",
+	.Place     = "Where",
+	.Calendar  = "Calendar",
+	.Repeat    = "Repeat",
+	.Attendees = "Invite",
 }
 
 FIELD_HINTS := [Field]string {
-	.Date     = "YYYY-MM-DD",
-	.Time     = "HH:MM, empty for all day",
-	.Duration = "60",
-	.Title    = "What is happening",
-	.Place    = "Optional",
+	.Date      = "YYYY-MM-DD",
+	.Time      = "HH:MM, empty for all day",
+	.Duration  = "60",
+	.Title     = "What is happening",
+	.Place     = "Optional",
+	.Calendar  = "",
+	.Repeat    = "",
+	.Attendees = "bob, someone@example.com",
 }
 
 form_dialog :: proc(ui: ^p.Ctx, c: ^Cal) {
 	scrim(ui, c)
 	win := p.size(ui)
-	sheet_open(ui, 520, max(8, win.y / 2 - 230))
+	sheet_open(ui, 540, max(8, win.y / 2 - 300))
 	defer sheet_close(ui)
 
 	p.row(ui, "w-full items-center gap-2.5 px-5 pt-5 pb-1")
@@ -700,17 +800,29 @@ form_dialog :: proc(ui: ^p.Ctx, c: ^Cal) {
 		if active {
 			p.apply(ui, "border-ring ring-3 ring-ring/40", idx)
 		}
-		v := string(c.form.bufs[f][:])
-		p.text(
-			ui,
-			v == "" ? FIELD_HINTS[f] : v,
-			v == "" \
-			? "text-[13] text-muted-foreground/60 whitespace-nowrap shrink-0" \
-			: "text-[13] text-foreground whitespace-nowrap shrink-0",
-		)
-		if active && p.caret_on(ui) {
-			p.div(ui, "w-px h-[16] ml-px bg-foreground shrink-0")
-			p.end(ui)
+		editable := field_editable(c, f)
+		if !editable {
+			p.apply(ui, "bg-muted/50", idx)
+		}
+		if f == .Calendar || f == .Repeat {
+			choice_value(ui, c, f, active, editable)
+		} else {
+			v := string(c.form.bufs[f][:])
+			hint := FIELD_HINTS[f]
+			if !editable {
+				hint = "for calendars in your Palmframe account"
+			}
+			p.text(
+				ui,
+				v == "" ? hint : v,
+				v == "" \
+				? "text-[13] text-muted-foreground/60 whitespace-nowrap shrink-0" \
+				: "text-[13] text-foreground whitespace-nowrap shrink-0",
+			)
+			if active && p.caret_on(ui) {
+				p.div(ui, "w-px h-[16] ml-px bg-foreground shrink-0")
+				p.end(ui)
+			}
 		}
 		p.end(ui)
 		p.end(ui)
@@ -767,12 +879,13 @@ delete_dialog :: proc(ui: ^p.Ctx, c: ^Cal) {
 	p.end(ui)
 
 	p.row(ui, "w-full gap-2 pt-1")
-	for label, k in ([?]string{"Keep it", "Delete"}) {
-		on := (k == 1) == c.confirm
+	labels := delete_choices(c) == 3 ? []string{"Keep it", "Only this one", "Every one"} : []string{"Keep it", "Delete"}
+	for label, k in labels {
+		on := k == c.confirm
 		p.key(ui, label)
 		idx := p.row(ui, "flex-1 h-[34] items-center justify-center rounded-lg border border-border transition cursor-pointer")
 		switch {
-		case on && k == 1:
+		case on && k > 0:
 			p.apply(ui, "bg-destructive border-destructive text-white ring-3 ring-destructive/25", idx)
 		case on:
 			p.apply(ui, "bg-secondary border-ring ring-3 ring-ring/30", idx)
@@ -780,7 +893,7 @@ delete_dialog :: proc(ui: ^p.Ctx, c: ^Cal) {
 			p.apply(ui, "bg-background hover:bg-accent", idx)
 		}
 		if p.clickable(ui, idx) {
-			c.confirm = k == 1
+			c.confirm = k
 		}
 		p.text(ui, label, "text-[13] font-medium whitespace-nowrap")
 		p.end(ui)
@@ -801,7 +914,11 @@ HELP_ROWS := [?][2]string {
 	{"Home / End", "Monday and Sunday of this week"},
 	{"T", "jump to today"},
 	{"Y", "switch the month and year views"},
-	{"Tab", "move between the grid and the day"},
+	{"Tab", "move between the grid, the day and the calendars"},
+	{"Space", "show or hide the calendar under the cursor"},
+	{"R  or  F6", "sync with your Palmframe account"},
+	{"I", "sign in"},
+	{"V", "invitations: A accept, D decline, T maybe"},
 	{"Enter", "open the day, or edit the event"},
 	{"A  or  N", "new event"},
 	{"E", "edit the selected event"},
@@ -813,7 +930,7 @@ HELP_ROWS := [?][2]string {
 help_sheet :: proc(ui: ^p.Ctx, c: ^Cal) {
 	scrim(ui, c)
 	win := p.size(ui)
-	sheet_open(ui, 560, max(8, (win.y - 480) / 2))
+	sheet_open(ui, 560, max(8, (win.y - 600) / 2))
 	defer sheet_close(ui)
 
 	p.row(ui, "w-full items-center gap-2.5 px-5 pt-5 pb-3")

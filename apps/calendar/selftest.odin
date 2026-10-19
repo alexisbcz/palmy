@@ -103,6 +103,7 @@ run_selftest :: proc() {
 	check(!mok, "24:00 is rejected")
 
 	test_events()
+	test_cloud()
 
 	if failures == 0 {
 		fmt.printfln("calendar selftest: %d checks passed", checks)
@@ -139,11 +140,11 @@ test_events :: proc() {
 	check(len(empty) == 0, "a missing events file loads as no events")
 
 	list := make([dynamic]Event, 0, 8, context.temp_allocator)
-	append(&list, Event{Date{2026, 10, 4}, 14 * 60, 60, "Design review", "Studio"})
-	append(&list, Event{Date{2026, 10, 4}, -1, 0, "Pay the bill", ""})
-	append(&list, Event{Date{2026, 10, 4}, 9 * 60 + 30, 45, "Stand-up", "Jitsi"})
-	append(&list, Event{Date{2024, 2, 29}, 0, 0, "Leap day", "Nowhere"})
-	append(&list, Event{Date{2026, 10, 4}, 9 * 60 + 30, 30, "A tab\there and a\nnewline", "x"})
+	append(&list, mk_event(Date{2026, 10, 4}, 14 * 60, 60, "Design review", "Studio"))
+	append(&list, mk_event(Date{2026, 10, 4}, -1, 0, "Pay the bill", ""))
+	append(&list, mk_event(Date{2026, 10, 4}, 9 * 60 + 30, 45, "Stand-up", "Jitsi"))
+	append(&list, mk_event(Date{2024, 2, 29}, 0, 0, "Leap day", "Nowhere"))
+	append(&list, mk_event(Date{2026, 10, 4}, 9 * 60 + 30, 30, "A tab\there and a\nnewline", "x"))
 	events_sort(&list)
 
 	check(date_eq(list[0].date, Date{2024, 2, 29}), "the earliest date sorts first")

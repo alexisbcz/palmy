@@ -1,6 +1,7 @@
 // The keyboard. Pointer clicks work too, but nothing requires them.
 package main
 
+import "core:strings"
 import p "palmy:."
 
 plain :: proc(ui: ^p.Ctx, sym: u32) -> bool {
@@ -61,6 +62,8 @@ field_edit :: proc(ui: ^p.Ctx, buf: ^[dynamic]u8, swallow: bool) -> bool {
 keys :: proc(ui: ^p.Ctx, c: ^Cal, app: ^p.App) {
 	swallow := c.swallow
 	c.swallow = false
+	// The cursor may have left the year whose instances are expanded.
+	defer ensure_view(c)
 
 	if p.shortcut(ui, 'q', {.Ctrl}) {
 		c.want_quit = true
@@ -79,12 +82,16 @@ keys :: proc(ui: ^p.Ctx, c: ^Cal, app: ^p.App) {
 			c.mode = .Normal
 			return
 		}
-		if plain(ui, p.KEY_LEFT) || plain(ui, p.KEY_RIGHT) || plain(ui, p.KEY_TAB) {
-			c.confirm = !c.confirm
+		n := delete_choices(c)
+		if plain(ui, p.KEY_RIGHT) || plain(ui, p.KEY_TAB) {
+			c.confirm = (c.confirm + 1) % n
+		}
+		if plain(ui, p.KEY_LEFT) {
+			c.confirm = (c.confirm + n - 1) % n
 		}
 		if plain(ui, p.KEY_RETURN) || plain(ui, p.KEY_SPACE) {
-			if c.confirm {
-				delete_selected(c)
+			if c.confirm > 0 {
+				delete_selected(c, delete_choice_is_one(c, c.confirm))
 			}
 			c.mode = .Normal
 		}
@@ -94,7 +101,36 @@ keys :: proc(ui: ^p.Ctx, c: ^Cal, app: ^p.App) {
 		form_keys(ui, c, swallow)
 		return
 
+	case .Sign_In:
+		sign_keys(ui, c, swallow)
+		return
+
+	case .Invites:
+		invite_keys(ui, c)
+		return
+
 	case .Normal:
+	}
+
+	if plain(ui, 'r') || plain(ui, p.KEY_F6) {
+		do_sync(c)
+		return
+	}
+	if plain(ui, 'i') && !c.cloud.signed {
+		c.mode = .Sign_In
+		c.sign.err = ""
+		c.swallow = true
+		return
+	}
+	if plain(ui, 'v') {
+		c.mode = .Invites
+		c.inv_sel = 0
+		return
+	}
+	if c.pane == .Sources && c.view == .Month {
+		if sources_keys(ui, c) {
+			return
+		}
 	}
 
 	if plain(ui, p.KEY_F1) || plain(ui, '?') {
@@ -103,7 +139,14 @@ keys :: proc(ui: ^p.Ctx, c: ^Cal, app: ^p.App) {
 		return
 	}
 	if plain(ui, p.KEY_TAB) {
-		c.pane = c.pane == .Grid ? .Day : .Grid
+		switch c.pane {
+		case .Grid:
+			c.pane = .Day
+		case .Day:
+			c.pane = len(c.cloud.sources) > 1 ? .Sources : .Grid
+		case .Sources:
+			c.pane = .Grid
+		}
 		return
 	}
 	if plain(ui, 'y') || plain(ui, p.KEY_F2) {
@@ -125,6 +168,9 @@ keys :: proc(ui: ^p.Ctx, c: ^Cal, app: ^p.App) {
 	}
 	if plain(ui, 'e') || plain(ui, p.KEY_F4) {
 		if i, ok := selected_event(c); ok {
+			if read_only_note(c, i) {
+				return
+			}
 			open_form(c, i)
 		} else {
 			note(c, "No event selected")
@@ -132,9 +178,12 @@ keys :: proc(ui: ^p.Ctx, c: ^Cal, app: ^p.App) {
 		return
 	}
 	if plain(ui, p.KEY_DELETE) || plain(ui, 'd') {
-		if _, ok := selected_event(c); ok {
+		if i, ok := selected_event(c); ok {
+			if read_only_note(c, i) {
+				return
+			}
 			c.mode = .Confirm_Delete
-			c.confirm = false
+			c.confirm = 0
 		}
 		return
 	}
@@ -261,19 +310,161 @@ form_keys :: proc(ui: ^p.Ctx, c: ^Cal, swallow: bool) {
 		c.mode = .Normal
 		return
 	}
+	step :: proc(c: ^Cal, by: int) {
+		f := int(c.form.field)
+		for _ in 0 ..< len(Field) {
+			f = (f + by + len(Field)) % len(Field)
+			if field_editable(c, Field(f)) {
+				break
+			}
+		}
+		c.form.field = Field(f)
+	}
 	if plain(ui, p.KEY_TAB) || plain(ui, p.KEY_DOWN) {
-		c.form.field = Field((int(c.form.field) + 1) % len(Field))
+		step(c, 1)
 		return
 	}
 	if with_shift(ui, p.KEY_TAB) || plain(ui, p.KEY_UP) {
-		c.form.field = Field((int(c.form.field) + len(Field) - 1) % len(Field))
+		step(c, -1)
 		return
 	}
 	if plain(ui, p.KEY_RETURN) {
 		commit_form(c)
 		return
 	}
+	// The two choice fields cycle with Left/Right or Space.
+	switch c.form.field {
+	case .Calendar:
+		if plain(ui, p.KEY_RIGHT) || plain(ui, p.KEY_SPACE) {
+			cycle_source(c, 1)
+		}
+		if plain(ui, p.KEY_LEFT) {
+			cycle_source(c, -1)
+		}
+		return
+	case .Repeat:
+		n := len(Recur)
+		if plain(ui, p.KEY_RIGHT) || plain(ui, p.KEY_SPACE) {
+			c.form.recur = Recur((int(c.form.recur) + 1) % n)
+		}
+		if plain(ui, p.KEY_LEFT) {
+			c.form.recur = Recur((int(c.form.recur) + n - 1) % n)
+		}
+		return
+	case .Date, .Time, .Duration, .Title, .Place, .Attendees:
+	}
 	if field_edit(ui, &c.form.bufs[c.form.field], swallow) {
 		c.form.err = ""
 	}
+}
+
+// read_only_note refuses to edit an event in a read-only share.
+read_only_note :: proc(c: ^Cal, i: int) -> bool {
+	e := c.events[i]
+	if e.src > 0 && !writable(&c.cloud.sources[e.src]) {
+		s := c.cloud.sources[e.src]
+		note(c, tfmt("\"%s\" is shared by %s read-only", s.name, s.owner))
+		return true
+	}
+	return false
+}
+
+// The delete dialog offers Keep / Delete, or for one instance of a
+// recurring cloud event Keep / This one / All of them.
+delete_choices :: proc(c: ^Cal) -> int {
+	if i, ok := selected_event(c); ok && c.events[i].recurring && c.events[i].src > 0 {
+		return 3
+	}
+	return 2
+}
+
+delete_choice_is_one :: proc(c: ^Cal, k: int) -> bool {
+	return delete_choices(c) == 3 && k == 1
+}
+
+sources_keys :: proc(ui: ^p.Ctx, c: ^Cal) -> bool {
+	n := len(c.cloud.sources)
+	if n == 0 {
+		return false
+	}
+	if k := times(ui, p.KEY_DOWN); k > 0 {
+		c.src_sel = min(c.src_sel + k, n - 1)
+		return true
+	}
+	if k := times(ui, p.KEY_UP); k > 0 {
+		c.src_sel = max(c.src_sel - k, 0)
+		return true
+	}
+	if plain(ui, p.KEY_SPACE) || plain(ui, p.KEY_RETURN) {
+		s := &c.cloud.sources[clamp(c.src_sel, 0, n - 1)]
+		s.visible = !s.visible
+		rebuild_view(c)
+		note(c, tfmt("%s %s", s.visible ? "Showing" : "Hiding", s.name))
+		return true
+	}
+	if plain(ui, p.KEY_ESCAPE) || plain(ui, p.KEY_LEFT) {
+		c.pane = .Grid
+		return true
+	}
+	return false
+}
+
+sign_keys :: proc(ui: ^p.Ctx, c: ^Cal, swallow: bool) {
+	if plain(ui, p.KEY_ESCAPE) {
+		c.mode = .Normal
+		return
+	}
+	if plain(ui, p.KEY_TAB) || plain(ui, p.KEY_DOWN) || plain(ui, p.KEY_UP) || with_shift(ui, p.KEY_TAB) {
+		c.sign.field = 1 - c.sign.field
+		return
+	}
+	if plain(ui, p.KEY_RETURN) {
+		if c.sign.field == 0 {
+			c.sign.field = 1
+			return
+		}
+		do_sign_in(c)
+		return
+	}
+	buf := c.sign.field == 0 ? &c.sign.email : &c.sign.pass
+	if field_edit(ui, buf, swallow) {
+		c.sign.err = ""
+	}
+}
+
+invite_keys :: proc(ui: ^p.Ctx, c: ^Cal) {
+	list := pending_invitations(&c.cloud, context.temp_allocator)
+	if plain(ui, p.KEY_ESCAPE) || plain(ui, 'v') {
+		c.mode = .Normal
+		return
+	}
+	if len(list) == 0 {
+		return
+	}
+	if k := times(ui, p.KEY_DOWN); k > 0 {
+		c.inv_sel = min(c.inv_sel + k, len(list) - 1)
+	}
+	if k := times(ui, p.KEY_UP); k > 0 {
+		c.inv_sel = max(c.inv_sel - k, 0)
+	}
+	c.inv_sel = clamp(c.inv_sel, 0, len(list) - 1)
+	inv := list[c.inv_sel]
+	answer := ""
+	if plain(ui, 'a') || plain(ui, p.KEY_RETURN) {
+		answer = "ACCEPTED"
+	} else if plain(ui, 'd') {
+		answer = "DECLINED"
+	} else if plain(ui, 't') {
+		answer = "TENTATIVE"
+	}
+	if answer == "" {
+		return
+	}
+	title := strings.clone(inv.title, context.temp_allocator)
+	if msg := respond(&c.cloud, inv.src, inv.obj, answer); msg != "" {
+		note(c, msg)
+	} else {
+		note(c, tfmt("%s \"%s\" — %s will be told", answer == "ACCEPTED" ? "Accepted" : (answer == "DECLINED" ? "Declined" : "Maybe for"), title, inv.organizer))
+	}
+	rebuild_view(c)
 }
