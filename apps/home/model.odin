@@ -1,18 +1,19 @@
-// The model Home draws from, and the one seam where real data will arrive.
+// The model Home draws from, and the one seam where its data arrives.
 //
 // Home owns no data. Mail lives in mailcore's Maildir and the cloud mail
-// tables, files in drive, events in calendar, and Home only *indexes* them:
-// it reads a flat list of Items, each carrying the identity it belongs to,
-// and draws Today and search from that. So the seam is one procedure,
-// `store_load`, returning identities and items. Today it has one source,
-// the invented fixtures in fixtures.odin. The real sources slot in beside it:
+// tables, files in drive, events in calendar, and Home only reads the
+// *index* of them: a flat list of Items, each carrying the identity it
+// belongs to, from which it draws Today and search. The seam is one
+// procedure, `store_load`, returning identities and items:
 //
-//	.Fixtures   fixtures.odin, invented, deterministic, for shots and demos
-//	.Device     (planned) the local index: mailcore Maildir, drive's synced
-//	            tree, the calendar store, notes — read per identity, offline
-//	.Cloud      (planned) apps/cloudkit over PostgREST, an unscoped session
-//	            for Home itself; never used by the assistant, which only ever
-//	            holds a session scoped to one identity (cloud/CONTRACT.md)
+//	.Device     the default: the local search index palm-indexd keeps, one
+//	            per identity (apps/index; device.odin). Works with no
+//	            network and no account: local-only mode is the same path
+//	.Fixtures   fixtures.odin, invented, deterministic, for screenshots and
+//	            the self-test (`home --fixtures`, PALM_HOME_FIXTURES=1)
+//
+// There is no .Cloud source on purpose: Home reads the device, and the
+// cloud is where the device converges (product.md P5).
 //
 // Whatever the source, the rule Home is held to is the contract's: an item
 // belongs to exactly one identity and is drawn labelled with it.
@@ -45,8 +46,11 @@ Kind :: enum {
 	Task,
 	Doc,
 	File,
+	Note,
 	Chat,
 	Person,
+	Page,
+	Issue,
 }
 
 // Item is anything Today or search can show. Fields not meaningful for a
@@ -65,9 +69,18 @@ Item :: struct {
 	waiting: bool, // a person is waiting on you: shown under "Waiting on you"
 	recent:  bool, // shown under "Recently opened"
 	done:    bool,
+	// From the index (device.odin); empty for fixtures.
+	dated:   bool, // a task with a due date, as opposed to an open issue
+	key:     string,
+	uri:     string,
+	raw_app: string, // the index's app name: docs, sheets, mail, track…
+	snippet: string,
+	mark:    [2]int, // the first match in snippet, {-1, -1} for none
+	time:    i64,
 }
 
 Source :: enum {
+	Device,
 	Fixtures,
 }
 
@@ -78,13 +91,17 @@ Store :: struct {
 	items:      [dynamic]Item,
 	now_day:    string, // "Monday 19 October"
 	now_min:    int,
+	now_unix:   i64,
 	synced:     string, // what the sync status line says
+	daemon:     bool, // the indexer is running (device)
 }
 
 store_load :: proc(src: Source) -> Store {
 	switch src {
 	case .Fixtures:
 		return fixtures_load()
+	case .Device:
+		return device_load()
 	}
 	return {}
 }
@@ -96,8 +113,11 @@ KIND_APP := [Kind]string {
 	.Task   = "Tasks",
 	.Doc    = "Docs",
 	.File   = "Files",
+	.Note   = "Notes",
 	.Chat   = "Chat",
 	.Person = "Contacts",
+	.Page   = "Browser",
+	.Issue  = "Forge",
 }
 
 KIND_PLURAL := [Kind]string {
@@ -106,8 +126,11 @@ KIND_PLURAL := [Kind]string {
 	.Task   = "Tasks",
 	.Doc    = "Documents",
 	.File   = "Files",
+	.Note   = "Notes",
 	.Chat   = "Chat",
 	.Person = "People",
+	.Page   = "Web",
+	.Issue  = "Issues",
 }
 
 // initials of a display name: "Priya Shah" -> "PS".

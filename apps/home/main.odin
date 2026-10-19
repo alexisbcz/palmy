@@ -1,19 +1,26 @@
 // Home — the unified hub of a Palmframe account: Today, universal search,
 // quick-create and a command palette, across every identity the person owns.
 //
-// A prototype. It reads invented fixtures (fixtures.odin) through the one
-// seam real data will use (model.odin), and opening anything shows where it
-// would open rather than opening it. The design it prototypes is in
-// cloud/docs/product.md.
+// It reads the local search index (apps/index, kept by palm-indexd) through
+// one seam (model.odin, device.odin): Today and search are queries on it,
+// and opening a result starts its application in its own identity. The
+// invented fixtures (fixtures.odin) stay behind a flag, for screenshots and
+// the self-test. The design is cloud/docs/product.md; search is
+// cloud/docs/search.md.
 //
-//	home                 a window, light
-//	home --dark          a window, dark
-//	home --shots <dir>   render the interface offscreen, light and dark
+//	home                       a window on this device's data, light
+//	home --dark                the same, dark
+//	home --fixtures            the invented persona instead (PALM_HOME_FIXTURES=1)
+//	home --shots <dir>         render the fixtures offscreen, light and dark
+//	home --shots-device <dir>  render this device's data offscreen
+//	home --bench <query>       type a query a letter at a time against the
+//	                           index, and report the latency per keystroke
 package main
 
 import "core:fmt"
 import "core:os"
 import "core:strings"
+import "core:time"
 import kit "kit:."
 import p "palmy:."
 
@@ -101,8 +108,8 @@ register_identity_colors :: proc(s: ^Store, dark: bool) {
 	p.register_color("now", p.hex(dark ? 0xf87171 : 0xdc2626))
 }
 
-home_init :: proc(h: ^Home, dark: bool) {
-	h.store = store_load(.Fixtures)
+home_init :: proc(h: ^Home, dark: bool, src := Source.Fixtures) {
+	h.store = store_load(src)
 	h.dark = dark
 	h.ident = -1
 	h.new_ident = -1
@@ -121,6 +128,7 @@ main :: proc() {
 	kit.i18n_init("home")
 	args := os.args[1:]
 	dark := os.get_env("PALM_THEME", context.temp_allocator) == "dark"
+	src := os.get_env("PALM_HOME_FIXTURES", context.temp_allocator) != "" ? Source.Fixtures : Source.Device
 	for a, i in args {
 		if a == "--selftest" {
 			run_selftest()
@@ -129,12 +137,22 @@ main :: proc() {
 		if a == "--dark" {
 			dark = true
 		}
-		if a == "--shots" {
+		if a == "--fixtures" {
+			src = .Fixtures
+		}
+		if a == "--shots" || a == "--shots-device" || a == "--bench" {
 			if i + 1 >= len(args) {
-				fmt.eprintln("home --shots <dir>")
+				fmt.eprintfln("home %s <arg>", a)
 				os.exit(2)
 			}
-			os.exit(shots(args[i + 1]))
+			switch a {
+			case "--shots":
+				os.exit(shots(args[i + 1]))
+			case "--shots-device":
+				os.exit(shots(args[i + 1], .Device))
+			case "--bench":
+				os.exit(bench(args[i + 1]))
+			}
 		}
 	}
 
@@ -149,10 +167,20 @@ main :: proc() {
 	defer p.destroy(app)
 
 	h := Home{}
-	home_init(&h, dark)
+	home_init(&h, dark, src)
 	register_identity_colors(&h.store, dark)
+	nids := len(h.store.identities)
 
 	for ui in p.frames(app) {
+		if h.store.source == .Device {
+			// Re-read the index every two seconds: a mail that arrives, a
+			// file that changes, shows up without a key being pressed.
+			if device_tick(&h.store) && len(h.store.identities) != nids {
+				register_identity_colors(&h.store, dark)
+				nids = len(h.store.identities)
+			}
+			p.wake_after(ui, 2 * time.Second)
+		}
 		keys(ui, &h)
 		frame(ui, &h)
 		if h.want_quit {

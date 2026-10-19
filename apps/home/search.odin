@@ -30,10 +30,14 @@ Hit :: struct {
 }
 
 Results :: struct {
-	hits:     [dynamic]Hit, // grouped by kind, then by score
-	per_kind: [Kind]int,
-	per_id:   [8]int, // per identity, before the identity filter applies
-	scanned:  int,
+	hits:       [dynamic]Hit, // grouped by kind, then by score
+	per_kind:   [Kind]int,
+	per_id:     [16]int, // per identity, before the identity filter applies
+	scanned:    int,
+	badges:     [dynamic]string, // the filters in force, as chips
+	unknown:    string, // an operator that was not understood
+	correction: string, // "roadmpa → roadmap", when a typo was corrected
+	took_us:    i64,
 }
 
 KIND_WORDS := [Kind]string {
@@ -42,8 +46,11 @@ KIND_WORDS := [Kind]string {
 	.Task   = "task",
 	.Doc    = "doc",
 	.File   = "file",
+	.Note   = "note",
 	.Chat   = "chat",
 	.Person = "person",
+	.Page   = "page",
+	.Issue  = "issue",
 }
 
 identity_by_word :: proc(s: ^Store, w: string) -> int {
@@ -99,9 +106,20 @@ contains :: proc(hay, needle: string) -> bool {
 }
 
 search :: proc(s: ^Store, text: string, filter_ident: int) -> Results {
+	if s.source == .Device {
+		return device_search(s, text, filter_ident)
+	}
 	r: Results
 	r.hits = make([dynamic]Hit, context.temp_allocator)
+	r.badges = make([dynamic]string, context.temp_allocator)
 	q := parse_query(s, text)
+	if k, ok := q.kind.?; ok {
+		append(&r.badges, tfmt("type: %s", KIND_WORDS[k]))
+	}
+	if q.unread {
+		append(&r.badges, "is: unread")
+	}
+	r.unknown = q.bad
 	if len(q.terms) == 0 && q.ident < 0 && q.kind == nil && !q.unread {
 		return r
 	}
@@ -163,9 +181,15 @@ search :: proc(s: ^Store, text: string, filter_ident: int) -> Results {
 		r.per_kind[it.kind] += 1
 	}
 
-	items := s.items[:]
+	sort_hits(r.hits[:], s.items[:])
+	return r
+}
+
+// sort_hits groups hits by kind, each group ranked by score.
+sort_hits :: proc(hits: []Hit, items: []Item) {
+	items := items
 	context.user_ptr = &items
-	slice.sort_by(r.hits[:], proc(a, b: Hit) -> bool {
+	slice.sort_by(hits, proc(a, b: Hit) -> bool {
 		items := (^[]Item)(context.user_ptr)^
 		ka, kb := items[a.item].kind, items[b.item].kind
 		if ka != kb {
@@ -173,7 +197,6 @@ search :: proc(s: ^Store, text: string, filter_ident: int) -> Results {
 		}
 		return a.score > b.score
 	})
-	return r
 }
 
 // split_match cuts `text` around the first occurrence of any term, for

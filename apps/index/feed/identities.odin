@@ -21,6 +21,7 @@ package indexfeed
 import "core:encoding/json"
 import "core:fmt"
 import "core:os"
+import "core:slice"
 import "core:strings"
 import ic "../core"
 
@@ -367,6 +368,8 @@ identities_visible :: proc(root: string, scope := "") -> [dynamic]Ident {
 		return out
 	}
 	read_cached(root, &out)
+	// A stable order, so Ctrl 1…n and the colours stay put between runs.
+	slice.sort_by(out[:], proc(a, b: Ident) -> bool {return a.handle < b.handle})
 	for &x, i in out {
 		if x.name == "" {
 			x.name = strings.clone(x.handle)

@@ -13,6 +13,7 @@
 package main
 
 import "core:strings"
+import kit "kit:."
 import p "palmy:."
 
 plain :: proc(ui: ^p.Ctx, sym: u32) -> bool {
@@ -82,11 +83,19 @@ open_carry :: proc(h: ^Home) {
 	}
 	h.carry_item = h.rows[h.sel]
 	from := h.store.items[h.carry_item].ident
+	if len(h.store.identities) < 2 {
+		note(h, tr("Carry needs a second identity to carry to."))
+		return
+	}
 	h.carry_to = (from + 1) % len(h.store.identities)
 	h.mode = .Carry
 }
 
 open_item :: proc(h: ^Home, i: int) {
+	if h.store.source == .Device {
+		device_open_item(h, i)
+		return
+	}
 	it := h.store.items[i]
 	app := it.app != "" ? it.app : KIND_APP[it.kind]
 	// A prototype: say where it would open, and as whom. The real hub hands
@@ -273,12 +282,41 @@ run_command :: proc(h: ^Home, c: Command) {
 	case .New:
 		open_create(h, c.kind, c.arg)
 	case .Ask:
-		note(h, tfmt(tr("The %s assistant sees %s and nothing else."), h.store.identities[c.arg].name, h.store.identities[c.arg].name))
+		name := h.store.identities[c.arg].name
+		if h.store.source == .Device {
+			// The assistant runs inside the identity: PALM_IDENTITY scopes
+			// its session, its memory and its tools (product.md §9).
+			if device_launch("ai", c.arg) {
+				note(h, tfmt(tr("The %s assistant is open. It sees %s and nothing else."), name, name))
+			} else {
+				note(h, tr("The assistant (ai) could not be started."))
+			}
+			return
+		}
+		note(h, tfmt(tr("The %s assistant sees %s and nothing else."), name, name))
 	case .Quiet:
-		note(h, tfmt(tr("%s is quiet until 08:00. Today still collects it."), h.store.identities[c.arg].name))
+		name := h.store.identities[c.arg].name
+		if h.store.source == .Device {
+			// Quiet belongs to the notifications service; Home asks it.
+			if _, ok := kit.run({"notify", "quiet", "--identity", device_handle(c.arg), "--until", "08:00"}, context.temp_allocator); ok {
+				note(h, tfmt(tr("%s is quiet until 08:00. Today still collects it."), name))
+			} else {
+				note(h, tfmt(tr("Notifications (notify) did not answer: %s is not quieted."), name))
+			}
+			return
+		}
+		note(h, tfmt(tr("%s is quiet until 08:00. Today still collects it."), name))
 	case .Carry:
 		open_carry(h)
 	case .Open_App:
+		if h.store.source == .Device {
+			if device_launch(strings.to_lower(c.app, context.temp_allocator), c.arg) {
+				note(h, c.arg >= 0 ? tfmt(tr("Opening %s as %s"), c.app, h.store.identities[c.arg].name) : tfmt(tr("Opening %s"), c.app))
+			} else {
+				note(h, tfmt(tr("%s could not be started"), c.app))
+			}
+			return
+		}
 		note(h, c.arg >= 0 ? tfmt(tr("Opens %s as %s"), c.app, h.store.identities[c.arg].name) : tfmt(tr("Opens %s showing every identity"), c.app))
 	case .Theme:
 	case .Help:
@@ -350,6 +388,10 @@ create_keys :: proc(ui: ^p.Ctx, h: ^Home, swallow: bool) {
 		id := h.store.identities[h.new_ident]
 		title := string(h.new_title[:])
 		h.mode = .Normal
+		if h.store.source == .Device {
+			note(h, device_create(h, h.new_kind, h.new_ident, title))
+			return
+		}
 		note(h, tfmt(tr("%s “%s” created in %s"), CREATE_LABEL[h.new_kind], title == "" ? tr("Untitled") : title, id.name))
 	}
 }
@@ -382,6 +424,12 @@ carry_keys :: proc(ui: ^p.Ctx, h: ^Home) {
 	if plain(ui, p.KEY_RETURN) {
 		it := h.store.items[h.carry_item]
 		h.mode = .Normal
+		if h.store.source == .Device {
+			// Carry needs each application to write the copy and both logs;
+			// none does yet on this branch (search.md, "Gaps").
+			note(h, tfmt(tr("Carry is not wired to %s yet: nothing was copied to %s."), it.app, h.store.identities[h.carry_to].name))
+			return
+		}
 		note(h, tfmt(tr("Copied “%s” to %s. Both carry logs record it."), it.title, h.store.identities[h.carry_to].name))
 	}
 }

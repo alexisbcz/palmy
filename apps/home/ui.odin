@@ -126,16 +126,17 @@ rail :: proc(ui: ^p.Ctx, h: ^Home) {
 		p.row(ui, "w-full items-center gap-2")
 		p.icon(ui, id.quiet != "" ? ICON_BELL_OFF : ICON_BELL, "size-3.5 shrink-0 text-muted-foreground")
 		p.text(ui, id.name, "text-[12] font-medium shrink-0")
-		p.text(ui, id.quiet != "" ? id.quiet : tr("People only"), "flex-1 min-w-0 text-[12] text-muted-foreground truncate")
+		p.text(ui, id.quiet != "" ? id.quiet : (h.store.source == .Device ? tr("People only (default)") : tr("People only")), "flex-1 min-w-0 text-[12] text-muted-foreground truncate")
 		p.end(ui)
 	}
 	p.end(ui)
 
 	p.row(ui, "w-full items-center gap-2.5 px-5 h-[46] border-t border-sidebar-border")
-	p.icon(ui, ICON_CLOUD, "size-4 shrink-0 text-muted-foreground")
+	dev := h.store.source == .Device
+	p.icon(ui, dev && !h.store.daemon ? ICON_CLOUD_OFF : ICON_CLOUD, "size-4 shrink-0 text-muted-foreground")
 	p.col(ui, "flex-1 min-w-0")
 	p.text(ui, h.store.synced, "text-[12] font-medium truncate")
-	p.text(ui, tr("Everything here works offline"), "text-[11] text-muted-foreground truncate")
+	p.text(ui, dev && !h.store.daemon ? tr("The indexer is not running") : tr("Everything here works offline"), "text-[11] text-muted-foreground truncate")
 	p.end(ui)
 	p.end(ui)
 }
@@ -307,15 +308,24 @@ today :: proc(ui: ^p.Ctx, h: ^Home) {
 		if it.waiting {
 			waiting += 1
 		}
-		if it.kind == .Task && !it.done && it.day <= 0 {
+		if it.kind == .Task && !it.done && it.day <= 0 && (it.dated || s.source == .Fixtures) {
 			due += 1
+		}
+	}
+	if next < 0 {
+		// Nothing left today: Next is tomorrow's first event.
+		for it, i in s.items {
+			if visible(h, it) && it.kind == .Event && it.day == 1 {
+				next = i
+				break
+			}
 		}
 	}
 
 	// The opening line: the day, then one sentence instead of a dashboard.
 	p.col(ui, "w-full gap-1.5 px-3")
 	p.text(ui, s.now_day, "text-[30] font-semibold tracking-tight")
-	lead := h.ident >= 0 ? tfmt(tr("In %s: "), s.identities[h.ident].name) : tr("Good morning, Camille. ")
+	lead := h.ident >= 0 ? tfmt(tr("In %s: "), s.identities[h.ident].name) : greeting(s)
 	ev := count_words(events, tr("event"), tr("events"))
 	if h.ident >= 0 {
 		ev = strings.to_lower(ev, context.temp_allocator)
@@ -335,6 +345,12 @@ today :: proc(ui: ^p.Ctx, h: ^Home) {
 
 	if next >= 0 {
 		next_up(ui, h, next)
+	}
+	if s.source == .Device && len(s.identities) == 0 {
+		p.col(ui, "w-full gap-1.5 px-5 py-4 rounded-2xl border border-border")
+		p.text(ui, tr("Nothing is indexed on this device yet."), "text-[14] font-medium")
+		p.text(ui, s.daemon ? tr("palm-indexd is reading your mail, files and calendars now. This fills in as it goes.") : tr("The indexer, palm-indexd, is not running. Start it, or run `index daemon`, and Today fills in."), "text-[12.5] text-muted-foreground")
+		p.end(ui)
 	}
 
 	p.row(ui, "w-full gap-10 items-start")
@@ -368,7 +384,7 @@ assistant_line :: proc(ui: ^p.Ctx, h: ^Home) {
 		p.icon(ui, ICON_SPARKLES, "size-3.5 text-muted-foreground")
 		p.end(ui)
 		p.text(ui, tr("The assistant works inside one identity."), "text-[13] font-medium shrink-0")
-		p.text(ui, tr("Choose one with Ctrl 1–4 to ask it something."), "flex-1 min-w-0 text-[12.5] text-muted-foreground truncate")
+		p.text(ui, tfmt(tr("Choose one with Ctrl 1–%d to ask it something."), max(1, min(len(h.store.identities), 9))), "flex-1 min-w-0 text-[12.5] text-muted-foreground truncate")
 	}
 	p.text(ui, "Ctrl K", "shrink-0 text-[11.5] text-muted-foreground")
 	p.end(ui)
@@ -383,7 +399,11 @@ next_up :: proc(ui: ^p.Ctx, h: ^Home, i: int) {
 	p.col(ui, "flex-1 min-w-0 gap-1")
 	p.row(ui, "items-center gap-2")
 	p.text(ui, tr("Next"), tfmt("text-[11.5] font-semibold uppercase tracking-wide text-id-%d", it.ident))
-	p.text(ui, in_min < 60 ? tfmt(tr("in %d min"), in_min) : tfmt(tr("at %s"), clock(it.at)), "text-[12] text-muted-foreground")
+	when_ := in_min < 60 ? tfmt(tr("in %d min"), in_min) : tfmt(tr("at %s"), clock(it.at))
+	if it.day == 1 {
+		when_ = tfmt(tr("tomorrow at %s"), clock(it.at))
+	}
+	p.text(ui, when_, "text-[12] text-muted-foreground")
 	p.end(ui)
 	p.text(ui, it.title, "text-[17] font-semibold truncate")
 	p.text(ui, tfmt("%s – %s · %s", clock(it.at), clock(it.at + it.mins), it.detail), "text-[12.5] text-muted-foreground truncate")
@@ -396,8 +416,10 @@ next_up :: proc(ui: ^p.Ctx, h: ^Home, i: int) {
 	if p.clickable(ui, j) {
 		open_item(h, i)
 	}
-	p.icon(ui, ICON_VIDEO, "size-3.5 text-foreground")
-	p.text(ui, tr("Join"), "text-[12.5] font-medium")
+	// The one most useful action: Join when there is a call, else Open.
+	call := h.store.source == .Fixtures || strings.contains(strings.to_lower(it.detail, context.temp_allocator), "video") || strings.contains(it.detail, "://")
+	p.icon(ui, call ? ICON_VIDEO : ICON_ARROW_UP_RIGHT, "size-3.5 text-foreground")
+	p.text(ui, call ? tr("Join") : tr("Open"), "text-[12.5] font-medium")
 	p.end(ui)
 	p.end(ui)
 }
@@ -473,7 +495,7 @@ tasks :: proc(ui: ^p.Ctx, h: ^Home) {
 		selectable(ui, h, i, "w-full items-center gap-3 px-3 py-2 rounded-lg transition cursor-pointer")
 		p.icon(ui, it.done ? ICON_CIRCLE_CHECK : ICON_CIRCLE, it.done ? "size-[17] shrink-0 text-muted-foreground/60" : "size-[17] shrink-0 text-muted-foreground")
 		p.text(ui, it.title, it.done ? "flex-1 min-w-0 text-[13.5] text-muted-foreground line-through truncate" : "flex-1 min-w-0 text-[13.5] truncate")
-		overdue := it.day < 0 && !it.done
+		overdue := it.day < 0 && !it.done && (it.dated || s.source == .Fixtures)
 		p.text(ui, it.detail, overdue ? "shrink-0 text-[12] font-medium text-destructive" : "shrink-0 text-[12] text-muted-foreground")
 		if h.ident < 0 {
 			id_label(ui, h, it.ident)
@@ -541,10 +563,16 @@ app_icon :: proc(it: Item) -> p.Icon {
 		return ICON_FILE_TEXT
 	case .File:
 		return ICON_FILE
+	case .Note:
+		return ICON_FILE_TEXT
 	case .Chat:
 		return ICON_MESSAGE_SQUARE
 	case .Person:
 		return ICON_USER
+	case .Page:
+		return ICON_GLOBE
+	case .Issue:
+		return ICON_SQUARE_CHECK
 	}
 	return ICON_FILE
 }
@@ -553,7 +581,7 @@ recent :: proc(ui: ^p.Ctx, h: ^Home) {
 	s := &h.store
 	p.col(ui, "w-full")
 	defer p.end(ui)
-	section_head(ui, tr("Recently opened"))
+	section_head(ui, s.source == .Fixtures ? tr("Recently opened") : tr("Recently changed"))
 	any := false
 	for it, i in s.items {
 		if !it.recent || !visible(h, it) {
@@ -567,7 +595,11 @@ recent :: proc(ui: ^p.Ctx, h: ^Home) {
 		p.col(ui, "flex-1 min-w-0 gap-0.5")
 		p.text(ui, it.title, "text-[13.5] font-medium truncate")
 		who := it.who == "You" ? tr("you") : it.who
-		p.text(ui, tfmt("%s · %s, edited by %s", ago(s, it), it.app, who), "text-[12] text-muted-foreground truncate")
+		if who == "" {
+			p.text(ui, tfmt("%s · %s · %s", ago(s, it), it.app, it.detail), "text-[12] text-muted-foreground truncate")
+		} else {
+			p.text(ui, tfmt("%s · %s, edited by %s", ago(s, it), it.app, who), "text-[12] text-muted-foreground truncate")
+		}
 		p.end(ui)
 		if h.ident < 0 {
 			id_label(ui, h, it.ident)
@@ -588,6 +620,15 @@ results :: proc(ui: ^p.Ctx, h: ^Home) {
 	text := string(h.query[:])
 	r := search(s, text, h.ident)
 	q := parse_query(s, text)
+	if s.source == .Device {
+		// Highlight what the index matched: its folded words.
+		clear(&q.terms)
+		for w in strings.fields(strings.to_lower(text, context.temp_allocator), context.temp_allocator) {
+			if !strings.contains(w, ":") {
+				append(&q.terms, strings.trim(w, "\"-"))
+			}
+		}
+	}
 
 	p.col(ui, "w-full px-8 pt-5 pb-10 gap-5")
 	defer p.end(ui)
@@ -603,18 +644,22 @@ results :: proc(ui: ^p.Ctx, h: ^Home) {
 		scope_chip(ui, h, i, tfmt("%s  %d", id.name, r.per_id[i]), r.per_id[i])
 	}
 	p.spacer(ui, "flex-1")
-	if k, ok := q.kind.?; ok {
-		sc.badge(ui, tfmt("type: %s", KIND_WORDS[k]), .Secondary)
-	}
-	if q.unread {
-		sc.badge(ui, "is: unread", .Secondary)
+	for b in r.badges {
+		p.key(ui, b)
+		sc.badge(ui, b, .Secondary)
 	}
 	p.end(ui)
 
-	if q.bad != "" {
+	if r.unknown != "" {
 		p.row(ui, "w-full items-center gap-2 px-3")
 		p.icon(ui, ICON_SPARKLES, "size-3.5 text-muted-foreground")
-		p.text(ui, tfmt(tr("“%s” is not a filter Home knows: try in:work, type:mail, is:unread"), q.bad), "text-[12.5] text-muted-foreground")
+		p.text(ui, tfmt(tr("“%s” is not a filter Home knows: try in:work, type:mail, is:unread"), r.unknown), "text-[12.5] text-muted-foreground")
+		p.end(ui)
+	}
+	if r.correction != "" {
+		p.row(ui, "w-full items-center gap-2 px-3")
+		p.icon(ui, ICON_SPARKLES, "size-3.5 text-muted-foreground")
+		p.text(ui, tfmt(tr("Showing results for %s"), r.correction), "text-[12.5] text-muted-foreground")
 		p.end(ui)
 	}
 
@@ -661,7 +706,7 @@ results :: proc(ui: ^p.Ctx, h: ^Home) {
 	p.icon(ui, ICON_LOCK, "size-3.5 shrink-0 text-muted-foreground/70")
 	p.text(
 		ui,
-		tfmt(tr("Searched %d items on this device, in %s. Nothing left the machine."), r.scanned, h.ident >= 0 ? s.identities[h.ident].name : tr("every identity")),
+		s.source == .Device ? tfmt(tr("Searched %d items on this device, in %s, in %.1f ms. Nothing left the machine."), r.scanned, h.ident >= 0 ? s.identities[h.ident].name : tr("every identity"), f64(r.took_us) / 1000) : tfmt(tr("Searched %d items on this device, in %s. Nothing left the machine."), r.scanned, h.ident >= 0 ? s.identities[h.ident].name : tr("every identity")),
 		"text-[12] text-muted-foreground/80",
 	)
 	p.end(ui)
@@ -721,21 +766,67 @@ result_row :: proc(ui: ^p.Ctx, h: ^Home, item: int, terms: []string) {
 		meta = tfmt("%s · %s", it.app, it.detail)
 	case .Chat:
 		meta = tfmt("%s: %s", it.who, it.detail)
-	case .Task, .Person:
+	case .Task, .Person, .Note, .Page, .Issue:
 		meta = it.detail
 	}
+	if it.kind == .Mail && h.store.source == .Device {
+		meta = tfmt("%s — %s", first_person(it.who), it.detail)
+	}
 	p.text(ui, meta, "text-[12] text-muted-foreground truncate")
+	snippet_line(ui, it)
 	p.end(ui)
 	// Always labelled in results: even inside one identity, a result list is
 	// something people screenshot and paste.
 	id_label(ui, h, it.ident)
 	if it.kind != .Person && it.kind != .Task {
-		p.text(ui, it.kind == .Event ? (it.day == 0 ? clock(it.at) : tfmt("+%dd", it.day)) : ago(s, it), "w-[64] shrink-0 text-right text-[11.5] text-muted-foreground tabular-nums whitespace-nowrap")
+		when_ := ago(s, it)
+		if it.kind == .Event {
+			when_ = it.day == 0 ? clock(it.at) : it.day > 0 ? tfmt("+%dd", it.day) : ago(s, it)
+		}
+		p.text(ui, when_, "w-[64] shrink-0 text-right text-[11.5] text-muted-foreground tabular-nums whitespace-nowrap")
 	} else {
 		p.div(ui, "w-[64] shrink-0")
 		p.end(ui)
 	}
 	p.end(ui)
+}
+
+// snippet_line draws the matched passage under a result, the first match
+// in it heavier. Only where the body says more than the title.
+snippet_line :: proc(ui: ^p.Ctx, it: Item) {
+	if it.snippet == "" {
+		return
+	}
+	#partial switch it.kind {
+	case .Mail, .Doc, .File, .Note, .Page, .Issue:
+	case:
+		return
+	}
+	sn := one_line_snip(it.snippet)
+	m := it.mark
+	p.row(ui, "w-full min-w-0 items-center overflow-hidden")
+	if m[0] >= 0 && m[1] <= len(sn) && m[0] < m[1] && len(sn) == len(it.snippet) {
+		if m[0] > 0 {
+			p.text(ui, sn[:m[0]], "text-[12] text-muted-foreground/80 whitespace-nowrap shrink-0")
+		}
+		p.text(ui, sn[m[0]:m[1]], "text-[12] font-semibold text-foreground/80 whitespace-nowrap shrink-0")
+		p.text(ui, sn[m[1]:], "text-[12] text-muted-foreground/80 whitespace-nowrap min-w-0 truncate")
+	} else {
+		p.text(ui, sn, "text-[12] text-muted-foreground/80 whitespace-nowrap min-w-0 truncate")
+	}
+	p.end(ui)
+}
+
+// one_line_snip keeps a snippet's byte offsets (the marks point into it)
+// but replaces line breaks with spaces.
+one_line_snip :: proc(s: string) -> string {
+	b := transmute([]u8)strings.clone(s, context.temp_allocator)
+	for &c in b {
+		if c == '\n' || c == '\r' || c == '\t' {
+			c = ' '
+		}
+	}
+	return string(b)
 }
 
 // ---------------------------------------------------------------------------
@@ -1102,4 +1193,23 @@ toast :: proc(ui: ^p.Ctx, h: ^Home) {
 	p.icon(ui, ICON_ARROW_UP_RIGHT, "size-4 shrink-0 text-background")
 	p.text(ui, h.toast, "flex-1 min-w-0 text-[13] text-background truncate")
 	p.end(ui)
+}
+
+// greeting is the opening of Today's sentence: the time of day and the
+// person's first name.
+greeting :: proc(s: ^Store) -> string {
+	first := s.owner
+	if sp := strings.index_byte(first, ' '); sp > 0 {
+		first = first[:sp]
+	}
+	part := tr("Good morning")
+	switch {
+	case s.now_min >= 18 * 60:
+		part = tr("Good evening")
+	case s.now_min >= 12 * 60:
+		part = tr("Good afternoon")
+	case s.now_min < 5 * 60:
+		part = tr("Good evening")
+	}
+	return tfmt("%s, %s. ", part, first)
 }

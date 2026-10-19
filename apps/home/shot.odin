@@ -40,14 +40,14 @@ set_buf :: proc(b: ^[dynamic]u8, s: string) {
 	append(b, ..transmute([]u8)s)
 }
 
-shots :: proc(dir: string) -> int {
+shots :: proc(dir: string, src := Source.Fixtures) -> int {
 	if err := os.make_directory_all(dir, os.perm(0o755)); err != nil && !os.exists(dir) {
 		fmt.eprintfln("home --shots: cannot create %s", dir)
 		return 1
 	}
 	n := 0
 	for dark in ([?]bool{false, true}) {
-		n += shots_theme(dir, dark)
+		n += src == .Device ? shots_device(dir, dark) : shots_theme(dir, dark)
 	}
 	fmt.printfln("home --shots: %d PNGs in %s", n, dir)
 	return 0

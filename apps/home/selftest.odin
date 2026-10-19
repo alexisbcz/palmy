@@ -63,6 +63,7 @@ run_selftest :: proc() {
 	check(pre == "Q4 " && mid == "Roadmap" && post == "", "the match is cut out case-insensitively")
 
 	ui_checks()
+	device_checks()
 	fmt.printfln("%d failures", failures)
 }
 
