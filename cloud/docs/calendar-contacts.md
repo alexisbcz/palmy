@@ -296,6 +296,63 @@ endpoint is the natural home, reading `dav_objects` where `component =
 'VCARD'`). JMAP Calendars once the draft is an RFC. Neither needs a schema
 change.
 
+### The apps
+
+Both apps sign in with the Palmframe account (cloudkit's session — the one
+Accounts makes — or an in-app sheet), sync through davclient, work offline
+from the local copy, and carry a `kit.cli` command surface per
+`docs/PALM-CLI.md` (`--json`, `--yes` for destructive verbs, exit 5 when a
+request is out of the `PALM_IDENTITY` scope). Screenshots, light and dark, are
+in `apps/calendar/shots/` and `apps/contacts/shots/`.
+
+**apps/calendar** (`--selftest`: 96 checks; 61 before this work, all kept)
+- Not signed in, the device calendar (`events.tsv`) works exactly as before.
+- Signed in, a sidebar lists every identity with its own and shared calendars
+  in their colours; read-only shares carry a lock and the owner. All of them
+  overlay in one month grid; Space hides or shows one.
+- Events are iCalendar: local TZID, an optional repeat (RRULE), attendees.
+  Recurring events are expanded with `ical.expand`. Deleting offers "only this
+  one" (EXDATE) or the series; editing a recurring event edits the series.
+- Invitations (V): every unanswered invitation across identities; accept,
+  maybe or decline sets PARTSTAT on the identity's own copy and stores it —
+  the server sends the REPLY — then dismisses the inbox item.
+- CLI: `status signin sync list events next add delete invitations accept
+  decline share unshare app-password`.
+
+**apps/contacts** (`--selftest`: 50 checks)
+- Identities and their address books (own and shared) in a sidebar; "All
+  identities" overlays them, each card tagged with its identity.
+- List with sections and search (name, email, phone digits, company), detail,
+  edit (emails and phones with types), groups (vCard 4 `KIND:group` +
+  `MEMBER`; Apple's 3.0 `X-ADDRESSBOOKSERVER-*` on the way in and out),
+  duplicates (same email, phone or name) and merge (union of fields, group
+  memberships moved to the survivor), import and export of `.vcf` (3.0 and
+  4.0). Properties the app does not show — and Apple's `itemN.` pairings —
+  survive an edit.
+- CLI: `signin books list show add edit delete groups group group-delete
+  duplicates merge import export sync`.
+
+### The end-to-end demo
+
+`cloud/dav/tests/e2e.sh` builds everything, starts a fresh stack and
+server, and runs the whole story with two people; its last run is
+`cloud/dav/tests/e2e.txt` (13 checks, all passed):
+
+1. Maya's calendar app adds a dentist appointment and a weekly stand-up in
+   her work identity, and deletes Wednesday's occurrence.
+2. python-caldav, on app passwords, adds a ceramics class to her personal
+   calendar and moves Friday's stand-up to 11:00 (a `RECURRENCE-ID`
+   override). The app sees both after `sync`; python-caldav sees the app's
+   events and the deleted occurrence.
+3. Maya invites Noah from her work identity; Noah's app lists the invitation
+   and accepts; Maya's copy shows Noah `ACCEPTED`.
+4. Maya shares her personal calendar read-only with Noah; Noah reads it, and
+   both the app and the server (403) refuse his write.
+5. Maya's work app password cannot see her personal calendar (404); the app
+   refuses `--identity noah` with exit 5.
+6. A contact made in the contacts app reaches khard through vdirsyncer; an
+   edit made on khard's side comes back to the app.
+
 ## Designed, not built
 
 ### Invitations to people outside Palmframe (Resend)
@@ -346,7 +403,12 @@ and already returns periods only.
 ### Smaller gaps
 
 - Editing a single instance of a recurring event in the Palmframe calendar
-  app (the server handles overrides from any client; see the app's own notes).
+  app (it can delete one; the server and stock clients handle overrides).
+- The apps sync on the window thread: instant against a local server, a
+  visible pause against a slow one. A background sync thread is the fix.
+- TLS: the server and davclient speak plain HTTP. davclient rides on
+  cloudkit's transport, so it gets TLS when cloudkit does; the server is meant
+  to sit behind the gateway's terminator.
 - VALARM time-range queries; `limit-recurrence-set`; partial `calendar-data`.
 - Apple's sharing UI protocol (`CS:invite`); shares are created by the
   Palmframe apps (a `dav_grants` row) and appear in stock clients as ordinary
@@ -373,7 +435,11 @@ cloud/dav/tests/caldav_client.py http://127.0.0.1:59580/ alice <app password>
 cloud/dav/tests/scheduling.py    http://127.0.0.1:59580/ http://127.0.0.1:59540 <alice pw> <alice-work pw> <bob pw>
 cloud/dav/tests/vdir.sh /tmp/vd http://127.0.0.1:59580/ alice <app password> <venv>/bin
 cloud/dav/tests/khard_khal.sh /tmp/vd http://127.0.0.1:59580/ alice <app password> <venv>/bin
+cloud/dav/tests/curl_checks.sh   http://127.0.0.1:59580 alice <app password>
 caldav-server-tester --config-section alice --config-section bob
+
+# the whole story on its own fresh stack (ports 59560-59579, server 59585)
+cloud/dav/tests/e2e.sh /tmp/e2e <venv>/bin
 ```
 
 App passwords come from the calendar app (`calendar app-password create
