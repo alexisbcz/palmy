@@ -161,7 +161,15 @@ makes its real uid root before writing, so the caller can no longer signal it.
   expired passwords.
 - `distro/login/e2e/run.sh` now also checks busybox `who` inside the session,
   `last` afterwards, the reboot record, lastlog and the logged failure (18).
-- `distro/doas/test-qemu.py`: the disk image in QEMU — see below for results.
+- `distro/doas/test-qemu.py`: the disk image in QEMU, 22 checks, all passing
+  (with the Makefile, generate.sh and syslog changes below applied): doas and
+  passwd installed 4755 root, `palm verify` clean; on the serial console as
+  palm `doas id` -> uid 0, a wrong password refused, `doas palm --repo
+  http://10.0.2.2:PORT/x86_64 add shop` installs it; `passwd` to a new
+  password, then busybox login refuses the old one and takes the new one, and
+  the greeter (typed over QMP) starts `wm --drm` as palm with it; `who` shows
+  palm on seat0 and ttyS0, `last` the sessions and the boot; doas, passwd and
+  palm-login lines in /var/log/messages.
 
 ### Needs from other areas
 
@@ -170,4 +178,13 @@ makes its real uid root before writing, so the caller can no longer signal it.
   and `distro/login/auth`), both left out of APP_BINS and added to
   `binaries` and `check-libs`.
 - `distro/recipes/generate.sh`: `passwd` in BB_SKIP (busybox's applet would
-  claim /usr/bin/passwd), and `doas passwd` in palmframe's first depend line.
+  claim /usr/bin/passwd), and `doas passwd` in palmframe's first depend line;
+  then regenerate the busybox and palmframe recipes.
+- `distro/base/root/etc/palm/services/syslog`: add `-L`. busybox 1.37.0's
+  syslogd sets "log locally" in `option_mask32` when no `-R` is given but its
+  receive loop tests a copy taken earlier (`opts`), so without `-L` it logs
+  nothing but its own start and exit lines — `/var/log/messages` on the image
+  has been empty of every program's messages, `logger` included. With `-L`
+  everything arrives (checked on the host in a namespace and in QEMU).
+  Consider also making /var/log/messages 0600 (busybox creates it 0644 and it
+  now carries authpriv lines with command lines).
