@@ -1,5 +1,3 @@
-
-
 /**
  * The pages scripts/sync-docs.mjs generated. Imported eagerly, but only from
  * route loaders, which run at build time (every page is prerendered), so none

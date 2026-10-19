@@ -3,3 +3,4 @@ build
 .react-router
 .cache
 .vercel
+.env*
