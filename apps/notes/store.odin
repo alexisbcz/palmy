@@ -12,6 +12,7 @@
 package main
 
 import "core:hash"
+import ck "../cloudkit"
 import "core:os"
 import "core:slice"
 import "core:strings"
@@ -62,7 +63,7 @@ notes_free :: proc(xs: ^[dynamic]Note) {
 store_dir :: proc() -> string {
 	if over := os.get_env("PALMY_NOTES_DIR", context.temp_allocator); over != "" {
 		if !os.is_dir(over) {
-			os.make_directory_all(over)
+			ck.make_dirs(over)
 		}
 		return strings.clone(over)
 	}
@@ -341,7 +342,7 @@ store_create :: proc(dir: string) -> (path: string, ok: bool) {
 store_create_in :: proc(root, notebook, body: string, id := "") -> (path: string, ok: bool) {
 	folder := notebook == "" ? root : tfmt("%s/%s", root, notebook)
 	if !os.is_dir(folder) {
-		os.make_directory_all(folder)
+		ck.make_dirs(folder)
 	}
 	meta := Meta {
 		id = id != "" ? id : new_id(context.temp_allocator),
@@ -365,7 +366,7 @@ store_delete :: proc(path: string) -> bool {
 store_move :: proc(root, path, folder: string) -> (new_path: string, ok: bool) {
 	dest := folder == "" ? root : tfmt("%s/%s", root, folder)
 	if !os.is_dir(dest) {
-		os.make_directory_all(dest)
+		ck.make_dirs(dest)
 	}
 	name := strings.trim_suffix(base_name(path), ".md")
 	want := unique_path(dest, name, path)

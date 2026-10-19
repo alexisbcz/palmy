@@ -140,6 +140,23 @@ offline :: proc(t: ^T) {
 	check(t, ok(e) && fi.mode & os.perm_number(0o777) == os.perm_number(0o600), "write_private: file is 0600")
 	check(t, di.mode & os.perm_number(0o777) == os.perm_number(0o700), "write_private: directory is 0700")
 
+	// make_dirs under an ancestor that may be passed through but not read
+	// (mode 0111): what the Landlock sandbox does to $HOME. core:os's
+	// make_directory_all opens that ancestor and gives up; make_dirs does not.
+	{
+		locked := pjoin({dir, "locked"}, context.temp_allocator)
+		root := pjoin({locked, "Notes", "camille.roux"}, context.temp_allocator)
+		check(t, make_dirs(root), "make_dirs: creates every missing level")
+		os.chmod(locked, os.perm_number(0o111))
+		deep := pjoin({root, "Travel", "2026"}, context.temp_allocator)
+		_ = os.make_directory_all(pjoin({root, "Other", "x"}, context.temp_allocator))
+		blind := !os.is_dir(pjoin({root, "Other"}, context.temp_allocator))
+		check(t, make_dirs(deep) && os.is_dir(deep), "make_dirs: below an unreadable ancestor, where make_directory_all could not (it %s)", blind ? "failed, as expected" : "worked: running as root?")
+		check(t, make_dirs(deep), "make_dirs: an existing directory is fine")
+		check(t, make_dirs("/") && !make_dirs(""), "make_dirs: / exists, \"\" is nothing")
+		os.chmod(locked, os.perm_number(0o700))
+	}
+
 	saved := tls_dial
 	tls_dial = nil
 	_, terr := http_do(Url{tls = true, host = "example.org", port = 443}, Request{method = "GET", path = "/"})

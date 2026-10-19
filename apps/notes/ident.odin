@@ -23,6 +23,7 @@ package main
 
 import "core:encoding/json"
 import "core:fmt"
+import ck "../cloudkit"
 import "core:os"
 import "core:slice"
 import "core:strings"
@@ -80,9 +81,19 @@ idents_load :: proc(allocator := context.allocator) -> [dynamic]Ident {
 	out := make([dynamic]Ident)
 	if one := os.get_env("PALMY_NOTES_DIR", context.temp_allocator); one != "" {
 		if !os.is_dir(one) {
-			os.make_directory_all(one)
+			ck.make_dirs(one)
 		}
-		append(&out, ident_read(one, LOCAL_HANDLE))
+		// A process scoped to an identity and pointed at that identity's own
+		// folder (~/Notes/<handle>, as the assistant runs this) reads it as
+		// that identity's even before sync has bound it; any other folder
+		// stays the local notebook, which a scope then hides.
+		handle := LOCAL_HANDLE
+		scope := os.get_env("PALM_IDENTITY", context.temp_allocator)
+		trimmed := strings.trim_right(one, "/")
+		if scope != "" && scope != LOCAL_HANDLE && trimmed[strings.last_index_byte(trimmed, '/') + 1:] == scope {
+			handle = scope
+		}
+		append(&out, ident_read(one, handle))
 	} else {
 		home := notes_home(context.temp_allocator)
 		if h, err := os.open(home); err == nil {
@@ -104,7 +115,7 @@ idents_load :: proc(allocator := context.allocator) -> [dynamic]Ident {
 				append(&out, ident_read(legacy, LOCAL_HANDLE))
 			} else {
 				root := fmt.tprintf("%s/%s", home, LOCAL_HANDLE)
-				os.make_directory_all(root)
+				ck.make_dirs(root)
 				append(&out, ident_read(root, LOCAL_HANDLE))
 			}
 		}
@@ -188,7 +199,7 @@ ident_read :: proc(root, fallback_handle: string) -> Ident {
 // ident_bind records which cloud identity a folder belongs to. From then on
 // `notes sync` syncs it, and the folder's name stays the handle.
 ident_bind :: proc(root, id, handle, name, color, kind: string) -> bool {
-	os.make_directory_all(fmt.tprintf("%s/.palm", root))
+	ck.make_dirs(fmt.tprintf("%s/.palm", root))
 	b := strings.builder_make(context.temp_allocator)
 	strings.write_string(&b, "{\n  \"id\": ")
 	json_q(&b, id)

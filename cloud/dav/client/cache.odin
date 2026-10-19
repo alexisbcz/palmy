@@ -17,6 +17,7 @@
 package davclient
 
 import "core:fmt"
+import ck "../../../apps/cloudkit"
 import "core:os"
 import "core:slice"
 import "core:strings"
@@ -45,7 +46,7 @@ cache_dir :: proc(a: ^Account, handle, kind, seg: string) -> string {
 
 @(private)
 mkdirs :: proc(path: string) {
-	_ = os.make_directory_all(path, os.perm(0o700))
+	_ = ck.make_dirs(path, os.perm(0o700))
 }
 
 // local_open reads a collection's copy (empty if there is none yet). The

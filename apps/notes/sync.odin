@@ -120,7 +120,7 @@ enroll :: proc(a: ^Acct) -> (added: int) {
 		if cur.id == "" {
 			added += 1
 		}
-		os.make_directory_all(root)
+		ck.make_dirs(root)
 		ident_bind(root, id.id, id.handle, id.display_name, id.color, id.kind)
 	}
 	return
@@ -169,7 +169,7 @@ index_load :: proc(root: string, allocator := context.allocator) -> Index {
 }
 
 index_save :: proc(root: string, idx: Index) {
-	os.make_directory_all(fmt.tprintf("%s/.palm", root))
+	ck.make_dirs(fmt.tprintf("%s/.palm", root))
 	b := strings.builder_make(context.temp_allocator)
 	for id, e in idx {
 		fmt.sbprintf(&b, "%s\t%s\t%x\t%s\t%s\t%s\n", id, e.rel, e.hash, e.remote ? "1" : "0", e.access, e.owner)
@@ -583,7 +583,7 @@ materialise :: proc(root: string, d: ^crdt.Doc, n: ^Note, nid, access, owner: st
 	}
 	written = compose(meta, body)
 	dir := folder == "" ? root : fmt.tprintf("%s/%s", root, folder)
-	os.make_directory_all(dir)
+	ck.make_dirs(dir)
 	title := title_of(body, context.temp_allocator)
 	want := unique_path(dir, slug(title), n.path)
 
@@ -685,7 +685,7 @@ carries_pending_save :: proc(root: string, xs: []Pending_Carry) {
 		os.remove(carries_path(root))
 		return
 	}
-	os.make_directory_all(fmt.tprintf("%s/.palm", root))
+	ck.make_dirs(fmt.tprintf("%s/.palm", root))
 	b := strings.builder_make(context.temp_allocator)
 	for pc in xs {
 		fmt.sbprintf(&b, "%s\t%s\t%s\t%s\t%s\t%s\t%d\n", pc.new_id, pc.from_id, pc.from_handle, pc.to_handle, pc.hash, pc.title, pc.bytes)
@@ -760,7 +760,7 @@ attach_queue_save :: proc(root: string, xs: []Pending_Attach) {
 		os.remove(attach_queue_path(root))
 		return
 	}
-	os.make_directory_all(fmt.tprintf("%s/.palm", root))
+	ck.make_dirs(fmt.tprintf("%s/.palm", root))
 	b := strings.builder_make(context.temp_allocator)
 	for x in xs {
 		fmt.sbprintf(&b, "%s\t%s\t%s\t%s\t%d\n", x.note, x.sha, x.name, x.file, x.size)
@@ -817,7 +817,7 @@ attachments_sync :: proc(a: ^Acct, id: Ident, root: string, r: ^Sync_Result) {
 		if os.exists(dest) {
 			continue
 		}
-		os.make_directory_all(fmt.tprintf("%s/%s", root, ATTACH_DIR))
+		ck.make_dirs(fmt.tprintf("%s/%s", root, ATTACH_DIR))
 		if de := ck.download_file(a.c, "notes", fmt.tprintf("%s/%s", owner, sha), dest); ck.ok(de) {
 			event(r, "fetched the attachment %s", name)
 		}

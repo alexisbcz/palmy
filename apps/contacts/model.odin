@@ -16,6 +16,7 @@ import "core:crypto"
 import "core:encoding/uuid"
 import "core:fmt"
 import "core:mem/virtual"
+import ck "../cloudkit"
 import "core:os"
 import "core:slice"
 import "core:strings"
@@ -205,7 +206,7 @@ sync_all :: proc(st: ^Store) -> Sync_Report {
 // The identity list, cached so an offline start still knows the colours.
 @(private = "file")
 idents_save :: proc(a: ^dc.Account, list: []Ident) {
-	_ = os.make_directory_all(a.cache, os.perm(0o700))
+	_ = ck.make_dirs(a.cache, os.perm(0o700))
 	sb := strings.builder_make(context.temp_allocator)
 	for i in list {
 		fmt.sbprintf(&sb, "%s\t%s\t%s\t%s\n", i.handle, i.display_name, i.color, i.kind)

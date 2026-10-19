@@ -1115,7 +1115,7 @@ create_note :: proc(c: ^kit.Call, id: Ident, notebook, body, tags: string) -> in
 		wrote_result(c, want, whole, true, meta.id, id.handle)
 		return kit.EXIT_OK
 	}
-	os.make_directory_all(folder)
+	ck.make_dirs(folder)
 	if err := os.write_entire_file(want, transmute([]u8)whole); err != nil {
 		return kit.cli_failf(c, kit.EXIT_FAILED, "could not write %s", want)
 	}
@@ -1481,7 +1481,7 @@ cmd_delete :: proc(c: ^kit.Call) -> int {
 purge_queue_add :: proc(root, id: string) {
 	path := fmt.tprintf("%s/.palm/purge.tsv", root)
 	old, _ := os.read_entire_file_from_path(path, context.temp_allocator)
-	os.make_directory_all(fmt.tprintf("%s/.palm", root))
+	ck.make_dirs(fmt.tprintf("%s/.palm", root))
 	_ = os.write_entire_file(path, transmute([]u8)fmt.tprintf("%s%s\n", string(old), id))
 }
 
@@ -1745,7 +1745,7 @@ carry_note :: proc(b: ^Book, n: Note, to: int, device: string) -> (copy_path, co
 	meta := Meta{id = copy_id, carried_from = fmt.tprintf("%s/%s", src.handle, n.meta.id)}
 	whole := compose(meta, n.body)
 	want := unique_path(dst.root, slug(n.title), "")
-	os.make_directory_all(dst.root)
+	ck.make_dirs(dst.root)
 	if os.write_entire_file(want, transmute([]u8)whole) != nil {
 		return "", "", "", false, fmt.tprintf("could not write into %s", dst.root)
 	}
@@ -1968,7 +1968,7 @@ cmd_attach :: proc(c: ^kit.Call) -> int {
 	if c.dry_run {
 		return kit.EXIT_OK
 	}
-	os.make_directory_all(fmt.tprintf("%s/%s", id.root, ATTACH_DIR))
+	ck.make_dirs(fmt.tprintf("%s/%s", id.root, ATTACH_DIR))
 	_ = os.write_entire_file(fmt.tprintf("%s/%s/%s", id.root, ATTACH_DIR, stored), data)
 	body := n.body
 	if body != "" && !strings.has_suffix(body, "\n") {

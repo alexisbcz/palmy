@@ -72,6 +72,7 @@ run_selftest :: proc() {
 	test_wrap()
 	test_prose()
 	test_cli()
+	test_confined()
 	run_selftest_sync()
 
 	if failures == 0 {
@@ -927,4 +928,45 @@ test_cli :: proc() {
 		}
 		check(strings.contains(out, `"effect": "destructive"`), "and says which command is destructive")
 	}
+}
+
+// test_confined runs the notes command line the way the assistant does: in
+// a process scoped to one identity, pointed at that identity's own folder
+// (~/Notes/<handle>), with everything above that folder passable but not
+// readable. That last part is what the Landlock sandbox does to $HOME, and
+// a directory of mode 0111 does the same to an ordinary process: core:os's
+// make_directory_all opens each ancestor from / down, is refused, and
+// creates nothing, so a note in a new notebook was silently never written.
+// The folder is not bound to the cloud yet (no .palm/identity.json), which is
+// how a new identity's notes start.
+test_confined :: proc() {
+	base := fmt.tprintf("/tmp/palmy-notes-confined-%d", os.get_pid())
+	home := fmt.tprintf("%s/home", base)
+	root := fmt.tprintf("%s/Notes/camille.roux", home)
+	os.make_directory_all(root)
+	_ = os.write_entire_file(fmt.tprintf("%s/map.png", root), transmute([]u8)string("\x89PNG not really"))
+	os.chmod(home, os.perm_number(0o111))
+	defer {
+		os.chmod(home, os.perm_number(0o700))
+		os.remove_all(base)
+	}
+	env := []string{fmt.tprintf("HOME=%q", home), "PALM_IDENTITY=camille.roux", "PALM_NOTES_NO_SYNC=1"}
+
+	out, code := cli_run_env(root, env, "new", "Lisbon", "--notebook", "Travel/2026", "--text", "Pasteis at Belem", "--json")
+	check_int(code, 0, "confined: a note in a new nested notebook is written")
+	check(os.exists(fmt.tprintf("%s/Travel/2026/lisbon.md", root)), "confined: and the file is there, notebook folders and all")
+
+	out, code = cli_run_env(root, env, "attach", "lisbon", fmt.tprintf("%s/map.png", root), "--json")
+	check_int(code, 0, "confined: attaching makes attachments/ and stores the file")
+	entries, _ := os.read_all_directory_by_path(fmt.tprintf("%s/attachments", root), context.temp_allocator)
+	check(len(entries) == 1, "confined: one file in attachments/")
+
+	out, code = cli_run_env(root, env, "list", "--json")
+	check(code == 0 && strings.contains(out, "Lisbon") && strings.contains(out, "camille.roux"),
+		"confined: listing scoped to camille.roux shows its own (not yet bound) folder's notes")
+
+	other := []string{fmt.tprintf("HOME=%q", home), "PALM_IDENTITY=northwind", "PALM_NOTES_NO_SYNC=1"}
+	out, code = cli_run_env(root, other, "list", "--json")
+	check(!strings.contains(out, "Lisbon"), "confined: a process scoped to another identity, pointed at this folder, lists none of it")
+	_ = out
 }

@@ -280,7 +280,7 @@ idents_save :: proc(cl: ^Cloud) {
 	for i in cl.idents {
 		fmt.sbprintf(&sb, "%s\t%s\t%s\t%s\t%s\n", i.id, i.handle, i.name, i.kind, i.color)
 	}
-	_ = os.make_directory_all(cl.acct.cache, os.perm(0o700))
+	_ = ck.make_dirs(cl.acct.cache, os.perm(0o700))
 	_ = os.write_entire_file(idents_path(cl), transmute([]u8)strings.to_string(sb))
 }
 

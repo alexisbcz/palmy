@@ -593,14 +593,45 @@ forget_scoped :: proc(c: ^Client, handle: string) {
 	}
 }
 
+// make_dirs creates a directory and whatever parents it lacks, like
+// `mkdir -p`, without opening a single ancestor. core:os's
+// make_directory_all opens every directory from `/` (or `.`) down and
+// mkdirs relative to each; inside the assistant's Landlock sandbox, or under
+// any ancestor that may be passed through but not read, that first open is
+// refused and nothing is created. This finds the deepest parent that exists
+// by stat alone and mkdirs each missing level by its full path, which needs
+// only the right to make a directory where it is made. True when the
+// directory exists afterwards.
+make_dirs :: proc(path: string, perm := os.Permissions_Default_Directory) -> bool {
+	if path == "" {
+		return false
+	}
+	p := strings.trim_right(path, "/")
+	if p == "" || os.is_dir(p) {
+		return true // "/", or there already
+	}
+	missing := make([dynamic]string, context.temp_allocator)
+	cur := p
+	for cur != "" && cur != "." && cur != "/" && !os.is_dir(cur) {
+		append(&missing, cur)
+		i := strings.last_index_byte(cur, '/')
+		if i < 0 {break}
+		cur = cur[:i]
+	}
+	#reverse for d in missing {
+		_ = os.make_directory(d, perm)
+	}
+	return os.is_dir(p)
+}
+
 // write_private writes a file only its owner can read, atomically, inside a
 // directory only its owner can enter.
 write_private :: proc(path, text: string) -> Error {
 	dir := filepath.dir(path)
-	if os.make_directory_all(dir, os.perm_number(0o700)) != nil && !os.is_dir(dir) {
+	if !make_dirs(dir, os.perm_number(0o700)) {
 		return Error{kind = .Failed, message = fmt.aprintf("cannot create %s", dir)}
 	}
-	// make_directory_all leaves existing directories alone, and the umask
+	// make_dirs leaves existing directories alone, and the umask
 	// can only narrow; tighten both levels explicitly.
 	os.chmod(dir, os.perm_number(0o700))
 	if b := filepath.base(dir); b == "scoped" || b == "delegated" {
