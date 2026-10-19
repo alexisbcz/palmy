@@ -634,7 +634,7 @@ rebuild_checks :: proc(home: string) {
 
 	// With an account the rule stands: a folder naming none of its
 	// identities is not one.
-	write(fmt.tprintf("%s/palmframe.conf", p.mail), "[identity]\nid = 1\nhandle = camille\nname = Personal\n")
+	write(fmt.tprintf("%s/palmy.conf", p.mail), "[identity]\nid = 1\nhandle = camille\nname = Personal\n")
 	os.remove_all(fmt.tprintf("%s/camille.roux", index))
 	code, _ = run(home, index, "", "rebuild", "--identity", "camille.roux")
 	check(code == 3, "once an account lists only camille, camille.roux's folder names no identity (exit %d)", code)

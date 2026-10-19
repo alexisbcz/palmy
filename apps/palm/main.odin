@@ -86,7 +86,7 @@ NOUNS := []Noun {
 	{"welcome", "welcome", "first run: account, identities, what syncs", true, ""},
 	{"vault", "vault", "secrets, scoped to one identity", true, ""},
 	{"browser", "browser", "a web browser, bookmarks synced per identity", true, ""},
-	{"mail", "palm-mail", "an identity's mail in the Palmframe cloud: unread, search, read, drafts, send", true, "cloud/mail/palm-mail"},
+	{"mail", "palm-mail", "an identity's mail in the Palmy cloud: unread, search, read, drafts, send", true, "cloud/mail/palm-mail"},
 	{"mailcore", "mailcore", "the mail engine: Maildir, IMAP, POP3, JMAP, SMTP", false, ""},
 	{"torrent", "torrent", "a BitTorrent client, loopback only", false, ""},
 	{"docs", "docs", "a word processor with a headless converter", false, ""},

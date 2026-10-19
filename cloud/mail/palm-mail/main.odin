@@ -2,7 +2,7 @@
 //
 // `palm mail` routes here, and the assistant's mail tools are this binary's
 // verbs, generated from its --schema like every other tool. It is the mail
-// area's command line for an identity's mailbox in the Palmframe cloud
+// area's command line for an identity's mailbox in the Palmy cloud
 // (palm-maild's store), next to the server: the mail engine (apps/mailcore)
 // is not on the kit convention, and apps/mail has no network code by rule.
 // It is small on purpose and goes through PostgREST with whatever session it

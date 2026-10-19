@@ -7,7 +7,7 @@
 // A preview taken from the plain part while the reader shows the HTML part
 // lets a sender put words in the list, in search and in front of the
 // assistant that the person never sees in the message (and the reverse,
-// with HTML hidden by CSS). The rule, everywhere Palmframe computes a
+// with HTML hidden by CSS). The rule, everywhere Palmy computes a
 // preview:
 //
 //  1. The preview is cut from the text the reader shows. A reader that
