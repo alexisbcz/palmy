@@ -300,6 +300,8 @@ e2e_run :: proc() -> int {
 	os.make_directory_all(dir)
 	fmt.printfln("palm-rtc end-to-end, run %s, gateway 127.0.0.1:%d, api %s", run, srv.port, srv.api)
 
+	es256_checks()
+
 	section("accounts and identities (GoTrue + PostgREST, through cloudkit)")
 	alice, e1 := person(dir, "alice", run)
 	bob, e2 := person(dir, "bob", run)

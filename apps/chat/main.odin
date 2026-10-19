@@ -302,6 +302,13 @@ parse_args :: proc() -> Args {
 				dir = args[i]
 			}
 			os.exit(shots(dir))
+		case "--cloud-shots":
+			dir := "palmy-chat-cloud-shots"
+			if i + 1 < len(args) {
+				i += 1
+				dir = args[i]
+			}
+			os.exit(cloud_shots(dir))
 		case "--post":
 			if i + 2 < len(args) {
 				out.post_ch = args[i + 1]
@@ -626,7 +633,7 @@ typers_here :: proc(a: ^App, allocator := context.temp_allocator) -> []string {
 	}
 	for t in a.typers {
 		if t.ch == c.name && t.nick != a.nick {
-			append(&out, t.nick)
+			append(&out, display_name(a, t.nick))
 		}
 	}
 	return out[:]

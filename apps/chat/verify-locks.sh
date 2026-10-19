@@ -48,7 +48,7 @@ for f in $SRCS; do
 done
 
 # The four, by name. `main` holds the accept loop.
-EXPECTED="boot drop_conn handle main"
+EXPECTED="${EXPECTED:-boot drop_conn handle main}"
 
 # shellcheck disable=SC2086
 python3 - "$EXPECTED" $SRCS <<'PY'
@@ -227,6 +227,8 @@ if bad == 0:
 NEUTRAL = {"note", "log_line", "log_chan", "log_msg", "log_edit", "log_delete",
            "log_react", "log_read", "clean_nick", "default_dir", "read_key",
            "safe_component", "clean_mime", "trim_text", "stage_attach"}
+import os
+NEUTRAL |= set(os.environ.get("EXTRA_NEUTRAL", "").split())
 for t in takers:
     for c in sorted(callees(t)):
         if c.startswith("locked_") or c in NEUTRAL or c in takers:

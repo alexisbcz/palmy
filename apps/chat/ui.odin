@@ -27,10 +27,16 @@ AVATAR_BG := [?]string {
 }
 
 build :: proc(ui: ^p.Ctx, a: ^App) {
+	if a.cloud {
+		space_rail(ui, a)
+	}
 	sidebar(ui, a)
 
 	p.col(ui, "flex-1 min-w-0 h-full relative bg-background")
 	channel_header(ui, a)
+	if a.cloud {
+		call_banner(ui, a)
+	}
 	message_list(ui, a)
 	composer(ui, a)
 	jump_button(ui, a)
@@ -54,6 +60,12 @@ build :: proc(ui: ^p.Ctx, a: ^App) {
 	if a.toast != "" {
 		toast_strip(ui, a)
 	}
+	if a.cloud && a.inv_open {
+		invites_overlay(ui, a)
+	}
+	if a.cloud && a.prompt != .None {
+		prompt_overlay(ui, a)
+	}
 	// The attach dialog draws last, over everything else.
 	attach_overlay(ui, a)
 }
@@ -72,8 +84,16 @@ sidebar :: proc(ui: ^p.Ctx, a: ^App) {
 	p.icon(ui, IC_MESSAGE_SQUARE, "size-4 text-primary-foreground")
 	p.end(ui)
 	p.col(ui, "flex-1 min-w-0 gap-0")
-	p.text(ui, "palmy chat", "text-[13] font-semibold truncate")
-	p.textf(ui, "text-[10.5] text-muted-foreground truncate", "127.0.0.1:%d", a.args.port)
+	if sp := space_of(a, a.cur_space); a.cloud && sp != nil {
+		p.text(ui, sp.name, "text-[13] font-semibold truncate")
+		p.textf(ui, "text-[10.5] text-muted-foreground truncate", "%s · %d member%s", sp.role, sp.members, sp.members == 1 ? "" : "s")
+	} else if a.cloud {
+		p.text(ui, "No space yet", "text-[13] font-semibold truncate")
+		p.text(ui, "accept an invitation, or chat create-space", "text-[10.5] text-muted-foreground truncate")
+	} else {
+		p.text(ui, "palmy chat", "text-[13] font-semibold truncate")
+		p.textf(ui, "text-[10.5] text-muted-foreground truncate", "127.0.0.1:%d", a.args.port)
+	}
 	p.end(ui)
 	p.end(ui)
 
@@ -81,7 +101,7 @@ sidebar :: proc(ui: ^p.Ctx, a: ^App) {
 
 	section_label(ui, "Channels", a.mode == .Channels)
 	for c, i in a.chans {
-		if c.kind != .Channel {
+		if c.kind != .Channel || !in_view(a, i) {
 			continue
 		}
 		p.key(ui, c.name)
@@ -89,8 +109,8 @@ sidebar :: proc(ui: ^p.Ctx, a: ^App) {
 	}
 
 	dms := 0
-	for c in a.chans {
-		if c.kind == .DM {
+	for c, i in a.chans {
+		if c.kind == .DM && in_view(a, i) {
 			dms += 1
 		}
 	}
@@ -105,16 +125,33 @@ sidebar :: proc(ui: ^p.Ctx, a: ^App) {
 		p.end(ui)
 	}
 	for c, i in a.chans {
-		if c.kind != .DM {
+		if c.kind != .DM || !in_view(a, i) {
 			continue
 		}
 		p.key(ui, c.name)
 		channel_row(ui, a, i)
 	}
+	if a.cloud {
+		p.div(ui, "h-2")
+		p.end(ui)
+		p.row(ui, "w-full items-center gap-1.5 px-3 pt-1")
+		p.icon(ui, IC_USER_PLUS, "size-3 shrink-0 text-muted-foreground")
+		p.text(ui, "Invite", "text-[11] text-muted-foreground whitespace-nowrap")
+		p.style(ui).shrink = 0
+		sc.kbd(ui, "Ctrl I")
+		p.text(ui, "New channel", "text-[11] text-muted-foreground whitespace-nowrap ml-1")
+		p.style(ui).shrink = 0
+		sc.kbd(ui, "Ctrl N")
+		p.end(ui)
+	}
 	p.end(ui)
 	_ = list
 
-	link_footer(ui, a)
+	if a.cloud {
+		identity_card(ui, a)
+	} else {
+		link_footer(ui, a)
+	}
 }
 
 section_label :: proc(ui: ^p.Ctx, label: string, active: bool) {
@@ -151,11 +188,11 @@ channel_row :: proc(ui: ^p.Ctx, a: ^App, i: int) {
 	defer p.end(ui)
 
 	if c.kind == .DM {
-		other := w.dm_other(c.name, a.nick)
+		other := a.cloud ? c.peer : w.dm_other(c.name, a.nick)
 		presence_dot(ui, presence_of_nick(a, other))
 		p.text(
 			ui,
-			other,
+			chan_label(a, c),
 			unread \
 			? "flex-1 min-w-0 text-[13] font-semibold truncate" \
 			: active ? "flex-1 min-w-0 text-[13] truncate" : "flex-1 min-w-0 text-[13] text-muted-foreground truncate",
@@ -163,16 +200,26 @@ channel_row :: proc(ui: ^p.Ctx, a: ^App, i: int) {
 	} else {
 		p.icon(
 			ui,
-			IC_HASH,
+			c.private ? IC_LOCK : IC_HASH,
 			active || unread ? "size-3.5 shrink-0 text-foreground" : "size-3.5 shrink-0 text-muted-foreground",
 		)
 		p.text(
 			ui,
-			c.name,
+			chan_label(a, c),
 			unread \
 			? "flex-1 min-w-0 text-[13] font-semibold truncate" \
 			: active ? "flex-1 min-w-0 text-[13] truncate" : "flex-1 min-w-0 text-[13] text-muted-foreground truncate",
 		)
+	}
+
+	if c.call != "" {
+		p.row(ui, "shrink-0 items-center gap-0.5 h-[18] px-1.5 rounded-full bg-emerald-600")
+		p.icon(ui, IC_PHONE, "size-2.5 shrink-0 text-white")
+		if len(c.call_who) > 0 {
+			p.textf(ui, "text-[9.5] font-semibold text-white whitespace-nowrap", "%d", len(c.call_who))
+			p.style(ui).shrink = 0
+		}
+		p.end(ui)
 	}
 
 	// Unread replies inside threads are not timeline rows, so they get their
@@ -202,7 +249,10 @@ channel_row :: proc(ui: ^p.Ctx, a: ^App, i: int) {
 link_footer :: proc(ui: ^p.Ctx, a: ^App) {
 	p.row(ui, "w-full h-[48] shrink-0 items-center gap-2.5 px-3 border-t border-border")
 	defer p.end(ui)
+	link_footer_body(ui, a)
+}
 
+link_footer_body :: proc(ui: ^p.Ctx, a: ^App) {
 	switch a.link {
 	case .Online:
 		avatar(ui, a.nick, "size-7", "text-[11]")
@@ -224,7 +274,7 @@ link_footer :: proc(ui: ^p.Ctx, a: ^App) {
 		ui.animating = true
 		p.col(ui, "flex-1 min-w-0 gap-0")
 		p.text(ui, "Connecting…", "text-[12.5] font-medium truncate")
-		p.textf(ui, "text-[10.5] text-muted-foreground truncate", "127.0.0.1:%d", a.args.port)
+		p.textf(ui, "text-[10.5] text-muted-foreground truncate", "127.0.0.1:%d", a.cloud ? (a.args.rtc_port != 0 ? a.args.rtc_port : DEFAULT_RTC_PORT) : a.args.port)
 		p.end(ui)
 
 	case .Offline:
@@ -234,7 +284,11 @@ link_footer :: proc(ui: ^p.Ctx, a: ^App) {
 		p.col(ui, "flex-1 min-w-0 gap-0")
 		p.text(ui, "Offline", "text-[12.5] font-medium text-destructive truncate")
 		wait := max(0, a.retry_at - a.now)
-		p.textf(ui, "text-[10.5] text-muted-foreground truncate", "retrying in %.0fs", wait + 0.5)
+		if a.err_text != "" && a.cloud {
+			p.text(ui, a.err_text, "text-[10.5] text-muted-foreground truncate")
+		} else {
+			p.textf(ui, "text-[10.5] text-muted-foreground truncate", "retrying in %.0fs", wait + 0.5)
+		}
 		p.end(ui)
 	}
 }
@@ -254,15 +308,18 @@ channel_header :: proc(ui: ^p.Ctx, a: ^App) {
 	}
 
 	if c.kind == .DM {
-		other := w.dm_other(c.name, a.nick)
-		avatar(ui, other, "size-6", "text-[10.5]")
-		p.text(ui, other, "text-[15] font-semibold whitespace-nowrap")
+		other := a.cloud ? c.peer : w.dm_other(c.name, a.nick)
+		avatar_who(ui, a, other, "", "", "size-6", "text-[10.5]")
+		p.text(ui, chan_label(a, c), "text-[15] font-semibold whitespace-nowrap")
 		p.style(ui).shrink = 0
 		sc.badge(ui, "direct", .Outline)
 	} else {
-		p.icon(ui, IC_HASH, "size-4 shrink-0 text-muted-foreground")
-		p.text(ui, c.name, "text-[15] font-semibold whitespace-nowrap")
+		p.icon(ui, c.private ? IC_LOCK : IC_HASH, "size-4 shrink-0 text-muted-foreground")
+		p.text(ui, chan_label(a, c), "text-[15] font-semibold whitespace-nowrap")
 		p.style(ui).shrink = 0
+		if c.private {
+			sc.badge(ui, "private", .Outline)
+		}
 	}
 
 	if c.topic != "" {
@@ -290,6 +347,19 @@ channel_header :: proc(ui: ^p.Ctx, a: ^App) {
 	sc.kbd(ui, "F4")
 	p.icon(ui, IC_SEARCH, "size-3.5 shrink-0 text-muted-foreground")
 	p.end(ui)
+
+	if a.cloud {
+		if c.call == "" {
+			p.row(ui, "shrink-0 items-center gap-1")
+			sc.kbd(ui, "Ctrl J")
+			p.icon(ui, IC_VIDEO, "size-3.5 shrink-0 text-muted-foreground")
+			p.end(ui)
+		}
+		// The window says which identity it speaks as, always.
+		if a.me.name != "" {
+			id_chip(ui, a.me.name, a.me.color, "as")
+		}
+	}
 }
 
 mode_chip :: proc(ui: ^p.Ctx, a: ^App) {
@@ -365,6 +435,9 @@ message_list :: proc(ui: ^p.Ctx, a: ^App) {
 		p.key(ui, itoa64(ui, c.msgs[i].id))
 		message_row(ui, a, c, i)
 	}
+	if a.cloud && len(c.msgs) > 0 && c.msgs[len(c.msgs) - 1].nick == a.nick {
+		seen_line(ui, a, c, &c.msgs[len(c.msgs) - 1])
+	}
 }
 
 empty_channel :: proc(ui: ^p.Ctx, a: ^App, c: ^Channel) {
@@ -427,7 +500,7 @@ message_row :: proc(ui: ^p.Ctx, a: ^App, c: ^Channel, i: int) -> bool {
 		}
 		p.end(ui)
 	} else {
-		avatar(ui, m.nick, "size-9", "text-[12.5]")
+		avatar_who(ui, a, m.nick, m.name, m.color, "size-9", "text-[12.5]")
 	}
 
 	body := p.col(ui, "flex-1 min-w-0 gap-1")
@@ -440,8 +513,12 @@ message_row :: proc(ui: ^p.Ctx, a: ^App, c: ^Channel, i: int) -> bool {
 
 	if !grouped {
 		p.row(ui, "w-full items-baseline gap-2")
-		p.text(ui, m.nick, "text-[13] font-semibold whitespace-nowrap")
+		p.text(ui, who_name(a, m.nick, m.name), "text-[13] font-semibold whitespace-nowrap")
 		p.style(ui).shrink = 0
+		if a.cloud && m.nick != a.nick && who_name(a, m.nick, m.name) != m.nick {
+			p.text(ui, m.nick, "text-[10.5] text-muted-foreground whitespace-nowrap")
+			p.style(ui).shrink = 0
+		}
 		if m.nick == a.nick {
 			p.text(ui, "you", "text-[10] text-muted-foreground whitespace-nowrap")
 			p.style(ui).shrink = 0
@@ -570,8 +647,8 @@ reply_stub :: proc(ui: ^p.Ctx, a: ^App, c: ^Channel, id: i64) {
 		p.style(ui).shrink = 0
 		return
 	}
-	avatar(ui, src.nick, "size-[14]", "text-[8]")
-	p.text(ui, src.nick, "text-[11] font-medium text-muted-foreground whitespace-nowrap")
+	avatar_who(ui, a, src.nick, src.name, src.color, "size-[14]", "text-[8]")
+	p.text(ui, who_name(a, src.nick, src.name), "text-[11] font-medium text-muted-foreground whitespace-nowrap")
 	p.style(ui).shrink = 0
 	p.text(ui, md_preview(src.text, context.temp_allocator), "flex-1 min-w-0 text-[11] text-muted-foreground truncate")
 }
@@ -725,8 +802,11 @@ composer :: proc(ui: ^p.Ctx, a: ^App) {
 		ph := "Message"
 		if c != nil {
 			ph = c.kind == .DM \
-			? fmt.tprintf("Message %s", w.dm_other(c.name, a.nick)) \
-			: fmt.tprintf("Message #%s", c.name)
+			? fmt.tprintf("Message %s", chan_label(a, c)) \
+			: fmt.tprintf("Message #%s", chan_label(a, c))
+			if a.cloud && a.me.name != "" {
+				ph = fmt.tprintf("%s as %s", ph, a.me.name)
+			}
 		}
 		if a.link != .Online {
 			ph = "Disconnected — reconnecting"
@@ -765,8 +845,18 @@ composer :: proc(ui: ^p.Ctx, a: ^App) {
 	}
 	p.end(ui) // area
 
-	// Hints.
+	// Hints. In cloud mode the line starts with who is sending: the From
+	// card, small, in the identity's colour (shell.md: compose shows the
+	// identity before you type).
 	p.row(ui, "w-full items-center gap-3")
+	if a.cloud && a.me.name != "" {
+		p.row(ui, "shrink-0 items-center gap-1.5")
+		p.div(ui, p.concat(ui, "size-2 shrink-0 rounded-full ", tint(a.me.color, "bg", "500")))
+		p.end(ui)
+		p.textf(ui, "text-[10.5] text-muted-foreground whitespace-nowrap", "from %s", a.me.name)
+		p.style(ui).shrink = 0
+		p.end(ui)
+	}
 	hint(ui, "Enter", "", a.editing != 0 ? "save edit" : "send")
 	hint(ui, "Shift", "Enter", "newline")
 	hint(ui, "Esc", "", a.editing != 0 || a.replying != 0 ? "cancel" : "browse")
@@ -835,7 +925,7 @@ draft_banner :: proc(ui: ^p.Ctx, a: ^App) {
 		p.icon(ui, IC_REPLY, "size-3 shrink-0 text-muted-foreground")
 		src := msg_at(c, a.replying)
 		if src != nil {
-			p.textf(ui, "text-[11.5] text-muted-foreground whitespace-nowrap", "Replying to %s", src.nick)
+			p.textf(ui, "text-[11.5] text-muted-foreground whitespace-nowrap", "Replying to %s", who_name(a, src.nick, src.name))
 			p.style(ui).shrink = 0
 			p.text(ui, md_preview(src.text, context.temp_allocator), "flex-1 min-w-0 text-[11.5] text-muted-foreground truncate")
 		}
@@ -970,14 +1060,14 @@ thread_msg :: proc(ui: ^p.Ctx, a: ^App, m: ^w.Msg, is_root: bool) {
 	}
 	defer p.end(ui)
 
-	avatar(ui, m.nick, "size-7", "text-[10.5]")
+	avatar_who(ui, a, m.nick, m.name, m.color, "size-7", "text-[10.5]")
 	body := p.col(ui, "flex-1 min-w-0 gap-1")
 	avail := p.rect_of(ui, p.node_id(ui, body)).w
 	if avail < 60 {
 		avail = f32(THREAD_W - 80)
 	}
 	p.row(ui, "w-full items-baseline gap-2")
-	p.text(ui, m.nick, "text-[12] font-semibold whitespace-nowrap")
+	p.text(ui, who_name(a, m.nick, m.name), "text-[12] font-semibold whitespace-nowrap")
 	p.style(ui).shrink = 0
 	p.text(ui, hhmm(ui, a, m.ts), "text-[10] text-muted-foreground whitespace-nowrap")
 	p.style(ui).shrink = 0
@@ -1039,10 +1129,10 @@ member_panel :: proc(ui: ^p.Ctx, a: ^App) {
 		if cursor {
 			p.apply(ui, "bg-accent ring-1 ring-ring", idx)
 		}
-		avatar(ui, m.nick, "size-5", "text-[9]")
+		avatar_who(ui, a, m.nick, m.name, m.color, "size-5", "text-[9]")
 		p.text(
 			ui,
-			m.nick,
+			who_name(a, m.nick, m.name),
 			m.state == .Offline \
 			? "flex-1 min-w-0 text-[12.5] text-muted-foreground truncate" \
 			: "flex-1 min-w-0 text-[12.5] truncate",
@@ -1139,10 +1229,10 @@ search_overlay :: proc(ui: ^p.Ctx, a: ^App) {
 		p.key(ui, itoa64(ui, m.id))
 		idx := p.row(ui, "w-full shrink-0 items-start gap-2.5 px-3 py-2 mx-1.5 rounded-md")
 		p.apply(ui, i == a.sel_result ? "bg-accent" : "hover:bg-muted", idx)
-		avatar(ui, m.nick, "size-6", "text-[10]")
+		avatar_who(ui, a, m.nick, m.name, m.color, "size-6", "text-[10]")
 		p.col(ui, "flex-1 min-w-0 gap-0.5")
 		p.row(ui, "w-full items-baseline gap-2")
-		p.text(ui, m.nick, "text-[12] font-semibold whitespace-nowrap")
+		p.text(ui, who_name(a, m.nick, m.name), "text-[12] font-semibold whitespace-nowrap")
 		p.style(ui).shrink = 0
 		p.textf(ui, "text-[10.5] text-muted-foreground whitespace-nowrap", "%s · %s", chan_name_for(a, m.ch), hhmm(ui, a, m.ts))
 		p.style(ui).shrink = 0
@@ -1323,13 +1413,20 @@ reaction_icon :: proc(key: string) -> p.Icon {
 			return r.ic
 		}
 	}
+	// The two keys protocol v2 adds; a v1 palette never offers them.
+	switch key {
+	case "eyes":
+		return IC_EYE
+	case "check":
+		return IC_CHECK
+	}
 	return IC_CIRCLE
 }
 
 chan_name_for :: proc(a: ^App, name: string) -> string {
 	if i := find_chan(a, name); i >= 0 {
 		c := &a.chans[i]
-		return c.kind == .DM ? w.dm_other(c.name, a.nick) : fmt.tprintf("#%s", c.name)
+		return c.kind == .DM ? chan_label(a, c) : fmt.tprintf("#%s", chan_label(a, c))
 	}
 	return name
 }

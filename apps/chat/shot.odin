@@ -331,3 +331,223 @@ shots :: proc(dir: string) -> int {
 	fmt.printfln("chat --shots: wrote PNGs to %s", dir)
 	return 0
 }
+
+// ---------------------------------------------------------------------------
+// Cloud mode: `chat --cloud-shots <dir>`
+//
+// The same offscreen build, with the model a palm-rtc session would fill in:
+// an identity speaking as itself, two spaces, a private channel, a live call,
+// a thread, a DM with its read receipt, and invitations waiting.
+// ---------------------------------------------------------------------------
+
+@(private = "file")
+Cloud_Line :: struct {
+	nick, name, color, text: string,
+	minutes:                 int,
+	react, reactor:          string,
+	replies:                 int,
+	file, mime:              string,
+	size:                    int,
+	edited:                  bool,
+}
+
+@(private = "file")
+cloud_msgs :: proc(ch: string, lines: []Cloud_Line, now: i64, first_id: i64, thread: i64 = 0) -> [dynamic]w.Msg {
+	out := make([dynamic]w.Msg)
+	for l, i in lines {
+		m := w.Msg {
+			id     = first_id + i64(i),
+			ch     = strings.clone(ch),
+			nick   = strings.clone(l.nick),
+			name   = strings.clone(l.name),
+			color  = strings.clone(l.color),
+			text   = strings.clone(l.text),
+			ts     = now - i64(l.minutes) * 60,
+			thread = thread,
+			seq    = i64(i + 1),
+			rev    = i64(i + 1),
+			reacts = make([dynamic]w.React),
+		}
+		if l.edited {
+			m.edited = m.ts + 60
+		}
+		if l.react != "" {
+			nicks := make([dynamic]string)
+			for r in strings.split(l.reactor, ",", context.temp_allocator) {
+				append(&nicks, strings.clone(r))
+			}
+			append(&m.reacts, w.React{key = strings.clone(l.react), nicks = nicks})
+		}
+		if l.replies > 0 {
+			m.replies = l.replies
+			m.last_reply = m.ts + 300
+		}
+		if l.file != "" {
+			m.file = w.Attach{id = first_id + i64(i), name = strings.clone(l.file), mime = strings.clone(l.mime), size = l.size}
+		}
+		append(&out, m)
+	}
+	return out
+}
+
+@(private = "file")
+cloud_state :: proc(a: ^App, now: i64) {
+	a.cloud = true
+	a.me = Ident_View{id = "a2", handle = "alice.northwind", name = "Alice Martin", color = "indigo", kind = "work"}
+	a.nick = a.me.handle
+	append(&a.spaces, Space{id = "nw", name = "Northwind", role = "owner", owner = "alice.northwind", members = 4})
+	append(&a.spaces, Space{id = "lh", name = "Lumen Health", role = "member", owner = "theo.lumen", members = 9})
+	a.cur_space = "nw"
+
+	A, B, C := "alice.northwind", "bob.northwind", "carol.diaz"
+	general := cloud_msgs("c-general", {
+		{nick = B, name = "Bob Chen", color = "emerald", text = "Infra freeze lifts at 18:00 tonight. Anything that needs the window, say so here.", minutes = 190},
+		{nick = A, name = "Alice Martin", color = "indigo", text = "The **release** goes out Friday at 10:00, after standup. Blockers?", minutes = 64, react = "thumbsup", reactor = "bob.northwind,carol.diaz", replies = 3, edited = true},
+		{nick = C, name = "Carol Diaz", color = "sky", text = "Board deck v4 is up — the pricing slide changed, the rest is wording.", minutes = 41, file = "board-deck-v4.pdf", mime = "application/pdf", size = 2_380_000},
+		{nick = B, name = "Bob Chen", color = "emerald", text = "Ran the migration against a copy of production: `4m12s`, no locks held longer than 300 ms.", minutes = 18, react = "rocket", reactor = "alice.northwind"},
+		{nick = B, name = "Bob Chen", color = "emerald", text = "Jumping on a call to walk through the rollback plan — join if you have ten minutes.", minutes = 3},
+	}, now, 1201)
+	append(&a.chans, Channel{
+		name = strings.clone("c-general"), label = strings.clone("general"), space = "nw", kind = .Channel,
+		topic = strings.clone("Everyone in Northwind — releases, freezes, the board"), loaded = true, msgs = general,
+		call = "call-1",
+	})
+	c0 := &a.chans[0]
+	append(&c0.call_who, Who{nick = B, name = "Bob Chen", color = "emerald"})
+	append(&c0.call_who, Who{nick = C, name = "Carol Diaz", color = "sky"})
+	append(&a.chans, Channel{name = strings.clone("c-design"), label = strings.clone("design"), space = "nw", kind = .Channel, private = true, unread = 2, threads = 1, topic = strings.clone("Pixels and the board deck")})
+	append(&a.chans, Channel{name = strings.clone("c-launch"), label = strings.clone("launch"), space = "nw", kind = .Channel, unread = 1, mention = true})
+	append(&a.chans, Channel{name = strings.clone("d-bob"), label = strings.clone("Bob Chen"), peer = B, space = "nw", kind = .DM})
+	append(&a.chans, Channel{name = strings.clone("d-carol"), label = strings.clone("Carol Diaz"), peer = C, space = "nw", kind = .DM, unread = 1})
+	append(&a.chans, Channel{name = strings.clone("c-ops"), label = strings.clone("ops"), space = "lh", kind = .Channel, unread = 4})
+
+	for who in ([?]struct {
+		nick, name, color: string,
+		state:             w.Presence,
+	}{
+		{A, "Alice Martin", "indigo", .Online},
+		{B, "Bob Chen", "emerald", .Online},
+		{C, "Carol Diaz", "sky", .Away},
+		{"dana.okafor", "Dana Okafor", "teal", .Offline},
+	}) {
+		append(&a.members, Member{nick = strings.clone(who.nick), name = strings.clone(who.name), color = strings.clone(who.color), state = who.state})
+	}
+	append(&a.invites, Invite{
+		id = "inv-1", space = "lh2", space_name = "Lumen Health", role = "guest", ch = "c-x", ch_name = "partner-pilot",
+		from_name = "Théo Laurent", from_handle = "theo.lumen", from_color = "amber",
+	})
+	append(&a.invites, Invite{
+		id = "inv-2", space = "kc", space_name = "Kestrel Collective", role = "member",
+		from_name = "Priya Raman", from_handle = "priya.kestrel", from_color = "violet",
+	})
+	a.seen_invites = len(a.invites)
+	append(&a.typers, Typer{nick = strings.clone(C), ch = strings.clone("c-general"), at = 0})
+	a.cur = 0
+	a.link = .Online
+	a.pinned = true
+}
+
+cloud_shots :: proc(dir: string) -> int {
+	if err := os.make_directory_all(dir, os.perm(0o755)); err != nil && !os.exists(dir) {
+		fmt.eprintfln("chat --cloud-shots: cannot create %s", dir)
+		return 1
+	}
+	for dark in ([2]bool{true, false}) {
+		off := p.offscreen_create(SHOT_W + RAIL_W, SHOT_H, 1, "w-full h-full flex-row bg-background text-foreground overflow-hidden")
+		shot_fonts(&off.fonts)
+		sc.register_shadcn_theme(dark)
+		p.set_text_gamma(1.8)
+		theme := dark ? "dark" : "light"
+
+		a := new(App)
+		a.chans = make([dynamic]Channel)
+		a.members = make([dynamic]Member)
+		a.typers = make([dynamic]Typer)
+		a.buf = make([dynamic]u8)
+		a.query = make([dynamic]u8)
+		a.results = make([dynamic]w.Msg)
+		a.vlines = make([dynamic]Vline)
+		a.tmsgs = make([dynamic]w.Msg)
+		a.retry_in = 0.4
+		a.args.dark = dark
+		now := i64(1791100800)
+		cloud_state(a, now)
+
+		step :: proc(off: ^p.Offscreen, a: ^App) {
+			ui := p.offscreen_begin(off)
+			a.now = ui.now
+			for &t in a.typers {
+				t.at = ui.now
+			}
+			update_pin(a, ui)
+			build(ui, a)
+			pin_to_bottom(a, ui)
+			p.offscreen_end(off)
+		}
+		shot :: proc(off: ^p.Offscreen, a: ^App, dir, name: string) {
+			for _ in 0 ..< 4 {
+				step(off, a)
+			}
+			path := fmt.tprintf("%s/%s.png", dir, name)
+			if p.offscreen_write_png(off, path) {
+				fmt.printfln("  %s", path)
+			}
+		}
+
+		// The channel, a call live in it, a draft in the composer.
+		a.mode = .Compose
+		append(&a.buf, "I can join in five — is the rollback plan in the doc?")
+		a.caret = len(a.buf)
+		shot(off, a, dir, fmt.aprintf("cloud-channel-%s", theme))
+		clear(&a.buf)
+		a.caret = 0
+
+		// The thread under the release message.
+		a.thread_root = 1202
+		a.thread_ch = strings.clone("c-general")
+		a.troot = a.chans[0].msgs[1]
+		a.tloaded = true
+		a.treplies = 3
+		clear(&a.tmsgs)
+		for m in cloud_msgs("c-general", {
+			{nick = "bob.northwind", name = "Bob Chen", color = "emerald", text = "None from infra once the freeze lifts.", minutes = 60},
+			{nick = "carol.diaz", name = "Carol Diaz", color = "sky", text = "Deck needs sign-off by Thursday noon, otherwise fine.", minutes = 55, react = "check", reactor = "alice.northwind"},
+			{nick = "alice.northwind", name = "Alice Martin", color = "indigo", text = "Then Friday 10:00 it is. I'll post the checklist here.", minutes = 50},
+		}, now, 1301, 1202) {
+			append(&a.tmsgs, m)
+		}
+		shot(off, a, dir, fmt.aprintf("cloud-thread-%s", theme))
+		a.thread_root = 0
+
+		// A DM, with the other side's read receipt.
+		dm := find_chan(a, "d-bob")
+		a.chans[dm].loaded = true
+		a.chans[dm].msgs = cloud_msgs("d-bob", {
+			{nick = "bob.northwind", name = "Bob Chen", color = "emerald", text = "Can you take the release notes this time? I'm on the migration.", minutes = 30},
+			{nick = "alice.northwind", name = "Alice Martin", color = "indigo", text = "Yes — I'll have a draft in the doc by 16:00.", minutes = 28},
+		}, now, 1401)
+		append(&a.chans[dm].seen, Seen{nick = "bob.northwind", id = 1402})
+		// Set directly: switch_to would announce a read cursor, and there is
+		// no socket here to announce it on.
+		a.cur = dm
+		a.want_bottom = true
+		shot(off, a, dir, fmt.aprintf("cloud-dm-%s", theme))
+		a.cur = 0
+
+		// The invitations.
+		a.inv_open = true
+		shot(off, a, dir, fmt.aprintf("cloud-invites-%s", theme))
+		a.inv_open = false
+
+		// Inviting someone: the From card leads.
+		a.prompt = .Invite
+		append(&a.pbuf, "dana.okafor")
+		a.pcaret = len(a.pbuf)
+		shot(off, a, dir, fmt.aprintf("cloud-invite-%s", theme))
+		a.prompt = .None
+
+		p.offscreen_destroy(off)
+	}
+	fmt.printfln("chat --cloud-shots: wrote PNGs to %s", dir)
+	return 0
+}
