@@ -12,6 +12,7 @@ import "core:os"
 import "core:slice"
 import "core:strings"
 import "core:time"
+import ai "kit:appindex"
 import kit "kit:."
 import p "palmy:."
 import sc "shadcn:."
@@ -75,6 +76,7 @@ St :: struct {
 	keep_open:  bool,
 	sort:       Sort_Mode,
 	pinned:     map[string]bool,
+	pin_order:  [dynamic]string,
 
 	terms:      []Term,
 	have_clip:  bool,
@@ -91,6 +93,12 @@ main :: proc() {
 	// see shot.odin.
 	args := os.args[1:]
 	for a, i in args {
+		// `--selftest`: the shared index, matcher and pins (kit:appindex).
+		if a == "--selftest" || a == "--self-test" {
+			pass, fail := ai.selftest()
+			fmt.printfln("launcher --selftest: %d passed, %d failed", pass, fail)
+			os.exit(fail == 0 ? 0 : 1)
+		}
 		if a == "--shots" {
 			dir := i + 1 < len(args) ? args[i + 1] : "shots"
 			os.exit(shots(dir))
@@ -665,8 +673,7 @@ launch_entry :: proc(st: ^St, app: ^p.App, e: ^Entry, in_term: bool) {
 	if len(argv) == 0 {
 		return
 	}
-	e.uses += 1
-	save_usage(st.apps)
+	ai.note_launch(st.apps, ai.find_id(st.apps, e.id))
 	kit.launch(argv)
 	if !st.keep_open {
 		p.quit_app(app)
@@ -729,10 +736,14 @@ edit_entry :: proc(st: ^St, ui: ^p.Ctx, e: ^Entry) {
 toggle_pin :: proc(st: ^St, ui: ^p.Ctx, e: ^Entry) {
 	if st.pinned[e.id] {
 		delete_key(&st.pinned, e.id)
+		if i := ai.pin_index(st.pin_order[:], e.id); i >= 0 {
+			ordered_remove(&st.pin_order, i)
+		}
 		toast(st, ui, fmt.tprintf("%s unpinned", e.name))
 	} else {
 		st.pinned[e.id] = true
-		toast(st, ui, fmt.tprintf("%s pinned to the top", e.name))
+		append(&st.pin_order, e.id)
+		toast(st, ui, fmt.tprintf("%s pinned to Start and the top", e.name))
 	}
 	save_pins(st)
 	refilter(st)
@@ -826,45 +837,19 @@ term_argv :: proc(t: Term, cmd: string, allocator := context.allocator) -> []str
 	return a[:]
 }
 
-pins_path :: proc(allocator := context.allocator) -> string {
-	home, err := os.user_home_dir(context.temp_allocator)
-	if err != nil {
-		return ""
-	}
-	return strings.concatenate({home, "/.cache/palmy-launcher/pinned"}, allocator)
-}
-
+// The pins are the start menu's: what is pinned there sits at the top here,
+// and pinning here pins it there. Only a list the person saved counts — the
+// start menu's defaults are a suggestion, not something to rank by.
 load_pins :: proc(st: ^St) {
-	path := pins_path(context.temp_allocator)
-	if path == "" {
-		return
-	}
-	data, err := os.read_entire_file_from_path(path, context.allocator)
-	if err != nil {
-		return
-	}
-	it := string(data)
-	for line in strings.split_lines_iterator(&it) {
-		id := strings.trim_space(line)
-		if id != "" {
-			st.pinned[id] = true
-		}
+	ids, _ := ai.load_pins(.Start)
+	st.pin_order = ids
+	for id in ids {
+		st.pinned[id] = true
 	}
 }
 
 save_pins :: proc(st: ^St) {
-	path := pins_path(context.temp_allocator)
-	if path == "" {
-		return
-	}
-	dir := path[:strings.last_index_byte(path, '/')]
-	_ = os.make_directory_all(dir)
-	b := strings.builder_make(context.temp_allocator)
-	for id in st.pinned {
-		strings.write_string(&b, id)
-		strings.write_byte(&b, '\n')
-	}
-	_ = os.write_entire_file(path, transmute([]byte)strings.to_string(b))
+	ai.save_pins(.Start, st.pin_order[:])
 }
 
 // ---------------------------------------------------------------------------
@@ -1203,64 +1188,4 @@ hint :: proc(ui: ^p.Ctx, k1, k2, label: string) {
 	}
 	p.text(ui, label, "text-[11] text-muted-foreground whitespace-nowrap")
 	p.style(ui).shrink = 0
-}
-
-// entry_icon picks a glyph. The category is the fallback; a handful of names
-// are recognisable enough to deserve their own.
-entry_icon :: proc(e: ^Entry) -> p.Icon {
-	n := e.lower
-	switch {
-	case has_any(n, "terminal", "console", "ghostty", "foot", "alacritty", "kitty"):
-		return IC_TERMINAL
-	case has_any(n, "files", "nautilus", "thunar", "dolphin", "nemo"):
-		return IC_FOLDER
-	case has_any(n, "browser", "firefox", "chromium", "chrome", "web"):
-		return IC_GLOBE
-	case has_any(n, "mail", "thunderbird"):
-		return IC_MAIL
-	case has_any(n, "music", "spotify", "audio", "rhythmbox"):
-		return IC_MUSIC
-	case has_any(n, "calculator", "calc"):
-		return IC_CALCULATOR
-	case has_any(n, "monitor", "system", "htop", "btop", "task"):
-		return IC_CPU
-	case has_any(n, "image", "photo", "picture", "gimp", "viewer"):
-		return IC_IMAGE
-	case has_any(n, "keyboard", "input"):
-		return IC_KEYBOARD
-	case has_any(n, "network", "wifi", "bluetooth"):
-		return IC_NETWORK
-	case has_any(n, "color", "theme", "appearance", "wallpaper"):
-		return IC_PALETTE
-	case has_any(n, "code", "editor", "vim", "studio"):
-		return IC_CODE
-	}
-	switch e.cat {
-	case .Dev:
-		return IC_CODE
-	case .Web:
-		return IC_GLOBE
-	case .Media:
-		return IC_FILM
-	case .Office:
-		return IC_BOOK
-	case .System:
-		return IC_SETTINGS
-	case .Utility:
-		return IC_WRENCH
-	case .Game:
-		return IC_GAMEPAD
-	case .Other:
-		return IC_PACKAGE
-	}
-	return IC_PACKAGE
-}
-
-has_any :: proc(s: string, needles: ..string) -> bool {
-	for n in needles {
-		if strings.contains(s, n) {
-			return true
-		}
-	}
-	return false
 }

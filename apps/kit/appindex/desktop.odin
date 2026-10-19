@@ -1,11 +1,19 @@
-package main
-
-// Reading the system's application index out of freedesktop `.desktop` files.
+// Package appindex is the system's application index: the freedesktop
+// `.desktop` files on the machine, ranked by a fuzzy matcher, with the user's
+// launch history and pinned apps beside them.
 //
-// The whole index is parsed once at startup. Every string in an Entry points
-// straight into the file's own bytes, which are kept for the lifetime of the
-// process, so a scan of ~100 files is a handful of allocations rather than
-// thousands.
+// Two front ends share it so they can never disagree about what is installed
+// or how a query ranks: the launcher (apps/launcher, a layer-shell overlay
+// with its own process) and the start menu the window manager draws itself
+// (apps/wm/start.odin). It used to live inside the launcher, which made the
+// start menu either a copy or a client; a package both import is neither.
+//
+// The whole index is parsed in one pass. Every string in an Entry points
+// straight into the file's own bytes, which are kept for as long as the
+// index is, so a scan of ~100 files is a handful of allocations rather than
+// thousands. Build an index into an arena (or a dedicated allocator) and
+// drop the arena to forget it.
+package appindex
 
 import "core:os"
 import "core:slice"
@@ -20,8 +28,10 @@ Category :: enum u8 {
 	System,
 	Utility,
 	Game,
+	Demo, // X-Palmframe-Demo=true: a showcase, not a tool; listed last and marked
 }
 
+// CAT_LABEL is the short name, for chips.
 CAT_LABEL := [Category]string {
 	.Other   = "Other",
 	.Dev     = "Dev",
@@ -31,7 +41,25 @@ CAT_LABEL := [Category]string {
 	.System  = "System",
 	.Utility = "Utility",
 	.Game    = "Games",
+	.Demo    = "Demos",
 }
+
+// CAT_TITLE is the heading over a group in the start menu's All apps.
+CAT_TITLE := [Category]string {
+	.Other   = "Other",
+	.Dev     = "Development",
+	.Web     = "Internet",
+	.Media   = "Media",
+	.Office  = "Office",
+	.System  = "System",
+	.Utility = "Utilities",
+	.Game    = "Games",
+	.Demo    = "Demos",
+}
+
+// CAT_ORDER is the order groups are listed in: the work people open a
+// computer for first, the plumbing after it, the demos last.
+CAT_ORDER :: [?]Category{.Office, .Web, .Media, .Dev, .Utility, .System, .Game, .Other, .Demo}
 
 // A `[Desktop Action <id>]` group: the extra verbs an application advertises,
 // such as Firefox's private window or Code's empty window.
@@ -46,34 +74,77 @@ Entry :: struct {
 	name:     string,
 	comment:  string,
 	exec:     string, // Exec with the %f/%u/%F/%U field codes removed
+	raw_exec: string, // Exec as written, field codes and all
 	icon:     string,
 	cats:     string, // the raw Categories= value
 	keywords: string, // the raw Keywords= value
+	mime:     string, // the raw MimeType= value
 	path:     string, // absolute path of the .desktop file
 	terminal: bool,
+	demo:     bool, // X-Palmframe-Demo=true
+	takes_file: bool, // Exec has %f/%F/%u/%U: it opens a document it is given
 	cat:      Category,
 	actions:  []Dsk_Action,
 	editable: bool, // lives under $HOME, so it can be opened in an editor
 	uses:     int, // launches recorded in the usage file
+	last:     i64, // unix seconds of the last recorded launch, 0 if never
 
 	// Lowercased, for matching.
 	lower:    string, // the name
 	lcomment: string, // the comment
-	hay:      string, // name + comment + exec + categories + id
+	hay:      string, // name + comment + exec + categories + keywords + id
 }
 
 // ---------------------------------------------------------------------------
 // Scanning
 // ---------------------------------------------------------------------------
 
+// search_dirs is where applications are looked for, lowest precedence first.
+// PALMY_APPLICATIONS_DIR replaces the whole list with one directory, which is
+// how the screenshots and the self-tests index distro/apps/desktop instead of
+// whatever happens to be installed on the machine running them.
 search_dirs :: proc(allocator := context.allocator) -> []string {
 	out := make([dynamic]string, allocator)
-	append(&out, "/usr/share/applications")
-	append(&out, "/usr/local/share/applications")
-	if home, err := os.user_home_dir(allocator); err == nil {
+	if only := os.get_env("PALMY_APPLICATIONS_DIR", context.temp_allocator); only != "" {
+		append(&out, strings.clone(only, allocator))
+		return out[:]
+	}
+	data_dirs := os.get_env("XDG_DATA_DIRS", context.temp_allocator)
+	if data_dirs == "" {
+		data_dirs = "/usr/local/share:/usr/share"
+	}
+	// XDG_DATA_DIRS is highest precedence first; the scan wants lowest first.
+	parts := strings.split(data_dirs, ":", context.temp_allocator)
+	#reverse for d in parts {
+		if d == "" {
+			continue
+		}
+		append(&out, strings.concatenate({d, "/applications"}, allocator))
+	}
+	if x := os.get_env("XDG_DATA_HOME", context.temp_allocator); x != "" {
+		append(&out, strings.concatenate({x, "/applications"}, allocator))
+	} else if home, err := os.user_home_dir(context.temp_allocator); err == nil {
 		append(&out, strings.concatenate({home, "/.local/share/applications"}, allocator))
 	}
 	return out[:]
+}
+
+// index_mtime is the newest modification time of the search directories,
+// so a long-lived index (the window manager's) knows when `palm add` put a
+// new application in and it is time to scan again.
+index_mtime :: proc() -> i64 {
+	newest: i64
+	for dir in search_dirs(context.temp_allocator) {
+		fi, err := os.stat(dir, context.temp_allocator)
+		if err != nil {
+			continue
+		}
+		t := fi.modification_time._nsec
+		if t > newest {
+			newest = t
+		}
+	}
+	return newest
 }
 
 // index_apps walks every search directory in increasing precedence order, so a
@@ -94,6 +165,13 @@ index_apps :: proc(allocator := context.allocator) -> []Entry {
 			path := strings.concatenate({dir, "/", fi.name}, allocator)
 			e, ok := parse_desktop(path, fi.name, allocator)
 			if !ok {
+				// A user's NoDisplay/Hidden copy of a system entry hides it.
+				for old, i in entries {
+					if old.id == fi.name {
+						ordered_remove(&entries, i)
+						break
+					}
+				}
 				continue
 			}
 			e.editable = home != "" && strings.has_prefix(path, home)
@@ -133,8 +211,18 @@ parse_desktop :: proc(
 	if err != nil {
 		return {}, false
 	}
-	text := string(data)
+	return parse_desktop_text(string(data), path, file, allocator)
+}
 
+// parse_desktop_text is parse_desktop on text already in memory, which is
+// what the self-tests feed it.
+parse_desktop_text :: proc(
+	text, path, file: string,
+	allocator := context.allocator,
+) -> (
+	e: Entry,
+	ok: bool,
+) {
 	e.id = strings.clone(file, allocator)
 	e.path = path
 
@@ -174,7 +262,7 @@ parse_desktop :: proc(
 		k := strings.trim_space(l[:eq])
 		v := strings.trim_space(l[eq + 1:])
 		// Localised keys (`Name[fr]`) are skipped: palmy draws one font and the
-		// launcher is only as multilingual as that.
+		// index is only as multilingual as that.
 		if strings.index_byte(k, '[') >= 0 {
 			continue
 		}
@@ -213,8 +301,12 @@ parse_desktop :: proc(
 			e.cats = v
 		case "Keywords":
 			e.keywords = v
+		case "MimeType":
+			e.mime = v
 		case "Terminal":
 			e.terminal = v == "true"
+		case "X-Palmframe-Demo":
+			e.demo = v == "true"
 		case "NoDisplay":
 			if v == "true" {
 				return {}, false
@@ -231,9 +323,15 @@ parse_desktop :: proc(
 	if !type_ok || e.name == "" || raw_exec == "" {
 		return {}, false
 	}
+	e.raw_exec = raw_exec
 	e.exec = strip_field_codes(raw_exec, allocator)
 	if e.exec == "" {
 		return {}, false
+	}
+	for code in ([?]string{"%f", "%F", "%u", "%U"}) {
+		if strings.contains(raw_exec, code) {
+			e.takes_file = true
+		}
 	}
 
 	// Keep the declared actions, in the order `Actions=` lists them, and drop
@@ -254,7 +352,7 @@ parse_desktop :: proc(
 	}
 	e.actions = keep[:]
 
-	e.cat = classify(e.cats, e.name)
+	e.cat = e.demo ? .Demo : classify(e.cats, e.name)
 	e.lower = strings.to_lower(e.name, allocator)
 	e.lcomment = strings.to_lower(e.comment, allocator)
 	e.hay = strings.to_lower(
@@ -265,6 +363,69 @@ parse_desktop :: proc(
 		allocator,
 	)
 	return e, true
+}
+
+// ---------------------------------------------------------------------------
+// Finding entries
+// ---------------------------------------------------------------------------
+
+// exec_name is the program an entry runs, without its directory: "files"
+// for `Exec=/usr/bin/files %U`.
+exec_name :: proc(e: ^Entry) -> string {
+	s := e.exec
+	if sp := strings.index_any(s, " \t"); sp >= 0 {
+		s = s[:sp]
+	}
+	s = strings.trim(s, "\"")
+	if sl := strings.last_index_byte(s, '/'); sl >= 0 {
+		s = s[sl + 1:]
+	}
+	return s
+}
+
+// find_id is the entry with that desktop id ("files.desktop", or "files").
+find_id :: proc(entries: []Entry, id: string) -> int {
+	for &e, i in entries {
+		if e.id == id {
+			return i
+		}
+	}
+	if !strings.has_suffix(id, ".desktop") {
+		for &e, i in entries {
+			if len(e.id) == len(id) + 8 && strings.has_prefix(e.id, id) && strings.has_suffix(e.id, ".desktop") {
+				return i
+			}
+		}
+	}
+	return -1
+}
+
+// find_program is the entry that runs `prog` (a binary name, or a path to
+// one), which is how a running window is traced back to its application:
+// from the client's pid, through /proc/<pid>/exe, to the entry whose Exec
+// starts that program. The bare entry is preferred over one that runs it
+// with arguments (`term` over `term -e htop`).
+find_program :: proc(entries: []Entry, prog: string) -> int {
+	name := prog
+	if sl := strings.last_index_byte(name, '/'); sl >= 0 {
+		name = name[sl + 1:]
+	}
+	if name == "" {
+		return -1
+	}
+	best := -1
+	for &e, i in entries {
+		if exec_name(&e) != name {
+			continue
+		}
+		if !strings.contains_any(strings.trim_space(e.exec), " \t") {
+			return i
+		}
+		if best < 0 {
+			best = i
+		}
+	}
+	return best
 }
 
 // ---------------------------------------------------------------------------
@@ -329,6 +490,33 @@ split_exec :: proc(s: string, allocator := context.allocator) -> []string {
 	return out[:]
 }
 
+// exec_with_file is the argv that opens `file` with an entry: the field code
+// in the raw Exec line replaced by the path, or the path appended when the
+// entry takes files but its Exec forgot to say where.
+exec_with_file :: proc(e: ^Entry, file: string, allocator := context.allocator) -> []string {
+	parts := split_exec(e.raw_exec, context.temp_allocator)
+	out := make([dynamic]string, allocator)
+	placed := false
+	for a in parts {
+		switch a {
+		case "%f", "%F", "%u", "%U":
+			if !placed {
+				append(&out, strings.clone(file, allocator))
+				placed = true
+			}
+		case:
+			stripped := strip_field_codes(a, context.temp_allocator)
+			if stripped != "" {
+				append(&out, strings.clone(stripped, allocator))
+			}
+		}
+	}
+	if !placed && file != "" {
+		append(&out, strings.clone(file, allocator))
+	}
+	return out[:]
+}
+
 // ---------------------------------------------------------------------------
 // Categories
 // ---------------------------------------------------------------------------
@@ -337,9 +525,9 @@ has_tag :: proc(cats, tag: string) -> bool {
 	return strings.contains(cats, tag)
 }
 
-// classify picks the one bucket a chip filter can use. Desktop categories
-// overlap freely, so the order here is the precedence: the most specific
-// grouping a user would look under wins.
+// classify picks the one bucket a chip filter or a start-menu group can use.
+// Desktop categories overlap freely, so the order here is the precedence: the
+// most specific grouping a user would look under wins.
 classify :: proc(cats, name: string) -> Category {
 	c := cats
 	switch {
@@ -357,7 +545,7 @@ classify :: proc(cats, name: string) -> Category {
 		return .Media
 	case has_tag(c, "Office") || has_tag(c, "Spreadsheet") || has_tag(c, "WordProcessor") ||
 	     has_tag(c, "Presentation") || has_tag(c, "Calendar") || has_tag(c, "Finance") ||
-	     has_tag(c, "Publishing"):
+	     has_tag(c, "Publishing") || has_tag(c, "ContactManagement"):
 		return .Office
 	case has_tag(c, "Settings") || has_tag(c, "System") || has_tag(c, "Monitor") ||
 	     has_tag(c, "Security") || has_tag(c, "HardwareSettings") ||
@@ -368,83 +556,4 @@ classify :: proc(cats, name: string) -> Category {
 		return .Utility
 	}
 	return .Other
-}
-
-// ---------------------------------------------------------------------------
-// Usage history
-//
-// Ranking by frecency is what makes a launcher feel like it knows you, so the
-// count of launches per desktop id is kept in the user's cache directory. The
-// file is a plain `<count> <id>` list, which is also what makes the menu's
-// "Clear Usage History" a real, reversible-by-use action.
-// ---------------------------------------------------------------------------
-
-usage_path :: proc(allocator := context.allocator) -> string {
-	home, err := os.user_home_dir(context.temp_allocator)
-	if err != nil {
-		return ""
-	}
-	return strings.concatenate({home, "/.cache/palmy-launcher/usage"}, allocator)
-}
-
-load_usage :: proc(entries: []Entry) {
-	path := usage_path(context.temp_allocator)
-	if path == "" {
-		return
-	}
-	data, err := os.read_entire_file_from_path(path, context.temp_allocator)
-	if err != nil {
-		return
-	}
-	it := string(data)
-	for line in strings.split_lines_iterator(&it) {
-		sp := strings.index_byte(line, ' ')
-		if sp <= 0 {
-			continue
-		}
-		n := 0
-		for c in line[:sp] {
-			if c < '0' || c > '9' {
-				n = 0
-				break
-			}
-			n = n * 10 + int(c - '0')
-		}
-		id := strings.trim_space(line[sp + 1:])
-		for &e in entries {
-			if e.id == id {
-				e.uses = n
-				break
-			}
-		}
-	}
-}
-
-save_usage :: proc(entries: []Entry) {
-	path := usage_path(context.temp_allocator)
-	if path == "" {
-		return
-	}
-	dir := path[:strings.last_index_byte(path, '/')]
-	_ = os.make_directory_all(dir)
-	b := strings.builder_make(context.temp_allocator)
-	for e in entries {
-		if e.uses > 0 {
-			strings.write_int(&b, e.uses)
-			strings.write_byte(&b, ' ')
-			strings.write_string(&b, e.id)
-			strings.write_byte(&b, '\n')
-		}
-	}
-	_ = os.write_entire_file(path, transmute([]byte)strings.to_string(b))
-}
-
-clear_usage :: proc(entries: []Entry) {
-	for &e in entries {
-		e.uses = 0
-	}
-	path := usage_path(context.temp_allocator)
-	if path != "" {
-		_ = os.remove(path)
-	}
 }
