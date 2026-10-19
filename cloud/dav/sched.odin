@@ -386,7 +386,9 @@ sched_on_delete :: proc(c: ^Ctx, r: ^Res, old_body: string) {
 		for a in attendees_of(cal, me) {
 			append(&plan.out, Itip_Out{a, "CANCEL", uid, body})
 		}
-	} else if strings.to_upper(web.header(c.req.headers, "Schedule-Reply")) != "F" {
+	} else if strings.to_upper(web.header(c.req.headers, "Schedule-Reply")) != "F" &&
+	   strings.to_upper(ical.value(sched_comps(cal)[0], "STATUS")) != "CANCELLED" {
+		// Removing an event the organizer already cancelled says nothing.
 		for comp in sched_comps(cal) {
 			if _, here := partstat_of(comp, me); here {
 				append(&plan.out, Itip_Out{org, "REPLY", uid, reply_message(cal, me, "DECLINED")})
