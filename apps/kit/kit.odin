@@ -70,9 +70,56 @@ start :: proc(cfg: p.Config, dark := false) -> (app: ^p.App, err: string) {
 		}
 	}
 
-	sc.register_shadcn_theme(dark)
+	// An app that asks for dark is dark; otherwise it follows the theme the
+	// person chose in Settings, so the shell and the apps agree.
+	sc.register_shadcn_theme(dark || system_theme_dark())
 	p.set_text_gamma(1.8)
 	return app, ""
+}
+
+// system_theme_dark reports the person's light/dark choice: PALMY_THEME if
+// set, else the last `theme =` line in ~/.config/palmy/wm.conf, which
+// Settings writes and the window manager reads. No explicit choice is light,
+// what every app looked like before the setting existed.
+system_theme_dark :: proc() -> bool {
+	if env := os.get_env("PALMY_THEME", context.temp_allocator); env != "" {
+		return strings.to_lower(strings.trim_space(env), context.temp_allocator) == "dark"
+	}
+	dir := os.get_env("XDG_CONFIG_HOME", context.temp_allocator)
+	if dir == "" {
+		home := os.get_env("HOME", context.temp_allocator)
+		if home == "" {
+			return false
+		}
+		dir = fmt.tprintf("%s/.config", home)
+	}
+	data, err := os.read_entire_file(fmt.tprintf("%s/palmy/wm.conf", dir), context.temp_allocator)
+	if err != nil {
+		return false
+	}
+	dark := false
+	text := string(data)
+	for line in strings.split_lines_iterator(&text) {
+		l := strings.trim_space(line)
+		if !strings.has_prefix(l, "theme") {
+			continue
+		}
+		rest := strings.trim_space(l[len("theme"):])
+		if !strings.has_prefix(rest, "=") {
+			continue
+		}
+		val := strings.to_lower(strings.trim_space(rest[1:]), context.temp_allocator)
+		if i := strings.index_byte(val, '#'); i >= 0 {
+			val = strings.trim_space(val[:i])
+		}
+		switch val {
+		case "dark":
+			dark = true
+		case "light":
+			dark = false
+		}
+	}
+	return dark
 }
 
 // run captures a command's output. Returns the trimmed stdout and whether the

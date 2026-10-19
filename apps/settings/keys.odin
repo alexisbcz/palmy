@@ -40,7 +40,7 @@ Key :: struct {
 }
 
 KEYS := [?]Key {
-	{"appearance.theme", .Enum, .Wm_Conf, "theme", "dark", {"dark", "light"}, 0, 0, "the look of the bar, title bars and menus"},
+	{"appearance.theme", .Enum, .Wm_Conf, "theme", "dark", {"dark", "light"}, 0, 0, "the look of the bar, title bars, menus and apps"},
 	{"appearance.accent", .Color, .Wm_Conf, "accent", "#6366f1", nil, 0, 0, "the colour of the current workspace, focus and selections"},
 	{"appearance.wallpaper", .Path, .Wm_Conf, "wallpaper", "", nil, 0, 0, "a picture for the desktop; empty for the generated gradient"},
 	{"appearance.wallpaper_mode", .Enum, .Wm_Conf, "wallpaper_mode", "fill", {"fill", "fit", "center", "tile"}, 0, 0, "how the picture covers the screen"},
