@@ -286,9 +286,7 @@ parse_desktop_text :: proc(
 		case "Name":
 			e.name = v
 		case "Comment":
-			if e.comment == "" {
-				e.comment = v
-			}
+			e.comment = v // the sentence beats GenericName's noun, whichever comes first
 		case "GenericName":
 			if e.comment == "" {
 				e.comment = v

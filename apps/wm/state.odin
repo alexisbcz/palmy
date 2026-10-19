@@ -113,7 +113,8 @@ state_publish :: proc(s: ^Server) {
 	}
 	delete(state_sig)
 	state_sig = strings.clone(body)
-	text := fmt.tprintf("{\"pid\": %d, %s}\n", os.get_pid(), body[1:])
+	// Concatenated, not formatted: fmt reads a brace as the start of a verb.
+	text := strings.concatenate({"{", fmt.tprintf("\"pid\": %d, ", os.get_pid()), body[1:], "}\n"}, context.temp_allocator)
 	tmp := fmt.tprintf("%s.tmp", path)
 	if os.write_entire_file(tmp, transmute([]byte)text) == nil {
 		os.rename(tmp, path)

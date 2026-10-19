@@ -687,7 +687,11 @@ start_key :: proc(s: ^Server, app: ^p.App, k: p.Key_Event) -> bool {
 		start.scroll = min(start.scroll + start.body.h * 0.8, start.scroll_max)
 	case p.KEY_PAGE_UP:
 		start.scroll = max(start.scroll - start.body.h * 0.8, 0)
-	case KEY_MENU:
+	case KEY_MENU, KEY_F10:
+		// The Menu key, or Shift+F10 on keyboards without one.
+		if k.sym == KEY_F10 && .Shift not_in k.mods {
+			break
+		}
 		if start.sel >= 0 && start.sel < len(start.hits) {
 			r := start.hits[start.sel].rect
 			start_context(s, start.hits[start.sel], int(r.x + r.w / 2), int(r.y + r.h / 2))
@@ -704,6 +708,7 @@ start_key :: proc(s: ^Server, app: ^p.App, k: p.Key_Event) -> bool {
 
 KEY_KP_ENTER :: 0xff8d
 KEY_MENU :: 0xff67
+KEY_F10 :: 0xffc7
 
 // key_rune is the character a keysym types: Latin-1 keysyms are their own
 // code points, and 0x01000000 + cp is the rest of Unicode.
