@@ -4,7 +4,7 @@
 # Libraries from the build host's Arch package avahi, only those another
 # runtime package links (pulled in by DT_NEEDED).
 pkgname  = avahi
-pkgver   = 0
+pkgver   = 0.9
 pkgrel   = 0
 pkgdesc  = Service Discovery for Linux using mDNS/DNS-SD (compatible with Bonjour) (libraries only) (from the build host)
 license  = LGPL-2.1-or-later

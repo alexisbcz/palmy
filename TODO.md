@@ -409,7 +409,11 @@ the areas' notes name.
 - **glibc, libxkbcommon, xkeyboard-config, tzdata, e2fsprogs, dosfstools,
   limine and the CJK font are copied from the Arch build host**
   (`distro/recipes/generate.sh`). Where a version is recorded, it comes from
-  `pacman -Q`. The image is only as reproducible as the host.
+  `pacman -Q`. The image is only as reproducible as the host. So are
+  PipeWire, BlueZ, OpenSSL and the libraries they pull; dbus, iwd, ffmpeg,
+  opus and libarchive are built from pinned, checksummed sources
+  (`distro/recipes/runtime/src`), and glibc 2.44 builds that way too but is
+  not switched over yet (`distro/notes/runtime.md`).
 - **Never booted on real hardware.** The kernel is configured for it and
   was tested on emulated PC devices (NVMe root, e1000e, HD Audio, xHCI,
   AHCI, PCIe hotplug), but no native GPU driver, Wi-Fi card or SOF audio
@@ -429,19 +433,13 @@ the areas' notes name.
 - **palm**: no revocation checking in its TLS client, indexes do not expire,
   and each package is decompressed whole in memory to install
   (`distro/notes/palm.md`, *Not done*).
-- **zram needs the kernel.** palm-init sets up zram swap from
-  `/etc/palm/zram` (verified with a kernel built with `CONFIG_ZRAM=y`,
-  `CONFIG_ZSMALLOC=y`, `CONFIG_CRYPTO_ZSTD=y`, `CONFIG_ZRAM_BACKEND_ZSTD=y`),
-  but `distro/kernel/palmframe.config` does not enable them, so the shipped
-  system has no swap.
-- **Most applications still copy through `kit.clipboard_set`**, which runs
-  `wl-copy`, not shipped. palmy has a native clipboard now
-  (`palmy/clipboard.odin`: `wl_data_device`, the primary selection, ICCCM
-  selections); `term`, `files`, `launcher` and palmy's own text widgets use
-  it. `apps/kit`'s `clipboard_set`/`clipboard_get` should try
-  `p.clipboard_set(text)` / `p.clipboard_get()` first (both work on the
-  default window and return false with none, off the loop thread, or when
-  refused) and keep wl-clipboard as the fallback.
+- **Runtime dependencies** (`distro/notes/runtime.md`): the kernel config lacks
+  what iwd (crypto API) and BlueZ (`CONFIG_BT`) need — proposed in
+  `distro/recipes/runtime/kernel.config`; PipeWire is not started by
+  palm-login yet (needs a `/etc/palm/session.d` hook); `apps/network` speaks
+  only NetworkManager while the system ships iwd; the bus runs as `nobody`
+  until base has a `dbus` user; poppler, whisper.cpp and v4l-utils are not
+  shipped.
 - **busybox's serial `login`** ignores shadow's aging fields; palm-login,
   doas and passwd honour them.
 - **A cosmetic fault** in the verification screenshots: the greeter's Shut

@@ -150,8 +150,12 @@ rt_add() { # rt_add <pkg> <dest> <host path to read>
 rt_meta() { # rt_meta <pkg> <arch pkg>: version, licence, url from pacman
 	local info
 	info="$(LC_ALL=C pacman -Qi "$2")"
-	RT_VER[$1]="${RT_VER[$1]:-$(host_version "$2" 0)}"
-	RT_LIC[$1]="${RT_LIC[$1]:-$(echo "$info" | sed -n 's/^Licenses *: *//p' | sed 's/  */ AND /g')}"
+	# The version as palm accepts it: Arch's "1:0.9rc3-2" -> 0.9 (the
+	# numeric prefix), where host_version would give up.
+	RT_VER[$1]="${RT_VER[$1]:-$(pacman -Q "$2" | awk '{print $2}' | sed 's/^[0-9]*://; s/-[^-]*$//' | grep -oE '^[0-9]+(\.[0-9]+)*')}"
+	# pacman separates licences by two spaces; one licence may itself
+	# contain single spaces ("GPL-3.0-or-later WITH GCC-exception-3.1").
+	RT_LIC[$1]="${RT_LIC[$1]:-$(echo "$info" | sed -n 's/^Licenses *: *//p' | sed -E 's/ {2,}/ AND /g')}"
 	RT_URL[$1]="${RT_URL[$1]:-$(echo "$info" | sed -n 's/^URL *: *//p')}"
 	RT_DESC[$1]="${RT_DESC[$1]:-$(echo "$info" | sed -n 's/^Description *: *//p')}"
 }

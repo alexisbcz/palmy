@@ -786,23 +786,21 @@ on real hardware yet.
   only ever run one monitor, and repaints the whole screen on the CPU every
   frame. Clients see keys as press and release pairs, so none can see a key
   held down. `notes/wm.md`.
-- **The clipboard is partly native.** palmy speaks `wl_data_device` and the
-  primary selection itself, so palmy's text fields, `term`, `files` and the
-  launcher copy and paste on the bare system; applications that go through
-  `kit.clipboard_set` still run `wl-copy`, which Palmframe does not ship.
-- **Applications.** 22 of the 47 programs work on the bare system, 9 partly,
-  16 not at all: those need ffmpeg, PipeWire, NetworkManager, BlueZ, ollama,
-  pacman or OpenSSL (`apps/apps.tsv`). `files` and the launcher still offer
+- **The clipboard is native.** palmy speaks `wl_data_device` and the
+  primary selection itself, and `kit.clipboard_set`/`get` try it first;
+  wl-clipboard is shipped as the fallback.
+- **Applications.** 29 of the 48 programs work, 14 partly, 5 not at all
+  (`apps/apps.tsv`). D-Bus, iwd, PipeWire, BlueZ, FFmpeg, OpenSSL and bsdtar
+  are shipped (`palmframe-runtime`, `notes/runtime.md`), but the kernel lacks
+  what iwd and BlueZ need, PipeWire is not yet started by palm-login, and
+  `network` still speaks only NetworkManager. `files` and the launcher still offer
   `foot` as the terminal. The `chat` app is not packaged, and busybox's `chat`
   applet is left out because the names clash.
 - **The installer** has the gaps listed in the root `TODO.md` under
   *Distribution*. The main ones: an installed disk boots only through UEFI,
   and part of the interface stays in English.
-- **No swap until the kernel has zram.** palm-init sets up zram swap from
-  `/etc/palm/zram`, but `kernel/palmframe.config` does not enable
-  `CONFIG_ZRAM` yet, so it says so at boot and runs without swap. Disk swap in
-  `/etc/fstab` works. Growing the root on first boot handles only a GPT disk
-  whose last partition is an ext4 `/`.
+- **Growing the root on first boot** handles only a GPT disk whose last
+  partition is an ext4 `/`.
 - **palm**'s resolver backtracks but is not a SAT solver (a step budget stops
   a pathological search); its TLS client checks no revocation; indexes do not
   expire (only an older one is refused); each package is still decompressed
