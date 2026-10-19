@@ -340,6 +340,14 @@ export const COLLECTIONS = {
               "End-to-end encrypted vaults per identity: the key hierarchy, sharing, what the server can see, and the browser autofill protocol.",
             source: { file: "cloud/docs/vault.md" },
           },
+          {
+            slug: "cloud-notes",
+            title: "Notes",
+            nav: "Notes",
+            description:
+              "Markdown notes per identity in ~/Notes, merged offline and co-edited live on the collab server, with share, carry and cross-identity links.",
+            source: { file: "cloud/docs/notes.md" },
+          },
         ],
       },
       {

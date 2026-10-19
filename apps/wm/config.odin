@@ -331,6 +331,7 @@ bind = $mod,       T,      spawn term
 bind = $mod,       Space,  spawn launcher
 bind = $mod,       D,      spawn launcher
 bind = $mod,       S,      spawn store
+bind = $mod SHIFT, N,      spawn notes capture
 bind = $mod,       C,      spawn counter
 bind = $mod,       G,      spawn gallery
 bind = $mod,       O,      spawn todo
