@@ -7,6 +7,7 @@ package main
 import "core:fmt"
 import "core:os"
 import "core:strings"
+import kit "kit:."
 import p "palmy:."
 
 SHOT_W :: 1280
@@ -121,6 +122,12 @@ shots :: proc(dir: string, only := "") -> int {
 	return shot_unbalanced == 0 ? n : -1
 }
 
+// kit_tr is tr without the right-to-left mark, for a format that is
+// formatted later.
+kit_tr :: proc(msgid: string) -> string {
+	return kit.tr(msgid)
+}
+
 step_file :: proc(s: Step) -> string {
 	switch s {
 	case .Welcome:
@@ -165,11 +172,11 @@ fixture_setup :: proc(st: ^St, ran: bool) {
 			t.detail = fmt.aprintf("~/Drive/%s", t.handle)
 		case .Calendar, .Contacts:
 			t.state = .Pending_Server
-			t.detail = "the calendar server is not answering"
+			t.detail = "" // a tool's own reason, in its own words, when there is one
 		case .Notes:
 			t.state = .Coming
 		case .Mail_Client:
-			t.detail = "2 mailboxes on this computer"
+			t.detail = fmt.aprintf(kit_tr("%d mailboxes on this computer"), 2)
 		case .Session, .Chat, .Vault:
 		}
 	}
