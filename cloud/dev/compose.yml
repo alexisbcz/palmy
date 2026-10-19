@@ -1,8 +1,8 @@
 # The Palmframe cloud stack for local development.
 #
 # Every service uses network_mode: host and binds 127.0.0.1 on a port derived
-# from PALM_PORT_BASE (see env.sh). Bridge networking does not work on the
-# development host (ufw-docker drops it), so this does not use it at all.
+# from PALM_PORT_BASE (see env.sh), so it needs no Docker bridge network
+# (see README.md for why it was written that way).
 # Start it with ./up.sh, not with `docker compose up` directly: up.sh sets
 # the ports, writes the gateway config, applies migrations and waits.
 #
@@ -61,6 +61,9 @@ services:
       GOTRUE_SECURITY_REFRESH_TOKEN_ROTATION_ENABLED: "true"
       GOTRUE_SECURITY_REFRESH_TOKEN_REUSE_INTERVAL: "10"
       GOTRUE_PASSWORD_MIN_LENGTH: "8"
+      # As config.toml: secure_password_change, double_confirm_changes.
+      GOTRUE_SECURITY_UPDATE_PASSWORD_REQUIRE_REAUTHENTICATION: "true"
+      GOTRUE_MAILER_SECURE_EMAIL_CHANGE_ENABLED: "true"
       GOTRUE_RATE_LIMIT_TOKEN_REFRESH: "1000"
       GOTRUE_RATE_LIMIT_VERIFY: "1000"
       GOTRUE_RATE_LIMIT_SIGN_IN_SIGN_UPS: "1000"

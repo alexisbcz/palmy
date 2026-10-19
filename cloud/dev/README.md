@@ -1,11 +1,14 @@
 # cloud/dev — the local Supabase stack
 
-`supabase start` does not work on the development host: ufw-docker drops
-Docker bridge traffic, so the CLI's containers cannot reach each other and it
-fails with `DbConnectError`, and published ports are unreachable too. Host
-networking does work, so this directory runs the same images the CLI 2.118.0
-uses, every one with `network_mode: host`, each bound to `127.0.0.1` on a port
-derived from one base.
+This directory runs the images Supabase CLI 2.118.0 uses, every one with
+`network_mode: host`, each bound to `127.0.0.1` on a port derived from one
+base. It needs no CLI and no Docker bridge network. It was written while
+bridge networking was broken on the development host: the CLI's containers
+could not reach each other and `supabase start` failed with
+`DbConnectError`. That turned out to be the VPN's firewall, not ufw, and it
+has since been fixed. `npx supabase@2.118.0 start` works now too, and the
+migrations and pgTAP tests pass under it (70 of 70). This stack is still the
+one that carries the gateway rule (see the end of this file).
 
 ```sh
 cloud/dev/up.sh                        # project palmframe, API 54321, DB 54322
