@@ -348,6 +348,10 @@ draw_grid :: proc(c: ^p.Canvas, r: p.Rect, app: ^App) {
 		}
 	}
 
+	if collab.on {
+		draw_peer_cells(c, app, g_ptr(&g), body, s)
+	}
+
 	// --- the selection outline, when more than one cell is selected ---
 	if sel.r0 != sel.r1 || sel.c0 != sel.c1 {
 		x0 := edge_x(app, xs[:], cols[:], sel.c0, body, true)

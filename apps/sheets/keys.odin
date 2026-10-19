@@ -9,6 +9,7 @@ import "core:strings"
 import "core:time"
 import kit "kit:."
 import p "palmy:."
+import collabui "../../cloud/collab/ui"
 
 // nkeys counts presses of a key with exactly these modifiers, auto-repeat
 // included — two arrow presses can land in one frame when a script drives the
@@ -68,6 +69,10 @@ handle_keys :: proc(ui: ^p.Ctx, app: ^App) {
 		keys_edit(ui, app, typed)
 		return
 	case .Nav:
+	}
+
+	if collab_keys(ui, app) {
+		return
 	}
 
 	// --- scrolling ---
@@ -394,6 +399,12 @@ prompt_title :: proc(k: Prompt_Kind) -> string {
 		return "Name the selection"
 	case .Name_Delete:
 		return "Delete which name"
+	case .Comment:
+		return "Comment on this cell"
+	case .Share:
+		return "Share with: <handle> <view|comment|edit>, or: link <role>"
+	case .Name_Version:
+		return "Name this version"
 	case .None:
 		return ""
 	}
@@ -517,6 +528,16 @@ run_prompt :: proc(app: ^App, text: string) {
 			set_status(app, "Dropped the name %s", arg)
 		} else {
 			set_status(app, "There is no name %s", arg)
+		}
+	case .Comment:
+		collab_comment(app, arg)
+	case .Share:
+		set_status(app, "%s", collabui.share_cmd(&collab.ui, arg))
+	case .Name_Version:
+		if e := collabui.name_version(&collab.ui, arg); e != "" {
+			set_status(app, "%s", e)
+		} else {
+			set_status(app, "Named this version %q", arg)
 		}
 	case .Save_As:
 		do_save(app, arg)

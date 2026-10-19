@@ -11,6 +11,7 @@ import "core:os"
 import "core:strings"
 import kit "kit:."
 import p "palmy:."
+import collabui "../../cloud/collab/ui"
 
 // The usage text and the headless exporter that used to live here are gone:
 // `--help` is generated from the declaration in cli.odin, and `--export` is a
@@ -22,8 +23,11 @@ main :: proc() {
 	// it is parsed by. --selftest, --export, --shot and --film are commands
 	// there now, with their old spellings kept as aliases. With no command,
 	// or with a path, there is a window.
-	if code, handled := kit.cli(surface()); handled {
-		os.exit(code)
+	ca, rest := collabui.parse_args(os.args[1:])
+	if ca.doc == "" {
+		if code, handled := kit.cli(surface()); handled {
+			os.exit(code)
+		}
 	}
 
 	app_win, err := kit.start({title = "Sheets", width = 1240, height = 760, min_width = 720, min_height = 420})
@@ -43,7 +47,7 @@ main :: proc() {
 	app.name = strings.clone("Untitled")
 
 	loaded := false
-	for arg in os.args[1:] {
+	for arg in rest {
 		if strings.has_prefix(arg, "-") {
 			continue
 		}
@@ -79,12 +83,22 @@ main :: proc() {
 	if !loaded {
 		seed_demo(app)
 	}
+	if ca.doc != "" {
+		if ca.script != "" {
+			os.exit(run_script(app, app_win, ca))
+		}
+		if e := collab_start(app, app_win, ca); e != "" {
+			fmt.eprintfln("sheets: %s", e)
+			os.exit(1)
+		}
+	}
 
 	for ui in p.frames(app_win) {
 		// The viewport is measured before the keyboard runs, because Page
 		// Up/Down and following the cursor both need to know what fits.
 		measure_viewport(app, p.size(ui))
 		handle_keys(ui, app)
+		collab_tick(ui, app)
 		if app.quit {
 			p.quit_app(app_win)
 			break

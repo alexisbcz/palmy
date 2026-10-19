@@ -290,6 +290,7 @@ selftest :: proc() -> int {
 	t_xlsx_book(&tc)
 	t_robustness(&tc)
 	t_cli(&tc)
+	t_collab(&tc)
 
 	fmt.println()
 	if tc.failed == 0 {

@@ -35,6 +35,10 @@ Prompt_Kind :: enum u8 {
 	Sheet_Name,
 	Name_Define,
 	Name_Delete,
+	// collaboration
+	Comment,
+	Share,
+	Name_Version,
 }
 
 // Line is a one-line text editor owned by this app. palmy's `text_field`
@@ -293,6 +297,7 @@ snap_free :: proc(s: Snap) {
 }
 
 undo_push :: proc(app: ^App) {
+	collab_note_edit(app)
 	append(&app.undo.past, snap_take(app))
 	if len(app.undo.past) > UNDO_LIMIT {
 		snap_free(app.undo.past[0])
@@ -320,6 +325,11 @@ snap_restore :: proc(app: ^App, s: Snap) {
 }
 
 do_undo :: proc(app: ^App) {
+	if collab.on {
+		// shared: this window's own last change, never a collaborator's
+		set_status(app, collab_undo(app, false) ? "Undo" : "Nothing to undo")
+		return
+	}
 	if len(app.undo.past) == 0 {
 		set_status(app, "Nothing to undo")
 		return
@@ -333,6 +343,10 @@ do_undo :: proc(app: ^App) {
 }
 
 do_redo :: proc(app: ^App) {
+	if collab.on {
+		set_status(app, collab_undo(app, true) ? "Redo" : "Nothing to redo")
+		return
+	}
 	if len(app.undo.future) == 0 {
 		set_status(app, "Nothing to redo")
 		return

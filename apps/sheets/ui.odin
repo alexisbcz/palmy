@@ -6,16 +6,23 @@ package main
 import "core:fmt"
 import "core:strings"
 import p "palmy:."
+import collabui "../../cloud/collab/ui"
 import sc "shadcn:."
 
 frame :: proc(ui: ^p.Ctx, app: ^App) {
 	p.div(ui, "relative flex-col w-full h-full bg-background text-foreground overflow-hidden")
 	defer p.end(ui)
 
+	collabui.band(ui, &collab.ui)
 	toolbar(ui, app)
 	formula_bar(ui, app)
 
-	p.pixels(ui, "flex-1 w-full overflow-hidden", app, draw_grid)
+	p.row(ui, "flex-1 w-full min-h-0 overflow-hidden")
+	p.pixels(ui, "flex-1 h-full overflow-hidden", app, draw_grid)
+	if collab.on && collab.ui.panel != .None {
+		collab_panel(ui, app)
+	}
+	p.end(ui)
 
 	sheet_tabs(ui, app)
 	status_bar(ui, app)
@@ -46,6 +53,7 @@ toolbar :: proc(ui: ^p.Ctx, app: ^App) {
 	defer p.end(ui)
 
 	p.icon(ui, sc.ICON_COLUMNS_3, "size-4 text-muted-foreground")
+	collabui.chip(ui, &collab.ui)
 	p.text(ui, app.name != "" ? app.name : "Untitled sheet", "text-sm font-semibold whitespace-nowrap shrink-0")
 	p.text(ui, "/", "text-sm text-muted-foreground shrink-0")
 	p.text(ui, app.sh.name, "text-sm text-muted-foreground whitespace-nowrap shrink-0 truncate max-w-[160]")
@@ -79,6 +87,14 @@ toolbar :: proc(ui: ^p.Ctx, app: ^App) {
 			sel.r1 - sel.r0 + 1,
 			sel.c1 - sel.c0 + 1,
 		)
+	}
+	if collab.on {
+		collabui.presence(ui, &collab.ui)
+		if collabui.share_button(ui, &collab.ui) {
+			collab.ui.panel = collab.ui.panel == .Share ? .None : .Share
+			if collab.ui.panel == .Share {collabui.load_people(&collab.ui)}
+		}
+		return
 	}
 	p.text(ui, "Keys", "text-xs text-muted-foreground whitespace-nowrap shrink-0")
 	sc.kbd(ui, "F1")

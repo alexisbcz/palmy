@@ -193,6 +193,7 @@ structural_op :: proc(sh: ^Sheet, insert: bool, axis_row: bool, at, n: int) {
 	if n <= 0 || at < 0 {
 		return
 	}
+	collab_note_structural(sh, insert, axis_row, at, n)
 	bk := sh.book
 	target := sh.index
 
