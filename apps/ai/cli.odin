@@ -40,7 +40,7 @@ COMMANDS := []kit.Command {
 		args = {{name = "request", kind = .String, required = true, variadic = true, help = "what to ask"}},
 		flags = {
 			{name = "conversation", kind = .String, help = "continue this conversation"},
-			{name = "max-steps", kind = .Int, def = "5", help = "tool calls at most"},
+			{name = "max-steps", kind = .Int, def = "6", help = "tool calls at most"},
 		},
 		out = {
 			{name = "identity", kind = .String},
@@ -295,7 +295,7 @@ cmd_ask :: proc(c: ^kit.Call) -> int {
 		handle = ident.handle,
 		request = request,
 		conversation_id = kit.cli_str(c, "conversation"),
-		max_steps = kit.cli_int(c, "max-steps", 5),
+		max_steps = kit.cli_int(c, "max-steps", 6),
 		sink = sink,
 		sink_data = steps,
 	})

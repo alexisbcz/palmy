@@ -57,6 +57,8 @@ Agent :: struct {
 	answer:    string,
 	refusals:  int,
 	draft_to:  map[string]string, // draft id -> its recipients, as written
+	parts:     []Part,
+	part:      int, // the part being worked on
 }
 
 // The menu, in the order a model sees it, with the words it sees. The
@@ -245,15 +247,173 @@ results_text :: proc(a: ^Agent, budget := 6000) -> string {
 }
 
 // ---------------------------------------------------------------------------
+// Parts of a request
+//
+// "Find the Halden invoice and draft a reply to Noor attaching it" is two
+// tasks. Measured on qwen3:0.6b, asking for the next step of the whole
+// request ends the run after the first read 12 times in 15; asking for the
+// next step of the current part, with "answer" withheld while a part that
+// asks for a draft or an event has produced neither, is right twice as
+// often. The split is plain text handling — sentences, and "and" before a
+// verb that writes — and the model still chooses every step.
+// ---------------------------------------------------------------------------
+
+Part :: struct {
+	text:   string,
+	writes: bool, // it asks for a draft, a message, an event
+	steps:  int, // steps taken while it was current
+	wrote:  bool,
+	looked: bool, // a read for it brought something back
+}
+
+@(private)
+WRITE_VERBS := [?]string {
+	"draft", "write", "reply", "answer", "respond", "schedule", "book", "add", "put", "send", "forward",
+	"share", "post", "create", "make", "invite", "note", "jot", "remind", "accept", "decline",
+}
+
+@(private)
+first_word_writes :: proc(s: string) -> bool {
+	for w in strings.fields(strings.to_lower(s, context.temp_allocator), context.temp_allocator) {
+		t := strings.trim(w, ".,;:!?\"'")
+		if t == "please" || t == "then" || t == "also" || t == "and" || t == "can" || t == "you" || t == "could" || t == "i" || t == "want" || t == "to" {continue}
+		for v in WRITE_VERBS {if t == v {return true}}
+		return false
+	}
+	return false
+}
+
+@(private)
+mentions_write :: proc(s: string) -> bool {
+	for w in strings.fields(strings.to_lower(s, context.temp_allocator), context.temp_allocator) {
+		t := strings.trim(w, ".,;:!?\"'")
+		for v in WRITE_VERBS[:9] {if t == v {return true}}
+	}
+	return false
+}
+
+split_parts :: proc(request: string, allocator := context.allocator) -> []Part {
+	out := make([dynamic]Part, allocator)
+	// Sentences first.
+	sentences := make([dynamic]string, context.temp_allocator)
+	start := 0
+	for i := 0; i < len(request); i += 1 {
+		c := request[i]
+		if (c == '.' || c == '?' || c == '!' || c == ';') && (i + 1 == len(request) || request[i + 1] == ' ' || request[i + 1] == '\n') {
+			append(&sentences, request[start:i])
+			start = i + 1
+		}
+	}
+	append(&sentences, request[start:])
+	for s in sentences {
+		// Then " and <verb that writes>", ", then", " and then".
+		rest := strings.trim_space(s)
+		for rest != "" {
+			cut := -1
+			skip := 0
+			low := strings.to_lower(rest, context.temp_allocator)
+			for marker in ([?]string{" and then ", ", then ", " then ", " and "}) {
+				from := 0
+				for {
+					j := strings.index(low[from:], marker)
+					if j < 0 {break}
+					at := from + j
+					if marker != " and " || first_word_writes(low[at + len(marker):]) {
+						if cut < 0 || at < cut {
+							cut = at
+							skip = len(marker)
+						}
+						break
+					}
+					from = at + len(marker)
+				}
+			}
+			piece := cut < 0 ? rest : rest[:cut]
+			piece = strings.trim(piece, " ,")
+			if piece != "" {
+				append(&out, Part{text = strings.clone(piece, allocator), writes = mentions_write(piece)})
+			}
+			if cut < 0 {break}
+			rest = strings.trim_space(rest[cut + skip:])
+		}
+	}
+	if len(out) == 0 {
+		append(&out, Part{text = strings.clone(request, allocator), writes = mentions_write(request)})
+	}
+	return out[:]
+}
+
+// ---------------------------------------------------------------------------
 // Choosing
 // ---------------------------------------------------------------------------
 
-// available is the menu at this moment: a tool whose argument must be one of
-// the candidates is offered only once there is a candidate.
+// read_something says whether a read in this run brought anything back.
+read_something :: proc(a: ^Agent) -> bool {
+	for o in a.obs {
+		if o.ok && o.text != "" && !strings.contains(o.text, "\n(nothing)\n") {return true}
+	}
+	return false
+}
+
+// available is the menu at this moment. Two rules shape it, both there for
+// small models and neither trusting one:
+//
+//   - A tool whose argument must be one of the candidates is offered only
+//     once there is a candidate.
+//   - Writing and proposing come after looking: a draft or a proposal is
+//     offered only once a read has brought something back, so what the
+//     assistant proposes is grounded in the identity's own data rather than
+//     in the model's guess ("schedule it as she proposed" has to find what
+//     she proposed first).
+// NOUN_WORDS says which application a word points at. The menu lists the
+// tools of the application the current part names first: a small model
+// picks from the top of a list far more often than from the middle, and
+// "find the invoice in my files" should not start with the mail tools.
+@(private)
+NOUN_WORDS := [?][2]string {
+	{"drive", "file"}, {"drive", "files"}, {"drive", "drive"}, {"drive", "folder"}, {"drive", "document"}, {"drive", "pdf"},
+	{"calendar", "calendar"}, {"calendar", "meeting"}, {"calendar", "schedule"}, {"calendar", "event"}, {"calendar", "week"}, {"calendar", "agenda"},
+	{"notes", "note"}, {"notes", "notes"},
+	{"mail", "mail"}, {"mail", "email"}, {"mail", "inbox"}, {"mail", "wrote"}, {"mail", "reply"}, {"mail", "asked"}, {"mail", "sent"},
+	{"mail", "draft"}, {"mail", "answer"}, {"mail", "respond"}, {"mail", "forward"},
+	{"contacts", "contact"}, {"contacts", "phone"}, {"chat", "chat"}, {"chat", "channel"}, {"forge", "issue"}, {"forge", "repository"},
+}
+
+@(private)
+nouns_named :: proc(text: string) -> []string {
+	out := make([dynamic]string, context.temp_allocator)
+	for w in strings.fields(strings.to_lower(text, context.temp_allocator), context.temp_allocator) {
+		t := strings.trim(w, ".,;:!?\"'")
+		for nw in NOUN_WORDS {
+			if t == nw[1] {
+				dup := false
+				for x in out {if x == nw[0] {dup = true}}
+				if !dup {append(&out, nw[0])}
+			}
+		}
+	}
+	return out[:]
+}
+
 available :: proc(a: ^Agent) -> []Menu {
 	out := make([dynamic]Menu, context.temp_allocator)
+	grounded := read_something(a)
+	named := nouns_named(a.parts[a.part].text)
+	ordered := make([dynamic]Menu, context.temp_allocator)
+	for n in named {
+		for m in MENU {if strings.has_prefix(m.name, fmt.tprintf("%s_", n)) {append(&ordered, m)}}
+	}
 	for m in MENU {
-		if find_tool(a.reg, m.name) == nil {continue}
+		if !slice.contains(ordered[:], m) {append(&ordered, m)}
+	}
+	for m in ordered {
+		t := find_tool(a.reg, m.name)
+		if t == nil {continue}
+		if t.class != .Read && !grounded {continue}
+		// A part that names what it wants written ("reply", "schedule")
+		// is not offered another application's writes: a reply is not a
+		// chat post.
+		if t.class != .Read && len(named) > 0 && !slice.contains(named, t.noun) {continue}
 		switch m.name {
 		case "mail_read":
 			if len(a.seen.messages) == 0 {continue}
@@ -293,15 +453,28 @@ choose :: proc(a: ^Agent) -> string {
 		fmt.sbprintf(&b, "- %s: %s\n", m.name, m.words)
 		append(&names, ck.quote(m.name))
 	}
-	fmt.sbprintf(&b, "- answer: reply to the person now\n")
-	append(&names, `"answer"`)
+	// The first step of a part always does something: a small model asked
+	// about the person's data otherwise "answers" from nothing. And a part
+	// that asks for a draft or an event is not finished until one exists.
+	cur := &a.parts[a.part]
+	may_answer := cur.steps > 0 && (!cur.writes || cur.wrote)
+	if may_answer {
+		fmt.sbprintf(&b, "- answer: reply to the person now\n")
+		append(&names, `"answer"`)
+	}
+	focus := ""
+	if len(a.parts) > 1 {
+		focus = fmt.tprintf("Now work on this part of it: «%s». ", cur.text)
+	}
 	prompt := fmt.tprintf(
-		"The person asked: «%s»\n\nDone so far:\n%s\nResults so far:\n%s\n\nWhat is the single next step? Choose \"answer\" as soon as the results contain what the person asked for, or when nothing more can help.\nSteps:\n%sReply as JSON: {{\"tool\": \"<one of the steps>\"}}",
-		a.req.request, done_so_far(a), results_text(a, 4000), strings.to_string(b),
+		"%s\n\nThe person asked: «%s»\nDone so far:\n%s\n%sWhat is the single next step?%s\nSteps:\n%sReply as JSON: {{\"tool\": \"<one of the steps>\"}}",
+		results_text(a, 4000), a.req.request, done_so_far(a), focus,
+		may_answer ? " Choose \"answer\" when this part is done." : "", strings.to_string(b),
 	)
 	schema := fmt.tprintf(`{{"type":"object","properties":{{"tool":{{"type":"string","enum":[%s]}}}},"required":["tool"]}}`, strings.join(names[:], ",", context.temp_allocator))
 	r := ask(a, "choose", prompt, schema, 40)
 	if r.err != "" {return "answer"}
+	_ = may_answer
 	v, ok := ck.parse(r.text, context.temp_allocator)
 	if !ok {return "answer"}
 	name := ck.get_str(v, "tool")
@@ -384,6 +557,8 @@ slots_for :: proc(a: ^Agent, t: ^Tool) -> []Slot {
 			vals := make([dynamic]string, context.temp_allocator)
 			for v in p.values {append(&vals, ck.quote(v))}
 			s.schema = fmt.tprintf(`{{"type":"string","enum":[%s]}}`, strings.join(vals[:], ",", context.temp_allocator))
+		case name == "query" || name == "search" || name == "title" || name == "subject":
+			s.schema = `{"type":"string","maxLength":80}`
 		case:
 			s.schema = `{"type":"string","maxLength":1500}`
 		}
@@ -394,6 +569,32 @@ slots_for :: proc(a: ^Agent, t: ^Tool) -> []Slot {
 
 @(private)
 slot_help :: proc(a: ^Agent, t: ^Tool, s: Slot) -> string {
+	// Plain words for the common slots; the binary's own help otherwise.
+	switch s.name {
+	case "query", "search":
+		return "two or three words to look for"
+	case "date", "from":
+		return "a date, YYYY-MM-DD, from the list of days"
+	case "to":
+		if t.name == "calendar_events" {return "the end date, YYYY-MM-DD"}
+		return "who it goes to"
+	case "time":
+		return "the start time, HH:MM, 24-hour"
+	case "minutes":
+		return "how long, in minutes"
+	case "title":
+		return "a short title"
+	case "subject":
+		return "the subject line"
+	case "body":
+		return "the text of the mail, short and polite"
+	case "attach":
+		return "a file to attach, or none"
+	case "reply-to":
+		return "the mail this answers, or none"
+	case "id":
+		return "which one"
+	}
 	for p in t.params {
 		if p.name == s.name {
 			return p.help
@@ -423,9 +624,12 @@ fill :: proc(a: ^Agent, t: ^Tool) -> (args: map[string]string, why: string) {
 		strings.join(props[:], ",", context.temp_allocator), strings.join(req[:], ",", context.temp_allocator))
 	words := t.summary
 	for m in MENU {if m.name == t.name {words = m.words}}
+	// Results first, then the request, then the values wanted: measured on
+	// qwen3:0.6b, this order stops it copying the instructions into the
+	// arguments (7 of 9 right against 6 of 9, and no prompt text echoed).
 	prompt := fmt.tprintf(
-		"The person asked: «%s»\n\nResults so far:\n%s\n\nNext step: %s (%s). Fill in its arguments from the person's request and the results. For a date, use the YYYY-MM-DD form from the list of days above.\nArguments:\n%sReply as JSON.",
-		a.req.request, results_text(a, 4000), t.name, words, strings.to_string(guide),
+		"%s\n\nThe person asked: «%s»\nYou will now %s. Give these values, taken from the person's words and the text above (for dates, use the list of days):\n%sAnswer with JSON only.",
+		results_text(a, 4000), a.req.request, words, strings.to_string(guide),
 	)
 	r := ask(a, "args", prompt, schema, 600)
 	if r.err != "" {return args, fmt.tprintf("the model did not answer (%s)", r.err)}
@@ -444,6 +648,17 @@ fill :: proc(a: ^Agent, t: ^Tool) -> (args: map[string]string, why: string) {
 		case json.Boolean:
 			val = x ? "true" : "false"
 		}
+		// A small model sometimes answers with the description of the slot
+		// ("two or three words to look for"); that is not a value.
+		if h := slot_help(a, t, s); h != "" && strings.to_lower(val, context.temp_allocator) == strings.to_lower(h, context.temp_allocator) {
+			val = ""
+		}
+		if val == "" && (s.name == "query" || s.name == "search") {
+			// The words of the part being worked on, then of the request.
+			ws := keywords(a.parts[a.part].text)
+			if len(ws) == 0 {ws = keywords(a.req.request)}
+			val = strings.join(ws, " ", context.temp_allocator)
+		}
 		if s.labels != nil || s.none_ok {
 			if val == "none" || val == "" {
 				val = ""
@@ -460,6 +675,22 @@ fill :: proc(a: ^Agent, t: ^Tool) -> (args: map[string]string, why: string) {
 			}
 		}
 		args[s.name] = val
+	}
+	// The person said "attach it" and the drafting step left the attachment
+	// out: if exactly one file found in this run matches the request's
+	// words, it is the one meant. Shown in the step, and still only a draft.
+	if t.name == "mail_draft" && args["attach"] == "" && strings.contains(strings.to_lower(a.req.request, context.temp_allocator), "attach") {
+		best := ""
+		best_n := 0
+		ties := 0
+		ws := keywords(a.req.request)
+		for f in a.seen.files {
+			n := 0
+			lf := strings.to_lower(f.key, context.temp_allocator)
+			for w in ws {if strings.contains(lf, w) {n += 1}}
+			if n > best_n {best, best_n, ties = f.key, n, 0} else if n == best_n && n > 0 {ties += 1}
+		}
+		if best != "" && ties == 0 {args["attach"] = best}
 	}
 	for p in t.params {
 		if p.required {
@@ -787,6 +1018,84 @@ remember :: proc(a: ^Agent, t: ^Tool, args: map[string]string, r: Run) -> (text,
 	return un.fence(label, body), brief
 }
 
+// ---------------------------------------------------------------------------
+// Searching
+//
+// A small model asked to search writes the person's whole sentence as the
+// query ("Did Mum write to me about Sunday dinner?"), and every search here
+// wants all its words. The runtime therefore keeps the words that carry
+// meaning and, when they find nothing together, tries them one at a time,
+// longest first. The model still chose to search; the runtime makes the
+// search useful.
+// ---------------------------------------------------------------------------
+
+@(private)
+STOPWORDS := [?]string {
+	"a", "an", "the", "and", "or", "of", "to", "in", "on", "at", "for", "from", "by", "with", "about", "is", "are",
+	"was", "were", "be", "it", "its", "this", "that", "these", "those", "my", "me", "i", "you", "your", "we", "our",
+	"did", "do", "does", "has", "have", "had", "any", "some", "find", "search", "show", "look", "mail", "mails",
+	"email", "emails", "message", "messages", "file", "files", "note", "notes", "write", "wrote", "written", "send",
+	"sent", "what", "when", "where", "who", "which", "how", "there", "can", "could", "would", "please", "draft",
+	"reply", "attach", "attaching", "it.", "him", "her", "them", "their", "his", "she", "he", "they", "fill",
+	"arguments", "argument", "words", "word", "results", "result", "person", "asked", "request", "tell", "give",
+	"list", "all", "new", "latest", "recent", "inbox", "drive", "folder", "calendar", "schedule", "meeting",
+}
+
+search_param :: proc(tool: string) -> string {
+	switch tool {
+	case "mail_search", "drive_find", "notes_search":
+		return "query"
+	case "contacts_list":
+		return "search"
+	}
+	return ""
+}
+
+keywords :: proc(q: string) -> []string {
+	out := make([dynamic]string, context.temp_allocator)
+	for raw in strings.fields(strings.to_lower(q, context.temp_allocator), context.temp_allocator) {
+		w := strings.trim(raw, ".,;:!?\"'()[]«»“”‘’")
+		if len(w) < 3 {continue}
+		skip := false
+		for s in STOPWORDS {if w == s {skip = true}}
+		if skip {continue}
+		dup := false
+		for x in out {if x == w {dup = true}}
+		if !dup {append(&out, w)}
+	}
+	return out[:]
+}
+
+@(private)
+hits :: proc(r: Run) -> int {
+	for k in ([?]string{"messages", "items", "matches", "contacts", "results"}) {
+		if v := ck.get(r.value, k); v != nil {return len(ck.array(v))}
+	}
+	return -1
+}
+
+search_relaxed :: proc(a: ^Agent, t: ^Tool, args: map[string]string, key: string) -> Run {
+	words := keywords(args[key])
+	try_q :: proc(a: ^Agent, t: ^Tool, args: map[string]string, key, q: string) -> Run {
+		m := make(map[string]string, allocator = context.temp_allocator)
+		for k, v in args {m[k] = v}
+		m[key] = q
+		return a.runner(a, argv_for(t, m))
+	}
+	if len(words) == 0 {return try_q(a, t, args, key, args[key])}
+	r := try_q(a, t, args, key, strings.join(words, " ", context.temp_allocator))
+	if !r.ok || hits(r) != 0 || len(words) == 1 {return r}
+	by_len := make([dynamic]string, context.temp_allocator)
+	append(&by_len, ..words)
+	slice.sort_by(by_len[:], proc(x, y: string) -> bool {return len(x) > len(y)})
+	for w, i in by_len {
+		if i >= 3 {break}
+		r2 := try_q(a, t, args, key, w)
+		if r2.ok && hits(r2) > 0 {return r2}
+	}
+	return r
+}
+
 execute :: proc(a: ^Agent, t: ^Tool, args: map[string]string, shown: string) {
 	run_args := make(map[string]string, allocator = context.temp_allocator)
 	for k, v in args {run_args[k] = v}
@@ -826,7 +1135,12 @@ execute :: proc(a: ^Agent, t: ^Tool, args: map[string]string, shown: string) {
 			a.runner(a, {t.bin, "sync", "--json"})
 			a.synced = true
 		}
-		r = a.runner(a, argv_for(t, run_args))
+		qkey := search_param(t.name)
+		if qkey != "" && run_args[qkey] != "" {
+			r = search_relaxed(a, t, run_args, qkey)
+		} else {
+			r = a.runner(a, argv_for(t, run_args))
+		}
 	}
 
 	text, brief: string
@@ -1014,6 +1328,7 @@ agent_init :: proc(a: ^Agent, io: ^IO, req: Request, reg: ^Registry, db: ^ck.Cli
 	a.obs = make([dynamic]Observation)
 	a.proposals = make([dynamic]Proposal)
 	a.draft_to = make(map[string]string)
+	a.parts = split_parts(req.request)
 	note_typed(&a.seen, req.request)
 	for t in req.history {
 		if t.role == "user" {note_typed(&a.seen, t.content)}
@@ -1030,7 +1345,14 @@ run :: proc(a: ^Agent) {
 	last := ""
 	for len(a.obs) < a.req.max_steps {
 		name := choose(a)
-		if name == "answer" {break}
+		if name == "answer" {
+			// This part is done; on to the next, or to the answer.
+			if a.part + 1 < len(a.parts) {
+				a.part += 1
+				continue
+			}
+			break
+		}
 		t := find_tool(a.reg, name)
 		if t == nil {break}
 		args, why := fill(a, t)
@@ -1041,7 +1363,26 @@ run :: proc(a: ^Agent) {
 		}
 		if key == last {break} // the same step twice: the model is going round
 		last = strings.clone(key)
+		before := len(a.obs)
 		step(a, t, args)
+		cur := &a.parts[a.part]
+		cur.steps += 1
+		if t.class != .Read {
+			cur.wrote = true
+		} else if len(a.obs) > before && a.obs[len(a.obs) - 1].ok && read_something(a) {
+			cur.looked = true
+		}
+		// A part that only reads is done once it has read something; a
+		// part that writes, once it has written. Then the next part.
+		if (cur.writes && cur.wrote) || (!cur.writes && cur.looked) {
+			if a.part + 1 < len(a.parts) {
+				a.part += 1
+			} else if cur.writes {
+				// Every part has what it asked for; one proposal per request
+				// part is enough, and more would only be duplicates.
+				break
+			}
+		}
 	}
 	a.answer = answer(a)
 	ao := ev("answer")

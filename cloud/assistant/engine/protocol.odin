@@ -93,7 +93,7 @@ parse_request :: proc(line: string, allocator := context.allocator) -> (r: Reque
 		address = strings.clone(ck.get_str(v, "identity", "address"), allocator),
 	}
 	r.max_steps = int(ck.get_int(v, "max_steps"))
-	if r.max_steps <= 0 {r.max_steps = 5}
+	if r.max_steps <= 0 {r.max_steps = 6}
 	hist := make([dynamic]Turn, allocator)
 	for t in ck.array(ck.get(v, "history")) {
 		append(&hist, Turn{strings.clone(ck.get_str(t, "role"), allocator), strings.clone(ck.get_str(t, "content"), allocator)})

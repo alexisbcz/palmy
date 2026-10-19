@@ -640,7 +640,8 @@ assist :: proc(p: ^Person, ask: Ask) -> (out: Outcome) {
 		fmt.tprintf("PALM_CLOUD_DIR=%s/cloud", dir),
 		fmt.tprintf("PALM_IDENTITY=%s", ident.handle),
 		fmt.tprintf("PALM_DAV_URL=%s", dav_url()),
-		fmt.tprintf("PALM_DAV_CACHE=%s/dav", dir),
+		"PALM_DAV_CACHE=dav", // relative to the state directory; see run_argv
+		fmt.tprintf("PALM_ASSISTANT_STATE=%s", dir),
 		fmt.tprintf("PALMY_NOTES_DIR=%s/Notes/%s", home_dir(), ident.handle),
 		fmt.tprintf("PALM_AUDIT=%s/audit.jsonl", dir),
 		fmt.tprintf("TMPDIR=%s/tmp", dir),
@@ -664,6 +665,7 @@ assist :: proc(p: ^Person, ask: Ask) -> (out: Outcome) {
 	proc_, perr := os.process_start({
 		command = {self, "agent", "--handle", ident.handle, "--ports", ports, "--tools", tools_dir()},
 		env = env[:],
+		working_dir = dir,
 		stdin = in_r,
 		stdout = out_w,
 		stderr = logf,
@@ -691,7 +693,7 @@ assist :: proc(p: ^Person, ask: Ask) -> (out: Outcome) {
 		today           = today_text(),
 		identity        = {handle = ident.handle, name = ident.display_name, kind = ident.kind, address = addr},
 		history         = history,
-		max_steps       = ask.max_steps > 0 ? ask.max_steps : 5,
+		max_steps       = ask.max_steps > 0 ? ask.max_steps : 6,
 	}
 	write_line(in_w, en.request_json(req, context.temp_allocator))
 

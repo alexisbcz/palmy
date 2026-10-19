@@ -34,9 +34,8 @@ quiet() { "$@" >/dev/null; }
 say() { printf '  %s\n' "$*"; }
 
 echo "== accounts"
-quiet as camille accounts signup camille@example.test --name "Camille Roux" --handle camille --password "$PW" --json
-quiet as camille accounts create camille.roux --name "Camille Roux (Northwind)" --kind work --color blue --json
-quiet as camille accounts rename camille "Camille" --json || true
+quiet as camille accounts signup camille@example.test --name "Personal" --handle camille --password "$PW" --json
+quiet as camille accounts create camille.roux --name "Northwind" --kind work --color blue --json
 quiet as camille accounts switch camille.roux --json
 quiet as camille accounts switch camille --json
 # switch remembers the last one as current; Northwind is where the demo starts.

@@ -287,7 +287,7 @@ Run :: struct {
 tool_env :: proc(allocator := context.temp_allocator) -> []string {
 	keep := [?]string {
 		"HOME", "PATH", "PALM_CLOUD_URL", "PALM_CLOUD_ANON_KEY", "PALM_CLOUD_SESSION", "PALM_IDENTITY",
-		"PALM_DAV_URL", "PALM_DAV_CACHE", "PALMY_NOTES_DIR", "PALM_AUDIT", "TMPDIR", "XDG_DATA_HOME", "TZ", "LANG",
+		"PALM_DAV_URL", "PALM_DAV_CACHE", "PALMY_NOTES_DIR", "PALM_ASSISTANT_STATE", "PALM_AUDIT", "TMPDIR", "XDG_DATA_HOME", "TZ", "LANG",
 	}
 	out := make([dynamic]string, allocator)
 	for k in keep {
@@ -326,7 +326,14 @@ argv_for :: proc(t: ^Tool, args: map[string]string, allocator := context.temp_al
 
 run_argv :: proc(argv: []string, allocator := context.allocator) -> Run {
 	start := time.tick_now()
-	state, out, errb, perr := os.process_exec({command = argv, env = tool_env()}, allocator)
+	// Tools run in the assistant's state directory, with relative cache
+	// paths. Under Landlock, creating a directory from an absolute path
+	// fails: core:os (like `mkdir -p`) opens every ancestor from / down,
+	// and the assistant may not open /tmp or $HOME. Granting it directory
+	// listing there would show it the names of the other identities'
+	// folders, so the paths are relative instead.
+	wd := os.get_env("PALM_ASSISTANT_STATE", context.temp_allocator)
+	state, out, errb, perr := os.process_exec({command = argv, env = tool_env(), working_dir = wd}, allocator)
 	r := Run{ms = i64(time.duration_milliseconds(time.tick_since(start)))}
 	if perr != nil {
 		r.err = fmt.aprintf("could not run %s (%v)", argv[0], perr, allocator = allocator)
@@ -335,6 +342,9 @@ run_argv :: proc(argv: []string, allocator := context.allocator) -> Run {
 	}
 	r.code = state.exit_code
 	r.stdout = string(out)
+	if os.get_env("PALM_ASSISTANT_TRACE", context.temp_allocator) != "" {
+		fmt.eprintfln("--- tool %v -> %d (%d ms)\n%s\n%s", argv[1:], r.code, r.ms, string(out), string(errb))
+	}
 	v, ok := ck.parse(r.stdout, allocator)
 	if ok {r.value = v}
 	r.ok = state.exit_code == 0

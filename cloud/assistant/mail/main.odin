@@ -338,6 +338,9 @@ cmd_search :: proc(c: ^kit.Call) -> int {
 	if code != kit.EXIT_OK {return code}
 	q := strings.builder_make(context.temp_allocator)
 	fmt.sbprintf(&q, "select=%s&identity_id=eq.%s&order=received_at.desc&limit=%d", LIST_COLS, b.ident, clamp(kit.cli_int(c, "limit", 10), 1, 50))
+	// Drafts are this identity's own unsent words, not mail it received;
+	// `drafts` lists them.
+	strings.write_string(&q, "&keywords=not.cs.%7B%24draft%7D")
 	words := strings.fields(strings.to_lower(kit.cli_str(c, "query"), context.temp_allocator), context.temp_allocator)
 	// Every word must appear: one ilike per word, on the generated `search`
 	// column (subject, preview and addresses).
