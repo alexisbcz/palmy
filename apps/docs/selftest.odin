@@ -126,6 +126,11 @@ run_selftest :: proc() -> bool {
 	test_rtf_import(&fonts)
 	test_cell_image(&fonts)
 	test_prose(&fonts)
+	{
+		cc, cf := test_collab(&fonts)
+		checks += cc
+		fails += cf
+	}
 
 	fmt.printfln("\n%d assertions, %d failed", checks, fails)
 	return fails == 0

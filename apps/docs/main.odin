@@ -192,6 +192,7 @@ main :: proc() {
 }
 
 state_destroy :: proc(st: ^State) {
+	collab_destroy(&st.collab)
 	prose_destroy(&st.prose)
 	doc_destroy(&st.doc)
 	doc_destroy(&st.clip_doc)

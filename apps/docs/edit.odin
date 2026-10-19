@@ -114,6 +114,9 @@ State :: struct {
 	// The prose checker: alerts mapped back into this model, the panel, and
 	// the rules switched off for this document. See prose.odin.
 	prose:      Prose,
+
+	// Collaborative editing, when the document is shared (collab.odin).
+	collab:     Collab,
 }
 
 state_init :: proc(st: ^State, fonts: ^p.Fonts) {
@@ -312,6 +315,14 @@ insert_doc :: proc(d: ^Doc, at: Pos, src: ^Doc) -> Pos {
 // ---------------------------------------------------------------------------
 
 edit_begin :: proc(st: ^State, kind: Edit_Kind) {
+	if st.collab.on {
+		// The same grouping rule as the local history, decided before
+		// history_begin moves it on: a new kind of edit is a new undo step.
+		if kind == .Structural || kind != st.hist.open {
+			collab_break(st)
+		}
+		collab_note_edit(st, kind)
+	}
 	history_begin(&st.hist, &st.doc, st.caret, st.anchor, kind)
 	st.modified = true
 	st.dirty = true
@@ -1218,6 +1229,12 @@ do_paste :: proc(st: ^State) {
 // ---------------------------------------------------------------------------
 
 do_undo :: proc(st: ^State) {
+	if st.collab.on {
+		// Shared: undo this window's own last step, never a collaborator's.
+		note(st, collab_undo(st) ? "Undo" : "Nothing to undo")
+		st.goal_ok = false
+		return
+	}
 	if history_undo(&st.hist, &st.doc, &st.caret, &st.anchor) {
 		st.dirty = true
 		st.modified = true
@@ -1231,6 +1248,11 @@ do_undo :: proc(st: ^State) {
 }
 
 do_redo :: proc(st: ^State) {
+	if st.collab.on {
+		note(st, collab_undo(st, true) ? "Redo" : "Nothing to redo")
+		st.goal_ok = false
+		return
+	}
 	if history_redo(&st.hist, &st.doc, &st.caret, &st.anchor) {
 		st.dirty = true
 		st.modified = true
