@@ -114,6 +114,21 @@ shots :: proc(dir: string) -> int {
 	step(off, st)
 	shot(off, dir, "06-greeter-session", &n)
 
+	// The pointer over Shut Down, the outermost button of the footer: it
+	// lights up (`hover:bg-muted`), as every power button does.
+	sz := p.offscreen_size(off)
+	hx, hy := int(sz.x) - 45, int(sz.y) - 62
+	if kit.i18n_is_rtl() {
+		hx = 45
+	}
+	before := p.offscreen_pixel(off, hx, hy)
+	p.move_pointer(off, f32(hx), f32(hy))
+	step(off, st)
+	step(off, st)
+	after := p.offscreen_pixel(off, hx, hy)
+	shot(off, dir, "07-greeter-hover-shutdown", &n)
+	fmt.printfln("  hover over Shut Down at %d,%d: %v -> %v%s", hx, hy, before, after, before == after ? "  (NO CHANGE)" : "")
+
 	fmt.printfln("greeter --shots: %d PNGs in %s", n, dir)
 	return 0
 }

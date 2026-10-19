@@ -737,8 +737,20 @@ step_session :: proc(st: ^St, d: int) {
 // Drawing
 // ---------------------------------------------------------------------------
 
+// Right to left. When the language is written right to left, `draw` puts
+// palmy's `dir-rtl` on the root, as the installer does: every row below it
+// runs right to left, as CSS's `direction: rtl` does, a column's text starts
+// at the right, and the Tab order follows the reading order. So the rows
+// below are written once, in reading order. Text that is not in the
+// interface's language (names, host names, commands, the socket path) is
+// `dir-auto` through `atext`, so "/usr/bin/fish" is not drawn backwards,
+// and still sits on the interface's side of its column. What is typed into
+// the password field, the `‹ n ›` stepper and the protocol log stay `dir-ltr`.
 draw :: proc(st: ^St, ui: ^p.Ctx) {
 	p.col(ui, "w-full h-full bg-background text-foreground")
+	if kit.i18n_is_rtl() {
+		p.apply(ui, "dir-rtl")
+	}
 	defer p.end(ui)
 
 	// A soft wash so the card has something to sit on.
@@ -758,12 +770,12 @@ header :: proc(st: ^St, ui: ^p.Ctx) {
 	h, m, s := local_clock(st)
 	y, mon, d := local_date(st)
 	wd := local_weekday(st)
-	rtl := kit.i18n_is_rtl()
 
 	p.col(ui, "w-full items-center pt-[64] gap-1")
 	defer p.end(ui)
 
-	p.row(ui, "items-end gap-2")
+	// The clock reads as numbers do, left to right, in every language.
+	p.row(ui, "items-end gap-2 dir-ltr")
 	p.textf(ui, "text-8xl font-bold text-foreground tracking-tight", "%02d:%02d", h, m)
 	p.textf(ui, "text-2xl font-medium text-muted-foreground pb-[14]", ":%02d", s)
 	p.end(ui)
@@ -773,20 +785,24 @@ header :: proc(st: ^St, ui: ^p.Ctx) {
 	p.text(ui, kit.trf("%[0]s, %[1]d %[2]s %[3]d", wd, d, mon, y), "text-lg text-muted-foreground")
 
 	p.row(ui, "items-center gap-2 mt-3")
-	if st.mock && rtl {
-		sc.badge(ui, kit.tr("MOCK greetd"), .Destructive)
-		p.div(ui, "w-2")
-		p.end(ui)
-	}
-	if !rtl {p.icon(ui, GI_SERVER, "size-3.5 text-muted-foreground")}
-	p.text(ui, st.hostname, "text-sm text-muted-foreground")
-	if rtl {p.icon(ui, GI_SERVER, "size-3.5 text-muted-foreground")}
-	if st.mock && !rtl {
+	p.icon(ui, GI_SERVER, "size-3.5 text-muted-foreground")
+	atext(ui, st.hostname, "text-sm text-muted-foreground")
+	if st.mock {
 		p.div(ui, "w-2")
 		p.end(ui)
 		sc.badge(ui, kit.tr("MOCK greetd"), .Destructive)
 	}
 	p.end(ui)
+}
+
+// atext is p.text for text that is not in the interface's language: its
+// own direction (`dir-auto`), so a Latin name or a path reads left to right
+// inside a right-to-left interface, aligned to the interface's side.
+atext :: proc(ui: ^p.Ctx, s: string, class := "") -> int {
+	idx := p.text(ui, s, class)
+	p.apply(ui, "dir-auto", idx)
+	p.apply(ui, kit.i18n_is_rtl() ? "text-right" : "text-left", idx)
+	return idx
 }
 
 CARD :: "w-[520] p-6 gap-5 rounded-xl border border-border bg-card shadow-2xl"
@@ -795,29 +811,26 @@ card :: proc(st: ^St, ui: ^p.Ctx) {
 	p.col(ui, CARD)
 	defer p.end(ui)
 
-	// Right to left, every row below is laid out mirrored: palmy's rows run
-	// left to right, so the children are emitted in the other order and the
-	// text columns hug the right edge. The password field itself is not
-	// mirrored — what is typed into it is not Arabic text.
-	rtl := kit.i18n_is_rtl()
 	text_col := "flex-1 gap-0.5"
 
 	// --- the account -------------------------------------------------------
 	u := cur_user(st)
 	p.row(ui, "items-center gap-4")
 	{
-		if rtl {stepper(ui, st.focus == .User, len(st.users))}
-		if !rtl {account_avatar(ui, u)}
+		account_avatar(ui, u)
 
 		p.col(ui, text_col)
-		p.text(ui, u.real == "" ? kit.tr("no local accounts") : u.real, rcls("text-base font-semibold text-foreground", rtl))
+		if u.real == "" {
+			p.text(ui, kit.tr("no local accounts"), "text-base font-semibold text-foreground")
+		} else {
+			atext(ui, u.real, "text-base font-semibold text-foreground")
+		}
 		if u.name != "" {
-			p.text(ui, fmt.tprintf("%s · uid %d · %s", u.name, u.uid, u.shell), rcls("text-xs text-muted-foreground", rtl))
+			atext(ui, fmt.tprintf("%s · uid %d · %s", u.name, u.uid, u.shell), "text-xs text-muted-foreground")
 		}
 		p.end(ui)
 
-		if rtl {account_avatar(ui, u)}
-		if !rtl {stepper(ui, st.focus == .User, len(st.users))}
+		stepper(ui, st.focus == .User, len(st.users))
 	}
 	p.end(ui)
 
@@ -832,10 +845,9 @@ card :: proc(st: ^St, ui: ^p.Ctx) {
 	}
 	p.col(ui, "gap-2")
 	{
-		p.row(ui, rtl ? "items-center gap-2 justify-end" : "items-center gap-2")
-		if !rtl {p.icon(ui, st.secret ? GI_LOCK : GI_KEY_ROUND, "size-3.5 text-muted-foreground")}
+		p.row(ui, "items-center gap-2")
+		p.icon(ui, st.secret ? GI_LOCK : GI_KEY_ROUND, "size-3.5 text-muted-foreground")
 		p.text(ui, kit.tr(label), "text-xs font-medium text-muted-foreground")
-		if rtl {p.icon(ui, st.secret ? GI_LOCK : GI_KEY_ROUND, "size-3.5 text-muted-foreground")}
 		p.end(ui)
 
 		answer_field(st, ui)
@@ -848,10 +860,8 @@ card :: proc(st: ^St, ui: ^p.Ctx) {
 	// --- the action --------------------------------------------------------
 	p.row(ui, "items-center gap-3")
 	{
-		if rtl {sign_in_button(st, ui)}
-
 		p.col(ui, text_col)
-		p.text(ui, kit.tr("Enter to sign in · Tab to move · Esc to clear"), rcls("text-xs text-muted-foreground", rtl))
+		p.text(ui, kit.tr("Enter to sign in · Tab to move · Esc to clear"), "text-xs text-muted-foreground")
 		p.text(
 			ui,
 			strings.concatenate(
@@ -862,19 +872,13 @@ card :: proc(st: ^St, ui: ^p.Ctx) {
 				},
 				context.temp_allocator,
 			),
-			rcls("text-xs text-muted-foreground", rtl),
+			"text-xs text-muted-foreground",
 		)
 		p.end(ui)
 
-		if !rtl {sign_in_button(st, ui)}
+		sign_in_button(st, ui)
 	}
 	p.end(ui)
-}
-
-// rcls sets a text flush right when the screen is mirrored: Latin names and
-// paths included, so a column reads from one edge.
-rcls :: proc(cls: string, rtl: bool) -> string {
-	return rtl ? strings.concatenate({cls, " text-right"}, context.temp_allocator) : cls
 }
 
 account_avatar :: proc(ui: ^p.Ctx, u: User) {
@@ -896,27 +900,24 @@ sign_in_button :: proc(st: ^St, ui: ^p.Ctx) {
 	if p.clickable(ui, idx) && !busy && !done {
 		submit(st, ui)
 	}
-	// The arrow points the way the text reads.
-	rtl := kit.i18n_is_rtl()
 	if busy {
 		sc.spinner(ui, "size-4")
 		p.text(ui, kit.tr("Authenticating"), "whitespace-nowrap")
 	} else if done {
 		p.icon(ui, GI_CIRCLE_CHECK, "size-4")
 		p.text(ui, kit.tr("Session ready"), "whitespace-nowrap")
-	} else if rtl {
-		p.text(ui, kit.tr("Sign in"), "whitespace-nowrap")
-		p.icon(ui, GI_ARROW_LEFT, "size-4")
 	} else {
-		p.icon(ui, GI_ARROW_RIGHT, "size-4")
+		// The arrow points the way the text reads.
+		p.icon(ui, kit.i18n_is_rtl() ? GI_ARROW_LEFT : GI_ARROW_RIGHT, "size-4")
 		p.text(ui, kit.tr("Sign in"), "whitespace-nowrap")
 	}
 	sc.button_end(ui)
 }
 
 // stepper is the `‹ n ›` affordance that says a row is a selector.
+// It reads `‹ n ›` in both directions.
 stepper :: proc(ui: ^p.Ctx, focused: bool, count: int) {
-	cls := focused ? "items-center gap-1 px-2 py-1 rounded-md border border-ring ring-3 ring-ring/50 bg-muted" : "items-center gap-1 px-2 py-1 rounded-md border border-border"
+	cls := focused ? "items-center gap-1 px-2 py-1 rounded-md border border-ring ring-3 ring-ring/50 bg-muted dir-ltr" : "items-center gap-1 px-2 py-1 rounded-md border border-border dir-ltr"
 	p.row(ui, cls)
 	defer p.end(ui)
 	p.icon(ui, GI_CHEVRON_LEFT, focused ? "size-3.5 text-foreground" : "size-3.5 text-muted-foreground")
@@ -951,22 +952,18 @@ answer_field :: proc(st: ^St, ui: ^p.Ctx) {
 
 	content := string(st.answer[:])
 	if len(content) == 0 {
+		// The placeholder is in the screen's language, so the empty field
+		// follows the interface: right to left, the caret sits at the right,
+		// where an Arabic line starts.
 		ph := st.secret ? kit.tr("Password") : kit.tr("Answer")
-		if kit.i18n_is_rtl() {
-			// The placeholder is the only text here that is in the screen's
-			// language, so only it moves: flush right, caret where an Arabic
-			// line starts.
-			p.spacer(ui)
-			p.text(ui, ph, "text-muted-foreground whitespace-nowrap")
-			p.style(ui).shrink = 0
-			caret_bar(ui, focused)
-			return
-		}
 		caret_bar(ui, focused)
 		p.text(ui, ph, "text-muted-foreground whitespace-nowrap")
 		p.style(ui).shrink = 0
 		return
 	} else {
+		// What is typed is not text in the interface's language (and is
+		// drawn as bullets anyway): left to right.
+		p.apply(ui, "dir-ltr", idx)
 		before := content[:clamp(st.caret, 0, len(content))]
 		after := content[clamp(st.caret, 0, len(content)):]
 		if st.secret {
@@ -1006,17 +1003,15 @@ bullets :: proc(s: string) -> string {
 }
 
 banner :: proc(st: ^St, ui: ^p.Ctx) {
-	rtl := kit.i18n_is_rtl()
 	// One notice: an icon beside a column of text, the icon on the side the
-	// text starts from.
-	notice :: proc(ui: ^p.Ctx, rtl: bool, row_cls: string, icon: p.Icon, icon_cls: string) {
+	// text starts from (the row's direction puts it there).
+	notice :: proc(ui: ^p.Ctx, row_cls: string, icon: p.Icon, icon_cls: string) {
 		p.row(ui, row_cls)
-		if !rtl {p.icon(ui, icon, icon_cls)}
+		p.icon(ui, icon, icon_cls)
 		p.col(ui, "flex-1 gap-0.5")
 	}
-	notice_end :: proc(ui: ^p.Ctx, rtl: bool, icon: p.Icon, icon_cls: string) {
+	notice_end :: proc(ui: ^p.Ctx) {
 		p.end(ui)
-		if rtl {p.icon(ui, icon, icon_cls)}
 		p.end(ui)
 	}
 
@@ -1026,36 +1021,36 @@ banner :: proc(st: ^St, ui: ^p.Ctx) {
 			? "w-full flex-row items-start gap-2 p-3 rounded-lg border border-destructive/50 bg-destructive/10" \
 			: "w-full flex-row items-start gap-2 p-3 rounded-lg border border-destructive/60 bg-destructive/15"
 		icon := st.err_fatal ? GI_TRIANGLE_ALERT : GI_CIRCLE_ALERT
-		notice(ui, rtl, cls, icon, "size-4 text-destructive mt-px")
+		notice(ui, cls, icon, "size-4 text-destructive mt-px")
 		p.text(
 			ui,
 			st.err_fatal ? kit.tr("greetd error") : kit.tr("Authentication failed"),
-			rcls("text-xs font-semibold text-destructive", rtl),
+			"text-xs font-semibold text-destructive",
 		)
 		// greetd's own words, translated when the catalogue has them (palm-
 		// login's "The password was not accepted." is there).
-		p.text(ui, kit.tr(st.err), rcls("text-xs text-destructive/90", rtl))
-		notice_end(ui, rtl, icon, "size-4 text-destructive mt-px")
+		p.text(ui, kit.tr(st.err), "text-xs text-destructive/90")
+		notice_end(ui)
 	}
 	if st.info != "" {
-		notice(ui, rtl, "w-full flex-row items-start gap-2 p-3 rounded-lg border border-border bg-muted", GI_INFO, "size-4 text-muted-foreground mt-px")
-		p.text(ui, kit.tr(st.info), rcls("text-xs text-muted-foreground", rtl))
-		notice_end(ui, rtl, GI_INFO, "size-4 text-muted-foreground mt-px")
+		notice(ui, "w-full flex-row items-start gap-2 p-3 rounded-lg border border-border bg-muted", GI_INFO, "size-4 text-muted-foreground mt-px")
+		p.text(ui, kit.tr(st.info), "text-xs text-muted-foreground")
+		notice_end(ui)
 	}
 	if st.note != "" {
-		notice(ui, rtl, "w-full flex-row items-start gap-2 p-3 rounded-lg border border-border bg-muted", GI_POWER, "size-4 text-muted-foreground mt-px")
-		p.text(ui, st.note, rcls("text-xs text-muted-foreground", rtl))
-		notice_end(ui, rtl, GI_POWER, "size-4 text-muted-foreground mt-px")
+		notice(ui, "w-full flex-row items-start gap-2 p-3 rounded-lg border border-border bg-muted", GI_POWER, "size-4 text-muted-foreground mt-px")
+		p.text(ui, st.note, "text-xs text-muted-foreground")
+		notice_end(ui)
 	}
 	if st.stage == .Started {
-		notice(ui, rtl, "w-full flex-row items-center gap-2 p-3 rounded-lg border border-emerald-700 bg-emerald-950", GI_CIRCLE_CHECK, "size-4 text-emerald-400")
-		p.text(ui, kit.tr("Signed in"), rcls("text-xs font-semibold text-emerald-300", rtl))
+		notice(ui, "w-full flex-row items-center gap-2 p-3 rounded-lg border border-emerald-700 bg-emerald-950", GI_CIRCLE_CHECK, "size-4 text-emerald-400")
+		p.text(ui, kit.tr("Signed in"), "text-xs font-semibold text-emerald-300")
 		p.text(
 			ui,
 			kit.tr("greetd accepted the session; it starts as soon as the greeter exits"),
-			rcls("text-xs text-emerald-400/90", rtl),
+			"text-xs text-emerald-400/90",
 		)
-		notice_end(ui, rtl, GI_CIRCLE_CHECK, "size-4 text-emerald-400")
+		notice_end(ui)
 	}
 }
 
@@ -1070,22 +1065,15 @@ footer :: proc(st: ^St, ui: ^p.Ctx) {
 	p.row(ui, "w-full items-center gap-4")
 	defer p.end(ui)
 
-	// Left to right: the session selector, then the power actions at the far
-	// end. Right to left the whole row is mirrored.
-	if kit.i18n_is_rtl() {
-		power_buttons(st, ui, true)
-		no_greetd_notice(st, ui, true)
-		p.spacer(ui)
-		session_selector(st, ui, true)
-	} else {
-		session_selector(st, ui, false)
-		p.spacer(ui)
-		no_greetd_notice(st, ui, false)
-		power_buttons(st, ui, false)
-	}
+	// In reading order: the session selector, then the power actions at the
+	// far end.
+	session_selector(st, ui)
+	p.spacer(ui)
+	no_greetd_notice(st, ui)
+	power_buttons(st, ui)
 }
 
-session_selector :: proc(st: ^St, ui: ^p.Ctx, rtl: bool) {
+session_selector :: proc(st: ^St, ui: ^p.Ctx) {
 	s := cur_session(st)
 	cls := st.focus == .Session ? "items-center gap-3 px-3 py-2 rounded-lg border border-ring ring-3 ring-ring/50 bg-card" : "items-center gap-3 px-3 py-2 rounded-lg border border-border bg-card/60"
 	idx := p.row(ui, cls)
@@ -1093,55 +1081,37 @@ session_selector :: proc(st: ^St, ui: ^p.Ctx, rtl: bool) {
 		st.focus = .Session
 	}
 	kind_icon := s.kind == .Shell ? GI_TERMINAL : GI_MONITOR
-	if rtl {
-		p.icon(ui, GI_CHEVRONS_UP_DOWN, "size-4 text-muted-foreground")
-	} else {
-		p.icon(ui, kind_icon, "size-4 text-muted-foreground")
-	}
+	p.icon(ui, kind_icon, "size-4 text-muted-foreground")
 	p.col(ui, "gap-0.5")
-	p.text(ui, s.name, rcls("text-sm font-medium text-foreground whitespace-nowrap", rtl))
-	p.text(
+	atext(ui, s.name, "text-sm font-medium text-foreground whitespace-nowrap")
+	atext(
 		ui,
 		fmt.tprintf("%s · %s", session_kind_label(s.kind), s.exec),
-		rcls("text-xs text-muted-foreground whitespace-nowrap", rtl),
+		"text-xs text-muted-foreground whitespace-nowrap",
 	)
 	p.end(ui)
-	if rtl {
-		p.icon(ui, kind_icon, "size-4 text-muted-foreground")
-	} else {
-		p.icon(ui, GI_CHEVRONS_UP_DOWN, "size-4 text-muted-foreground")
-	}
+	p.icon(ui, GI_CHEVRONS_UP_DOWN, "size-4 text-muted-foreground")
 	p.end(ui)
 }
 
-no_greetd_notice :: proc(st: ^St, ui: ^p.Ctx, rtl: bool) {
+no_greetd_notice :: proc(st: ^St, ui: ^p.Ctx) {
 	if st.connected {
 		return
 	}
-	if rtl {
-		p.div(ui, "w-4")
-		p.end(ui)
-	}
 	p.row(ui, "items-center gap-2 px-3 py-2 rounded-lg border border-destructive/50 bg-destructive/10")
-	if !rtl {p.icon(ui, GI_TRIANGLE_ALERT, "size-4 text-destructive")}
+	p.icon(ui, GI_TRIANGLE_ALERT, "size-4 text-destructive")
 	p.text(ui, kit.trf("no greetd on %s", st.sock), "text-xs text-destructive whitespace-nowrap")
-	if rtl {p.icon(ui, GI_TRIANGLE_ALERT, "size-4 text-destructive")}
 	p.end(ui)
-	if !rtl {
-		p.div(ui, "w-4")
-		p.end(ui)
-	}
+	p.div(ui, "w-4")
+	p.end(ui)
 }
 
 // power_buttons draws the actions this machine has. Every one of these calls
 // a stub, except under palm-login, where the ones that exist are real (see
-// power_request). Right to left, Shut Down comes first so it stays at the
-// outer edge.
-power_buttons :: proc(st: ^St, ui: ^p.Ctx, rtl: bool) {
+// power_request). Shut Down comes last, so it stays at the outer edge in
+// either direction.
+power_buttons :: proc(st: ^St, ui: ^p.Ctx) {
 	order := [?]Power{.Suspend, .Reboot, .Shutdown}
-	if rtl {
-		order = {.Shutdown, .Reboot, .Suspend}
-	}
 	for act in order {
 		if !power_available(act) {
 			continue
@@ -1149,14 +1119,15 @@ power_buttons :: proc(st: ^St, ui: ^p.Ctx, rtl: bool) {
 		focused := (act == .Suspend && st.focus == .Suspend) ||
 			(act == .Reboot && st.focus == .Reboot) ||
 			(act == .Shutdown && st.focus == .Shutdown)
-		b := sc.button_open(ui, .Outline, .LG, {focus = focused, hover = false})
-		p.apply(ui, "px-3 gap-2")
+		b := sc.button_open(ui, .Outline, .LG, {focus = focused})
+		// The pointer over a button lights it, as shadcn's outline button
+		// does on the web (`hover:bg-muted`).
+		p.apply(ui, "px-3 gap-2 hover:bg-muted")
 		if p.clickable(ui, b) {
 			st.note = power_request(act, st.sock)
 		}
-		if !rtl {p.icon(ui, power_icon(act), "size-4")}
+		p.icon(ui, power_icon(act), "size-4")
 		p.text(ui, power_label(act), "whitespace-nowrap")
-		if rtl {p.icon(ui, power_icon(act), "size-4")}
 		sc.button_end(ui)
 	}
 }
@@ -1164,18 +1135,19 @@ power_buttons :: proc(st: ^St, ui: ^p.Ctx, rtl: bool) {
 LOG_LINES :: 6
 
 protocol_log :: proc(st: ^St, ui: ^p.Ctx) {
-	p.col(ui, "w-full gap-1 p-3 rounded-lg border border-border bg-card/60")
+	p.col(ui, "w-full gap-1 p-3 rounded-lg border border-border bg-card/60 dir-ltr")
 	defer p.end(ui)
 
 	// The protocol lines themselves are JSON and stay left to right; only
 	// the caption is translated.
 	p.row(ui, "items-center gap-2")
 	p.icon(ui, GI_TERMINAL, "size-3.5 text-muted-foreground")
-	p.text(
+	cap := p.text(
 		ui,
 		kit.trf("greetd IPC · %s  (F2 hides this)", st.sock == "" ? kit.tr("no socket") : st.sock),
 		"text-xs font-medium text-muted-foreground whitespace-nowrap",
 	)
+	p.apply(ui, "dir-auto", cap)
 	p.end(ui)
 
 	n := len(st.client.log)
