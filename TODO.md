@@ -377,12 +377,26 @@ the areas' notes name.
 
 ## The system
 
-- **The kernel limine boots is a copy** made at image or install time on the
-  FAT partition. `palm upgrade linux` updates `/boot/vmlinuz` on the root and
-  not that copy. palm-init now mounts the ESP at `/boot/efi` from fstab (the
-  image and installed disks both have the line); the linux package has to
-  install there. palm has no hooks by design, so the package has to carry
-  the file itself.
+- **The disk image boots a copy of the kernel.** The linux package now
+  installs `/boot/efi/vmlinuz`, which on the mounted ESP is the `/vmlinuz`
+  the installer's limine.conf boots, so `palm upgrade linux` reaches limine
+  there (verified in QEMU, `distro/kernel/test-hardware.py esp`). The
+  image's limine.conf still names `boot():/boot/vmlinuz`, a copy made at
+  build time, and `palm verify` reports `/boot/efi/vmlinuz` missing;
+  `distro/notes/kernel-image.patch` is the four-line fix. The live build
+  should also prune `./boot/efi` from its initramfs.
+- **busybox's modprobe cannot load the kernel's `.ko.zst` modules**, and it
+  is the `modprobe` palm-init runs on hotplug. Drop `modprobe insmod depmod
+  modinfo` from busybox (`BB_SKIP` in `distro/recipes/generate.sh`) and add
+  `symlink = /usr/bin/modprobe -> palm-modules` to the linux recipe; until
+  then the linux package's `modules` service does the hotplug loading
+  (`distro/notes/kernel.md`).
+- **Nothing installs firmware.** `linux-firmware` and its parts (440 MB
+  packed) are in the repository, but neither `palmframe` nor the installer
+  nor the live medium installs them, so on real hardware amdgpu, i915's
+  display firmware and every Wi-Fi card would be missing theirs.
+  `distro/notes/kernel.md` suggests a split. `generate.sh` should also call
+  `distro/recipes/linux-firmware/generate.sh`.
 - **busybox's `su` still fails** for anyone but root (busybox is not setuid).
   `doas` and `passwd` (distro/doas, distro/passwd) replace what mattered;
   `su` could be dropped from the busybox package.
@@ -390,8 +404,11 @@ the areas' notes name.
   limine and the CJK font are copied from the Arch build host**
   (`distro/recipes/generate.sh`). Where a version is recorded, it comes from
   `pacman -Q`. The image is only as reproducible as the host.
-- **Never booted on real hardware.** `distro/kernel/palmframe.config` is
-  written for QEMU's devices.
+- **Never booted on real hardware.** The kernel is configured for it and
+  was tested on emulated PC devices (NVMe root, e1000e, HD Audio, xHCI,
+  AHCI, PCIe hotplug), but no native GPU driver, Wi-Fi card or SOF audio
+  has run. No early microcode, no initramfs for an encrypted root, and no
+  fallback boot entry with the previous kernel (`distro/notes/kernel.md`).
 - **Not exercised in the image:** Restart from the greeter, logging out with
   SUPER+SHIFT+E, the autologin and single-user limine entries, and the
   windowed `distro/run-qemu.sh` (all testing was headless). Restart and

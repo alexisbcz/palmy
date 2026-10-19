@@ -15,6 +15,15 @@ package main
 //
 //	--dir DIR    the index to use instead of /usr/lib/modules/$(uname -r)
 //	--dry-run    say what would be loaded, load nothing
+//	--verbose    coldplug: say how many devices and modules (it is quiet
+//	             otherwise, being palm-init's early hook)
+//
+//	modprobe [-abq] [--] NAME... is `load`, when installed as modprobe (or
+//	given those options): palm-init runs `modprobe -b -q <MODALIAS>` for
+//	every device the kernel adds.
+//
+// coldplug first loads what /usr/lib/modules-load.d/*.conf and
+// /etc/modules-load.d/*.conf name, one module per line.
 //
 // Every device the kernel knows has a `modalias` file in /sys, such as
 // pci:v00008086d0000A7A0sv...bc03sc00i00 for an Intel GPU; depmod's
@@ -40,6 +49,8 @@ State :: struct {
 	ix:      Index,
 	dry_run: bool,
 	quiet:   bool,
+	verbose: bool,
+	blacklist_names: bool, // -b: a blacklisted module is not loaded even by name
 	loaded:  map[string]bool, // tried this run, whatever the outcome
 	count:   int, // newly inserted
 	failed:  int,
@@ -61,15 +72,36 @@ main :: proc() {
 			dir = args[i]
 		case a == "--dry-run":
 			st.dry_run = true
-		case a == "-q" || a == "--quiet":
+		case a == "--quiet":
 			st.quiet = true
-			modprobe_style = true
+		case a == "--verbose":
+			st.verbose = true
 		case a == "--":
+			// Everything after is a name, even if it starts with '-'.
 			modprobe_style = true
+			for n in args[i + 1:] {append(&names, n)}
+			i = len(args)
 		case a == "-h" || a == "--help":
 			usage(0)
 		case a == "--selftest":
 			os.exit(selftest())
+		case len(a) > 1 && a[0] == '-' && a[1] != '-':
+			// modprobe's short options, as kmod and palm-init use them:
+			// -q quiet, -b apply the blacklist to names too, -a every
+			// argument is a module (the default here anyway).
+			modprobe_style = true
+			for c in a[1:] {
+				switch c {
+				case 'q':
+					st.quiet = true
+				case 'b':
+					st.blacklist_names = true
+				case 'a', 'v':
+				case:
+					fmt.eprintfln("palm-modules: unknown option -%c", c)
+					usage(2)
+				}
+			}
 		case cmd == "" && !modprobe_style && (a == "coldplug" || a == "watch" || a == "load" || a == "lookup"):
 			cmd = a
 		case strings.has_prefix(a, "-") && !modprobe_style:
@@ -127,14 +159,18 @@ main :: proc() {
 			}
 			by_alias := !(module_name(n, context.temp_allocator) in st.ix.paths)
 			for m in mods {
-				if by_alias && m in st.ix.blacklist {continue}
+				if (by_alias || st.blacklist_names) && m in st.ix.blacklist {continue}
 				if !load(m) {bad += 1}
 			}
 		}
 		os.exit(1 if bad > 0 else 0)
 	case "coldplug":
+		// As palm-init's early hook it should be quiet unless something
+		// failed (distro/notes/init.md); --verbose says what it did.
 		devices := coldplug()
-		say("%d device(s) with a modalias, %d module(s) loaded%s", devices, st.count, failed_note())
+		if st.verbose || st.failed > 0 {
+			say("%d device(s) with a modalias, %d module(s) loaded%s", devices, st.count, failed_note())
+		}
 	case "watch":
 		sock := uevent_open()
 		devices := coldplug()
@@ -230,6 +266,7 @@ is_loaded :: proc(name: string) -> bool {
 // coldplug loads modules for the devices in /sys until a walk finds nothing
 // new; it returns how many distinct modaliases it saw.
 coldplug :: proc() -> int {
+	load_listed()
 	seen := make(map[string]bool)
 	for pass in 0 ..< 8 {
 		found := make([dynamic]string, context.temp_allocator)
@@ -246,6 +283,28 @@ coldplug :: proc() -> int {
 		_ = pass
 	}
 	return len(seen)
+}
+
+// load_listed loads the modules named in modules-load.d, one per line, for
+// what no device announces (a filesystem, a protocol, a tunnel).
+load_listed :: proc() {
+	for dir in ([]string{"/usr/lib/modules-load.d", "/etc/modules-load.d"}) {
+		names, _ := list_dir(dir)
+		for name in names {
+			if !strings.has_suffix(name, ".conf") {continue}
+			text, ok := read_file(join(dir, name, context.temp_allocator), context.temp_allocator)
+			if !ok {continue}
+			for line in strings.split_lines_iterator(&text) {
+				l := strings.trim_space(line)
+				if l == "" || l[0] == '#' || l[0] == ';' {continue}
+				mods, builtin := lookup(&st.ix, l)
+				if len(mods) == 0 && !builtin {
+					report_failure(l, fmt.tprintf("named in %s/%s, but there is no such module", dir, name))
+				}
+				for m in mods {load(m)}
+			}
+		}
+	}
 }
 
 load_for_alias :: proc(alias: string) {

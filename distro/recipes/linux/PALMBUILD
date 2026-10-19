@@ -24,8 +24,9 @@ details  = Upgrading it replaces /boot/efi/vmlinuz on the EFI system partition, 
 provides = cmd:palm-modules
 
 file     = ${PALMFRAME_OUT}/bzImage -> /boot/vmlinuz mode 0644
-file     = ${PALMFRAME_OUT}/bzImage -> /boot/efi/vmlinuz mode 0644
+file     = ${PALMFRAME_OUT}/bzImage -> /boot/efi/vmlinuz mode 0700
 file     = ${PALMFRAME_OUT}/kernel.config -> /boot/config mode 0644
 tree     = ${PALMFRAME_OUT}/modules -> /usr/lib/modules
 file     = ${PALMFRAME_OUT}/bin/palm-modules -> /usr/bin/palm-modules mode 0755
 file     = ${PALMFRAME_ROOT}/distro/kernel/modules.service -> /etc/palm/services/modules mode 0644
+file     = ${PALMFRAME_ROOT}/distro/kernel/10-modules -> /usr/lib/palm-init/early.d/10-modules mode 0755

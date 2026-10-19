@@ -1,0 +1,7 @@
+#!/bin/sh
+# palm-init's early hook (installed as /usr/lib/palm-init/early.d/10-modules
+# by the linux package): load the drivers for every device present, and the
+# modules modules-load.d names, before palm-init sets device permissions,
+# mounts the rest of fstab, starts the network and the services. Quiet unless
+# something fails. distro/notes/kernel.md.
+exec /usr/bin/palm-modules coldplug

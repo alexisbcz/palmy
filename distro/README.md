@@ -33,7 +33,8 @@ distro/run-qemu.sh           # boot it in a QEMU window, UEFI firmware
 ```
 
 `make distro` builds the kernel (Linux 6.18.56) and busybox (1.37) only if
-`distro/out/bzImage` or `distro/out/busybox` is missing, because those take
+`distro/out/kernel.release` or `distro/out/busybox` is missing (the kernel
+also when `distro/kernel/palmframe.config` changes), because those take
 minutes. Then it builds the Odin binaries, generates the recipes, builds 48
 packages into `distro/out/repo/x86_64/`, signs the index, and assembles
 `distro/out/palmframe.img` from 34 of them. Once the kernel exists, the rest
@@ -417,7 +418,7 @@ layout, and `live/test-install-more.py` added (screenshots
 ```
 OVMF (UEFI)                      or SeaBIOS with --bios
 └─ limine 12.8                   partition 1, FAT: BOOTX64.EFI, limine.conf, a copy of the kernel
-   └─ Linux 6.18.56              everything built in, no modules, no initramfs
+   └─ Linux 6.18.56              storage, ext4, vfat built in, no initramfs; drivers as modules
       └─ /sbin/init = palm-init  root=/dev/vda2 ro (ext4, partition 2), fsck'd, then rw
          ├─ network              udhcpc on eth0, a built-in one-shot service
          ├─ getty-ttyS0          busybox getty + login on the serial port
@@ -446,7 +447,7 @@ sized from RAM at boot, so the image has no swap partition.
 
 | directory | what | language |
 | --- | --- | --- |
-| `kernel/` | the kernel config and build script | config, shell |
+| `kernel/` | the kernel config and build script; `palm-modules`, the module loader; `test-hardware.py` | config, shell, Odin, Python |
 | `busybox/` | the static busybox build | shell |
 | `init/` | palm-init, PID 1, statically linked | Odin |
 | `login/` | palm-login, the login daemon; `login/auth/`, the crypt, shadow, rate-limit, utmp and syslog code doas and passwd share with it | Odin |
@@ -764,13 +765,17 @@ Each component also has its own tests: `palm --selftest`, `palm-init
 The system boots, logs in and installs packages. It is not something to run
 on real hardware yet.
 
-- **Only QEMU.** It has never booted on real hardware. The kernel
-  config (`kernel/palmframe.config`) was written for QEMU's machine: virtio
-  devices, and virtio-gpu, bochs and simpledrm for the display.
-- **The kernel limine boots is a copy.** It is copied into the FAT partition
-  when the image is built. `palm upgrade linux` updates `/boot/vmlinuz` on the
-  root, not that copy: the FAT partition is mounted at `/boot/efi`, but the
-  linux package does not install there, and palm has no hooks to copy it.
+- **Only QEMU.** It has never booted on real hardware. The kernel is now
+  configured for it (storage built in, GPUs, Wi-Fi, Ethernet, sound and
+  laptop drivers as modules that `palm-modules` loads, firmware packages
+  split as Arch splits them; `notes/kernel.md`), and an NVMe root with
+  e1000e and HD Audio works in QEMU, but no GPU driver other than QEMU's has
+  ever taken over the screen, and nothing installs the firmware yet.
+- **The disk image's limine.conf boots a copy.** The linux package installs
+  the kernel as `/boot/efi/vmlinuz`, which on the mounted ESP is the
+  `/vmlinuz` the installer's limine.conf boots, so `palm upgrade linux`
+  reaches the boot loader there. The image still boots `boot():/boot/vmlinuz`,
+  a copy made at build time (`notes/kernel-image.patch` is the fix).
 - **No su.** palm becomes root with `doas`; busybox's `su` is still there and
   still fails for anyone but root.
 - **glibc, libxkbcommon and xkeyboard-config come from the build host** (Arch),

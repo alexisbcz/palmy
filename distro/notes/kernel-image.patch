@@ -1,0 +1,34 @@
+diff --git i/distro/image/build.sh w/distro/image/build.sh
+index 90b187e..ab26326 100755
+--- i/distro/image/build.sh
++++ w/distro/image/build.sh
+@@ -131,17 +131,17 @@ default_entry: 1
+ 
+ /Palmframe
+     protocol: linux
+-    path: boot():/boot/vmlinuz
++    path: boot():/vmlinuz
+     cmdline: $CMDLINE
+ 
+ /Palmframe (log in automatically as palm)
+     protocol: linux
+-    path: boot():/boot/vmlinuz
++    path: boot():/vmlinuz
+     cmdline: $CMDLINE palm.autologin=palm
+ 
+ /Palmframe (single user, root shell)
+     protocol: linux
+-    path: boot():/boot/vmlinuz
++    path: boot():/vmlinuz
+     cmdline: ${CMDLINE/ quiet loglevel=3/} palm.single
+ EOF
+ 
+@@ -152,7 +152,7 @@ mmd -i "$ESP" ::/EFI ::/EFI/BOOT ::/boot ::/boot/limine
+ mcopy -i "$ESP" "$LIMINE_SHARE/BOOTX64.EFI" ::/EFI/BOOT/BOOTX64.EFI
+ mcopy -i "$ESP" "$LIMINE_SHARE/limine-bios.sys" ::/boot/limine/limine-bios.sys
+ mcopy -i "$ESP" "$WORK/limine.conf" ::/boot/limine/limine.conf
+-mcopy -i "$ESP" "$ROOTFS/boot/vmlinuz" ::/boot/vmlinuz
++mcopy -i "$ESP" "$ROOTFS/boot/efi/vmlinuz" ::/vmlinuz
+ 
+ # --- the disk -----------------------------------------------------------------
+ # The GPT and 1 MiB of alignment, a 1 MiB BIOS boot partition for limine's

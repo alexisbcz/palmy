@@ -13,7 +13,8 @@ every palmy binary links it, and the palmy window manager and applications on
 top. It boots in QEMU from a real disk image.
 
 ```
-Linux 6.18 LTS (distro/kernel, everything built in, no modules)
+Linux 6.18 LTS (distro/kernel: storage built in, no initramfs; drivers are
+                modules loaded by palm-modules; notes/kernel.md)
 └─ /sbin/init          palm-init        (distro/init, Odin)
    ├─ coldplug + hotplug device permissions
    ├─ services from /etc/palm/services/
@@ -187,7 +188,7 @@ Everything is under `distro/out/` (git-ignored); sources downloaded into
 
 | output | built by |
 | --- | --- |
-| `distro/out/bzImage` | `distro/kernel/build.sh` |
+| `distro/out/bzImage`, `kernel.config`, `kernel.release`, `modules/<release>/` | `distro/kernel/build.sh` |
 | `distro/out/busybox` | `distro/busybox/build.sh` |
 | `distro/out/bin/<name>` | Odin binaries |
 | `distro/out/repo/x86_64/*.palm`, `PALMINDEX`, `PALMINDEX.sig` | `distro/recipes` |

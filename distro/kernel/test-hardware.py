@@ -31,6 +31,7 @@ distro/build/kernel-test/<scenario>/.
 """
 
 import hashlib
+import json
 import os
 import re
 import shutil
@@ -57,6 +58,10 @@ class Machine:
         cmd = ["qemu-system-x86_64", "-enable-kvm", "-cpu", "host", "-m", "2G", "-smp", "4",
                "-machine", "q35", "-display", "none",
                "-serial", f"unix:{self.sock},server=on,wait=on"] + args
+        self.qmp_path = os.path.join(self.work, "qmp.sock")
+        if os.path.exists(self.qmp_path):
+            os.unlink(self.qmp_path)
+        cmd += ["-qmp", f"unix:{self.qmp_path},server=on,wait=off"]
         self.proc = subprocess.Popen(cmd, stdout=subprocess.DEVNULL,
                                      stderr=open(os.path.join(self.work, "qemu.log"), "a"))
         deadline = time.time() + 15
@@ -103,6 +108,23 @@ class Machine:
             if time.time() > deadline or (not self._pump(0.1) and self.proc.poll() is not None):
                 return None
 
+    def qmp(self, *commands):
+        s = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+        s.connect(self.qmp_path)
+        f = s.makefile("rw")
+        json.loads(f.readline())
+        replies = []
+        for cmd in [{"execute": "qmp_capabilities"}] + list(commands):
+            f.write(json.dumps(cmd) + "\n")
+            f.flush()
+            while True:
+                r = json.loads(f.readline())
+                if "event" not in r:
+                    replies.append(r)
+                    break
+        s.close()
+        return replies[1:]
+
     def send(self, line):
         self.serial.sendall((line + "\r").encode())
 
@@ -130,7 +152,10 @@ class Machine:
             time.sleep(1)
 
     def stop(self):
-        self.send("poweroff")
+        try:
+            self.send("poweroff")
+        except OSError:
+            pass
         try:
             self.proc.wait(30)
         except subprocess.TimeoutExpired:
@@ -174,8 +199,9 @@ def scenario_nvme():
         "-drive", f"if=none,id=n,file={disk},format=raw", "-device", "nvme,drive=n,serial=palmframe",
         "-drive", f"if=none,id=a,file={blank},format=raw", "-device", "ide-hd,drive=a,bus=ide.1",
         "-device", "e1000e,netdev=net0", "-netdev", "user,id=net0",
-        "-device", "intel-hda", "-device", "hda-duplex", "-audiodev", "none,id=snd0",
+        "-device", "intel-hda", "-device", "hda-duplex,audiodev=snd0", "-audiodev", "none,id=snd0",
         "-device", "qemu-xhci", "-device", "usb-kbd", "-device", "usb-tablet",
+        "-device", "pcie-root-port,id=rp5,slot=5,chassis=5", "-netdev", "user,id=net1",
         "-vga", "std",
     ])
     try:
@@ -183,8 +209,9 @@ def scenario_nvme():
             return
         out, _ = m.run("uname -r")
         check(f"running {release}", out.strip() == release, out)
-        out, _ = m.run("grep ' / ' /proc/mounts")
-        check("/ is /dev/nvme0n1p2 (built-in NVMe, no initramfs)", out.startswith("/dev/nvme0n1p2 / ext4"), out)
+        out, _ = m.run("echo $(mountpoint -d /) $(cat /sys/block/nvme0n1/nvme0n1p2/dev)")
+        f = out.split()
+        check("/ is /dev/nvme0n1p2 (built-in NVMe, no initramfs)", len(f) == 2 and f[0] == f[1], out)
         out, _ = m.run("cat /proc/sys/kernel/modprobe")
         check("the kernel's modprobe is palm-modules", out.strip() == "/usr/bin/palm-modules", out)
 
@@ -215,8 +242,26 @@ def scenario_nvme():
         m.run("mkdir -p /mnt/x; mount -t exfat /dev/sda /mnt/x 2>/dev/null")
         out, rc = m.run("grep '^exfat ' /proc/modules")
         check("request_module(\"fs-exfat\") loaded exfat through palm-modules", rc == 0, out)
-        out, rc = m.run("palm-modules load zram && grep '^zram ' /proc/modules && ls /dev/zram0")
-        check("palm-modules load zram", rc == 0, out)
+        out, rc = m.run("palm-modules load dm-crypt && grep '^dm_crypt ' /proc/modules && grep '^dm_mod ' /proc/modules")
+        check("palm-modules load dm-crypt (and dm_mod, which it needs)", rc == 0, out)
+        out, rc = m.run("grep -c zram /proc/swaps")
+        check("zram is built in and palm-init made it swap", rc == 0, out)
+
+        # Hotplug: a PCIe network card (igb) added to a running machine.
+        r = m.qmp({"execute": "device_add", "arguments": {"driver": "igb", "bus": "rp5", "id": "hot0",
+                                                         "netdev": "net1"}})
+        check("QMP device_add igb", r and "error" not in r[0], str(r))
+        out, rc = m.wait_until("readlink /sys/bus/pci/drivers/igb/0000:* | head -1 | grep -q . && echo bound", 30)
+        check("a hotplugged igb card gets its driver", rc == 0,
+              m.run("cat /proc/modules | cut -d' ' -f1 | tr '\\n' ' '; tail -3 /var/log/modules.log")[0])
+        out, _ = m.run("tail -2 /var/log/modules.log")
+        show("the modules service on the hotplug", out)
+        # What palm-init's own hotplug handler runs: `modprobe -b -q <MODALIAS>`,
+        # whichever modprobe is first in PATH.
+        out, _ = m.run("command -v modprobe; ls -l $(command -v modprobe) | sed 's/.*-> //'; "
+                       "modprobe -b -q fs-udf; echo modprobe-exit=$?; grep -c '^udf ' /proc/modules; "
+                       "ls /usr/lib/modules/*/modules.dep.bb 2>&1 | tail -1")
+        show("modprobe in PATH, asked for fs-udf", out)
 
         out, _ = m.run("ip -4 addr show eth0 | grep inet; cat /var/log/modules.log 2>/dev/null | head -5")
         show("eth0 and the modules service log", out)
@@ -256,6 +301,14 @@ def make_upgrade_repo(old_kernel):
                    stdout=subprocess.DEVNULL)
     subprocess.run([palm, "index", os.path.join(repo, "x86_64"), "--key",
                     os.path.join(DISTRO, "build", "keys", "palmframe.sec")], check=True, stdout=subprocess.DEVNULL)
+    # Firmware as Arch ships it, zstd-compressed: the regulatory database
+    # cfg80211 asks the firmware loader for when it starts.
+    fw = os.path.join(repo, "firmware")
+    os.makedirs(fw)
+    for name in ("regulatory.db", "regulatory.db.p7s"):
+        if os.path.isfile(f"/usr/lib/firmware/{name}"):
+            subprocess.run(["zstd", "-q", "-19", f"/usr/lib/firmware/{name}", "-o", os.path.join(fw, name + ".zst")],
+                           check=True)
     img = os.path.join(base, "repo.ext4")
     if os.path.exists(img):
         os.unlink(img)
@@ -290,12 +343,23 @@ def scenario_esp():
             return
         out, _ = m.run("zcat /proc/config.gz | grep '^CONFIG_MODULES='")
         check("running the new kernel (CONFIG_MODULES=y)", "CONFIG_MODULES=y" in out, out)
-        out, rc = m.run("mkdir -p /boot/efi && mount -t vfat -o rw,relatime,fmask=0077,dmask=0077 /dev/vda1 /boot/efi && "
+        out, rc = m.run("(mountpoint -q /boot/efi || mount -t vfat -o rw,relatime,fmask=0077,dmask=0077 /dev/vda1 /boot/efi) && "
                         "sed -i 's|boot():/boot/vmlinuz|boot():/vmlinuz|' /boot/efi/boot/limine/limine.conf && "
                         "grep -c 'boot():/vmlinuz' /boot/efi/boot/limine/limine.conf")
+        show("the ESP mount", m.run("grep /boot/efi /proc/mounts")[0])
         check("ESP mounted at /boot/efi, limine.conf points at boot():/vmlinuz", rc == 0, out)
         out, rc = m.run("mkdir -p /mnt/repo && mount -o ro /dev/vdb /mnt/repo && "
-                        "palm --repo /mnt/repo/x86_64 --yes add linux 2>&1 | tail -5", 120)
+                        "rm -f /usr/lib/firmware/regulatory.db*; rmmod cfg80211 2>/dev/null; dmesg -c >/dev/null; "
+                        "palm-modules load cfg80211 && sleep 2 && dmesg -c | grep -i -E 'regulatory|cfg80211'")
+        check("without the file, cfg80211 says it cannot load regulatory.db (the control)",
+              "failed to load regulatory.db" in out, out)
+        out, rc = m.run("mkdir -p /usr/lib/firmware && cp /mnt/repo/firmware/* /usr/lib/firmware/ && "
+                        "rmmod cfg80211 && palm-modules load cfg80211 && sleep 2 && dmesg -c | grep -i -E 'regulatory|cfg80211'")
+        check("with regulatory.db.zst it loads: the kernel's firmware loader reads zstd",
+              rc == 0 and "failed to load regulatory.db" not in out and "loading compiled-in x.509" in out.lower(), out)
+        show("dmesg after loading cfg80211 with the firmware", out)
+        m.run("rm -f /usr/lib/firmware/regulatory.db*")
+        out, rc = m.run("palm --repo /mnt/repo/x86_64 --yes upgrade linux 2>&1 | tail -5", 120)
         check("palm installs linux r99 from the repository disk", rc == 0, out)
         out, _ = m.run("sha256sum /boot/efi/vmlinuz /boot/vmlinuz")
         check("/boot/efi/vmlinuz on the ESP is the package's kernel", out.count(old_sum) == 2, out + "\nwant " + old_sum)
@@ -307,6 +371,9 @@ def scenario_esp():
             return
         out, _ = m.run("zcat /proc/config.gz | grep -E '^(# )?CONFIG_MODULES[= ]'")
         check("running OLD_KERNEL from the ESP now (CONFIG_MODULES not set)", "CONFIG_MODULES is not set" in out, out)
+        # vfat keeps no modes: after a remount every file is 0777 & ~fmask.
+        out, rc = m.run("palm verify linux 2>&1 | tail -5")
+        check("palm verify linux is still clean after the ESP was remounted", rc == 0, out)
     finally:
         m.stop()
 
