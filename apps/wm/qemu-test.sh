@@ -30,6 +30,18 @@
 #                                        until it is killed, so further QMP
 #                                        scripts can drive the same session
 #   apps/wm/qemu-test.sh --no-build      reuse the wm binary already in --out
+#   apps/wm/qemu-test.sh --vt 1          run wm on /dev/tty1 the way a login
+#                                        manager without logind would: the
+#                                        node chown'd to palm, XDG_VTNR=1, wm a
+#                                        session leader (setsid); tty2 gets a
+#                                        line of text so a switch is visible
+#   apps/wm/qemu-test.sh --gpu "-device virtio-vga,max_outputs=2"
+#                                        the display device(s) instead of
+#                                        -device virtio-vga ("-vga std" is
+#                                        bochs-drm)
+#   apps/wm/qemu-test.sh --qemu-args "-device qemu-xhci,id=xhci"
+#                                        more QEMU arguments (a USB bus to
+#                                        hotplug a keyboard onto over QMP)
 #   apps/wm/qemu-test.sh -- <steps>      replace the default QMP script
 #
 # The steps are qemu-qmp.py's (wait:, shot:, type:, key:, move:, click:,
@@ -63,6 +75,9 @@ apps=""
 tag=""
 hold=0
 build=1
+vt=""
+gpu="-device virtio-vga"
+qemu_args=""
 while [ $# -gt 0 ]; do
 	case "$1" in
 	--out) OUT=$(mkdir -p "$2" && cd "$2" && pwd); shift ;;
@@ -73,6 +88,9 @@ while [ $# -gt 0 ]; do
 	--tag) tag=$2; shift ;;
 	--hold) hold=1 ;;
 	--no-build) build=0 ;;
+	--vt) vt=$2; shift ;;
+	--gpu) gpu=$2; shift ;;
+	--qemu-args) qemu_args=$2; shift ;;
 	--root) as_user=0 ;;
 	--kiosk) kiosk=1 ;;
 	--no-xkb) xkb=0 ;;
@@ -218,9 +236,23 @@ mkdir -p /run/user/1000 /run/user/0
 chown palm:palm /run/user/1000 /home/palm; chmod 0700 /run/user/1000 /run/user/0
 $GUEST_SCRIPT_RUN
 ENVS="HOME=/home/palm USER=palm SHELL=/bin/sh PATH=/usr/bin XDG_RUNTIME_DIR=/run/user/1000 XDG_SESSION_TYPE=wayland PALMY_WM_DRM_DEBUG=1"
+VT="$vt"
+if [ -n "\$VT" ]; then
+	# What a login manager without logind does for the session's VT: give
+	# the user the node (login(1) always has), say which one it is, and
+	# start the session as a session leader so the VT can be its terminal.
+	chown palm:tty /dev/tty\$VT; chmod 0620 /dev/tty\$VT
+	ENVS="\$ENVS XDG_VTNR=\$VT"
+	printf '\033[2J\033[H\n  palmframe tty2: a text console.\n  Ctrl+Alt+F1 goes back to the desktop.\n' > /dev/tty2
+	chvt \$VT
+fi
 if [ $as_user = 1 ]; then
 	echo "init: starting wm $WMARGS as palm (\$(id palm))"
-	su -s /bin/sh palm -c "env \$ENVS id; env \$ENVS wm $WMARGS"
+	if [ -n "\$VT" ]; then
+		su -s /bin/sh palm -c "env \$ENVS id; env \$ENVS setsid wm $WMARGS </dev/null & wait"
+	else
+		su -s /bin/sh palm -c "env \$ENVS id; env \$ENVS wm $WMARGS"
+	fi
 else
 	echo "init: starting wm $WMARGS as root"
 	env HOME=/root SHELL=/bin/sh XDG_RUNTIME_DIR=/run/user/0 wm $WMARGS &
@@ -249,7 +281,7 @@ DISPLAY_ARGS="-display none"
 qemu-system-x86_64 -enable-kvm -cpu host -m 2G -smp 4 \
 	-kernel "$KERNEL" -initrd "$OUT/initramfs.cpio.zst" \
 	-append "rdinit=/init console=ttyS0 loglevel=4" \
-	-device virtio-vga -device virtio-keyboard-pci -device virtio-tablet-pci \
+	$gpu -device virtio-keyboard-pci -device virtio-tablet-pci $qemu_args \
 	$DISPLAY_ARGS -qmp "unix:$QMP,server,nowait" \
 	-serial "file:$SERIAL" -no-reboot &
 QPID=$!

@@ -32,7 +32,179 @@ SUPER_TAP :: 0.4 // s: a Super press released within this, alone, is a tap
 // hands over symbols, and the keycode is found again through the keymap.
 key_codes: [dynamic]u32
 
+// ---------------------------------------------------------------------------
+// Real presses and releases (bare metal)
+//
+// Nested, palmy hands over typed symbols and nothing else, so a key reaches a
+// client as a press and release pair re-derived from the symbol. On bare
+// metal the keycode, its direction and the xkb state are all known, so the
+// client gets what happened: a press when the key goes down, a release when
+// it comes up, the modifiers xkb computed after each, and no repeats, because
+// wl_keyboard.repeat_info told it to repeat by itself. That is what lets a
+// client see a key held down (games, push-to-talk, Shift+click, its own
+// repeat rate).
+//
+// A key the compositor takes (a binding, an open overlay, a VT switch) is
+// swallowed whole: its release, and any repeats in between, never reach a
+// client either. A key a client got the press of gets its release, even if a
+// binding fired in the meantime.
+// ---------------------------------------------------------------------------
+
+Key_Ev :: struct {
+	code:   u32, // evdev
+	time:   u32, // ms, CLOCK_MONOTONIC
+	down:   bool,
+	repeat: bool,
+	idx:    int, // into app.win.input.keys for a press or repeat, else -1
+	dep:    u32, // the xkb state after this key
+	lat:    u32,
+	lock:   u32,
+	grp:    u32,
+}
+
+// key_evs is this frame's keys in order, presses and releases both. evdev.odin
+// fills it on bare metal; nested it stays empty and the old path runs.
+key_evs: [dynamic]Key_Ev
+
+Kbd_Wire :: struct {
+	sent:      [EV_KEY_MAX + 1]bool, // the focused client has this key's press
+	swallowed: [EV_KEY_MAX + 1]bool, // the compositor took this key's press
+	dep, lat, lock, grp: u32, // the modifier state last announced
+	presses:   int, // counters for the self-test and the log
+	releases:  int,
+}
+
+kbd_wire: Kbd_Wire
+
+// kbd_send_modifiers announces the modifier state on one wl_keyboard: the
+// real xkb state on bare metal, the mask derived from palmy's set nested.
+kbd_send_modifiers :: proc(s: ^Server, c: ^Client, kb: u32) {
+	if session.bare {
+		w := &kbd_wire
+		event(c, kb, 4, next_serial(s), w.dep, w.lat, w.lock, w.grp)
+		return
+	}
+	event(c, kb, 4, next_serial(s), s.mod_mask, u32(0), u32(0), s.kt.group)
+}
+
+// kbd_wire_focus_changed forgets which keys the old focus held. It was sent
+// wl_keyboard.leave, which ends every key it had (and its own repeat); the
+// new focus is entered with no keys down, so their releases go nowhere.
+kbd_wire_focus_changed :: proc() {
+	kbd_wire.sent = {}
+}
+
+// key_send delivers one press or release to the focused client.
+key_send :: proc(s: ^Server, code, t: u32, down: bool) {
+	surf := s.kbd_surf
+	if surf == nil || surf.client == nil || surf.client.dead {
+		return
+	}
+	for kb in surf.client.keyboards {
+		event(surf.client, kb, 3, next_serial(s), t, code, u32(down ? 1 : 0))
+	}
+	if down {
+		kbd_wire.presses += 1
+	} else {
+		kbd_wire.releases += 1
+	}
+}
+
+// key_send_state announces the xkb state if it changed since last time.
+key_send_state :: proc(s: ^Server, dep, lat, lock, grp: u32) {
+	w := &kbd_wire
+	if dep == w.dep && lat == w.lat && lock == w.lock && grp == w.grp {
+		return
+	}
+	w.dep, w.lat, w.lock, w.grp = dep, lat, lock, grp
+	surf := s.kbd_surf
+	if surf == nil || surf.client == nil || surf.client.dead {
+		return
+	}
+	for kb in surf.client.keyboards {
+		event(surf.client, kb, 4, next_serial(s), dep, lat, lock, grp)
+	}
+}
+
+// handle_keys_bare is handle_keys for real keys: the same gauntlet in the
+// same order, deciding per key whether the compositor or the client has it.
+handle_keys_bare :: proc(s: ^Server, app: ^p.App) {
+	in_ := &app.win.input
+	w := &kbd_wire
+	for ke in key_evs {
+		code := min(ke.code, EV_KEY_MAX)
+		if !ke.down {
+			if w.swallowed[code] {
+				w.swallowed[code] = false
+			} else if w.sent[code] {
+				w.sent[code] = false
+				key_send(s, ke.code, ke.time, false)
+			}
+			key_send_state(s, ke.dep, ke.lat, ke.lock, ke.grp)
+			continue
+		}
+		k := in_.keys[ke.idx]
+		if ke.repeat {
+			// The client repeats keys itself. A repeat only matters here when
+			// the compositor owns the key: a held binding or an arrow key in
+			// an open overlay.
+			if w.swallowed[code] && !lock_active() {
+				if !overlays_key(s, app, k, ke.code) {
+					wm_shortcut(s, app, k, ke.code)
+				}
+			}
+			continue
+		}
+		log_line("key code %d sym 0x%x mods %v", ke.code, k.sym, k.mods)
+
+		taken := false
+		if vt_switch_key(ke.code, k.mods) {
+			taken = true
+		} else if lock_active() {
+			// The lock screen has the keyboard; only the escape hatch stays.
+			if .Alt in k.mods && .Ctrl in k.mods && (k.sym == 'q' || k.sym == 'Q') {
+				p.quit_app(app)
+				taken = true
+			}
+		} else {
+			if k.sym == KEY_SUPER_L || k.sym == KEY_SUPER_R {
+				ix.super_armed = true
+				ix.super_at = wall_now()
+			} else {
+				ix.super_armed = false
+			}
+			taken = overlays_key(s, app, k, ke.code) || wm_shortcut(s, app, k, ke.code)
+			if !taken && k.sym != KEY_SUPER_L && k.sym != KEY_SUPER_R {
+				ix.typed_at = wall_now()
+			}
+		}
+		if taken {
+			w.swallowed[code] = true
+		} else {
+			w.sent[code] = true
+			key_send(s, ke.code, ke.time, true)
+		}
+		key_send_state(s, ke.dep, ke.lat, ke.lock, ke.grp)
+	}
+	clear(&key_evs)
+
+	if lock_active() {
+		return
+	}
+	switcher_mods(s, in_.mods)
+	if ix.super_armed && .Super not_in in_.mods {
+		ix.super_armed = false
+		if wall_now() - ix.super_at <= SUPER_TAP && s.cfg.super_tap && !session.kiosk && s.drag == .None {
+			overview_toggle(s)
+		}
+	}
+}
+
 handle_keys :: proc(s: ^Server, app: ^p.App) {
+	if session.bare {
+		handle_keys_bare(s, app)
+		return
+	}
 	if overlay_keys(s, app) {
 		return
 	}

@@ -676,11 +676,12 @@ set_kbd_focus :: proc(s: ^Server, surf: ^Surface) {
 		}
 	}
 	s.kbd_surf = surf
+	kbd_wire_focus_changed()
 	if surf != nil && surf.client != nil && !surf.client.dead {
 		empty: []u8
 		for k in surf.client.keyboards {
 			event(surf.client, k, 1, next_serial(s), surf.id, empty)
-			event(surf.client, k, 4, next_serial(s), s.mod_mask, u32(0), u32(0), s.kt.group)
+			kbd_send_modifiers(s, surf.client, k)
 		}
 		s.mod_group = s.kt.group
 		// The clipboard follows keyboard focus, as the protocol requires.
@@ -1007,6 +1008,10 @@ mods_mask :: proc(s: ^Server, m: p.Modifiers, extra_shift: bool) -> u32 {
 // part of it because a layout switch (several layouts in /etc/palm/keyboard)
 // changes what every keycode means without any modifier changing.
 send_mods :: proc(s: ^Server, mask: u32) {
+	if session.bare {
+		// The real xkb state goes out with each key (handle_keys_bare).
+		return
+	}
 	if mask == s.mod_mask && s.kt.group == s.mod_group {
 		return
 	}

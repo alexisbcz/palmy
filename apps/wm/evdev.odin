@@ -177,6 +177,14 @@ ev_set_bit :: proc(bits: []u64, i: int) {
 	bits[w] |= u64(1) << uint(i % 64)
 }
 
+ev_clear_bit :: proc(bits: []u64, i: int) {
+	w := i / 64
+	if i < 0 || w >= len(bits) {
+		return
+	}
+	bits[w] &~= u64(1) << uint(i % 64)
+}
+
 // ev_parse_bitmap reads the format sysfs uses for capability files: hex words
 // most-significant first, space separated, with the *last* token holding bits
 // 0..63. "ffff0000 0 0 0 0" is bits 16..31 of word 4.
@@ -489,6 +497,7 @@ Ev_Device :: struct {
 	opened:       bool,
 	paused:       bool,
 	synthetic:    bool,
+	gone:         bool, // read() said ENODEV: unplugged, waiting to be removed
 	kinds:        Ev_Kinds,
 	caps:         Ev_Caps,
 	bus:          u16,
@@ -532,6 +541,10 @@ Ev_Device :: struct {
 
 	// Absolute pointer: an ABS_X or ABS_Y arrived this frame.
 	abs_dirty:    bool,
+
+	// What this device is holding down right now, so that unplugging it in
+	// the middle of a chord releases exactly its own keys and buttons.
+	keys_down:    [(EV_KEY_MAX + 64) / 64]u64,
 }
 
 // Package-level state. The package already uses this idiom (`server` in
@@ -543,6 +556,9 @@ ev_screen: [2]f64 = {1920, 1080}
 ev_buttons: bit_set[Ev_Button_Slot;u8]
 ev_last_key_ms: u32
 ev_ready: bool
+// Every device is paused because the session is not on the active VT (or
+// logind paused it). A device that appears meanwhile is opened on resume.
+ev_paused_all: bool
 
 Ev_Button_Slot :: enum u8 {
 	Left,
@@ -607,18 +623,76 @@ ev_close_direct :: proc(path: string, fd: linux.Fd) {
 // stop delivering, and anything held down has to be released or the next
 // session inherits a stuck modifier.
 ev_pause_all :: proc() {
+	ev_paused_all = true
 	for d in ev_devices {
 		d.paused = true
 		ev_device_reset(d)
+		d.keys_down = {}
 	}
 	ev_release_all()
 }
 
 ev_resume_all :: proc() {
+	ev_paused_all = false
 	for d in ev_devices {
 		d.paused = false
 		d.carry_n = 0
 	}
+}
+
+// ev_grab_all takes (or gives back) exclusive use of every open device. A
+// session that is switched away from must let go: EVIOCGRAB also keeps the
+// kernel's own console keyboard handler from seeing keys, so a VT switched
+// to while we hold the grab would get no keyboard at all, including the
+// Ctrl+Alt+Fn that would switch back.
+ev_grab_all :: proc(grab: bool) {
+	if !ev_cfg.grab_devices {
+		return
+	}
+	v := i32(grab ? 1 : 0)
+	for d in ev_devices {
+		if d.opened {
+			linux.ioctl(d.fd, EV_IOC_GRAB, uintptr(v))
+		}
+	}
+}
+
+// ev_flush_all throws away whatever the devices queued while paused: those
+// keys were typed into another VT.
+ev_flush_all :: proc() {
+	buf: [EV_EVENT_SIZE * 64]u8
+	for d in ev_devices {
+		if !d.opened {
+			continue
+		}
+		for {
+			n, err := linux.read(d.fd, buf[:])
+			if err != .NONE || n < len(buf) {
+				break
+			}
+		}
+		d.carry_n = 0
+	}
+}
+
+// ev_open_pending opens the devices that appeared while paused.
+ev_open_pending :: proc() {
+	for d in ev_devices {
+		if !d.opened && ev_device_open(d) {
+			fmt.printfln("wm: input: added %s  %s  %v", d.path, d.name, d.kinds)
+		}
+	}
+}
+
+// ev_reap_gone removes devices whose read() reported ENODEV.
+ev_reap_gone :: proc() -> (changed: bool) {
+	for i := len(ev_devices) - 1; i >= 0; i -= 1 {
+		if ev_devices[i].gone {
+			ev_device_remove(ev_devices[i])
+			changed = true
+		}
+	}
+	return
 }
 
 // ev_device_reset drops every scrap of per-frame and per-touch state. It runs
@@ -721,27 +795,33 @@ ev_scan :: proc() -> []^Ev_Device {
 		return atoi(a[5:]) < atoi(b[5:])
 	})
 	for n in names {
-		base := fmt.tprintf("/sys/class/input/%s/device", n)
-		d := new(Ev_Device)
-		d.path = fmt.aprintf("/dev/input/%s", n)
-		d.sysfs = strings.clone(base)
-		if s, ok := ev_read_file(fmt.tprintf("%s/name", base), context.temp_allocator); ok {
-			d.name = strings.clone(strings.trim_space(s))
-		}
-		ev_caps_from_sysfs(&d.caps, base)
-		if s, ok := ev_read_file(fmt.tprintf("%s/id/bustype", base), context.temp_allocator); ok {
-			d.bus = u16(ev_parse_hex(strings.trim_space(s)))
-		}
-		if s, ok := ev_read_file(fmt.tprintf("%s/id/vendor", base), context.temp_allocator); ok {
-			d.vendor = u16(ev_parse_hex(strings.trim_space(s)))
-		}
-		if s, ok := ev_read_file(fmt.tprintf("%s/id/product", base), context.temp_allocator); ok {
-			d.product = u16(ev_parse_hex(strings.trim_space(s)))
-		}
-		d.kinds = ev_classify(&d.caps, d.name)
-		append(&out, d)
+		append(&out, ev_scan_one(n))
 	}
 	return out[:]
+}
+
+// ev_scan_one builds the Ev_Device for one event node ("event3") from sysfs.
+// Nothing is opened. Hotplug calls it for a node that has just appeared.
+ev_scan_one :: proc(n: string) -> ^Ev_Device {
+	base := fmt.tprintf("/sys/class/input/%s/device", n)
+	d := new(Ev_Device)
+	d.path = fmt.aprintf("/dev/input/%s", n)
+	d.sysfs = strings.clone(base)
+	if s, ok := ev_read_file(fmt.tprintf("%s/name", base), context.temp_allocator); ok {
+		d.name = strings.clone(strings.trim_space(s))
+	}
+	ev_caps_from_sysfs(&d.caps, base)
+	if s, ok := ev_read_file(fmt.tprintf("%s/id/bustype", base), context.temp_allocator); ok {
+		d.bus = u16(ev_parse_hex(strings.trim_space(s)))
+	}
+	if s, ok := ev_read_file(fmt.tprintf("%s/id/vendor", base), context.temp_allocator); ok {
+		d.vendor = u16(ev_parse_hex(strings.trim_space(s)))
+	}
+	if s, ok := ev_read_file(fmt.tprintf("%s/id/product", base), context.temp_allocator); ok {
+		d.product = u16(ev_parse_hex(strings.trim_space(s)))
+	}
+	d.kinds = ev_classify(&d.caps, d.name)
+	return d
 }
 
 ev_parse_hex :: proc(s: string) -> u64 {
@@ -875,6 +955,204 @@ ev_stop :: proc() {
 	ev_ready = false
 }
 
+
+// ---------------------------------------------------------------------------
+// Hotplug
+//
+// /dev/input is watched with inotify rather than a netlink uevent socket, for
+// one reason: permissions. The kernel announces a new device before devtmpfs
+// has finished with the node and long before palm-init has chown'd it to
+// root:input 0660, so an open() on the uevent fails with EACCES for a user
+// session. inotify reports the node's creation (IN_CREATE) and then the
+// ownership change (IN_ATTRIB); the open that fails on the first succeeds on
+// the second. Removal is IN_DELETE, or ENODEV from read() if that comes first;
+// both end in ev_device_remove, which is idempotent.
+// ---------------------------------------------------------------------------
+
+ev_hot_fd: linux.Fd = -1
+
+// ev_hotplug_start watches /dev/input. Without it the devices found at start
+// are all there will ever be, which is how wm behaved before.
+ev_hotplug_start :: proc() -> bool {
+	if ev_hot_fd >= 0 {
+		return true
+	}
+	fd, err := linux.inotify_init1({.NONBLOCK, .CLOEXEC})
+	if err != .NONE {
+		fmt.eprintfln("wm: input: inotify unavailable (%v); devices plugged in later are not seen", err)
+		return false
+	}
+	if _, werr := linux.inotify_add_watch(fd, "/dev/input", {.CREATE, .ATTRIB, .DELETE, .MOVED_TO, .MOVED_FROM}); werr != .NONE {
+		fmt.eprintfln("wm: input: cannot watch /dev/input (%v); devices plugged in later are not seen", werr)
+		linux.close(fd)
+		return false
+	}
+	ev_hot_fd = fd
+	return true
+}
+
+ev_hotplug_stop :: proc() {
+	if ev_hot_fd >= 0 {
+		linux.close(ev_hot_fd)
+		ev_hot_fd = -1
+	}
+}
+
+ev_hotplug_fd :: proc() -> linux.Fd {
+	return ev_hot_fd
+}
+
+ev_find :: proc(path: string) -> (^Ev_Device, int) {
+	for d, i in ev_devices {
+		if d.path == path {
+			return d, i
+		}
+	}
+	return nil, -1
+}
+
+// ev_hotplug_pump drains the inotify queue and adds or removes devices.
+// Returns true when the set of open devices changed.
+ev_hotplug_pump :: proc() -> (changed: bool) {
+	if ev_hot_fd < 0 {
+		return false
+	}
+	buf: [4096]u8
+	for {
+		n, err := linux.read(ev_hot_fd, buf[:])
+		if err != .NONE || n <= 0 {
+			break
+		}
+		off := 0
+		for off + size_of(linux.Inotify_Event) <= n {
+			ev := (^linux.Inotify_Event)(&buf[off])
+			name := ""
+			if ev.len > 0 {
+				raw := buf[off + size_of(linux.Inotify_Event):][:ev.len]
+				name = strings.truncate_to_byte(string(raw), 0)
+			}
+			off += size_of(linux.Inotify_Event) + int(ev.len)
+			if .Q_OVERFLOW in ev.mask {
+				// Lost events: reconcile against what is there now.
+				if ev_hotplug_rescan() {
+					changed = true
+				}
+				continue
+			}
+			if !strings.has_prefix(name, "event") {
+				continue
+			}
+			if .DELETE in ev.mask || .MOVED_FROM in ev.mask {
+				if ev_node_removed(name) {
+					changed = true
+				}
+			} else if ev_node_added(name) {
+				changed = true
+			}
+		}
+	}
+	return
+}
+
+// ev_node_added opens a node that appeared or whose permissions changed.
+ev_node_added :: proc(name: string) -> bool {
+	path := fmt.tprintf("/dev/input/%s", name)
+	d, _ := ev_find(path)
+	if d == nil {
+		d = ev_scan_one(name)
+		if d.kinds == {} {
+			// A node with nothing we act on (a power button, a lid switch,
+			// the PC speaker). Forget it; an IN_ATTRIB will bring it back
+			// here and it will be forgotten again, which costs a sysfs read.
+			ev_device_free(d)
+			return false
+		}
+		append(&ev_devices, d)
+		if ev_paused_all {
+			// The session is on another VT. Open it when we come back.
+			fmt.printfln("wm: input: %s (%s) appeared while inactive", d.path, d.name)
+			return false
+		}
+	}
+	if d.opened || ev_paused_all {
+		return false
+	}
+	if !ev_device_open(d) {
+		// Usually EACCES between devtmpfs creating the node and palm-init
+		// giving it to the input group; the IN_ATTRIB that follows retries.
+		return false
+	}
+	fmt.printfln("wm: input: added %s  %s  %v", d.path, d.name, d.kinds)
+	return true
+}
+
+// ev_node_removed closes a node that went away.
+ev_node_removed :: proc(name: string) -> bool {
+	d, _ := ev_find(fmt.tprintf("/dev/input/%s", name))
+	if d == nil {
+		return false
+	}
+	ev_device_remove(d)
+	return true
+}
+
+// ev_device_remove releases whatever the device was holding — as events, so
+// clients see the keys come up — closes it and forgets it.
+ev_device_remove :: proc(d: ^Ev_Device) {
+	_, i := ev_find(d.path)
+	if i < 0 {
+		return
+	}
+	t := now_ms()
+	for code in 0 ..= EV_KEY_MAX {
+		if ev_bit(d.keys_down[:], code) {
+			ev_key_event(d, Ev_Input_Event{type = EV_KEY, code = u16(code), value = 0}, t)
+		}
+	}
+	if ev_repeat.device == d {
+		ev_repeat.active = false
+		ev_repeat.device = nil
+	}
+	fmt.printfln("wm: input: removed %s  %s", d.path, d.name)
+	ordered_remove(&ev_devices, i)
+	ev_device_close(d)
+	ev_device_free(d)
+}
+
+ev_device_free :: proc(d: ^Ev_Device) {
+	delete(d.path)
+	delete(d.sysfs)
+	delete(d.name)
+	free(d)
+}
+
+// ev_hotplug_rescan reconciles the device list with /sys/class/input after
+// the inotify queue overflowed: new nodes are added, vanished ones removed.
+ev_hotplug_rescan :: proc() -> (changed: bool) {
+	present := make(map[string]bool, 16, context.temp_allocator)
+	if dir, derr := os.open("/sys/class/input"); derr == nil {
+		if entries, rerr := os.read_dir(dir, -1, context.temp_allocator); rerr == nil {
+			for e in entries {
+				if strings.has_prefix(e.name, "event") {
+					present[fmt.tprintf("/dev/input/%s", e.name)] = true
+					if ev_node_added(e.name) {
+						changed = true
+					}
+				}
+			}
+		}
+		os.close(dir)
+	}
+	for i := len(ev_devices) - 1; i >= 0; i -= 1 {
+		d := ev_devices[i]
+		if !d.synthetic && !present[d.path] {
+			ev_device_remove(d)
+			changed = true
+		}
+	}
+	return
+}
+
 // ---------------------------------------------------------------------------
 // Decoding
 // ---------------------------------------------------------------------------
@@ -991,6 +1269,9 @@ ev_key_event :: proc(d: ^Ev_Device, e: Ev_Input_Event, t: u32) {
 	// Buttons live in the same EV_KEY space as keys. Anything a pointer or a
 	// touch device emits in BTN_* range is a button, not a key.
 	if code >= 0x100 && code < 0x160 {
+		if e.value != 2 && int(code) <= EV_KEY_MAX {
+			if e.value != 0 {ev_set_bit(d.keys_down[:], int(code))} else {ev_clear_bit(d.keys_down[:], int(code))}
+		}
 		ev_button_event(d, code, e.value != 0, t)
 		return
 	}
@@ -1001,6 +1282,9 @@ ev_key_event :: proc(d: ^Ev_Device, e: Ev_Input_Event, t: u32) {
 		return
 	}
 	down := e.value == 1
+	if int(code) <= EV_KEY_MAX {
+		if down {ev_set_bit(d.keys_down[:], int(code))} else {ev_clear_bit(d.keys_down[:], int(code))}
+	}
 
 	xkb_update_key(code, down)
 	sym := xkb_sym_for(code)
@@ -1728,6 +2012,10 @@ ev_read_once :: proc(d: ^Ev_Device) -> bool {
 	any := false
 	for {
 		n, err := linux.read(d.fd, buf[:])
+		if err == .ENODEV {
+			d.gone = true
+			break
+		}
 		if err != .NONE || n <= 0 {
 			break
 		}
@@ -1800,6 +2088,7 @@ ev_apply_to_input :: proc(in_: ^p.Input, scale: f32 = 1) {
 	in_.mouse_delta = {}
 	clear(&in_.keys)
 	clear(&key_codes)
+	clear(&key_evs)
 	in_.over_surface = true
 	in_.focused = true
 
@@ -1807,12 +2096,20 @@ ev_apply_to_input :: proc(in_: ^p.Input, scale: f32 = 1) {
 		switch e.kind {
 		case .Key:
 			in_.mods = e.mods
+			idx := -1
 			if e.down {
+				idx = len(in_.keys)
 				append(&in_.keys, p.Key_Event{sym = e.sym, mods = e.mods, repeat = e.repeat})
 				// The keycode rides alongside, so bindings can match the key
 				// the user pressed and not only what it typed (keys.odin).
 				append(&key_codes, e.keycode)
 			}
+			// And the whole stream, releases included, in order, for the
+			// clients (keys.odin, handle_keys_bare).
+			append(&key_evs, Key_Ev{
+				code = e.keycode, time = e.time_ms, down = e.down, repeat = e.repeat, idx = idx,
+				dep = e.mods_depressed, lat = e.mods_latched, lock = e.mods_locked, grp = e.group,
+			})
 		case .Pointer_Motion, .Pointer_Motion_Absolute:
 			in_.mouse_delta += {f32(e.dx), f32(e.dy)}
 			in_.mouse = {f32(e.x) / scale, f32(e.y) / scale}

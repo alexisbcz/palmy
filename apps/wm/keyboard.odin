@@ -501,7 +501,7 @@ kbd_broadcast :: proc(s: ^Server) -> (sent: int) {
 	}
 	if surf := s.kbd_surf; surf != nil && surf.client != nil && !surf.client.dead {
 		for k in surf.client.keyboards {
-			event(surf.client, k, 4, next_serial(s), s.mod_mask, u32(0), u32(0), s.kt.group)
+			kbd_send_modifiers(s, surf.client, k)
 		}
 		s.mod_group = s.kt.group
 	}

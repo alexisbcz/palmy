@@ -266,9 +266,15 @@ Bare_Out :: struct {
 	cw, ch:        int,
 	last_frame_ns: i64,
 	heads:         int,
+	full:          bool, // the next frame repaints everything
 }
 
 bare_out: Bare_Out
+
+// damage_all asks for the next frame to repaint every pixel.
+damage_all :: proc() {
+	bare_out.full = true
+}
 
 bare_mono_ns :: proc() -> i64 {
 	ts, _ := linux.clock_gettime(.MONOTONIC)
@@ -406,6 +412,18 @@ bare_main :: proc(display, conf: string) -> int {
 	}
 	fmt.printfln("wm: seat: %s", via_logind ? "logind (TakeDevice)" : "direct (no logind; opening /dev/dri and /dev/input ourselves)")
 
+	// The VT, which logind would otherwise look after. Taken before the
+	// first modeset so the console never draws over our first frame, and
+	// given back after drm_shutdown (defers run in reverse).
+	if !via_logind {
+		if vt_open() {
+			fmt.printfln("wm: vt: tty%d in graphics mode, VT_PROCESS (Ctrl+Alt+F1..F12 switch)", vt.num)
+		} else {
+			fmt.printfln("wm: vt: none (%s); no VT switching", vt.why)
+		}
+	}
+	defer vt_close()
+
 	drm_enable_live()
 	if ok, err := drm_init({verbose = VERBOSE || os.get_env("PALMY_WM_DRM_DEBUG", context.temp_allocator) != "", hotplug = true}); !ok {
 		fmt.eprintfln("wm: drm: %s", err)
@@ -451,7 +469,9 @@ bare_main :: proc(display, conf: string) -> int {
 	ev_pointer = {f64(s.out_w) / 2, f64(s.out_h) / 2}
 	app.win.input.mouse = {f32(ev_pointer[0]), f32(ev_pointer[1])}
 	defer ev_stop()
-	fmt.printfln("wm: input: %d of %d device(s) opened", opened, found)
+	ev_hotplug_start()
+	defer ev_hotplug_stop()
+	fmt.printfln("wm: input: %d of %d device(s) opened%s", opened, found, ev_hotplug_fd() >= 0 ? "; watching /dev/input for more" : "")
 	for d in ev_devices {
 		fmt.printfln("wm:   %s  %s  %v%s", d.path, d.name, d.kinds, d.opened ? "" : "  (could not open)")
 	}
@@ -505,6 +525,12 @@ bare_main :: proc(display, conf: string) -> int {
 		if kfd := kbd_poll_fd(); kfd > 0 {
 			append(&pfds, linux.Poll_Fd{fd = kfd, events = {.IN}})
 		}
+		if hfd := ev_hotplug_fd(); hfd >= 0 {
+			append(&pfds, linux.Poll_Fd{fd = hfd, events = {.IN}})
+		}
+		if vfd := vt_poll_fd(); vfd >= 0 {
+			append(&pfds, linux.Poll_Fd{fd = vfd, events = {.IN}})
+		}
 
 		// A second is the longest anything waits: the bar's clock, a status
 		// note expiring, children reaped. A pending frame with every head
@@ -520,13 +546,18 @@ bare_main :: proc(display, conf: string) -> int {
 		if want_frame {
 			timeout = awaiting ? 100 : i32(max(bare_pace_wait_ms(), 0))
 		}
+		if vt_inactive() {
+			// Switched away: nothing to draw until the kernel says we are back.
+			want_frame = false
+			timeout = 1000
+		}
 		if rt := ev_next_timeout(bare_mono_ms()); rt >= 0 {
 			timeout = min(timeout, i32(rt))
 		}
 		// Something on screen changes by itself soon (a tooltip, a snap
 		// preview, a toast running out): wake for it rather than a second
 		// later. An animation in flight wants every frame.
-		if anim_busy() {
+		if anim_busy() && !vt_inactive() {
 			want_frame = true
 			timeout = awaiting ? 100 : i32(max(bare_pace_wait_ms(), 0))
 		}
@@ -558,10 +589,19 @@ bare_main :: proc(display, conf: string) -> int {
 		// Devices first, so this frame's input is this frame's. Then the
 		// keyboard layout: a reload or a group switch has to be in place
 		// before those keys are handed on.
+		if vt_pump(s) {
+			want_frame = true
+		}
 		for d in ev_devices {
 			if d.opened && !d.paused {
 				ev_read_once(d)
 			}
+		}
+		if ev_reap_gone() {
+			want_frame = true
+		}
+		if ev_hotplug_pump() {
+			want_frame = true
 		}
 		kbd_pump(s)
 		// drm_dispatch says "redraw" for a flip completion as well as for a
@@ -598,7 +638,7 @@ bare_main :: proc(display, conf: string) -> int {
 		// Anything that woke us may have changed what is on screen — a
 		// commit, a motion, a title — and draw() repaints everything anyway,
 		// so there is no finer question to ask. The flip paces how many go out.
-		if want_frame && bare_pace_wait_ms() <= 0 && bare_frame(s, app) {
+		if want_frame && !vt_inactive() && bare_pace_wait_ms() <= 0 && bare_frame(s, app) {
 			bare_out.last_frame_ns = bare_mono_ns()
 			want_frame = false
 			frames_n += 1
