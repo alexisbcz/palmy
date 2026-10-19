@@ -58,7 +58,8 @@ person or as one identity:
   revoking an app password is immediate. App passwords are 32 random
   characters stored as SHA-256 (they have a key's entropy, so a slow hash buys
   nothing and would make every request slow); only an unscoped session may
-  create one.
+  create one. Twenty failed Basic sign-ins from one address within a minute
+  earn it a 429 for the rest of that minute.
 
 Every row the server touches is touched under RLS. A bug in the server can
 show a client the wrong *view* of its own data; it cannot show it someone

@@ -3,6 +3,7 @@ package main
 
 import "core:encoding/json"
 import "core:strings"
+import "core:sync"
 import web "web"
 
 REALM :: `Basic realm="Palmframe calendars and contacts", charset="UTF-8"`
@@ -22,6 +23,12 @@ authenticate :: proc(c: ^Ctx) -> bool {
 			return refuse(c, "the token is not a signed-in user's")
 		}
 	} else if user, pass, ok := web.basic_auth(authz); ok {
+		if throttled(c.req.peer) {
+			c.res.status = 429
+			web.set_header(c.res, "Retry-After", "60")
+			c.res.body = "too many failed sign-ins from this address; wait a minute\n"
+			return false
+		}
 		b := jb_make()
 		jb_str(&b, "username", user)
 		jb_str(&b, "secret", strings.trim_space(pass))
@@ -33,6 +40,7 @@ authenticate :: proc(c: ^Ctx) -> bool {
 		}
 		rs := rows(v)
 		if !db_ok(e) || len(rs) == 0 {
+			note_failure(c.req.peer)
 			return refuse(c, "unknown identity or app password")
 		}
 		c.user = jstr(rs[0], "owner")
@@ -150,4 +158,60 @@ load_mail_domain :: proc(c: ^Ctx) {
 			g_domain = strings.clone(string(s), heap())
 		}
 	}
+}
+
+// ---------------------------------------------------------------------------
+// A brake on guessing app passwords
+//
+// Twenty failed Basic sign-ins from one address within a minute and that
+// address gets 429 until the minute is up. App passwords are 32 random
+// characters, so this is not what keeps them safe; it keeps a misconfigured
+// client or a scanner from hammering the database.
+// ---------------------------------------------------------------------------
+
+@(private = "file")
+Failures :: struct {
+	count:  int,
+	window: i64, // unix second the window started
+}
+
+@(private = "file")
+g_fail_lock: sync.Mutex
+@(private = "file")
+g_fails: map[string]Failures
+
+FAIL_LIMIT :: 20
+
+@(private = "file")
+peer_host :: proc(peer: string) -> string {
+	if i := strings.last_index_byte(peer, ':'); i > 0 {
+		return peer[:i]
+	}
+	return peer
+}
+
+throttled :: proc(peer: string) -> bool {
+	sync.mutex_lock(&g_fail_lock)
+	defer sync.mutex_unlock(&g_fail_lock)
+	f, ok := g_fails[peer_host(peer)]
+	return ok && now_unix() - f.window < 60 && f.count >= FAIL_LIMIT
+}
+
+note_failure :: proc(peer: string) {
+	sync.mutex_lock(&g_fail_lock)
+	defer sync.mutex_unlock(&g_fail_lock)
+	if g_fails == nil {
+		g_fails = make(map[string]Failures, 16, heap())
+	}
+	host := peer_host(peer)
+	f, ok := g_fails[host]
+	now := now_unix()
+	if !ok || now - f.window >= 60 {
+		f = Failures{0, now}
+	}
+	f.count += 1
+	if !ok {
+		host = strings.clone(host, heap())
+	}
+	g_fails[host] = f
 }
