@@ -1,4 +1,4 @@
-# palmy-chat protocol v1
+# palmy-chat protocol (v1: the loopback server; v2: the cloud gateway)
 
 A small, length-prefixed JSON protocol over TCP. It is deliberately readable on
 the wire — `nc 127.0.0.1 8787 | xxd` tells you what went wrong — and the whole
@@ -368,3 +368,211 @@ stb_truetype rasterizer cannot draw — and palmy has no font fallback. A litera
 `👍` in a reaction would be a tofu box. So a reaction key is a name, and the
 client draws it as a stroked lucide icon at text size. They render, they scale,
 and they are legible in both themes.
+
+---
+
+# Protocol v2 — the cloud gateway
+
+Version 2 is the same framing and the same records, spoken to **palm-rtc**
+(`cloud/rtc`), the chat gateway of the Palmframe cloud, instead of to the
+loopback server above. The loopback server is unchanged and still speaks v1:
+it is the account-less, local-first chat, and its 164 self-test assertions
+still pass. The client speaks both (`chat --cloud` for v2).
+
+v2 was designed so the v1 client would need little to speak it, and it does:
+
+- **A channel's key on the wire is its id**, a uuid, in the same `ch` field.
+  A channel object carries `label` (what to draw), `space`, `private`, a DM's
+  `peer` handle, and `call` (the live call's id, when there is one).
+- **A nickname is an identity's handle.** A message object adds `seq`, `rev`
+  and `ident: {id, handle, name, color}`: the author as the space knew them
+  when they wrote it, so a message keeps its name after its author leaves.
+- Threads, reactions, read cursors, attachments, typing, presence, search and
+  history are the **same frames with the same meaning**. The reaction set
+  gains `eyes` and `check`.
+
+What is new is who you are, what you are a member of, ordering by revision,
+and calls.
+
+## Who you are
+
+```json
+{"t":"hello","token":"<Palmframe access token>","identity":"alice.northwind","rq":1}
+```
+
+`token` is the account's access token (GoTrue; cloudkit holds it). The gateway
+verifies it itself — ES256 against the project's JWKS, or HS256 when it was
+given the project secret (cloud/dev) — and accepts only `role:
+authenticated`: the anon key and the service-role key are not people.
+
+`identity` says which of the person's identities this connection speaks as,
+by handle or id. It is never defaulted: an unscoped token without one is
+answered `identity_required`, listing the handles. A token that is already
+scoped (`palm_identity`, minted by the accounts area's
+`mint_scoped_session`) can only be the identity it names; asking for another
+is `out_of_scope`.
+
+From then on **every statement the gateway runs for this connection runs as
+that one identity**: inside a transaction that has switched to the
+`authenticated` role with the token's claims, narrowed by the gateway to the
+chosen identity (`palm_identity`). Narrowing only ever removes access
+(`can_access_identity`), so the gateway may add it; it cannot widen anything,
+because the person comes from the token's `sub` and nothing else. The JSON a
+reply carries is made by SQL functions (`migrations/20261019700100_rtc_wire.sql`)
+running in that transaction, so a reply contains exactly what RLS gives that
+identity.
+
+`welcome` adds `identity: {id, handle, name, color, kind}` and `exp`; it is
+followed by `spaces`, `channels`, `users`, `reads`, `invites` and one `call`
+per live call. `auth {token}` replaces the token before it expires (same
+person, and if scoped, same identity). `presence: "none"` on hello marks a
+command-line session, which does not make the identity online.
+
+## Spaces, invitations, membership
+
+| `t` | fields | reply |
+| --- | --- | --- |
+| `create_space` | `name` | `space {id}`; the space comes with `#general` |
+| `create_channel` | `space`, `name`, `topic?`, `private?` | `joined {ch}` |
+| `invite` | `space`, `handle`, `ch?`, `role?`, `note?` | `invited {id}` |
+| `invites` | — | `invites {list}`; also pushed to the invitee as it happens |
+| `accept` / `decline` | `id` | `accepted {id, space}` / `declined {id}` |
+| `dm` | `with` (handle), `space?` | `joined {ch}`: the DM, made or found |
+| `members` | `space` | `members {space, list}` |
+| `remove` | `space`, `handle` | `removed_member` (owner or admin) |
+| `leave_space` | `space` | `left_space` |
+| `part` | `ch` | `parted`: leave a private channel |
+
+An invitation grants **exactly what it names**: a space invitation, the space
+at its role (its public channels; a `guest` gets none of them); a channel
+invitation, that channel (and the space as a guest, if the invitee was not in
+it). It is addressed to one identity, by handle; only that identity can accept
+it — the same person's other identities cannot — and it does nothing until it
+is accepted. Revoked, declined or expired, it cannot be accepted.
+
+When membership changes — accepted, removed, left — every connection it
+concerns is re-asked what it can see and sent fresh `spaces`, `channels`,
+`users` and `reads`; a channel that has gone is announced `removed {ch}` and
+disappears from the client. Anyone in a live call in that channel is dropped
+from the call (`sfu_kick`, below), whether or not they have a chat window open.
+
+## Ordering, revisions, and reconnecting
+
+Every change in a channel — a message, an edit, a deletion, a reaction, a
+thread's reply count — takes the channel's next sequence number inside the
+writing transaction, under the channel row's lock. So per channel the numbers
+are gapless and equal **commit order**. A message's `seq` is its place; its
+`rev` is the number of its latest change.
+
+Broadcasts are made from Postgres's own notification stream, which Postgres
+delivers in commit order, by one thread in the gateway, and from nowhere
+else. Every client therefore sees each channel's changes in the order they
+committed — including changes another gateway, PostgREST or a bot wrote. The
+request that caused a change gets its direct answer (or an `error`); the
+change itself arrives as a broadcast like everybody else's, with the `tag` the
+author sent on `message`. The v1 guarantee about threads still holds, now in
+the database: a reply's `message` is notified before its root's `replies`, and
+the root's new rev is above the reply's, so neither a live client nor a
+syncing one can see a count before the reply it counts.
+
+Every broadcast that changes a message (`message`, `edit`, `delete`, `react`,
+`replies`) carries `rev`. A client keeps the highest rev it has seen per
+channel, and on reconnect asks for what it missed:
+
+```json
+{"t":"sync","rq":7,"chs":[{"ch":"<id>","rev":41},{"ch":"<id>","rev":12}]}
+```
+
+The answer is one `changes {ch, msgs, rev, more}` per channel — every message
+whose rev is above the one given, **once each, in rev order, as it is now**
+(an edited message comes back with its new text, a reacted one with its
+current reactions, a deleted one as a tombstone) — then `synced`. Nothing is
+re-fetched that did not change. If the gateway's own notification stream ever
+drops, it tells every client `resync`, and they do the same.
+
+## Read receipts
+
+`read {ch, id}` moves this identity's cursor (forward only, clamped to a
+message that exists, exactly as v1), answers every connection of the identity
+with `read {ch, id, unread, threads, mention}`, and tells the channel's other
+members `receipt {ch, nick, who, id}`. Cursors are now visible to the people
+in the channel — that is what a receipt is — where v1 deliberately kept them
+private. The client draws "Seen" under your newest message in a DM, "Seen by …"
+in a channel.
+
+## Attachments
+
+`attach` and `fetch` are v1's frames. The bytes go to Supabase Storage, in the
+private `rtc` bucket, under `<channel id>/<uuid>/<safe name>`, uploaded with
+the person's own token — so Storage's policy checks the channel again
+(`rtc_objects_insert`: some identity of the caller may post there) — and the
+message that points at it is written under RLS afterwards; if that fails, the
+object is removed. `fetch` finds the object through the message (RLS), then
+downloads it as the person (Storage's policy again). The 512 KiB cap of the
+frame is unchanged; Drive will be the way to share larger files.
+
+## Calls
+
+| `t` | fields | reply |
+| --- | --- | --- |
+| `call_join` | `ch` | `call_token {call, ch, sfu, token, exp, e2ee}` |
+| `call_leave` | `call` | `call_left` |
+
+`call_join` is admission. As the identity, the gateway finds the channel's
+live call or starts one (`rtc_calls`), and records the participation
+(`rtc_call_participants`) — both inserts go through
+`rtc_identity_can_post`, so Postgres decides who may join. Only then does it
+mint a 60-second join token for exactly this identity and call
+(`cloud/rtc/pcp/token.odin`), which the client hands to the call app:
+`call --sfu HOST:PORT --join-token TOKEN`. The media protocol, the SFU and the
+encryption are `apps/call/PROTOCOL.md`'s.
+
+The channel learns about calls through `call {call, ch, state, started, e2ee,
+who: [{id, nick, name, color}]}`, sent when a call starts, whenever the SFU
+reports a new roster, and when it ends; and `speaker {ch, call, id}`.
+
+The SFU keeps a control link to the gateway (the same framing; first frame
+`sfu_hello {ts, mac}` with `mac = HMAC-SHA256(secret, "sfu-hello:" + ts)`, the
+secret shared by the two and nobody else). Over it the SFU sends `sfu_room
+{call, ids}`, `sfu_end {call}` and `sfu_speaker {call, id}`, and the gateway
+sends `sfu_kick {call, id}` when someone in a call loses the channel.
+
+## Server → client, new in v2
+
+| `t` | fields |
+| --- | --- |
+| `spaces` | `list: [{id, name, role, owner, members}]` |
+| `invites` | `list: [{id, space, space_name, ch?, ch_name?, role, note?, from: {handle, name, color}, to, ts}]` |
+| `changes` | `ch`, `msgs`, `rev`, `more` |
+| `synced` / `resync` | — |
+| `removed` | `ch`: no longer visible to this identity |
+| `receipt` | `ch`, `nick`, `who`, `id` |
+| `call` | `call`, `ch`, `state` (`active`\|`ended`), `started`, `e2ee`, `who` |
+| `call_token` | `call`, `ch`, `sfu`, `token`, `exp`, `e2ee` |
+| `speaker` | `ch`, `call`, `id` |
+| `space`, `joined`, `invited`, `accepted`, `declined`, `posted`, `authed`, `parted`, `left_space`, `removed_member`, `call_left` | the direct answers above |
+
+Error codes add `auth`, `identity_required`, `no_identity`, `out_of_scope`,
+`forbidden`, `not_found`, `invalid`, `conflict` and `unavailable`, mapped from
+the SQLSTATE Postgres raised (42501 → `forbidden`, or `no_channel` where the
+v1 code already said it).
+
+## Locking
+
+The gateway keeps v1's discipline — one mutex, `locked_*` procedures that
+never lock, work that needs no shared state done before the lock — with five
+lock sites instead of four: `boot`, `serve` (the accept loop), `handle`,
+`drop_conn` and `notify_batch`. The same checker runs over it:
+`bash cloud/rtc/verify-locks.sh`.
+
+## Reproducing v2
+
+```sh
+cloud/dev/up.sh --name rtc --port-base 61520           # Postgres, GoTrue, PostgREST, Storage
+cloud/dev/test.sh --name rtc --port-base 61520         # pgTAP, every area (rtc_rls: 90)
+palm-rtc --e2e --db … --api … --jwt-secret … --sfu-secret-file …   # 92 checks
+bash cloud/rtc/demo.sh                                 # three people, a space, a call
+PALM_IDENTITY=alice.northwind chat --cloud             # the window
+PALM_IDENTITY=alice.northwind chat history '#general'  # the command line (chat help)
+chat --cloud-shots DIR                                 # offscreen screenshots, both themes
+```
