@@ -43,6 +43,7 @@ import re
 import shutil
 import subprocess
 import sys
+import tempfile
 import time
 
 HERE = os.path.dirname(os.path.abspath(__file__))
@@ -51,6 +52,9 @@ OUT = os.path.join(DISTRO, "out")
 WORK = os.path.join(DISTRO, "build", "integrate", "qemu")
 SHOTS = os.path.join(OUT, "shots")
 EFI_GUID = "8be4df61-93ca-11d2-aa0d-00e098032b8c"
+# A unix socket path must fit in 108 bytes, which a checkout in a deep
+# directory (a git worktree) does not leave room for under WORK.
+SOCKETS = tempfile.mkdtemp(prefix="palm-ti-")
 
 _spec = importlib.util.spec_from_file_location("image_test_boot", os.path.join(DISTRO, "image", "test-boot.py"))
 itb = importlib.util.module_from_spec(_spec)
@@ -70,8 +74,8 @@ class Machine(itb.Machine):
 
     def __init__(self, name, opts, extra=()):
         self.work = WORK
-        self.serial_path = os.path.join(WORK, f"{name}-serial.sock")
-        self.qmp_path = os.path.join(WORK, f"{name}-qmp.sock")
+        self.serial_path = os.path.join(SOCKETS, f"{name}-serial.sock")
+        self.qmp_path = os.path.join(SOCKETS, f"{name}-qmp.sock")
         for p in (self.serial_path, self.qmp_path):
             if os.path.exists(p):
                 os.unlink(p)
@@ -288,7 +292,7 @@ def gui():
         log, _ = m.run("cat /var/log/palm-install.log", 30)
         with open(os.path.join(WORK, "gui-palm-install.log"), "w") as f:
             f.write(log)
-        m.check("the install log names the UEFI entry", re.search(r"UEFI: Boot[0-9A-F]{4} \"Palmframe\"", log) is not None, log[-1500:])
+        m.check("the install log names the UEFI entry", re.search(r"UEFI: Boot[0-9A-F]{4} \"Palmframe \(analytical\)\"", log) is not None, log[-1500:])
         if not finished:
             return False
         m.key("ret")  # Restart now, focused
@@ -300,7 +304,7 @@ def gui():
     t = Machine("gui-target", ["--disk", disk])
     try:
         m = t.expect(r'BdsDxe: (?:loading|starting) (Boot[0-9A-F]{4}) "([^"]*)"', 60)
-        t.check("OVMF starts the \"Palmframe\" boot entry", m is not None and m.group(2) == "Palmframe",
+        t.check("OVMF starts the \"Palmframe\" boot entry", m is not None and m.group(2) == "Palmframe (analytical)",
                 m.group(0) if m else t.buf[-800:])
         ok = t.expect(r"palm-init: Palmframe is starting", 90) is not None
         t.check("limine boots the kernel, palm-init starts", ok, t.buf[-1500:])
@@ -411,7 +415,7 @@ def cli():
     t = Machine("cli-target", ["--disk", disk])
     try:
         mm = t.expect(r'BdsDxe: (?:loading|starting) (Boot[0-9A-F]{4}) "([^"]*)"', 60)
-        t.check("OVMF starts the \"Palmframe\" boot entry", mm is not None and mm.group(2) == "Palmframe",
+        t.check("OVMF starts the \"Palmframe\" boot entry", mm is not None and mm.group(2) == "Palmframe (cli-test)",
                 mm.group(0) if mm else t.buf[-800:])
         if not t.check("serial getty on host cli-test", t.login("root", "gracehopper", "cli-test"), t.buf[-1500:]):
             return False
