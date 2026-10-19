@@ -912,7 +912,7 @@ check_configured :: proc(root: string, g: core.Gpt, efivars: string) {
 		check(strings.contains(fs, fmt.tprintf("PARTUUID=%s\t/\text4\t", root_uuid)), "fstab: root by PARTUUID (%s)", fs)
 		check(strings.contains(fs, fmt.tprintf("PARTUUID=%s\t/boot/efi\tvfat\t", esp_uuid)), "fstab: the ESP at /boot/efi")
 		check(strings.has_prefix(fs, "# palm-init mounts"), "fstab: the base file's comment is kept")
-		eq(strings.count(fs, "PARTUUID="), 2, "fstab: exactly two entries")
+		eq(strings.count(fs, "\nPARTUUID="), 2, "fstab: exactly two entries")
 		conf := slurp(core.join(root, "boot/efi/boot/limine/limine.conf"))
 		check(strings.contains(conf, fmt.tprintf("cmdline: root=PARTUUID=%s rw ", root_uuid)), "limine.conf boots root=PARTUUID (%s)", conf)
 		check(strings.contains(conf, "path: boot():/vmlinuz"), "limine.conf boots /vmlinuz on the ESP")
