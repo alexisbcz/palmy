@@ -28,6 +28,7 @@ import "core:os"
 import "core:strconv"
 import "core:strings"
 import "core:sys/linux"
+import "kit:dbus"
 
 SEAT_BUS :: "org.freedesktop.login1"
 SEAT_MGR_PATH :: "/org/freedesktop/login1"
@@ -55,7 +56,7 @@ Seat_Device :: struct {
 }
 
 Seat :: struct {
-	conn:            ^Dbus_Conn,
+	conn:            ^dbus.Dbus_Conn,
 	ready:           bool,
 	live:            bool, // PALMY_WM_SEAT_LIVE=1
 	session_id:      string,
@@ -112,15 +113,15 @@ seat_live_enabled :: proc() -> bool {
 // seat_open connects to the system bus, finds our login session and reads its
 // properties. Nothing here changes any state on the session, so it is safe to
 // call while another compositor owns the seat.
-seat_open :: proc() -> Dbus_Error {
+seat_open :: proc() -> dbus.Dbus_Error {
 	if seat.ready {
 		return .None
 	}
 	seat_verbose = os.get_env("PALMY_WM_SEAT_DEBUG", context.temp_allocator) != ""
-	dbus_verbose = seat_verbose
+	dbus.dbus_verbose = seat_verbose
 	seat.live = seat_live_enabled()
 
-	conn, e := dbus_connect()
+	conn, e := dbus.dbus_connect()
 	if e != .None {
 		seat_log("cannot reach the system bus: %v", e)
 		return e
@@ -128,7 +129,7 @@ seat_open :: proc() -> Dbus_Error {
 	seat.conn = conn
 
 	if e2 := seat_find_session(); e2 != .None {
-		dbus_close(seat.conn)
+		dbus.dbus_close(seat.conn)
 		seat.conn = nil
 		return e2
 	}
@@ -176,7 +177,7 @@ seat_close :: proc() {
 	seat_free_devices()
 	delete(seat.devices)
 	if seat.conn != nil {
-		dbus_close(seat.conn)
+		dbus.dbus_close(seat.conn)
 		seat.conn = nil
 	}
 	delete(seat.session_id)
@@ -192,15 +193,15 @@ seat_close :: proc() {
 // becomes readable when logind has something to say -- a pause, a resume, or a
 // change of Active.
 seat_fd :: proc() -> linux.Fd {
-	return dbus_fd(seat.conn)
+	return dbus.dbus_fd(seat.conn)
 }
 
 // seat_find_session prefers XDG_SESSION_ID, because that is the session the
 // user logged into, and falls back to asking logind which session owns us.
-seat_find_session :: proc() -> Dbus_Error {
+seat_find_session :: proc() -> dbus.Dbus_Error {
 	if id := os.get_env("XDG_SESSION_ID", context.temp_allocator); id != "" {
-		args := [1]Dbus_Value{dbus_s(id)}
-		m, e := dbus_call(
+		args := [1]dbus.Dbus_Value{dbus.dbus_s(id)}
+		m, e := dbus.dbus_call(
 			seat.conn,
 			SEAT_BUS,
 			SEAT_MGR_PATH,
@@ -212,18 +213,18 @@ seat_find_session :: proc() -> Dbus_Error {
 		if e == .None && len(m.args) == 1 {
 			seat.session_path = strings.clone(m.args[0].str)
 			seat.session_id = strings.clone(id)
-			dbus_msg_free(m)
+			dbus.dbus_msg_free(m)
 			return .None
 		}
 		if m != nil {
-			dbus_msg_free(m)
+			dbus.dbus_msg_free(m)
 		}
 		seat_log("GetSession(%s) failed (%v), falling back to GetSessionByPID", id, e)
 	}
 
 	pid := u32(linux.getpid())
-	args := [1]Dbus_Value{dbus_u(pid)}
-	m, e := dbus_call(
+	args := [1]dbus.Dbus_Value{dbus.dbus_u(pid)}
+	m, e := dbus.dbus_call(
 		seat.conn,
 		SEAT_BUS,
 		SEAT_MGR_PATH,
@@ -234,16 +235,16 @@ seat_find_session :: proc() -> Dbus_Error {
 	)
 	if e != .None {
 		if m != nil {
-			dbus_msg_free(m)
+			dbus.dbus_msg_free(m)
 		}
 		return e
 	}
 	if len(m.args) != 1 {
-		dbus_msg_free(m)
+		dbus.dbus_msg_free(m)
 		return .Protocol
 	}
 	seat.session_path = strings.clone(m.args[0].str)
-	dbus_msg_free(m)
+	dbus.dbus_msg_free(m)
 	return .None
 }
 
@@ -256,36 +257,36 @@ reset_str :: proc(dst: ^string, src: string) {
 }
 
 // seat_refresh re-reads every property we care about in one GetAll.
-seat_refresh :: proc() -> Dbus_Error {
+seat_refresh :: proc() -> dbus.Dbus_Error {
 	if seat.conn == nil || seat.session_path == "" {
 		return .Not_Ready
 	}
-	dict, m, e := dbus_get_all(seat.conn, SEAT_BUS, seat.session_path, SEAT_SESSION_IFACE)
+	dict, m, e := dbus.dbus_get_all(seat.conn, SEAT_BUS, seat.session_path, SEAT_SESSION_IFACE)
 	if e != .None {
 		if m != nil {
-			dbus_msg_free(m)
+			dbus.dbus_msg_free(m)
 		}
 		return e
 	}
-	defer dbus_msg_free(m)
+	defer dbus.dbus_msg_free(m)
 
-	if v, ok := dbus_dict_get(dict, "Id"); ok {
+	if v, ok := dbus.dbus_dict_get(dict, "Id"); ok {
 		reset_str(&seat.session_id, v.str)
 	}
-	if v, ok := dbus_dict_get(dict, "Type"); ok {
+	if v, ok := dbus.dbus_dict_get(dict, "Type"); ok {
 		reset_str(&seat.session_type, v.str)
 	}
-	if v, ok := dbus_dict_get(dict, "State"); ok {
+	if v, ok := dbus.dbus_dict_get(dict, "State"); ok {
 		reset_str(&seat.session_state, v.str)
 	}
-	if v, ok := dbus_dict_get(dict, "VTNr"); ok {
-		seat.vtnr = dbus_as_u32(v)
+	if v, ok := dbus.dbus_dict_get(dict, "VTNr"); ok {
+		seat.vtnr = dbus.dbus_as_u32(v)
 	}
-	if v, ok := dbus_dict_get(dict, "Active"); ok {
-		seat.active = dbus_as_bool(v)
+	if v, ok := dbus.dbus_dict_get(dict, "Active"); ok {
+		seat.active = dbus.dbus_as_bool(v)
 	}
 	// Seat is a (so): the id and the object path of the seat object.
-	if v, ok := dbus_dict_get(dict, "Seat"); ok {
+	if v, ok := dbus.dbus_dict_get(dict, "Seat"); ok {
 		if v.kind == '(' && len(v.items) == 2 {
 			reset_str(&seat.seat_id, v.items[0].str)
 			reset_str(&seat.seat_path, v.items[1].str)
@@ -320,7 +321,7 @@ seat_watch :: proc() {
 		),
 	}
 	for r in rules {
-		if e := dbus_add_match(seat.conn, r); e != .None {
+		if e := dbus.dbus_add_match(seat.conn, r); e != .None {
 			seat_log("AddMatch failed (%v) for %s", e, r)
 		}
 	}
@@ -336,20 +337,20 @@ seat_pump :: proc() {
 	if seat.conn == nil {
 		return
 	}
-	if e := dbus_dispatch(seat.conn); e != .None {
-		if !dbus_alive(seat.conn) {
+	if e := dbus.dbus_dispatch(seat.conn); e != .None {
+		if !dbus.dbus_alive(seat.conn) {
 			seat_log("logind hung up; VT switching is no longer brokered")
 		}
 		return
 	}
 	for {
-		m, ok := dbus_next(seat.conn)
+		m, ok := dbus.dbus_next(seat.conn)
 		if !ok {
 			break
 		}
 		seat_handle(m)
-		dbus_msg_close_fds(m)
-		dbus_msg_free(m)
+		dbus.dbus_msg_close_fds(m)
+		dbus.dbus_msg_free(m)
 	}
 }
 
@@ -425,8 +426,8 @@ seat_mark_active :: proc(active: bool) {
 }
 
 @(private = "file")
-seat_handle :: proc(m: ^Dbus_Msg) {
-	if m.type != DBUS_MSG_SIGNAL {
+seat_handle :: proc(m: ^dbus.Dbus_Msg) {
+	if m.type != dbus.DBUS_MSG_SIGNAL {
 		return
 	}
 	switch {
@@ -435,8 +436,8 @@ seat_handle :: proc(m: ^Dbus_Msg) {
 		if len(m.args) != 3 {
 			return
 		}
-		major := dbus_as_u32(m.args[0])
-		minor := dbus_as_u32(m.args[1])
+		major := dbus.dbus_as_u32(m.args[0])
+		minor := dbus.dbus_as_u32(m.args[1])
 		if seat_mark_pause(major, minor, m.args[2].str) {
 			// Mandatory: logind blocks the VT switch until every delegate has
 			// answered or its timeout expires.
@@ -456,18 +457,18 @@ seat_handle :: proc(m: ^Dbus_Msg) {
 				f = -1
 			}
 		}
-		seat_mark_resume(dbus_as_u32(m.args[0]), dbus_as_u32(m.args[1]), newfd)
+		seat_mark_resume(dbus.dbus_as_u32(m.args[0]), dbus.dbus_as_u32(m.args[1]), newfd)
 
 	case m.iface == SEAT_PROPS_IFACE && m.member == "PropertiesChanged":
 		// (s interface, a{sv} changed, as invalidated)
 		if len(m.args) < 2 || m.args[0].str != SEAT_SESSION_IFACE {
 			return
 		}
-		if v, ok := dbus_dict_get(m.args[1], "State"); ok {
+		if v, ok := dbus.dbus_dict_get(m.args[1], "State"); ok {
 			reset_str(&seat.session_state, v.str)
 		}
-		if v, ok := dbus_dict_get(m.args[1], "Active"); ok {
-			seat_mark_active(dbus_as_bool(v))
+		if v, ok := dbus.dbus_dict_get(m.args[1], "Active"); ok {
+			seat_mark_active(dbus.dbus_as_bool(v))
 			return
 		}
 		if len(m.args) >= 3 {
@@ -487,7 +488,7 @@ seat_handle :: proc(m: ^Dbus_Msg) {
 // PropertiesChanged invalidated it rather than carrying its new value.
 @(private = "file")
 seat_read_active :: proc() -> (active: bool, ok: bool) {
-	v, m, e := dbus_get_property(
+	v, m, e := dbus.dbus_get_property(
 		seat.conn,
 		SEAT_BUS,
 		seat.session_path,
@@ -497,10 +498,10 @@ seat_read_active :: proc() -> (active: bool, ok: bool) {
 	// The value is a bool, so it is copied out before the message that owns
 	// its storage goes away.
 	if e == .None && v.kind == 'b' {
-		active, ok = dbus_as_bool(v), true
+		active, ok = dbus.dbus_as_bool(v), true
 	}
 	if m != nil {
-		dbus_msg_free(m)
+		dbus.dbus_msg_free(m)
 	}
 	return
 }
@@ -510,8 +511,8 @@ seat_pause_complete :: proc(major, minor: u32) {
 	if seat.conn == nil {
 		return
 	}
-	args := [2]Dbus_Value{dbus_u(major), dbus_u(minor)}
-	if e := dbus_send_noreply(
+	args := [2]dbus.Dbus_Value{dbus.dbus_u(major), dbus.dbus_u(minor)}
+	if e := dbus.dbus_send_noreply(
 		seat.conn,
 		SEAT_BUS,
 		seat.session_path,
@@ -545,15 +546,15 @@ seat_gate :: proc(what: string) -> bool {
 
 // seat_take_control makes us the session's device delegate. Until this
 // succeeds TakeDevice will be refused by logind.
-seat_take_control :: proc(force := false) -> Dbus_Error {
+seat_take_control :: proc(force := false) -> dbus.Dbus_Error {
 	if !seat.ready {
 		return .Not_Ready
 	}
 	if !seat_gate("TakeControl") {
 		return .Gated
 	}
-	args := [1]Dbus_Value{dbus_b(force)}
-	m, e := dbus_call(
+	args := [1]dbus.Dbus_Value{dbus.dbus_b(force)}
+	m, e := dbus.dbus_call(
 		seat.conn,
 		SEAT_BUS,
 		seat.session_path,
@@ -563,7 +564,7 @@ seat_take_control :: proc(force := false) -> Dbus_Error {
 		args[:],
 	)
 	if m != nil {
-		dbus_msg_free(m)
+		dbus.dbus_msg_free(m)
 	}
 	if e == .None {
 		seat.control = true
@@ -571,11 +572,11 @@ seat_take_control :: proc(force := false) -> Dbus_Error {
 	return e
 }
 
-seat_release_control :: proc() -> Dbus_Error {
+seat_release_control :: proc() -> dbus.Dbus_Error {
 	if !seat.ready || !seat.control {
 		return .Not_Ready
 	}
-	m, e := dbus_call(
+	m, e := dbus.dbus_call(
 		seat.conn,
 		SEAT_BUS,
 		seat.session_path,
@@ -585,7 +586,7 @@ seat_release_control :: proc() -> Dbus_Error {
 		nil,
 	)
 	if m != nil {
-		dbus_msg_free(m)
+		dbus.dbus_msg_free(m)
 	}
 	seat.control = false
 	return e
@@ -594,15 +595,15 @@ seat_release_control :: proc() -> Dbus_Error {
 // seat_take_device asks logind for an open descriptor on a device node. The
 // second result says whether the device arrived already paused, which happens
 // when we are not the foreground VT.
-seat_take_device :: proc(major, minor: u32) -> (fd: linux.Fd, paused: bool, err: Dbus_Error) {
+seat_take_device :: proc(major, minor: u32) -> (fd: linux.Fd, paused: bool, err: dbus.Dbus_Error) {
 	if !seat.ready {
 		return -1, false, .Not_Ready
 	}
 	if !seat_gate("TakeDevice") {
 		return -1, false, .Gated
 	}
-	args := [2]Dbus_Value{dbus_u(major), dbus_u(minor)}
-	m, e := dbus_call(
+	args := [2]dbus.Dbus_Value{dbus.dbus_u(major), dbus.dbus_u(minor)}
+	m, e := dbus.dbus_call(
 		seat.conn,
 		SEAT_BUS,
 		seat.session_path,
@@ -613,18 +614,18 @@ seat_take_device :: proc(major, minor: u32) -> (fd: linux.Fd, paused: bool, err:
 	)
 	if e != .None {
 		if m != nil {
-			dbus_msg_close_fds(m)
-			dbus_msg_free(m)
+			dbus.dbus_msg_close_fds(m)
+			dbus.dbus_msg_free(m)
 		}
 		return -1, false, e
 	}
-	defer dbus_msg_free(m)
+	defer dbus.dbus_msg_free(m)
 	if len(m.args) != 2 || m.args[0].kind != 'h' {
-		dbus_msg_close_fds(m)
+		dbus.dbus_msg_close_fds(m)
 		return -1, false, .Protocol
 	}
 	fd = m.args[0].fd
-	paused = dbus_as_bool(m.args[1])
+	paused = dbus.dbus_as_bool(m.args[1])
 	if fd < 0 {
 		return -1, false, .Protocol
 	}
@@ -640,7 +641,7 @@ seat_take_device :: proc(major, minor: u32) -> (fd: linux.Fd, paused: bool, err:
 }
 
 // seat_take_node is the same thing by path: "/dev/input/event3".
-seat_take_node :: proc(node: string) -> (fd: linux.Fd, paused: bool, err: Dbus_Error) {
+seat_take_node :: proc(node: string) -> (fd: linux.Fd, paused: bool, err: dbus.Dbus_Error) {
 	d := seat_device_by_node(node)
 	if d == nil {
 		return -1, false, .Not_Found
@@ -648,15 +649,15 @@ seat_take_node :: proc(node: string) -> (fd: linux.Fd, paused: bool, err: Dbus_E
 	return seat_take_device(d.major, d.minor)
 }
 
-seat_release_device :: proc(major, minor: u32) -> Dbus_Error {
+seat_release_device :: proc(major, minor: u32) -> dbus.Dbus_Error {
 	if !seat.ready {
 		return .Not_Ready
 	}
 	if !seat_gate("ReleaseDevice") {
 		return .Gated
 	}
-	args := [2]Dbus_Value{dbus_u(major), dbus_u(minor)}
-	m, e := dbus_call(
+	args := [2]dbus.Dbus_Value{dbus.dbus_u(major), dbus.dbus_u(minor)}
+	m, e := dbus.dbus_call(
 		seat.conn,
 		SEAT_BUS,
 		seat.session_path,
@@ -666,7 +667,7 @@ seat_release_device :: proc(major, minor: u32) -> Dbus_Error {
 		args[:],
 	)
 	if m != nil {
-		dbus_msg_free(m)
+		dbus.dbus_msg_free(m)
 	}
 	if d := seat_device_by_dev(major, minor); d != nil {
 		d.taken = false
@@ -679,14 +680,14 @@ seat_release_device :: proc(major, minor: u32) -> Dbus_Error {
 }
 
 // seat_activate brings our session to the foreground.
-seat_activate :: proc() -> Dbus_Error {
+seat_activate :: proc() -> dbus.Dbus_Error {
 	if !seat.ready {
 		return .Not_Ready
 	}
 	if !seat_gate("Activate") {
 		return .Gated
 	}
-	m, e := dbus_call(
+	m, e := dbus.dbus_call(
 		seat.conn,
 		SEAT_BUS,
 		seat.session_path,
@@ -696,21 +697,21 @@ seat_activate :: proc() -> Dbus_Error {
 		nil,
 	)
 	if m != nil {
-		dbus_msg_free(m)
+		dbus.dbus_msg_free(m)
 	}
 	return e
 }
 
 // seat_switch_to moves the seat to another VT.
-seat_switch_to :: proc(vt: u32) -> Dbus_Error {
+seat_switch_to :: proc(vt: u32) -> dbus.Dbus_Error {
 	if !seat.ready || seat.seat_path == "" {
 		return .Not_Ready
 	}
 	if !seat_gate("SwitchTo") {
 		return .Gated
 	}
-	args := [1]Dbus_Value{dbus_u(vt)}
-	m, e := dbus_call(
+	args := [1]dbus.Dbus_Value{dbus.dbus_u(vt)}
+	m, e := dbus.dbus_call(
 		seat.conn,
 		SEAT_BUS,
 		seat.seat_path,
@@ -720,7 +721,7 @@ seat_switch_to :: proc(vt: u32) -> Dbus_Error {
 		args[:],
 	)
 	if m != nil {
-		dbus_msg_free(m)
+		dbus.dbus_msg_free(m)
 	}
 	return e
 }
@@ -1039,7 +1040,7 @@ hexdump :: proc(b: []u8) -> string {
 
 // values_equal compares two unmarshalled trees structurally.
 @(private = "file")
-values_equal :: proc(a, b: Dbus_Value) -> bool {
+values_equal :: proc(a, b: dbus.Dbus_Value) -> bool {
 	if a.kind != b.kind {
 		return false
 	}
@@ -1071,9 +1072,9 @@ values_equal :: proc(a, b: Dbus_Value) -> bool {
 // roundtrip marshals a value, reads it back, and reports both that the bytes
 // came out the expected length and that the value survived.
 @(private = "file")
-roundtrip :: proc(sig: string, v: Dbus_Value, want_len: int, label: string) -> []u8 {
-	w: Dbus_Writer
-	if !dbus_marshal(&w, sig, v) {
+roundtrip :: proc(sig: string, v: dbus.Dbus_Value, want_len: int, label: string) -> []u8 {
+	w: dbus.Dbus_Writer
+	if !dbus.dbus_marshal(&w, sig, v) {
 		check(false, "%s: marshal of %s refused", label, sig)
 		return nil
 	}
@@ -1090,11 +1091,11 @@ roundtrip :: proc(sig: string, v: Dbus_Value, want_len: int, label: string) -> [
 		)
 	}
 	fakefds := [4]linux.Fd{70, 71, 72, 73}
-	r := Dbus_Reader {
+	r := dbus.Dbus_Reader {
 		b   = bytes,
 		fds = fakefds[:],
 	}
-	back := dbus_unmarshal(&r, sig)
+	back := dbus.dbus_unmarshal(&r, sig)
 	check(!r.bad, "%s: %s unmarshals cleanly", label, sig)
 	check(r.p == len(bytes), "%s: %s consumes all %d bytes (got %d)", label, sig, len(bytes), r.p)
 	check(values_equal(v, back), "%s: %s round-trips", label, sig)
@@ -1105,51 +1106,51 @@ roundtrip :: proc(sig: string, v: Dbus_Value, want_len: int, label: string) -> [
 selftest_marshal :: proc() {
 	fmt.println("-- signatures")
 	{
-		ct, next, ok := dbus_sig_next("a{sv}s", 0)
+		ct, next, ok := dbus.dbus_sig_next("a{sv}s", 0)
 		check(ok && ct == "a{sv}" && next == 5, "a{{sv}}s splits to a{{sv}} at 5 (got %q,%d)", ct, next)
 	}
 	{
-		ct, next, ok := dbus_sig_next("a{sv}s", 5)
+		ct, next, ok := dbus.dbus_sig_next("a{sv}s", 5)
 		check(ok && ct == "s" && next == 6, "...then s (got %q,%d)", ct, next)
 	}
 	{
-		ct, _, ok := dbus_sig_next("aa(us)", 0)
+		ct, _, ok := dbus.dbus_sig_next("aa(us)", 0)
 		check(ok && ct == "aa(us)", "aa(us) is one complete type (got %q)", ct)
 	}
 	{
-		_, _, ok := dbus_sig_next("a(us", 0)
+		_, _, ok := dbus.dbus_sig_next("a(us", 0)
 		check(!ok, "an unbalanced signature is rejected")
 	}
-	check(dbus_sig_count("susso") == 5, "susso counts 5 types")
-	check(dbus_sig_count("a(susso)") == 1, "a(susso) counts 1 type")
-	check(dbus_sig_count("(us") == -1, "a broken signature counts -1")
-	check(dbus_align_of('y') == 1, "y aligns to 1")
-	check(dbus_align_of('u') == 4, "u aligns to 4")
-	check(dbus_align_of('t') == 8, "t aligns to 8")
-	check(dbus_align_of('(') == 8, "a struct aligns to 8")
-	check(dbus_align_of('v') == 1, "a variant aligns to 1")
+	check(dbus.dbus_sig_count("susso") == 5, "susso counts 5 types")
+	check(dbus.dbus_sig_count("a(susso)") == 1, "a(susso) counts 1 type")
+	check(dbus.dbus_sig_count("(us") == -1, "a broken signature counts -1")
+	check(dbus.dbus_align_of('y') == 1, "y aligns to 1")
+	check(dbus.dbus_align_of('u') == 4, "u aligns to 4")
+	check(dbus.dbus_align_of('t') == 8, "t aligns to 8")
+	check(dbus.dbus_align_of('(') == 8, "a struct aligns to 8")
+	check(dbus.dbus_align_of('v') == 1, "a variant aligns to 1")
 
 	fmt.println("-- scalars and alignment")
-	roundtrip("y", dbus_y(0xab), 1, "byte")
-	roundtrip("b", dbus_b(true), 4, "bool")
-	roundtrip("n", dbus_n(-2), 2, "int16")
-	roundtrip("q", dbus_q(513), 2, "uint16")
-	roundtrip("i", dbus_i(-77), 4, "int32")
-	roundtrip("u", dbus_u(0xdeadbeef), 4, "uint32")
-	roundtrip("x", dbus_x(-1), 8, "int64")
-	roundtrip("t", dbus_t(1 << 40), 8, "uint64")
-	roundtrip("d", dbus_d(0.5), 8, "double")
+	roundtrip("y", dbus.dbus_y(0xab), 1, "byte")
+	roundtrip("b", dbus.dbus_b(true), 4, "bool")
+	roundtrip("n", dbus.dbus_n(-2), 2, "int16")
+	roundtrip("q", dbus.dbus_q(513), 2, "uint16")
+	roundtrip("i", dbus.dbus_i(-77), 4, "int32")
+	roundtrip("u", dbus.dbus_u(0xdeadbeef), 4, "uint32")
+	roundtrip("x", dbus.dbus_x(-1), 8, "int64")
+	roundtrip("t", dbus.dbus_t(1 << 40), 8, "uint64")
+	roundtrip("d", dbus.dbus_d(0.5), 8, "double")
 	// "hello" is 5 bytes: 4 length + 5 + 1 NUL = 10.
-	roundtrip("s", dbus_s("hello"), 10, "string")
-	roundtrip("s", dbus_s(""), 5, "empty string")
-	roundtrip("o", dbus_o("/org/freedesktop/login1"), 28, "object path")
-	roundtrip("g", dbus_g("a{sv}"), 7, "signature")
+	roundtrip("s", dbus.dbus_s("hello"), 10, "string")
+	roundtrip("s", dbus.dbus_s(""), 5, "empty string")
+	roundtrip("o", dbus.dbus_o("/org/freedesktop/login1"), 28, "object path")
+	roundtrip("g", dbus.dbus_g("a{sv}"), 7, "signature")
 
 	{
 		// y then u: one byte, three of padding, four of value.
-		w: Dbus_Writer
-		dbus_marshal(&w, "y", dbus_y(1))
-		dbus_marshal(&w, "u", dbus_u(0x04030201))
+		w: dbus.Dbus_Writer
+		dbus.dbus_marshal(&w, "y", dbus.dbus_y(1))
+		dbus.dbus_marshal(&w, "u", dbus.dbus_u(0x04030201))
 		b := w.b[:]
 		check(len(b) == 8, "y,u pads to 8 bytes (got %d) [%s]", len(b), hexdump(b))
 		check(b[1] == 0 && b[2] == 0 && b[3] == 0, "the pad bytes after y are zero")
@@ -1157,18 +1158,18 @@ selftest_marshal :: proc() {
 	}
 	{
 		// y then t: one byte, seven of padding, eight of value.
-		w: Dbus_Writer
-		dbus_marshal(&w, "y", dbus_y(1))
-		dbus_marshal(&w, "t", dbus_t(1))
+		w: dbus.Dbus_Writer
+		dbus.dbus_marshal(&w, "y", dbus.dbus_y(1))
+		dbus.dbus_marshal(&w, "t", dbus.dbus_t(1))
 		b := w.b[:]
 		check(len(b) == 16, "y,t pads to 16 bytes (got %d) [%s]", len(b), hexdump(b))
 		check(b[8] == 1, "the u64 lands at offset 8")
 	}
 	{
 		// y then a struct: the struct is forced to 8.
-		w: Dbus_Writer
-		dbus_marshal(&w, "y", dbus_y(0xff))
-		dbus_marshal(&w, "(yy)", dbus_struct(dbus_y(1), dbus_y(2)))
+		w: dbus.Dbus_Writer
+		dbus.dbus_marshal(&w, "y", dbus.dbus_y(0xff))
+		dbus.dbus_marshal(&w, "(yy)", dbus.dbus_struct(dbus.dbus_y(1), dbus.dbus_y(2)))
 		b := w.b[:]
 		check(len(b) == 10, "y,(yy) pads the struct to offset 8 (got %d) [%s]", len(b), hexdump(b))
 		check(b[8] == 1 && b[9] == 2, "the struct members follow the pad")
@@ -1176,42 +1177,42 @@ selftest_marshal :: proc() {
 
 	fmt.println("-- containers")
 	// as of two strings: 4 len + (4+3+1) + (4+5+1) = 4 + 8 + 10 = 22.
-	roundtrip("as", dbus_array("s", dbus_s("abc"), dbus_s("hello")), 22, "string array")
+	roundtrip("as", dbus.dbus_array("s", dbus.dbus_s("abc"), dbus.dbus_s("hello")), 22, "string array")
 	// An empty array is still four bytes of length and no padding (we are
 	// already 4-aligned at offset 0 and the element is 4-aligned).
-	roundtrip("as", dbus_array("s"), 4, "empty string array")
+	roundtrip("as", dbus.dbus_array("s"), 4, "empty string array")
 	// An empty array of 8-aligned elements still writes the pad to 8.
-	roundtrip("a(u)", dbus_array("(u)"), 8, "empty struct array keeps its pad")
-	roundtrip("ay", dbus_array("y", dbus_y(1), dbus_y(2), dbus_y(3)), 7, "byte array")
-	roundtrip("au", dbus_array("u", dbus_u(1), dbus_u(2)), 12, "uint32 array")
+	roundtrip("a(u)", dbus.dbus_array("(u)"), 8, "empty struct array keeps its pad")
+	roundtrip("ay", dbus.dbus_array("y", dbus.dbus_y(1), dbus.dbus_y(2), dbus.dbus_y(3)), 7, "byte array")
+	roundtrip("au", dbus.dbus_array("u", dbus.dbus_u(1), dbus.dbus_u(2)), 12, "uint32 array")
 	roundtrip(
 		"aas",
-		dbus_array("as", dbus_array("s", dbus_s("a")), dbus_array("s", dbus_s("bb"))),
+		dbus.dbus_array("as", dbus.dbus_array("s", dbus.dbus_s("a")), dbus.dbus_array("s", dbus.dbus_s("bb"))),
 		4 + (4 + 6) + 2 + (4 + 7),
 		"nested array",
 	)
 	roundtrip(
 		"(susso)",
-		dbus_struct(
-			dbus_s("1"),
-			dbus_u(1000),
-			dbus_s("alex"),
-			dbus_s("seat0"),
-			dbus_o("/org/freedesktop/login1/session/_31"),
+		dbus.dbus_struct(
+			dbus.dbus_s("1"),
+			dbus.dbus_u(1000),
+			dbus.dbus_s("alex"),
+			dbus.dbus_s("seat0"),
+			dbus.dbus_o("/org/freedesktop/login1/session/_31"),
 		),
 		-1,
 		"ListSessions element",
 	)
 	roundtrip(
 		"a(susso)",
-		dbus_array(
+		dbus.dbus_array(
 			"(susso)",
-			dbus_struct(
-				dbus_s("1"),
-				dbus_u(1000),
-				dbus_s("alex"),
-				dbus_s("seat0"),
-				dbus_o("/x"),
+			dbus.dbus_struct(
+				dbus.dbus_s("1"),
+				dbus.dbus_u(1000),
+				dbus.dbus_s("alex"),
+				dbus.dbus_s("seat0"),
+				dbus.dbus_o("/x"),
 			),
 		),
 		-1,
@@ -1219,54 +1220,54 @@ selftest_marshal :: proc() {
 	)
 
 	fmt.println("-- variants")
-	roundtrip("v", dbus_variant("u", dbus_u(7)), 4 + 4, "variant of u")
-	roundtrip("v", dbus_variant("s", dbus_s("tty")), 3 + 1 + 4 + 3 + 1, "variant of s")
+	roundtrip("v", dbus.dbus_variant("u", dbus.dbus_u(7)), 4 + 4, "variant of u")
+	roundtrip("v", dbus.dbus_variant("s", dbus.dbus_s("tty")), 3 + 1 + 4 + 3 + 1, "variant of s")
 	roundtrip(
 		"v",
-		dbus_variant("as", dbus_array("s", dbus_s("a"), dbus_s("b"))),
+		dbus.dbus_variant("as", dbus.dbus_array("s", dbus.dbus_s("a"), dbus.dbus_s("b"))),
 		-1,
 		"variant of as",
 	)
-	roundtrip("v", dbus_variant("(so)", dbus_struct(dbus_s("seat0"), dbus_o("/s"))), -1, "variant of (so)")
+	roundtrip("v", dbus.dbus_variant("(so)", dbus.dbus_struct(dbus.dbus_s("seat0"), dbus.dbus_o("/s"))), -1, "variant of (so)")
 
 	fmt.println("-- a{sv}")
-	props := dbus_array(
+	props := dbus.dbus_array(
 		"{sv}",
-		dbus_entry(dbus_s("Id"), dbus_variant("s", dbus_s("1"))),
-		dbus_entry(dbus_s("Active"), dbus_variant("b", dbus_b(true))),
-		dbus_entry(dbus_s("VTNr"), dbus_variant("u", dbus_u(1))),
-		dbus_entry(
-			dbus_s("Seat"),
-			dbus_variant("(so)", dbus_struct(dbus_s("seat0"), dbus_o("/seat/seat0"))),
+		dbus.dbus_entry(dbus.dbus_s("Id"), dbus.dbus_variant("s", dbus.dbus_s("1"))),
+		dbus.dbus_entry(dbus.dbus_s("Active"), dbus.dbus_variant("b", dbus.dbus_b(true))),
+		dbus.dbus_entry(dbus.dbus_s("VTNr"), dbus.dbus_variant("u", dbus.dbus_u(1))),
+		dbus.dbus_entry(
+			dbus.dbus_s("Seat"),
+			dbus.dbus_variant("(so)", dbus.dbus_struct(dbus.dbus_s("seat0"), dbus.dbus_o("/seat/seat0"))),
 		),
 	)
 	bytes := roundtrip("a{sv}", props, -1, "property dict")
 	{
-		r := Dbus_Reader{b = bytes}
-		back := dbus_unmarshal(&r, "a{sv}")
+		r := dbus.Dbus_Reader{b = bytes}
+		back := dbus.dbus_unmarshal(&r, "a{sv}")
 		check(!r.bad && len(back.items) == 4, "the dict has four entries")
-		v, ok := dbus_dict_get(back, "VTNr")
-		check(ok && dbus_as_u32(v) == 1, "VTNr reads back as 1")
-		v2, ok2 := dbus_dict_get(back, "Active")
-		check(ok2 && dbus_as_bool(v2), "Active reads back as true")
-		v3, ok3 := dbus_dict_get(back, "Seat")
+		v, ok := dbus.dbus_dict_get(back, "VTNr")
+		check(ok && dbus.dbus_as_u32(v) == 1, "VTNr reads back as 1")
+		v2, ok2 := dbus.dbus_dict_get(back, "Active")
+		check(ok2 && dbus.dbus_as_bool(v2), "Active reads back as true")
+		v3, ok3 := dbus.dbus_dict_get(back, "Seat")
 		check(
 			ok3 && v3.kind == '(' && len(v3.items) == 2 && v3.items[0].str == "seat0",
 			"Seat reads back as (so)",
 		)
-		_, missing := dbus_dict_get(back, "Nope")
+		_, missing := dbus.dbus_dict_get(back, "Nope")
 		check(!missing, "a missing key reports missing")
 	}
 	{
 		// Each dict entry is a struct, so the second one must start at an
 		// offset that is 8-aligned relative to the message.
-		small := dbus_array(
+		small := dbus.dbus_array(
 			"{sv}",
-			dbus_entry(dbus_s("a"), dbus_variant("y", dbus_y(1))),
-			dbus_entry(dbus_s("b"), dbus_variant("y", dbus_y(2))),
+			dbus.dbus_entry(dbus.dbus_s("a"), dbus.dbus_variant("y", dbus.dbus_y(1))),
+			dbus.dbus_entry(dbus.dbus_s("b"), dbus.dbus_variant("y", dbus.dbus_y(2))),
 		)
-		w: Dbus_Writer
-		dbus_marshal(&w, "a{sv}", small)
+		w: dbus.Dbus_Writer
+		dbus.dbus_marshal(&w, "a{sv}", small)
 		b := w.b[:]
 		// 4 length, entry at 8 (pad 4), entry is 4+1+1 + 1+1+1 + 1 = 10 -> ends
 		// at 18, second entry padded to 24, ends at 34.
@@ -1275,23 +1276,23 @@ selftest_marshal :: proc() {
 
 	fmt.println("-- descriptors")
 	{
-		w: Dbus_Writer
-		ok := dbus_marshal(&w, "h", dbus_h(linux.Fd(9)))
+		w: dbus.Dbus_Writer
+		ok := dbus.dbus_marshal(&w, "h", dbus.dbus_h(linux.Fd(9)))
 		check(ok && len(w.b) == 4, "an h marshals as a 4-byte index")
 		check(len(w.fds) == 1 && w.fds[0] == 9, "and puts the descriptor in the side table")
 		idx := (^u32)(raw_data(w.b[:]))^
 		check(idx == 0, "the first descriptor gets index 0 (got %d)", idx)
-		dbus_marshal(&w, "h", dbus_h(linux.Fd(11)))
+		dbus.dbus_marshal(&w, "h", dbus.dbus_h(linux.Fd(11)))
 		idx2 := (^u32)(raw_data(w.b[4:]))^
 		check(idx2 == 1 && len(w.fds) == 2 && w.fds[1] == 11, "the second gets index 1")
 
 		fds := [2]linux.Fd{55, 66}
-		r := Dbus_Reader {
+		r := dbus.Dbus_Reader {
 			b   = w.b[:],
 			fds = fds[:],
 		}
-		a := dbus_unmarshal(&r, "h")
-		b := dbus_unmarshal(&r, "h")
+		a := dbus.dbus_unmarshal(&r, "h")
+		b := dbus.dbus_unmarshal(&r, "h")
 		check(a.fd == 55 && b.fd == 66, "reading h resolves against the control message")
 	}
 
@@ -1299,24 +1300,24 @@ selftest_marshal :: proc() {
 	{
 		// A big-endian u32 0x01020304.
 		raw := [4]u8{0x01, 0x02, 0x03, 0x04}
-		r := Dbus_Reader {
+		r := dbus.Dbus_Reader {
 			b  = raw[:],
 			be = true,
 		}
-		v := dbus_unmarshal(&r, "u")
-		check(dbus_as_u32(v) == 0x01020304, "a big-endian u32 is byte-swapped (got %x)", v.num)
-		r2 := Dbus_Reader {
+		v := dbus.dbus_unmarshal(&r, "u")
+		check(dbus.dbus_as_u32(v) == 0x01020304, "a big-endian u32 is byte-swapped (got %x)", v.num)
+		r2 := dbus.Dbus_Reader {
 			b = raw[:],
 		}
-		v2 := dbus_unmarshal(&r2, "u")
-		check(dbus_as_u32(v2) == 0x04030201, "a little-endian u32 is not")
+		v2 := dbus.dbus_unmarshal(&r2, "u")
+		check(dbus.dbus_as_u32(v2) == 0x04030201, "a little-endian u32 is not")
 	}
 
 	fmt.println("-- whole messages")
 	{
-		args := [2]Dbus_Value{dbus_s("org.freedesktop.login1.Session"), dbus_s("Active")}
-		data, fds, ok := dbus_encode(
-			DBUS_MSG_CALL,
+		args := [2]dbus.Dbus_Value{dbus.dbus_s("org.freedesktop.login1.Session"), dbus.dbus_s("Active")}
+		data, fds, ok := dbus.dbus_encode(
+			dbus.DBUS_MSG_CALL,
 			0,
 			42,
 			"/org/freedesktop/login1/session/_31",
@@ -1330,7 +1331,7 @@ selftest_marshal :: proc() {
 		)
 		check(ok, "a Properties.Get encodes")
 		check(len(fds) == 0, "and carries no descriptors")
-		check(data[0] == 'l' && data[1] == DBUS_MSG_CALL && data[3] == 1, "the fixed header is right")
+		check(data[0] == 'l' && data[1] == dbus.DBUS_MSG_CALL && data[3] == 1, "the fixed header is right")
 		fields_len := (^u32)(raw_data(data[12:]))^
 		body_start := 16 + int((fields_len + 7) & ~u32(7))
 		check(body_start % 8 == 0, "the body starts 8-aligned (at %d)", body_start)
@@ -1342,7 +1343,7 @@ selftest_marshal :: proc() {
 			body_start + int(body_len),
 		)
 
-		m, used, dok := dbus_decode(data, nil)
+		m, used, dok := dbus.dbus_decode(data, nil)
 		check(dok && used == len(data), "it decodes, consuming the whole buffer")
 		check(m.serial == 42, "the serial survives")
 		check(m.member == "Get", "the member survives")
@@ -1350,10 +1351,10 @@ selftest_marshal :: proc() {
 		check(m.path == "/org/freedesktop/login1/session/_31", "the path survives")
 		check(m.dest == "org.freedesktop.login1", "the destination survives")
 		check(m.signature == "ss", "the signature survives")
-		r := Dbus_Reader {
+		r := dbus.Dbus_Reader {
 			b = m.body,
 		}
-		back := dbus_unmarshal_all(&r, m.signature)
+		back := dbus.dbus_unmarshal_all(&r, m.signature)
 		check(
 			!r.bad && len(back) == 2 && back[1].str == "Active",
 			"and the body unmarshals to the two strings",
@@ -1362,9 +1363,9 @@ selftest_marshal :: proc() {
 	{
 		// A message whose body needs a descriptor: the UNIX_FDS header field
 		// has to appear.
-		args := [1]Dbus_Value{dbus_h(linux.Fd(3))}
-		data, fds, ok := dbus_encode(
-			DBUS_MSG_RETURN,
+		args := [1]dbus.Dbus_Value{dbus.dbus_h(linux.Fd(3))}
+		data, fds, ok := dbus.dbus_encode(
+			dbus.DBUS_MSG_RETURN,
 			0,
 			7,
 			"",
@@ -1377,7 +1378,7 @@ selftest_marshal :: proc() {
 			args[:],
 		)
 		check(ok && len(fds) == 1 && fds[0] == 3, "a body with an h hands the fd to the sender")
-		m, _, dok := dbus_decode(data, fds)
+		m, _, dok := dbus.dbus_decode(data, fds)
 		check(dok && m.fd_count == 1, "and the decoded header declares one descriptor")
 		check(m.reply_serial == 6, "the reply serial survives")
 	}
@@ -1386,24 +1387,24 @@ selftest_marshal :: proc() {
 @(private = "file")
 selftest_live :: proc() {
 	fmt.println("-- system bus")
-	addr := dbus_system_address(context.temp_allocator)
-	path, abstract, pok := dbus_parse_address(addr)
+	addr := dbus.dbus_system_address(context.temp_allocator)
+	path, abstract, pok := dbus.dbus_parse_address(addr)
 	check(pok, "the address %q parses to %q (abstract %v)", addr, path, abstract)
 	{
-		ap, aabs, aok := dbus_parse_address("unix:abstract=/tmp/x,guid=ab")
+		ap, aabs, aok := dbus.dbus_parse_address("unix:abstract=/tmp/x,guid=ab")
 		check(aok && aabs && ap == "/tmp/x", "an abstract address parses too (%q)", ap)
-		bp, babs, bok := dbus_parse_address("tcp:host=localhost;unix:path=/s")
+		bp, babs, bok := dbus.dbus_parse_address("tcp:host=localhost;unix:path=/s")
 		check(bok && !babs && bp == "/s", "the first unix transport in a list wins (%q)", bp)
-		_, _, cok := dbus_parse_address("tcp:host=localhost")
+		_, _, cok := dbus.dbus_parse_address("tcp:host=localhost")
 		check(!cok, "an address with no unix transport is rejected")
 	}
 
-	conn, e := dbus_connect()
+	conn, e := dbus.dbus_connect()
 	check(e == .None, "the EXTERNAL handshake and Hello succeed (%v)", e)
 	if e != .None {
 		return
 	}
-	defer dbus_close(conn)
+	defer dbus.dbus_close(conn)
 	check(
 		len(conn.unique) > 1 && conn.unique[0] == ':',
 		"the bus gave us a unique name: %s",
@@ -1411,7 +1412,7 @@ selftest_live :: proc() {
 	)
 
 	{
-		m, le := dbus_call(
+		m, le := dbus.dbus_call(
 			conn,
 			SEAT_BUS,
 			SEAT_MGR_PATH,
@@ -1422,7 +1423,7 @@ selftest_live :: proc() {
 		)
 		check(le == .None, "ListSessions returns (%v)", le)
 		if le == .None {
-			defer dbus_msg_free(m)
+			defer dbus.dbus_msg_free(m)
 			check(m.signature == "a(susso)", "with signature a(susso), got %q", m.signature)
 			check(len(m.args) == 1 && m.args[0].kind == 'a', "and one array argument")
 			n := len(m.args[0].items)
@@ -1432,7 +1433,7 @@ selftest_live :: proc() {
 					fmt.printf(
 						"       session %s uid %d user %s seat %s at %s\n",
 						s.items[0].str,
-						dbus_as_u32(s.items[1]),
+						dbus.dbus_as_u32(s.items[1]),
 						s.items[2].str,
 						s.items[3].str,
 						s.items[4].str,
@@ -1449,10 +1450,10 @@ selftest_live :: proc() {
 	}
 
 	{
-		m, le := dbus_call(conn, SEAT_BUS, SEAT_MGR_PATH, SEAT_MGR_IFACE, "ListSeats", "", nil)
+		m, le := dbus.dbus_call(conn, SEAT_BUS, SEAT_MGR_PATH, SEAT_MGR_IFACE, "ListSeats", "", nil)
 		check(le == .None, "ListSeats returns (%v)", le)
 		if le == .None {
-			defer dbus_msg_free(m)
+			defer dbus.dbus_msg_free(m)
 			check(m.signature == "a(so)", "with signature a(so), got %q", m.signature)
 			found := false
 			for s in m.args[0].items {
@@ -1471,47 +1472,47 @@ selftest_live :: proc() {
 		// The bus sends NameAcquired unsolicited right after Hello, which is
 		// a real signal off a real socket -- enough to prove the receive path
 		// decodes traffic it did not ask for.
-		dbus_dispatch(conn)
+		dbus.dbus_dispatch(conn)
 		found := false
 		for {
-			m, got := dbus_next(conn)
+			m, got := dbus.dbus_next(conn)
 			if !got {
 				break
 			}
-			if m.type == DBUS_MSG_SIGNAL && m.member == "NameAcquired" {
+			if m.type == dbus.DBUS_MSG_SIGNAL && m.member == "NameAcquired" {
 				found = true
 				fmt.printf("       signal %s.%s(%s)\n", m.iface, m.member,
 					len(m.args) > 0 ? m.args[0].str : "")
 			}
-			dbus_msg_close_fds(m)
-			dbus_msg_free(m)
+			dbus.dbus_msg_close_fds(m)
+			dbus.dbus_msg_free(m)
 		}
 		check(found, "the pump decoded the bus's unsolicited NameAcquired signal")
 	}
 
 	{
 		rule := "type='signal',sender='org.freedesktop.login1',interface='org.freedesktop.login1.Session',member='PauseDevice'"
-		check(dbus_add_match(conn, rule) == .None, "AddMatch is accepted by the bus")
-		check(dbus_remove_match(conn, rule) == .None, "and RemoveMatch takes it off again")
-		check(dbus_remove_match(conn, rule) == .Call_Failed, "removing it twice is an error")
+		check(dbus.dbus_add_match(conn, rule) == .None, "AddMatch is accepted by the bus")
+		check(dbus.dbus_remove_match(conn, rule) == .None, "and RemoveMatch takes it off again")
+		check(dbus.dbus_remove_match(conn, rule) == .Call_Failed, "removing it twice is an error")
 	}
 
 	{
 		// An error reply has to come back as an error, not as a hang.
-		m, le := dbus_call(
+		m, le := dbus.dbus_call(
 			conn,
 			SEAT_BUS,
 			SEAT_MGR_PATH,
 			SEAT_MGR_IFACE,
 			"GetSession",
 			"s",
-			[]Dbus_Value{dbus_s("no-such-session")},
+			[]dbus.Dbus_Value{dbus.dbus_s("no-such-session")},
 		)
 		check(le == .Call_Failed, "a bad GetSession comes back as an error (%v)", le)
 		if m != nil {
-			check(m.type == DBUS_MSG_ERROR, "the reply is an ERROR message")
+			check(m.type == dbus.DBUS_MSG_ERROR, "the reply is an ERROR message")
 			check(m.err_name != "", "named %s", m.err_name)
-			dbus_msg_free(m)
+			dbus.dbus_msg_free(m)
 		}
 	}
 }
@@ -1559,13 +1560,13 @@ selftest_seat :: proc() {
 	check(seat.active, "and it is the active session (Active = %v)", seat.active)
 	check(!seat.control, "we do NOT hold control of it")
 	check(seat_fd() >= 0, "the bus fd %d is pollable", seat_fd())
-	check(dbus_alive(seat.conn), "and the connection reports itself alive")
+	check(dbus.dbus_alive(seat.conn), "and the connection reports itself alive")
 	seat_pump()
-	check(dbus_alive(seat.conn), "a pump with nothing pending leaves it alive")
+	check(dbus.dbus_alive(seat.conn), "a pump with nothing pending leaves it alive")
 
 	// A single-property read has to agree with the GetAll.
 	{
-		v, m, pe := dbus_get_property(
+		v, m, pe := dbus.dbus_get_property(
 			seat.conn,
 			SEAT_BUS,
 			seat.session_path,
@@ -1575,24 +1576,24 @@ selftest_seat :: proc() {
 		check(pe == .None, "Properties.Get(Id) succeeds (%v)", pe)
 		check(v.kind == 's' && v.str == seat.session_id, "and agrees with GetAll: %q", v.str)
 		if m != nil {
-			dbus_msg_free(m)
+			dbus.dbus_msg_free(m)
 		}
 	}
 	{
-		v, m, pe := dbus_get_property(
+		v, m, pe := dbus.dbus_get_property(
 			seat.conn,
 			SEAT_BUS,
 			seat.session_path,
 			SEAT_SESSION_IFACE,
 			"VTNr",
 		)
-		check(pe == .None && v.kind == 'u' && dbus_as_u32(v) == seat.vtnr, "VTNr agrees: %d", v.num)
+		check(pe == .None && v.kind == 'u' && dbus.dbus_as_u32(v) == seat.vtnr, "VTNr agrees: %d", v.num)
 		if m != nil {
-			dbus_msg_free(m)
+			dbus.dbus_msg_free(m)
 		}
 	}
 	{
-		v, m, pe := dbus_get_property(
+		v, m, pe := dbus.dbus_get_property(
 			seat.conn,
 			SEAT_BUS,
 			seat.session_path,
@@ -1605,7 +1606,7 @@ selftest_seat :: proc() {
 			seat.seat_id,
 		)
 		if m != nil {
-			dbus_msg_free(m)
+			dbus.dbus_msg_free(m)
 		}
 	}
 
@@ -1715,9 +1716,9 @@ selftest_seat :: proc() {
 	// decoded here but deliberately never sent.
 	fmt.println("-- messages built but not sent")
 	{
-		args := [2]Dbus_Value{dbus_u(226), dbus_u(1)}
-		data, fds, ok := dbus_encode(
-			DBUS_MSG_CALL,
+		args := [2]dbus.Dbus_Value{dbus.dbus_u(226), dbus.dbus_u(1)}
+		data, fds, ok := dbus.dbus_encode(
+			dbus.DBUS_MSG_CALL,
 			0,
 			11,
 			seat.session_path,
@@ -1730,25 +1731,25 @@ selftest_seat :: proc() {
 			args[:],
 		)
 		check(ok && len(fds) == 0, "TakeDevice encodes")
-		m, _, dok := dbus_decode(data, nil)
+		m, _, dok := dbus.dbus_decode(data, nil)
 		check(
 			dok && m.member == "TakeDevice" && m.signature == "uu" && m.path == seat.session_path,
 			"with the header logind expects",
 		)
-		r := Dbus_Reader {
+		r := dbus.Dbus_Reader {
 			b = m.body,
 		}
-		a := dbus_unmarshal_all(&r, "uu")
+		a := dbus.dbus_unmarshal_all(&r, "uu")
 		check(
-			!r.bad && len(a) == 2 && dbus_as_u32(a[0]) == 226 && dbus_as_u32(a[1]) == 1,
+			!r.bad && len(a) == 2 && dbus.dbus_as_u32(a[0]) == 226 && dbus.dbus_as_u32(a[1]) == 1,
 			"and a body of 226:1 -- which is NOT put on the wire",
 		)
 	}
 	{
-		args := [2]Dbus_Value{dbus_u(226), dbus_u(1)}
-		data, _, ok := dbus_encode(
-			DBUS_MSG_CALL,
-			DBUS_FLAG_NO_REPLY,
+		args := [2]dbus.Dbus_Value{dbus.dbus_u(226), dbus.dbus_u(1)}
+		data, _, ok := dbus.dbus_encode(
+			dbus.DBUS_MSG_CALL,
+			dbus.DBUS_FLAG_NO_REPLY,
 			12,
 			seat.session_path,
 			SEAT_SESSION_IFACE,
@@ -1760,14 +1761,14 @@ selftest_seat :: proc() {
 			args[:],
 		)
 		check(ok, "PauseDeviceComplete encodes")
-		m, _, dok := dbus_decode(data, nil)
+		m, _, dok := dbus.dbus_decode(data, nil)
 		check(dok && m.member == "PauseDeviceComplete", "with the right member")
-		check(m.flags & DBUS_FLAG_NO_REPLY != 0, "and the no-reply flag set")
+		check(m.flags & dbus.DBUS_FLAG_NO_REPLY != 0, "and the no-reply flag set")
 	}
 	{
-		args := [3]Dbus_Value{dbus_u(226), dbus_u(1), dbus_s("pause")}
-		data, _, _ := dbus_encode(
-			DBUS_MSG_SIGNAL,
+		args := [3]dbus.Dbus_Value{dbus.dbus_u(226), dbus.dbus_u(1), dbus.dbus_s("pause")}
+		data, _, _ := dbus.dbus_encode(
+			dbus.DBUS_MSG_SIGNAL,
 			0,
 			5,
 			seat.session_path,
@@ -1779,24 +1780,24 @@ selftest_seat :: proc() {
 			"uus",
 			args[:],
 		)
-		m, _, dok := dbus_decode(data, nil)
+		m, _, dok := dbus.dbus_decode(data, nil)
 		check(
-			dok && m.type == DBUS_MSG_SIGNAL && m.member == "PauseDevice",
+			dok && m.type == dbus.DBUS_MSG_SIGNAL && m.member == "PauseDevice",
 			"a PauseDevice signal decodes as a signal",
 		)
-		r := Dbus_Reader {
+		r := dbus.Dbus_Reader {
 			b = m.body,
 		}
-		a := dbus_unmarshal_all(&r, "uus")
+		a := dbus.dbus_unmarshal_all(&r, "uus")
 		check(
-			!r.bad && dbus_as_u32(a[0]) == 226 && dbus_as_u32(a[1]) == 1 && a[2].str == "pause",
+			!r.bad && dbus.dbus_as_u32(a[0]) == 226 && dbus.dbus_as_u32(a[1]) == 1 && a[2].str == "pause",
 			"carrying 226:1 pause",
 		)
 	}
 	{
-		args := [3]Dbus_Value{dbus_u(226), dbus_u(1), dbus_h(linux.Fd(31))}
-		data, fds, _ := dbus_encode(
-			DBUS_MSG_SIGNAL,
+		args := [3]dbus.Dbus_Value{dbus.dbus_u(226), dbus.dbus_u(1), dbus.dbus_h(linux.Fd(31))}
+		data, fds, _ := dbus.dbus_encode(
+			dbus.DBUS_MSG_SIGNAL,
 			0,
 			6,
 			seat.session_path,
@@ -1809,22 +1810,22 @@ selftest_seat :: proc() {
 			args[:],
 		)
 		check(len(fds) == 1 && fds[0] == 31, "a ResumeDevice signal hands its fd out of band")
-		m, _, dok := dbus_decode(data, fds)
+		m, _, dok := dbus.dbus_decode(data, fds)
 		check(dok && m.fd_count == 1, "and declares UNIX_FDS = 1 in the header")
-		r := Dbus_Reader {
+		r := dbus.Dbus_Reader {
 			b   = m.body,
 			fds = fds,
 		}
-		a := dbus_unmarshal_all(&r, "uuh")
+		a := dbus.dbus_unmarshal_all(&r, "uuh")
 		check(
 			!r.bad && a[2].kind == 'h' && a[2].fd == 31,
 			"the h resolves against the control message",
 		)
 	}
 	{
-		args := [2]Dbus_Value{dbus_h(linux.Fd(17)), dbus_b(true)}
-		data, fds, _ := dbus_encode(
-			DBUS_MSG_RETURN,
+		args := [2]dbus.Dbus_Value{dbus.dbus_h(linux.Fd(17)), dbus.dbus_b(true)}
+		data, fds, _ := dbus.dbus_encode(
+			dbus.DBUS_MSG_RETURN,
 			0,
 			13,
 			"",
@@ -1836,14 +1837,14 @@ selftest_seat :: proc() {
 			"hb",
 			args[:],
 		)
-		m, _, _ := dbus_decode(data, fds)
-		r := Dbus_Reader {
+		m, _, _ := dbus.dbus_decode(data, fds)
+		r := dbus.Dbus_Reader {
 			b   = m.body,
 			fds = fds,
 		}
-		a := dbus_unmarshal_all(&r, "hb")
+		a := dbus.dbus_unmarshal_all(&r, "hb")
 		check(
-			!r.bad && a[0].fd == 17 && dbus_as_bool(a[1]),
+			!r.bad && a[0].fd == 17 && dbus.dbus_as_bool(a[1]),
 			"a TakeDevice reply yields (fd, inactive=true)",
 		)
 	}

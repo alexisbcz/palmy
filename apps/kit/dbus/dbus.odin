@@ -1,18 +1,19 @@
-// A D-Bus client, hand-rolled onto a unix socket.
+// A D-Bus client, hand-rolled onto a unix socket: `import "kit:dbus"`.
 //
-// The compositor needs logind, and logind only speaks D-Bus, so this is the
-// second protocol in the tree that is spoken directly rather than through a C
-// library. It is the same shape as wire.odin: a socket, a byte buffer, and
-// descriptors riding in SCM_RIGHTS control messages. Only what logind uses is
-// implemented -- the EXTERNAL SASL handshake, the header-field table, the
-// alignment rules, the type-signature system, method calls with replies, and
-// match rules for signals -- but within that, it is complete and symmetric:
-// anything this file can marshal it can also unmarshal.
+// Written for the window manager, which needs logind, and moved here when
+// the network applet needed iwd (net.connman.iwd): two programs speaking the
+// same protocol directly rather than through a C library. It is the same
+// shape as palmy's wire.odin: a socket, a byte buffer, and descriptors riding
+// in SCM_RIGHTS control messages. What is implemented -- the EXTERNAL SASL
+// handshake, the header-field table, the alignment rules, the type-signature
+// system, method calls with replies, Properties.Get/GetAll, and match rules
+// for signals -- is complete and symmetric: anything this file can marshal it
+// can also unmarshal. It is a package of its own, not part of kit, so a
+// program that uses it pulls in nothing else.
 //
-// Descriptor passing is not optional here. Session.TakeDevice answers with an
-// 'h', which is an index into the control message, so NEGOTIATE_UNIX_FD has to
-// succeed before anything useful can happen.
-package wm
+// Descriptor passing is negotiated (NEGOTIATE_UNIX_FD) because logind's
+// Session.TakeDevice answers with an 'h', an index into the control message.
+package dbus
 
 import "base:intrinsics"
 import "core:fmt"
@@ -48,6 +49,14 @@ DBUS_MAX_QUEUE :: 256
 DBUS_SOL_SOCKET :: 1
 DBUS_SCM_RIGHTS :: 1
 
+// struct cmsghdr, the header of an SCM_RIGHTS control message.
+@(private = "file")
+Cmsg_Hdr :: struct {
+	len:   uint,
+	level: i32,
+	type:  i32,
+}
+
 Dbus_Error :: enum u8 {
 	None,
 	No_Address,
@@ -59,7 +68,7 @@ Dbus_Error :: enum u8 {
 	Timeout,
 	Call_Failed, // the peer answered with an error message
 	Not_Ready,
-	Gated, // refused locally: PALMY_WM_SEAT_LIVE is not set
+	Gated, // refused locally by the caller (wm: PALMY_WM_SEAT_LIVE is not set)
 	Not_Found,
 }
 
