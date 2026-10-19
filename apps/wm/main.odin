@@ -219,6 +219,8 @@ client_free :: proc(s: ^Server, c: ^Client) {
 			if s.ptr_surf == surf {s.ptr_surf = nil}
 			if s.kbd_surf == surf {s.kbd_surf = nil}
 			delete(surf.img)
+			delete(surf.c_img)
+			delete(surf.c_frames)
 			delete(surf.p_frames)
 			delete(surf.frames)
 			delete(surf.children)

@@ -148,6 +148,20 @@ Surface :: struct {
 	sub_id:       u32,
 	sx, sy:       int,
 	children:     [dynamic]^Surface,
+	// set_position is applied on the parent's commit.
+	p_sx, p_sy:   int,
+	p_pos_set:    bool,
+	// Synchronized (the default) or not. A synchronized subsurface's commit
+	// is cached and applied with its parent's next commit, so a parent and
+	// its children change on screen together (subsurface.odin).
+	sub_desync:   bool,
+	c_has:        bool, // there is cached state
+	c_buf_set:    bool, // and it changes the buffer (c_img; empty: unmap)
+	c_img:        []u32,
+	c_iw, c_ih:   int,
+	c_opaque:     bool,
+	c_scale:      int,
+	c_frames:     [dynamic]u32,
 
 	// The other two roles a surface can take.
 	layer:        ^Layer_Surface,
@@ -888,6 +902,8 @@ surface_destroy :: proc(s: ^Server, c: ^Client, surf: ^Surface, id: u32) {
 	}
 	obj_drop(c, id)
 	delete(surf.img)
+	delete(surf.c_img)
+	delete(surf.c_frames)
 	delete(surf.p_frames)
 	delete(surf.frames)
 	delete(surf.children)
@@ -899,6 +915,15 @@ surface_destroy :: proc(s: ^Server, c: ^Client, surf: ^Surface, id: u32) {
 // of the shm pool here, which lets the buffer be released immediately and
 // means a later redraw by the client cannot tear what we are compositing.
 surface_commit :: proc(s: ^Server, surf: ^Surface) {
+	if surf.role == .Sub && sub_synced(surf) {
+		sub_cache(s, surf)
+		return
+	}
+	if surf.role == .Sub && surf.c_has {
+		// Desynchronized with state still cached from when it was not:
+		// the cache goes first, then this commit on top of it.
+		sub_apply_cache(s, surf)
+	}
 	surf.scale = surf.p_scale
 
 	if surf.p_buffer_set {
@@ -941,6 +966,7 @@ surface_commit :: proc(s: ^Server, surf: ^Surface) {
 	if !session.bare {
 		s.dirty = true
 	}
+	sub_parent_committed(s, surf)
 }
 
 // ---------------------------------------------------------------------------
@@ -1538,9 +1564,10 @@ req_subsurface :: proc(s: ^Server, c: ^Client, o: Object, id: u32, op: u16, r: ^
 		child.role = .None
 		obj_drop(c, id)
 	case 1:
-		child.sx = int(r_i32(r))
-		child.sy = int(r_i32(r))
-		s.dirty = true
+		// set_position: pending until the parent commits.
+		child.p_sx = int(r_i32(r))
+		child.p_sy = int(r_i32(r))
+		child.p_pos_set = true
 	case 2, 3:
 		// place_above / place_below: move the child within the parent's list.
 		sib := r_u32(r)
@@ -1570,7 +1597,15 @@ req_subsurface :: proc(s: ^Server, c: ^Client, o: Object, id: u32, op: u16, r: ^
 		if at < ti {ti -= 1}
 		idx := op == 2 ? ti + 1 : ti
 		inject_at(list, clamp(idx, 0, len(list)), child)
-	case 4, 5:
+		s.dirty = true
+	case 4:
+		child.sub_desync = false
+	case 5:
+		child.sub_desync = true
+		if !sub_synced(child) && child.c_has {
+			sub_apply_cache(s, child)
+			sub_parent_committed(s, child)
+		}
 	}
 }
 

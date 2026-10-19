@@ -2323,6 +2323,68 @@ ws_selftest :: proc() -> int {
 		ws_check(dlg.parent == nil, "a parent that goes away is forgotten")
 	}
 	{
+		// wl_subsurface: a synchronized child's commit waits for its parent's;
+		// a desynchronized one shows at once; set_position waits too.
+		ws_test_reset(s)
+		sc := ws_test_client(s)
+		mem := make([]u8, 2 * 2 * 4)
+		defer delete(mem)
+		pool := Pool{client = sc, mem = mem, refs = 1}
+		buf := Buffer{client = sc, id = 900, pool = &pool, w = 2, h = 2, stride = 8, format = 1}
+		paint :: proc(mem: []u8, v: u8) {
+			for i in 0 ..< len(mem) {mem[i] = v}
+		}
+		par := new(Surface)
+		par.client = sc
+		par.p_scale = 1
+		ch := new(Surface)
+		ch.client = sc
+		ch.p_scale = 1
+		ch.role = .Sub
+		ch.parent = par
+		append(&par.children, ch)
+		defer {
+			delete(par.children)
+			delete(par.img)
+			delete(ch.img)
+			delete(ch.c_img)
+			delete(ch.frames)
+			delete(ch.c_frames)
+			free(par)
+			free(ch)
+		}
+
+		paint(mem, 0x11)
+		ch.p_buffer, ch.p_buffer_set = &buf, true
+		surface_commit(s, ch)
+		ws_check(ch.img == nil && ch.c_has, "a synchronized child's commit is cached, not shown")
+		ch.p_sx, ch.p_sy, ch.p_pos_set = 7, 9, true
+		ws_check(ch.sx == 0, "set_position waits for the parent")
+		surface_commit(s, par)
+		ws_check(ch.img != nil && ch.img[0] & 0xff == 0x11, "the parent's commit shows it")
+		ws_check(ch.sx == 7 && ch.sy == 9, "and moves it")
+		ws_check(!ch.c_has, "and empties the cache")
+
+		ch.sub_desync = true
+		paint(mem, 0x22)
+		ch.p_buffer, ch.p_buffer_set = &buf, true
+		surface_commit(s, ch)
+		ws_check(ch.img[0] & 0xff == 0x22, "a desynchronized child shows its commit at once")
+
+		ch.sub_desync = false
+		paint(mem, 0x33)
+		ch.p_buffer, ch.p_buffer_set = &buf, true
+		surface_commit(s, ch)
+		ws_check(ch.img[0] & 0xff == 0x22, "synchronized again: cached")
+		ch.sub_desync = true
+		if !sub_synced(ch) && ch.c_has {
+			sub_apply_cache(s, ch)
+		}
+		ws_check(ch.img[0] & 0xff == 0x33, "set_desync shows what was cached")
+		pop(&s.clients)
+		free(sc)
+	}
+	{
 		// A surface that maps at zero, and one that maps absurdly large.
 		ws_test_reset(s)
 		z := ws_test_win(s, c, "zero", "app", 0, 0)
