@@ -17,7 +17,11 @@
 #   make -C distro run-iso    boot it in QEMU with a blank target disk
 #   make -C distro test-installer  the installer's selftests (no disks touched)
 #   make -C distro test-install    ISO -> GUI and CLI installs -> boot each
-#                             installed disk, all in QEMU; distro/out/shots/
+#                             installed disk, then the Japanese/NVMe, Arabic/
+#                             SeaBIOS and two-disk installs, all in QEMU;
+#                             distro/out/shots/
+#   make -C distro publish    sign and publish the repository with the release
+#                             key (distro/repo-publish/publish.sh; ARGS=--dry-run)
 #   make -C distro clean      remove the packages, root and image (not the
 #                             kernel, busybox or the keys)
 #
@@ -51,7 +55,7 @@ export SOURCE_DATE_EPOCH ?= 0
 
 PALM := $(BIN)/palm
 
-.PHONY: all recipes packages repo image run test serve check-libs clean binaries iso run-iso test-installer test-install
+.PHONY: all recipes packages repo image run test serve check-libs clean binaries iso run-iso test-installer test-install publish
 .DELETE_ON_ERROR:
 
 all: image
@@ -162,6 +166,13 @@ packages: recipes binaries $(OUT)/kernel.release $(OUT)/busybox $(KEYS)/palmfram
 repo: packages
 	$(PALM) index $(REPO) --key $(KEYS)/palmframe.sec
 
+# The public repository: the packages just built, signed again with the
+# release key (kept outside every checkout) and uploaded to Vercel and GitHub
+# Releases. distro/repo-publish/publish.sh says what it checks and refuses;
+# `make -C distro publish ARGS=--dry-run` stages and verifies without uploading.
+publish: repo
+	$(DISTRO)/repo-publish/publish.sh $(ARGS)
+
 # --- the disk image -----------------------------------------------------------
 image: repo
 	$(DISTRO)/image/build.sh
@@ -191,9 +202,12 @@ test-installer: $(BIN)/palm-install $(BIN)/installer
 
 # End to end, all inside QEMU: the live ISO, the graphical installer driven
 # over QMP onto a blank disk, palm-install onto a second one from the serial
-# console, then each installed disk booted on its own (distro/live/test-install.py).
+# console, then each installed disk booted on its own (distro/live/test-install.py);
+# then Japanese onto NVMe with the pointer, Arabic under SeaBIOS, and two
+# disks in one machine (distro/live/test-install-more.py).
 test-install: iso
 	python3 -I -u $(DISTRO)/live/test-install.py
+	python3 -I -u $(DISTRO)/live/test-install-more.py
 
 serve:
 	@echo "serving $(OUT)/repo on http://0.0.0.0:$(PORT) (the guest uses http://10.0.2.2:$(PORT)/x86_64)"
