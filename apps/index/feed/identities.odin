@@ -214,20 +214,29 @@ read_cached :: proc(root: string, out: ^[dynamic]Ident) {
 		if e.type != .Directory || !ic.handle_ok(e.name) {
 			continue
 		}
-		data, rerr := os.read_entire_file_from_path(fmt.tprintf("%s/%s/identity", root, e.name), context.temp_allocator)
-		info := ic.Identity{handle = strings.clone(e.name)}
-		if rerr == nil {
-			if i, ok := identity_parse(data); ok && i.handle == e.name {
-				info = i
-			}
-		}
-		x := find(out, info.handle)
-		if x == nil {
-			append(out, Ident{info = {handle = info.handle}, source = "cache"})
-			x = &out[len(out) - 1]
-		}
-		fill(x, info)
+		read_cached_one(root, e.name, out)
 	}
+}
+
+// read_cached_one reads one identity's cached `identity` file, if its index
+// directory exists, and nothing of any other identity's.
+read_cached_one :: proc(root, handle: string, out: ^[dynamic]Ident) {
+	if !ic.handle_ok(handle) || !os.is_dir(fmt.tprintf("%s/%s", root, handle)) {
+		return
+	}
+	data, rerr := os.read_entire_file_from_path(fmt.tprintf("%s/%s/identity", root, handle), context.temp_allocator)
+	info := ic.Identity{handle = strings.clone(handle)}
+	if rerr == nil {
+		if i, ok := identity_parse(data); ok && i.handle == handle {
+			info = i
+		}
+	}
+	x := find(out, info.handle)
+	if x == nil {
+		append(out, Ident{info = {handle = info.handle}, source = "cache"})
+		x = &out[len(out) - 1]
+	}
+	fill(x, info)
 }
 
 // local_handles lists the handle-named folders under a data root, skipping
@@ -252,9 +261,20 @@ local_handles :: proc(dir: string, out: ^[dynamic]string) {
 
 // discover lists the identities on this device. `scope` ($PALM_IDENTITY)
 // narrows it to one; nothing about the others is read beyond their folder
-// names, and with a scope not even those.
+// names, and with a scope not even those: neither their cached `identity`
+// files nor the listing of the data folders.
+//
+// An identity with an id came from an account (the cloud, palmy.conf,
+// or a cache an account wrote). Only those make this an account's device,
+// where a data folder naming none of them is not an identity. A cache that
+// local-only mode wrote has no id and proves nothing: counting it made the
+// first identity indexed hide every other one, so `index rebuild
+// --identity camille.roux` failed after `--identity camille` had run.
 discover :: proc(p: Paths, scope := "", cloud: []ic.Identity = nil) -> [dynamic]Ident {
 	out := make([dynamic]Ident)
+	if scope != "" && !ic.handle_ok(scope) {
+		return out
+	}
 	for c in cloud {
 		if !ic.handle_ok(c.handle) {
 			continue
@@ -262,14 +282,32 @@ discover :: proc(p: Paths, scope := "", cloud: []ic.Identity = nil) -> [dynamic]
 		append(&out, Ident{info = c, source = "cloud"})
 	}
 	read_palmy_conf(p.mail, &out)
-	read_cached(p.index, &out)
-	known := len(out) > 0
+	if scope != "" {
+		read_cached_one(p.index, scope, &out)
+	} else {
+		read_cached(p.index, &out)
+	}
+	known := false
+	for x in out {
+		if x.id != "" {
+			known = true
+		}
+	}
 	locals := make([dynamic]string, context.temp_allocator)
-	local_handles(p.drive, &locals)
-	local_handles(p.notes, &locals)
-	local_handles(p.dav, &locals)
-	local_handles(p.browser, &locals)
-	local_handles(p.track, &locals)
+	if scope != "" {
+		for dir in ([]string{p.drive, p.notes, p.dav, p.browser, p.track}) {
+			if os.is_dir(fmt.tprintf("%s/%s", dir, scope)) && scope != "local" && scope != "default" {
+				append(&locals, scope)
+				break
+			}
+		}
+	} else {
+		local_handles(p.drive, &locals)
+		local_handles(p.notes, &locals)
+		local_handles(p.dav, &locals)
+		local_handles(p.browser, &locals)
+		local_handles(p.track, &locals)
+	}
 	for h in locals {
 		if find(&out, h) != nil {
 			continue

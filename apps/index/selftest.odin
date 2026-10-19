@@ -37,6 +37,7 @@ run_selftest :: proc() -> int {
 	mime_checks()
 	office_checks()
 	sources_checks(fmt.tprintf("%s/home", root))
+	rebuild_checks(fmt.tprintf("%s/rebuild", root))
 	fmt.printfln("%d passed, %d failed", passes, failures)
 	return failures == 0 ? 0 : 1
 }
@@ -554,4 +555,87 @@ isolation_checks :: proc(p: feed.Paths, ts: []ic.Target) {
 	env2 := []string{fmt.tprintf("PALM_INDEX_DIR=%s", p.index), fmt.tprintf("HOME=%s", p.index), "PATH=/usr/bin:/bin"}
 	state, sout, _, perr = os.process_exec({command = {self, "search", "roadmap", "--json"}, env = env2}, context.temp_allocator)
 	check(perr == nil && state.exit_code == 0 && strings.contains(string(sout), "\"identity\": \"northwind\"") && !strings.contains(string(sout), "\"identity\": \"\""), "unscoped, the All view: every result carries its identity")
+}
+
+// rebuild_checks: two identities whose handles share a prefix and one of
+// which has a dot, on a device with no account (local-only mode). Each is
+// rebuilt alone, the way the assistant runs `index rebuild` scoped to its
+// identity; neither may hide the other, and a rebuild scoped to one never
+// opens or writes anything in the other's index directory.
+rebuild_checks :: proc(home: string) {
+	write(fmt.tprintf("%s/Drive/camille/Home/Flat.md", home), "# Flat\n\nThe viewing is on Saturday.\n")
+	write(fmt.tprintf("%s/Drive/camille.roux/Plans/Roadmap.md", home), "# Roadmap\n\nThe Q4 roadmap needs sign-off.\n")
+	write(fmt.tprintf("%s/Notes/camille.roux/Standup.md", home), "# Standup\n\nPriya owns the migration.\n")
+	index := fmt.tprintf("%s/index", home)
+	env :: proc(home, index, scope: string) -> []string {
+		e := make([dynamic]string, context.temp_allocator)
+		append(&e, fmt.tprintf("HOME=%s", home), fmt.tprintf("XDG_DATA_HOME=%s/.local/share", home),
+			fmt.tprintf("PALM_INDEX_DIR=%s", index), fmt.tprintf("PALM_MAIL_DIR=%s/mail", home),
+			"PALM_INDEX_NO_CLOUD=1", "PATH=/usr/bin:/bin")
+		if scope != "" {append(&e, fmt.tprintf("PALM_IDENTITY=%s", scope))}
+		return e[:]
+	}
+	run :: proc(home, index, scope: string, args: ..string) -> (int, string) {
+		cmd := make([dynamic]string, context.temp_allocator)
+		append(&cmd, os.args[0])
+		append(&cmd, ..args)
+		append(&cmd, "--json")
+		state, sout, _, err := os.process_exec({command = cmd[:], env = env(home, index, scope)}, context.temp_allocator)
+		if err != nil {return -1, ""}
+		return state.exit_code, string(sout)
+	}
+	// Watches one identity's index directory for any open, read or write.
+	watch :: proc(index, handle: string) -> linux.Fd {
+		fd, e := linux.inotify_init1({.NONBLOCK})
+		if e != .NONE {return -1}
+		t := strings.clone_to_cstring(fmt.tprintf("%s/%s", index, handle), context.temp_allocator)
+		linux.inotify_add_watch(fd, t, {.OPEN, .ACCESS, .MODIFY, .CREATE, .DELETE, .MOVED_TO, .ATTRIB})
+		return fd
+	}
+	quiet :: proc(fd: linux.Fd) -> bool {
+		buf: [4096]u8
+		n, _ := linux.read(fd, buf[:])
+		linux.close(fd)
+		return n <= 0
+	}
+
+	code, out := run(home, index, "", "rebuild", "--identity", "camille")
+	check(code == 0 && strings.contains(out, "\"docs\": 1"), "rebuild --identity camille, on a device with no account (exit %d)", code)
+
+	w := watch(index, "camille")
+	code, out = run(home, index, "camille.roux", "rebuild", "--identity", "camille.roux")
+	check(code == 0 && strings.contains(out, "\"identity\": \"camille.roux\"") && strings.contains(out, "\"docs\": 2"),
+		"then PALM_IDENTITY=camille.roux rebuild --identity camille.roux: its own two documents (exit %d)", code)
+	check(w >= 0 && quiet(w), "and the kernel saw no open, read or write in camille's index")
+
+	w = watch(index, "camille.roux")
+	code, out = run(home, index, "camille", "rebuild", "--identity", "camille")
+	check(code == 0 && strings.contains(out, "\"docs\": 1"), "the other way round: PALM_IDENTITY=camille rebuild still works (exit %d)", code)
+	check(w >= 0 && quiet(w), "and touched nothing of camille.roux's")
+
+	c1, o1 := run(home, index, "camille.roux", "search", "roadmap")
+	c2, o2 := run(home, index, "camille.roux", "search", "viewing")
+	check(c1 == 0 && c2 == 0 && strings.contains(o1, "Roadmap") && !strings.contains(o2, "Flat"), "camille.roux's search finds its roadmap and not camille's flat")
+	c1, o1 = run(home, index, "camille", "search", "viewing")
+	c2, o2 = run(home, index, "camille", "search", "roadmap")
+	check(c1 == 0 && c2 == 0 && strings.contains(o1, "Flat") && !strings.contains(o2, "Roadmap"), "camille's finds the flat and not camille.roux's roadmap")
+	code, _ = run(home, index, "camille", "rebuild", "--identity", "camille.roux")
+	check(code == 5, "--identity camille.roux from inside camille is refused, exit 5 (%d)", code)
+
+	p := feed.Paths {
+		index = index, mail = fmt.tprintf("%s/mail", home), drive = fmt.tprintf("%s/Drive", home),
+		notes = fmt.tprintf("%s/Notes", home), dav = fmt.tprintf("%s/dav", home),
+		browser = fmt.tprintf("%s/browser", home), track = fmt.tprintf("%s/track", home),
+	}
+	ids := feed.discover(p)
+	check(len(ids) == 2, "with both indexed, discovery still finds both local identities (%d)", len(ids))
+	one := feed.discover(p, "camille.roux")
+	check(len(one) == 1 && one[0].handle == "camille.roux", "scoped, exactly the one, not its prefix's (%d)", len(one))
+
+	// With an account the rule stands: a folder naming none of its
+	// identities is not one.
+	write(fmt.tprintf("%s/palmframe.conf", p.mail), "[identity]\nid = 1\nhandle = camille\nname = Personal\n")
+	os.remove_all(fmt.tprintf("%s/camille.roux", index))
+	code, _ = run(home, index, "", "rebuild", "--identity", "camille.roux")
+	check(code == 3, "once an account lists only camille, camille.roux's folder names no identity (exit %d)", code)
 }
