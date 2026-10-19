@@ -1,0 +1,63 @@
+# The API gateway: one port, three services, the same paths as hosted
+# Supabase. up.sh substitutes the @PORT@ placeholders and writes the result
+# to .state/<name>/kong.yml.
+_format_version: "2.1"
+_transform: true
+
+services:
+  - name: auth-v1
+    url: http://127.0.0.1:@AUTH_PORT@/
+    routes:
+      - name: auth-v1
+        strip_path: true
+        paths: [/auth/v1/]
+    plugins:
+      - name: cors
+      # A session scoped to one identity (its JWT carries palm_identity) is an
+      # assistant or a device acting for that identity alone. It may refresh
+      # its token, sign out and read who it is, and nothing else here: it may
+      # not change the account's password or email, enrol factors, or use the
+      # admin API. GoTrue does not know about identities, so the gateway says
+      # so. The payload is read unverified; GoTrue verifies the signature, and
+      # a forged token without the claim fails there.
+      - name: pre-function
+        config:
+          access:
+            - |
+              local path = kong.request.get_path()
+              local method = kong.request.get_method()
+              if path:find("/token$") or path:find("/logout$") then return end
+              if method == "GET" and path:find("/user$") then return end
+              local h = kong.request.get_header("authorization")
+              if not h then return end
+              local payload = h:match("^[Bb]earer%s+[^.]+%.([^.]+)%.")
+              if not payload then return end
+              payload = payload:gsub("-", "+"):gsub("_", "/")
+              local pad = #payload % 4
+              if pad > 0 then payload = payload .. string.rep("=", 4 - pad) end
+              local json = ngx.decode_base64(payload)
+              if json and json:find('"palm_identity"%s*:%s*"') then
+                return kong.response.exit(403, {
+                  code = 403,
+                  error_code = "scoped_session",
+                  msg = "a session scoped to one identity cannot change the account",
+                })
+              end
+
+  - name: rest-v1
+    url: http://127.0.0.1:@REST_PORT@/
+    routes:
+      - name: rest-v1
+        strip_path: true
+        paths: [/rest/v1/]
+    plugins:
+      - name: cors
+
+  - name: storage-v1
+    url: http://127.0.0.1:@STORAGE_PORT@/
+    routes:
+      - name: storage-v1
+        strip_path: true
+        paths: [/storage/v1/]
+    plugins:
+      - name: cors

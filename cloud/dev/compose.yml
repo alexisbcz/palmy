@@ -1,0 +1,140 @@
+# The Palmframe cloud stack for local development.
+#
+# Every service uses network_mode: host and binds 127.0.0.1 on a port derived
+# from PALM_PORT_BASE (see env.sh). Bridge networking does not work on the
+# development host (ufw-docker drops it), so this does not use it at all.
+# Start it with ./up.sh, not with `docker compose up` directly: up.sh sets
+# the ports, writes the gateway config, applies migrations and waits.
+#
+# Images are the ones Supabase CLI 2.118.0 pulls, pinned.
+
+services:
+  db:
+    image: public.ecr.aws/supabase/postgres:17.6.1.171
+    container_name: palm-${PALM_NAME}-db
+    network_mode: host
+    restart: unless-stopped
+    environment:
+      POSTGRES_PASSWORD: postgres
+      POSTGRES_HOST: /var/run/postgresql
+      POSTGRES_PORT: ${PALM_DB_PORT}
+      PGPORT: ${PALM_DB_PORT}
+      JWT_SECRET: ${PALM_JWT_SECRET}
+      JWT_EXP: "3600"
+    command:
+      - postgres
+      - -D
+      - /etc/postgresql
+      - -c
+      - port=${PALM_DB_PORT}
+      - -c
+      - listen_addresses=127.0.0.1
+    volumes:
+      - db-data:/var/lib/postgresql/data
+      - ./schema.sql:/etc/postgresql.schema.sql:ro
+
+  auth:
+    image: public.ecr.aws/supabase/gotrue:v2.197.0
+    container_name: palm-${PALM_NAME}-auth
+    network_mode: host
+    restart: unless-stopped
+    environment:
+      API_EXTERNAL_URL: http://127.0.0.1:${PALM_API_PORT}/auth/v1
+      GOTRUE_API_HOST: 127.0.0.1
+      GOTRUE_API_PORT: ${PALM_AUTH_PORT}
+      PORT: ${PALM_AUTH_PORT}
+      GOTRUE_DB_DRIVER: postgres
+      GOTRUE_DB_DATABASE_URL: postgres://supabase_auth_admin:postgres@127.0.0.1:${PALM_DB_PORT}/postgres
+      GOTRUE_SITE_URL: http://127.0.0.1:3000
+      GOTRUE_URI_ALLOW_LIST: ""
+      GOTRUE_DISABLE_SIGNUP: "false"
+      GOTRUE_JWT_ADMIN_ROLES: service_role
+      GOTRUE_JWT_AUD: authenticated
+      GOTRUE_JWT_DEFAULT_GROUP_NAME: authenticated
+      GOTRUE_JWT_EXP: "3600"
+      GOTRUE_JWT_SECRET: ${PALM_JWT_SECRET}
+      GOTRUE_JWT_ISSUER: http://127.0.0.1:${PALM_API_PORT}/auth/v1
+      GOTRUE_EXTERNAL_EMAIL_ENABLED: "true"
+      GOTRUE_MAILER_AUTOCONFIRM: "true"
+      GOTRUE_EXTERNAL_PHONE_ENABLED: "false"
+      GOTRUE_SMS_AUTOCONFIRM: "false"
+      GOTRUE_SECURITY_REFRESH_TOKEN_ROTATION_ENABLED: "true"
+      GOTRUE_SECURITY_REFRESH_TOKEN_REUSE_INTERVAL: "10"
+      GOTRUE_PASSWORD_MIN_LENGTH: "8"
+      GOTRUE_RATE_LIMIT_TOKEN_REFRESH: "1000"
+      GOTRUE_RATE_LIMIT_VERIFY: "1000"
+      GOTRUE_RATE_LIMIT_SIGN_IN_SIGN_UPS: "1000"
+      # Scoped sessions. See cloud/supabase/migrations/20261019110000_accounts.sql
+      GOTRUE_HOOK_CUSTOM_ACCESS_TOKEN_ENABLED: "true"
+      GOTRUE_HOOK_CUSTOM_ACCESS_TOKEN_URI: pg-functions://postgres/public/custom_access_token_hook
+
+  rest:
+    image: public.ecr.aws/supabase/postgrest:v16.3
+    container_name: palm-${PALM_NAME}-rest
+    network_mode: host
+    restart: unless-stopped
+    environment:
+      PGRST_DB_URI: postgres://authenticator:postgres@127.0.0.1:${PALM_DB_PORT}/postgres
+      PGRST_DB_SCHEMAS: public,graphql_public
+      PGRST_DB_EXTRA_SEARCH_PATH: public,extensions
+      PGRST_DB_ANON_ROLE: anon
+      PGRST_DB_MAX_ROWS: "1000"
+      PGRST_JWT_SECRET: ${PALM_JWT_SECRET}
+      PGRST_DB_USE_LEGACY_GUCS: "false"
+      PGRST_APP_SETTINGS_JWT_SECRET: ${PALM_JWT_SECRET}
+      PGRST_APP_SETTINGS_JWT_EXP: "3600"
+      PGRST_SERVER_HOST: 127.0.0.1
+      PGRST_SERVER_PORT: ${PALM_REST_PORT}
+      PGRST_ADMIN_SERVER_PORT: ${PALM_REST_ADMIN_PORT}
+
+  storage:
+    image: public.ecr.aws/supabase/storage-api:v1.77.0
+    container_name: palm-${PALM_NAME}-storage
+    network_mode: host
+    restart: unless-stopped
+    environment:
+      SERVER_HOST: 127.0.0.1
+      SERVER_PORT: ${PALM_STORAGE_PORT}
+      SERVER_ADMIN_PORT: ${PALM_STORAGE_ADMIN_PORT}
+      ANON_KEY: ${PALM_ANON_KEY}
+      SERVICE_KEY: ${PALM_SERVICE_KEY}
+      AUTH_JWT_SECRET: ${PALM_JWT_SECRET}
+      AUTH_JWT_ALGORITHM: HS256
+      DATABASE_URL: postgres://supabase_storage_admin:postgres@127.0.0.1:${PALM_DB_PORT}/postgres
+      FILE_SIZE_LIMIT: "52428800"
+      STORAGE_BACKEND: file
+      STORAGE_FILE_BACKEND_PATH: /var/lib/storage
+      TENANT_ID: stub
+      REGION: local
+      GLOBAL_S3_BUCKET: stub
+      ENABLE_IMAGE_TRANSFORMATION: "false"
+      S3_PROTOCOL_ENABLED: "false"
+      DB_INSTALL_ROLES: "false"
+    volumes:
+      - storage-data:/var/lib/storage
+
+  kong:
+    image: public.ecr.aws/supabase/kong:2.8.1
+    container_name: palm-${PALM_NAME}-kong
+    network_mode: host
+    restart: unless-stopped
+    environment:
+      KONG_DATABASE: "off"
+      KONG_DECLARATIVE_CONFIG: /home/kong/kong.yml
+      KONG_PROXY_LISTEN: 127.0.0.1:${PALM_API_PORT}
+      KONG_ADMIN_LISTEN: "off"
+      KONG_STATUS_LISTEN: "off"
+      KONG_STREAM_LISTEN: "off"
+      KONG_CLUSTER_LISTEN: "off"
+      KONG_DNS_ORDER: LAST,A,CNAME
+      KONG_PLUGINS: request-transformer,cors,pre-function
+      KONG_NGINX_PROXY_PROXY_BUFFER_SIZE: 160k
+      KONG_NGINX_PROXY_PROXY_BUFFERS: 64 160k
+      KONG_NGINX_HTTP_CLIENT_MAX_BODY_SIZE: 60m
+      KONG_PREFIX: /tmp/kong
+    volumes:
+      - ${PALM_STATE_DIR}/kong.yml:/home/kong/kong.yml:ro
+
+volumes:
+  db-data:
+  storage-data:
