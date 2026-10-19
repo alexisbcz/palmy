@@ -53,6 +53,11 @@ sched_comps :: proc(cal: ^ical.Component) -> []^ical.Component {
 	return ical.children(cal, kind, context.allocator)
 }
 
+// is_scheduling_object: RFC 6638 calls a resource with an ORGANIZER one.
+is_scheduling_object :: proc(cal: ^ical.Component) -> bool {
+	return organizer_of(cal) != ""
+}
+
 @(private = "file")
 organizer_of :: proc(cal: ^ical.Component) -> string {
 	for comp in sched_comps(cal) {
@@ -553,13 +558,13 @@ apply_itip :: proc(c: ^Ctx, ident: ^Ident, item: Itip) {
 					}
 				}
 			}
-			put_calendar_text(c, col, existing.name, "", false, ical.write(msg))
+			put_calendar_text(c, col, existing.name, "", false, ical.write(msg), new_schedule_tag())
 		} else {
 			target, has := default_calendar(c, ident)
 			if !has {
 				return
 			}
-			put_calendar_text(c, target, safe_name(item.uid), "", false, ical.write(msg))
+			put_calendar_text(c, target, safe_name(item.uid), "", false, ical.write(msg), new_schedule_tag())
 		}
 	case "CANCEL":
 		if !found {
@@ -577,7 +582,7 @@ apply_itip :: proc(c: ^Ctx, ident: ^Ident, item: Itip) {
 				}
 			}
 		}
-		put_calendar_text(c, col, existing.name, "", false, ical.write(stored))
+		put_calendar_text(c, col, existing.name, "", false, ical.write(stored), new_schedule_tag())
 	case "REPLY":
 		if !found {
 			return

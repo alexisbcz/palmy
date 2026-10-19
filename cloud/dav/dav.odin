@@ -838,6 +838,12 @@ caldav_prop :: proc(c: ^Ctx, w: ^x.Writer, r: ^Res, n: Prop_Name) -> bool {
 		x.empty(w, x.NS_CALDAV, "opaque")
 		x.close(w)
 		return true
+	case "schedule-tag":
+		if r.kind != .Cal_Object || r.obj.schedule_tag == "" {
+			return false
+		}
+		x.leaf(w, x.NS_CALDAV, "schedule-tag", r.obj.schedule_tag)
+		return true
 	case "calendar-data":
 		#partial switch r.kind {
 		case .Cal_Object:

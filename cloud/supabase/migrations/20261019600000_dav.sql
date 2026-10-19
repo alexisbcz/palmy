@@ -124,6 +124,9 @@ create table public.dav_objects (
 	component     text not null check (component in ('VEVENT', 'VTODO', 'VJOURNAL', 'VFREEBUSY', 'VCARD')),
 	body          text not null,
 	etag          text not null,
+	-- RFC 6638 3.2.10: changes only when the scheduling-relevant content
+	-- does (an organizer's update), not when a reply updates a PARTSTAT.
+	schedule_tag  text,
 	size          integer not null default 0,
 
 	-- Calendar index (UTC). first_start/last_end bound every instance of a
@@ -695,7 +698,9 @@ begin
 			emails = coalesce(array(select jsonb_array_elements_text(idx -> 'emails')), '{}'),
 			phones = coalesce(array(select jsonb_array_elements_text(idx -> 'phones')), '{}'),
 			card_kind = idx ->> 'card_kind',
-			members = coalesce(array(select jsonb_array_elements_text(idx -> 'members')), '{}')
+			members = coalesce(array(select jsonb_array_elements_text(idx -> 'members')), '{}'),
+			-- A scheduling object keeps its tag unless the writer sets one.
+			schedule_tag = coalesce(idx ->> 'schedule_tag', o.schedule_tag)
 		 where o.id = cur.id;
 		if not found then
 			-- Visible but not writable: a read-only share.
@@ -707,7 +712,7 @@ begin
 			identity_id, collection_id, name, uid, component, body, etag,
 			dtstart, dtend, first_start, last_end, all_day, rrule, overrides,
 			summary, location, status, organizer, attendees,
-			fn, given_name, family_name, org, emails, phones, card_kind, members)
+			fn, given_name, family_name, org, emails, phones, card_kind, members, schedule_tag)
 		values (
 			-- Placeholder: the owner trigger sets the real owner.
 			(select c.identity_id from public.dav_collections c where c.id = collection),
@@ -722,7 +727,8 @@ begin
 			coalesce(array(select jsonb_array_elements_text(idx -> 'emails')), '{}'),
 			coalesce(array(select jsonb_array_elements_text(idx -> 'phones')), '{}'),
 			idx ->> 'card_kind',
-			coalesce(array(select jsonb_array_elements_text(idx -> 'members')), '{}'));
+			coalesce(array(select jsonb_array_elements_text(idx -> 'members')), '{}'),
+			idx ->> 'schedule_tag');
 		return query select tag, true;
 	end if;
 end

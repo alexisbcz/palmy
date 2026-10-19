@@ -43,6 +43,7 @@ Obj :: struct {
 	size:       i64,
 	updated_at: string,
 	created_at: string,
+	schedule_tag: string,
 }
 
 coll_from :: proc(r: json.Object) -> Coll {
@@ -119,8 +120,8 @@ find_coll :: proc(c: ^Ctx, ident: ^Ident, kind, seg: string) -> (Coll, bool) {
 	return {}, false
 }
 
-OBJ_META :: "name,uid,etag,component,size,updated_at,created_at"
-OBJ_FULL :: "name,uid,etag,component,size,updated_at,created_at,body"
+OBJ_META :: "name,uid,etag,component,size,updated_at,created_at,schedule_tag"
+OBJ_FULL :: "name,uid,etag,component,size,updated_at,created_at,schedule_tag,body"
 
 obj_from :: proc(r: json.Object) -> Obj {
 	return Obj {
@@ -132,6 +133,7 @@ obj_from :: proc(r: json.Object) -> Obj {
 		size = jint(r, "size"),
 		updated_at = jstr(r, "updated_at"),
 		created_at = jstr(r, "created_at"),
+		schedule_tag = jstr(r, "schedule_tag"),
 	}
 }
 
@@ -183,7 +185,7 @@ Put_Result :: struct {
 	message: string,
 }
 
-cal_index_json :: proc(ix: ical.Index) -> string {
+cal_index_json :: proc(ix: ical.Index, schedule_tag := "") -> string {
 	b := jb_make()
 	jb_str(&b, "uid", ix.uid)
 	jb_str(&b, "component", ix.component)
@@ -209,6 +211,9 @@ cal_index_json :: proc(ix: ical.Index) -> string {
 	jb_opt(&b, "status", ix.status)
 	jb_opt(&b, "organizer", ix.organizer)
 	jb_strs(&b, "attendees", ix.attendees)
+	if schedule_tag != "" {
+		jb_str(&b, "schedule_tag", schedule_tag)
+	}
 	return jb_done(&b)
 }
 
@@ -262,7 +267,7 @@ delete_object :: proc(c: ^Ctx, col: Coll, name, if_match: string) -> (found: boo
 }
 
 // put_calendar_text validates, indexes and stores an iCalendar text.
-put_calendar_text :: proc(c: ^Ctx, col: Coll, name, if_match: string, if_none_match: bool, text: string) -> Put_Result {
+put_calendar_text :: proc(c: ^Ctx, col: Coll, name, if_match: string, if_none_match: bool, text: string, schedule_tag := "") -> Put_Result {
 	cal, perr, ok := ical.parse_one(text)
 	if !ok {
 		return {status = 400, message = perr.message}
@@ -272,5 +277,13 @@ put_calendar_text :: proc(c: ^Ctx, col: Coll, name, if_match: string, if_none_ma
 	}
 	z, _ := ical.zone_for(col.timezone)
 	ix := ical.index(cal, z)
-	return put_object(c, col, name, if_match, if_none_match, cal_index_json(ix), text)
+	return put_object(c, col, name, if_match, if_none_match, cal_index_json(ix, schedule_tag), text)
 }
+
+// new_schedule_tag is a fresh opaque tag.
+new_schedule_tag :: proc() -> string {
+	return fmt.tprintf("\"st-%x-%x\"", now_unix(), sync.atomic_add(&g_tag_counter, 1))
+}
+
+@(private = "file")
+g_tag_counter: u64

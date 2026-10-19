@@ -11,13 +11,13 @@ select plan(68);
 -- People and identities ------------------------------------------------------
 
 insert into auth.users (id, email, aud, role) values
-	('a0000000-0000-0000-0000-00000000000a', 'alice@example.test', 'authenticated', 'authenticated'),
-	('b0000000-0000-0000-0000-00000000000b', 'bob@example.test', 'authenticated', 'authenticated');
+	('a0000000-0000-0000-0000-00000000000a', 'dav-alice@example.test', 'authenticated', 'authenticated'),
+	('b0000000-0000-0000-0000-00000000000b', 'dav-bob@example.test', 'authenticated', 'authenticated');
 
 insert into public.identities (id, owner, handle, display_name, kind) values
-	('a1000000-0000-0000-0000-000000000001', 'a0000000-0000-0000-0000-00000000000a', 'alice', 'Alice', 'personal'),
-	('a2000000-0000-0000-0000-000000000002', 'a0000000-0000-0000-0000-00000000000a', 'alice-work', 'Alice at work', 'work'),
-	('b1000000-0000-0000-0000-000000000001', 'b0000000-0000-0000-0000-00000000000b', 'bob', 'Bob', 'personal');
+	('a1000000-0000-0000-0000-000000000001', 'a0000000-0000-0000-0000-00000000000a', 'tdav-alice', 'Alice', 'personal'),
+	('a2000000-0000-0000-0000-000000000002', 'a0000000-0000-0000-0000-00000000000a', 'tdav-alice-work', 'Alice at work', 'work'),
+	('b1000000-0000-0000-0000-000000000001', 'b0000000-0000-0000-0000-00000000000b', 'tdav-bob', 'Bob', 'personal');
 
 -- Sessions: as(user, identity or null for unscoped).
 create function pg_temp.as_(usr uuid, ident uuid) returns void language plpgsql as $$
@@ -152,7 +152,7 @@ select is((select count(*)::int from public.dav_objects where identity_id = 'a20
 select is((select access from public.dav_list_collections('b1000000-0000-0000-0000-000000000001', 'calendar')
 	where id = (select a_cal from ids)), 'read', 'bob''s home lists the share with read access');
 select is((select owner_handle from public.dav_list_collections('b1000000-0000-0000-0000-000000000001', 'calendar')
-	where id = (select a_cal from ids)), 'alice', 'and names its owner');
+	where id = (select a_cal from ids)), 'tdav-alice', 'and names its owner');
 select throws_ok($$ select * from public.dav_put_object((select a_cal from ids), 'bob.ics', null, true,
 	pg_temp.ix('bob-in-alice'), pg_temp.ev('bob-in-alice')) $$, '42501', null,
 	'read grant: bob cannot add an event');
@@ -210,32 +210,32 @@ insert into public.dav_grants (identity_id, collection_id, grantee_identity, acc
 select pg_temp.as_('b0000000-0000-0000-0000-00000000000b', 'b1000000-0000-0000-0000-000000000001');
 delete from public.dav_grants where collection_id = (select a_cal from ids);
 select pg_temp.as_postgres();
-select is((select count(*)::int from public.dav_grants), 0, 'bob declined the share');
+select is((select count(*)::int from public.dav_grants where collection_id = (select a_cal from ids)), 0, 'bob declined the share');
 
 -- Scheduling messages ------------------------------------------------------------
 
 select pg_temp.as_('a0000000-0000-0000-0000-00000000000a', 'a1000000-0000-0000-0000-000000000001');
 select lives_ok($$ insert into public.dav_itip (identity_id, sender_address, recipient_address, method, uid, body)
-	values ('a1000000-0000-0000-0000-000000000001', 'mailto:alice@palm.test', 'mailto:bob@palm.test', 'REQUEST', 'm1', 'x') $$,
+	values ('a1000000-0000-0000-0000-000000000001', 'mailto:tdav-alice@palm.test', 'mailto:tdav-bob@palm.test', 'REQUEST', 'm1', 'x') $$,
 	'alice invites bob');
 select lives_ok($$ insert into public.dav_itip (identity_id, sender_address, recipient_address, method, uid, body)
-	values ('a1000000-0000-0000-0000-000000000001', 'mailto:alice@palm.test', 'mailto:carol@example.com', 'REQUEST', 'm1', 'x') $$,
+	values ('a1000000-0000-0000-0000-000000000001', 'mailto:tdav-alice@palm.test', 'mailto:carol@example.com', 'REQUEST', 'm1', 'x') $$,
 	'alice invites someone outside');
 select throws_ok($$ insert into public.dav_itip (identity_id, sender_address, recipient_address, method, uid, body)
-	values ('b1000000-0000-0000-0000-000000000001', 'mailto:bob@palm.test', 'mailto:alice@palm.test', 'REPLY', 'm1', 'x') $$,
+	values ('b1000000-0000-0000-0000-000000000001', 'mailto:tdav-bob@palm.test', 'mailto:tdav-alice@palm.test', 'REPLY', 'm1', 'x') $$,
 	'42501', null, 'alice cannot send in bob''s name');
 select is((select status from public.dav_itip where recipient_address = 'mailto:carol@example.com'),
 	'not sent: outbound not enabled', 'the outside invitation is queued, not sent');
-select is((select recipient_identity from public.dav_itip where recipient_address = 'mailto:bob@palm.test'),
+select is((select recipient_identity from public.dav_itip where recipient_address = 'mailto:tdav-bob@palm.test'),
 	'b1000000-0000-0000-0000-000000000001'::uuid, 'the local one is routed to bob');
-update public.dav_itip set processed_at = now() where recipient_address = 'mailto:bob@palm.test';
+update public.dav_itip set processed_at = now() where recipient_address = 'mailto:tdav-bob@palm.test';
 
 select pg_temp.as_('b0000000-0000-0000-0000-00000000000b', 'b1000000-0000-0000-0000-000000000001');
 select is((select count(*)::int from public.dav_itip), 1, 'bob sees the invitation, not the outside one');
 select is((select processed_at from public.dav_itip), null, 'the sender could not mark it processed');
 update public.dav_itip set processed_at = now();
 select isnt((select processed_at from public.dav_itip), null, 'bob marks it processed');
-select is(public.dav_identity_handle('a1000000-0000-0000-0000-000000000001'), 'alice',
+select is(public.dav_identity_handle('a1000000-0000-0000-0000-000000000001'), 'tdav-alice',
 	'bob may name the identity that wrote to him');
 select is(public.dav_identity_handle('a2000000-0000-0000-0000-000000000002'), null,
 	'but not alice''s other identities');
@@ -260,21 +260,21 @@ select throws_ok($$ select * from public.dav_app_password_create('b1000000-0000-
 
 select pg_temp.as_('b0000000-0000-0000-0000-00000000000b', 'b1000000-0000-0000-0000-000000000001');
 select is((select count(*)::int from public.dav_app_passwords), 0, 'bob cannot list alice''s app passwords');
-select throws_ok($$ select * from public.dav_app_password_check('alice', 'whatever') $$, '42501', null,
+select throws_ok($$ select * from public.dav_app_password_check('tdav-alice', 'whatever') $$, '42501', null,
 	'a user session cannot call the credential check');
 
 select pg_temp.as_postgres();
 set local role service_role;
-select is((select handle from public.dav_app_password_check('alice@palm.test', (select secret from pw))), 'alice',
+select is((select handle from public.dav_app_password_check('tdav-alice@palm.test', (select secret from pw))), 'tdav-alice',
 	'the server checks the secret and gets the identity');
-select is((select count(*)::int from public.dav_app_password_check('bob', (select secret from pw))), 0,
+select is((select count(*)::int from public.dav_app_password_check('tdav-bob', (select secret from pw))), 0,
 	'the secret is bound to its identity');
 
 select pg_temp.as_('a0000000-0000-0000-0000-00000000000a', null);
 select ok(public.dav_app_password_revoke((select id from pw)), 'alice revokes it');
 select pg_temp.as_postgres();
 set local role service_role;
-select is((select count(*)::int from public.dav_app_password_check('alice', (select secret from pw))), 0,
+select is((select count(*)::int from public.dav_app_password_check('tdav-alice', (select secret from pw))), 0,
 	'a revoked app password stops working at once');
 
 -- Sync log and tombstones ------------------------------------------------------

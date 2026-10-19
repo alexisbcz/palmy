@@ -41,6 +41,9 @@ do_get :: proc(c: ^Ctx, r: ^Res) {
 		if body == obj.body {
 			web.set_header(c.res, "ETag", obj.etag)
 		}
+		if obj.schedule_tag != "" {
+			web.set_header(c.res, "Schedule-Tag", obj.schedule_tag)
+		}
 		if lm := http_date(obj.updated_at); lm != "" {
 			web.set_header(c.res, "Last-Modified", lm)
 		}
@@ -160,15 +163,31 @@ do_put :: proc(c: ^Ctx, r: ^Res) {
 	// Scheduling sees the old and new versions; it may stamp the new one
 	// (SCHEDULE-STATUS on attendees), which counts as a modification.
 	old, had_old := object(c, r.coll, r.obj.name)
+	// If-Schedule-Tag-Match (RFC 6638 8.3): an attendee's client writing
+	// over a copy the organizer has since changed must be told.
+	if st := strings.trim_space(web.header(c.req.headers, "If-Schedule-Tag-Match")); st != "" {
+		if !had_old || old.schedule_tag != st {
+			fail(c, 412, "the schedule tag does not match")
+			return
+		}
+	}
 	plan := sched_plan(c, r, had_old ? old.body : "", cal)
 	if plan.modified {
 		modified = true
 	}
 	text := modified ? ical.write(cal) : c.req.body
 
+	// The schedule tag moves when the organizer's content does, not when an
+	// attendee answers.
+	tag := ""
+	scheduling := is_scheduling_object(cal)
+	if scheduling && (!had_old || old.schedule_tag == "" || (plan.role == .Organizer && len(plan.out) > 0)) {
+		tag = new_schedule_tag()
+	}
+
 	z, _ := ical.zone_for(r.coll.timezone)
 	ix := ical.index(cal, z)
-	res := put_object(c, r.coll, r.obj.name, if_match, if_none, cal_index_json(ix), text)
+	res := put_object(c, r.coll, r.obj.name, if_match, if_none, cal_index_json(ix, tag), text)
 	if res.status != 0 {
 		put_failed(c, res, true, r)
 		return
@@ -178,6 +197,9 @@ do_put :: proc(c: ^Ctx, r: ^Res) {
 	if !modified {
 		// RFC 4791 5.3.4: an ETag only when what is stored is what was sent.
 		web.set_header(c.res, "ETag", res.etag)
+	}
+	if scheduling {
+		web.set_header(c.res, "Schedule-Tag", tag != "" ? tag : old.schedule_tag)
 	}
 }
 
