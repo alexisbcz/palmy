@@ -51,6 +51,8 @@ typo is caught at build time rather than shipped.
 | `arch` | default `x86_64` | |
 | `depend` | repeatable | space-separated constraints: `glibc`, `libgui>=2`, `foo<3`, `bar=1.2`, `baz~1.2` |
 | `provides` | repeatable | space-separated virtual names other packages may depend on: `cmd:sh`, `so:libc.so.6`, optionally versioned `so:libc.so.6=6` |
+| `conflicts` | repeatable | space-separated constraints no package installed beside this one may meet, by name or by what it provides: `mta-other`, `foo<2` |
+| `replaces` | repeatable | space-separated constraints naming packages this one takes over: `oldname`, `oldname<3` |
 | `install_user` | repeatable | a user the package expects to exist (see below) |
 | `category` | | one of `Accessories`, `Development`, `Graphics`, `Internet`, `Office`, `System`, `Multimedia`, `Games` |
 | `icon` | | an icon name for a graphical front end: lowercase letters, digits and `-` (a [lucide](https://lucide.dev) name, which is what `apps/store` draws) |
@@ -65,6 +67,20 @@ know when it reads any of those, so an index with these fields is still read
 by an older palm, and an older index simply has none of them. The category
 list is closed so that a typo fails `palm build` instead of opening a shelf of
 one.
+
+`conflicts` and `replaces` are read by the resolver (`distro/palm/resolve.odin`),
+which never chooses two packages where either names the other. `replaces`
+means what it means in pacman: the named package was renamed or merged into
+this one. It implies the conflict, and `palm upgrade` installs the replacement
+in place of an installed package it replaces, renaming the entry in
+`/etc/palm/world` too; `palm add` leaves an installed package alone. For a
+rename to be seamless the new package should also `provides` the old name
+(`provides = oldname=<version>`), so whatever depended on the old name is met
+by the new one. Its files may be the old package's: the old package is removed
+in the same transaction, and paths the new one brings are kept while it goes.
+A package may not name itself in either field. Both fields are copied into
+`.PKGINFO`, `PALMINDEX` and the installed database; an older palm skips them,
+as it skips every key it does not know.
 
 Constraint operators are `>=`, `<=`, `>`, `<`, `=` and `~`. `=1.2` matches any
 release of 1.2 (`1.2-r0`, `1.2-r7`) unless a release is given (`=1.2-r3`);

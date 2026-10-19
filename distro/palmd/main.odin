@@ -20,6 +20,11 @@ package palmd
 //     answered "busy" rather than queued, so nobody's click silently waits
 //     behind someone else's upgrade.
 //   - every request, with the peer's uid and pid, is logged.
+//   - on its own, every REFRESH_EVERY (first REFRESH_FIRST after it starts,
+//     once the network is likely up), it runs `palm update` when nothing
+//     else is running, so the cached indexes Software reads are current and
+//     a security update shows up under Updates without anyone asking for a
+//     refresh. That is the only thing it does unasked: it never installs.
 //
 // An apply plans again first and refuses if the plan's id differs from the
 // one the client confirmed, so the transaction that runs is the one a person
@@ -28,12 +33,15 @@ package palmd
 //	palmd                                    the daemon; must be root
 //	palmd --test --sock PATH [--palm P] [--passwd F] [--group F] [--log F]
 //	                                         unprivileged, against a fake palm
+//	palmd ... --refresh-every SECONDS        the index refresh period; 0 turns
+//	                                         it off (the default under --test)
 //	palmd --request JSON [--sock PATH]       send one request, print each reply
 //	palmd --selftest
 
 import "base:intrinsics"
 import "core:fmt"
 import "core:os"
+import "core:strconv"
 import "core:strings"
 import "core:sys/linux"
 import "core:sys/posix"
@@ -45,6 +53,10 @@ SOCK_PATH :: "/run/palmd.sock"
 // upgrade over a slow link is minutes, not an hour.
 JOB_LIMIT :: 30 * time.Minute
 
+// The scheduled index refresh: how often, and how long after starting.
+REFRESH_EVERY :: 6 * time.Hour
+REFRESH_FIRST :: 2 * time.Minute
+
 Daemon :: struct {
 	sock_path:   string,
 	palm:        string,
@@ -55,6 +67,8 @@ Daemon :: struct {
 	listen_fd:   linux.Fd,
 	conns:       [dynamic]^Conn,
 	job:         ^Job, // the lock: at most one palm at a time
+	refresh:     time.Duration, // 0: no scheduled refresh
+	next_update: time.Time,
 }
 
 Conn :: struct {
@@ -102,6 +116,7 @@ main :: proc() {
 	d.log_fd = 2
 	request := ""
 	log_path := ""
+	refresh := -1
 
 	args := os.args[1:]
 	for i := 0; i < len(args); i += 1 {
@@ -130,6 +145,14 @@ main :: proc() {
 			log_path = value(args, &i)
 		case "--request":
 			request = value(args, &i)
+		case "--refresh-every":
+			v := value(args, &i)
+			n, okn := strconv.parse_int(v)
+			if !okn || n < 0 {
+				fmt.eprintfln("palmd: --refresh-every needs a number of seconds, not %q", v)
+				os.exit(2)
+			}
+			refresh = n
 		case "-h", "--help":
 			fmt.println("usage: palmd | palmd --test --sock PATH [--palm P] [--passwd F] [--group F] [--log F] | palmd --request JSON [--sock PATH] | palmd --selftest")
 			os.exit(0)
@@ -165,6 +188,15 @@ main :: proc() {
 			os.exit(1)
 		}
 		d.log_fd = fd
+	}
+
+	switch {
+	case refresh > 0:
+		d.refresh = time.Duration(refresh) * time.Second
+		d.next_update = time.time_add(time.now(), d.refresh)
+	case refresh < 0 && !d.test:
+		d.refresh = REFRESH_EVERY
+		d.next_update = time.time_add(time.now(), REFRESH_FIRST)
 	}
 
 	posix.signal(.SIGPIPE, auto_cast posix.SIG_IGN)
@@ -286,6 +318,14 @@ run :: proc(d: ^Daemon) {
 
 		if d.job != nil {
 			job_service(d, len(fds) > job_at ? fds[job_at:] : nil)
+		}
+
+		if d.refresh > 0 && d.job == nil && time.diff(d.next_update, time.now()) >= 0 {
+			// Nobody is waiting on this one; its result goes to the log only.
+			d.next_update = time.time_add(time.now(), d.refresh)
+			if err := job_start(d, nil, Request{op = .Update}, .Run, "palmd (scheduled refresh)"); err != "" {
+				logf(d, "scheduled refresh: %s", err)
+			}
 		}
 	}
 }

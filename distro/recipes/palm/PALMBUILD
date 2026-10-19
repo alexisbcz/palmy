@@ -5,8 +5,19 @@
 # /usr/lib/palm/palm-surface: the application command dispatcher from
 # apps/palm, which distro/apps/build.sh builds as palm-apps because the name
 # palm belongs to the package manager.
+#
+# palm fetches over https with its own TLS client, so it carries the CA roots
+# it checks servers against: ca-certificates.crt is Mozilla's TLS root set
+# (a copy of an Arch host's /etc/ssl/certs/ca-certificates.crt; refreshing it
+# is in distro/notes/palm.md). A system bundle at
+# /etc/ssl/certs/ca-certificates.crt, if a package ever installs one, wins.
+#
+# palmframe-release.pub is the key the public repository is signed with
+# (distro/repo-publish). The build key in /etc/palm/keys/palmframe.pub
+# (palmframe-base) still signs the repository a checkout builds for itself; a
+# system trusts both.
 pkgname  = palm
-pkgver   = 0.1.0
+pkgver   = 0.2.0
 pkgrel   = 0
 pkgdesc  = The Palmframe package manager
 license  = MIT
@@ -19,4 +30,6 @@ provides = cmd:palm
 
 file     = ${PALMFRAME_OUT}/bin/palm -> /usr/bin/palm mode 0755
 file     = ${PALMFRAME_OUT}/bin/palm-apps -> /usr/lib/palm/palm-surface mode 0755
+file     = ca-certificates.crt -> /usr/share/palm/ca-certificates.crt mode 0644
+file     = palmframe-release.pub -> /etc/palm/keys/palmframe-release.pub mode 0644
 dir      = /var/cache/palm

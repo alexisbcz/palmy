@@ -521,7 +521,31 @@ test_daemon :: proc() {
 	}
 
 	logged := read_text(log)
+	check(!strings.contains(logged, "scheduled refresh"), "--test schedules no refresh unless asked")
 	check(strings.contains(logged, fmt.tprintf("uid=%d (tester)", me)), "requests are logged with the peer's uid")
 	check(strings.contains(logged, "refused") && strings.contains(logged, "--root=/"), "refusals are logged with what was asked")
 	check(strings.contains(logged, fmt.tprintf("uid=%d (tester) pid=", me)) && strings.contains(logged, "only root and members of group wheel"), "the denied connection is logged")
+
+	// The scheduled refresh: a daemon told to refresh every second runs
+	// `palm update --json` by itself and logs the outcome.
+	_ = os.remove(fmt.tprintf("%s/argv.log", dir))
+	sock2 := fmt.tprintf("%s/palmd2.sock", dir)
+	log2 := fmt.tprintf("%s/palmd2.log", dir)
+	p2, perr2 := os.process_start(os.Process_Desc{command = {self, "--test", "--sock", sock2, "--palm", fake, "--passwd", passwd, "--group", group, "--log", log2, "--refresh-every", "1"}})
+	if perr2 != nil {
+		check(false, "the second daemon starts: %v", perr2)
+		return
+	}
+	refreshed := false
+	for _ in 0 ..< 60 {
+		if strings.contains(read_text(log2), "palmd (scheduled refresh): update: done") {
+			refreshed = true
+			break
+		}
+		time.sleep(100 * time.Millisecond)
+	}
+	_ = os.process_kill(p2)
+	_, _ = os.process_wait(p2)
+	check(refreshed, "a scheduled refresh ran and was logged:\n%s", read_text(log2))
+	check(strings.contains(read_text(fmt.tprintf("%s/argv.log", dir)), "update --json\n"), "as palm update --json")
 }
