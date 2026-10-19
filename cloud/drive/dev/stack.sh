@@ -134,6 +134,7 @@ up() {
 
 reset() {
 	psql_su <<-'SQL'
+	delete from auth.users;
 	drop schema if exists public cascade;
 	create schema public;
 	grant usage on schema public to anon, authenticated, service_role;

@@ -11,8 +11,8 @@ set search_path = public, extensions;
 select plan(31);
 
 insert into auth.users (id, email) values
-	('00000000-0000-0000-0000-00000000a11c', 'alice@palm.test'),
-	('00000000-0000-0000-0000-000000000b0b', 'bob@palm.test');
+	('00000000-0000-0000-0000-00000000a11c', 'alice@drive-test.invalid'),
+	('00000000-0000-0000-0000-000000000b0b', 'bob@drive-test.invalid');
 
 insert into public.identities (id, owner, handle, display_name, kind) values
 	('aaaaaaaa-0000-0000-0000-000000000001', '00000000-0000-0000-0000-00000000a11c', 'a-work', 'Alice (work)', 'work'),
