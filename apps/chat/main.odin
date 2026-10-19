@@ -15,6 +15,7 @@ import "core:net"
 import "core:os"
 import "core:strconv"
 import "core:strings"
+import ck "../cloudkit"
 import kit "kit:."
 import p "palmy:."
 import w "wire"
@@ -73,11 +74,24 @@ Channel :: struct {
 	unread:  int,  // new messages in the timeline
 	threads: int,  // new replies inside threads, which are not timeline rows
 	mention: bool,
+
+	// Cloud mode (protocol v2). `name` is then the channel's id, the key
+	// every frame uses, and `label` is what to draw.
+	label:    string,
+	space:    string,
+	private:  bool,
+	peer:     string, // a DM's other handle
+	rev:      i64, // the newest change number seen: what to sync from
+	call:     string, // the live call in this channel, "" for none
+	call_who: [dynamic]Who,
+	seen:     [dynamic]Seen, // read receipts: how far each other member has read
 }
 
 Member :: struct {
 	nick:  string,
 	state: w.Presence,
+	name:  string, // cloud: the identity's display name
+	color: string, // cloud: the identity's colour
 }
 
 Typer :: struct {
@@ -98,6 +112,11 @@ Args :: struct {
 	att_path: string,
 	thread:   i64,
 	full:     bool,
+
+	cloud:    bool, // speak protocol v2 to palm-rtc, as an account identity
+	rtc_port: int,
+	identity: string, // which identity to speak as (else PALM_IDENTITY)
+	call_bin: string, // the call app to launch for a call
 }
 
 App :: struct {
@@ -175,6 +194,24 @@ App :: struct {
 	toast_t:     f64,
 	tz:          i64,
 	now:         f64,
+
+	// Cloud mode.
+	cloud:           bool,
+	ck:              ^ck.Client,
+	me:              Ident_View,
+	spaces:          [dynamic]Space,
+	cur_space:       string,
+	invites:         [dynamic]Invite,
+	seen_invites:    int,
+	inv_open:        bool,
+	sel_invite:      int,
+	token_exp:       i64,
+	next_auth_check: f64,
+	was_online:      bool,
+	syncing:         bool,
+	prompt:          Prompt_Kind,
+	pbuf:            [dynamic]u8,
+	pcaret:          int,
 }
 
 // Vline is one visual line of the composer: a byte range in `buf`.
@@ -183,9 +220,16 @@ Vline :: struct {
 }
 
 main :: proc() {
+	// A verb is the command line's (cli.odin, docs/PALM-CLI.md); everything
+	// else is the window's own flags, unchanged.
+	if len(os.args) > 1 && is_cli_invocation(os.args[1]) {
+		code, _ := kit.cli(surface())
+		os.exit(code)
+	}
 	a := new(App)
 	a.args = parse_args()
 	a.nick = a.args.nick
+	a.cloud = a.args.cloud
 
 	if a.args.selftest {
 		os.exit(selftest(a.args))
@@ -224,6 +268,25 @@ parse_args :: proc() -> Args {
 			}
 		case "--fullscreen":
 			out.full = true
+		case "--cloud":
+			out.cloud = true
+		case "--rtc-port":
+			if i + 1 < len(args) {
+				i += 1
+				if n, ok := strconv.parse_int(args[i]); ok {
+					out.rtc_port = n
+				}
+			}
+		case "--identity":
+			if i + 1 < len(args) {
+				i += 1
+				out.identity = args[i]
+			}
+		case "--call-bin":
+			if i + 1 < len(args) {
+				i += 1
+				out.call_bin = args[i]
+			}
 		case "--light":
 			out.dark = false
 		case "--dark":
@@ -264,6 +327,12 @@ parse_args :: proc() -> Args {
 			fmt.println("  --port N         server port on 127.0.0.1 (default 8787)")
 			fmt.println("  --light          light theme")
 			fmt.println("  --fullscreen     open fullscreen (handy for screenshots)")
+			fmt.println("  --cloud          the Palmframe cloud (palm-rtc) as an account identity")
+			fmt.println("  --identity H     with --cloud: the identity to speak as (else PALM_IDENTITY)")
+			fmt.println("  --rtc-port N     with --cloud: the gateway's port on 127.0.0.1 (default 8790)")
+			fmt.println("  --call-bin PATH  the call app to launch for calls (default: call)")
+			fmt.println("  spaces|channels|post|history|search|invite|invites|accept|dm|call|...")
+			fmt.println("                   cloud commands; `chat help` lists them")
 			fmt.println("  --post CH TEXT   post one message and exit")
 			fmt.println("  --attach CH PATH upload one file and exit")
 			fmt.println("  --thread ID      with --post or --attach: reply inside that thread")
@@ -280,6 +349,9 @@ parse_args :: proc() -> Args {
 }
 
 default_nick :: proc() -> string {
+	if v := os.get_env("PALM_IDENTITY", context.allocator); v != "" {
+		return v
+	}
 	if v := os.get_env("USER", context.allocator); v != "" {
 		return v
 	}
@@ -343,6 +415,7 @@ run_ui :: proc(a: ^App) {
 		}
 
 		net_pump(a)
+		cloud_tick(a)
 		expire_typers(a)
 		// The attach dialog is modal, so the list behind it must not react to
 		// a wheel aimed at the dialog.
@@ -405,6 +478,9 @@ find_chan :: proc(a: ^App, name: string) -> int {
 // chan_label is what the sidebar and the header show: a channel's own name, or
 // the other person's nickname for a DM.
 chan_label :: proc(a: ^App, c: ^Channel) -> string {
+	if c.label != "" {
+		return c.label
+	}
 	if c.kind == .DM {
 		return w.dm_other(c.name, a.nick)
 	}
@@ -464,7 +540,34 @@ step_channel :: proc(a: ^App, d: int) {
 	if len(a.chans) == 0 {
 		return
 	}
-	switch_to(a, clamp(a.cur + d, 0, len(a.chans) - 1))
+	// In cloud mode the sidebar shows one space at a time, and stepping
+	// stays inside it.
+	i := a.cur
+	for {
+		i += d
+		if i < 0 || i >= len(a.chans) {
+			return
+		}
+		if in_view(a, i) {
+			switch_to(a, i)
+			return
+		}
+	}
+}
+
+// nth_in_view is the n-th channel (0-based) of the space on screen.
+nth_in_view :: proc(a: ^App, n: int) -> int {
+	k := 0
+	for _, i in a.chans {
+		if !in_view(a, i) {
+			continue
+		}
+		if k == n {
+			return i
+		}
+		k += 1
+	}
+	return -1
 }
 
 // mark_read moves the server-side cursor to the newest message on screen, and
@@ -661,7 +764,44 @@ handle_keys :: proc(ui: ^p.Ctx, app: ^p.App, a: ^App) {
 	}
 	for n in 1 ..= 9 {
 		if p.shortcut(ui, u32('0' + n), {.Ctrl}) {
-			switch_to(a, n - 1)
+			switch_to(a, nth_in_view(a, n - 1))
+			return
+		}
+		if a.cloud && p.shortcut(ui, u32('0' + n), {.Alt}) {
+			switch_space(a, n - 1)
+			return
+		}
+	}
+	if a.cloud {
+		if a.prompt != .None {
+			keys_prompt(ui, a)
+			return
+		}
+		if a.inv_open {
+			keys_invites(ui, a)
+			return
+		}
+		if p.shortcut(ui, 'j', {.Ctrl}) {
+			start_call(a)
+			return
+		}
+		if p.key_pressed(ui, p.KEY_F6) {
+			a.inv_open = len(a.invites) > 0
+			if !a.inv_open {
+				toast(a, "No invitations waiting")
+			}
+			return
+		}
+		if p.shortcut(ui, 'i', {.Ctrl}) {
+			a.prompt = .Invite
+			clear(&a.pbuf)
+			a.pcaret = 0
+			return
+		}
+		if p.shortcut(ui, 'n', {.Ctrl}) {
+			a.prompt = .New_Channel
+			clear(&a.pbuf)
+			a.pcaret = 0
 			return
 		}
 	}
@@ -850,11 +990,11 @@ keys_channels :: proc(ui: ^p.Ctx, a: ^App) {
 		return
 	}
 	if p.key_pressed(ui, p.KEY_UP) {
-		a.sel_chan = max(0, a.sel_chan - 1)
+		a.sel_chan = next_in_view(a, a.sel_chan, -1)
 		return
 	}
 	if p.key_pressed(ui, p.KEY_DOWN) {
-		a.sel_chan = min(len(a.chans) - 1, a.sel_chan + 1)
+		a.sel_chan = next_in_view(a, a.sel_chan, 1)
 		return
 	}
 	if p.key_pressed(ui, p.KEY_RETURN) || p.key_pressed(ui, p.KEY_KP_ENTER) {
@@ -868,9 +1008,9 @@ keys_channels :: proc(ui: ^p.Ctx, a: ^App) {
 		}
 		switch k.sym {
 		case 'j':
-			a.sel_chan = min(len(a.chans) - 1, a.sel_chan + 1)
+			a.sel_chan = next_in_view(a, a.sel_chan, 1)
 		case 'k':
-			a.sel_chan = max(0, a.sel_chan - 1)
+			a.sel_chan = next_in_view(a, a.sel_chan, -1)
 		}
 	}
 }
@@ -1288,6 +1428,10 @@ open_dm :: proc(a: ^App) {
 	other := a.members[a.sel_member].nick
 	if other == a.nick {
 		toast(a, "That is you")
+		return
+	}
+	if a.cloud {
+		open_dm_cloud(a, other)
 		return
 	}
 	name := w.dm_name(a.nick, other, context.temp_allocator)

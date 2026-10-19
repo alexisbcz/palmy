@@ -81,6 +81,7 @@ Conn :: struct {
 	dead:    bool,
 	is_sfu:  bool,
 	away:    bool,
+	passive: bool, // a command-line session: no presence of its own
 
 	token:   string,
 	claims:  Claims,
@@ -228,7 +229,7 @@ serve :: proc() {
 		fmt.eprintfln("palm-rtc: cannot listen on port %d: %v", srv.port, err)
 		os.exit(1)
 	}
-	note("listening on %v:%d, database %s, sfu %s", srv.bind, srv.port, redact(srv.db_url), srv.sfu_addr)
+	note("listening on %s:%d, database %s, sfu %s", net.address_to_string(srv.bind, context.temp_allocator), srv.port, redact(srv.db_url), srv.sfu_addr)
 	thread.create_and_start(listen_thread, self_cleanup = true)
 
 	for {

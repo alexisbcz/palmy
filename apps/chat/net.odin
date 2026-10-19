@@ -29,7 +29,11 @@ net_connect :: proc(a: ^App) {
 		return
 	}
 	a.link = .Connecting
-	sock, err := net.dial_tcp(net.Endpoint{address = net.IP4_Loopback, port = a.args.port})
+	port := a.args.port
+	if a.cloud {
+		port = a.args.rtc_port != 0 ? a.args.rtc_port : DEFAULT_RTC_PORT
+	}
+	sock, err := net.dial_tcp(net.Endpoint{address = net.IP4_Loopback, port = port})
 	if err != nil {
 		a.link = .Offline
 		a.retry_at = a.now + a.retry_in
@@ -47,6 +51,14 @@ net_connect :: proc(a: ^App) {
 	a.retry_in = 0.4
 	clear(&a.rd.buf)
 	a.rd.bad = false
+	_ = net.set_option(sock, .TCP_Nodelay, true)
+
+	// Cloud mode keeps what it had and asks for what it missed by rev (see
+	// cloud_resync, sent once the gateway has said welcome).
+	if a.cloud {
+		cloud_hello(a)
+		return
+	}
 
 	// Everything that arrived while the link was down is missing from every
 	// channel, so nothing loaded before this connection can be trusted to be
@@ -318,6 +330,9 @@ send_search :: proc(a: ^App, q: string) {
 // ---------------------------------------------------------------------------
 
 apply :: proc(a: ^App, o: json.Object) {
+	if a.cloud && apply_cloud(a, o) {
+		return
+	}
 	switch w.ostr(o, "t") {
 	case "welcome":
 		a.err_text = ""
@@ -337,6 +352,8 @@ apply :: proc(a: ^App, o: json.Object) {
 				Member {
 					nick = strings.clone(w.ostr(uo, "nick")),
 					state = w.presence_of(w.ostr(uo, "state")),
+					name = strings.clone(w.ostr(uo, "name")),
+					color = strings.clone(w.ostr(uo, "color")),
 				},
 			)
 		}
@@ -370,7 +387,9 @@ apply :: proc(a: ^App, o: json.Object) {
 		if !ok {
 			return
 		}
-		take_message(a, w.msg_from(mo, context.allocator))
+		m := w.msg_from(mo, context.allocator)
+		note_rev(a, m.ch, m.rev)
+		take_message(a, m)
 
 	case "history":
 		apply_history(a, o)
@@ -395,6 +414,7 @@ apply :: proc(a: ^App, o: json.Object) {
 		// order the server committed, so applying it here can never show a
 		// count for a message that has not arrived.
 		n := int(w.oint(o, "n"))
+		note_rev(a, w.ostr(o, "ch"), w.oint(o, "rev"))
 		if m := locate(a, w.ostr(o, "ch"), w.oint(o, "id")); m != nil {
 			m.replies = n
 			m.last_reply = w.oint(o, "last_reply")
@@ -409,12 +429,14 @@ apply :: proc(a: ^App, o: json.Object) {
 		apply_file(a, o)
 
 	case "edit":
+		note_rev(a, w.ostr(o, "ch"), w.oint(o, "rev"))
 		if m := locate(a, w.ostr(o, "ch"), w.oint(o, "id")); m != nil {
 			m.text = strings.clone(w.ostr(o, "text"))
 			m.edited = w.oint(o, "edited")
 		}
 
 	case "delete":
+		note_rev(a, w.ostr(o, "ch"), w.oint(o, "rev"))
 		if m := locate(a, w.ostr(o, "ch"), w.oint(o, "id")); m != nil {
 			m.deleted = true
 			m.text = ""
@@ -422,6 +444,7 @@ apply :: proc(a: ^App, o: json.Object) {
 		}
 
 	case "react":
+		note_rev(a, w.ostr(o, "ch"), w.oint(o, "rev"))
 		if m := locate(a, w.ostr(o, "ch"), w.oint(o, "id")); m != nil {
 			key, nick := w.ostr(o, "key"), w.ostr(o, "nick")
 			if w.obool(o, "on") {
@@ -465,29 +488,59 @@ apply_channels :: proc(a: ^App, o: json.Object) {
 		name := w.ostr(co, "name")
 		seen[name] = true
 		kind := w.ostr(co, "kind") == "dm" ? w.Chan_Kind.DM : w.Chan_Kind.Channel
-		if i := find_chan(a, name); i >= 0 {
-			a.chans[i].kind = kind
-			a.chans[i].topic = strings.clone(w.ostr(co, "topic"))
-			if i == a.cur && !a.chans[i].loaded {
-				req_history(a, name, 0)
+		i := find_chan(a, name)
+		if i < 0 {
+			append(&a.chans, Channel{name = strings.clone(name), msgs = make([dynamic]w.Msg)})
+			i = len(a.chans) - 1
+			// Joining is what makes a DM visible to the other side, and it
+			// is free for an ordinary channel. The gateway needs neither.
+			if !a.cloud {
+				send_join(a, name, kind == .DM ? "dm" : "channel")
 			}
-			continue
 		}
-		append(
-			&a.chans,
-			Channel {
-				name = strings.clone(name),
-				kind = kind,
-				topic = strings.clone(w.ostr(co, "topic")),
-				msgs = make([dynamic]w.Msg),
-			},
-		)
-		// Joining is what makes a DM visible to the other side, and it is
-		// free for an ordinary channel.
-		send_join(a, name, kind == .DM ? "dm" : "channel")
+		c := &a.chans[i]
+		c.kind = kind
+		c.topic = strings.clone(w.ostr(co, "topic"))
+		if a.cloud {
+			c.label = strings.clone(w.ostr(co, "label"))
+			c.space = strings.clone(w.ostr(co, "space"))
+			c.private = w.obool(co, "private")
+			c.peer = strings.clone(w.ostr(co, "peer"))
+			call := w.ostr(co, "call")
+			if call == "" {
+				c.call = ""
+			} else if c.call != call {
+				c.call = strings.clone(call)
+			}
+		}
+		if i == a.cur && !c.loaded {
+			req_history(a, name, 0)
+		}
 	}
 
-	if a.cur < 0 && len(a.chans) > 0 {
+	// A channel the server no longer lists is one this identity lost access
+	// to (removed from the space, left it, a private channel it was taken
+	// out of). It goes, with what it held.
+	if a.cloud {
+		cur_name := a.cur >= 0 && a.cur < len(a.chans) ? strings.clone(a.chans[a.cur].name, context.temp_allocator) : ""
+		for i := len(a.chans) - 1; i >= 0; i -= 1 {
+			if !seen[a.chans[i].name] {
+				w.msgs_destroy(&a.chans[i].msgs)
+				ordered_remove(&a.chans, i)
+			}
+		}
+		a.cur = find_chan(a, cur_name)
+		if a.cur < 0 {
+			if a.cur_space == "" && len(a.chans) > 0 {
+				a.cur_space = strings.clone(a.chans[0].space)
+			}
+			if first := nth_in_view(a, 0); first >= 0 {
+				a.cur = first
+				req_history(a, a.chans[first].name, 0)
+				a.want_bottom = true
+			}
+		}
+	} else if a.cur < 0 && len(a.chans) > 0 {
 		a.cur = 0
 		req_history(a, a.chans[0].name, 0)
 		a.want_bottom = true
@@ -592,7 +645,9 @@ apply_history :: proc(a: ^App, o: json.Object) {
 		if !ok {
 			continue
 		}
-		insert_sorted(c, w.msg_from(mo, context.allocator))
+		m := w.msg_from(mo, context.allocator)
+		c.rev = max(c.rev, m.rev)
+		insert_sorted(c, m)
 	}
 	// History is the user's own doing, so reaching the newest message through
 	// it moves the cursor — on the server, which is the only place that counts.

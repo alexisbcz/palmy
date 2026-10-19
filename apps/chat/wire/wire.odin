@@ -97,6 +97,18 @@ Msg :: struct {
 	last_reply: i64,
 
 	file:       Attach,
+
+	// Protocol v2 (the cloud gateway) only; zero from a v1 server, and never
+	// written by msg_json, so v1 frames and the v1 log are unchanged.
+	// `seq` is the message's place in its channel and `rev` the channel
+	// change number of its latest edit, reaction or reply count: a client
+	// that remembers the highest rev it has seen per channel can ask for
+	// exactly what it missed. `name` and `color` are the author identity's,
+	// as the space knows it.
+	seq:        i64,
+	rev:        i64,
+	name:       string,
+	color:      string,
 }
 
 // Threads are exactly one level deep: a reply inside a thread belongs to the
@@ -497,6 +509,12 @@ msg_from :: proc(o: json.Object, allocator := context.allocator) -> Msg {
 			size = int(oint(fo, "size")),
 		}
 	}
+	m.seq = oint(o, "seq")
+	m.rev = oint(o, "rev")
+	if io, has := as_obj(o["ident"] or_else nil); has {
+		m.name = strings.clone(ostr(io, "name"), allocator)
+		m.color = strings.clone(ostr(io, "color"), allocator)
+	}
 	m.reacts = make([dynamic]React, allocator)
 	for rv in oarr(o, "reacts") {
 		ro, ok := as_obj(rv)
@@ -525,6 +543,8 @@ msg_destroy :: proc(m: ^Msg, allocator := context.allocator) {
 	delete(m.text, allocator)
 	delete(m.file.name, allocator)
 	delete(m.file.mime, allocator)
+	delete(m.name, allocator)
+	delete(m.color, allocator)
 	for &r in m.reacts {
 		for n in r.nicks {
 			delete(n, allocator)

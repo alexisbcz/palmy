@@ -357,8 +357,13 @@ locked_hello :: proc(c: ^Conn, o: json.Object, rq: i64, pre: ^Pre) {
 	locked_as(c, "select public.rtc_seed_reads($1)", c.ident.id)
 	locked_refresh(c)
 
-	srv.online[c.ident.id] = (srv.online[c.ident.id] or_else 0) + 1
-	locked_store_presence(c, c.away ? "away" : "online")
+	// A command-line session is not a person arriving: it does not make the
+	// identity online, and its leaving does not make it offline.
+	c.passive = w.ostr(o, "presence") == "none"
+	if !c.passive {
+		srv.online[c.ident.id] = (srv.online[c.ident.id] or_else 0) + 1
+		locked_store_presence(c, c.away ? "away" : "online")
+	}
 
 	e: w.Enc
 	w.enc_begin(&e, "welcome")
@@ -372,7 +377,9 @@ locked_hello :: proc(c: ^Conn, o: json.Object, rq: i64, pre: ^Pre) {
 	w.kv_int(&e, "exp", cl.exp)
 	locked_send(c, w.enc_done(&e))
 	locked_lists(c, 0, {.Spaces, .Channels, .Users, .Reads, .Invites, .Calls})
-	locked_broadcast_presence(c.ident, c.away ? "away" : "online")
+	if !c.passive {
+		locked_broadcast_presence(c.ident, c.away ? "away" : "online")
+	}
 	note("%s (%s) said hello, %d channels visible", c.ident.handle, c.ident.id[:8], len(c.visible))
 }
 
@@ -1347,6 +1354,29 @@ locked_sfu :: proc(c: ^Conn, t: string, o: json.Object) {
 	}
 }
 
+// locked_recheck_calls asks Postgres, for every participant of every live
+// call, whether that identity still has the channel. This runs as the
+// gateway's own role, not as anyone's session: it reads membership rows
+// directly, the same rows rtc_identity_can_post reads.
+locked_recheck_calls :: proc() {
+	for _, k in srv.calls {
+		for id in k.ids {
+			r := db_q(
+				&srv.db,
+				"select exists (select 1 from public.rtc_channels c " +
+				"join public.rtc_members m on m.space_id = c.space_id and m.identity_id = $2 " +
+				"where c.id = $1 and c.archived_at is null and ((c.kind = 'public' and m.role <> 'guest') " +
+				"or exists (select 1 from public.rtc_channel_members cm where cm.channel_id = c.id and cm.identity_id = $2)))::text",
+				k.ch,
+				id,
+			)
+			if r.ok && one(r) == "false" {
+				locked_sfu_kick(k.id, id)
+			}
+		}
+	}
+}
+
 locked_sfu_kick :: proc(call, id: string) {
 	e: w.Enc
 	w.enc_begin(&e, "sfu_kick")
@@ -1366,7 +1396,7 @@ locked_sfu_kick :: proc(call, id: string) {
 // ---------------------------------------------------------------------------
 
 locked_gone :: proc(c: ^Conn) {
-	if !c.hello {
+	if !c.hello || c.passive {
 		return
 	}
 	n := (srv.online[c.ident.id] or_else 1) - 1
@@ -1490,6 +1520,12 @@ locked_event :: proc(o: json.Object) {
 		}
 		for ident in hit {
 			locked_refresh_identity(ident)
+		}
+		// Calls follow access, whether or not the person has a chat window
+		// open: anyone in a live call who can no longer post in its channel
+		// is dropped from it.
+		if k != "channel" && !w.obool(o, "on", true) {
+			locked_recheck_calls()
 		}
 	case "invite":
 		who := w.ostr(o, "identity")
