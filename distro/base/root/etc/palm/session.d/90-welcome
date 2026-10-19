@@ -1,0 +1,30 @@
+#!/bin/sh
+# Run once per graphical session, as the user: the first-run window
+# (apps/welcome), until the person has finished or dismissed it.
+#
+# `welcome run --first-login` checks the marker itself
+# ($XDG_STATE_HOME/palm/welcome/done) and does nothing once it exists; it is
+# checked here too so that most logins cost one stat and no process.
+#
+# palm-login starts these hooks just before the session program, so the
+# compositor (wm) is not listening yet: wait for its socket in
+# $XDG_RUNTIME_DIR, then hand the window to it. PALM_WELCOME_WAIT is how
+# many seconds to wait (60).
+command -v welcome >/dev/null 2>&1 || exit 0
+[ -e "${XDG_STATE_HOME:-$HOME/.local/state}/palm/welcome/done" ] && exit 0
+
+rt="${XDG_RUNTIME_DIR:-/run/user/$(id -u)}"
+left="${PALM_WELCOME_WAIT:-60}"
+while [ "$left" -gt 0 ]; do
+	for s in "$rt"/wayland-*; do
+		if [ -S "$s" ]; then
+			# The shell's own first clients (bar, launcher) start now too;
+			# a moment lets the welcome window open on top of them.
+			sleep 1
+			WAYLAND_DISPLAY="${s##*/}" exec welcome run --first-login
+		fi
+	done
+	sleep 1
+	left=$((left - 1))
+done
+exit 0

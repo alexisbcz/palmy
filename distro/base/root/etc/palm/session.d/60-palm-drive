@@ -1,0 +1,34 @@
+#!/bin/sh
+# Run once per graphical session, as the user, with the session's
+# environment: one `palm-drive watch` for each identity whose drive this
+# computer keeps in sync, each with PALM_IDENTITY set to that identity alone,
+# so each daemon holds a session that can reach one drive and nothing else.
+#
+# The choice is the person's, made in the welcome app (apps/welcome) and
+# written to $XDG_CONFIG_HOME/palm/sync.conf:
+#
+#	mode = account
+#	[identity]
+#	handle = camille
+#	drive = on
+#
+# Nothing here decides anything: no sync.conf, `mode = local`, or no
+# palm-drive installed means nothing starts. palm-login runs this in the
+# session's process group, so the daemons end with the session.
+conf="${XDG_CONFIG_HOME:-$HOME/.config}/palm/sync.conf"
+[ -r "$conf" ] || exit 0
+command -v palm-drive >/dev/null 2>&1 || exit 0
+grep -q '^mode *= *account' "$conf" || exit 0
+
+awk '
+	/^\[identity\]/   { h = "" }
+	/^handle *=/      { sub(/^handle *= */, ""); h = $0 }
+	/^drive *= *on *$/ { if (h != "") print h }
+' "$conf" | while read -r h; do
+	# A handle is [a-z0-9][a-z0-9._-]*; anything else is not ours to pass on.
+	case "$h" in
+	'' | [!a-z0-9]* | *[!a-z0-9._-]*) continue ;;
+	esac
+	PALM_IDENTITY="$h" palm-drive watch &
+done
+wait
