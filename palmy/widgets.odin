@@ -280,7 +280,9 @@ slider :: proc(ctx: ^Ctx, value: ^f32, low, high: f32, class: string = "") -> bo
 	f := push_styled(ctx, .Box, "absolute h-1.5 rounded-full bg-indigo-500", "")
 	ctx.nodes[f].style.inset[LEFT] = px(0)
 	ctx.nodes[f].style.inset[TOP] = px((h - 6) / 2)
-	ctx.nodes[f].style.w = px(knob_x + KNOB / 2)
+	// The fill is the value's share of the whole track; where it ends is
+	// always under the knob.
+	ctx.nodes[f].style.w = pct(frac * 100)
 
 	k := push_styled(
 		ctx,

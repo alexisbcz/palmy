@@ -691,14 +691,9 @@ test_slider_fill_and_knob_follow_the_value :: proc(t: ^testing.T) {
 	root, fill, knob := measure(off, 25)
 	geom_eq(t, fill.w, root.w * 0.25, "a quarter value fills a quarter of the track")
 
-	// The knob tracks the value to within its own width. It is deliberately
-	// not asserted to be *centred* on it: measured today the knob's leading
-	// edge sits on the value instead, because `slider` offsets it with
-	// `margin[LEFT] = -8` and a negative margin does not apply to an
-	// absolutely positioned child. At the top of the range that puts the
-	// whole knob past the end of the track -- rendered and looked at, it
-	// hangs off the right-hand end. This is a palmy bug, reported rather
-	// than asserted here, since `palmy/` is not this suite's to change.
+	// The knob tracks the value to within its own width. Its exact centre,
+	// and that it stays on the track at both ends, is asserted in
+	// `slider_test.odin` (TODO.md K2, fixed).
 	testing.expectf(
 		t,
 		abs((knob.x + knob.w / 2) - (root.x + root.w * 0.25)) <= knob.w,
