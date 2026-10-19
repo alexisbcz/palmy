@@ -184,6 +184,9 @@ wl_open :: proc(w: ^Window, decorate: bool) -> (err: string) {
 		return "the compositor does not advertise xdg_wm_base (palmy needs xdg-shell)"
 	}
 
+	// The clipboard devices, when the compositor has the protocols.
+	wl_clip_init(w)
+
 	w.wl.surface = new_id(c, .Surface)
 	request(c, w.wl.compositor, WL_COMPOSITOR_CREATE_SURFACE, Obj(w.wl.surface))
 
@@ -361,6 +364,8 @@ wl_on_event :: proc(w: ^Window, id: u32, opcode: u16, r: ^Reader) {
 				w.wl.decor_manager = bind_global(w, name, iface, 1, .Decor_Manager)
 			case "zwlr_layer_shell_v1":
 				w.wl.layer_shell = bind_global(w, name, iface, min(version, 4), .Layer_Shell)
+			case "wl_data_device_manager", "zwp_primary_selection_device_manager_v1":
+				wl_clip_bind(w, name, iface, version)
 			case "wp_cursor_shape_manager_v1":
 				w.wl.cursor_manager_ver = min(version, 1)
 				w.wl.cursor_manager = bind_global(w, name, iface, w.wl.cursor_manager_ver, .Cursor_Manager)
@@ -569,6 +574,7 @@ wl_on_event :: proc(w: ^Window, id: u32, opcode: u16, r: ^Reader) {
 			case:
 				return
 			}
+			w.clip.serial = serial
 			if state == 1 {
 				in_.down[mb] = true
 				in_.pressed[mb] = true
@@ -610,6 +616,8 @@ wl_on_event :: proc(w: ^Window, id: u32, opcode: u16, r: ^Reader) {
 			w.repeat_key = 0
 			w.repeat_sym = 0
 		case 1:
+			// enter(serial, surface, keys)
+			w.clip.serial = r_u32(r)
 			w.input.focused = true
 		case 2:
 			w.input.focused = false
@@ -617,7 +625,7 @@ wl_on_event :: proc(w: ^Window, id: u32, opcode: u16, r: ^Reader) {
 			w.input.mods = {}
 		case 3:
 			// key(serial, time, key, state)
-			r_u32(r)
+			w.clip.serial = r_u32(r)
 			r_u32(r)
 			code := r_u32(r)
 			state := r_u32(r)
@@ -645,6 +653,9 @@ wl_on_event :: proc(w: ^Window, id: u32, opcode: u16, r: ^Reader) {
 			w.repeat_rate = int(r_i32(r))
 			w.repeat_delay = int(r_i32(r))
 		}
+
+	case .Data_Device, .Data_Source, .Data_Offer, .Primary_Device, .Primary_Source, .Primary_Offer:
+		wl_clip_event(w, kind_of(c, id), id, opcode, r)
 
 	case:
 		// Interfaces we create but never listen to.

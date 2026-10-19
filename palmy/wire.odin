@@ -44,6 +44,17 @@ Obj_Kind :: enum u8 {
 	Layer_Shell,
 	Layer_Surface,
 
+	// The clipboard: wl_data_device_manager and the primary selection
+	// protocol. Offers are created by the server, see `server_kinds`.
+	Data_Device_Manager,
+	Data_Device,
+	Data_Source,
+	Data_Offer,
+	Primary_Manager,
+	Primary_Device,
+	Primary_Source,
+	Primary_Offer,
+
 	// The object has been destroyed locally but the server has not confirmed
 	// it yet, so its id must not be handed out again.
 	Dead,
@@ -83,6 +94,26 @@ Conn :: struct {
 	kinds:    [dynamic]Obj_Kind,
 	free_ids: [dynamic]u32,
 	fatal:    string,
+
+	// Objects the server created (ids from 0xff000000 up), which an event
+	// introduces with a new_id argument: today only clipboard offers. They
+	// are forgotten when the client destroys them; there is no delete_id.
+	server_kinds: map[u32]Obj_Kind,
+}
+
+// SERVER_ID_BASE is where the server's half of the object id space starts.
+SERVER_ID_BASE :: u32(0xff00_0000)
+
+// server_id records an object the server just created.
+server_id :: proc(c: ^Conn, id: u32, kind: Obj_Kind) {
+	if id >= SERVER_ID_BASE {
+		c.server_kinds[id] = kind
+	}
+}
+
+// forget_server_id drops a server-created object the client has destroyed.
+forget_server_id :: proc(c: ^Conn, id: u32) {
+	delete_key(&c.server_kinds, id)
 }
 
 @(private)
@@ -167,6 +198,7 @@ conn_close :: proc(c: ^Conn) {
 	delete(c.rx_fds)
 	delete(c.kinds)
 	delete(c.free_ids)
+	delete(c.server_kinds)
 }
 
 // new_id reserves a client-side object id and records its interface.
@@ -202,6 +234,9 @@ free_id :: proc(c: ^Conn, id: u32) {
 }
 
 kind_of :: proc(c: ^Conn, id: u32) -> Obj_Kind {
+	if id >= SERVER_ID_BASE {
+		return c.server_kinds[id] or_else .None
+	}
 	if int(id) < len(c.kinds) {
 		return c.kinds[id]
 	}

@@ -744,6 +744,7 @@ x_event :: proc(w: ^Window, rec: []u8, avail: int) -> int {
 
 	switch int(kind) {
 	case X_KEY_PRESS:
+		w.clip.x_time = xr32(rec, 4)
 		code := u32(xr8(rec, 1))
 		in_.mods = keymap_x11_state(&w.keymap, u32(xr16(rec, 28)))
 		repeat := x.repeat_pending == code || x_held(x, code)
@@ -775,6 +776,7 @@ x_event :: proc(w: ^Window, rec: []u8, avail: int) -> int {
 		w.input_dirty = true
 
 	case X_BUTTON_PRESS:
+		w.clip.x_time = xr32(rec, 4)
 		btn := xr8(rec, 1)
 		in_.mouse = {f32(xri16(rec, 24)), f32(xri16(rec, 26))}
 		in_.mods = keymap_x11_state(&w.keymap, u32(xr16(rec, 28)))
@@ -878,6 +880,9 @@ x_event :: proc(w: ^Window, rec: []u8, avail: int) -> int {
 			w.should_close = true
 			w.input_dirty = true
 		}
+
+	case X_SELECTION_CLEAR, X_SELECTION_REQUEST, X_SELECTION_NOTIFY:
+		x_clip_event(w, rec)
 
 	case X_MAPPING_NOTIFY:
 		// Re-reading the mapping needs a reply, which cannot be waited for
@@ -1185,6 +1190,7 @@ x_open :: proc(w: ^Window, decorate: bool) -> (err: string) {
 	x.a_max_vert = x_intern(w, "_NET_WM_STATE_MAXIMIZED_VERT")
 	x.a_max_horz = x_intern(w, "_NET_WM_STATE_MAXIMIZED_HORZ")
 	x.a_net_wm_pid = x_intern(w, "_NET_WM_PID")
+	x_clip_init(w)
 
 	x.window = x_new_id(w)
 	{

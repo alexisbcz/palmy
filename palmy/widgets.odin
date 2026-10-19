@@ -469,6 +469,23 @@ text_field :: proc(
 					w.affinity = .Downstream
 					changed = true
 				}
+			case 'v', 'V', KEY_INSERT:
+				// Ctrl+V, or Shift+Insert. One line: a pasted newline would
+				// be a character this field cannot show, so it becomes a space.
+				paste := (k.sym != KEY_INSERT && .Ctrl in k.mods && .Alt not_in k.mods) ||
+					(k.sym == KEY_INSERT && .Shift in k.mods)
+				if !paste {
+					break
+				}
+				if text, ok := clipboard_get(ctx, context.temp_allocator); ok {
+					line, _ := strings.replace_all(text, "\r\n", " ", context.temp_allocator)
+					line, _ = strings.replace_all(line, "\n", " ", context.temp_allocator)
+					line, _ = strings.replace_all(line, "\r", " ", context.temp_allocator)
+					inject_at_elems(buf, w.cursor, ..transmute([]u8)line)
+					w.cursor += len(line)
+					w.affinity = .Upstream
+					changed = true
+				}
 			}
 		}
 	}
@@ -1092,6 +1109,42 @@ text_area :: proc(
 					clear(buf)
 					w.cursor, w.sel = 0, 0
 					w.affinity = .Downstream
+					ac.have = false
+					dirty = true
+				}
+			case 'c', 'C', 'x', 'X':
+				// Copy and cut the selection. Nothing selected copies
+				// nothing, rather than silently emptying the clipboard.
+				if ctrl && .Alt not_in k.mods && hi > lo {
+					clipboard_set(ctx, string(buf[lo:hi]))
+					if k.sym == 'x' || k.sym == 'X' {
+						area_cut(buf, w, ac, lo, hi)
+						dirty = true
+					}
+				}
+			case 'v', 'V', KEY_INSERT:
+				// Ctrl+V, Shift+Insert to paste, replacing the selection;
+				// Ctrl+Insert copies.
+				if k.sym == KEY_INSERT && ctrl {
+					if hi > lo {
+						clipboard_set(ctx, string(buf[lo:hi]))
+					}
+					break
+				}
+				paste := (k.sym != KEY_INSERT && ctrl && .Alt not_in k.mods) ||
+					(k.sym == KEY_INSERT && extend)
+				if !paste {
+					break
+				}
+				if text, ok := clipboard_get(ctx, context.temp_allocator); ok {
+					text, _ = strings.replace_all(text, "\r\n", "\n", context.temp_allocator)
+					if hi > lo {
+						area_cut(buf, w, ac, lo, hi)
+					}
+					inject_at_elems(buf, w.cursor, ..transmute([]u8)text)
+					w.cursor += len(text)
+					w.sel = w.cursor
+					w.affinity = .Upstream
 					ac.have = false
 					dirty = true
 				}

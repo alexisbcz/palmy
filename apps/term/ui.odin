@@ -43,12 +43,17 @@ Term_App :: struct {
 	zombies:    [dynamic]^Tab,
 	quit:       bool,
 	paste_confirmed: bool,
-	// Clipboard work, deferred out of the frame. Both of these shell out to
-	// wl-copy and wl-paste, and forking while holding the lock the reader
-	// thread wants is the kind of deadlock that happens once a month and is
-	// never reproducible, so the frame only records the intent.
+	// Clipboard work, deferred to the end of the frame. palmy speaks the
+	// clipboard natively now, but the fallback still shells out to wl-copy
+	// and wl-paste, and forking while holding the lock the reader thread
+	// wants is the kind of deadlock that happens once a month and is never
+	// reproducible, so the frame only records the intent.
 	clip_copy:  string,
 	clip_paste: bool,
+	// The primary selection: what a finished drag selected, and a
+	// middle-click paste.
+	clip_primary:       string,
+	clip_paste_primary: bool,
 }
 
 note :: proc(a: ^Term_App, s: string) {
@@ -476,10 +481,16 @@ handle_mouse :: proc(a: ^Term_App, ui: ^p.Ctx, show_tabs: bool, scale: f32) {
 		if report {
 			send_mouse(a, t, .Left, .Release, col, row, ui)
 		}
+		if a.sel.dragging && a.sel.active {
+			// A finished selection becomes the primary selection, which is
+			// what a middle click anywhere pastes.
+			delete(a.clip_primary)
+			a.clip_primary = selection_text(a)
+		}
 		a.sel.dragging = false
 	}
 	if ui.input.pressed[.Middle] && !report {
-		paste_clipboard(a)
+		a.clip_paste_primary = true
 	}
 }
 
@@ -572,23 +583,42 @@ paste_clipboard :: proc(a: ^Term_App) {
 	a.clip_paste = true
 }
 
-// run_clipboard does the deferred work, outside the frame and outside the
-// lock, because both halves of it fork a process.
+// run_clipboard does the deferred work, outside the lock: palmy's own
+// clipboard first, which talks to the display server on this thread, and
+// wl-copy / wl-paste only when that is unavailable, since those fork.
 run_clipboard :: proc(a: ^Term_App) {
 	if a.clip_copy != "" {
-		if kit.clipboard_set(a.clip_copy) {
+		if p.clipboard_set(a.app, a.clip_copy) || kit.clipboard_set(a.clip_copy) {
 			note(a, "copied")
 		} else {
-			note(a, "wl-copy is not installed")
+			note(a, "there is no clipboard to copy to")
 		}
 		delete(a.clip_copy)
 		a.clip_copy = ""
 	}
-	if !a.clip_paste {
-		return
+	if a.clip_primary != "" {
+		p.primary_set(a.app, a.clip_primary)
+		delete(a.clip_primary)
+		a.clip_primary = ""
 	}
-	a.clip_paste = false
-	text, ok := kit.clipboard_get(context.temp_allocator)
+	text: string
+	ok: bool
+	if a.clip_paste_primary {
+		a.clip_paste_primary = false
+		text, ok = p.primary_get(a.app, context.temp_allocator)
+		if !ok {
+			// No primary selection (or no protocol for one): paste the
+			// clipboard, which is what this did before there was a primary.
+			a.clip_paste = true
+		}
+	}
+	if a.clip_paste {
+		a.clip_paste = false
+		text, ok = p.clipboard_get(a.app, context.temp_allocator)
+		if !ok && !p.clipboard_available(a.app) {
+			text, ok = kit.clipboard_get(context.temp_allocator)
+		}
+	}
 	if !ok || text == "" {
 		return
 	}

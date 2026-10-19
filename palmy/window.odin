@@ -161,6 +161,11 @@ Window :: struct {
 	input:             Input,
 	keymap:            Keymap,
 
+	// The clipboard (palmy/clipboard.odin), and input that arrived while a
+	// clipboard call waited on the server mid-frame.
+	clip:              Clip_State,
+	late:              Late_Input,
+
 	// Client-side key repeat, driven by wl_keyboard.repeat_info. The X11
 	// server generates its own repeats, so there `repeat_rate` stays 0 and
 	// `pump_key_repeat` never fires.
@@ -259,6 +264,7 @@ window_close :: proc(w: ^Window) {
 		x_close(w)
 	}
 	keymap_destroy(&w.keymap)
+	clip_destroy(w)
 	wake_close(w)
 	conn_close(&w.conn)
 	delete(w.input.keys)

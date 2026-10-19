@@ -83,6 +83,15 @@ pty_spawn :: proc(cfg: Pty_Config) -> (p: Pty, err: string) {
 		cargv[i] = strings.clone_to_cstring(a)
 	}
 	cargv[len(cfg.argv)] = nil
+	// execve does not search $PATH, so `term -e htop` -- and the launcher's
+	// `term -e sh -c CMD` -- ran nothing. The search happens here, before
+	// the fork, for the same reason as everything else above.
+	cpath := cargv[0]
+	if len(cfg.argv) > 0 && !strings.contains_rune(cfg.argv[0], '/') {
+		if found := find_on_path(cfg.argv[0]); found != "" {
+			cpath = strings.clone_to_cstring(found)
+		}
+	}
 	cenv := make([]cstring, len(cfg.env) + 1, context.allocator)
 	for e, i in cfg.env {
 		cenv[i] = strings.clone_to_cstring(e)
@@ -120,7 +129,7 @@ pty_spawn :: proc(cfg: Pty_Config) -> (p: Pty, err: string) {
 		if ccwd != nil {
 			linux.chdir(ccwd)
 		}
-		linux.execve(cargv[0], raw_data(cargv), raw_data(cenv))
+		linux.execve(cpath, raw_data(cargv), raw_data(cenv))
 		// Only reached when exec failed. Say so on the terminal the parent
 		// is about to show, because a silently empty window is a worse bug
 		// report than a one-line error.
@@ -253,6 +262,25 @@ child_env :: proc(term: string, extra: []string) -> []string {
 		append(&out, strings.clone(e))
 	}
 	return out[:]
+}
+
+// find_on_path is the executable a bare command name resolves to on $PATH,
+// or "" when there is none.
+find_on_path :: proc(name: string) -> string {
+	path := os.get_env("PATH", context.temp_allocator)
+	if path == "" {
+		path = "/usr/local/bin:/usr/bin:/bin"
+	}
+	for dir in strings.split(path, ":", context.temp_allocator) {
+		if dir == "" {
+			continue
+		}
+		full := fmt.tprintf("%s/%s", dir, name)
+		if os.exists(full) && !os.is_dir(full) {
+			return full
+		}
+	}
+	return ""
 }
 
 // default_shell picks what to run. The order matters: an explicit argument

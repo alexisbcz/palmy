@@ -109,6 +109,7 @@ create :: proc(cfg: Config) -> (app: ^App, err: string) {
 		set_min_size_window(&app.win, cfg.min_width, cfg.min_height)
 	}
 
+	clip_attach(app)
 	fonts_init(&app.fonts)
 	ctx_init(&app.ctx)
 	app.ctx.app = app
@@ -123,6 +124,7 @@ destroy :: proc(app: ^App) {
 	if app == nil {
 		return
 	}
+	clip_detach(app)
 	canvas_destroy(&app.canvas)
 	ctx_destroy(&app.ctx)
 	fonts_destroy(&app.fonts)
@@ -474,6 +476,7 @@ finish_frame :: proc(app: ^App) {
 	app.frames_shown += 1
 
 	clear_edges(&w.input)
+	restore_late(w)
 	app.first = false
 
 	// Layout, hit testing and painting all use the temp allocator for
@@ -492,6 +495,7 @@ present_direct :: proc(app: ^App) {
 	present(w, b)
 	app.frames_shown += 1
 	clear_edges(&w.input)
+	restore_late(w)
 	app.first = false
 	free_all(context.temp_allocator)
 }
