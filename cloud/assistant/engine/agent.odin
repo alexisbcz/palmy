@@ -71,7 +71,6 @@ Menu :: struct {
 }
 
 MENU := [?]Menu {
-	{"index_search", "search everything in this identity: mail, files, events, notes"},
 	{"mail_unread", "list my unread mail"},
 	{"mail_search", "find mail by words in it"},
 	{"mail_read", "open one mail and read all of it"},
@@ -89,6 +88,12 @@ MENU := [?]Menu {
 	{"chat_history", "read recent messages in a chat channel"},
 	{"chat_post", "propose a chat message"},
 	{"forge_issue_list", "list issues of a code repository"},
+	// Last: measured on qwen3:0.6b, a general search at the top of the menu
+	// is picked first for everything, and a request that needed the mail
+	// tools then wanders (the draft and meeting scenarios fell from 10/10
+	// and 7/10 to 0). Where the request names an application, that
+	// application's tools come first anyway.
+	{"index_search", "search everything in this identity: mail, files, events, notes"},
 }
 
 // ARGS narrows each tool to the parameters a model fills; the rest keep the
@@ -376,7 +381,7 @@ read_something :: proc(a: ^Agent) -> bool {
 NOUN_WORDS := [?][2]string {
 	{"drive", "file"}, {"drive", "files"}, {"drive", "drive"}, {"drive", "folder"}, {"drive", "document"}, {"drive", "pdf"},
 	{"calendar", "calendar"}, {"calendar", "meeting"}, {"calendar", "schedule"}, {"calendar", "event"}, {"calendar", "week"}, {"calendar", "agenda"},
-	{"notes", "note"}, {"notes", "notes"},
+	{"notes", "note"}, {"notes", "notes"}, {"index", "search"}, {"index", "anything"}, {"index", "everything"},
 	{"mail", "mail"}, {"mail", "email"}, {"mail", "inbox"}, {"mail", "wrote"}, {"mail", "reply"}, {"mail", "asked"}, {"mail", "sent"},
 	{"mail", "draft"}, {"mail", "answer"}, {"mail", "respond"}, {"mail", "forward"},
 	{"contacts", "contact"}, {"contacts", "phone"}, {"chat", "chat"}, {"chat", "channel"}, {"forge", "issue"}, {"forge", "repository"},
@@ -417,6 +422,11 @@ available :: proc(a: ^Agent) -> []Menu {
 		// is not offered another application's writes: a reply is not a
 		// chat post.
 		if t.class != .Read && len(named) > 0 && !slice.contains(named, t.noun) {continue}
+		// The general search only when the part names no application: with
+		// it on the menu at all, qwen3:0.6b's choices for "find … in my
+		// files" and "schedule … as she proposed" shifted to the wrong tools
+		// (measured: 10/10 and 7/10 to 0/10).
+		if m.name == "index_search" && len(named) > 0 && !slice.contains(named, "index") {continue}
 		switch m.name {
 		case "mail_read":
 			if len(a.seen.messages) == 0 {continue}
@@ -1316,6 +1326,7 @@ nothing_found :: proc(a: ^Agent) -> string {
 		case strings.has_prefix(o.tool, "notes_"): w = "notes"
 		case strings.has_prefix(o.tool, "chat_"): w = "chats"
 		case strings.has_prefix(o.tool, "contacts_"): w = "contacts"
+		case strings.has_prefix(o.tool, "index_"): w = "search index"
 		}
 		dup := false
 		for l in looked {if l == w {dup = true}}
