@@ -9,6 +9,7 @@ package login
 // session's command run. A session that cannot drop to its user does not
 // start at all.
 
+import "auth"
 import "core:sys/posix"
 import "core:fmt"
 import "core:os"
@@ -18,7 +19,7 @@ import "core:sys/linux"
 SESSION_PATH :: "/usr/local/bin:/usr/bin:/bin"
 
 Session_Spec :: struct {
-	acct:   Account,
+	acct:   auth.Account,
 	groups: []u32,
 	cmd:    []string,
 	env:    []string, // added on top of the base environment, and wins
@@ -26,7 +27,7 @@ Session_Spec :: struct {
 }
 
 // base_env is the environment the contract promises every session.
-base_env :: proc(acct: Account, allocator := context.allocator) -> [dynamic]string {
+base_env :: proc(acct:   auth.Account, allocator := context.allocator) -> [dynamic]string {
 	env := make([dynamic]string, allocator)
 	shell := acct.shell == "" ? "/bin/sh" : acct.shell
 	append(&env, fmt.aprintf("HOME=%s", acct.home, allocator = allocator))

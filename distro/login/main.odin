@@ -33,6 +33,7 @@ package login
 //	palm-login --hash PASSWORD [--salt S] [--rounds N]
 //	                                             a $6$ hash for /etc/shadow
 
+import "auth"
 import "core:sys/posix"
 import "base:intrinsics"
 import "core:fmt"
@@ -86,7 +87,17 @@ Daemon :: struct {
 	// rather than in a tight loop that would hide the log under restarts.
 	quick_deaths:   int,
 	next_start:     time.Tick,
+
+	// Failed attempts, per account and for the seat (accounts.odin).
+	limits:         Limits,
+	// utmp, wtmp and lastlog; empty paths in --test mode, which records
+	// nothing.
+	utmp:           auth.Utmp_Paths,
 }
+
+// The graphical seat's line in utmp and wtmp, and its utmp slot id.
+SEAT_LINE :: "seat0"
+SEAT_ID :: "s0"
 
 @(private = "file")
 stop_requested: i32
@@ -140,7 +151,7 @@ main :: proc() {
 					break
 				}
 			}
-			h, ok := make_hash(pw, salt, rounds)
+			h, ok := auth.make_hash(pw, salt, rounds)
 			if !ok {
 				fmt.eprintln("palm-login: could not hash (salt must be [./0-9A-Za-z], at most 16)")
 				os.exit(1)
@@ -180,15 +191,30 @@ main :: proc() {
 	cmdline := os.get_env("PALM_GREETER_CMD", context.allocator)
 	d.greeter_cmd = strings.fields(cmdline != "" ? cmdline : GREETER_CMD)
 
+	// Every grant and failure goes to syslog (authpriv) and, as before, to
+	// stderr, which palm-init keeps as /var/log/palm-login.log. --test mode
+	// stays out of the host's syslog.
+	auth.log_open("palm-login", to_syslog = !d.test, echo = true)
+
+	fail_delay := d.test ? 150 * time.Millisecond : 1500 * time.Millisecond
+	d.limits.base = fail_delay
 	d.handler = Handler {
-		authenticate = proc(h: ^Handler, user, password: string) -> bool {
+		authenticate = proc(h: ^Handler, user, password: string) -> Auth_Result {
 			d := (^Daemon)(h.data)
-			return authenticate(d.paths, user, password)
+			return check_login(d.paths, &d.limits, user, password)
+		},
+		change_password = proc(h: ^Handler, user, password: string) -> string {
+			d := (^Daemon)(h.data)
+			return set_password(d.paths, user, password)
 		},
 		start        = d.test ? test_start : daemon_start,
 		power        = d.test ? test_power : daemon_power,
-		fail_delay   = d.test ? 150 * time.Millisecond : 1500 * time.Millisecond,
+		fail_delay   = fail_delay,
 		data         = d,
+	}
+	if !d.test {
+		d.utmp = auth.SYSTEM_UTMP
+		record_boot_once(d)
 	}
 
 	fd, err := listen_unix(d.sock_path)
@@ -219,6 +245,27 @@ main :: proc() {
 	shutdown(d)
 }
 
+// record_boot_once writes the "reboot" record `last` shows, once per boot:
+// /run is a fresh tmpfs at every boot, so a marker there says whether this
+// boot has one yet, and a restarted palm-login does not add a second.
+BOOT_MARKER :: "/run/palm-login.boot"
+
+record_boot_once :: proc(d: ^Daemon) {
+	fd, e := linux.open(BOOT_MARKER, {.WRONLY, .CREAT, .EXCL, .NOFOLLOW, .CLOEXEC}, {.IRUSR, .IWUSR})
+	if e != .NONE {
+		return
+	}
+	linux.close(fd)
+	up: i64 = 0
+	if text, ok := read_text("/proc/uptime"); ok {
+		if f := strings.fields(text, context.temp_allocator); len(f) > 0 {
+			v, _ := strconv.parse_f64(f[0])
+			up = i64(v)
+		}
+	}
+	auth.record_boot(d.utmp, up)
+}
+
 // secure_socket gives the socket to the greeter: only root and members of the
 // greeter group may speak to the daemon at all.
 secure_socket :: proc(d: ^Daemon) {
@@ -229,7 +276,7 @@ secure_socket :: proc(d: ^Daemon) {
 	}
 	gid := u32(0)
 	if text, ok := read_text(d.paths.group); ok {
-		if g, found := group_id(text, GREETER_USER); found {
+		if g, found := auth.group_id(text, GREETER_USER); found {
 			gid = g
 		}
 	}
@@ -365,6 +412,10 @@ session_ended :: proc(d: ^Daemon, status: u32) {
 	// Whatever the session left behind in its process group goes with it.
 	signal_session(d.child, .SIGHUP)
 	signal_session(d.child, .SIGTERM)
+	if d.child_kind == .User {
+		auth.record_logout(d.utmp, i32(d.child), SEAT_LINE, SEAT_ID)
+		auth.logf(.Info, "session of %q closed", d.child_user)
+	}
 
 	if d.child_kind == .Greeter && d.pending == nil {
 		if ran < 3 * time.Second {
@@ -420,12 +471,12 @@ start_user_session :: proc(d: ^Daemon, req: Start_Request) {
 	launch(d, .User, acct, user_groups(d, acct), req.cmd, req.env)
 }
 
-user_groups :: proc(d: ^Daemon, acct: Account) -> []u32 {
+user_groups :: proc(d: ^Daemon, acct: auth.Account) -> []u32 {
 	text, _ := read_text(d.paths.group)
-	return parse_groups(text, acct.name, acct.gid, context.temp_allocator)
+	return auth.parse_groups(text, acct.name, acct.gid, context.temp_allocator)
 }
 
-launch :: proc(d: ^Daemon, kind: Child_Kind, acct: Account, groups: []u32, cmd, env: []string) {
+launch :: proc(d: ^Daemon, kind: Child_Kind, acct: auth.Account, groups: []u32, cmd, env: []string) {
 	// The system's language (and, rarely, TZ) under whatever the caller
 	// adds: the greeter may ask for its own LANG in start_session, and that
 	// request wins, as greetd's would. See locale.odin.
@@ -448,6 +499,10 @@ launch :: proc(d: ^Daemon, kind: Child_Kind, acct: Account, groups: []u32, cmd, 
 		return
 	}
 	fmt.eprintfln("palm-login: started %v as %q (pid %d)", cmd, acct.name, pid)
+	if kind == .User {
+		auth.record_login(d.utmp, i32(pid), SEAT_LINE, SEAT_ID, acct.name, acct.uid)
+		auth.logf(.Info, "session opened for %q (uid %d) on %s", acct.name, acct.uid, SEAT_LINE)
+	}
 	d.child = pid
 	d.child_kind = kind
 	d.child_user = strings.clone(acct.name)
@@ -540,6 +595,9 @@ shutdown :: proc(d: ^Daemon) {
 			time.sleep(50 * time.Millisecond)
 		}
 		signal_session(d.child, .SIGKILL)
+		if d.child_kind == .User {
+			auth.record_logout(d.utmp, i32(d.child), SEAT_LINE, SEAT_ID)
+		}
 	}
 	for c in d.conns {
 		conn_close(c)

@@ -1,4 +1,4 @@
-package login
+package auth
 
 // SHA-512 crypt, the `$6$` hashes in /etc/shadow.
 //

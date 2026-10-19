@@ -13,6 +13,7 @@ package login
 //
 // No session is started and nothing outside a temporary directory is touched.
 
+import "auth"
 import "core:encoding/json"
 import "core:fmt"
 import "core:os"
@@ -63,6 +64,10 @@ greeter:x:900:900:Greeter:/var/lib/greeter:/sbin/nologin
 odd:x:1001:1001::/home/odd:/bin/sh
 legacy:` + HASH_PALM + `:1002:1002::/home/legacy:/bin/sh
 broken:x:notanumber:1003::/:/bin/sh
+expiredpw:x:1004:1004::/home/e:/bin/sh
+warnme:x:1005:1005::/home/w:/bin/sh
+gone:x:1006:1006::/home/g:/bin/sh
+limited:x:1007:1007::/home/l:/bin/sh
 `
 
 FIXTURE_SHADOW :: "root:" + HASH_ROOT + ":19000:0:99999:7:::\n" +
@@ -87,46 +92,46 @@ selftest :: proc() -> int {
 
 	// --- 1. crypt -----------------------------------------------------------
 	for v in VECTORS {
-		got, ok := sha512_crypt(v[1], v[0], context.temp_allocator)
+		got, ok := auth.sha512_crypt(v[1], v[0], context.temp_allocator)
 		check(fmt.tprintf("crypt %s", v[0]), ok && got == v[2], ok && got != v[2] ? got : "")
 	}
-	check("crypt: verify accepts the right password", verify_password("palm", HASH_PALM))
-	check("crypt: verify refuses a wrong password", !verify_password("Palm", HASH_PALM))
-	check("crypt: verify refuses a locked hash", !verify_password("palm", "!" + HASH_PALM))
-	check("crypt: verify refuses '*' and empty", !verify_password("", "*") && !verify_password("", ""))
-	check("crypt: verify refuses non-$6$ schemes", !verify_password("palm", "$1$abc$def"))
-	_, bad := sha512_crypt("x", "$5$salt")
+	check("crypt: verify accepts the right password", auth.verify_password("palm", HASH_PALM))
+	check("crypt: verify refuses a wrong password", !auth.verify_password("Palm", HASH_PALM))
+	check("crypt: verify refuses a locked hash", !auth.verify_password("palm", "!" + HASH_PALM))
+	check("crypt: verify refuses '*' and empty", !auth.verify_password("", "*") && !auth.verify_password("", ""))
+	check("crypt: verify refuses non-$6$ schemes", !auth.verify_password("palm", "$1$abc$def"))
+	_, bad := auth.sha512_crypt("x", "$5$salt")
 	check("crypt: a $5$ setting is not taken for $6$", !bad)
 
 	// --- 2. parsers ---------------------------------------------------------
 	{
-		a, found := parse_passwd(FIXTURE_PASSWD, "palm")
+		a, found := auth.parse_passwd(FIXTURE_PASSWD, "palm")
 		check(
 			"passwd: palm",
 			found && a.uid == 1000 && a.gid == 1000 && a.home == "/home/palm" && a.shell == "/bin/sh" && a.passwd == "x",
 			fmt.tprintf("%v", a),
 		)
-		_, nf := parse_passwd(FIXTURE_PASSWD, "pal")
+		_, nf := auth.parse_passwd(FIXTURE_PASSWD, "pal")
 		check("passwd: a prefix of a name is not the name", !nf)
-		_, br := parse_passwd(FIXTURE_PASSWD, "broken")
+		_, br := auth.parse_passwd(FIXTURE_PASSWD, "broken")
 		check("passwd: a malformed uid is refused", !br)
-		_, cm := parse_passwd(FIXTURE_PASSWD, "# fixture")
+		_, cm := auth.parse_passwd(FIXTURE_PASSWD, "# fixture")
 		check("passwd: comments are skipped", !cm)
 
-		h, hf := parse_shadow(FIXTURE_SHADOW, "greeter")
+		h, hf := auth.parse_shadow(FIXTURE_SHADOW, "greeter")
 		check("shadow: greeter is locked", hf && h == "!", h)
-		h2, _ := parse_shadow(FIXTURE_SHADOW, "root")
+		h2, _ := auth.parse_shadow(FIXTURE_SHADOW, "root")
 		check("shadow: root's hash", h2 == HASH_ROOT)
 
-		g := parse_groups(FIXTURE_GROUP, "palm", 1000, context.temp_allocator)
+		g := auth.parse_groups(FIXTURE_GROUP, "palm", 1000, context.temp_allocator)
 		check(
 			"group: palm is in palm, wheel, audio, video, input",
 			len(g) == 5 && g[0] == 1000 && slice_has(g, 10) && slice_has(g, 63) && slice_has(g, 39) && slice_has(g, 97),
 			fmt.tprintf("%v", g),
 		)
-		gg := parse_groups(FIXTURE_GROUP, "greeter", 900, context.temp_allocator)
+		gg := auth.parse_groups(FIXTURE_GROUP, "greeter", 900, context.temp_allocator)
 		check("group: greeter is in greeter, video, input", len(gg) == 3, fmt.tprintf("%v", gg))
-		gid, gok := group_id(FIXTURE_GROUP, "greeter")
+		gid, gok := auth.group_id(FIXTURE_GROUP, "greeter")
 		check("group: greeter's gid", gok && gid == 900)
 
 		env := base_env(a, context.temp_allocator)
@@ -192,7 +197,7 @@ LANG=fr_CA.UTF-8
 		e = system_locale_env(paths, context.temp_allocator)
 		check("session env: no TZ once localtime exists", len(e) == 1 && e[0] == "LANG=ar_EG.UTF-8", strings.join(e, " ", context.temp_allocator))
 
-		a, _ := parse_passwd(FIXTURE_PASSWD, "greeter")
+		a, _ := auth.parse_passwd(FIXTURE_PASSWD, "greeter")
 		env := base_env(a, context.temp_allocator)
 		merge_env(&env, e, context.temp_allocator)
 		merge_env(&env, {"GREETD_SOCK=/run/palm-login.sock"}, context.temp_allocator)
@@ -366,7 +371,20 @@ ipc_round_trip :: proc() {
 	sock := fmt.tprintf("%s/sock", dir)
 	logp := fmt.tprintf("%s/daemon.log", dir)
 	write(passwd, FIXTURE_PASSWD)
-	write(shadow, FIXTURE_SHADOW)
+	// The aging fixtures are relative to today.
+	day := auth.today()
+	write(
+		shadow,
+		fmt.tprintf(
+			"%sexpiredpw:%s:0:0:99999:7:::\nwarnme:%s:%d:0:100:7:::\ngone:%s:19000:::::1:\nlimited:%s:19000::::::\n",
+			FIXTURE_SHADOW,
+			HASH_PALM,
+			HASH_PALM,
+			day - 95,
+			HASH_PALM,
+			HASH_PALM,
+		),
+	)
 	write(group, FIXTURE_GROUP)
 
 	// The daemon under test is this same binary in --test mode.
@@ -516,6 +534,87 @@ ipc_round_trip :: proc() {
 		check("ipc: an unknown power action is an error", r.type == "error", r.description)
 		r = ask(fd, `{"type":"reticulate_splines"}`)
 		check("ipc: an unknown request is an error", r.type == "error", r.description)
+	}
+
+	// Shadow aging: an expired password is changed in the conversation, a
+	// soon-expiring one is announced, an expired account is refused.
+	{
+		_, r := login(fd, "gone", "palm")
+		check(
+			"aging: an expired account is refused, saying why",
+			r.error_type == "auth_error" && strings.contains(r.description, "expired"),
+			r.description,
+		)
+		_, w := login(fd, "warnme", "palm")
+		check(
+			"aging: a password about to expire is an info message",
+			w.type == "auth_message" && w.auth_type == "info" && strings.contains(w.message, "5 days"),
+			fmt.tprintf("%s %s %q", w.type, w.auth_type, w.message),
+		)
+		ack := ask(fd, `{"type":"post_auth_message_response"}`)
+		check("aging: ...acknowledged, then success", ack.type == "success", ack.description)
+		ask(fd, CANCEL)
+
+		_, e := login(fd, "expiredpw", "palm")
+		check(
+			"aging: an expired password asks for a new one",
+			e.type == "auth_message" && e.auth_type == "secret" && strings.contains(e.message, "New password"),
+			fmt.tprintf("%s %q", e.type, e.message),
+		)
+		short := ask(fd, respond("abc"))
+		check("aging: a too-short password is an error message", short.type == "auth_message" && short.auth_type == "error", short.message)
+		again := ask(fd, `{"type":"post_auth_message_response"}`)
+		check("aging: ...then the question again", again.type == "auth_message" && again.auth_type == "secret", again.message)
+		same := ask(fd, respond("palm"))
+		check("aging: the old password is refused as the new one", same.auth_type == "error", same.message)
+		ask(fd, `{"type":"post_auth_message_response"}`)
+		ask(fd, respond("new-secret-1"))
+		mism := ask(fd, respond("new-secret-2"))
+		check("aging: a mismatched retype is an error message", mism.auth_type == "error" && strings.contains(mism.message, "match"), mism.message)
+		ask(fd, `{"type":"post_auth_message_response"}`)
+		retype := ask(fd, respond("new-secret-1"))
+		check("aging: the retype question", retype.auth_type == "secret" && strings.contains(retype.message, "Retype"), retype.message)
+		done := ask(fd, respond("new-secret-1"))
+		check("aging: a matching retype changes the password and authenticates", done.type == "success", done.description)
+		ask(fd, CANCEL)
+
+		text, _ := auth.read_text(shadow)
+		s, found, valid := auth.parse_shadow_entry(text, "expiredpw")
+		check(
+			"aging: shadow has the new hash and today's date",
+			found && valid && s.lastchg == day && auth.verify_password("new-secret-1", s.hash),
+			fmt.tprintf("%v", s),
+		)
+		p, _, _ := auth.parse_shadow_entry(text, "palm")
+		check("aging: other lines are untouched", p.hash == HASH_PALM && p.lastchg == 19000 && p.max == 99999)
+		_, old := login(fd, "expiredpw", "palm")
+		check("aging: the old password no longer works", old.error_type == "auth_error", old.description)
+		_, nw := login(fd, "expiredpw", "new-secret-1")
+		check("aging: the new one does, with nothing more to ask", nw.type == "success", nw.description)
+		ask(fd, CANCEL)
+	}
+
+	// Rate limiting (test mode: base 150 ms). The third failure in a row
+	// earns 300 ms; an attempt inside that window is refused unchecked,
+	// even with the right password; after it, the right password works.
+	{
+		for _ in 0 ..< 3 {
+			login(fd, "limited", "wrong")
+		}
+		_, r := login(fd, "limited", "palm")
+		check(
+			"limit: the right password is refused while waiting",
+			r.error_type == "auth_error" && strings.contains(r.description, "Too many"),
+			r.description,
+		)
+		time.sleep(400 * time.Millisecond)
+		_, ok := login(fd, "limited", "palm")
+		check("limit: after the wait it works, and the count is cleared", ok.type == "success", ok.description)
+		ask(fd, CANCEL)
+		_, w := login(fd, "limited", "wrong")
+		_, ok2 := login(fd, "limited", "palm")
+		check("limit: one failure after a success costs only the base delay", w.error_type == "auth_error" && ok2.type == "success", ok2.description)
+		ask(fd, CANCEL)
 	}
 
 	// Two greeters at once each get their own conversation.

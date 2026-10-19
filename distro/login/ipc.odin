@@ -24,7 +24,23 @@ package login
 // authenticates the session or ends it with an auth_error, and only an
 // authenticated session can be started. Anything out of order is a plain
 // "error", which the greeter treats as fatal for that attempt.
+//
+// Two detours, both in greetd's vocabulary so the greeter needs nothing new
+// (it already answers whatever question it is asked, and acknowledges info
+// and error messages):
+//
+//	password right, but expiring soon    info "Your password expires in N days."
+//	                                     -> acknowledged -> success
+//	password right, but expired          secret "...New password:" -> secret
+//	                                     "Retype the new password:" -> written to
+//	                                     /etc/shadow -> success. A refused new
+//	                                     password is an error message, then the
+//	                                     question again.
+//
+// A wrong password is answered late (the hold below), and too many in a row
+// are refused unchecked for a growing while (accounts.odin).
 
+import "auth"
 import "core:encoding/json"
 import "core:fmt"
 import "core:strings"
@@ -39,6 +55,15 @@ Stage :: enum u8 {
 	None, // no session under configuration
 	Asked, // the password question is on the wire
 	Authenticated, // the password was right; start_session may follow
+	// The password was right but has expired (shadow aging): a new one is
+	// asked for, twice, before the session may start. An error message
+	// (too short, did not match) is acknowledged, then the question is
+	// asked again.
+	New_Password,
+	Retype,
+	Error_Ack,
+	// "Your password expires in N days" is waiting to be acknowledged.
+	Info_Ack,
 }
 
 Conn :: struct {
@@ -47,6 +72,12 @@ Conn :: struct {
 	stage:    Stage,
 	user:     string,
 	closing:  bool,
+
+	// While an expired password is being changed: the old one (a new one
+	// may not equal it) and the first entry of the new one. Zeroed and
+	// freed as soon as the conversation ends.
+	old_pw:   string,
+	new_pw:   string,
 
 	// A failed attempt is answered late, so a guesser gets one try per
 	// delay rather than one per round trip. While a reply is held back the
@@ -211,7 +242,10 @@ jstrings :: proc(obj: json.Object, key: string, allocator := context.allocator) 
 // do with a session that is ready to start. Splitting them out is what lets
 // --test mode and the real daemon share every line of the protocol.
 Handler :: struct {
-	authenticate: proc(h: ^Handler, user, password: string) -> bool,
+	authenticate:    proc(h: ^Handler, user, password: string) -> Auth_Result,
+	// change_password stores a new password for an expired account; "" or
+	// why not.
+	change_password: proc(h: ^Handler, user, password: string) -> string,
 	// start returns "" when the session was accepted, or why not.
 	start:        proc(h: ^Handler, req: Start_Request) -> string,
 	// power runs /sbin/poweroff or /sbin/reboot; "" or why not.
@@ -250,19 +284,80 @@ handle_request :: proc(h: ^Handler, c: ^Conn, payload: string) -> (reply: string
 		return reply_auth_message("secret", "Password:"), false, false
 
 	case "post_auth_message_response":
-		if c.stage != .Asked {
-			return reply_error("error", "no question is waiting for an answer"), false, false
-		}
 		response, _ := jstr(obj, "response")
-		ok := h.authenticate(h, c.user, response)
-		if !ok {
-			c.stage = .None
-			fmt.eprintfln("palm-login: authentication failed for %q", c.user)
-			return reply_error("auth_error", "The password was not accepted."), true, false
+		switch c.stage {
+		case .None, .Authenticated:
+			return reply_error("error", "no question is waiting for an answer"), false, false
+
+		case .Asked:
+			r := h.authenticate(h, c.user, response)
+			if r.wait > 0 {
+				c.stage = .None
+				return reply_error("auth_error", describe_wait(r.wait)), true, false
+			}
+			if !r.ok {
+				c.stage = .None
+				return reply_error("auth_error", "The password was not accepted."), true, false
+			}
+			switch r.status {
+			case .Account_Expired, .Inactive:
+				c.stage = .None
+				auth.logf(.Notice, "refused %q: %v", auth.clean(c.user), r.status)
+				return reply_error("auth_error", auth.status_message(r.status)), false, false
+			case .Must_Change:
+				conn_forget_secrets(c)
+				c.old_pw = strings.clone(response)
+				c.stage = .New_Password
+				auth.logf(.Notice, "%q must change an expired password", auth.clean(c.user))
+				return reply_auth_message("secret", "Your password has expired. New password:"), false, false
+			case .Warn:
+				c.stage = .Info_Ack
+				auth.logf(.Info, "%q authenticated", auth.clean(c.user))
+				return reply_auth_message("info", fmt.tprintf(
+					"Your password expires in %d day%s.", r.days, r.days == 1 ? "" : "s",
+				)), false, false
+			case .Ok:
+			}
+			c.stage = .Authenticated
+			auth.logf(.Info, "%q authenticated", auth.clean(c.user))
+			return reply_success(), false, false
+
+		case .Info_Ack:
+			c.stage = .Authenticated
+			return reply_success(), false, false
+
+		case .Error_Ack:
+			c.stage = .New_Password
+			return reply_auth_message("secret", "New password:"), false, false
+
+		case .New_Password:
+			if problem := auth.password_problem(response, c.old_pw, c.user); problem != "" {
+				c.stage = .Error_Ack
+				return reply_auth_message("error", problem), false, false
+			}
+			delete(c.new_pw)
+			c.new_pw = strings.clone(response)
+			c.stage = .Retype
+			return reply_auth_message("secret", "Retype the new password:"), false, false
+
+		case .Retype:
+			if response != c.new_pw {
+				zero_string(c.new_pw)
+				c.stage = .Error_Ack
+				return reply_auth_message("error", "The passwords did not match."), false, false
+			}
+			why := h.change_password(h, c.user, c.new_pw)
+			conn_forget_secrets(c)
+			if why != "" {
+				c.stage = .None
+				auth.logf(.Err, "could not change the expired password of %q: %s", auth.clean(c.user), why)
+				return reply_error("auth_error", fmt.tprintf("The password could not be changed: %s", why)), false, false
+			}
+			auth.logf(.Notice, "%q changed an expired password at the greeter", auth.clean(c.user))
+			c.stage = .Authenticated
+			return reply_success(), false, false
 		}
-		c.stage = .Authenticated
-		fmt.eprintfln("palm-login: %q authenticated", c.user)
-		return reply_success(), false, false
+		return reply_error("error", "no question is waiting for an answer"), false, false
 
 	case "start_session":
 		if c.stage != .Authenticated {
@@ -288,6 +383,7 @@ handle_request :: proc(h: ^Handler, c: ^Conn, payload: string) -> (reply: string
 		return reply_success(), false, false
 
 	case "cancel_session":
+		conn_forget_secrets(c)
 		c.stage = .None
 		return reply_success(), false, false
 
@@ -370,7 +466,17 @@ zero_string :: proc(s: string) {
 	}
 }
 
+conn_forget_secrets :: proc(c: ^Conn) {
+	zero_string(c.old_pw)
+	zero_string(c.new_pw)
+	delete(c.old_pw)
+	delete(c.new_pw)
+	c.old_pw = ""
+	c.new_pw = ""
+}
+
 conn_close :: proc(c: ^Conn) {
+	conn_forget_secrets(c)
 	linux.close(c.fd)
 	if len(c.inbuf) > 0 {
 		zero_string(string(c.inbuf[:]))

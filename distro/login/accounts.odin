@@ -1,38 +1,14 @@
 package login
 
-// The three account databases: /etc/passwd, /etc/shadow, /etc/group.
-//
-// There is no NSS here and no PAM. Palmframe's accounts are flat files and
-// palm-login reads them directly, the same way busybox's login does. The
-// parsers take the text rather than a path so the selftest can feed them
-// fixtures, and so --test mode can point at files the invoking user owns.
-//
-// Every file is re-read on every login attempt. They are small, and reading
-// them fresh means a `passwd` run on the serial console takes effect at the
-// next attempt without restarting anything.
+// Accounts as palm-login sees them: where the files are, and the whole of
+// "may this person log in?" — the rate limit, the password, then the aging
+// fields. The parsers, the crypt and the shadow writer are in auth/, shared
+// with doas and passwd.
 
-import "core:os"
-import "core:strconv"
+import "auth"
+import "core:fmt"
 import "core:strings"
-
-Account :: struct {
-	name:  string,
-	uid:   u32,
-	gid:   u32,
-	gecos: string,
-	home:  string,
-	shell: string,
-	// The password field of /etc/passwd. Almost always "x", meaning "look in
-	// /etc/shadow"; anything else is a hash kept in passwd itself, which old
-	// systems did and which is honoured for completeness.
-	passwd: string,
-}
-
-Group :: struct {
-	name:    string,
-	gid:     u32,
-	members: []string,
-}
+import "core:time"
 
 Paths :: struct {
 	passwd:      string,
@@ -45,180 +21,155 @@ Paths :: struct {
 }
 
 SYSTEM_PATHS :: Paths {
-	passwd      = "/etc/passwd",
-	shadow      = "/etc/shadow",
-	group       = "/etc/group",
+	passwd      = auth.PASSWD_PATH,
+	shadow      = auth.SHADOW_PATH,
+	group       = auth.GROUP_PATH,
 	locale_conf = "/etc/locale.conf",
 	timezone    = "/etc/timezone",
 	localtime   = "/etc/localtime",
 }
 
-// colon_fields splits one line of a colon-separated database. Comments and
-// blank lines yield nothing.
-@(private = "file")
-colon_fields :: proc(line: string, allocator := context.temp_allocator) -> []string {
-	l := strings.trim_right(line, "\r")
-	if l == "" || strings.has_prefix(l, "#") {
-		return nil
-	}
-	f, _ := strings.split(l, ":", allocator)
-	return f
-}
-
-@(private = "file")
-parse_id :: proc(s: string) -> (u32, bool) {
-	n, ok := strconv.parse_u64_of_base(s, 10)
-	if !ok || n > u64(max(u32)) {
-		return 0, false
-	}
-	return u32(n), true
-}
-
-// parse_passwd finds `user` in the text of an /etc/passwd. Strings in the
-// result are slices of `text`.
-parse_passwd :: proc(text: string, user: string) -> (a: Account, found: bool) {
-	rest := text
-	for line in strings.split_lines_iterator(&rest) {
-		f := colon_fields(line)
-		if len(f) < 7 || f[0] != user {
-			continue
-		}
-		uid, uok := parse_id(f[2])
-		gid, gok := parse_id(f[3])
-		if !uok || !gok {
-			// A malformed line for the very user asked about: refuse, rather
-			// than fall through to a later duplicate.
-			return {}, false
-		}
-		return Account {
-				name = f[0],
-				passwd = f[1],
-				uid = uid,
-				gid = gid,
-				gecos = f[4],
-				home = f[5],
-				shell = f[6],
-			},
-			true
-	}
-	return {}, false
-}
-
-// parse_shadow returns the hash field for `user` in the text of an
-// /etc/shadow.
-parse_shadow :: proc(text: string, user: string) -> (hash: string, found: bool) {
-	rest := text
-	for line in strings.split_lines_iterator(&rest) {
-		f := colon_fields(line)
-		if len(f) < 2 || f[0] != user {
-			continue
-		}
-		return f[1], true
-	}
-	return "", false
-}
-
-// parse_groups returns every group `user` belongs to: the primary group from
-// passwd first, then each group that lists the user as a member. This is
-// initgroups(3) without NSS.
-parse_groups :: proc(text: string, user: string, primary: u32, allocator := context.allocator) -> []u32 {
-	out := make([dynamic]u32, allocator)
-	append(&out, primary)
-	rest := text
-	for line in strings.split_lines_iterator(&rest) {
-		f := colon_fields(line)
-		if len(f) < 4 {
-			continue
-		}
-		gid, ok := parse_id(f[2])
-		if !ok {
-			continue
-		}
-		for m in strings.split_iterator(&f[3], ",") {
-			if strings.trim_space(m) == user {
-				already := false
-				for g in out {
-					if g == gid {
-						already = true
-					}
-				}
-				if !already {
-					append(&out, gid)
-				}
-				break
-			}
-		}
-	}
-	return out[:]
-}
-
-// group_id looks a group up by name, for chowning the socket to `greeter`.
-group_id :: proc(text: string, name: string) -> (u32, bool) {
-	rest := text
-	for line in strings.split_lines_iterator(&rest) {
-		f := colon_fields(line)
-		if len(f) >= 3 && f[0] == name {
-			return parse_id(f[2])
-		}
-	}
-	return 0, false
-}
-
-// read_text reads a whole database into the temp allocator.
-read_text :: proc(path: string) -> (string, bool) {
-	data, err := os.read_entire_file_from_path(path, context.temp_allocator)
-	if err != nil {
-		return "", false
-	}
-	return string(data), true
-}
+read_text :: auth.read_text
 
 // lookup_account reads passwd from disk and finds `user`. The strings are
 // cloned with `allocator` so the account outlives the temp allocator.
-lookup_account :: proc(paths: Paths, user: string, allocator := context.allocator) -> (a: Account, ok: bool) {
-	text, rok := read_text(paths.passwd)
+lookup_account :: proc(paths: Paths, user: string, allocator := context.allocator) -> (a: auth.Account, ok: bool) {
+	text, rok := auth.read_text(paths.passwd)
 	if !rok {
 		return {}, false
 	}
 	found: bool
-	a, found = parse_passwd(text, user)
+	a, found = auth.parse_passwd(text, user)
 	if !found {
 		return {}, false
 	}
-	a.name = strings.clone(a.name, allocator)
-	a.passwd = strings.clone(a.passwd, allocator)
-	a.gecos = strings.clone(a.gecos, allocator)
-	a.home = strings.clone(a.home, allocator)
-	a.shell = strings.clone(a.shell, allocator)
-	return a, true
+	return auth.clone_account(a, allocator), true
 }
 
-// authenticate is the whole of "is this the password?". An unknown user, a
-// locked account, a missing shadow entry and a wrong password all answer
-// false the same way, so the reply never tells a guesser which one it was.
-authenticate :: proc(paths: Paths, user: string, password: string) -> bool {
-	ptext, pok := read_text(paths.passwd)
-	if !pok {
-		return false
+// ---------------------------------------------------------------------------
+// Rate limiting (auth/ratelimit.odin has the policy)
+// ---------------------------------------------------------------------------
+
+// Two counts: one per account name, and one for the seat as a whole, so
+// guessing across many names is slowed down too. The seat starts waiting
+// only after SEAT_FREE failures in a row, so one person's typos never hold
+// up another's login.
+SEAT_FREE :: 8
+MAX_TRACKED :: 512
+
+Limits :: struct {
+	users: map[string]auth.Tally,
+	seat:  auth.Tally,
+	base:  time.Duration,
+}
+
+// limits_wait is how long `user` must wait before an attempt is looked at.
+limits_wait :: proc(l: ^Limits, user: string) -> time.Duration {
+	now := auth.now_ms()
+	auth.tally_refresh(&l.seat, now)
+	seat := l.seat
+	seat.failures = max(0, seat.failures - SEAT_FREE)
+	w := auth.tally_remaining(seat, now, l.base)
+	if t, ok := &l.users[user]; ok {
+		auth.tally_refresh(t, now)
+		w = max(w, auth.tally_remaining(t^, now, l.base))
 	}
-	acct, found := parse_passwd(ptext, user)
-	if !found {
-		// Burn the same time a real check would, so an unknown name is not
-		// told apart from a wrong password by how fast the answer comes.
-		_ = verify_password(password, "$6$palmframe$x")
-		return false
+	return w
+}
+
+// limits_fail counts a failure and returns how many in a row `user` has.
+limits_fail :: proc(l: ^Limits, user: string) -> int {
+	now := auth.now_ms()
+	auth.tally_fail(&l.seat, now)
+	if !auth.valid_name(user) {
+		return l.seat.failures
 	}
-	stored := acct.passwd
-	if stored == "x" {
-		stext, sok := read_text(paths.shadow)
-		if !sok {
-			return false
+	if len(l.users) >= MAX_TRACKED && user not_in l.users {
+		// Only names that do not exist can fill it this far; forget them.
+		for k in l.users {
+			delete(k)
 		}
-		h, hfound := parse_shadow(stext, user)
-		if !hfound {
-			return false
-		}
-		stored = h
+		clear(&l.users)
 	}
-	return verify_password(password, stored)
+	if user not_in l.users {
+		l.users[strings.clone(user)] = {}
+	}
+	t := &l.users[user]
+	auth.tally_fail(t, now)
+	return t.failures
+}
+
+limits_ok :: proc(l: ^Limits, user: string) {
+	l.seat = {}
+	if user in l.users {
+		k, _ := delete_key(&l.users, user)
+		delete(k)
+	}
+}
+
+// ---------------------------------------------------------------------------
+// The check
+// ---------------------------------------------------------------------------
+
+Auth_Result :: struct {
+	ok:     bool, // the password was right
+	wait:   time.Duration, // > 0: refused unchecked, try again after this
+	status: auth.Status,
+	days:   i64,
+}
+
+// check_login is the whole decision for the greeter's answer.
+check_login :: proc(paths: Paths, limits: ^Limits, user, password: string) -> Auth_Result {
+	if w := limits_wait(limits, user); w > 0 {
+		auth.logf(.Warning, "refused %q unchecked: too many failures, %s left", auth.clean(user), auth.wait_words(w))
+		return {wait = w}
+	}
+	c, found := auth.load_credentials(paths.passwd, paths.shadow, user)
+	if !auth.check_password(c, found, password) {
+		n := limits_fail(limits, user)
+		wait := auth.tally_wait_for(n, limits.base)
+		auth.logf(
+			.Notice,
+			"authentication failure for %q (%d in a row; next attempt in %s)",
+			auth.clean(user),
+			n,
+			auth.wait_words(wait),
+		)
+		return {}
+	}
+	limits_ok(limits, user)
+	r := Auth_Result{ok = true}
+	if c.has_shadow {
+		r.status, r.days = auth.account_status(c.shadow, auth.today())
+	}
+	return r
+}
+
+// set_password writes a new hash for `user` (an expired password changed at
+// the greeter).
+set_password :: proc(paths: Paths, user, password: string) -> string {
+	h, ok := auth.make_hash(password, allocator = context.temp_allocator)
+	if !ok {
+		return "could not hash the password"
+	}
+	Data :: struct {
+		hash: string,
+	}
+	data := Data{h}
+	edit :: proc(s: ^auth.Shadow, found: bool, p: rawptr) -> string {
+		if !found {
+			return "the account has no shadow entry"
+		}
+		s.hash = (^Data)(p).hash
+		s.lastchg = auth.today()
+		return ""
+	}
+	if e := auth.update_shadow(paths.shadow, user, edit, &data); e != "" {
+		return e
+	}
+	return ""
+}
+
+describe_wait :: proc(w: time.Duration) -> string {
+	return fmt.tprintf("Too many failed attempts. Try again in %s.", auth.wait_words(w))
 }
