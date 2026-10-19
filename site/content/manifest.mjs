@@ -324,6 +324,22 @@ export const COLLECTIONS = {
               "Palmframe's own browser chrome over Chromium or Firefox, chosen per identity, with bookmark sync.",
             source: { file: "cloud/docs/browser.md" },
           },
+          {
+            slug: "cloud-office",
+            title: "Office and collaborative editing",
+            nav: "Office and collaborative editing",
+            description:
+              "Docs, Sheets and Slides on an Odin CRDT: the sync service, conflict rules per app, and the choice not to link Yrs or Automerge.",
+            source: { file: "cloud/docs/office.md" },
+          },
+          {
+            slug: "cloud-vault",
+            title: "Password manager",
+            nav: "Password manager",
+            description:
+              "End-to-end encrypted vaults per identity: the key hierarchy, sharing, what the server can see, and the browser autofill protocol.",
+            source: { file: "cloud/docs/vault.md" },
+          },
         ],
       },
       {
