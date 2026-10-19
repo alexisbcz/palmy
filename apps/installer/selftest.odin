@@ -558,8 +558,20 @@ test_catalogues :: proc() {
 		check("catalogues: run from the repository (apps/installer not found)", false)
 		return
 	}
-	ids := source_msgids(fmt.tprintf("%s/apps/installer", root))
-	check("catalogues: msgids found in the source", len(ids) > 100, fmt.tprintf("%d msgids", len(ids)))
+	src_ids := source_msgids(fmt.tprintf("%s/apps/installer", root))
+	check("catalogues: msgids found in the source", len(src_ids) > 100, fmt.tprintf("%d msgids", len(src_ids)))
+	// The core's messages (validate problems, progress details) are
+	// translated through the same catalogue, by text_tr.
+	all_ids := make([dynamic]string, context.temp_allocator)
+	append(&all_ids, ..src_ids)
+	core_ids := core_message_msgids()
+	check("catalogues: the core's messages are listed", len(core_ids) > 40, fmt.tprintf("%d messages", len(core_ids)))
+	for id in core_ids {
+		if !slice.contains(all_ids[:], id) {
+			append(&all_ids, id)
+		}
+	}
+	ids := all_ids[:]
 
 	for lang in ([?]string{"fr", "de", "es", "ar", "ja"}) {
 		path := fmt.tprintf("%s/distro/locale/%s/installer.msg", root, lang)

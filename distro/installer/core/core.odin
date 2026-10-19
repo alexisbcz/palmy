@@ -81,6 +81,7 @@ Plan :: struct {
 	repo:           string, // default: the live medium's repository, file:///usr/share/palm/repo
 	packages:       []string, // default: {"palmframe"}
 	efi_boot_entry: bool, // write a UEFI Boot#### variable via efivarfs
+	swap_bytes:     u64, // a /swapfile of this size on the root; 0 = none
 }
 
 Step :: enum {
@@ -96,10 +97,14 @@ Step :: enum {
 
 // fraction is the whole installation's progress, 0 to 1, not the step's:
 // a front end can feed it straight to one progress bar.
+// message is the English text of `detail`; detail is the same thing as an
+// id and arguments (message.odin), for a front end that translates it. Its
+// arguments are only valid during the `report` call: clone what you keep.
 Progress :: struct {
 	step:     Step,
 	fraction: f32,
 	message:  string,
+	detail:   Message,
 }
 
 DEFAULT_REPO :: "file:///usr/share/palm/repo"
@@ -110,6 +115,9 @@ DEFAULT_TARGET :: "/mnt/target"
 DEFAULT_EFIVARS :: "/sys/firmware/efi/efivars"
 DEFAULT_LOG :: "/var/log/palm-install.log"
 MIN_DISK_BYTES :: 4 * 1024 * 1024 * 1024
+// A swap file is at most this big; bigger only wastes the disk on a machine
+// that cannot hibernate anyway.
+MAX_SWAP_BYTES :: 64 * 1024 * 1024 * 1024
 
 // Options are the knobs neither front end shows a person: where things are,
 // and the test paths. default_options() is what install() uses.
@@ -122,7 +130,13 @@ Options :: struct {
 	steps:      bit_set[Step], // which steps run; {} = all of them
 	palm:       string, // the package manager; "" = palm from PATH
 	keys_dir:   string, // trusted repository keys passed to palm
-	limine_dir: string, // where BOOTX64.EFI is found if the target has none
+	limine_dir: string, // where BOOTX64.EFI and limine-bios.sys are found if the target has none
+	// limine's host tool, which writes the BIOS boot code (`limine
+	// bios-install`); "" = `limine` from PATH, else LIMINE_TOOL_PRIVATE.
+	limine_tool: string,
+	// Skip `limine bios-install`. The BIOS boot partition is still made, so
+	// it can be run later.
+	no_bios_boot: bool,
 	efivars:    string, // efivarfs mount point
 	log_path:   string,
 	dry_run:    bool, // say what would happen, change nothing
@@ -169,6 +183,7 @@ Partition_Info :: struct {
 	root_dev:       string,
 	esp_guid:       Guid,
 	root_guid:      Guid,
+	has_bios_boot:  bool, // partition BIOS_BOOT_NUMBER holds limine's BIOS stage 2
 	esp_first_lba:  u64,
 	esp_sectors:    u64,
 	root_first_lba: u64,
@@ -191,6 +206,9 @@ Ctx :: struct {
 	step:         Step,
 	mounted_root: bool,
 	mounted_esp:  bool,
+	// The partition GUIDs of the table this run erased: a UEFI entry that
+	// points at one of them pointed at this disk, and is reused.
+	old_guids:    [dynamic]Guid,
 }
 
 @(private = "file")
@@ -231,6 +249,7 @@ install_with :: proc(p: Plan, o: Options, report: proc(Progress, rawptr), user: 
 	if c.o.target == "" {c.o.target = DEFAULT_TARGET}
 	if c.o.keys_dir == "" {c.o.keys_dir = "/etc/palm/keys"}
 	if c.o.limine_dir == "" {c.o.limine_dir = "/usr/share/limine"}
+	c.old_guids = make([dynamic]Guid, context.temp_allocator)
 	if c.o.efivars == "" {c.o.efivars = DEFAULT_EFIVARS}
 	if c.o.steps == {} {c.o.steps = ~bit_set[Step]{}}
 	c.t = Target {
@@ -244,9 +263,9 @@ install_with :: proc(p: Plan, o: Options, report: proc(Progress, rawptr), user: 
 
 	logf(&c, "palm-install: %s, disk %s, target %s%s%s", time_stamp(), c.p.disk, c.t.root,
 		c.o.disk_image ? " (disk image)" : "", c.o.dry_run ? " (dry run)" : "")
-	logf(&c, "plan: language=%s keyboard=%s:%s timezone=%s hostname=%s user=%s packages=%v repo=%s efi_entry=%v",
+	logf(&c, "plan: language=%s keyboard=%s:%s timezone=%s hostname=%s user=%s packages=%v repo=%s efi_entry=%v swap=%s",
 		c.p.language, c.p.keyboard.layout, c.p.keyboard.variant, c.p.timezone, c.p.hostname,
-		c.p.user, c.p.packages, c.p.repo, c.p.efi_boot_entry)
+		c.p.user, c.p.packages, c.p.repo, c.p.efi_boot_entry, c.p.swap_bytes > 0 ? human_size(c.p.swap_bytes) : "none")
 
 	// The safety rules that do not depend on the plan's content: a disk image
 	// must really be a file, and a disk must really be a block device. The
@@ -272,7 +291,7 @@ install_with :: proc(p: Plan, o: Options, report: proc(Progress, rawptr), user: 
 			continue
 		}
 		c.step = st.s
-		progress(&c, 0, step_title(st.s))
+		progress(&c, 0, msg(step_msg(st.s)))
 		start := time.tick_now()
 		if e := st.f(&c); e != "" {
 			cleanup(&c)
@@ -281,23 +300,27 @@ install_with :: proc(p: Plan, o: Options, report: proc(Progress, rawptr), user: 
 		logf(&c, "%s: done in %.1f s", step_title(st.s), time.duration_seconds(time.tick_since(start)))
 	}
 	c.step = .Done
-	progress(&c, 1, "Done")
+	progress(&c, 1, msg(.Step_Done))
 	logf(&c, "installation finished")
 	return true, ""
 }
 
 step_title :: proc(s: Step) -> string {
+	return MESSAGE_FORMAT[step_msg(s)]
+}
+
+step_msg :: proc(s: Step) -> Msg {
 	switch s {
-	case .Partition: return "Partitioning"
-	case .Format: return "Formatting"
-	case .Mount: return "Mounting"
-	case .Packages: return "Installing packages"
-	case .Configure: return "Configuring the system"
-	case .Bootloader: return "Installing the boot loader"
-	case .Unmount: return "Unmounting"
-	case .Done: return "Done"
+	case .Partition: return .Step_Partition
+	case .Format: return .Step_Format
+	case .Mount: return .Step_Mount
+	case .Packages: return .Step_Packages
+	case .Configure: return .Step_Configure
+	case .Bootloader: return .Step_Bootloader
+	case .Unmount: return .Step_Unmount
+	case .Done: return .Step_Done
 	}
-	return ""
+	return .None
 }
 
 step_name :: proc(s: Step) -> string {
@@ -332,11 +355,11 @@ normalise_plan :: proc(p: Plan) -> Plan {
 
 // progress reports `within` (0..1) of the current step.
 @(private)
-progress :: proc(c: ^Ctx, within: f32, msg: string) {
+progress :: proc(c: ^Ctx, within: f32, m: Message) {
 	span := STEP_SPAN[c.step]
 	f := span[0] + (span[1] - span[0]) * clamp(within, 0, 1)
 	if c.report != nil {
-		c.report(Progress{step = c.step, fraction = f, message = msg}, c.user)
+		c.report(Progress{step = c.step, fraction = f, message = message_text(m), detail = m}, c.user)
 	}
 }
 

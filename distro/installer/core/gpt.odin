@@ -13,10 +13,13 @@ package install_core
 // everywhere; 4096 on some NVMe and USB bridges, which we honour):
 //
 //   LBA 0                      protective MBR: one 0xEE partition covering
-//                              the disk, so MBR-only tools see it as in use
+//                              the disk, so MBR-only tools see it as in use;
+//                              its boot code is limine's BIOS stage 1, put
+//                              there later by `limine bios-install`
 //   LBA 1                      primary GPT header
 //   LBA 2 ..                   primary entry array, 128 entries x 128 bytes
-//   first_usable .. last_usable  the partitions, starts aligned to 1 MiB
+//   first_usable .. 1 MiB      partition 3, BIOS boot: limine's stage 2
+//   1 MiB .. last_usable       the ESP and the root, aligned to 1 MiB
 //   last-1-array .. last-1     backup entry array (same bytes as the primary)
 //   last LBA                   backup header (my/alternate LBAs swapped)
 //
@@ -31,6 +34,19 @@ import "core:unicode/utf16"
 
 ESP_TYPE :: "C12A7328-F81F-11D2-BA4B-00A0C93EC93B"
 LINUX_FS_TYPE :: "0FC63DAF-8483-4772-8E79-3D69D8477DE4"
+// "Hah!IdontNeedEFI": a partition no file system lives in, where a BIOS boot
+// loader keeps the code that does not fit in the MBR (GRUB's convention,
+// which limine follows).
+BIOS_BOOT_TYPE :: "21686148-6449-6E6F-744E-656564454649"
+// Partition numbers. The ESP stays partition 1 and the root 2, as on every
+// disk installed before the BIOS boot partition existed; the BIOS boot
+// partition is number 3 although it comes first on the disk.
+ESP_NUMBER :: 1
+ROOT_NUMBER :: 2
+BIOS_BOOT_NUMBER :: 3
+// limine's stage 2 is about 40 KiB; its documentation asks for 32 KiB at
+// least. The gap before the first MiB holds 1007 KiB with 512-byte sectors.
+BIOS_BOOT_MIN :: 64 * 1024
 
 ALIGN :: 1024 * 1024 // partition starts and sizes are whole MiB
 ESP_SIZE :: 512 * 1024 * 1024
@@ -162,9 +178,11 @@ gpt_entry_sectors :: proc(sector_size: u64) -> u64 {
 }
 
 // gpt_layout_palmframe is the one layout the installer writes: a 512 MiB EFI
-// system partition at 1 MiB, and a Linux root from there to the last whole
-// MiB before the backup table. Fresh random GUIDs every time, so two disks
-// installed from the same medium never share a PARTUUID.
+// system partition at 1 MiB, a Linux root from there to the last whole MiB
+// before the backup table, and a BIOS boot partition in the otherwise unused
+// space before the first MiB, so the same disk starts under UEFI and under a
+// BIOS. Fresh random GUIDs every time, so two disks installed from the same
+// medium never share a PARTUUID.
 gpt_layout_palmframe :: proc(size_bytes: u64, sector_size: u64 = 512, allocator := context.allocator) -> (g: Gpt, ok: bool) {
 	ss := sector_size
 	if ss < 512 || ss & (ss - 1) != 0 || ALIGN % ss != 0 {
@@ -191,7 +209,10 @@ gpt_layout_palmframe :: proc(size_bytes: u64, sector_size: u64 = 512, allocator 
 	if root_end <= root_first + per_mib {
 		return
 	}
-	parts := make([]Gpt_Partition, 2, allocator)
+	if (per_mib - g.first_usable) * ss < BIOS_BOOT_MIN {
+		return
+	}
+	parts := make([]Gpt_Partition, 3, allocator)
 	parts[0] = {
 		type_guid = must_guid(ESP_TYPE),
 		part_guid = guid_random(),
@@ -205,6 +226,13 @@ gpt_layout_palmframe :: proc(size_bytes: u64, sector_size: u64 = 512, allocator 
 		first_lba = root_first,
 		last_lba  = root_end - 1,
 		name      = "Palmframe",
+	}
+	parts[2] = {
+		type_guid = must_guid(BIOS_BOOT_TYPE),
+		part_guid = guid_random(),
+		first_lba = g.first_usable,
+		last_lba  = per_mib - 1,
+		name      = "BIOS boot partition",
 	}
 	g.parts = parts
 	return g, true

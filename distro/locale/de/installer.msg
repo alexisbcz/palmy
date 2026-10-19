@@ -234,8 +234,8 @@ msgstr "%d MiB"
 msgid "The whole disk will be used"
 msgstr "Das gesamte Laufwerk wird verwendet"
 
-msgid "Palmframe erases the disk you choose and creates two partitions: a 512 MiB EFI system partition and an ext4 root file system on the rest. Sharing a disk with another system is not supported."
-msgstr "Palmframe löscht das gewählte Laufwerk und legt zwei Partitionen an: eine 512 MiB große EFI-Systempartition und ein ext4-Root-Dateisystem auf dem restlichen Platz. Ein Laufwerk mit einem anderen System zu teilen, wird nicht unterstützt."
+msgid "Palmframe erases the disk you choose and creates a 512 MiB EFI system partition, a small BIOS boot partition so that older computers can start it too, and an ext4 root file system on the rest. Sharing a disk with another system is not supported."
+msgstr "Palmframe löscht die gewählte Festplatte und legt eine 512 MiB große EFI-Systempartition an, eine kleine BIOS-Boot-Partition, damit auch ältere Computer davon starten können, und auf dem Rest ein ext4-Wurzeldateisystem. Eine Festplatte mit einem anderen System zu teilen, wird nicht unterstützt."
 
 msgid "No disks were found. Attach a disk and restart the installer."
 msgstr "Keine Laufwerke gefunden. Schließen Sie ein Laufwerk an und starten Sie das Installationsprogramm neu."
@@ -443,3 +443,168 @@ msgstr "Entfernen Sie das Installationsmedium und starten Sie den Rechner neu, u
 
 msgid "Restart now"
 msgstr "Jetzt neu starten"
+
+# --- the swap file (disk page, summary) -----------------------------------------
+msgid "Create a swap file of %s"
+msgstr "Eine Auslagerungsdatei von %s anlegen"
+
+msgid "Room on the disk for memory that is not in use, so that a full memory slows the computer down instead of closing programs."
+msgstr "Platz auf der Festplatte für Speicher, der gerade nicht gebraucht wird: Ist der Arbeitsspeicher voll, wird der Computer langsamer, statt Programme zu beenden."
+
+msgid "Swap"
+msgstr "Auslagerung"
+
+msgid "A swap file of %s"
+msgstr "Eine Auslagerungsdatei von %s"
+
+msgid "None"
+msgstr "Keine"
+
+# --- install_core's messages: validate() problems and progress details --------
+# The msgids are MESSAGE_FORMAT in distro/installer/core/message.odin.
+msgid "The user name is empty."
+msgstr "Der Benutzername ist leer."
+
+msgid "The user name has more than 32 characters."
+msgstr "Der Benutzername hat mehr als 32 Zeichen."
+
+msgid "The user name %q must start with a lower-case letter or '_' and contain only a-z, 0-9, '-' and '_'."
+msgstr "Der Benutzername %q muss mit einem Kleinbuchstaben oder „_“ beginnen und darf nur a-z, 0-9, „-“ und „_“ enthalten."
+
+msgid "The user name %q is used by the system."
+msgstr "Der Benutzername %q wird vom System verwendet."
+
+msgid "The full name may not contain ':' or line breaks, and has at most 128 characters."
+msgstr "Der vollständige Name darf weder „:“ noch Zeilenumbrüche enthalten und hat höchstens 128 Zeichen."
+
+msgid "The password is empty."
+msgstr "Das Passwort ist leer."
+
+msgid "The password may not contain line breaks."
+msgstr "Das Passwort darf keine Zeilenumbrüche enthalten."
+
+msgid "The root password may not contain line breaks."
+msgstr "Das root-Passwort darf keine Zeilenumbrüche enthalten."
+
+msgid "The host name is empty."
+msgstr "Der Rechnername ist leer."
+
+msgid "The host name is longer than 253 characters."
+msgstr "Der Rechnername ist länger als 253 Zeichen."
+
+msgid "The host name %q is not valid: each part has 1 to 63 characters and does not start or end with '-'."
+msgstr "Der Rechnername %q ist ungültig: Jeder Teil hat 1 bis 63 Zeichen und beginnt und endet nicht mit „-“."
+
+msgid "The host name %q may contain only letters, digits and '-'."
+msgstr "Der Rechnername %q darf nur Buchstaben, Ziffern und „-“ enthalten."
+
+msgid "The language %q is not a locale name like fr_FR."
+msgstr "Die Sprache %q ist kein Gebietsschema-Name wie fr_FR."
+
+msgid "The keyboard layout %q is not a valid name."
+msgstr "Die Tastaturbelegung %q ist kein gültiger Name."
+
+msgid "The keyboard layout %s has no variant %q."
+msgstr "Die Tastaturbelegung %s hat keine Variante %q."
+
+msgid "There is no keyboard layout %q."
+msgstr "Es gibt keine Tastaturbelegung %q."
+
+msgid "The time zone %q is not a zone name like Europe/Paris."
+msgstr "Die Zeitzone %q ist kein Zonenname wie Europe/Paris."
+
+msgid "There is no time zone %q."
+msgstr "Es gibt keine Zeitzone %q."
+
+msgid "The repository %q is neither an http:// URL nor an absolute path."
+msgstr "Die Paketquelle %q ist weder eine http://-URL noch ein absoluter Pfad."
+
+msgid "%q is not a package name."
+msgstr "%q ist kein Paketname."
+
+msgid "The swap size %q is not a size like 2G or 512M."
+msgstr "Die Auslagerungsgröße %q ist keine Größe wie 2G oder 512M."
+
+msgid "A swap file of %s leaves too little room on %s."
+msgstr "Eine Auslagerungsdatei von %s lässt auf %s zu wenig Platz."
+
+msgid "No disk is chosen."
+msgstr "Es ist keine Festplatte gewählt."
+
+msgid "%s is a device; a disk image must be a plain file."
+msgstr "%s ist ein Gerät; ein Festplattenabbild muss eine gewöhnliche Datei sein."
+
+msgid "The disk image %s is not a plain file."
+msgstr "Das Festplattenabbild %s ist keine gewöhnliche Datei."
+
+msgid "The disk image %s holds %s; at least 4 GiB is needed."
+msgstr "Das Festplattenabbild %s fasst %s; mindestens 4 GiB werden benötigt."
+
+msgid "%s holds the running system; choose another disk."
+msgstr "Auf %s läuft das aktuelle System; wählen Sie eine andere Festplatte."
+
+msgid "%s is read-only."
+msgstr "%s ist schreibgeschützt."
+
+msgid "%s holds %s; at least 4 GiB is needed."
+msgstr "%s fasst %s; mindestens 4 GiB werden benötigt."
+
+msgid "%s has a mounted file system; unmount it first."
+msgstr "Auf %s ist ein Dateisystem eingehängt; hängen Sie es zuerst aus."
+
+msgid "There is no disk %s."
+msgstr "Es gibt keine Festplatte %s."
+
+msgid "Partitioning"
+msgstr "Partitionierung"
+
+msgid "Formatting"
+msgstr "Formatierung"
+
+msgid "Unmounting"
+msgstr "Aushängen"
+
+msgid "Writing the partition table"
+msgstr "Partitionstabelle wird geschrieben"
+
+msgid "Waiting for the kernel to see the new partitions"
+msgstr "Warten, bis der Kernel die neuen Partitionen sieht"
+
+msgid "Formatting the EFI system partition"
+msgstr "EFI-Systempartition wird formatiert"
+
+msgid "Formatting the root partition"
+msgstr "Wurzelpartition wird formatiert"
+
+msgid "Installing %s (%s of %s)"
+msgstr "%s wird installiert (%s von %s)"
+
+msgid "Setting the host name"
+msgstr "Rechnername wird gesetzt"
+
+msgid "Creating the user account"
+msgstr "Benutzerkonto wird angelegt"
+
+msgid "Setting language, keyboard and time zone"
+msgstr "Sprache, Tastatur und Zeitzone werden eingestellt"
+
+msgid "Creating a %s swap file"
+msgstr "Auslagerungsdatei von %s wird angelegt"
+
+msgid "Writing the file system table"
+msgstr "Dateisystemtabelle wird geschrieben"
+
+msgid "Copying the boot loader"
+msgstr "Bootloader wird kopiert"
+
+msgid "Copying the kernel"
+msgstr "Kernel wird kopiert"
+
+msgid "Making the disk start on BIOS computers"
+msgstr "Festplatte wird für BIOS-Computer startfähig gemacht"
+
+msgid "Adding the UEFI boot entry"
+msgstr "UEFI-Starteintrag wird hinzugefügt"
+
+msgid "UEFI boot entry not written; the disk still boots through the fallback path"
+msgstr "UEFI-Starteintrag nicht geschrieben; die Festplatte startet dennoch über den Ausweichpfad"

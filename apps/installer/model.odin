@@ -55,6 +55,17 @@ Plan :: struct {
 	repo:           string, // empty = the core's default (the live medium's repository)
 	packages:       []string, // nil = the core's default ({"palmframe"})
 	efi_boot_entry: bool,
+	swap_bytes:     u64, // a swap file of this size on the new root; 0 = none
+}
+
+// Text is one of install_core's messages (its Message): an English msgid,
+// translated where it is drawn (text_tr), and the strings that fill its
+// %s/%q verbs. The msgids are the core's MESSAGE_FORMAT, which the selftest
+// checks every catalogue for.
+Text :: struct {
+	msgid: string,
+	args:  [4]string,
+	nargs: int,
 }
 
 // Install_Step is the core's `Step`: where `install` has got to.
@@ -74,7 +85,8 @@ Install_Step :: enum {
 Progress :: struct {
 	step:     Install_Step,
 	fraction: f32,
-	message:  string,
+	message:  string, // English; the demo's only text
+	detail:   Text, // the core's message, translatable; empty in the demo
 }
 
 // MIN_DISK is the smallest disk the core accepts (validate: size >= 4 GiB).

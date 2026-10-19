@@ -357,7 +357,7 @@ page_disk :: proc(st: ^St, ui: ^p.Ctx) {
 		txt(ui, tr("The whole disk will be used"), "text-sm font-medium text-foreground")
 		txt(
 			ui,
-			tr("Palmframe erases the disk you choose and creates two partitions: a 512 MiB EFI system partition and an ext4 root file system on the rest. Sharing a disk with another system is not supported."),
+			tr("Palmframe erases the disk you choose and creates a 512 MiB EFI system partition, a small BIOS boot partition so that older computers can start it too, and an ext4 root file system on the rest. Sharing a disk with another system is not supported."),
 			"text-sm text-muted-foreground",
 		)
 		p.end(ui)
@@ -413,6 +413,11 @@ page_disk :: proc(st: ^St, ui: ^p.Ctx) {
 		}
 		hend(ui, row)
 	}
+
+	// The swap file, under the disks because it takes room on the one chosen.
+	p.div(ui, "w-full pt-2")
+	p.end(ui)
+	checkbox(ui, &st.swap, trf("Create a swap file of %s", size_label(st.swap_bytes)), tr("Room on the disk for memory that is not in use, so that a full memory slows the computer down instead of closing programs."))
 }
 
 // ---------------------------------------------------------------------------
@@ -442,26 +447,7 @@ page_account :: proc(st: ^St, ui: ^p.Ctx) {
 		strength_meter(ui, password_strength(string(st.password[:])))
 		text_field(st, ui, .Confirm, &st.confirm, tr("Confirm password"), "", probs, "", secret = true)
 
-		check := hrow(ui, "items-center gap-3 py-1 rounded-md")
-		p.focusable(ui, check)
-		p.apply(ui, "cursor-pointer")
-		if p.focused(ui, check) {
-			p.apply(ui, "ring-3 ring-ring/50")
-		}
-		// Space toggles; Enter on the box is Next, as everywhere else.
-		toggled := p.clickable(ui, check) || (p.focused(ui, check) && p.key_pressed(ui, p.KEY_SPACE, false))
-		{
-			p.div(ui, st.same_root ? "size-4 rounded-sm bg-primary border border-primary items-center justify-center shrink-0" : "size-4 rounded-sm border border-input shrink-0")
-			if st.same_root {
-				p.icon(ui, II_CHECK, "size-3 text-primary-foreground")
-			}
-			p.end(ui)
-			txt(ui, tr("Use the same password for the administrator (root)"), "flex-1 min-w-0 text-sm text-foreground")
-		}
-		hend(ui, check)
-		if toggled {
-			st.same_root = !st.same_root
-		}
+		checkbox(ui, &st.same_root, tr("Use the same password for the administrator (root)"))
 
 		if !st.same_root {
 			text_field(st, ui, .Root_Password, &st.root_password, tr("Administrator password"), "", probs, "", secret = true)
@@ -579,6 +565,7 @@ page_summary :: proc(st: ^St, ui: ^p.Ctx) {
 		summary_row(st, ui, .Keyboard, II_KEYBOARD, tr("Keyboard"), k.description, k.variant == "" ? k.layout : fmt.tprintf("%s (%s)", k.layout, k.variant))
 		summary_row(st, ui, .Timezone, II_CLOCK, tr("Time zone"), z.city, z.name)
 		summary_row(st, ui, .Disk, II_HARD_DRIVE, tr("Disk"), d.path, tr("GPT: 512 MiB EFI system partition, ext4 root on the rest"))
+		summary_row(st, ui, .Disk, II_MEMORY_STICK, tr("Swap"), st.swap ? trf("A swap file of %s", size_label(st.swap_bytes)) : tr("None"), "")
 		who := a.full_name == "" ? a.user : fmt.tprintf("%s (%s)", a.full_name, a.user)
 		summary_row(st, ui, .Account, II_USER, tr("Account"), who, a.same_root ? tr("The administrator uses the same password") : tr("The administrator has its own password"))
 		summary_row(st, ui, .Account, II_SERVER, tr("Computer name"), a.hostname, "", last = true)
@@ -591,7 +578,7 @@ page_summary :: proc(st: ^St, ui: ^p.Ctx) {
 		p.col(ui, "flex-1 gap-1 min-w-0")
 		txt(ui, tr("The installer refused this plan"), "text-sm font-semibold text-destructive")
 		for pr in st.core_problems {
-			txt(ui, pr, "text-sm text-destructive/90")
+			txt(ui, text_tr(pr), "text-sm text-destructive/90")
 		}
 		p.end(ui)
 		hend(ui, box)
@@ -712,6 +699,8 @@ page_install :: proc(st: ^St, ui: ^p.Ctx) {
 
 		if failed {
 			txt(ui, snap.err, "text-sm font-mono text-destructive/90")
+		} else if snap.progress.detail.msgid != "" {
+			txt(ui, text_tr(snap.progress.detail), "text-sm text-muted-foreground whitespace-nowrap truncate")
 		} else if snap.progress.message != "" {
 			txt(ui, snap.progress.message, "text-sm font-mono text-muted-foreground whitespace-nowrap truncate")
 		}

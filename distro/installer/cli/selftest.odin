@@ -237,10 +237,11 @@ test_gpt :: proc() {
 		linux.close(fd)
 		eq(rerr, "", "gpt_read reads our table back")
 		eq(back.disk_guid, g.disk_guid, "disk GUID round trip")
-		eq(len(back.parts), 2, "two partitions read back")
-		if len(back.parts) == 2 {
+		eq(len(back.parts), 3, "three partitions read back")
+		if len(back.parts) == 3 {
 			eq(back.parts[0].name, "EFI system partition", "partition 1 name round trip")
 			eq(back.parts[1].part_guid, g.parts[1].part_guid, "root GUID round trip")
+			eq(back.parts[2].name, "BIOS boot partition", "partition 3 name round trip")
 		}
 
 		// The independent judge.
@@ -253,8 +254,12 @@ test_gpt :: proc() {
 		eq(label, core.guid_string(g.disk_guid), "sfdisk sees our disk GUID")
 		eq(first, 34, "first usable LBA")
 		eq(last, total - 34, "last usable LBA")
-		eq(len(parts), 2, "sfdisk sees two partitions")
-		if len(parts) == 2 && len(g.parts) == 2 {
+		eq(len(parts), 3, "sfdisk sees three partitions")
+		if len(parts) == 3 && len(g.parts) == 3 {
+			eq(parts[2].start, 34, "BIOS boot partition starts at the first usable LBA")
+			eq(parts[2].start + parts[2].size, 2048, "BIOS boot partition ends at 1 MiB")
+			eq(parts[2].type, core.BIOS_BOOT_TYPE, "BIOS boot type")
+			eq(parts[2].uuid, core.guid_string(g.parts[2].part_guid), "BIOS boot PARTUUID")
 			eq(parts[0].start, 2048, "ESP starts at 1 MiB")
 			eq(parts[0].size, 512 * 2048, "ESP is 512 MiB")
 			eq(parts[0].type, core.ESP_TYPE, "ESP type")
@@ -303,6 +308,8 @@ test_gpt :: proc() {
 	check(ok4, "layout with 4096-byte sectors")
 	eq(g4.first_usable, 6, "4K: first usable LBA (MBR, header, 4 entry sectors)")
 	eq(g4.parts[0].first_lba * 4096, 1024 * 1024, "4K: ESP at 1 MiB")
+	eq(g4.parts[2].first_lba, 6, "4K: BIOS boot partition after the entries")
+	eq(g4.parts[2].last_lba, 255, "4K: BIOS boot partition up to 1 MiB")
 	img4 := core.join(dir, "disk-4k.img")
 	make_image(img4, size)
 	fd4, _ := linux.open(strings.clone_to_cstring(img4, context.temp_allocator), {.RDWR, .CLOEXEC})
@@ -696,6 +703,7 @@ test_install_image :: proc() {
 	p.hostname = "desk"
 	p.repo = "http://example.org/palmframe/x86_64"
 	p.efi_boot_entry = true
+	p.swap_bytes = 64 << 20
 
 	o := core.default_options()
 	o.disk_image = true
@@ -703,6 +711,11 @@ test_install_image :: proc() {
 	o.efivars = efivars
 	o.log_path = core.join(dir, "install.log")
 	o.steps = {.Partition, .Format}
+	have_limine := os.is_file("/usr/bin/limine") && os.is_file(core.join(o.limine_dir, "limine-bios.sys"))
+	if !have_limine {
+		o.no_bios_boot = true
+		fmt.println("  skip  limine bios-install: no limine on this host")
+	}
 
 	steps_seen: bit_set[core.Step]
 	last_fraction: f32 = -1
@@ -728,7 +741,7 @@ test_install_image :: proc() {
 	g, gerr := core.gpt_read(fd, u64(size), 512)
 	eq(gerr, "", "the installed table reads back")
 	// The file systems, at the partitions' offsets.
-	if len(g.parts) == 2 {
+	if len(g.parts) == 3 {
 		esp_off := i64(g.parts[0].first_lba * 512)
 		root_off := i64(g.parts[1].first_lba * 512)
 		fat: [8]u8
@@ -766,6 +779,7 @@ test_install_image :: proc() {
 	check(monotonic, "progress fractions never go backwards")
 	check(steps_seen >= {.Partition, .Format, .Configure, .Bootloader, .Done}, "every step reported (%v)", steps_seen)
 	check_configured(root, g, efivars)
+	check_bios_boot(img, size, g, root, have_limine)
 
 	// Again: the same Boot#### is reused, BootOrder does not grow.
 	ok, err = core.install_with(p, o, nil, nil)
@@ -775,6 +789,51 @@ test_install_image :: proc() {
 	check(!os.exists(core.join(efivars, "Boot0002" + SUFFIX)), "no second Palmframe entry")
 	pw := slurp(core.join(root, "etc/passwd"))
 	eq(strings.count(pw, "\nalex:x:"), 1, "the user is not added twice")
+	eq(strings.count(slurp(core.join(root, "etc/fstab")), "/swapfile"), 1, "the swap file is in fstab once")
+
+	// A second disk in the same machine gets an entry of its own and leaves
+	// the first disk's alone; a reinstall of the first disk takes its old
+	// entry back.
+	{
+		img2 := core.join(dir, "disk2.img")
+		make_image(img2, size)
+		root2 := core.join(dir, "root2")
+		fake_root(root2)
+		p2 := p
+		p2.disk = img2
+		p2.hostname = "other"
+		p2.swap_bytes = 0
+		o2 := o
+		o2.target = root2
+		o2.no_bios_boot = true
+		o2.steps = {.Partition, .Format, .Mount, .Bootloader}
+		ok2, err2 := core.install_with(p2, o2, nil, nil)
+		check(ok2, "a second disk: %s", err2)
+		b1 := transmute([]u8)slurp(core.join(efivars, "Boot0001" + SUFFIX))
+		b2 := transmute([]u8)slurp(core.join(efivars, "Boot0002" + SUFFIX))
+		g1, _ := core.load_option_partition(b1[4:])
+		g2, ok2g := core.load_option_partition(b2[4:])
+		eq(g1, g.parts[0].part_guid, "Boot0001 still points at the first disk's ESP")
+		check(ok2g && g2 != g1, "Boot0002 points at the second disk's ESP")
+		eq(core.load_option_description(b2[4:]), "Palmframe (other)", "the second entry names its computer")
+		order2 := transmute([]u8)slurp(core.join(efivars, "BootOrder" + SUFFIX))
+		check(len(order2) == 10 && core.get_u16(order2[4:]) == 2 && core.get_u16(order2[6:]) == 1 && core.get_u16(order2[8:]) == 0, "BootOrder is 0002,0001,0000 (%v)", order2)
+
+		// Reinstall onto the first disk: new GUIDs, the same entry.
+		o.steps = {.Partition, .Format, .Mount, .Bootloader}
+		o.no_bios_boot = true
+		ok3, err3 := core.install_with(p, o, nil, nil)
+		check(ok3, "reinstalling the first disk: %s", err3)
+		check(!os.exists(core.join(efivars, "Boot0003" + SUFFIX)), "a reinstall makes no third entry")
+		b1n := transmute([]u8)slurp(core.join(efivars, "Boot0001" + SUFFIX))
+		g1n, _ := core.load_option_partition(b1n[4:])
+		check(g1n != g1, "Boot0001 now points at the reinstalled ESP")
+		b2n := transmute([]u8)slurp(core.join(efivars, "Boot0002" + SUFFIX))
+		eq(string(b2n), string(b2), "the second disk's entry is untouched")
+		order3 := transmute([]u8)slurp(core.join(efivars, "BootOrder" + SUFFIX))
+		check(len(order3) == 10 && core.get_u16(order3[4:]) == 1 && core.get_u16(order3[6:]) == 2, "BootOrder is 0001,0002,0000 (%v)", order3)
+		o.no_bios_boot = !have_limine
+	}
 
 	log := slurp(o.log_path)
 	check(strings.contains(log, "mkfs.ext4") && strings.contains(log, "installation finished"), "the log records commands and the outcome")
@@ -836,7 +895,14 @@ check_configured :: proc(root: string, g: core.Gpt, efivars: string) {
 	eq(lt, "../usr/share/zoneinfo/Europe/Paris", "/etc/localtime points into zoneinfo, relatively")
 	eq(slurp(core.join(root, "etc/timezone")), "Europe/Paris\n", "/etc/timezone")
 	fs := slurp(core.join(root, "etc/fstab"))
-	if len(g.parts) == 2 {
+	check(strings.contains(fs, "/swapfile\tnone\tswap\tdefaults\t0 0\n"), "fstab: the swap file")
+	sw, swerr := os.stat(core.join(root, "swapfile"), context.temp_allocator)
+	check(swerr == nil && sw.size == 64 << 20 && transmute(u32)sw.mode & 0o777 == 0o600, "/swapfile: 64 MiB, 0600")
+	if swerr == nil {
+		sig := slurp(core.join(root, "swapfile"))
+		check(len(sig) > 4096 && sig[4086:4096] == "SWAPSPACE2", "/swapfile has mkswap's signature")
+	}
+	if len(g.parts) >= 2 {
 		root_uuid := core.partuuid(g.parts[1].part_guid)
 		esp_uuid := core.partuuid(g.parts[0].part_guid)
 		check(strings.contains(fs, fmt.tprintf("PARTUUID=%s\t/\text4\t", root_uuid)), "fstab: root by PARTUUID (%s)", fs)
@@ -855,12 +921,49 @@ check_configured :: proc(root: string, g: core.Gpt, efivars: string) {
 	// The Boot#### variable: attributes, then the load option for partition 1.
 	b1 := transmute([]u8)slurp(core.join(efivars, "Boot0001" + SUFFIX))
 	check(len(b1) > 4 && core.get_u32(b1) == 7, "Boot0001 has NV|BS|RT")
-	if len(b1) > 4 && len(g.parts) == 2 {
-		want := core.efi_load_option("Palmframe", 1, g.parts[0].first_lba, g.parts[0].last_lba - g.parts[0].first_lba + 1, g.parts[0].part_guid, "\\EFI\\palmframe\\BOOTX64.EFI", context.temp_allocator)
+	if len(b1) > 4 && len(g.parts) >= 2 {
+		want := core.efi_load_option("Palmframe (desk)", 1, g.parts[0].first_lba, g.parts[0].last_lba - g.parts[0].first_lba + 1, g.parts[0].part_guid, "\\EFI\\palmframe\\BOOTX64.EFI", context.temp_allocator)
 		check(string(b1[4:]) == string(want), "Boot0001 names the ESP and \\EFI\\palmframe\\BOOTX64.EFI")
+		pg, pok := core.load_option_partition(b1[4:])
+		check(pok && pg == g.parts[0].part_guid, "the entry's partition GUID reads back")
 	}
 	order := transmute([]u8)slurp(core.join(efivars, "BootOrder" + SUFFIX))
 	check(len(order) == 8 && core.get_u32(order) == 7 && core.get_u16(order[4:]) == 1 && core.get_u16(order[6:]) == 0, "BootOrder is 0001,0000 (%v)", order)
+}
+
+// check_bios_boot: limine bios-install put its stage 1 into the MBR without
+// touching the protective partition entry, the GPT still reads, and the
+// stage 3 file is on the ESP.
+@(private = "file")
+check_bios_boot :: proc(img: string, size: i64, g: core.Gpt, root: string, have_limine: bool) {
+	if !have_limine {
+		return
+	}
+	check(os.is_file(core.join(root, "boot/efi/boot/limine/limine-bios.sys")), "limine-bios.sys on the ESP")
+	fd, _ := linux.open(strings.clone_to_cstring(img, context.temp_allocator), {.CLOEXEC})
+	defer linux.close(fd)
+	mbr: [512]u8
+	linux.pread(fd, mbr[:], 0)
+	code := false
+	for b in mbr[:440] {
+		if b != 0 {code = true}
+	}
+	check(code, "the MBR has boot code")
+	check(mbr[446 + 4] == 0xEE && mbr[510] == 0x55 && mbr[511] == 0xAA, "the protective MBR entry is intact")
+	back, err := core.gpt_read(fd, u64(size), 512)
+	eq(err, "", "the GPT still reads after bios-install")
+	check(len(back.parts) == 3 && back.parts[1].part_guid == g.parts[1].part_guid, "and is the same table")
+	if len(back.parts) == 3 {
+		stage2: [512]u8
+		linux.pread(fd, stage2[:], i64(back.parts[2].first_lba * 512))
+		nz := false
+		for b in stage2 {
+			if b != 0 {nz = true}
+		}
+		check(nz, "the BIOS boot partition holds limine's stage 2")
+	}
+	code2, out := exec("sfdisk", "--verify", img)
+	check(code2 == 0 && strings.contains(out, "No errors"), "sfdisk --verify after bios-install: %s", strings.trim_space(out))
 }
 
 // ------------------------------------------------- the real packages, too --

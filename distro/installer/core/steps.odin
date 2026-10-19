@@ -33,7 +33,7 @@ step_partition :: proc(c: ^Ctx) -> string {
 		flags += {.EXCL} // fails with EBUSY while anything on the disk is mounted
 	}
 	if c.o.dry_run {
-		logf(c, "would write a GPT on %s: 1 MiB gap, ESP 512 MiB (FAT32), root ext4 to the end", c.p.disk)
+		logf(c, "would write a GPT on %s: BIOS boot partition in the first MiB, ESP 512 MiB (FAT32), root ext4 to the end", c.p.disk)
 		return ""
 	}
 	fd, err := linux.open(strings.clone_to_cstring(c.p.disk, context.temp_allocator), flags)
@@ -59,7 +59,15 @@ step_partition :: proc(c: ^Ctx) -> string {
 		linux.close(fd)
 		return "cannot lay out partitions on this disk"
 	}
-	progress(c, 0.2, "Writing the partition table")
+	// Remember what the disk held: a UEFI boot entry that points at one of
+	// these partitions pointed at this disk (boot.odin reuses it).
+	if old, oerr := gpt_read(fd, size, ss, context.temp_allocator); oerr == "" {
+		for op in old.parts {
+			append(&c.old_guids, op.part_guid)
+		}
+		logf(c, "%s held a GPT with %d partitions; erasing it", c.p.disk, len(old.parts))
+	}
+	progress(c, 0.2, msg(.Writing_Partition_Table))
 	if e := gpt_write(fd, g); e != "" {
 		linux.close(fd)
 		return e
@@ -70,19 +78,20 @@ step_partition :: proc(c: ^Ctx) -> string {
 	if rerr != "" {
 		return fmt.tprintf("the table just written does not read back: %s", rerr)
 	}
-	if back.disk_guid != g.disk_guid || len(back.parts) != 2 || back.parts[1].part_guid != g.parts[1].part_guid {
+	if back.disk_guid != g.disk_guid || len(back.parts) != len(g.parts) || back.parts[1].part_guid != g.parts[1].part_guid {
 		return "the table just written reads back differently"
 	}
 	set_parts(c, back)
-	logf(c, "GPT written: disk %s; ESP %s LBA %d+%d; root %s LBA %d+%d",
+	logf(c, "GPT written: disk %s; ESP %s LBA %d+%d; root %s LBA %d+%d; BIOS boot %v",
 		guid_string(g.disk_guid, context.temp_allocator),
 		guid_string(c.parts.esp_guid, context.temp_allocator), c.parts.esp_first_lba, c.parts.esp_sectors,
-		guid_string(c.parts.root_guid, context.temp_allocator), c.parts.root_first_lba, c.parts.root_sectors)
+		guid_string(c.parts.root_guid, context.temp_allocator), c.parts.root_first_lba, c.parts.root_sectors,
+		c.parts.has_bios_boot)
 
 	if c.o.disk_image {
 		return ""
 	}
-	progress(c, 0.6, "Waiting for the kernel to see the new partitions")
+	progress(c, 0.6, msg(.Waiting_For_Partitions))
 	return reread_partitions(c)
 }
 
@@ -159,6 +168,9 @@ set_parts :: proc(c: ^Ctx, g: Gpt) {
 		root_first_lba = root.first_lba,
 		root_sectors   = root.last_lba - root.first_lba + 1,
 	}
+	if len(g.parts) >= BIOS_BOOT_NUMBER && guid_string(g.parts[BIOS_BOOT_NUMBER - 1].type_guid, context.temp_allocator) == BIOS_BOOT_TYPE {
+		c.parts.has_bios_boot = true
+	}
 	if !c.o.disk_image {
 		c.parts.esp_dev = partition_path(c.p.disk, 1)
 		c.parts.root_dev = partition_path(c.p.disk, 2)
@@ -181,6 +193,7 @@ load_parts :: proc(c: ^Ctx) -> string {
 		c.parts.sector_size = 512
 		c.parts.esp_first_lba = 2048
 		c.parts.esp_sectors = ESP_SIZE / 512
+		c.parts.has_bios_boot = true
 		c.have_parts = true
 		return ""
 	}
@@ -217,18 +230,18 @@ step_format :: proc(c: ^Ctx) -> string {
 		// mke2fs takes a byte offset and a size with a unit suffix.
 		esp_kib := c.parts.esp_sectors * ss / 1024
 		root_kib := c.parts.root_sectors * ss / 1024
-		progress(c, 0.1, "Formatting the EFI system partition")
+		progress(c, 0.1, msg(.Formatting_Esp))
 		if e := run(c, {"mkfs.fat", "-F", "32", "-n", "PALMEFI", fmt.tprintf("--offset=%d", c.parts.esp_first_lba * ss / 512), c.p.disk, fmt.tprintf("%d", esp_kib)}); e != "" {
 			return e
 		}
-		progress(c, 0.4, "Formatting the root partition")
+		progress(c, 0.4, msg(.Formatting_Root))
 		return run(c, {"mkfs.ext4", "-F", "-q", "-L", "palmroot", "-E", fmt.tprintf("offset=%d", c.parts.root_first_lba * ss), c.p.disk, fmt.tprintf("%dk", root_kib)})
 	}
-	progress(c, 0.1, "Formatting the EFI system partition")
+	progress(c, 0.1, msg(.Formatting_Esp))
 	if e := run(c, {"mkfs.fat", "-F", "32", "-n", "PALMEFI", c.parts.esp_dev}); e != "" {
 		return e
 	}
-	progress(c, 0.4, "Formatting the root partition")
+	progress(c, 0.4, msg(.Formatting_Root))
 	return run(c, {"mkfs.ext4", "-F", "-q", "-L", "palmroot", c.parts.root_dev})
 }
 
@@ -363,8 +376,9 @@ step_packages :: proc(c: ^Ctx) -> string {
 			pkg_state.done += 1
 			total := max(pkg_state.total, pkg_state.done)
 			name := strings.fields(line, context.temp_allocator)
-			msg := len(name) >= 2 ? fmt.tprintf("Installing %s (%d of %d)", name[1], pkg_state.done, total) : line
-			progress(c, f32(pkg_state.done) / f32(total), msg)
+			if len(name) >= 2 {
+				progress(c, f32(pkg_state.done) / f32(total), msg(.Installing_Package, name[1], fmt.tprint(pkg_state.done), fmt.tprint(total)))
+			}
 		}
 	})
 }

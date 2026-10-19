@@ -4,12 +4,22 @@
 # the new root and writes limine onto the new ESP, so it depends on the
 # packages that carry those tools. Built by distro/Makefile into
 # distro/out/bin/palm-install.
+#
+# It also carries limine's own tool, from the build host like the limine
+# package's boot files, for `limine bios-install`: install_core runs it to
+# put limine's BIOS stages into the MBR and the BIOS boot partition. The
+# limine package ships only the boot files, so the tool is kept where only
+# the installer looks (install_core's LIMINE_TOOL_PRIVATE); if the limine
+# package ever ships /usr/bin/limine, this line goes and PATH finds that.
+# The tool and limine-bios.sys must come from the same limine build, which
+# they do: both are the host's.
 pkgname  = palm-install
 pkgver   = 0.1.0
-pkgrel   = 0
+pkgrel   = 1
 pkgdesc  = Install Palmframe onto a disk (command line)
 license  = MIT
 depend   = glibc palm e2fsprogs dosfstools limine tzdata
 provides = cmd:palm-install
 
 file     = ${PALMFRAME_OUT}/bin/palm-install -> /usr/bin/palm-install mode 0755
+file     = /usr/bin/limine -> /usr/lib/palm-install/limine mode 0755

@@ -71,6 +71,21 @@ trf :: proc(msgid: string, args: ..any) -> string {
 	return mark(fmt.tprintf(format, ..wrapped), format)
 }
 
+// text_tr translates one of the core's messages (model.odin's Text): its
+// msgid through the catalogue, then its arguments, isolated as trf does.
+// The msgids are not literals here; the selftest finds them in the core's
+// MESSAGE_FORMAT instead.
+text_tr :: proc(t: Text) -> string {
+	if t.msgid == "" {
+		return ""
+	}
+	a: [len(t.args)]any
+	for i in 0 ..< t.nargs {
+		a[i] = t.args[i]
+	}
+	return trf(t.msgid, ..a[:t.nargs])
+}
+
 // mark prefixes the RIGHT-TO-LEFT MARK when the interface is right to left
 // and the translation is written in a right-to-left script. A translation
 // with no such letters ("%.1f GiB") is left alone: forced right to left it

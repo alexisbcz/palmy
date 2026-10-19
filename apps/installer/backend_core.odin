@@ -82,11 +82,40 @@ to_core :: proc(p: Plan) -> core.Plan {
 		repo           = p.repo,
 		packages       = p.packages,
 		efi_boot_entry = p.efi_boot_entry,
+		swap_bytes     = p.swap_bytes,
 	}
 }
 
-core_validate :: proc(p: Plan) -> (ok: bool, problems: []string) {
-	return core.validate(to_core(p))
+text_of :: proc(m: core.Message) -> Text {
+	t := Text {
+		msgid = core.message_format(m.id),
+		nargs = m.nargs,
+	}
+	t.args = m.args
+	return t
+}
+
+// core_validate returns the core's problems as Texts, translated where the
+// summary page draws them.
+core_validate :: proc(p: Plan) -> (ok: bool, problems: []Text) {
+	ms := core.validate_messages(to_core(p), core.default_options())
+	out := make([]Text, len(ms))
+	for m, i in ms {
+		out[i] = text_of(m)
+	}
+	return len(out) == 0, out
+}
+
+// core_message_msgids is every msgid the core can hand the GUI, for the
+// selftest's catalogue check.
+core_message_msgids :: proc() -> []string {
+	out := make([dynamic]string, context.temp_allocator)
+	for id in core.Msg {
+		if f := core.message_format(id); f != "" {
+			append(&out, f)
+		}
+	}
+	return out[:]
 }
 
 // core_install runs on the worker thread, with the worker's own callbacks
@@ -98,7 +127,7 @@ core_install :: proc(p: Plan, w: ^Worker) -> (ok: bool, err: string) {
 		worker_log((^Worker)(user), line)
 	}
 	report :: proc(pr: core.Progress, user: rawptr) {
-		worker_report(Progress{step = Install_Step(pr.step), fraction = pr.fraction, message = pr.message}, user)
+		worker_report(Progress{step = Install_Step(pr.step), fraction = pr.fraction, message = pr.message, detail = text_of(pr.detail)}, user)
 	}
 	return core.install_with(to_core(p), o, report, w)
 }

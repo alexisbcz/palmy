@@ -65,6 +65,8 @@ St :: struct {
 	confirm_open:   bool, // the erase dialog
 	confirmed:      string, // the path the user agreed to erase
 	dialog_focus:   bool, // the dialog just opened: focus Cancel
+	swap:           bool, // make a swap file on the new system
+	swap_bytes:     u64, // its size, from this machine's memory
 
 	// Account
 	full_name:      [dynamic]u8,
@@ -81,7 +83,7 @@ St :: struct {
 	show_password:  bool,
 
 	// Summary: the core's verdict, when it had objections.
-	core_problems:  []string,
+	core_problems:  []Text,
 
 	// Install
 	worker:         ^Worker,
@@ -105,6 +107,8 @@ state_init :: proc(st: ^St, b: Backend) {
 	st.disks = load_disks(&st.backend)
 	st.disk_i = -1
 	st.same_root = true
+	st.swap = true
+	st.swap_bytes = swap_size_for(memory_bytes(&st.backend))
 	st.visited = {.Language}
 	st.want_focus = true
 
@@ -120,6 +124,14 @@ state_init :: proc(st: ^St, b: Backend) {
 	// Start from whatever language the environment names, or English.
 	st.lang_i = 0
 	pick_language(st, st.lang_i)
+}
+
+// swap_size_for is the swap file offered by default: half the memory, in
+// whole GiB, at least 1 GiB and at most 4 GiB. It is room to page out what
+// sits idle, not hibernation, which Palmframe does not do.
+swap_size_for :: proc(mem: u64) -> u64 {
+	gib := (mem / 2 + (1 << 30) - 1) >> 30
+	return clamp(gib, 1, 4) << 30
 }
 
 // preselect_disk: one usable disk is the common case (a laptop, a QEMU
@@ -487,6 +499,7 @@ plan_of :: proc(st: ^St) -> Plan {
 		root_password = root,
 		packages = packages,
 		efi_boot_entry = os.is_dir("/sys/firmware/efi"),
+		swap_bytes = st.swap ? st.swap_bytes : 0,
 	}
 }
 

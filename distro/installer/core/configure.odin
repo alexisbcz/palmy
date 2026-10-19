@@ -48,19 +48,24 @@ step_configure :: proc(c: ^Ctx) -> string {
 		return fmt.tprintf("%s has no /etc/passwd; were the packages installed?", root)
 	}
 
-	progress(c, 0.05, "Setting the host name")
+	progress(c, 0.05, msg(.Setting_Hostname))
 	if e := write_hostname(c, root, p.hostname); e != "" {return e}
 
-	progress(c, 0.2, "Creating the user account")
+	progress(c, 0.2, msg(.Creating_User))
 	if e := write_accounts(c, root, p); e != "" {return e}
 
-	progress(c, 0.6, "Setting language, keyboard and time zone")
+	progress(c, 0.5, msg(.Setting_Locale))
 	if e := write_locale(c, root, p.language); e != "" {return e}
 	if e := write_keyboard(c, root, p.keyboard); e != "" {return e}
 	if e := write_timezone(c, root, p.timezone); e != "" {return e}
 
-	progress(c, 0.8, "Writing the file system table")
-	if e := write_fstab(c, root, c.parts); e != "" {return e}
+	if p.swap_bytes > 0 {
+		progress(c, 0.6, msg(.Creating_Swap, human_size(p.swap_bytes)))
+		if e := write_swapfile(c, root, p.swap_bytes); e != "" {return e}
+	}
+
+	progress(c, 0.8, msg(.Writing_Fstab))
+	if e := write_fstab(c, root, c.parts, p.swap_bytes > 0); e != "" {return e}
 	if e := write_repositories(c, root, p.repo); e != "" {return e}
 	return ""
 }
@@ -305,12 +310,12 @@ write_timezone :: proc(c: ^Ctx, root, zone: string) -> string {
 // needs no blkid — and the ESP at /boot/efi. The base file's comment header
 // is kept; entries for / and /boot/efi it may already have are replaced.
 @(private)
-write_fstab :: proc(c: ^Ctx, root: string, parts: Partition_Info) -> string {
+write_fstab :: proc(c: ^Ctx, root: string, parts: Partition_Info, swap := false) -> string {
 	path := join(root, "etc/fstab")
 	kept := make([dynamic]string, context.temp_allocator)
 	for l in read_lines(path) {
 		f := strings.fields(l, context.temp_allocator)
-		if len(f) >= 2 && !strings.has_prefix(f[0], "#") && (f[1] == "/" || f[1] == "/boot/efi") {
+		if len(f) >= 2 && !strings.has_prefix(f[0], "#") && (f[1] == "/" || f[1] == "/boot/efi" || f[0] == SWAPFILE) {
 			continue
 		}
 		append(&kept, l)
@@ -320,7 +325,50 @@ write_fstab :: proc(c: ^Ctx, root: string, parts: Partition_Info) -> string {
 	}
 	append(&kept, fmt.tprintf("PARTUUID=%s\t/\text4\trw,relatime\t0 1", partuuid(parts.root_guid)))
 	append(&kept, fmt.tprintf("PARTUUID=%s\t/boot/efi\tvfat\trw,relatime,fmask=0077,dmask=0077\t0 2", partuuid(parts.esp_guid)))
+	if swap {
+		append(&kept, fmt.tprintf("%s\tnone\tswap\tdefaults\t0 0", SWAPFILE))
+	}
 	return write_file(c, path, lines_text(kept[:]), 0o644)
+}
+
+// ------------------------------------------------------------- swap file --
+
+// The swap file lives on the root file system rather than in a partition of
+// its own: it can be resized or removed later without touching the table.
+// ext4 takes a swap file only when it has no holes, so the blocks are
+// allocated with fallocate(2) (zeros are written where that is not
+// supported), and only root may read it: it holds pages of every process.
+SWAPFILE :: "/swapfile"
+
+@(private)
+write_swapfile :: proc(c: ^Ctx, root: string, size: u64) -> string {
+	path := join(root, SWAPFILE)
+	_ = os.remove(path)
+	cpath := strings.clone_to_cstring(path, context.temp_allocator)
+	fd, err := linux.open(cpath, {.WRONLY, .CREAT, .EXCL, .CLOEXEC}, {.IRUSR, .IWUSR})
+	if err != .NONE {
+		return fmt.tprintf("create %s: %v", path, err)
+	}
+	r := linux.syscall(linux.SYS_fallocate, fd, 0, 0, uintptr(size))
+	if int(r) < 0 {
+		logf(c, "fallocate %s: %v; writing zeros instead", path, linux.Errno(-int(r)))
+		zero := make([]u8, 1 << 20, context.temp_allocator)
+		for off: u64 = 0; off < size; off += u64(len(zero)) {
+			n := min(u64(len(zero)), size - off)
+			if e := pwrite_all(fd, zero[:n], i64(off)); e != "" {
+				linux.close(fd)
+				return fmt.tprintf("%s: %s", path, e)
+			}
+		}
+	}
+	linux.fchmod(fd, {.IRUSR, .IWUSR})
+	linux.fsync(fd)
+	linux.close(fd)
+	if e := run(c, {"mkswap", path}); e != "" {
+		return e
+	}
+	logf(c, "swap file %s, %s", SWAPFILE, human_size(size))
+	return ""
 }
 
 // The installed system keeps palmframe-base's network repository unless the

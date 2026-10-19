@@ -237,8 +237,8 @@ msgstr "%d MiB"
 msgid "The whole disk will be used"
 msgstr "سيُستخدم القرص بأكمله"
 
-msgid "Palmframe erases the disk you choose and creates two partitions: a 512 MiB EFI system partition and an ext4 root file system on the rest. Sharing a disk with another system is not supported."
-msgstr "يمحو Palmframe القرص الذي تختاره وينشئ عليه قسمين: قسم نظام EFI بحجم 512 MiB ونظام ملفات جذر ext4 على المساحة الباقية. لا تُدعَم مشاركة القرص مع نظام آخر."
+msgid "Palmframe erases the disk you choose and creates a 512 MiB EFI system partition, a small BIOS boot partition so that older computers can start it too, and an ext4 root file system on the rest. Sharing a disk with another system is not supported."
+msgstr "يمسح Palmframe القرص الذي تختاره وينشئ قسم نظام EFI بحجم 512 ميبيبايت، وقسم إقلاع BIOS صغيرًا لتتمكن الحواسيب الأقدم من تشغيله أيضًا، ونظام ملفات جذر ext4 على المساحة المتبقية. مشاركة القرص مع نظام آخر غير مدعومة."
 
 msgid "No disks were found. Attach a disk and restart the installer."
 msgstr "لم يُعثر على أي قرص. صِل قرصًا ثم أعد تشغيل المثبِّت."
@@ -446,3 +446,168 @@ msgstr "أزل وسيط التثبيت، ثم أعد تشغيل الحاسوب �
 
 msgid "Restart now"
 msgstr "أعد التشغيل الآن"
+
+# --- the swap file (disk page, summary) -----------------------------------------
+msgid "Create a swap file of %s"
+msgstr "إنشاء ملف تبديل بحجم %s"
+
+msgid "Room on the disk for memory that is not in use, so that a full memory slows the computer down instead of closing programs."
+msgstr "مساحة على القرص للذاكرة غير المستخدمة، حتى يتباطأ الحاسوب عند امتلاء الذاكرة بدلًا من إغلاق البرامج."
+
+msgid "Swap"
+msgstr "التبديل"
+
+msgid "A swap file of %s"
+msgstr "ملف تبديل بحجم %s"
+
+msgid "None"
+msgstr "لا شيء"
+
+# --- install_core's messages: validate() problems and progress details --------
+# The msgids are MESSAGE_FORMAT in distro/installer/core/message.odin.
+msgid "The user name is empty."
+msgstr "اسم المستخدم فارغ."
+
+msgid "The user name has more than 32 characters."
+msgstr "يتجاوز اسم المستخدم 32 حرفًا."
+
+msgid "The user name %q must start with a lower-case letter or '_' and contain only a-z, 0-9, '-' and '_'."
+msgstr "يجب أن يبدأ اسم المستخدم %q بحرف لاتيني صغير أو '_' وألا يحتوي إلا على a-z و0-9 و'-' و'_'."
+
+msgid "The user name %q is used by the system."
+msgstr "اسم المستخدم %q يستخدمه النظام."
+
+msgid "The full name may not contain ':' or line breaks, and has at most 128 characters."
+msgstr "لا يجوز أن يحتوي الاسم الكامل على ':' أو فواصل أسطر، ولا يتجاوز 128 حرفًا."
+
+msgid "The password is empty."
+msgstr "كلمة المرور فارغة."
+
+msgid "The password may not contain line breaks."
+msgstr "لا يجوز أن تحتوي كلمة المرور على فواصل أسطر."
+
+msgid "The root password may not contain line breaks."
+msgstr "لا يجوز أن تحتوي كلمة مرور root على فواصل أسطر."
+
+msgid "The host name is empty."
+msgstr "اسم الحاسوب فارغ."
+
+msgid "The host name is longer than 253 characters."
+msgstr "يتجاوز اسم الحاسوب 253 حرفًا."
+
+msgid "The host name %q is not valid: each part has 1 to 63 characters and does not start or end with '-'."
+msgstr "اسم الحاسوب %q غير صالح: يتكون كل جزء من 1 إلى 63 حرفًا ولا يبدأ أو ينتهي بـ '-'."
+
+msgid "The host name %q may contain only letters, digits and '-'."
+msgstr "لا يجوز أن يحتوي اسم الحاسوب %q إلا على حروف لاتينية وأرقام و'-'."
+
+msgid "The language %q is not a locale name like fr_FR."
+msgstr "اللغة %q ليست اسم إعدادات محلية مثل fr_FR."
+
+msgid "The keyboard layout %q is not a valid name."
+msgstr "تخطيط لوحة المفاتيح %q ليس اسمًا صالحًا."
+
+msgid "The keyboard layout %s has no variant %q."
+msgstr "لا يحتوي تخطيط لوحة المفاتيح %s على البديل %q."
+
+msgid "There is no keyboard layout %q."
+msgstr "لا يوجد تخطيط لوحة مفاتيح باسم %q."
+
+msgid "The time zone %q is not a zone name like Europe/Paris."
+msgstr "المنطقة الزمنية %q ليست اسم منطقة مثل Europe/Paris."
+
+msgid "There is no time zone %q."
+msgstr "لا توجد منطقة زمنية باسم %q."
+
+msgid "The repository %q is neither an http:// URL nor an absolute path."
+msgstr "المستودع %q ليس عنوان http:// ولا مسارًا مطلقًا."
+
+msgid "%q is not a package name."
+msgstr "%q ليس اسم حزمة."
+
+msgid "The swap size %q is not a size like 2G or 512M."
+msgstr "حجم التبديل %q ليس حجمًا مثل 2G أو 512M."
+
+msgid "A swap file of %s leaves too little room on %s."
+msgstr "ملف تبديل بحجم %s يترك مساحة قليلة جدًا على %s."
+
+msgid "No disk is chosen."
+msgstr "لم يُختر أي قرص."
+
+msgid "%s is a device; a disk image must be a plain file."
+msgstr "%s جهاز؛ يجب أن تكون صورة القرص ملفًا عاديًا."
+
+msgid "The disk image %s is not a plain file."
+msgstr "صورة القرص %s ليست ملفًا عاديًا."
+
+msgid "The disk image %s holds %s; at least 4 GiB is needed."
+msgstr "سعة صورة القرص %s هي %s؛ يلزم 4 جيبيبايت على الأقل."
+
+msgid "%s holds the running system; choose another disk."
+msgstr "يحمل %s النظام قيد التشغيل؛ اختر قرصًا آخر."
+
+msgid "%s is read-only."
+msgstr "%s للقراءة فقط."
+
+msgid "%s holds %s; at least 4 GiB is needed."
+msgstr "سعة %s هي %s؛ يلزم 4 جيبيبايت على الأقل."
+
+msgid "%s has a mounted file system; unmount it first."
+msgstr "على %s نظام ملفات مُركَّب؛ افصله أولًا."
+
+msgid "There is no disk %s."
+msgstr "لا يوجد قرص %s."
+
+msgid "Partitioning"
+msgstr "جارٍ التقسيم"
+
+msgid "Formatting"
+msgstr "جارٍ التهيئة"
+
+msgid "Unmounting"
+msgstr "جارٍ الفصل"
+
+msgid "Writing the partition table"
+msgstr "جارٍ كتابة جدول الأقسام"
+
+msgid "Waiting for the kernel to see the new partitions"
+msgstr "في انتظار أن ترى النواة الأقسام الجديدة"
+
+msgid "Formatting the EFI system partition"
+msgstr "جارٍ تهيئة قسم نظام EFI"
+
+msgid "Formatting the root partition"
+msgstr "جارٍ تهيئة قسم الجذر"
+
+msgid "Installing %s (%s of %s)"
+msgstr "جارٍ تثبيت %s (%s من %s)"
+
+msgid "Setting the host name"
+msgstr "جارٍ ضبط اسم الحاسوب"
+
+msgid "Creating the user account"
+msgstr "جارٍ إنشاء حساب المستخدم"
+
+msgid "Setting language, keyboard and time zone"
+msgstr "جارٍ ضبط اللغة ولوحة المفاتيح والمنطقة الزمنية"
+
+msgid "Creating a %s swap file"
+msgstr "جارٍ إنشاء ملف تبديل بحجم %s"
+
+msgid "Writing the file system table"
+msgstr "جارٍ كتابة جدول أنظمة الملفات"
+
+msgid "Copying the boot loader"
+msgstr "جارٍ نسخ محمِّل الإقلاع"
+
+msgid "Copying the kernel"
+msgstr "جارٍ نسخ النواة"
+
+msgid "Making the disk start on BIOS computers"
+msgstr "جارٍ تجهيز القرص للإقلاع على حواسيب BIOS"
+
+msgid "Adding the UEFI boot entry"
+msgstr "جارٍ إضافة مُدخَل إقلاع UEFI"
+
+msgid "UEFI boot entry not written; the disk still boots through the fallback path"
+msgstr "لم يُكتب مُدخَل إقلاع UEFI؛ سيُقلِع القرص مع ذلك عبر المسار الاحتياطي"

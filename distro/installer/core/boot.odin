@@ -12,8 +12,18 @@ package install_core
 //                               so another OS reinstalling the fallback path
 //                               cannot take Palmframe's entry with it
 //   boot/limine/limine.conf     limine looks next to itself first, then here;
-//                               both copies of the binary find this one
+//                               both copies of the binary find this one,
+//                               and so does the BIOS stage
+//   boot/limine/limine-bios.sys limine's BIOS stage 3, which the stage 2 in
+//                               the BIOS boot partition loads from here
 //   vmlinuz                     a copy of the root's /boot/vmlinuz
+//
+// For a BIOS, `limine bios-install <disk> 3` puts limine's stage 1 into the
+// protective MBR's boot code (the partition table bytes stay as they are)
+// and its stage 2 into the BIOS boot partition gpt.odin lays out. The same
+// disk then starts on either kind of firmware. The tool is limine's own
+// (Options.limine_tool), because the two stages it embeds must match the
+// limine-bios.sys beside them, and both come from the same limine build.
 //
 // The kernel is told its root by PARTUUID, which the kernel resolves itself
 // (no initramfs, no blkid), and which stays right if disks are renumbered.
@@ -24,6 +34,14 @@ package install_core
 // drive node naming the partition by GUID, then the file path — which the
 // firmware expands by finding the partition. Failing to write the entry does
 // not fail the installation: the fallback path still boots.
+//
+// Each installed disk gets an entry of its own. An existing entry is reused
+// only when it is ours (its description starts with "Palmframe") and it
+// points at this disk: at the new ESP (a rerun), or at a partition of the
+// table this installation erased (a reinstall). An entry for another disk is
+// left alone, so a second disk installed in the same machine does not take
+// the first one's entry. The description names the computer when its name
+// is not the default, so a firmware menu can tell two installs apart.
 
 import "core:fmt"
 import "core:os"
@@ -46,6 +64,14 @@ EFIVARFS_MAGIC :: 0xde5e81e4
 BOOT_ENTRY_NAME :: "Palmframe"
 BOOT_LOADER_PATH :: "\\EFI\\palmframe\\BOOTX64.EFI"
 KERNEL_CMDLINE_TAIL :: "rw console=tty0 console=ttyS0,115200 quiet loglevel=3"
+// Where the kernel is on the ESP, as limine.conf names it (boot():/...) and
+// as the bootloader step copies it. One place to change when the linux
+// package starts carrying the ESP's kernel itself.
+ESP_KERNEL :: "vmlinuz"
+// limine's host tool on the live system when it is not in PATH: the
+// palm-install package carries a copy there (the limine package ships only
+// the boot files).
+LIMINE_TOOL_PRIVATE :: "/usr/lib/palm-install/limine"
 
 @(private)
 step_bootloader :: proc(c: ^Ctx) -> string {
@@ -55,8 +81,11 @@ step_bootloader :: proc(c: ^Ctx) -> string {
 	esp := c.t.esp
 	if c.o.dry_run {
 		logf(c, "would install limine to %s/EFI/BOOT and %s/EFI/palmframe, copy the kernel, write limine.conf with root=PARTUUID=<root>", esp, esp)
+		if !c.o.no_bios_boot {
+			logf(c, "would run limine bios-install %s %d (BIOS boot code)", c.p.disk, BIOS_BOOT_NUMBER)
+		}
 		if c.p.efi_boot_entry {
-			logf(c, "would write Boot#### \"%s\" -> %s and put it first in BootOrder", BOOT_ENTRY_NAME, BOOT_LOADER_PATH)
+			logf(c, "would write Boot#### \"%s\" -> %s and put it first in BootOrder", boot_entry_description(c.p.hostname), BOOT_LOADER_PATH)
 		}
 		return ""
 	}
@@ -73,7 +102,7 @@ step_bootloader :: proc(c: ^Ctx) -> string {
 		return "the target has no /boot/vmlinuz; is the linux package installed?"
 	}
 
-	progress(c, 0.1, "Copying the boot loader")
+	progress(c, 0.1, msg(.Copying_Boot_Loader))
 	for d in ([]string{"EFI/BOOT", "EFI/palmframe", "boot/limine"}) {
 		if e := mkdir_p(join(esp, d)); e != nil {
 			return fmt.tprintf("mkdir %s: %v", join(esp, d), e)
@@ -84,8 +113,8 @@ step_bootloader :: proc(c: ^Ctx) -> string {
 			return fmt.tprintf("copy %s: %v", dst, e)
 		}
 	}
-	progress(c, 0.3, "Copying the kernel")
-	if e := os.copy_file(join(esp, "vmlinuz"), kernel); e != nil {
+	progress(c, 0.3, msg(.Copying_Kernel))
+	if e := os.copy_file(join(esp, ESP_KERNEL), kernel); e != nil {
 		return fmt.tprintf("copy the kernel: %v", e)
 	}
 	if e := write_file(c, join(esp, "boot/limine/limine.conf"), limine_conf(c.parts.root_guid), 0o644); e != "" {
@@ -93,19 +122,74 @@ step_bootloader :: proc(c: ^Ctx) -> string {
 	}
 	logf(c, "limine installed on the ESP from %s", limine)
 
+	if !c.o.no_bios_boot {
+		progress(c, 0.5, msg(.Installing_Bios_Boot))
+		if e := install_bios_boot(c); e != "" {
+			// A machine that booted through a BIOS needs this to start
+			// the disk at all; anywhere else the disk still starts
+			// through UEFI, so it is a warning.
+			if !c.o.disk_image && !os.is_dir("/sys/firmware/efi") {
+				return fmt.tprintf("BIOS boot code: %s", e)
+			}
+			logf(c, "warning: BIOS boot code not installed: %s (the disk starts only through UEFI)", e)
+		}
+	}
+
 	if !c.p.efi_boot_entry {
 		logf(c, "no UEFI boot entry requested; the disk boots through EFI/BOOT/BOOTX64.EFI")
 		return ""
 	}
-	progress(c, 0.7, "Adding the UEFI boot entry")
+	progress(c, 0.7, msg(.Adding_Uefi_Entry))
 	num, werr := write_boot_entry(c)
 	if werr != "" {
 		logf(c, "warning: UEFI boot entry not written: %s (the disk still boots through the fallback path)", werr)
-		progress(c, 1, "UEFI boot entry not written; the disk still boots through the fallback path")
+		progress(c, 1, msg(.Uefi_Entry_Failed))
 		return ""
 	}
-	logf(c, "UEFI: Boot%04X \"%s\" -> %s, first in BootOrder", num, BOOT_ENTRY_NAME, BOOT_LOADER_PATH)
+	logf(c, "UEFI: Boot%04X \"%s\" -> %s, first in BootOrder", num, boot_entry_description(c.p.hostname), BOOT_LOADER_PATH)
 	return ""
+}
+
+// install_bios_boot copies limine's BIOS stage 3 onto the ESP and runs
+// `limine bios-install <disk> 3`.
+@(private = "file")
+install_bios_boot :: proc(c: ^Ctx) -> string {
+	if !c.parts.has_bios_boot {
+		return "the disk has no BIOS boot partition"
+	}
+	// The stage 3 file must come from the same limine build as the tool,
+	// which is the live system's: its directory first.
+	sys := join(c.o.limine_dir, "limine-bios.sys")
+	if !os.is_file(sys) {
+		sys = join(c.t.root, "usr/share/limine/limine-bios.sys")
+	}
+	if !os.is_file(sys) {
+		return fmt.tprintf("limine-bios.sys was found neither in %s nor in the target", c.o.limine_dir)
+	}
+	if e := os.copy_file(join(c.t.esp, "boot/limine/limine-bios.sys"), sys); e != nil {
+		return fmt.tprintf("copy limine-bios.sys: %v", e)
+	}
+	tool := c.o.limine_tool
+	if tool == "" {
+		tool = find_program("limine")
+	}
+	if tool == "" && os.is_file(LIMINE_TOOL_PRIVATE) {
+		tool = LIMINE_TOOL_PRIVATE
+	}
+	if tool == "" {
+		return fmt.tprintf("limine's tool was found neither in PATH nor at %s", LIMINE_TOOL_PRIVATE)
+	}
+	// Everything is on disk before the boot code points at it.
+	linux.sync()
+	return run(c, {tool, "bios-install", c.p.disk, fmt.tprint(BIOS_BOOT_NUMBER)})
+}
+
+// boot_entry_description is the name the firmware's boot menu shows.
+boot_entry_description :: proc(hostname: string) -> string {
+	if hostname == "" || hostname == "palmframe" {
+		return BOOT_ENTRY_NAME
+	}
+	return fmt.tprintf("%s (%s)", BOOT_ENTRY_NAME, hostname)
 }
 
 limine_conf :: proc(root_guid: Guid) -> string {
@@ -118,14 +202,14 @@ default_entry: 1
 
 /Palmframe
     protocol: linux
-    path: boot():/vmlinuz
+    path: boot():/%s
     cmdline: %s
 
 /Palmframe (single user, root shell)
     protocol: linux
-    path: boot():/vmlinuz
+    path: boot():/%s
     cmdline: %s
-`, cmdline, single)
+`, ESP_KERNEL, cmdline, ESP_KERNEL, single)
 }
 
 // --------------------------------------------------------- EFI_LOAD_OPTION --
@@ -200,6 +284,37 @@ load_option_description :: proc(data: []u8) -> string {
 	return string(buf[:n])
 }
 
+// load_option_partition is the partition GUID of the first hard drive node
+// in a load option's device path, which is the partition the entry boots.
+load_option_partition :: proc(data: []u8) -> (g: Guid, ok: bool) {
+	if len(data) < 6 {
+		return
+	}
+	dp_len := int(get_u16(data[4:]))
+	o := 6
+	for o + 1 < len(data) && get_u16(data[o:]) != 0 {
+		o += 2
+	}
+	o += 2 // the description's terminating zero
+	end := min(len(data), o + dp_len)
+	for o + 4 <= end {
+		typ, sub := data[o], data[o + 1]
+		n := int(get_u16(data[o + 2:]))
+		if n < 4 || o + n > end {
+			return
+		}
+		if typ == 0x04 && sub == 0x01 && n >= 42 {
+			copy(g[:], data[o + 24:o + 40])
+			return g, true
+		}
+		if typ == 0x7F {
+			return
+		}
+		o += n
+	}
+	return
+}
+
 @(private = "file")
 utf16_z :: proc(s: string) -> []u16 {
 	buf := make([]u16, 2 * len(s) + 1, context.temp_allocator)
@@ -240,8 +355,9 @@ write_boot_entry_in :: proc(c: ^Ctx, dir: string) -> (num: int, err: string) {
 	if rerr != nil {
 		return 0, fmt.tprintf("%s: %v", dir, rerr)
 	}
-	// Reuse an entry of ours from an earlier installation rather than pile
-	// up "Palmframe" entries; otherwise take the lowest free number.
+	// Reuse an entry of ours that pointed at this disk rather than pile up
+	// entries; otherwise take the lowest free number. An entry of ours for
+	// another disk is that disk's, and stays.
 	used := make(map[int]bool, context.temp_allocator)
 	num = -1
 	suffix :: "-" + EFI_GLOBAL_GUID
@@ -253,8 +369,12 @@ write_boot_entry_in :: proc(c: ^Ctx, dir: string) -> (num: int, err: string) {
 		if !ok {continue}
 		used[n] = true
 		data, _ := os.read_entire_file_from_path(join(dir, fi.name), context.temp_allocator)
-		if num < 0 && len(data) > 4 && load_option_description(data[4:]) == BOOT_ENTRY_NAME {
+		if num >= 0 || len(data) <= 4 || !strings.has_prefix(load_option_description(data[4:]), BOOT_ENTRY_NAME) {
+			continue
+		}
+		if g, gok := load_option_partition(data[4:]); gok && (g == c.parts.esp_guid || slice.contains(c.old_guids[:], g)) {
 			num = n
+			logf(c, "UEFI: Boot%04X pointed at this disk; reusing it", n)
 		}
 	}
 	if num < 0 {
@@ -264,7 +384,7 @@ write_boot_entry_in :: proc(c: ^Ctx, dir: string) -> (num: int, err: string) {
 		return 0, "no free Boot#### number"
 	}
 
-	opt := efi_load_option(BOOT_ENTRY_NAME, 1, c.parts.esp_first_lba, c.parts.esp_sectors, c.parts.esp_guid, BOOT_LOADER_PATH, context.temp_allocator)
+	opt := efi_load_option(boot_entry_description(c.p.hostname), ESP_NUMBER, c.parts.esp_first_lba, c.parts.esp_sectors, c.parts.esp_guid, BOOT_LOADER_PATH, context.temp_allocator)
 	if e := efivar_write(join(dir, fmt.tprintf("Boot%04X%s", num, suffix)), opt); e != "" {
 		return 0, e
 	}

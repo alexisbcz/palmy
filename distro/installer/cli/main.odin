@@ -7,6 +7,7 @@ package palm_install
 // the same Plan, asks the same validate(), and runs the same install(), so
 // testing one tests the engine of both.
 //
+//	palm-install                  (on a terminal: asks the questions, interactive.odin)
 //	palm-install --disk /dev/vdb --user alex --password-file - --timezone Europe/Paris --yes
 //	palm-install --answers install.conf --yes --json
 //	palm-install --list-disks | --list-layouts | --list-zones | --list-languages [--json]
@@ -41,8 +42,10 @@ EXIT_REFUSED :: 4
 EXIT_FAILED :: 7
 
 USAGE :: `usage: palm-install [options]
+       palm-install [--interactive]     ask each question on this terminal
 
-install Palmframe on a disk, erasing it (GPT: 512 MiB ESP + ext4 root)
+install Palmframe on a disk, erasing it (GPT: 512 MiB ESP + ext4 root, and a
+BIOS boot partition so the disk starts under UEFI and under a BIOS)
 
   --disk <dev>                  the disk to erase, e.g. /dev/vda
   --language <ll_CC>            fr_FR (default en_US)
@@ -55,7 +58,9 @@ install Palmframe on a disk, erasing it (GPT: 512 MiB ESP + ext4 root)
   --root-password-file <file|-> root's password (default: the user's)
   --repo <path|url>             (default file:///usr/share/palm/repo)
   --package <name>              repeatable (default palmframe)
+  --swap <size>                 a swap file on the root: 2G, 512M (default none)
   --no-efi-entry                do not write a UEFI Boot#### variable
+  --no-bios-boot                do not install limine's BIOS boot code
   --answers <file>              key = value lines with the same names as the
                                 options (password = ... allowed); options win
   --yes                         really do it
@@ -72,7 +77,7 @@ test paths (build host):
   --steps <a,b,...>             only these of partition,format,mount,packages,
                                 configure,bootloader,unmount
   --efivars <dir>               a directory standing in for efivarfs
-  --palm <path> --keys-dir <dir> --limine-dir <dir> --log <file>
+  --palm <path> --keys-dir <dir> --limine-dir <dir> --limine-tool <path> --log <file>
   --selftest | --version | --help
 `
 
@@ -101,8 +106,13 @@ run :: proc(argv: []string) -> int {
 		plan = core.default_plan(),
 		opts = core.default_options(),
 	}
+	if len(argv) == 0 && is_terminal(os.stdin) {
+		return interactive(&a)
+	}
 	if len(argv) == 1 {
 		switch argv[0] {
+		case "--interactive":
+			return interactive(&a)
 		case "--selftest":
 			return selftest()
 		case "--version":
@@ -214,35 +224,50 @@ run :: proc(argv: []string) -> int {
 		a.plan.root_password = pw
 	}
 
-	// Validate the whole plan for a full install, the relevant part for a
-	// test run that only does some steps.
-	partial := a.opts.steps != {} && a.opts.steps != ~bit_set[core.Step]{}
-	ok, problems := core.validate_with(a.plan, a.opts)
-	if !ok {
-		relevant := problems
-		if partial {
-			relevant = filter_problems(problems, a.opts.steps)
-		}
-		if len(relevant) > 0 {
-			if a.json {
-				fmt.printf("{{\"event\":\"invalid\",\"problems\":[")
-				for p, i in relevant {
-					fmt.printf("%s%s", i > 0 ? "," : "", json_str(p))
-				}
-				fmt.println("]}")
-			} else {
-				fmt.eprintln("palm-install: the plan is not valid:")
-				for p in relevant {
-					fmt.eprintf("  - %s\n", p)
-				}
-			}
-			return EXIT_REFUSED
-		}
+	if code := check_plan(&a); code != EXIT_OK {
+		return code
 	}
-
 	if !a.json {
 		print_summary(&a)
 	}
+	return install(&a)
+}
+
+// check_plan validates the whole plan for a full install, the relevant part
+// for a test run that only does some steps, and prints the problems.
+check_plan :: proc(a: ^Args) -> int {
+	partial := a.opts.steps != {} && a.opts.steps != ~bit_set[core.Step]{}
+	problems := core.validate_messages(a.plan, a.opts)
+	relevant := problems
+	if partial {
+		relevant = filter_problems(problems, a.opts.steps)
+	}
+	if len(relevant) == 0 {
+		return EXIT_OK
+	}
+	if a.json {
+		// "problems" are the English sentences, as before; "codes" the
+		// stable names of the same problems, in the same order.
+		fmt.printf("{{\"event\":\"invalid\",\"problems\":[")
+		for p, i in relevant {
+			fmt.printf("%s%s", i > 0 ? "," : "", json_str(core.message_text(p)))
+		}
+		fmt.printf("],\"codes\":[")
+		for p, i in relevant {
+			fmt.printf("%s%s", i > 0 ? "," : "", json_str(core.message_code(p.id)))
+		}
+		fmt.println("]}")
+	} else {
+		fmt.eprintln("palm-install: the plan is not valid:")
+		for p in relevant {
+			fmt.eprintf("  - %s\n", core.message_text(p))
+		}
+	}
+	return EXIT_REFUSED
+}
+
+// install asks for --yes (unless dry), then runs the plan.
+install :: proc(a: ^Args) -> int {
 	if !a.opts.dry_run {
 		if !a.yes {
 			return fail_code(EXIT_REFUSED, "refusing to erase %s without --yes", a.plan.disk)
@@ -261,7 +286,7 @@ run :: proc(argv: []string) -> int {
 			}
 		}
 	}
-	ok2, err := core.install_with(a.plan, a.opts, on_progress, &a)
+	ok2, err := core.install_with(a.plan, a.opts, on_progress, a)
 	if a.json {
 		if ok2 {
 			fmt.println("{\"event\":\"done\",\"ok\":true}")
@@ -286,7 +311,7 @@ takes_value :: proc(key: string) -> bool {
 	switch key {
 	case "disk", "disk-image", "language", "keyboard", "timezone", "hostname", "user", "full-name",
 	     "password-file", "root-password-file", "repo", "package", "answers", "target", "steps",
-	     "efivars", "palm", "keys-dir", "limine-dir", "log":
+	     "efivars", "palm", "keys-dir", "limine-dir", "limine-tool", "log", "swap":
 		return true
 	}
 	return false
@@ -325,6 +350,12 @@ apply :: proc(a: ^Args, key, val: string, has_val: bool, from_answers: bool) -> 
 		append(&a.packages, val)
 	case "packages":
 		for f in strings.fields(val) {append(&a.packages, f)}
+	case "swap":
+		n, ok := parse_size(val)
+		if !ok {return usage_error("--swap: %s", core.message_text(core.msg(.Swap_Invalid, val)))}
+		a.plan.swap_bytes = n
+	case "no-bios-boot": a.opts.no_bios_boot = true
+	case "limine-tool": a.opts.limine_tool = val
 	case "no-efi-entry":
 		a.plan.efi_boot_entry = false
 		a.efi_given = true
@@ -404,12 +435,35 @@ read_secret :: proc(path, what: string) -> (string, int) {
 	return strings.trim_right(s, "\r"), EXIT_OK
 }
 
+// parse_size reads "none", "0", "2G", "2GiB", "512M", "512MiB" or a number of
+// bytes.
+parse_size :: proc(s: string) -> (u64, bool) {
+	t := strings.to_lower(strings.trim_space(s), context.temp_allocator)
+	if t == "none" || t == "no" || t == "0" || t == "" {
+		return 0, true
+	}
+	t = strings.trim_suffix(strings.trim_suffix(t, "ib"), "b")
+	mult := u64(1)
+	switch {
+	case strings.has_suffix(t, "g"): mult, t = 1 << 30, t[:len(t) - 1]
+	case strings.has_suffix(t, "m"): mult, t = 1 << 20, t[:len(t) - 1]
+	case strings.has_suffix(t, "k"): mult, t = 1 << 10, t[:len(t) - 1]
+	}
+	n: u64
+	if t == "" {return 0, false}
+	for ch in transmute([]u8)t {
+		if ch < '0' || ch > '9' {return 0, false}
+		n = n * 10 + u64(ch - '0')
+	}
+	return n * mult, true
+}
+
 // filter_problems keeps what matters to the steps being run: a test that only
 // partitions an image does not need a user name.
-filter_problems :: proc(problems: []string, steps: bit_set[core.Step]) -> []string {
-	out := make([dynamic]string)
+filter_problems :: proc(problems: []core.Message, steps: bit_set[core.Step]) -> []core.Message {
+	out := make([dynamic]core.Message)
 	for p in problems {
-		disk := strings.contains(p, "disk") || strings.contains(p, "4 GiB") || strings.contains(p, "running system") || strings.contains(p, "mounted")
+		disk := strings.has_prefix(core.message_code(p.id), "disk_")
 		if disk && steps & {.Partition, .Format, .Mount} != {} {
 			append(&out, p)
 		} else if !disk && steps & {.Configure, .Packages} != {} {
@@ -435,6 +489,10 @@ print_summary :: proc(a: ^Args) {
 	if len(pk) == 0 {pk = {"palmframe"}}
 	fmt.printf("Palmframe will be installed on %s.\n", what)
 	fmt.printf("  EVERYTHING ON %s WILL BE ERASED: a 512 MiB EFI partition and an ext4 root.\n", p.disk)
+	fmt.printf("  boot: UEFI%s\n", a.opts.no_bios_boot ? " only (no BIOS boot code)" : " and BIOS")
+	if p.swap_bytes > 0 {
+		fmt.printf("  swap file: %s\n", core.human_size(p.swap_bytes))
+	}
 	kb := p.keyboard.layout
 	if p.keyboard.variant != "" {kb = fmt.tprintf("%s:%s", kb, p.keyboard.variant)}
 	fmt.printf("  language %s, keyboard %s, time zone %s\n", p.language, kb, p.timezone)
@@ -448,8 +506,8 @@ last_msg: string
 
 on_progress :: proc(pr: core.Progress, user: rawptr) {
 	if g_json {
-		fmt.printf("{{\"event\":\"progress\",\"step\":%s,\"fraction\":%.3f,\"message\":%s}}\n",
-			json_str(core.step_name(pr.step)), pr.fraction, json_str(pr.message))
+		fmt.printf("{{\"event\":\"progress\",\"step\":%s,\"fraction\":%.3f,\"message\":%s,\"code\":%s}}\n",
+			json_str(core.step_name(pr.step)), pr.fraction, json_str(pr.message), json_str(core.message_code(pr.detail.id)))
 		return
 	}
 	if pr.message == last_msg {return}

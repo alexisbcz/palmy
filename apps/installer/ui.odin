@@ -483,6 +483,36 @@ disk_model :: proc(d: Disk) -> string {
 	return d.model
 }
 
+// checkbox is a focusable row with a box and a label (and an optional line
+// under it). Space or a click toggles it; Enter on it is Next, as everywhere
+// else.
+checkbox :: proc(ui: ^p.Ctx, on: ^bool, label: string, detail := "") {
+	check := hrow(ui, "w-full items-start gap-3 py-1 rounded-md")
+	p.focusable(ui, check)
+	p.apply(ui, "cursor-pointer")
+	if p.focused(ui, check) {
+		p.apply(ui, "ring-3 ring-ring/50")
+	}
+	toggled := p.clickable(ui, check) || (p.focused(ui, check) && p.key_pressed(ui, p.KEY_SPACE, false))
+	{
+		p.div(ui, on^ ? "size-4 mt-0.5 rounded-sm bg-primary border border-primary items-center justify-center shrink-0" : "size-4 mt-0.5 rounded-sm border border-input shrink-0")
+		if on^ {
+			p.icon(ui, II_CHECK, "size-3 text-primary-foreground")
+		}
+		p.end(ui)
+		p.col(ui, "flex-1 gap-0.5 min-w-0")
+		txt(ui, label, "text-sm text-foreground")
+		if detail != "" {
+			txt(ui, detail, "text-xs text-muted-foreground")
+		}
+		p.end(ui)
+	}
+	hend(ui, check)
+	if toggled {
+		on^ = !on^
+	}
+}
+
 // size_label: binary units, which is what partition sizes are stated in
 // (512 MiB ESP) and what the 4 GiB minimum means.
 size_label :: proc(b: u64) -> string {

@@ -235,8 +235,8 @@ msgstr "%d MiB"
 msgid "The whole disk will be used"
 msgstr "ディスク全体が使われます"
 
-msgid "Palmframe erases the disk you choose and creates two partitions: a 512 MiB EFI system partition and an ext4 root file system on the rest. Sharing a disk with another system is not supported."
-msgstr "Palmframe は選んだディスクを消去し、512 MiB の EFI システムパーティションと、残りすべてを使う ext4 のルートファイルシステムの 2 つを作成します。ほかのシステムとのディスクの共有には対応していません。"
+msgid "Palmframe erases the disk you choose and creates a 512 MiB EFI system partition, a small BIOS boot partition so that older computers can start it too, and an ext4 root file system on the rest. Sharing a disk with another system is not supported."
+msgstr "Palmframe は選んだディスクを消去し、512 MiB の EFI システムパーティション、古いコンピューターでも起動できるようにする小さな BIOS ブートパーティション、残り全体の ext4 ルートファイルシステムを作成します。ほかのシステムとのディスクの共有には対応していません。"
 
 msgid "No disks were found. Attach a disk and restart the installer."
 msgstr "ディスクが見つかりません。ディスクを接続してから、インストーラーを再起動してください。"
@@ -444,3 +444,168 @@ msgstr "インストールメディアを取り外してから、コンピュー
 
 msgid "Restart now"
 msgstr "今すぐ再起動"
+
+# --- the swap file (disk page, summary) -----------------------------------------
+msgid "Create a swap file of %s"
+msgstr "%s のスワップファイルを作成する"
+
+msgid "Room on the disk for memory that is not in use, so that a full memory slows the computer down instead of closing programs."
+msgstr "使われていないメモリーを置くためのディスク上の領域です。メモリーがいっぱいになっても、プログラムが終了される代わりに動作が遅くなるだけで済みます。"
+
+msgid "Swap"
+msgstr "スワップ"
+
+msgid "A swap file of %s"
+msgstr "%s のスワップファイル"
+
+msgid "None"
+msgstr "なし"
+
+# --- install_core's messages: validate() problems and progress details --------
+# The msgids are MESSAGE_FORMAT in distro/installer/core/message.odin.
+msgid "The user name is empty."
+msgstr "ユーザー名が空です。"
+
+msgid "The user name has more than 32 characters."
+msgstr "ユーザー名が 32 文字を超えています。"
+
+msgid "The user name %q must start with a lower-case letter or '_' and contain only a-z, 0-9, '-' and '_'."
+msgstr "ユーザー名 %q は英小文字か「_」で始め、a-z、0-9、「-」、「_」だけを使ってください。"
+
+msgid "The user name %q is used by the system."
+msgstr "ユーザー名 %q はシステムが使用しています。"
+
+msgid "The full name may not contain ':' or line breaks, and has at most 128 characters."
+msgstr "フルネームには「:」や改行を使えません。また 128 文字以内にしてください。"
+
+msgid "The password is empty."
+msgstr "パスワードが空です。"
+
+msgid "The password may not contain line breaks."
+msgstr "パスワードに改行は使えません。"
+
+msgid "The root password may not contain line breaks."
+msgstr "root のパスワードに改行は使えません。"
+
+msgid "The host name is empty."
+msgstr "コンピューター名が空です。"
+
+msgid "The host name is longer than 253 characters."
+msgstr "コンピューター名が 253 文字を超えています。"
+
+msgid "The host name %q is not valid: each part has 1 to 63 characters and does not start or end with '-'."
+msgstr "コンピューター名 %q は無効です。各部分は 1〜63 文字で、「-」で始まったり終わったりしてはいけません。"
+
+msgid "The host name %q may contain only letters, digits and '-'."
+msgstr "コンピューター名 %q には英字、数字、「-」だけが使えます。"
+
+msgid "The language %q is not a locale name like fr_FR."
+msgstr "言語 %q は fr_FR のようなロケール名ではありません。"
+
+msgid "The keyboard layout %q is not a valid name."
+msgstr "キーボード配列 %q は有効な名前ではありません。"
+
+msgid "The keyboard layout %s has no variant %q."
+msgstr "キーボード配列 %s にはバリエーション %q がありません。"
+
+msgid "There is no keyboard layout %q."
+msgstr "キーボード配列 %q はありません。"
+
+msgid "The time zone %q is not a zone name like Europe/Paris."
+msgstr "タイムゾーン %q は Europe/Paris のようなゾーン名ではありません。"
+
+msgid "There is no time zone %q."
+msgstr "タイムゾーン %q はありません。"
+
+msgid "The repository %q is neither an http:// URL nor an absolute path."
+msgstr "リポジトリー %q は http:// の URL でも絶対パスでもありません。"
+
+msgid "%q is not a package name."
+msgstr "%q はパッケージ名ではありません。"
+
+msgid "The swap size %q is not a size like 2G or 512M."
+msgstr "スワップサイズ %q は 2G や 512M のようなサイズではありません。"
+
+msgid "A swap file of %s leaves too little room on %s."
+msgstr "%s のスワップファイルでは %s の空き容量が足りなくなります。"
+
+msgid "No disk is chosen."
+msgstr "ディスクが選ばれていません。"
+
+msgid "%s is a device; a disk image must be a plain file."
+msgstr "%s はデバイスです。ディスクイメージは通常のファイルでなければなりません。"
+
+msgid "The disk image %s is not a plain file."
+msgstr "ディスクイメージ %s は通常のファイルではありません。"
+
+msgid "The disk image %s holds %s; at least 4 GiB is needed."
+msgstr "ディスクイメージ %s の容量は %s です。4 GiB 以上が必要です。"
+
+msgid "%s holds the running system; choose another disk."
+msgstr "%s では現在のシステムが動いています。別のディスクを選んでください。"
+
+msgid "%s is read-only."
+msgstr "%s は読み取り専用です。"
+
+msgid "%s holds %s; at least 4 GiB is needed."
+msgstr "%s の容量は %s です。4 GiB 以上が必要です。"
+
+msgid "%s has a mounted file system; unmount it first."
+msgstr "%s にはマウントされたファイルシステムがあります。先にアンマウントしてください。"
+
+msgid "There is no disk %s."
+msgstr "ディスク %s はありません。"
+
+msgid "Partitioning"
+msgstr "パーティションを作成しています"
+
+msgid "Formatting"
+msgstr "フォーマットしています"
+
+msgid "Unmounting"
+msgstr "アンマウントしています"
+
+msgid "Writing the partition table"
+msgstr "パーティションテーブルを書き込んでいます"
+
+msgid "Waiting for the kernel to see the new partitions"
+msgstr "カーネルが新しいパーティションを認識するのを待っています"
+
+msgid "Formatting the EFI system partition"
+msgstr "EFI システムパーティションをフォーマットしています"
+
+msgid "Formatting the root partition"
+msgstr "ルートパーティションをフォーマットしています"
+
+msgid "Installing %s (%s of %s)"
+msgstr "%s をインストールしています（%s / %s）"
+
+msgid "Setting the host name"
+msgstr "コンピューター名を設定しています"
+
+msgid "Creating the user account"
+msgstr "ユーザーアカウントを作成しています"
+
+msgid "Setting language, keyboard and time zone"
+msgstr "言語、キーボード、タイムゾーンを設定しています"
+
+msgid "Creating a %s swap file"
+msgstr "%s のスワップファイルを作成しています"
+
+msgid "Writing the file system table"
+msgstr "ファイルシステムテーブルを書き込んでいます"
+
+msgid "Copying the boot loader"
+msgstr "ブートローダーをコピーしています"
+
+msgid "Copying the kernel"
+msgstr "カーネルをコピーしています"
+
+msgid "Making the disk start on BIOS computers"
+msgstr "BIOS のコンピューターでも起動できるようにしています"
+
+msgid "Adding the UEFI boot entry"
+msgstr "UEFI ブートエントリーを追加しています"
+
+msgid "UEFI boot entry not written; the disk still boots through the fallback path"
+msgstr "UEFI ブートエントリーを書き込めませんでしたが、ディスクは予備のパスから起動できます"

@@ -56,6 +56,31 @@ load_zones :: proc(b: ^Backend) -> []Zone {
 	return demo_zones()
 }
 
+// memory_bytes is MemTotal from /proc/meminfo, for the swap file's size.
+// The demo pretends to be an 8 GiB machine.
+memory_bytes :: proc(b: ^Backend) -> u64 {
+	if b.demo {
+		return 8 << 30
+	}
+	data, err := os.read_entire_file("/proc/meminfo", context.temp_allocator)
+	if err != nil {
+		return 4 << 30
+	}
+	for line in strings.split_lines(string(data), context.temp_allocator) {
+		if !strings.has_prefix(line, "MemTotal:") {continue}
+		f := strings.fields(line, context.temp_allocator)
+		if len(f) >= 2 {
+			kib: u64
+			for ch in transmute([]u8)f[1] {
+				if ch < '0' || ch > '9' {break}
+				kib = kib * 10 + u64(ch - '0')
+			}
+			return kib * 1024
+		}
+	}
+	return 4 << 30
+}
+
 load_disks :: proc(b: ^Backend) -> []Disk {
 	if b.demo {
 		return demo_disks()
@@ -65,8 +90,8 @@ load_disks :: proc(b: ^Backend) -> []Disk {
 
 // check_plan is install_core.validate in real mode. The GUI validates every
 // field itself as it is typed (account.odin); this is the core's last word
-// before anything is written, and its problems are shown verbatim.
-check_plan :: proc(b: ^Backend, p: Plan) -> (ok: bool, problems: []string) {
+// before anything is written, and its problems are shown translated.
+check_plan :: proc(b: ^Backend, p: Plan) -> (ok: bool, problems: []Text) {
 	if b.demo {
 		return true, nil
 	}
@@ -222,7 +247,13 @@ worker_report :: proc(pr: Progress, user: rawptr) {
 	sync.mutex_lock(&w.mu)
 	defer sync.mutex_unlock(&w.mu)
 	msg := strings.clone(pr.message)
-	w.progress = Progress{step = pr.step, fraction = pr.fraction, message = msg}
+	// The detail's arguments live only as long as the core's call; its
+	// msgid is one of the core's constant strings.
+	detail := pr.detail
+	for i in 0 ..< detail.nargs {
+		detail.args[i] = strings.clone(detail.args[i])
+	}
+	w.progress = Progress{step = pr.step, fraction = pr.fraction, message = msg, detail = detail}
 	if !w.core_logs && msg != "" && (len(w.log) == 0 || w.log[len(w.log) - 1] != msg) {
 		append(&w.log, msg)
 	}

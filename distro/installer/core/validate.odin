@@ -11,10 +11,10 @@ package install_core
 // system came from, and has nothing mounted.
 //
 // Every problem is reported, not just the first, so a front end can mark
-// all the fields at once. The messages are plain English sentences meant to
-// be shown as they are (the GUI passes them through tr()).
+// all the fields at once. Each is a Message (message.odin): a stable code,
+// an English format that is also the msgid a front end translates, and the
+// values that fill it.
 
-import "core:fmt"
 import "core:os"
 import "core:slice"
 import "core:strings"
@@ -30,43 +30,55 @@ validate :: proc(p: Plan) -> (ok: bool, problems: []string) {
 }
 
 // validate_with is validate with the test paths: a disk image instead of a
-// block device, and an explicit disk list (nil = list_disks()).
+// block device, and an explicit disk list (nil = list_disks()). Its problems
+// are English sentences; validate_messages has the same problems as
+// Messages, for a front end that translates them.
 validate_with :: proc(p: Plan, o: Options, disks: []Disk = nil) -> (ok: bool, problems: []string) {
-	out := make([dynamic]string)
-	add :: proc(out: ^[dynamic]string, format: string, args: ..any) {
-		append(out, fmt.aprintf(format, ..args))
+	ms := validate_messages(p, o, disks)
+	out := make([]string, len(ms))
+	for m, i in ms {
+		out[i] = message_text(m, context.allocator)
+	}
+	return len(out) == 0, out
+}
+
+// validate_messages returns every problem with the plan, as Messages (an id
+// and its arguments; message.odin). The arguments are allocated with the
+// context allocator.
+validate_messages :: proc(p: Plan, o: Options, disks: []Disk = nil) -> []Message {
+	out := make([dynamic]Message)
+	add :: proc(out: ^[dynamic]Message, m: Message) {
+		if m.id != .None {
+			append(out, message_clone(m))
+		}
 	}
 	q := normalise_plan(p)
 
 	// user
-	if e := check_user_name(p.user); e != "" {
-		add(&out, "%s", e)
-	}
+	add(&out, check_user_name(p.user))
 	if strings.contains_any(q.full_name, ":\n") || len(q.full_name) > 128 {
-		add(&out, "The full name may not contain ':' or line breaks, and has at most 128 characters.")
+		add(&out, msg(.Full_Name_Invalid))
 	}
 	if p.password == "" {
-		add(&out, "The password is empty.")
+		add(&out, msg(.Password_Empty))
 	} else if strings.contains_any(p.password, "\n\r\x00") {
-		add(&out, "The password may not contain line breaks.")
+		add(&out, msg(.Password_Line_Break))
 	}
 	if strings.contains_any(p.root_password, "\n\r\x00") {
-		add(&out, "The root password may not contain line breaks.")
+		add(&out, msg(.Root_Password_Line_Break))
 	}
 
 	// host name
-	if e := check_hostname(p.hostname); e != "" {
-		add(&out, "%s", e)
-	}
+	add(&out, check_hostname(p.hostname))
 
 	// language
 	if !valid_language(q.language) {
-		add(&out, "The language %q is not a locale name like fr_FR.", q.language)
+		add(&out, msg(.Language_Invalid, q.language))
 	}
 
 	// keyboard: against base.lst when it is there to ask.
 	if !valid_token(q.keyboard.layout) || (q.keyboard.variant != "" && !valid_token(q.keyboard.variant)) {
-		add(&out, "The keyboard layout %q is not a valid name.", q.keyboard.layout)
+		add(&out, msg(.Layout_Invalid, q.keyboard.layout))
 	} else if layouts := list_layouts(); len(layouts) > 0 {
 		found := false
 		for k in layouts {
@@ -77,93 +89,99 @@ validate_with :: proc(p: Plan, o: Options, disks: []Disk = nil) -> (ok: bool, pr
 		}
 		if !found {
 			if q.keyboard.variant != "" {
-				add(&out, "The keyboard layout %s has no variant %q.", q.keyboard.layout, q.keyboard.variant)
+				add(&out, msg(.Layout_No_Variant, q.keyboard.layout, q.keyboard.variant))
 			} else {
-				add(&out, "There is no keyboard layout %q.", q.keyboard.layout)
+				add(&out, msg(.Layout_Unknown, q.keyboard.layout))
 			}
 		}
 	}
 
 	// time zone
 	if q.timezone == "" || strings.has_prefix(q.timezone, "/") || strings.contains(q.timezone, "..") || strings.contains_any(q.timezone, " \n") {
-		add(&out, "The time zone %q is not a zone name like Europe/Paris.", q.timezone)
+		add(&out, msg(.Timezone_Invalid, q.timezone))
 	} else if os.is_dir("/usr/share/zoneinfo") && !os.is_file(join("/usr/share/zoneinfo", q.timezone)) {
-		add(&out, "There is no time zone %q.", q.timezone)
+		add(&out, msg(.Timezone_Unknown, q.timezone))
 	}
 
 	// repository and packages
 	if !(strings.has_prefix(q.repo, "http://") || strings.has_prefix(q.repo, "https://") || strings.has_prefix(q.repo, "file:///") || strings.has_prefix(q.repo, "/")) {
-		add(&out, "The repository %q is neither an http:// URL nor an absolute path.", q.repo)
+		add(&out, msg(.Repo_Invalid, q.repo))
 	}
 	for pkg in q.packages {
 		if !valid_package(pkg) {
-			add(&out, "%q is not a package name.", pkg)
+			add(&out, msg(.Package_Invalid, pkg))
 		}
 	}
 
-	// disk
-	if e := check_disk(p.disk, o, disks); e != "" {
-		add(&out, "%s", e)
+	// disk, and the swap file that has to fit on it beside the system
+	disk_size, dm := check_disk(p.disk, o, disks)
+	add(&out, dm)
+	if p.swap_bytes > MAX_SWAP_BYTES {
+		add(&out, msg(.Swap_Too_Big, human_size(p.swap_bytes), p.disk))
+	} else if p.swap_bytes > 0 && dm.id == .None && disk_size > 0 && disk_size < MIN_DISK_BYTES + p.swap_bytes {
+		add(&out, msg(.Swap_Too_Big, human_size(p.swap_bytes), p.disk))
 	}
-	return len(out) == 0, out[:]
+	return out[:]
 }
 
-check_user_name :: proc(name: string) -> string {
+check_user_name :: proc(name: string) -> Message {
 	if name == "" {
-		return "The user name is empty."
+		return msg(.User_Empty)
 	}
 	if len(name) > 32 {
-		return "The user name has more than 32 characters."
+		return msg(.User_Too_Long)
 	}
 	for ch, i in transmute([]u8)name {
 		ok := (ch >= 'a' && ch <= 'z') || ch == '_' || (i > 0 && ((ch >= '0' && ch <= '9') || ch == '-'))
 		if !ok {
-			return fmt.tprintf("The user name %q must start with a lower-case letter or '_' and contain only a-z, 0-9, '-' and '_'.", name)
+			return msg(.User_Invalid, name)
 		}
 	}
 	if slice.contains(RESERVED_NAMES[:], name) {
-		return fmt.tprintf("The user name %q is used by the system.", name)
+		return msg(.User_Reserved, name)
 	}
-	return ""
+	return {}
 }
 
-check_hostname :: proc(h: string) -> string {
+check_hostname :: proc(h: string) -> Message {
 	if h == "" {
-		return "The host name is empty."
+		return msg(.Hostname_Empty)
 	}
 	if len(h) > 253 {
-		return "The host name is longer than 253 characters."
+		return msg(.Hostname_Too_Long)
 	}
 	for label in strings.split(h, ".", context.temp_allocator) {
 		if label == "" || len(label) > 63 || label[0] == '-' || label[len(label) - 1] == '-' {
-			return fmt.tprintf("The host name %q is not valid: each part has 1 to 63 characters and does not start or end with '-'.", h)
+			return msg(.Hostname_Label, h)
 		}
 		for ch in transmute([]u8)label {
 			if !((ch >= 'a' && ch <= 'z') || (ch >= 'A' && ch <= 'Z') || (ch >= '0' && ch <= '9') || ch == '-') {
-				return fmt.tprintf("The host name %q may contain only letters, digits and '-'.", h)
+				return msg(.Hostname_Chars, h)
 			}
 		}
 	}
-	return ""
+	return {}
 }
 
+// check_disk also returns the disk's size when the disk is usable, for the
+// swap check.
 @(private = "file")
-check_disk :: proc(path: string, o: Options, disks: []Disk) -> string {
+check_disk :: proc(path: string, o: Options, disks: []Disk) -> (u64, Message) {
 	if path == "" {
-		return "No disk is chosen."
+		return 0, msg(.Disk_None)
 	}
 	if o.disk_image {
 		if strings.has_prefix(path, "/dev/") {
-			return fmt.tprintf("%s is a device; a disk image must be a plain file.", path)
+			return 0, msg(.Disk_Image_Device, path)
 		}
 		st, err := os.stat(path, context.temp_allocator)
 		if err != nil || st.type != .Regular {
-			return fmt.tprintf("The disk image %s is not a plain file.", path)
+			return 0, msg(.Disk_Image_Not_File, path)
 		}
 		if u64(st.size) < MIN_DISK_BYTES {
-			return fmt.tprintf("The disk image %s holds %s; at least 4 GiB is needed.", path, human_size(u64(st.size)))
+			return 0, msg(.Disk_Image_Small, path, human_size(u64(st.size)))
 		}
-		return ""
+		return u64(st.size), {}
 	}
 	list := disks
 	if list == nil {
@@ -172,20 +190,20 @@ check_disk :: proc(path: string, o: Options, disks: []Disk) -> string {
 	for d in list {
 		if d.path != path {continue}
 		if d.is_live_medium {
-			return fmt.tprintf("%s holds the running system; choose another disk.", path)
+			return 0, msg(.Disk_Live_Medium, path)
 		}
 		if d.readonly {
-			return fmt.tprintf("%s is read-only.", path)
+			return 0, msg(.Disk_Readonly, path)
 		}
 		if d.size_bytes < MIN_DISK_BYTES {
-			return fmt.tprintf("%s holds %s; at least 4 GiB is needed.", path, human_size(d.size_bytes))
+			return 0, msg(.Disk_Small, path, human_size(d.size_bytes))
 		}
 		if disks == nil && slice.contains(disks_in_use(), d.name) {
-			return fmt.tprintf("%s has a mounted file system; unmount it first.", path)
+			return 0, msg(.Disk_Mounted, path)
 		}
-		return ""
+		return d.size_bytes, {}
 	}
-	return fmt.tprintf("There is no disk %s.", path)
+	return 0, msg(.Disk_Missing, path)
 }
 
 @(private = "file")
