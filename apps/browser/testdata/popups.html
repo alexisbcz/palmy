@@ -1,0 +1,15 @@
+<!doctype html>
+<title>Popups and dialogs</title>
+<body style="font: 16px sans-serif; padding: 40px">
+<h2>A native select, opened from the keyboard</h2>
+<select id="s" autofocus style="font-size: 16px; padding: 4px">
+<option>Odin</option><option>Zig</option><option>C</option><option>Rust</option><option>Go</option>
+</select>
+<p id="out">chosen: Odin</p>
+<p><button onclick="alert('hello from the page')">alert()</button></p>
+<script>
+document.getElementById('s').addEventListener('change', e => {
+  document.getElementById('out').textContent = 'chosen: ' + e.target.value;
+});
+</script>
+</body>

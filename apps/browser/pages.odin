@@ -265,7 +265,7 @@ new_tab_page :: proc(ui: ^p.Ctx, s: ^State) {
 	p.end(ui)
 	ver := s.engine != nil && s.engine.ok ? s.engine.version : "not running"
 	p.text(ui, tfmt("%s profile · %s %s", s.prof.identity, engine_label(s.engine_kind), short_version(ver)), "text-[12] text-muted-foreground")
-	ch := p.text(ui, "Change", "text-[12] text-primary cursor-pointer")
+	ch := p.text(ui, "Change", "text-[12] text-blue-600 underline cursor-pointer")
 	if p.clickable(ui, ch) {
 		open_internal(s, .Settings)
 		s.settings_section = 0
@@ -690,25 +690,28 @@ choice_row :: proc(ui: ^p.Ctx, label, desc: string, on: bool, ic: p.Icon = {}) -
 }
 
 settings_engine :: proc(ui: ^p.Ctx, s: ^State) {
-	page_header(ui, "Engine", "Which engine draws web pages in this profile. Everything around the page -- tabs, the address bar, bookmarks, these settings -- is Palmframe's own, whichever you choose.")
+	page_header(ui, "Engine", "Which engine draws web pages in this profile. Everything around the page — tabs, the address bar, bookmarks, these settings — is Palmframe's own, whichever you choose.")
 	chosen := profile_engine(&s.prof)
 	ENGINES := [2]struct {
 		kind:  Engine_Kind,
 		title: string,
 		what:  string,
 		pros:  [3]string,
+		limit: string,
 	}{
 		{
 			.Chromium,
 			"Chromium",
 			"Blink and V8, embedded through CEF's off-screen rendering",
-			{"Pixels come straight from the engine into this window, with damage rectangles", "Chromium's sandbox: renderers run in their own namespaces", "Everything Chrome renders, renders here"},
+			{"Pages are drawn straight into shared memory, only what changed", "Renderers run in Chromium's sandbox: their own user, PID and network namespaces, under seccomp", "Menus, page dialogs and downloads are this window's own"},
+			"palm add palm-browser-cef — 164 MB to download, 375 MB installed.",
 		},
 		{
 			.Firefox,
 			"Firefox",
 			"Gecko and SpiderMonkey, running Firefox itself as a client of a private compositor",
-			{"The real Firefox, with Mozilla's updates and its own sandbox", "Steered over WebDriver BiDi; frames arrive as Wayland buffers", "Prototype: see the notes below for what is not wired yet"},
+			{"Mozilla's own Firefox, unmodified, with its own content sandbox", "Firefox draws into a compositor that exists only for this window", "Steered over WebDriver BiDi, Firefox's standard remote protocol"},
+			"palm add firefox — 158 MB, 397 MB installed. Find in page shows no match count, downloads no progress, and a page's own pop-up windows open as tabs.",
 		},
 	}
 	for e in ENGINES {
@@ -716,7 +719,7 @@ settings_engine :: proc(ui: ^p.Ctx, s: ^State) {
 		on := chosen == e.kind
 		running := s.engine_kind == e.kind && s.engine != nil && s.engine.ok
 		card := p.col(ui, "w-full rounded-xl border p-5 gap-3 cursor-pointer transition")
-		p.apply(ui, on ? "border-primary ring-1 ring-primary bg-primary/5" : "border-border bg-card hover:bg-muted/40")
+		p.apply(ui, on ? "border-foreground/40 bg-card" : "border-border bg-card hover:bg-muted/40")
 		p.focusable(ui, card)
 		if p.focused(ui, card) {
 			p.apply(ui, "ring-3 ring-ring/30", card)
@@ -753,6 +756,13 @@ settings_engine :: proc(ui: ^p.Ctx, s: ^State) {
 			p.icon(ui, ICON_CHECK, "size-3.5 text-muted-foreground mt-[3]")
 			p.text(ui, pro, "flex-1 text-[12.5] leading-[19]")
 			p.end(ui)
+		}
+		p.text(ui, e.limit, "text-[12] text-muted-foreground pt-1 leading-[18]")
+		if e.kind == .Firefox {
+			terms := p.text(ui, "Firefox is subject to Mozilla's Terms of Use", "text-[12] text-blue-600 underline cursor-pointer")
+			if p.clickable(ui, terms) {
+				new_tab(s, "https://www.mozilla.org/about/legal/terms/firefox/", s.active + 1)
+			}
 		}
 		if !info.available {
 			p.text(ui, info.detail, "text-[12] text-destructive pt-1")
@@ -877,7 +887,7 @@ settings_profile :: proc(ui: ^p.Ctx, s: ^State) {
 }
 
 settings_sync :: proc(ui: ^p.Ctx, s: ^State) {
-	page_header(ui, "Sync", "Bookmarks can sync through your Palmframe account, per identity: a work window syncs work bookmarks and cannot see personal ones -- the database refuses, not just this window.")
+	page_header(ui, "Sync", "Bookmarks can sync through your Palmframe account, per identity: a work window syncs work bookmarks and cannot see personal ones — the database refuses, not just this window.")
 	section_card(ui, "Bookmarks", "")
 	pend := pending(&s.bookmarks, context.temp_allocator)
 	p.row(ui, "items-center gap-3")

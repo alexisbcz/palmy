@@ -132,9 +132,7 @@ shot :: proc(prof: ^Profile, opt: Shot_Options) -> (res: Shot_Result) {
 		}
 	} else {
 		navigate(s, t, url)
-		if t.page == .New_Tab {
-			set_focus(s, .None)
-		}
+		set_focus(s, .None)
 		if res.engine == "" {
 			res.engine = engine_name(s.engine_kind)
 		}

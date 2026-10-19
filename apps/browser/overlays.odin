@@ -721,7 +721,7 @@ downloads_panel :: proc(ui: ^p.Ctx, s: ^State) {
 	panel_at(ui, win.x - 376, 92, 360, "p-2")
 	p.row(ui, "items-center px-2 pt-1 pb-2")
 	p.text(ui, "Downloads", "flex-1 text-[14] font-semibold")
-	all := p.text(ui, "Show all", "text-[12.5] text-primary cursor-pointer")
+	all := p.text(ui, "Show all", "text-[12.5] text-blue-600 cursor-pointer")
 	if p.clickable(ui, all) {
 		close_overlay(s)
 		open_internal(s, .Downloads)
