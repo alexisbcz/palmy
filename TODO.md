@@ -295,14 +295,15 @@ commands run, two windows tile, and an absolute pointer click moves focus
 (`distro/out/shots/verify-r1-0[2-6]-*.png`). `wm --drm-probe` inside the guest
 passes 173 of 173. What W1 asked for and did not happen:
 
-- **Never on a real VT or real hardware.** Only virtio-gpu has run, so the
-  SETCRTC + DIRTYFB fallback for a device that refuses page flip has never
-  triggered.
+- **Never on real hardware.** Only QEMU has run (virtio-gpu and bochs-drm).
+  The SETCRTC + DIRTYFB fallback for a device that refuses page flip is now
+  exercised by forcing it (`PALMY_WM_DRM_NOFLIP=1`, `qemu-test.sh --noflip`)
+  on both; a VT is exercised with `qemu-test.sh --vt 1`.
 - **The logind path has never executed.** `seat_take_control` and
   `seat_bind_backends` are wired, but Palmframe has no logind and the host was
   off limits, so no `TakeDevice` has returned a real descriptor and no
   `PauseDevice` has arrived.
-- **One head only.** See multi-head under W2.
+- **Two heads, in QEMU only** (two GPUs; see multi-head under W2).
 
 ## W2 — the things a daily driver needs that it does not have
 
@@ -312,18 +313,23 @@ passes 173 of 173. What W1 asked for and did not happen:
 - **No XWayland**, so no X11-only application. Probably by linking the real
   Xwayland binary rather than hand-rolling it — the one place to break the
   zero-dependency rule without regret.
-- **Multi-head is unproven.** One monitor is plugged in; the layout, the CRTC
-  allocator's collision avoidance and `global_remove` on unplug are exercised
-  against fabricated heads only.
-- **No VT switching.** Without logind, Ctrl+Alt+Fn does nothing and the console
-  VT is not put into `KD_GRAPHICS`. Input devices are grabbed, so the console
-  does not also receive keys.
-- **No input hotplug.** `/dev/input/event*` is scanned once at startup; a
-  keyboard plugged in later is ignored. palm-init already sets its permissions
-  from the uevent, so only the wm side is missing.
-- **Keys reach clients as press and release pairs** re-derived from the keysym,
-  so a client cannot see a key held down.
-- **A full CPU repaint every frame**, no damage tracking.
+- **Output hotplug is unproven.** Two heads run (virtio-vga + virtio-gpu-pci
+  in QEMU): one output per head, its own bar and workspace. Plugging and
+  unplugging a monitor was not exercised: the Palmframe kernel has no PCI
+  hotplug and QEMU's virtio-gpu enables extra outputs only from a UI.
+- **VT switching needs palm-login's part.** wm does the whole VT dance
+  without logind (`apps/wm/vt.odin`, verified in QEMU), but on the image
+  palm-login must chown the session's tty to the user and set `XDG_VTNR`
+  (`distro/notes/wm.md`, "What I need from others"); until then wm logs
+  `vt: none` and runs without Ctrl+Alt+Fn.
+- **Damage tracking is one rectangle per frame**, and palmy clients damage
+  their whole surface on every commit, so a palmy app on screen still costs
+  most of a repaint per frame. Measured numbers are in `distro/notes/wm.md`.
+- Done in this round (details in `distro/notes/wm.md`): input hotplug,
+  VT switching without logind, real key press/release with client-side
+  repeat, damage tracking, `xdg_popup` with a real positioner (a browser's
+  `<select>` no longer kills it), window geometry, `set_parent` dialogs,
+  subsurface sync/desync, `axis_value120`/`axis_stop`.
 
 ---
 

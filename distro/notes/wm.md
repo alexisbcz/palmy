@@ -36,8 +36,16 @@ Requirements on the environment (all as in CONTRACT.md):
 
 - `XDG_RUNTIME_DIR` set and writable (0700, owned by the user).
 - The user in `video` and `input`; `/dev/dri/*` root:video 0660 and
-  `/dev/input/event*` root:input 0660 **before wm starts** (palm-init's
-  coldplug). Input devices are scanned once at startup — see gaps.
+  `/dev/input/event*` root:input 0660 (palm-init's coldplug, and its uevent
+  handler for devices plugged in later: wm watches /dev/input and opens a
+  node as soon as its ownership allows).
+- **For VT switching** (optional; without it wm runs as before, with no
+  Ctrl+Alt+Fn): the session's VT, e.g. `/dev/tty1`, chown'd to the user
+  (0620, the way login(1) does it), `XDG_VTNR=1` in the environment, and wm
+  started as a session leader without a controlling terminal (palm-login's
+  `setsid()` already does this). wm then opens the VT, which becomes its
+  controlling terminal, as the VT ioctls require. Give the tty back to
+  root:tty when the session ends.
 - No logind and no D-Bus needed. If a system bus with logind is reachable, wm
   uses TakeControl/TakeDevice instead (that path is unchanged and still
   untested on real logind).
@@ -165,6 +173,20 @@ listens, output prefixed `guest:` in serial.log).
 
 ## What I need from others
 
+- **palm-login**: for VT switching, before starting a session on VT n:
+  `chown <user>:tty /dev/ttyN; chmod 0620 /dev/ttyN`, put `XDG_VTNR=N` in the
+  session environment, keep the existing `setsid()` (wm must be a session
+  leader with no controlling terminal), and give the tty back to root:tty
+  0620 when the session ends. Nothing else; wm does the VT ioctls itself.
+- **palmy (client side)**: (1) key repeat under wm runs at ~2 keys/s instead
+  of `repeat_info`'s 25/s (seen in term in QEMU; wm sends one press, no
+  release, and repeat_info 25/400). (2) palmy clients commit their whole
+  surface as damage (`damage_buffer` of everything) on every frame, and
+  term commits on every pointer motion; with real damage rectangles wm would
+  repaint only those. (3) term scrolls back on positive `wl_pointer.axis`
+  values, which Wayland defines as down: a wheel turned up (negative) does
+  not scroll back in QEMU.
+
 - **apps/kit (`kit.FONT_DIR`)** is an absolute path into this checkout
   (`/home/alex/Work/palmy/parity/web/public/fonts`). Every kit app (term,
   launcher, greeter, ...) looks for Geist there. On the image that path does
@@ -203,6 +225,99 @@ listens, output prefixed `guest:` in serial.log).
   truncate followed by several writes can make wm compile a half-written file
   (it recompiles when the final `CLOSE_WRITE` arrives).
 
+## Daily-driver backend: hotplug, VT, real keys, damage, popups, multi-head
+
+Files: `vt.odin`, `popup.odin`, `subsurface.odin` (new); `bare.odin`,
+`evdev.odin`, `keys.odin`, `drm.odin`, `proto.odin`, `main.odin`,
+`workspace.odin`, `layer.odin`, `clipboard.odin`, `qemu-test.sh`,
+`qemu-qmp.py`. Everything below verified in QEMU (scripts in the commit
+messages; the harness options are listed at the top of `qemu-test.sh`).
+
+- **Input hotplug.** inotify on `/dev/input` (CREATE, ATTRIB, DELETE): a node
+  that appears is opened as soon as its ownership allows (palm-init chowns
+  it from the uevent after the kernel creates it root-only, so the open on
+  IN_CREATE fails and the one on IN_ATTRIB succeeds); `ENODEV` from read or
+  IN_DELETE removes it, releasing the keys and buttons it held as events.
+  Verified: `device_add usb-kbd` on qemu-xhci, typed into term, `device_del`
+  while Shift was held, typing continued on the virtio keyboard.
+- **VT switching without logind** (`vt.odin`). KD_GRAPHICS, K_OFF,
+  VT_PROCESS with SIGUSR1/SIGUSR2 (through a self-pipe into the poll set).
+  Release: every key a client holds is released, input ungrabbed and
+  paused, DRM master dropped, VT_RELDISP 1. Acquire: VT_ACKACQ, master,
+  modeset, input reopened/regrabbed/flushed, full repaint. Ctrl+Alt+F1..F12
+  is taken before bindings and clients. Text mode, the keyboard mode and
+  VT_AUTO are restored on exit and from a SIGSEGV/SIGBUS/SIGILL/SIGFPE/
+  SIGABRT/SIGTRAP handler, which then re-raises. Verified with
+  `qemu-test.sh --vt 1`: Ctrl+Alt+F2 shows tty2's text, the console's own
+  Ctrl+Alt+F1 brings the desktop back and typing works; `kill -SEGV` leaves
+  tty1 drawing text again.
+- **Real key presses and releases.** On bare metal a client gets
+  `wl_keyboard.key` pressed when the key goes down and released when it
+  comes up, with `modifiers` from the real xkb state after each key, and no
+  compositor-made repeats: `repeat_info` (25/s after 400 ms) tells it to
+  repeat by itself. A key a binding, an overlay or a VT switch takes is
+  swallowed whole (press, repeats, release). Focus changes forget held keys
+  (leave ends them). The nested path is unchanged. `--kbd-selftest` checks
+  the wire over a socketpair (68 -> 82).
+- **Damage tracking.** The scene is drawn into ordinary memory, never read
+  back from the scanout buffer; every clip draw() sets is intersected with
+  the frame's damage; only the damaged rectangle is copied to the dumb
+  buffer, with a short per-buffer history (buffer age, three buffers);
+  the cursor is laid over the scene at copy time; DIRTYFB gets the
+  rectangle as a clip on the no-flip path. Client commits damage where the
+  surface was last drawn; anything the compositor draws differently asks
+  for a full repaint, and there is a full repaint at least once a second.
+  `PALMY_WM_DAMAGE=off` restores full repaints; `PALMY_WM_DRM_DEBUG=1`
+  prints a stats line every 5 s. An identical scripted session with damage
+  on and off gave identical screenshots (clock masked; one 8x16 difference
+  was the term's own mouse block). Measured, wm process CPU in the guest
+  (KVM, 1280x800, one term):
+
+  | | before (`PALMY_WM_DAMAGE=off`) | after |
+  | --- | --- | --- |
+  | idle | 0.4-0.9 % | 0.4-0.5 % |
+  | pointer circling over the term | 16.1-16.3 % | 12.5-13.1 % |
+  | typing ~16 keys/s into the term | 12.5-12.8 % | 10.3-10.6 % |
+
+  The floor is the client: term commits its whole surface as damage on
+  every pointer motion and every key (~56 full-surface commits a second
+  while the pointer moves), so most frames still redraw 900 kpx. Frames
+  with nothing but the pointer moving draw nothing at all ("cursor-only").
+- **Clipboard.** wl_data_device_manager v3 and primary selection were
+  already there; a `set_selection` with a serial wm never issued now
+  answers `cancelled` (both protocols) instead of silence. Verified against
+  palmy's native client: OSC 52 copy in one term, Ctrl+Shift+V in another.
+- **xdg_popup and xdg_positioner** (`popup.odin`): anchor, gravity, offset,
+  flip/slide/resize per axis inside the parent's output, reposition,
+  grab (keyboard to the popup; a click outside closes the chain and is
+  swallowed), popup_done when the parent goes, nested popups, layer-shell
+  popups. Drawn above windows and the bar; get the pointer first.
+- **Window geometry** is honoured: a CSD client's shadow is outside the
+  laid-out, tiled, configured rectangle and clipped away. Verified: headless
+  sway -> `wm --nested` -> Chromium 152; a `<select>` (CDP click) opens as an
+  xdg_popup right under the control, and the browser stays up.
+- **set_parent**: dialogs float, open centred over the parent, stay above it.
+- **wl_subsurface sync/desync**: synchronized commits are cached and applied
+  with the parent's; desynchronized ones show at once; set_position waits
+  for the parent's commit.
+- **Scroll detail**: wl_seat v8; `axis_value120` (v8) or `axis_discrete`
+  (v5-7), `axis_source`, `axis_stop` when a finger lifts. Fixed: a
+  high-resolution wheel scrolled the wrong way.
+- **Multi-head**: one workspace-layer output per DRM head (own bar, own
+  workspace, own tiling area); a head without a config entry takes the
+  first free empty workspace; a click on a head makes its workspace current.
+  Fixed: flip completions were matched by CRTC id across cards. Verified with
+  `-device virtio-vga -device virtio-gpu-pci` (two cards, 2560x800).
+- **No-flip path** exercised: `PALMY_WM_DRM_NOFLIP=1` (`qemu-test.sh
+  --noflip`) presents with SETCRTC + DIRTYFB from the first frame; run on
+  bochs-drm (`--gpu "-vga std"`) and virtio-gpu, both correct, one DIRTYFB
+  per frame.
+
+Self-tests after this work: `--selftest` 244 -> 269, `--kbd-selftest`
+keyboard 68 -> 82 (clock 13), `--input-selftest` evdev 118 and xkb 134
+(three wheel assertions corrected), `--selftest-seat` 234, `--drm-probe`
+187 -> 190 on the host and 173 -> 176 in the guest.
+
 ## Known gaps (not done, stated rather than faked)
 
 - Keyboard: `options` are passed through the rules file; an option that
@@ -212,16 +327,21 @@ listens, output prefixed `guest:` in serial.log).
   iteration, so keys arriving in the same poll batch as the toggle may still
   be resolved in the old group.
 
-- No VT switching. Without logind there is no PauseDevice; Ctrl+Alt+Fn is not
-  handled and the kernel console's VT is not put into KD_GRAPHICS. evdev
-  devices are grabbed, so the console does not also receive keys.
-- Input hotplug: devices are enumerated once at startup. A keyboard plugged in
-  later is not opened (DRM connector hotplug is handled via the uevent socket).
-- Multi-head: composited into one layout-sized buffer and copied per head; the
-  workspace layer still sees one output the size of the bounding box. Only one
-  head has ever been run.
-- Keys reach clients as press+release pairs re-derived from the keysym
-  (the nested path's forward_key, now fed a reverse table built from the
-  compiled keymap). Typing, modifiers and repeat work; a client cannot see a
-  key held down.
-- Rendering is a full CPU repaint per frame; no damage tracking.
+- VT switching needs palm-login to hand over the VT (chown + XDG_VTNR, see
+  above). Until it does, wm on the image logs `vt: none` and runs without
+  it, as before. Only exercised in QEMU through `qemu-test.sh --vt 1`.
+- Output hotplug was not exercised: the kernel has no PCI hotplug driver
+  (`CONFIG_HOTPLUG_PCI_ACPI`/`_PCIE` off) and QEMU enables a virtio-gpu's
+  second output only when a UI resizes it, which `-display none` never does.
+  The disable path (`ws_output_disable`) is the one the selftest covers.
+- Damage is one bounding rectangle per frame; a commit at one corner and the
+  cursor at the other repaint the box between them. Surfaces drawn somewhere
+  other than their place (overview, switcher, animations) force full frames.
+  A hidden window that commits (another workspace) also forces a full frame.
+- xdg_popup was verified with Chromium only, nested, opened over CDP; real
+  clicks (grab, click-outside dismissal) and GTK/Firefox popups were not run
+  on a real seat. Firefox maps a `<select>` as a popup only with a real input
+  serial.
+- palmy's term repeats a held key at about 2/s under wm (it should be 25/s
+  after 400 ms; wm sends `repeat_info(25, 400)` and a single press). That is
+  in palmy's client-side repeat, not the wire (see "What I need").
