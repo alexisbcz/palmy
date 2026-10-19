@@ -59,6 +59,59 @@ resolve_path :: proc(c: ^Client, path: string, trashed := false) -> (it: Item, o
 	return cur, true, {}
 }
 
+// paths_of is the slash path from the drive root of each item, by id, the
+// way resolve_path reads it back ("Q3 Board pack/deck.pptx"). One request
+// per level of folders above the items, not one per item: the ancestors
+// not yet known are asked for together. A path whose ancestor cannot be
+// read (or a cycle, which the database forbids) stops at what is known.
+paths_of :: proc(c: ^Client, items: []Item, allocator := context.allocator) -> (paths: map[string]string, e: Error) {
+	Row :: struct {
+		id:        string,
+		parent_id: string,
+		name:      string,
+	}
+	known := make(map[string]Row, len(items) * 2, context.temp_allocator)
+	for it in items {
+		known[it.id] = {it.id, it.parent_id, it.name}
+	}
+	for _ in 0 ..< 64 {
+		want := make([dynamic]string, context.temp_allocator)
+		seen := make(map[string]bool, 16, context.temp_allocator)
+		for _, r in known {
+			if r.parent_id != "" && !(r.parent_id in known) && !seen[r.parent_id] {
+				seen[r.parent_id] = true
+				append(&want, r.parent_id)
+			}
+		}
+		if len(want) == 0 {
+			break
+		}
+		rows: []Row
+		e = rest(c, "GET", fmt.tprintf("/drive_items?identity_id=eq.%s&id=in.(%s)&select=id,parent_id,name", c.identity, strings.join(want[:], ",", context.temp_allocator)), "", &rows)
+		if failed(e) {
+			break
+		}
+		if len(rows) == 0 {
+			break
+		}
+		for r in rows {
+			known[r.id] = r
+		}
+	}
+	paths = make(map[string]string, len(items), allocator)
+	for it in items {
+		parts := make([dynamic]string, context.temp_allocator)
+		cur, ok := known[it.id]
+		for depth := 0; ok && depth < 64; depth += 1 {
+			inject_at(&parts, 0, cur.name)
+			if cur.parent_id == "" {break}
+			cur, ok = known[cur.parent_id]
+		}
+		paths[it.id] = strings.join(parts[:], "/", allocator)
+	}
+	return
+}
+
 // human_size is a byte count the way a file browser says it.
 human_size :: proc(n: i64) -> string {
 	switch {

@@ -35,6 +35,28 @@ LIST_FIELDS := []kit.Field {
 	{name = "count", kind = .Int},
 }
 
+// A search result says where it is: the same item fields, and the path from
+// the root of the identity's drive, the form every other verb takes.
+@(private = "file")
+FOUND_FIELDS := []kit.Field {
+	{name = "id", kind = .String},
+	{name = "name", kind = .String},
+	{name = "path", kind = .String, help = "from the root of the identity's drive, as ls/stat/download take it"},
+	{name = "kind", kind = .String},
+	{name = "size", kind = .Int},
+	{name = "modified", kind = .String},
+	{name = "starred", kind = .Bool},
+	{name = "hash", kind = .String, opt = true},
+}
+
+@(private = "file")
+FIND_FIELDS := []kit.Field {
+	{name = "identity", kind = .String},
+	{name = "query", kind = .String},
+	{name = "items", kind = .Array, of = FOUND_FIELDS},
+	{name = "count", kind = .Int},
+}
+
 @(private = "file")
 COMMANDS := []kit.Command {
 	{
@@ -69,7 +91,7 @@ COMMANDS := []kit.Command {
 		summary = "items whose name contains the text",
 		effect = .Read,
 		args = {{name = "query", kind = .String, required = true}},
-		out = LIST_FIELDS,
+		out = FIND_FIELDS,
 		examples = {"drive find budget --json"},
 		run = cmd_find,
 	},
@@ -493,11 +515,33 @@ cmd_find :: proc(c: ^kit.Call) -> int {
 	if code != 0 {
 		return code
 	}
-	items, e := dc.search(&x.c, kit.cli_str(c, "query"))
+	query := kit.cli_str(c, "query")
+	items, e := dc.search(&x.c, query)
 	if dc.failed(e) {
 		return api_fail(c, e, "find")
 	}
-	return list_out(c, &x, "", items)
+	paths, pe := dc.paths_of(&x.c, items, context.temp_allocator)
+	if dc.failed(pe) {
+		return api_fail(c, pe, "find")
+	}
+	arr := kit.jarr()
+	for it in items {
+		o := item_json(it)
+		kit.jset_str(o, "path", paths[it.id])
+		kit.jpush(arr, o)
+	}
+	kit.jset_str(c.out, "identity", x.id.handle)
+	kit.jset_str(c.out, "query", query)
+	kit.jset(c.out, "items", arr)
+	kit.jset_int(c.out, "count", len(items))
+	if !c.json {
+		// One line per match, its path first: what to pass to the next verb.
+		for it in items {
+			fmt.printfln("%-6s %8s  %s", it.kind, it.kind == "file" ? dc.human_size(it.size) : "", paths[it.id])
+		}
+		c.out = kit.jobj()
+	}
+	return kit.EXIT_OK
 }
 
 @(private = "file")

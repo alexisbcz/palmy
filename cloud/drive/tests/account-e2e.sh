@@ -47,6 +47,23 @@ PALM_IDENTITY="dana$N-work" "$DRIVE" ls Specs --json >"$T/ls.json" 2>&1
 check '[ "$(jq -r ".items[0].name" "$T/ls.json")" = api.md ]' "drive ls, scoped to the work identity, sees Specs/api.md"
 PALM_IDENTITY="dana$N-work" "$DRIVE" find groceries --json >"$T/find.json" 2>&1
 check '[ "$(jq -r ".count" "$T/find.json")" = 0 ]' "scoped to work, the personal file does not exist"
+
+# A match says where it is: the path from the root of the identity's drive,
+# which stat (and every other verb) takes back as is.
+mkdir -p "$HOME/Drive/dana$N-work/Specs/2026/Q4"
+echo "q4 budget" >"$HOME/Drive/dana$N-work/Specs/2026/Q4/budget.csv"
+"$SYNC" sync --json >/dev/null 2>&1
+PALM_IDENTITY="dana$N-work" "$DRIVE" find budget --json >"$T/findp.json" 2>&1
+check '[ "$(jq -r ".items[0].path" "$T/findp.json")" = Specs/2026/Q4/budget.csv ]' "drive find gives each match its full path in the drive"
+PALM_IDENTITY="dana$N-work" "$DRIVE" find 2026 --json >"$T/findf.json" 2>&1
+check '[ "$(jq -r ".items[0].kind + \" \" + .items[0].path" "$T/findf.json")" = "folder Specs/2026" ]' "a folder's path too"
+PALM_IDENTITY="dana$N-work" "$DRIVE" stat "$(jq -r ".items[0].path" "$T/findp.json")" --json >"$T/statp.json" 2>&1
+check '[ "$(jq -r ".item.id" "$T/statp.json")" = "$(jq -r ".items[0].id" "$T/findp.json")" ]' "and that path, given to stat, is the same item"
+PALM_IDENTITY="dana$N-work" "$DRIVE" find budget >"$T/findp.txt" 2>&1
+check 'grep -q "Specs/2026/Q4/budget.csv" "$T/findp.txt"' "the text output shows the path"
+"$DRIVE" --schema >"$T/finds.json" 2>&1
+check 'jq -e ".commands[] | select(.verb == \"find\") | .output.fields[] | select(.name == \"items\") | .of[] | select(.name == \"path\")" "$T/finds.json" >/dev/null' "and --schema declares it on each item"
+
 PALM_IDENTITY="dana$N-work" "$DRIVE" ls --identity "dana$N" --json >"$T/scope.json" 2>&1
 CODE=$?
 check '[ $CODE = 5 ]' "scoped to work, asking for the personal drive exits 5 (out of scope)"
