@@ -150,7 +150,7 @@ COMMANDS := []kit.Command {
 			{name = "off", kind = .Bool, help = "back to the local model"},
 		},
 		out = {{name = "identity", kind = .String}, {name = "provider", kind = .String}, {name = "model", kind = .String}},
-		examples = {"ai remote --identity camille.roux --yes", "ai remote --identity camille.roux --off"},
+		examples = {"ai remote --identity camille.roux --yes", "ai remote --identity camille.roux --off --yes"},
 		run = cmd_remote,
 	},
 	{
@@ -544,7 +544,11 @@ cmd_remote :: proc(c: ^kit.Call) -> int {
 @(private = "file")
 cmd_sandbox_check :: proc(c: ^kit.Call) -> int {
 	out_text, err := sandbox_check_run()
-	if err != "" {return kit.cli_fail(c, kit.EXIT_FAILED, err)}
+	if err != "" {
+		// No tool directory: the assistant is not installed here, which is
+		// unavailable (6), not a probe that came out wrong.
+		return kit.cli_fail(c, strings.has_prefix(err, "no tools in") ? kit.EXIT_UNAVAILABLE : kit.EXIT_FAILED, err)
+	}
 	v, ok := ck.parse(out_text, context.temp_allocator)
 	if !ok {return kit.cli_fail(c, kit.EXIT_FAILED, "the probe said nothing readable")}
 	c.out = value_to_kit(v)

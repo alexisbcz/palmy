@@ -37,7 +37,7 @@ build() { # out, package
 for t in "${targets[@]}"; do
 	case "$t" in
 	ai) build "$here/bin/ai" "$root/apps/ai" & ;;
-	mail) build "$here/bin/tools/palm-mail" "$here/mail" & ;;
+	mail) build "$here/bin/tools/palm-mail" "$root/cloud/mail/palm-mail" & ;;
 	sandbox-check) build "$here/bin/palm-sandbox-check" "$here/sandbox/check" & ;;
 	davd) build "$here/bin/palm-davd" "$root/cloud/dav" & ;;
 	accounts) build "$here/bin/accounts" "$root/apps/accounts" & ;;

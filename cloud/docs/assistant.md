@@ -17,7 +17,7 @@ not its.**
 | schema: settings, conversations, messages, the action log; the rule that refuses outbound acts to an assistant session | `cloud/supabase/migrations/20261020100000_assistant.sql` | pgTAP `assistant_isolation.sql` (50), `assistant_outbound.sql` (45); every other area's 725 still pass |
 | the sandbox (Landlock + seccomp) and its probes | `cloud/assistant/sandbox/` | `palm-sandbox-check`, `ai sandbox-check`: 30/30 |
 | the untrusted-content rules (hidden text, fencing) | `cloud/assistant/untrusted/` | `palm-mail --selftest` (26), e2e section E |
-| `palm-mail`, the mail tool on the CLI convention | `cloud/assistant/mail/` | `palm-mail --selftest`, e2e |
+| `palm-mail`, the mail tool on the CLI convention (now the mail area's; `palm mail` routes to it) | `cloud/mail/palm-mail/` | `palm-mail --selftest`, e2e |
 | the engine: tool registry from `--schema`, policy, provenance, the loop | `cloud/assistant/engine/` | `ai --selftest` (engine section), e2e |
 | `ai`: the window, `ai ask … --json`, `ai confirm`, the sandboxed `ai agent` | `apps/ai/` | `ai --selftest`: 242 (181 before) |
 | end to end on a real stack, with two identities and an attacker | `cloud/assistant/e2e.sh` | 57/57, plus model numbers |

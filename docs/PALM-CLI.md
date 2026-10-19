@@ -242,6 +242,20 @@ The order is by what an agent would reach for first, not alphabetically:
 4. **System applets** — `audio`, `power`, `sysmon`, `network`, `bluetooth`,
    `screenshot`. Small surfaces, and the safety rules above bite hardest here.
 
+Where it stands: 17 of the 37 nouns in `apps/palm` are on the convention —
+notes, sheets, power, drive, calendar, contacts, chat, forge, ai, notify,
+index, settings, accounts, welcome, vault, browser, and mail, which routes to
+`palm-mail` (`cloud/mail/palm-mail`; `mailcore` stays listed, off the
+convention). `palm --selftest` holds each to the whole convention and prints
+the count. Two outcomes of a read say nothing about the convention and are
+accepted with the documented error object: *not found* (3), and
+*unavailable* (6) — no server, daemon or session on this machine, which is
+how the self-test runs. "Not signed in" is unavailable everywhere (drive,
+chat, accounts, forge, mail, ai). An example may set the scope in front of
+the binary (`PALM_IDENTITY=work drive ls`); one that composes commands
+(`git clone $(forge clone-url …)`) is documentation, not an invocation, and
+is not checked as one.
+
 A thing is done when the GUI uses the same entry points the CLI does. If
 `palm notes write` goes through a different path than typing in the window,
 the two will diverge, and the CLI will be the one that rots.

@@ -1,17 +1,17 @@
 // palm-mail — an identity's mailbox, on the command-line convention.
 //
-// The assistant's mail tools are this binary's verbs, generated from its
-// --schema like every other tool. It exists because the mail engine
-// (apps/mailcore) is not on the kit convention yet — `palm mail` still routes
-// to a binary that would open a window — and an assistant that cannot read
-// mail is not much of one. It is small on purpose and goes through PostgREST
-// with whatever session it is given, so RLS decides everything it can reach:
+// `palm mail` routes here, and the assistant's mail tools are this binary's
+// verbs, generated from its --schema like every other tool. It is the mail
+// area's command line for an identity's mailbox in the Palmframe cloud
+// (palm-maild's store), next to the server: the mail engine (apps/mailcore)
+// is not on the kit convention, and apps/mail has no network code by rule.
+// It is small on purpose and goes through PostgREST with whatever session it
+// is given, so RLS decides everything it can reach:
 //
 //	PALM_IDENTITY=camille.roux palm-mail unread --json
 //	PALM_CLOUD_SESSION=<delegated.json> palm-mail read <id> --json
 //
-// It belongs in the mail area; cloud/docs/assistant.md asks for these verbs
-// to move into mailcore (or apps/mail's CLI) and for this binary to go.
+// It was written by the assistant area (cloud/assistant/mail) and moved here.
 //
 // What it reads, it returns as the recipient would see it: the HTML part
 // when there is one, with hidden passages removed and counted (see
@@ -25,7 +25,7 @@ import "core:os"
 import "core:strings"
 import "core:time"
 import ck "../../../apps/cloudkit"
-import un "../untrusted"
+import un "../../assistant/untrusted"
 import kit "kit:."
 
 @(private = "file")

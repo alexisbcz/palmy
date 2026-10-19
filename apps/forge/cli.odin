@@ -113,7 +113,9 @@ open_client :: proc(c: ^kit.Call, need_auth := false) -> (cl: Client, code: int)
 		return cl, kit.cli_fail(c, code, err)
 	}
 	if need_auth && cl.bearer == "" {
-		return cl, kit.cli_fail(c, kit.EXIT_OUT_OF_SCOPE, "sign in first (`accounts signin`), or set FORGE_TOKEN")
+		// Not signed in is the account being unavailable here (6), as drive
+		// and chat say it, not a refusal of scope.
+		return cl, kit.cli_fail(c, kit.EXIT_UNAVAILABLE, "sign in first (`accounts signin`), or set FORGE_TOKEN")
 	}
 	if cl.kind == "token" && c.identity != "" {
 		// The token's identity is the scope; a different one is refused here,
@@ -256,7 +258,7 @@ COMMANDS := []kit.Command {
 		effect = .Read,
 		args = {REPO_ARG},
 		out = {{name = "url", kind = .String}},
-		examples = {"git clone $(forge clone-url ada/notes)"},
+		examples = {"forge clone-url ada/notes", "git clone $(forge clone-url ada/notes)"},
 		run = cmd_clone_url,
 	},
 	{

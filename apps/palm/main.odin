@@ -47,13 +47,15 @@ VERSION :: "0.1.0"
 // ---------------------------------------------------------------------------
 // The nouns
 //
-// Nouns follow the system, not the source tree: `palm mail` is `mailcore`,
-// `palm net` is the network applet, `palm capture` is the screenshot tool.
+// Nouns follow the system, not the source tree: `palm mail` is `palm-mail`
+// (the mail area's command line, cloud/mail/palm-mail), `palm net` is the
+// network applet, `palm capture` is the screenshot tool.
 //
-// `on_convention` is the honest statement of where the conversion has got to.
-// Three applications are on the shared convention today; the rest are listed
-// because the surface is the plan, and `palm schema` reports them as
-// unavailable rather than pretending. An application is probed for its
+// `on_convention` is the honest statement of where the conversion has got to,
+// and `palm --selftest` holds it to that: a noun marked on it must answer
+// `--schema` and pass every check below. The rest are listed because the
+// surface is the plan, and `palm schema` reports them as unavailable rather
+// than pretending. An application is probed for its
 // declaration only once this says it has one — a binary that does not know
 // `--schema` would open a window instead of answering, and a dispatcher that
 // hangs is worse than one that says it does not know yet.
@@ -64,36 +66,47 @@ Noun :: struct {
 	app:           string, // the directory and binary name under apps/
 	summary:       string,
 	on_convention: bool,
+	src:           string, // where the working tree builds it, when not apps/<app>/
 }
 
 NOUNS := []Noun {
-	{"notes", "notes", "a notebook of real Markdown files", true},
-	{"sheets", "sheets", "a spreadsheet, and the formula engine underneath it", true},
-	{"power", "power", "power and session state; session actions are intent only", true},
-	{"mail", "mailcore", "the mail engine: Maildir, IMAP, POP3, JMAP, SMTP", false},
-	{"torrent", "torrent", "a BitTorrent client, loopback only", false},
-	{"docs", "docs", "a word processor with a headless converter", false},
-	{"slides", "slides", "a presentation editor", false},
-	{"money", "money", "accounts, imports and budgets", false},
-	{"chat", "chat", "a chat client", false},
-	{"vault", "vault", "secrets, scoped to one identity", false},
-	{"files", "files", "a file browser", false},
-	{"calendar", "calendar", "a calendar", false},
-	{"reader", "reader", "an e-book reader", false},
-	{"maps", "maps", "a map viewer", false},
-	{"shop", "shop", "a shopping list", false},
-	{"ai", "ai", "models, prompts and scope", false},
-	{"audio", "audio", "an audio workstation", false},
-	{"mixer", "mixer", "output and input levels", false},
-	{"net", "network", "network state — read-only, by rule", false},
-	{"bluetooth", "bluetooth", "bluetooth devices — read-only, by rule", false},
-	{"sysmon", "sysmon", "processes, memory and load", false},
-	{"capture", "screenshot", "screenshots, on a private headless compositor", false},
-	{"clipboard", "clipboard", "the clipboard history", false},
-	{"editor", "editor", "a text editor", false},
-	{"image", "image", "an image viewer", false},
-	{"prose", "prose", "a Vale-compatible prose linter", false},
-	{"pkg", "pkg", "packages: list, search, install, sync, rollback", false},
+	{"notes", "notes", "a notebook of real Markdown files", true, ""},
+	{"sheets", "sheets", "a spreadsheet, and the formula engine underneath it", true, ""},
+	{"power", "power", "power and session state; session actions are intent only", true, ""},
+	{"drive", "drive", "an identity's cloud drive: files, sharing, links, trash", true, ""},
+	{"calendar", "calendar", "calendars per identity, on this device and over CalDAV", true, ""},
+	{"contacts", "contacts", "address books per identity, over CardDAV", true, ""},
+	{"chat", "chat", "team chat: spaces, channels, threads, calls", true, ""},
+	{"forge", "forge", "repositories, issues and pull requests owned by identities", true, ""},
+	{"ai", "ai", "the assistant: one per identity, confined to it", true, ""},
+	{"notify", "notify", "notifications per identity, under a policy written in words", true, ""},
+	{"index", "index", "the local search index, one per identity", true, ""},
+	{"settings", "settings", "the system's settings", true, ""},
+	{"accounts", "accounts", "one account, several identities", true, ""},
+	{"welcome", "welcome", "first run: account, identities, what syncs", true, ""},
+	{"vault", "vault", "secrets, scoped to one identity", true, ""},
+	{"browser", "browser", "a web browser, bookmarks synced per identity", true, ""},
+	{"mail", "palm-mail", "an identity's mail in the Palmframe cloud: unread, search, read, drafts, send", true, "cloud/mail/palm-mail"},
+	{"mailcore", "mailcore", "the mail engine: Maildir, IMAP, POP3, JMAP, SMTP", false, ""},
+	{"torrent", "torrent", "a BitTorrent client, loopback only", false, ""},
+	{"docs", "docs", "a word processor with a headless converter", false, ""},
+	{"slides", "slides", "a presentation editor", false, ""},
+	{"money", "money", "accounts, imports and budgets", false, ""},
+	{"files", "files", "a file browser", false, ""},
+	{"reader", "reader", "an e-book reader", false, ""},
+	{"maps", "maps", "a map viewer", false, ""},
+	{"shop", "shop", "a shopping list", false, ""},
+	{"audio", "audio", "an audio workstation", false, ""},
+	{"mixer", "mixer", "output and input levels", false, ""},
+	{"net", "network", "network state — read-only, by rule", false, ""},
+	{"bluetooth", "bluetooth", "bluetooth devices — read-only, by rule", false, ""},
+	{"sysmon", "sysmon", "processes, memory and load", false, ""},
+	{"capture", "screenshot", "screenshots, on a private headless compositor", false, ""},
+	{"clipboard", "clipboard", "the clipboard history", false, ""},
+	{"editor", "editor", "a text editor", false, ""},
+	{"image", "image", "an image viewer", false, ""},
+	{"prose", "prose", "a Vale-compatible prose linter", false, ""},
+	{"pkg", "pkg", "packages: list, search, install, sync, rollback", false, ""},
 }
 
 // FORBIDDEN_VERBS are the verbs that must not exist anywhere, and that `palm`
@@ -160,6 +173,8 @@ binary_for :: proc(n: Noun) -> (path: string, found: bool) {
 		fmt.tprintf("%s/../%s/%s.bin", dir, n.app, n.app),
 		fmt.tprintf("%s/%s.bin", dir, n.app),
 		fmt.tprintf("apps/%s/%s.bin", n.app, n.app),
+		// An application built outside apps/ (palm-mail, in the mail area).
+		fmt.tprintf("%s/%s.bin", n.src == "" ? fmt.tprintf("apps/%s", n.app) : n.src, n.app),
 	}) {
 		if os.exists(cand) {
 			return cand, true

@@ -31,6 +31,8 @@ import kit "kit:."
 
 checks: int
 failures: int
+ran_reads: int // read commands run and validated against their own schema
+unavailable_reads: int // read commands that could only answer "unavailable" here
 
 check :: proc(ok: bool, what: string, args: ..any) {
 	checks += 1
@@ -90,6 +92,54 @@ quoted :: proc(bin: string, args: []string) -> string {
 	for a in args {
 		strings.write_string(&sb, fmt.tprintf(" %q", a))
 	}
+	return strings.to_string(sb)
+}
+
+// Example is one shipped example as a command line for the binary: the
+// environment assignments written in front of it (`PALM_IDENTITY=work drive
+// ls`, which is how a scope is set), and the words from the binary's name on.
+// A composition (`git clone $(forge clone-url ada/notes)`) is an example of
+// using the output, not an invocation of the binary, and is not checked as
+// one; the application's own selftest skips it the same way.
+Example :: struct {
+	env:      []string,
+	words:    []string,
+	composed: bool,
+}
+
+example_of :: proc(line: string) -> Example {
+	if strings.contains(line, "$(") || strings.contains(line, "`") {
+		return {composed = true}
+	}
+	all := kit.cli_split_example(line, context.temp_allocator)
+	i := 0
+	for i < len(all) {
+		eq := strings.index_byte(all[i], '=')
+		if eq <= 0 {break}
+		name := all[i][:eq]
+		ok := true
+		for ch in transmute([]u8)name {
+			if !((ch >= 'A' && ch <= 'Z') || (ch >= '0' && ch <= '9') || ch == '_') {ok = false}
+		}
+		if !ok {break}
+		i += 1
+	}
+	return {env = all[:i], words = all[i:]}
+}
+
+// with_env puts an example's assignments in front of a command line.
+with_env :: proc(env: []string, line: string) -> string {
+	if len(env) == 0 {
+		return line
+	}
+	sb := strings.builder_make(context.temp_allocator)
+	for e in env {
+		// Only the value is quoted: a quoted NAME=value is a command word to
+		// the shell, not an assignment. example_of has checked the name.
+		eq := strings.index_byte(e, '=')
+		strings.write_string(&sb, fmt.tprintf("%s=%q ", e[:eq], e[eq + 1:]))
+	}
+	strings.write_string(&sb, line)
 	return strings.to_string(sb)
 }
 
@@ -188,6 +238,11 @@ selftest :: proc() -> int {
 	test_exit_codes(scratch)
 	test_dispatcher(scratch)
 
+	on := 0
+	for n in NOUNS {
+		if n.on_convention {on += 1}
+	}
+	fmt.printfln("\n%d of %d nouns on the convention; %d reads validated against their schema, %d answered unavailable (no server, daemon or session here)", on, len(NOUNS), ran_reads, unavailable_reads)
 	fmt.printfln("\n%d assertions, %d failures", checks, failures)
 	return failures == 0 ? 0 : 1
 }
@@ -281,19 +336,23 @@ test_examples :: proc(infos: []Surface_Info) {
 				if !is_s {
 					continue
 				}
+				ex := example_of(string(s))
+				if ex.composed {
+					continue
+				}
 				total += 1
-				words := kit.cli_split_example(string(s), context.temp_allocator)
+				words := ex.words
 				check(
 					len(words) > 0 && words[0] == info.noun.app,
 					"the example %q is typed as the binary is named",
 					string(s),
 				)
 				args := make([dynamic]string, context.temp_allocator)
-				for w in words[1:] {
+				for w in (len(words) > 0 ? words[1:] : nil) {
 					append(&args, w)
 				}
 				append(&args, "--parse-only")
-				_, code := sh(quoted(info.path, args[:]))
+				_, code := sh(with_env(ex.env, quoted(info.path, args[:])))
 				eq_i(code, 0, "the example %q parses", string(s))
 				_ = verb
 			}
@@ -318,6 +377,7 @@ test_read_schemas :: proc(infos: []Surface_Info) {
 			}
 			verb := str_of(cmd, "verb")
 			args := make([dynamic]string, context.temp_allocator)
+			env: []string
 			needs_arg := false
 			for a in arr_of(cmd, "args") {
 				if bool_of(a, "required") {
@@ -327,20 +387,26 @@ test_read_schemas :: proc(infos: []Surface_Info) {
 			if !needs_arg {
 				append(&args, verb)
 			} else {
-				ex := arr_of(cmd, "examples")
-				if len(ex) == 0 {
-					continue
+				// The first example that is an invocation of the binary.
+				found := false
+				for e in arr_of(cmd, "examples") {
+					s, is_s := e.(json.String)
+					if !is_s {continue}
+					ex := example_of(string(s))
+					if ex.composed || len(ex.words) == 0 {continue}
+					env = ex.env
+					for w in ex.words[1:] {
+						append(&args, w)
+					}
+					found = true
+					break
 				}
-				s, is_s := ex[0].(json.String)
-				if !is_s {
+				if !found {
 					continue
-				}
-				for w in kit.cli_split_example(string(s), context.temp_allocator)[1:] {
-					append(&args, w)
 				}
 			}
 			append(&args, "--json")
-			out, code := sh(quoted(info.path, args[:]))
+			out, code := sh(with_env(env, quoted(info.path, args[:])))
 
 			// "Not found" is a documented outcome of a read, not a failure of
 			// the convention: an example may name a note or a file that is
@@ -348,7 +414,16 @@ test_read_schemas :: proc(infos: []Surface_Info) {
 			// answer is a document of a declared shape — the command's own
 			// fields when it worked, the documented error object when it did
 			// not.
-			if code == kit.EXIT_NOT_FOUND {
+			// Unavailable is the other documented outcome that says nothing
+			// about the convention: the server, the daemon or the session the
+			// command reads through is not on this machine (the self-test
+			// runs with none). The answer must still be the documented error
+			// object. How many reads could only be checked this way is
+			// counted, so the number stays visible.
+			if code == kit.EXIT_UNAVAILABLE {
+				unavailable_reads += 1
+			}
+			if code == kit.EXIT_NOT_FOUND || code == kit.EXIT_UNAVAILABLE {
 				bad := kit.cli_validate_output(
 					out,
 					{{name = "error", kind = .String}, {name = "code", kind = .Int}, {name = "command", kind = .String}},
@@ -356,13 +431,15 @@ test_read_schemas :: proc(infos: []Surface_Info) {
 				)
 				check(
 					len(bad) == 0,
-					"%s %s --json refuses with the documented error object%s",
+					"%s %s --json answers %d with the documented error object%s",
 					info.noun.noun,
 					verb,
+					code,
 					len(bad) > 0 ? fmt.tprintf(" (%s)", bad[0]) : "",
 				)
 				continue
 			}
+			ran_reads += 1
 			eq_i(code, 0, "%s %s --json exits 0", info.noun.noun, verb)
 			if code != 0 {
 				continue
@@ -410,7 +487,12 @@ test_destructive :: proc(infos: []Surface_Info) {
 				continue
 			}
 			s, _ := ex[0].(json.String)
-			words := kit.cli_split_example(string(s), context.temp_allocator)
+			dex := example_of(string(s))
+			words := dex.words
+			if dex.composed || len(words) == 0 {
+				check(false, "the first example for %s %s is an invocation of %s", info.noun.noun, verb, info.noun.app)
+				continue
+			}
 			check(
 				strings.contains(string(s), "--yes"),
 				"the example for %s %s passes --yes, as any caller must",
@@ -428,13 +510,13 @@ test_destructive :: proc(infos: []Surface_Info) {
 			append(&without, "--parse-only")
 			append(&with, "--parse-only")
 
-			out, code := sh(quoted(info.path, without[:]))
+			out, code := sh(with_env(dex.env, quoted(info.path, without[:])))
 			eq_i(code, kit.EXIT_NEEDS_YES, "%s %s without --yes exits 4", info.noun.noun, verb)
 			check(
 				strings.contains(out, "needs --yes") || code == kit.EXIT_NEEDS_YES,
 				"and says so in machine-readable form",
 			)
-			_, ok_code := sh(quoted(info.path, with[:]))
+			_, ok_code := sh(with_env(dex.env, quoted(info.path, with[:])))
 			eq_i(ok_code, 0, "%s %s with --yes is accepted", info.noun.noun, verb)
 
 			// Refusal, not prompting. The command is given a stdin that is
@@ -447,9 +529,9 @@ test_destructive :: proc(infos: []Surface_Info) {
 			line := strings.builder_make(context.temp_allocator)
 			strings.write_string(
 				&line,
-				fmt.tprintf("mkfifo %q && (sleep 30 > %q &) && timeout 5 ", fifo, fifo),
+				fmt.tprintf("mkfifo %q && (sleep 30 > %q 2>/dev/null < /dev/null &) && timeout 5 ", fifo, fifo),
 			)
-			strings.write_string(&line, quoted(info.path, without[:len(without) - 1]))
+			strings.write_string(&line, with_env(dex.env, quoted(info.path, without[:len(without) - 1])))
 			strings.write_string(&line, fmt.tprintf(" < %q", fifo))
 			_, blocked := sh(strings.to_string(line))
 			os.remove(fifo)

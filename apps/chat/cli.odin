@@ -297,7 +297,7 @@ open_sess :: proc(c: ^kit.Call) -> (s: ^Sess, code: int) {
 		if env != "" {
 			return nil, kit.cli_failf(c, kit.EXIT_OUT_OF_SCOPE, "no session scoped to %s on this machine (accounts switch %s)", env, env)
 		}
-		return nil, kit.cli_fail(c, kit.EXIT_FAILED, "not signed in (accounts signin)")
+		return nil, kit.cli_fail(c, kit.EXIT_UNAVAILABLE, "not signed in (accounts signin)")
 	}
 	if fe := ck.ensure_fresh(cl); !ck.ok(fe) {
 		return nil, kit.cli_failf(c, kit.EXIT_UNAVAILABLE, "cloud: %s", fe.message)

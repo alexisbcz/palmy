@@ -396,7 +396,9 @@ need_session :: proc(c: ^kit.Call, st: ^St) -> int {
 		kit.cli_err_field(c, "identity", c.identity)
 		return code
 	}
-	code := kit.cli_fail(c, kit.EXIT_FAILED, "not signed in; run: accounts signin <email>")
+	// The account is not available on this device: unavailable (6), as the
+	// other apps say it, so a caller can tell it from a command that failed.
+	code := kit.cli_fail(c, kit.EXIT_UNAVAILABLE, "not signed in; run: accounts signin <email>")
 	kit.cli_err_field(c, "reason", "not signed in")
 	return code
 }

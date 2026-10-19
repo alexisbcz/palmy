@@ -49,7 +49,7 @@ step 0 "devices lists it" "$bin" devices --json
 step 0 "sessions lists the account's sessions" "$bin" sessions --json
 step 4 "revoke without --yes is refused (exit 4)" "$bin" revoke "Mail assistant" --json
 step 0 "revoke --yes" "$bin" revoke "Mail assistant" --yes --json
-step 7 "the revoked assistant is refused, and its file is gone" \
+step 6 "the revoked assistant is refused (no session left: unavailable), and its file is gone" \
 	env PALM_CLOUD_SESSION="$held" "$bin" list --json
 step 0 "this machine's own work session (from switch) still works" env PALM_IDENTITY="work$tag" "$bin" list --json
 step 0 "rename (the handle stays)" "$bin" rename "work$tag" "Alex, Northwind" --json
@@ -57,7 +57,7 @@ step 4 "archive without --yes is refused" "$bin" archive "work$tag" --json
 step 0 "archive --yes" "$bin" archive "work$tag" --yes --json
 step 0 "restore" "$bin" restore "work$tag" --json
 step 0 "signout" "$bin" signout --json
-step 7 "list when signed out fails with a reason" "$bin" list --json
+step 6 "list when signed out is unavailable, with a reason" "$bin" list --json
 step 0 "signin" env PALM_CLOUD_PASSWORD="e2e password $tag" "$bin" signin "e2e$tag@palm.test" --json
 step 7 "a wrong password is refused" "$bin" signin "e2e$tag@palm.test" --password nope-nope-nope --json
 "$bin" signout --json >/dev/null 2>&1

@@ -8,7 +8,7 @@ package main
 
 import "core:fmt"
 import "core:strings"
-import un "../untrusted"
+import un "../../assistant/untrusted"
 
 @(private = "file")
 passed, failed: int

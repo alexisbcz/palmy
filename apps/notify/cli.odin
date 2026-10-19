@@ -127,7 +127,7 @@ COMMANDS := []kit.Command {
 		summary = "take a toast off the screen; it stays in the center, read",
 		effect = .Idempotent,
 		args = {{name = "target", kind = .String, required = true, help = "an id or a key"}},
-		out = {},
+		out = {{name = "count", kind = .Int, opt = true}},
 		examples = {"notify dismiss 12"},
 		run = cmd_simple,
 	},
@@ -136,7 +136,7 @@ COMMANDS := []kit.Command {
 		summary = "the sender takes a notification back; its key will not come back as new",
 		effect = .Idempotent,
 		args = {{name = "target", kind = .String, required = true, help = "a key or an id"}},
-		out = {},
+		out = {{name = "count", kind = .Int, opt = true}},
 		examples = {"notify withdraw call:7f3a"},
 		run = cmd_simple,
 	},
@@ -214,7 +214,7 @@ COMMANDS := []kit.Command {
 		verb = "digest",
 		summary = "send an identity's held notifications as a digest now",
 		effect = .Mutate,
-		out = {},
+		out = {{name = "identity", kind = .String, help = "whose held notifications went out"}},
 		examples = {"notify digest --identity work"},
 		run = cmd_digest,
 	},
@@ -231,7 +231,7 @@ COMMANDS := []kit.Command {
 		summary = "open the notification center",
 		effect = .Read,
 		flags = {{name = "window", kind = .Bool, help = "an ordinary window, not a panel"}, {name = "dark", kind = .Bool}},
-		out = {},
+		out = {{name = "shown", kind = .Bool, help = "the center was shown, and has been closed"}},
 		examples = {"notify center", "notify center --identity work"},
 		run = cmd_center,
 	},
@@ -245,7 +245,7 @@ COMMANDS := []kit.Command {
 			{name = "no-bus", kind = .Bool, help = "do not serve org.freedesktop.Notifications"},
 			{name = "no-ui", kind = .Bool, help = "never start the toast surface"},
 		},
-		out = {},
+		out = {{name = "stopped", kind = .Bool, help = "the service ran and has stopped"}},
 		examples = {"notify daemon", "notify daemon --clock 17:58 --no-ui"},
 		run = cmd_daemon,
 	},
@@ -683,6 +683,7 @@ cmd_digest :: proc(c: ^kit.Call) -> int {
 	_, code := ask(c, r)
 	if code == kit.EXIT_OK {
 		c.out = kit.jobj(context.temp_allocator)
+		kit.jset_str(c.out, "identity", c.identity, context.temp_allocator)
 	}
 	return code
 }
@@ -710,7 +711,13 @@ cmd_center :: proc(c: ^kit.Call) -> int {
 		append(&args, "--identity", c.identity)
 	}
 	code := center_main(args[:])
+	if code != kit.EXIT_OK {
+		// center_main said why on stderr; the caller gets the documented
+		// error object, not an empty document with a failing exit.
+		return kit.cli_fail(c, code, code == kit.EXIT_UNAVAILABLE ? "palm-notifyd is not running" : "the center could not open")
+	}
 	c.out = kit.jobj(context.temp_allocator)
+	kit.jset_bool(c.out, "shown", true, context.temp_allocator)
 	return code
 }
 
@@ -730,7 +737,11 @@ cmd_daemon :: proc(c: ^kit.Call) -> int {
 		append(&args, "--clock", t)
 	}
 	code := daemon_main(args[:])
+	if code != kit.EXIT_OK {
+		return kit.cli_fail(c, code, "palm-notifyd stopped with an error")
+	}
 	c.out = kit.jobj(context.temp_allocator)
+	kit.jset_bool(c.out, "stopped", true, context.temp_allocator)
 	return code
 }
 
