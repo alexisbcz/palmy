@@ -167,15 +167,15 @@ const h = (type, style, ...children) => ({
 
 function card({ path, h1, description }) {
   const eyebrow = path === "/" ? "palmframe-os.vercel.app" : groupOf(path);
-  const desc = description.length > 190 ? description.slice(0, 187).replace(/\s+\S*$/, "") + "…" : description;
+  const desc = description.length > 150 ? description.slice(0, 147).replace(/\s+\S*$/, "") + "…" : description;
   return h(
     "div",
     {
-      width: "100%",
-      height: "100%",
+      width: "1200px",
+      height: "630px",
       display: "flex",
       flexDirection: "column",
-      justifyContent: "space-between",
+      justifyContent: "flex-start",
       padding: "64px 72px",
       background: "#0a0a0a",
       backgroundImage: "radial-gradient(circle at 85% 0%, #1e1b4b 0%, #0a0a0a 55%)",
@@ -184,7 +184,7 @@ function card({ path, h1, description }) {
     },
     h(
       "div",
-      { display: "flex", alignItems: "center", gap: "16px" },
+      { display: "flex", alignItems: "center", gap: "16px", width: "1056px" },
       h(
         "div",
         {
@@ -203,22 +203,17 @@ function card({ path, h1, description }) {
       ),
       h("div", { fontSize: "28px", fontWeight: 600 }, "Palmframe"),
       h("div", { fontSize: "26px", color: "#a1a1aa", marginLeft: "8px" }, eyebrow),
+      h("div", { fontSize: "22px", color: "#71717a", marginLeft: "auto" }, "github.com/alexisbcz/palmy"),
     ),
     h(
       "div",
-      { display: "flex", flexDirection: "column", gap: "24px" },
+      { display: "flex", flexDirection: "column", gap: "24px", width: "1056px", marginTop: "150px" },
       h(
         "div",
         { fontSize: h1.length > 40 ? "60px" : "72px", fontWeight: 700, lineHeight: 1.05, letterSpacing: "-0.02em" },
         h1,
       ),
-      desc ? h("div", { fontSize: "28px", lineHeight: 1.4, color: "#a1a1aa" }, desc) : h("div", {}, ""),
-    ),
-    h(
-      "div",
-      { display: "flex", justifyContent: "space-between", fontSize: "22px", color: "#71717a" },
-      h("div", {}, "github.com/alexisbcz/palmy"),
-      h("div", {}, path === "/" ? "" : path),
+      desc ? h("div", { fontSize: "28px", lineHeight: 1.4, color: "#a1a1aa", width: "1056px" }, desc) : h("div", {}, ""),
     ),
   );
 }

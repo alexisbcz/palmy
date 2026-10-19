@@ -206,6 +206,19 @@ export const COLLECTIONS = {
             },
           },
           {
+            slug: "cloud-contract",
+            title: "The cloud contract",
+            nav: "Cloud contract",
+            description:
+              "The interfaces the account, mail and drive pieces of the cloud part are being built against: layout, ownership and what each piece must agree on.",
+            source: { file: "cloud/CONTRACT.md" },
+            note: {
+              type: "info",
+              title: "A contract for work in progress",
+              body: "The pieces this file describes are being built against it now. None of them is part of the distribution yet; the idea behind them is on [The cloud part](/palmframe/cloud).",
+            },
+          },
+          {
             slug: "wm-interaction-model",
             title: "The window manager's interaction model",
             nav: "wm interaction model",
@@ -234,6 +247,7 @@ export const COLLECTIONS = {
           ["notes-installer-core", "install_core notes", "distro/notes/installer-core.md", "The install core and palm-install: the API as built, decisions, requests and gaps."],
           ["notes-installer-gui", "Graphical installer notes", "distro/notes/installer-gui.md", "apps/installer: modes, pages, right to left, translations, and where it differs from INSTALLER.md."],
           ["notes-i18n", "Translations notes", "distro/notes/i18n.md", "Translations, locale and time zone across the session stack."],
+          ["notes-browser", "Browser, GPU and X11 research", "distro/notes/browser.md", "Research, nothing built: what a real web browser, GPU clients and X11 applications on Palmframe would take, and what to do first."],
         ].map(([slug, title, file, description]) => ({
           slug,
           title,

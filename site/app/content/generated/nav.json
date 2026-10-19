@@ -160,6 +160,13 @@
             "description": "A design for a declarative layer over pacman, written before the distribution existed."
           },
           {
+            "slug": "cloud-contract",
+            "url": "/distro/cloud-contract",
+            "title": "The cloud contract",
+            "nav": "Cloud contract",
+            "description": "The interfaces the account, mail and drive pieces of the cloud part are being built against: layout, ownership and what each piece must agree on."
+          },
+          {
             "slug": "wm-interaction-model",
             "url": "/distro/wm-interaction-model",
             "title": "The window manager's interaction model",
@@ -247,6 +254,13 @@
             "title": "Translations notes",
             "nav": "Translations notes",
             "description": "Translations, locale and time zone across the session stack."
+          },
+          {
+            "slug": "notes-browser",
+            "url": "/distro/notes-browser",
+            "title": "Browser, GPU and X11 research",
+            "nav": "Browser, GPU and X11 research",
+            "description": "Research, nothing built: what a real web browser, GPU clients and X11 applications on Palmframe would take, and what to do first."
           }
         ]
       },

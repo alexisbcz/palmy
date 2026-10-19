@@ -310,7 +310,7 @@ export function Shell({
 
         {hasToc ? (
           <aside className="hidden xl:block">
-            <Toc entries={toc!} />
+            <Toc key={toc!.map((e) => e.id).join(" ")} entries={toc!} />
           </aside>
         ) : null}
       </div>
