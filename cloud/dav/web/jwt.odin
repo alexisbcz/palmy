@@ -67,3 +67,60 @@ jwt_claims :: proc(token: string) -> (json.Object, bool) {
 	obj, ok := v.(json.Object)
 	return obj, ok
 }
+
+// jwt_verify checks an HS256 token's signature and expiry and returns its
+// claims. A bearer token is verified here so the server can trust `sub` and
+// `palm_identity` for routing; PostgREST verifies it again on every query.
+jwt_verify :: proc(token, secret: string) -> (claims: json.Object, err: string) {
+	parts := strings.split(token, ".", context.temp_allocator)
+	if len(parts) != 3 {
+		return nil, "not a JWT"
+	}
+	signing := token[:len(parts[0]) + 1 + len(parts[1])]
+	sig := b64url_decode(parts[2])
+	if len(sig) != 32 || !hmac.verify(hash.Algorithm.SHA256, sig, transmute([]u8)signing, transmute([]u8)secret) {
+		return nil, "bad JWT signature"
+	}
+	head, hok := json.parse(b64url_decode(parts[0]), allocator = context.temp_allocator)
+	if hok != nil {
+		return nil, "bad JWT header"
+	}
+	alg := ""
+	if h, isobj := head.(json.Object); isobj {
+		if v, iss := h["alg"].(json.String); iss {
+			alg = string(v)
+		}
+	}
+	if alg != "HS256" {
+		return nil, "unsupported JWT algorithm (HS256 only)"
+	}
+	c, ok := jwt_claims(token)
+	if !ok {
+		return nil, "bad JWT payload"
+	}
+	if exp, has := c["exp"]; has {
+		e: i64
+		#partial switch x in exp {
+		case json.Integer:
+			e = x
+		case json.Float:
+			e = i64(x)
+		}
+		if e != 0 && e < time.time_to_unix(time.now()) {
+			return nil, "the token has expired"
+		}
+	}
+	return c, ""
+}
+
+b64url_decode :: proc(s: string) -> []u8 {
+	p := s
+	for len(p) % 4 != 0 {
+		p = strings.concatenate({p, "="}, context.temp_allocator)
+	}
+	raw, err := base64.decode(p, base64.DEC_URL_TABLE, allocator = context.temp_allocator)
+	if err != nil {
+		return nil
+	}
+	return raw
+}

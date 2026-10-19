@@ -184,7 +184,7 @@ expand :: proc(
 				}
 				append(&starts, occ)
 				walked += 1
-				if walked > limit * 4 {
+				if walked > 200000 {
 					truncated = true
 					break
 				}
