@@ -102,7 +102,7 @@ wrap_text :: proc(ctx: ^Ctx, n: ^Node, max_w: f32) -> [2]f32 {
 		// wrapped right-to-left paragraph from flipping on the line that
 		// happens to start with a Latin word. It is also why the width a line
 		// is measured at is the width it is drawn at: both go through `dir`.
-		dir := text_base_dir(para)
+		dir := text_base_dir(para, s.text_dir)
 		if max_w < 0 || s.nowrap {
 			emit(ctx, &lines, para, s, tracking, dir)
 			continue
@@ -474,6 +474,19 @@ arrange :: proc(ctx: ^Ctx, idx: int, box: Rect, clip: Rect) {
 	avail_main := cb.w if main == 0 else cb.h
 	avail_cross := cb.h if main == 0 else cb.w
 
+	// Mirroring. `flex-row-reverse` runs the main axis from the right,
+	// `flex-col-reverse` from the bottom, and `dir-rtl` mirrors the
+	// horizontal axis whichever way the box runs: a row's first child at
+	// the right, a column's `items-start` at the right. Two mirrors cancel,
+	// as `flex-row-reverse` inside `dir-rtl` does in CSS. Everything is laid
+	// out as if left to right and each child's box is reflected in the
+	// content box at the end, so justification, gaps, wrapping and growth
+	// are untouched -- and so are a child's physical margins, which move
+	// with it: `ml-2` in a mirrored row is the gap on the child's right,
+	// like a logical `ms-2`.
+	flip_x := (s.text_dir == .RTL) != (s.reverse && main == 0)
+	flip_y := s.reverse && main == 1
+
 	kids := make([dynamic]Child_Box, 0, n.n_children, context.temp_allocator)
 	abs := make([dynamic]int, 0, 4, context.temp_allocator)
 
@@ -758,6 +771,12 @@ arrange :: proc(ctx: ^Ctx, idx: int, box: Rect, clip: Rect) {
 			pos := [2]f32{}
 			pos[main] = cursor + (main == 0 ? cs.margin[LEFT] : cs.margin[TOP])
 			pos[cross] = cross_pos + (cross == 0 ? cs.margin[LEFT] : cs.margin[TOP])
+			if flip_x {
+				pos.x = cb.w - pos.x - k.size.x
+			}
+			if flip_y {
+				pos.y = cb.h - pos.y - k.size.y
+			}
 
 			kid_box := Rect {
 				cb.x + pos.x - scroll.x,

@@ -361,7 +361,13 @@ text_field :: proc(
 	// One direction for the whole field, resolved from everything in it, so
 	// that the caret, the arrow keys and the drawn text cannot disagree about
 	// which way the line runs.
-	field_dir := text_base_dir(string(buf[:]))
+	// A `dir-rtl` or `dir-ltr` above the field (or on it) fixes that
+	// direction instead of reading it from the text.
+	field_dir := text_base_dir(string(buf[:]), s.text_dir)
+	// The field positions its text and caret itself, from the left, so its
+	// own box must not be mirrored by an inherited `dir-rtl`; the text node
+	// below gets the field's direction back explicitly.
+	ctx.nodes[idx].style.text_dir = .LTR
 
 	if has_focus {
 		// Printable input.
@@ -527,6 +533,7 @@ text_field :: proc(
 
 	shown := content
 	t := text(ctx, shown, "whitespace-nowrap")
+	ctx.nodes[t].style.text_dir = mask != 0 ? .LTR : field_dir
 	if show_placeholder {
 		shown = placeholder
 		ctx.nodes[t].text = clone_frame(ctx, placeholder)
@@ -648,21 +655,12 @@ area_row_width :: proc(ctx: ^Ctx, str: string, s: Style, dir: Bidi_Direction) ->
 //
 // The rows are allocated from `alloc`; a widget passes the frame arena.
 //
-// WHERE THIS IS STILL WRONG, and what would fix it.
-//
-// Every row is measured with its paragraph's direction, which is right. Every
-// row is *drawn* as its own text node, and `wrap_text` resolves a node's
-// direction from that node's own string, which for a mixed paragraph can come
-// out different. Nothing in `Style` can override it, so a wrapped paragraph
-// that mixes directions can be drawn with a row at the wrong base direction
-// while the caret is placed at the right one. For text that is all one
-// direction -- which is every row of every application in this repository
-// today -- the two agree exactly and `text_simple` short-circuits both.
-//
-// The fix is a text-direction field on `Style` (`dir-ltr` / `dir-rtl` /
-// `dir-auto`) that `wrap_text` passes to `text_base_dir` instead of `.Auto`.
-// That is a change to `class.odin` and `layout.odin`, which this file does not
-// own, so it is reported rather than made.
+// THE DIRECTION each row is measured and drawn at is its paragraph's,
+// resolved once over the whole paragraph (or fixed by an inherited `dir-ltr`
+// / `dir-rtl`, which `s.text_dir` carries). `text_area` sets it on every row's
+// text node, so a wrapped paragraph that mixes directions is drawn at the
+// direction it was measured, hit-tested and caret-placed at, rather than one
+// `wrap_text` would resolve again from the row's own string.
 text_rows :: proc(
 	ctx: ^Ctx,
 	text: string,
@@ -680,7 +678,7 @@ text_rows :: proc(
 		para := text[at:para_end]
 		// Once per paragraph, not once per row: resolved over the whole
 		// paragraph and carried on every row of it.
-		dir := text_base_dir(para)
+		dir := text_base_dir(para, s.text_dir)
 
 		if width <= 0 || s.nowrap || area_row_width(ctx, para, s, dir) <= width {
 			append(&rows, Text_Row{at, para_end, after, true, dir})
@@ -1186,6 +1184,10 @@ text_area :: proc(
 	// whole width and then fades it out, which looks like the entire line
 	// flashing every time a drag begins. Snapping instead is also what a
 	// caret and a selection should do.
+	// The field places its rows, selection and caret from the left itself,
+	// so nothing in here may be mirrored by an inherited `dir-rtl`. Each
+	// row's text gets its paragraph's direction back explicitly below.
+	ctx.nodes[idx].style.text_dir = .LTR
 	body := push_styled(ctx, .Box, "flex-col items-stretch shrink-0 w-full", "")
 	ctx.nodes[body].style.margin[TOP] = -w.scroll.y
 	ctx.nodes[body].style.margin[LEFT] = -w.scroll.x
@@ -1243,6 +1245,9 @@ text_area :: proc(
 
 		t := text(ctx, line, "whitespace-nowrap")
 		ctx.nodes[t].style.shrink = 0
+		// Drawn at the direction it was measured at, the paragraph's, not one
+		// resolved again from this row's own string.
+		ctx.nodes[t].style.text_dir = r.dir
 		if show_placeholder && ri == 0 {
 			ctx.nodes[t].text = clone_frame(ctx, placeholder)
 			// A placeholder is the field's own colour at half strength, which

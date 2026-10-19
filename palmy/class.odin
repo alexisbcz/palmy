@@ -118,6 +118,10 @@ Style :: struct {
 	// Layout
 	hidden:        bool,
 	dir:           Direction,
+	// `flex-row-reverse` / `flex-col-reverse`: the main axis runs from its
+	// end, so the first child sits at the right (or the bottom) and
+	// `justify-start` packs against that edge.
+	reverse:       bool,
 	items:         Align,
 	self:          Align,
 	justify:       Justify,
@@ -166,6 +170,13 @@ Style :: struct {
 	outline_w:     f32,
 	outline_col:   Color,
 	text_align:    Text_Align,
+	// `dir-ltr` / `dir-rtl` / `dir-auto`, CSS's `direction` (inherited). It
+	// fixes the base direction of every paragraph below it instead of
+	// resolving it from the paragraph's first strong character, so
+	// `text-start` and the caret follow it; and `dir-rtl` mirrors layout:
+	// a row's children run right to left, a column's `items-start` sits at
+	// the right. Auto is the zero value and changes nothing.
+	text_dir:      Bidi_Direction,
 	tracking_em:   f32,
 	transform:     Text_Transform,
 	nowrap:        bool,
@@ -220,6 +231,7 @@ inherit :: proc(parent: Style) -> Style {
 	s.outline_w = parent.outline_w
 	s.outline_col = parent.outline_col
 	s.text_align = parent.text_align
+	s.text_dir = parent.text_dir
 	s.tracking_em = parent.tracking_em
 	s.transform = parent.transform
 	s.opacity = parent.opacity
@@ -466,9 +478,28 @@ apply_token :: proc(s: ^Style, t: string) {
 		return
 	case "flex-row":
 		s.dir = .Row
+		s.reverse = false
 		return
 	case "flex-col":
 		s.dir = .Col
+		s.reverse = false
+		return
+	case "flex-row-reverse":
+		s.dir = .Row
+		s.reverse = true
+		return
+	case "flex-col-reverse":
+		s.dir = .Col
+		s.reverse = true
+		return
+	case "dir-ltr":
+		s.text_dir = .LTR
+		return
+	case "dir-rtl":
+		s.text_dir = .RTL
+		return
+	case "dir-auto":
+		s.text_dir = .Auto
 		return
 	case "flex-wrap":
 		s.wrap = true
