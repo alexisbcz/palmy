@@ -41,7 +41,7 @@ Shell_Pal :: struct {
 	frame_rule_on:  u32, // the line under the title bar
 	frame_rule_off: u32,
 	frame_glyph:  u32,
-	frame_btn_hover: u32, // translucent: 0xAARRGGBB
+	frame_btn_hover: u32, // translucent: 0xRRGGBBAA, as p.hexa reads it
 	frame_btn_down:  u32,
 
 	// Menus, the start menu, tooltips, toasts.
@@ -53,7 +53,7 @@ Shell_Pal :: struct {
 	pop_faint:    u32, // disabled items, placeholders
 	pop_field:    u32, // the start menu's search field
 	pop_section:  u32, // the start menu's footer band
-	shadow:       u32, // 0xAARRGGBB
+	shadow:       u32, // 0xRRGGBBAA, as p.hexa reads it
 
 	// The accent and what is derived from it.
 	accent:       u32,
@@ -112,8 +112,8 @@ pal_apply :: proc(light: bool, accent: u32) {
 			frame_rule_on  = 0xd4d4d8,
 			frame_rule_off = 0xe4e4e7,
 			frame_glyph    = 0x52525b,
-			frame_btn_hover = 0x14000000,
-			frame_btn_down = 0x24000000,
+			frame_btn_hover = 0x00000014,
+			frame_btn_down = 0x00000024,
 			pop_bg         = 0xffffff,
 			pop_line       = 0xe4e4e7,
 			pop_hover      = 0xf4f4f5,
@@ -122,7 +122,7 @@ pal_apply :: proc(light: bool, accent: u32) {
 			pop_faint      = 0xa1a1aa,
 			pop_field      = 0xf4f4f5,
 			pop_section    = 0xfafafa,
-			shadow         = 0x40000000,
+			shadow         = 0x00000040,
 		}
 		pal.accent_soft = mix(accent, 0x000000, 0.15)
 		pal.accent_wash = mix(accent, 0xffffff, 0.86)
@@ -147,8 +147,8 @@ pal_apply :: proc(light: bool, accent: u32) {
 			frame_rule_on  = 0x3f3f46,
 			frame_rule_off = 0x27272a,
 			frame_glyph    = 0xa1a1aa,
-			frame_btn_hover = 0x1affffff,
-			frame_btn_down = 0x0dffffff,
+			frame_btn_hover = 0xffffff1a,
+			frame_btn_down = 0xffffff0d,
 			pop_bg         = 0x0f0f12,
 			pop_line       = 0x27272a,
 			pop_hover      = 0x27272a,
@@ -157,7 +157,7 @@ pal_apply :: proc(light: bool, accent: u32) {
 			pop_faint      = 0x52525b,
 			pop_field      = 0x18181b,
 			pop_section    = 0x0b0b0e,
-			shadow         = 0x99000000,
+			shadow         = 0x00000099,
 		}
 		pal.accent_soft = mix(accent, 0xffffff, 0.45)
 		pal.accent_wash = mix(accent, 0x0a0a0c, 0.80)
