@@ -1,0 +1,14 @@
+# A quick smoke test of the scripted collaborator.
+find Feature freeze
+para 0
+end
+type  Reviewed by Bob.
+find Nov 17
+backspace
+backspace
+type 24
+find The migration touches every document
+select 9
+comment Can we say which documents first?
+sync 5
+quit

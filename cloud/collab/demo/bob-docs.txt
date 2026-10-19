@@ -1,0 +1,27 @@
+# Bob, headless, while Alice's window is filmed.
+wait 1.5
+find Publish the migration guide two weeks before general availability.
+enter
+type Write the rollback runbook and rehearse it once.
+wait 1.5
+# Bob loses the network; his edits keep going into the local copy.
+offline
+find widen it over a week.
+type  Support gets a live dashboard of migration errors.
+wait 5
+online
+sync 6
+wait 2
+# A suggestion, not an edit.
+suggest on
+find ships to every
+type  paying
+suggest off
+sync 4
+wait 1
+find The migration touches
+select 14
+comment Which documents migrate first?
+sync 4
+wait 40
+quit

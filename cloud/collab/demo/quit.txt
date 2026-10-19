@@ -1,0 +1,3 @@
+# Create the shared document from plan.md and leave.
+sync 5
+quit

@@ -176,8 +176,15 @@ b64 :: proc(data: []u8) -> string {
 	return s
 }
 
+// unb64 decodes base64, ignoring the line breaks PostgreSQL's encode() puts
+// every 76 characters.
 unb64 :: proc(s: string) -> []u8 {
-	d, err := base64.decode(s, allocator = context.temp_allocator)
+	clean := s
+	if strings.contains_any(s, "\r\n") {
+		clean, _ = strings.remove_all(s, "\n", context.temp_allocator)
+		clean, _ = strings.remove_all(clean, "\r", context.temp_allocator)
+	}
+	d, err := base64.decode(clean, allocator = context.temp_allocator)
 	if err != nil {
 		return nil
 	}
@@ -209,7 +216,11 @@ room_open :: proc(doc_id: string) -> (^Room, string) {
 	if err != "" {
 		return r, err
 	}
-	snap := unb64(jstr(v, "snapshot"))
+	snap_text := jstr(v, "snapshot")
+	snap := unb64(snap_text)
+	if snap_text != "" && len(snap) == 0 {
+		return r, "the stored snapshot is not valid base64"
+	}
 	if len(snap) > 0 {
 		d, good := crdt.doc_load(1, snap)
 		if !good {

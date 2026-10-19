@@ -155,7 +155,7 @@ main :: proc() {
 		key := "b"
 		if cmd == "cat" && len(rest) > 1 {key = rest[1]}
 		if cmd == "append" && len(rest) > 2 {key = rest[2]}
-		s := open_session(&a, rest[0], fmt.tprintf("%s/cli-state", os.get_env("HOME", context.temp_allocator)))
+		s := open_session(&a, rest[0], "")
 		if !wait(s, is_live) {
 			die("could not sync: %v %s", s.status, s.error)
 		}
@@ -304,7 +304,7 @@ e2e :: proc(dir_a, handle_a, dir_b, handle_b: string) -> int {
 	// 9. History: sessions, and the state as it was after update 1.
 	hv, herr := client.rpc_raw(&a, "collab_history", fmt.tprintf(`{{"p_doc":"%s"}}`, doc))
 	sessions := ck.array(ck.get(hv, "sessions"))
-	check(herr == "" && len(sessions) >= 2, fmt.tprintf("history groups the log into %d sessions", len(sessions)))
+	check(herr == "" && len(sessions) >= 1 && len(ck.array(ck.get(sessions[0], "authors"))) == 2, fmt.tprintf("history groups the log into %d session(s), naming both authors", len(sessions)))
 	sv, serr := client.rpc_raw(&a, "collab_state_at", fmt.tprintf(`{{"p_doc":"%s","p_seq":1}}`, doc))
 	old := crdt.doc_make(99)
 	if serr == "" {

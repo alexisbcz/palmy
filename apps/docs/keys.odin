@@ -140,6 +140,9 @@ handle_keys :: proc(ui: ^p.Ctx, st: ^State, app: ^p.App) {
 	case .Doc:
 	}
 
+	if collab_keys(ui, st) {
+		return
+	}
 	keys_mouse(ui, st)
 	keys_commands(ui, st)
 	keys_motion(ui, st)
@@ -573,6 +576,9 @@ open_prompt :: proc(st: ^State, kind: Prompt_Kind) {
 		def = fmt_image_default(st)
 	case .Insert_Table:
 		def = "3x3"
+	case .Share:
+		def = "handle edit"
+	case .Comment, .Reply, .Name_Version:
 	case .None:
 	}
 	append(&st.prompt_buf, ..transmute([]u8)def)
@@ -610,6 +616,14 @@ prompt_label :: proc(kind: Prompt_Kind) -> string {
 		return "Insert picture from"
 	case .Insert_Table:
 		return "Insert table, rows x columns"
+	case .Comment:
+		return "Comment on the selection"
+	case .Reply:
+		return "Reply"
+	case .Share:
+		return "Share with: <handle> <view|comment|suggest|edit>, or: link <role>"
+	case .Name_Version:
+		return "Name this version"
 	case .None:
 	}
 	return ""
@@ -695,6 +709,12 @@ prompt_verb :: proc(kind: Prompt_Kind) -> string {
 		return "Export"
 	case .Insert_Image, .Insert_Table:
 		return "Insert"
+	case .Comment, .Reply:
+		return "Comment"
+	case .Share:
+		return "Share"
+	case .Name_Version:
+		return "Name"
 	case .None:
 	}
 	return "OK"
@@ -764,7 +784,8 @@ run_prompt :: proc(st: ^State, kind: Prompt_Kind, path: string) {
 		case .Import_Rtf:
 			nd, ok = import_rtf(full)
 		case .None, .Open, .Save_As, .Export_Md, .Import_Md, .Export_Html, .Export_Png,
-		     .Export_Pdf, .Export_Docx, .Export_Odt, .Export_Rtf, .Insert_Image, .Insert_Table:
+		     .Export_Pdf, .Export_Docx, .Export_Odt, .Export_Rtf, .Insert_Image, .Insert_Table,
+		     .Comment, .Reply, .Share, .Name_Version:
 		}
 		if ok {
 			replace_document(st, nd)
@@ -778,6 +799,17 @@ run_prompt :: proc(st: ^State, kind: Prompt_Kind, path: string) {
 	case .Insert_Table:
 		r, c := parse_table_spec(path)
 		insert_table(st, r, c)
+	case .Comment:
+		collab_comment(st, path)
+	case .Reply:
+		cb := &st.collab
+		if n := len(cb.comments); n > 0 {
+			collab_reply(st, cb.comments[clamp(collab_x.sel, 0, n - 1)].id, path)
+		}
+	case .Share:
+		collab_share_cmd(st, path)
+	case .Name_Version:
+		collab_name_version(st, path)
 	case .None:
 	}
 }

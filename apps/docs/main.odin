@@ -72,7 +72,12 @@ relayout :: proc(st: ^State) {
 }
 
 main :: proc() {
-	if len(os.args) > 1 {
+	if len(os.args) > 1 && os.args[1] == "--collab" {
+		if ca, rest := parse_collab_args(os.args[1:]); ca.script != "" {
+			os.exit(run_script(ca, ca.script, len(rest) > 0 ? rest[0] : ""))
+		}
+	}
+	if len(os.args) > 1 && os.args[1] != "--collab" {
 		switch os.args[1] {
 		case "--selftest":
 			os.exit(run_selftest() ? 0 : 1)
@@ -147,10 +152,18 @@ main :: proc() {
 	state_init(&st, &app.fonts)
 	defer state_destroy(&st)
 
-	if len(os.args) > 1 && !strings.has_prefix(os.args[1], "-") {
-		do_open(&st, os.args[1])
+	ca, rest := parse_collab_args(os.args[1:])
+	if len(rest) > 0 && !strings.has_prefix(rest[0], "-") {
+		do_open(&st, rest[0])
 	} else {
 		seed_document(&st)
+	}
+	if ca.doc != "" {
+		relayout(&st)
+		if err := collab_start(&st, app, ca); err != "" {
+			fmt.eprintfln("docs: %s", err)
+			os.exit(1)
+		}
 	}
 	relayout(&st)
 	st.dirty = false
@@ -159,6 +172,7 @@ main :: proc() {
 	for ui in p.frames(app) {
 		measure(ui, &st)
 		handle_keys(ui, &st, app)
+		collab_tick(ui, &st)
 		measure(ui, &st)
 		prose_tick(ui, &st)
 

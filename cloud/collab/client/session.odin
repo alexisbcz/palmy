@@ -122,12 +122,19 @@ Session :: struct {
 	saved_at:   time.Tick,
 }
 
+// state_dir is where this identity's local copies live: one directory per
+// identity, so an identity can be removed from a device by deleting its
+// directory, and two identities on one machine never share a file.
 state_dir :: proc(cfg: Config, allocator := context.allocator) -> string {
-	if cfg.dir != "" {
-		return strings.clone(cfg.dir, allocator)
+	base := cfg.dir
+	if base == "" {
+		base = os.get_env("PALM_COLLAB_DIR", context.temp_allocator)
 	}
-	home := os.get_env("HOME", context.temp_allocator)
-	p, _ := filepath.join({home, ".local/share/palm/collab"}, allocator)
+	if base == "" {
+		home := os.get_env("HOME", context.temp_allocator)
+		base, _ = filepath.join({home, ".local/share/palm/collab"}, context.temp_allocator)
+	}
+	p, _ := filepath.join({base, cfg.as_id != "" ? cfg.as_id : "anonymous"}, allocator)
 	return p
 }
 

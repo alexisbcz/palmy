@@ -1420,6 +1420,19 @@ peer_color_for :: proc(st: ^State, handle: string) -> string {
 	return "emerald"
 }
 
+// peer_name_for is the display name of the identity with `handle`, as far as
+// this window knows it (itself, or someone present).
+peer_name_for :: proc(st: ^State, handle: string) -> string {
+	cb := &st.collab
+	if handle == cb.handle {return cb.name}
+	if cb.sess != nil {
+		for p in cb.sess.peers {
+			if p.identity.handle == handle {return p.identity.display_name}
+		}
+	}
+	return handle
+}
+
 // collab_comment adds a comment on the selection. Returns its id.
 collab_comment :: proc(st: ^State, text: string) -> string {
 	cb := &st.collab

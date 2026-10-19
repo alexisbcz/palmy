@@ -34,6 +34,11 @@ Prompt_Kind :: enum u8 {
 	Insert_Table,
 	Import_Odt,
 	Import_Rtf,
+	// collaboration
+	Comment,
+	Reply,
+	Share,
+	Name_Version,
 }
 
 ZOOMS := [?]f32{0.5, 0.75, 0.9, 1.0, 1.25, 1.5, 2.0}
@@ -1636,6 +1641,9 @@ set_path :: proc(st: ^State, path: string) {
 }
 
 doc_title :: proc(st: ^State) -> string {
+	if st.collab.on && st.collab.sess != nil && st.collab.sess.doc_title != "" {
+		return st.collab.sess.doc_title
+	}
 	if st.path == "" {
 		return "Untitled"
 	}
@@ -1644,6 +1652,9 @@ doc_title :: proc(st: ^State) -> string {
 }
 
 replace_document :: proc(st: ^State, nd: Doc) {
+	if st.collab.on {
+		collab_note_edit(st, .Structural)
+	}
 	doc_destroy(&st.doc)
 	st.doc = nd
 	history_clear(&st.hist)

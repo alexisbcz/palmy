@@ -257,6 +257,10 @@ draw_page :: proc(c: ^p.Canvas, st: ^State, pi: int, dr: p.Rect, z, sc: f32, liv
 				draw_prose_marks(c, st, li, ox, ly, lh, k)
 			}
 
+			if live && st.collab.on {
+				draw_collab_line(c, st, li, ox, ly, lh, base, k)
+			}
+
 			// Selection.
 			if live && has_sel {
 				a := l.para == sel_lo.para ? max(l.start, sel_lo.off) : l.start
@@ -323,6 +327,10 @@ draw_page :: proc(c: ^p.Canvas, st: ^State, pi: int, dr: p.Rect, z, sc: f32, liv
 			.Sans,
 			.Regular,
 		)
+	}
+
+	if live && st.collab.on {
+		draw_remote_carets(c, st, pi, ox, oy, k)
 	}
 
 	// The caret, last, so it is never painted over.

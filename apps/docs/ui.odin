@@ -15,7 +15,7 @@ FINDBAR :: f32(40)
 STATUS :: f32(26)
 
 chrome_top :: proc(st: ^State) -> f32 {
-	h := TOP1 + TOP2 + 1
+	h := TOP1 + TOP2 + 1 + (st.collab.on ? 3 : 0)
 	if in_table(st) {
 		h += TABLEBAR + 1
 	}
@@ -32,7 +32,7 @@ measure :: proc(ui: ^p.Ctx, st: ^State) {
 	top := chrome_top(st)
 	// The problems panel takes its width out of the workspace, so the page
 	// stays centred in what is left rather than hiding behind the panel.
-	side := st.prose.show ? PROSE_W + 1 : 0
+	side := (st.prose.show ? PROSE_W + 1 : 0) + collab_side_w(st)
 	st.view = {0, top, max(120, win.x - side), max(40, win.y - top - 1 - STATUS)}
 	clamp_scroll(st)
 }
@@ -41,6 +41,7 @@ frame :: proc(ui: ^p.Ctx, st: ^State) {
 	p.col(ui, "w-full h-full bg-background text-foreground")
 	defer p.end(ui)
 
+	collab_band(ui, st)
 	toolbar_top(ui, st)
 	toolbar_format(ui, st)
 	sc.separator(ui)
@@ -73,6 +74,10 @@ frame :: proc(ui: ^p.Ctx, st: ^State) {
 		// takes the whole width and leaves both siblings at zero.
 		sc.separator(ui, .Vertical)
 		prose_panel(ui, st)
+	}
+	if st.collab.on && st.collab.panel != .None {
+		sc.separator(ui, .Vertical)
+		collab_panel(ui, st)
 	}
 	p.end(ui)
 
@@ -210,16 +215,17 @@ toolbar_top :: proc(ui: ^p.Ctx, st: ^State) {
 
 	vrule(ui)
 
-	if tool_button(ui, "undo", ICON_ROTATE_CCW, false, history_can_undo(&st.hist)) {
+	if tool_button(ui, "undo", ICON_ROTATE_CCW, false, st.collab.on ? crdt_can_undo(st) : history_can_undo(&st.hist)) {
 		do_undo(st)
 	}
-	if tool_button(ui, "redo", ICON_ROTATE_CW, false, history_can_redo(&st.hist)) {
+	if tool_button(ui, "redo", ICON_ROTATE_CW, false, st.collab.on ? crdt_can_redo(st) : history_can_redo(&st.hist)) {
 		do_redo(st)
 	}
 
 	p.spacer(ui)
 
 	p.row(ui, "shrink-0 items-center gap-1.5")
+	collab_identity_chip(ui, st)
 	p.text(ui, doc_title(st), "text-[12.5] text-muted-foreground whitespace-nowrap")
 	p.style(ui).shrink = 0
 	if st.modified {
@@ -230,6 +236,12 @@ toolbar_top :: proc(ui: ^p.Ctx, st: ^State) {
 
 	p.spacer(ui)
 
+	if st.collab.on {
+		collab_presence(ui, st)
+		vrule(ui)
+		collab_toolbar_buttons(ui, st)
+		vrule(ui)
+	}
 	if tool_button(ui, "find", ICON_SEARCH, st.mode == .Find) {
 		st.mode = st.mode == .Find ? .Doc : .Find
 		st.find_hits = count_hits(st)

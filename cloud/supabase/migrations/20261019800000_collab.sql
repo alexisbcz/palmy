@@ -435,17 +435,17 @@ as $$
 	order by d.updated_at desc
 $$;
 
--- collab_history groups the log into sessions — consecutive updates by one
--- author with no gap longer than five minutes — the way a version list wants
--- them, plus the named versions.
-create function public.collab_history(p_doc uuid) returns jsonb
+-- collab_history groups the log into editing sessions the way a version list
+-- wants them: a new session starts after `p_gap` seconds without an edit
+-- (five minutes by default), and each session lists everyone who edited in
+-- it. Named versions come alongside.
+create function public.collab_history(p_doc uuid, p_gap int default 300) returns jsonb
 language sql stable security definer
 set search_path = ''
 as $$
 	with u as (
 		select seq, author_identity, created_at,
-		       case when author_identity is distinct from lag(author_identity) over w
-		              or created_at - lag(created_at) over w > interval '5 minutes'
+		       case when created_at - lag(created_at) over w > make_interval(secs => greatest(p_gap, 1))
 		            then 1 else 0 end as brk
 		from public.collab_updates
 		where doc_id = p_doc and public.collab_session_role(p_doc) is not null
@@ -453,19 +453,20 @@ as $$
 	), g as (
 		select *, sum(brk) over (order by seq) as grp from u
 	), s as (
-		select min(seq) as seq_from, max(seq) as seq_to, author_identity,
+		select grp, min(seq) as seq_from, max(seq) as seq_to,
 		       min(created_at) as first_at, max(created_at) as last_at, count(*) as n
-		from g group by grp, author_identity
+		from g group by grp
 	)
 	select jsonb_build_object(
 		'sessions', coalesce((select jsonb_agg(jsonb_build_object(
 			'from', s.seq_from, 'to', s.seq_to, 'n', s.n, 'first_at', s.first_at, 'last_at', s.last_at,
-			'author', s.author_identity, 'name', i.display_name, 'handle', i.handle, 'color', i.color)
+			'authors', (select jsonb_agg(distinct jsonb_build_object('name', i.display_name, 'handle', i.handle, 'color', i.color))
+			            from g join public.identities i on i.id = g.author_identity where g.grp = s.grp))
 			order by s.seq_to desc)
-			from s join public.identities i on i.id = s.author_identity), '[]'::jsonb),
+			from s), '[]'::jsonb),
 		'versions', coalesce((select jsonb_agg(jsonb_build_object('seq', v.seq, 'name', v.name,
-			'at', v.created_at, 'by', v.created_by) order by v.seq desc)
-			from public.collab_versions v
+			'at', v.created_at, 'by', i.display_name, 'color', i.color) order by v.seq desc)
+			from public.collab_versions v join public.identities i on i.id = v.created_by
 			where v.doc_id = p_doc and public.collab_session_role(p_doc) is not null), '[]'::jsonb))
 $$;
 
@@ -486,8 +487,8 @@ begin
 		where doc_id = p_doc and seq <= p_seq order by seq desc limit 1;
 	return jsonb_build_object(
 		'snapshot_seq', coalesce(snap.seq, 0),
-		'snapshot', case when snap.data is null then null else encode(snap.data, 'base64') end,
-		'updates', coalesce((select jsonb_agg(encode(u.data, 'base64') order by u.seq)
+		'snapshot', case when snap.data is null then null else translate(encode(snap.data, 'base64'), E'\n', '') end,
+		'updates', coalesce((select jsonb_agg(translate(encode(u.data, 'base64'), E'\n', '') order by u.seq)
 			from public.collab_updates u
 			where u.doc_id = p_doc and u.seq > coalesce(snap.seq, 0) and u.seq <= p_seq), '[]'::jsonb));
 end
@@ -565,22 +566,22 @@ as $$
 	select jsonb_build_object(
 		'head_seq', (select head_seq from public.collab_documents where id = p_doc),
 		'snapshot_seq', coalesce((select seq from s), 0),
-		'snapshot', (select encode(data, 'base64') from s),
-		'updates', coalesce((select jsonb_agg(jsonb_build_object('seq', u.seq, 'data', encode(u.data, 'base64'))
+		'snapshot', (select translate(encode(data, 'base64'), E'\n', '') from s),
+		'updates', coalesce((select jsonb_agg(jsonb_build_object('seq', u.seq, 'data', translate(encode(u.data, 'base64'), E'\n', ''))
 			order by u.seq) from public.collab_updates u
 			where u.doc_id = p_doc and u.seq > coalesce((select seq from s), 0)), '[]'::jsonb))
 $$;
 
 revoke execute on function public.collab_role_of(uuid, uuid), public.collab_session_role(uuid),
 	public.collab_share(uuid, text, text), public.collab_unshare(uuid, text), public.collab_people(uuid), public.collab_make_link(uuid, text, int),
-	public.collab_join(uuid, uuid, text), public.collab_documents_mine(), public.collab_history(uuid),
+	public.collab_join(uuid, uuid, text), public.collab_documents_mine(), public.collab_history(uuid, int),
 	public.collab_state_at(uuid, bigint), public.collab_server_role(uuid, uuid, uuid),
 	public.collab_append(uuid, uuid, uuid, text, text, text), public.collab_put_snapshot(uuid, bigint, text),
 	public.collab_load(uuid)
 	from public, anon, authenticated;
 grant execute on function public.collab_role_of(uuid, uuid), public.collab_session_role(uuid),
 	public.collab_share(uuid, text, text), public.collab_unshare(uuid, text), public.collab_people(uuid), public.collab_make_link(uuid, text, int),
-	public.collab_join(uuid, uuid, text), public.collab_documents_mine(), public.collab_history(uuid),
+	public.collab_join(uuid, uuid, text), public.collab_documents_mine(), public.collab_history(uuid, int),
 	public.collab_state_at(uuid, bigint)
 	to authenticated, service_role;
 grant execute on function public.collab_server_role(uuid, uuid, uuid),

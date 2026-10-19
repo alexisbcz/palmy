@@ -1,0 +1,43 @@
+# Alice, the filmed window (driven by apps/tools/headless-record.sh).
+wait 3.5
+chord ctrl+alt+v
+wait 0.4
+type Draft before review
+wait 0.3
+key Return
+wait 1
+chord ctrl+End
+key Return
+wait 0.3
+type Owners confirm their dates by Friday.
+wait 5
+key Return
+wait 0.3
+type Next review: Monday, with Bob.
+wait 7
+chord ctrl+alt+c
+wait 4
+key F9
+type paying
+key Escape
+wait 1
+chord ctrl+alt+a
+wait 2
+chord ctrl+alt+n
+wait 1
+chord ctrl+alt+y
+wait 0.5
+type Customer documents first, then internal ones.
+wait 0.3
+key Return
+wait 3
+chord ctrl+alt+h
+wait 2
+chord ctrl+alt+Down
+wait 0.5
+chord ctrl+alt+Return
+wait 4
+key Escape
+wait 1
+chord ctrl+alt+k
+wait 4
