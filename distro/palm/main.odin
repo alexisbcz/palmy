@@ -108,6 +108,9 @@ Any other first word is passed to the command surface (` + SURFACE_PATH + `).
 
 main :: proc() {
 	args := os.args
+	if v, found := os.lookup_env("PALM_HTTP_TRACE", context.temp_allocator); found && v != "" && v != "0" {
+		g_http_trace = true
+	}
 	if len(args) >= 2 {
 		first := args[1]
 		if first == "--selftest" || first == "--self-test" {

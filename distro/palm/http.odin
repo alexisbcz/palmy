@@ -148,6 +148,11 @@ Http_Client :: struct {
 @(thread_local)
 tl_client: Http_Client
 
+// g_http_trace (PALM_HTTP_TRACE=1 in the environment) prints every request
+// and the status it got on stderr: what a person needs when a mirror
+// misbehaves.
+g_http_trace := false
+
 // g_conns_opened counts connections made, so the selftest can see keep-alive
 // at work.
 g_conns_opened: int
@@ -550,6 +555,9 @@ http_open :: proc(url: string, range_from: i64 = 0) -> (Body, Err) {
 			conn_close(c)
 			if stale {continue}
 			return {}, e
+		}
+		if g_http_trace {
+			fmt.eprintf("palm: http: GET %s%s -> %d (length %d%s%s, %s connection)\n", url, range_from > 0 ? fmt.tprintf(" from byte %d", range_from) : "", r.status, r.length, r.chunked ? ", chunked" : "", r.close ? ", close" : "", pooled ? "pooled" : "new")
 		}
 		return body_start(c, r, url), Err{}
 	}

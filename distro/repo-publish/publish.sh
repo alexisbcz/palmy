@@ -42,7 +42,11 @@ PALM=${PALM:-$OUT/bin/palm}
 SRC=${SRC:-$OUT/repo/x86_64}
 KEY=${PALMFRAME_RELEASE_KEY:-$HOME/.config/palmframe/keys/palmframe-release.sec}
 PUB=$DISTRO/recipes/palm/palmframe-release.pub
-STAGE=${STAGE:-$DISTRO/build/publish}
+# The staging directory is outside every checkout on purpose: `vercel link`
+# run inside a git repository connects the project to that repository, and
+# Vercel then deploys the repository itself on every push -- which would
+# replace the package repository with a build of the source tree.
+STAGE=${STAGE:-${XDG_CACHE_HOME:-$HOME/.cache}/palmframe/publish}
 VERCEL_PROJECT=${VERCEL_PROJECT:-palmframe-packages}
 VERCEL_URL=${VERCEL_URL:-https://$VERCEL_PROJECT.vercel.app}
 GITHUB_REPO=${GITHUB_REPO:-alexisbcz/palmframe-packages}
@@ -82,6 +86,13 @@ say() { echo "publish: $*"; }
 ls "$SRC"/*.palm >/dev/null 2>&1 || die "no packages in $SRC (make -C distro repo)"
 [ -f "$KEY" ] || die "no release key at $KEY (PALMFRAME_RELEASE_KEY); \`palm keygen\` one outside the checkout and put its .pub in $PUB"
 key_abs=$(cd "$(dirname "$KEY")" && pwd)/$(basename "$KEY")
+case "$STAGE" in
+"$ROOT" | "$ROOT"/*) die "STAGE ($STAGE) is inside the checkout; see the comment at STAGE" ;;
+esac
+mkdir -p "$STAGE"
+if (cd "$STAGE" && command -v git >/dev/null && git rev-parse --show-toplevel >/dev/null 2>&1); then
+	die "STAGE ($STAGE) is inside a git repository; see the comment at STAGE"
+fi
 case "$key_abs" in
 "$ROOT"/* | "$STAGE"/* | "$OUT"/*) die "the release key $key_abs is inside the checkout; keep it outside (it must never be committed or uploaded)" ;;
 esac
@@ -97,7 +108,18 @@ mkdir -p "$site"
 find "$site" -mindepth 1 -maxdepth 1 ! -name .vercel -exec rm -rf {} +
 mkdir -p "$site/x86_64"
 cp "$SRC"/*.palm "$site/x86_64/"
-"$PALM" index "$site/x86_64" --key "$key_abs"
+# palmframe-base carries /etc/palm/keys/palmframe.pub, which a checkout's
+# build fills with its own throwaway build key. The public copy must not
+# trust a key that only ever signed one developer's local repository, so it
+# is rebuilt here with the release key in that place.
+keys_tmp=$(mktemp -d)
+cp "$PUB" "$keys_tmp/palmframe.pub"
+rm -f "$site"/x86_64/palmframe-base-*.palm
+PALMFRAME_ROOT=$ROOT PALMFRAME_OUT=$OUT PALMFRAME_KEYS=$keys_tmp SOURCE_DATE_EPOCH=0 \
+	"$PALM" build "$DISTRO/recipes/palmframe-base" -o "$site/x86_64" >/dev/null
+rm -rf "$keys_tmp"
+# Dated now, whatever the environment says: clients refuse an older index.
+env -u SOURCE_DATE_EPOCH "$PALM" index "$site/x86_64" --key "$key_abs"
 cp "$PUB" "$site/palmframe-release.pub"
 
 # Nothing but what should be public.
@@ -170,10 +192,16 @@ check_repo() { # <repo url or path> <label>
 	scratch=$(mktemp -d)
 	mkdir -p "$scratch/keys"
 	cp "$PUB" "$scratch/keys/"
-	if ! "$PALM" --root "$scratch/root" --initdb --keys-dir "$scratch/keys" --repo "$1" update; then
-		rm -rf "$scratch"
-		die "$2: palm update against $1 failed"
-	fi
+	# A CDN takes a little while to serve a new deployment everywhere.
+	tries=0
+	until "$PALM" --root "$scratch/root" --initdb --keys-dir "$scratch/keys" --repo "$1" update; do
+		tries=$((tries + 1))
+		if [ $tries -ge 12 ]; then
+			rm -rf "$scratch"
+			die "$2: palm update against $1 failed"
+		fi
+		sleep 5
+	done
 	pkg=$(awk -F' = ' '/^pkgname = /{print $2; exit}' "$site/x86_64/PALMINDEX")
 	if ! "$PALM" --root "$scratch/root" --initdb --keys-dir "$scratch/keys" --repo "$1" add --dry-run "$pkg" >/dev/null; then
 		rm -rf "$scratch"
@@ -196,6 +224,9 @@ if [ $do_vercel = 1 ]; then
 	if [ ! -f "$site/.vercel/project.json" ]; then
 		(cd "$site" && vercel link --yes --project "$VERCEL_PROJECT" >/dev/null)
 	fi
+	# Belt and braces for the STAGE comment: the project must never build
+	# from a repository.
+	(cd "$site" && vercel git disconnect --yes >/dev/null 2>&1) || true
 	say "deploying to Vercel project $VERCEL_PROJECT"
 	(cd "$site" && vercel deploy --prod --yes)
 	check_repo "$VERCEL_URL" "Vercel"
