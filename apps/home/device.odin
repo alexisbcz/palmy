@@ -449,9 +449,12 @@ device_search :: proc(s: ^Store, text: string, filter_ident: int) -> Results {
 		r.unknown = fmt.aprintf("in:%s", q.in_words[0])
 	}
 
-	// Counts for every identity in scope (the chips: what each would find),
-	// then the results for the identities the window shows.
+	// Counts for the identities in scope but not shown (the chips: what
+	// each would find); the shown ones are counted by the search itself.
 	for i in allowed {
+		if filter_ident < 0 || filter_ident == i {
+			continue
+		}
 		st: ic.Stats
 		qq := q
 		out := make([dynamic]ic.Result, context.temp_allocator)
@@ -459,12 +462,6 @@ device_search :: proc(s: ^Store, text: string, filter_ident: int) -> Results {
 		ic.search_all(ts, &qq, {limit = 1, now = now, typing = typing}, &out, &st)
 		if i < len(r.per_id) {
 			r.per_id[i] = st.matched
-		}
-		r.scanned += st.searched
-		for c in st.corrections {
-			if r.correction == "" {
-				r.correction = fmt.aprintf("%s → %s", c.from, c.to)
-			}
 		}
 	}
 	// The results themselves: one search across the identities shown, so
@@ -484,6 +481,17 @@ device_search :: proc(s: ^Store, text: string, filter_ident: int) -> Results {
 	ic.search_all(shown[:], &qq, {limit = 60, per_kind = 6, now = now, typing = typing, snippets = true}, &out, &st)
 	for k in ic.Kind {
 		r.per_kind[kind_from(k)] = st.per_kind[k]
+	}
+	for i, n in shown_idx {
+		if i < len(r.per_id) {
+			r.per_id[i] = st.per_target[n]
+		}
+	}
+	r.scanned = st.searched
+	for c in st.corrections {
+		if r.correction == "" {
+			r.correction = fmt.aprintf("%s → %s", c.from, c.to)
+		}
 	}
 	r.took_us = st.took_us
 	for res in out {

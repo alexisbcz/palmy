@@ -76,6 +76,7 @@ Stats :: struct {
 	per_kind:    [Kind]int,
 	corrections: [dynamic]Correction,
 	took_us:     i64,
+	per_target:  [16]int, // matched, per index searched (search_all's targets)
 }
 
 @(private)
@@ -94,6 +95,24 @@ Expansion :: struct {
 }
 
 MAX_PREFIX_EXPAND :: 48
+
+// prefix_budget bounds how many completions a prefix stands for. A letter
+// or two matches thousands of words, and the commonest of them are in
+// nearly every document: decoding 48 of those lists is what makes the first
+// keystrokes slow, and the results they give are noise anyway. So the
+// first letters complete to a few common words, and the list widens as the
+// prefix starts to mean something.
+prefix_budget :: proc(n: int) -> int {
+	switch n {
+	case 1:
+		return 3
+	case 2:
+		return 6
+	case 3:
+		return 16
+	}
+	return MAX_PREFIX_EXPAND
+}
 MAX_FUZZY_EXPAND :: 6
 
 // edit_distance is Damerau–Levenshtein (adjacent transpositions), giving up
@@ -159,7 +178,10 @@ expand :: proc(ix: ^Index, t: Term, stats: ^Stats) -> [dynamic]Expansion {
 			text: string,
 			df:   u32,
 		}
-		cands := make([dynamic]Cand_Term, context.temp_allocator)
+		// The `budget` commonest completions, summed across segments, kept
+		// in a small sorted array rather than collecting and sorting them all.
+		budget := prefix_budget(len(t.text))
+		top := make([dynamic]Cand_Term, 0, budget + 1, context.temp_allocator)
 		for s in ix.segs {
 			i := term_lower_bound(s, t.text)
 			scanned := 0
@@ -172,14 +194,32 @@ expand :: proc(ix: ^Index, t: Term, stats: ^Stats) -> [dynamic]Expansion {
 				if tt == t.text {
 					continue
 				}
-				append(&cands, Cand_Term{tt, s.terms[i].df})
+				df := s.terms[i].df
+				merged := false
+				for &c in top {
+					if c.text == tt {
+						c.df += df
+						merged = true
+					}
+				}
+				if !merged {
+					if len(top) == budget && df <= top[len(top) - 1].df {
+						continue
+					}
+					append(&top, Cand_Term{tt, df})
+				}
+				// Keep it descending by df (a merge can move any entry up).
+				for j in 1 ..< len(top) {
+					for k := j; k > 0 && top[k].df > top[k - 1].df; k -= 1 {
+						top[k], top[k - 1] = top[k - 1], top[k]
+					}
+				}
+				if len(top) > budget {
+					resize(&top, budget)
+				}
 			}
 		}
-		slice.sort_by(cands[:], proc(a, b: Cand_Term) -> bool {return a.df > b.df})
-		for c in cands {
-			if len(out) >= MAX_PREFIX_EXPAND {
-				break
-			}
+		for c in top {
 			if c.text in seen {
 				continue
 			}
@@ -777,6 +817,9 @@ search_one :: proc(ix: ^Index, ti: int, q: ^Query, opt: Options, heaps: ^[Kind][
 				sc += ranking_boosts(r, opt.now)
 			}
 			stats.matched += 1
+			if ti < len(stats.per_target) {
+				stats.per_target[ti] += 1
+			}
 			stats.per_kind[r.kind] += 1
 			heap_push(&heaps[r.kind], Cand{sc, s, u32(d), ti}, cap_n)
 		}
