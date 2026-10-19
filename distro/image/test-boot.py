@@ -319,6 +319,9 @@ def main():
         m.key("esc")
 
         # --- palm on the installed system ---
+        # The image points at the public repository; the test uses the one
+        # this build just made, served from the host.
+        LOCAL_REPO = "http://10.0.2.2:8080/x86_64"
         out, st = m.run("palm list --installed", 30)
         print("  ....  palm list --installed:\n" + "\n".join("          " + l for l in out.strip().splitlines()))
         m.check("palm list --installed lists the 31 shipped packages",
@@ -326,10 +329,10 @@ def main():
         out, st = m.run("palm verify", 60)
         print("  ....  palm verify (exit %d):\n" % st + "\n".join("          " + l for l in out.strip().splitlines()[-15:]))
         m.check("palm verify finds nothing wrong", st == 0, out)
-        out, st = m.run("palm update", 60)
+        out, st = m.run(f"palm update --repo {LOCAL_REPO}", 60)
         print("  ....  palm update (exit %d): %s" % (st, out.strip().replace("\n", " | ")))
         m.check("palm update fetches the signed index from http://10.0.2.2", st == 0, out)
-        out, st = m.run(f"palm add --yes {args.add} && command -v {args.add} && palm info {args.add}", 120)
+        out, st = m.run(f"palm add --repo {LOCAL_REPO} --yes {args.add} && command -v {args.add} && palm info {args.add}", 120)
         print(f"  ....  palm add {args.add} (exit {st}):\n" + "\n".join("          " + l for l in out.strip().splitlines()))
         m.check(f"palm add {args.add} installs it over http", st == 0 and f"/usr/bin/{args.add}" in out, out)
         out, st = m.run("palm verify", 60)

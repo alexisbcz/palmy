@@ -102,11 +102,11 @@ fakeroot -- bash -euo pipefail -c '
 	rm -f "$rootfs/etc/machine-id"
 
 	# The repository the installed system uses is the one palmframe-base
-	# ships in /etc/palm/repositories (the build host over QEMU user
-	# networking, http://10.0.2.2:8080/x86_64). Say so here, so a changed
-	# base file does not silently produce an image that points nowhere.
-	grep -q "^http://10.0.2.2:" "$rootfs/etc/palm/repositories" ||
-		echo "image: warning: /etc/palm/repositories is not the host repository" >&2
+	# ships in /etc/palm/repositories: the public https repository and its
+	# mirror (distro/repo-publish). Say so here, so a changed base file does
+	# not silently produce an image that points nowhere.
+	grep -q "^https://" "$rootfs/etc/palm/repositories" ||
+		echo "image: warning: /etc/palm/repositories is not the public repository" >&2
 
 	# Size: what is installed plus room to grow, rounded to 4 MiB.
 	used=$(du -s --block-size=1M "$rootfs" | cut -f1)
