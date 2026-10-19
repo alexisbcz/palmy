@@ -556,11 +556,15 @@ do_move :: proc(c: ^Ctx, r: ^Res) {
 	}
 	dest = web.percent_decode(dest)
 	d, found := route(c, dest)
-	if found {
-		if strings.to_upper(web.header(c.req.headers, "Overwrite")) == "F" {
-			fail(c, 412, "the destination exists")
-			return
-		}
+	// route finds the collection; whether the object itself exists is a
+	// separate question (it decides 201 against 204, and Overwrite: F).
+	exists := false
+	if found && (d.kind == .Cal_Object || d.kind == .Card) {
+		_, exists = object(c, d.coll, d.obj.name, false)
+	}
+	if exists && strings.to_upper(web.header(c.req.headers, "Overwrite")) == "F" {
+		fail(c, 412, "the destination exists")
+		return
 	}
 	if d.kind != r.kind && !(d.kind == .None && d.coll.seg != "") {
 		fail(c, 409, "the destination is not inside a collection of the same kind")
@@ -590,7 +594,7 @@ do_move :: proc(c: ^Ctx, r: ^Res) {
 		fail(c, status, "copied, but the original could not be removed")
 		return
 	}
-	c.res.status = found ? 204 : 201
+	c.res.status = exists ? 204 : 201
 }
 
 // ---------------------------------------------------------------------------
