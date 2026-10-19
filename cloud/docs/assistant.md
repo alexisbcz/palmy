@@ -344,6 +344,16 @@ test; it has not been exercised against the real API from this machine.
 
 ## Asked of other areas
 
+Done since (bugfix round): deleting a person with mail, forge issues or chat
+membership works (`accounts_erase.sql`); the stored preview follows the part
+a reader shows, and diverging parts are flagged (`cloud/mail/readable`);
+`palm-mail` lives in the mail area (`cloud/mail/palm-mail`) and `palm mail`,
+`palm ai` and the other nouns below are on the convention; `drive find`
+items carry `path`; the `camille.roux` rebuild was the index taking its own
+cache for an account, now fixed; notes and the DAV cache create directories
+without opening their ancestors, so they work inside the sandbox. The engine's
+`drive_path` fallback for `drive find` is now unused, and harmless.
+
 - **mail**: adopt `palm-mail`'s verbs (unread, search, read, drafts, draft,
   send) into mailcore or apps/mail on the kit convention, then delete
   `cloud/assistant/mail`. Keep the "body as the recipient sees it" rule and
