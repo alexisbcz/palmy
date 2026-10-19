@@ -18,6 +18,7 @@ Typed :: struct {
 	value: string,
 	types: []string, // lower-case: "work", "home", "cell", "voice"...
 	pref:  bool,
+	group: string, // the "item1." prefix Apple uses to pair a value with its X-AB label
 }
 
 Address :: struct {
@@ -30,6 +31,7 @@ Address :: struct {
 	region:   string,
 	postcode: string,
 	country:  string,
+	group:    string, // pairs it with Apple's itemN.X-ABADR (country code)
 }
 
 Card :: struct {
@@ -176,17 +178,17 @@ from_component :: proc(c: ^ical.Component) -> Card {
 		switch p.name {
 		case "EMAIL":
 			t, pref := types_of(&p)
-			append(&emails, Typed{strings.trim_space(ical.unescape_text(p.value)), t, pref})
+			append(&emails, Typed{value = strings.trim_space(ical.unescape_text(p.value)), types = t, pref = pref, group = p.group})
 		case "TEL":
 			t, pref := types_of(&p)
 			v := strings.trim_space(p.value)
 			if strings.has_prefix(strings.to_lower(v, context.temp_allocator), "tel:") {
 				v = v[4:]
 			}
-			append(&phones, Typed{ical.unescape_text(v), t, pref})
+			append(&phones, Typed{value = ical.unescape_text(v), types = t, pref = pref, group = p.group})
 		case "URL":
 			t, pref := types_of(&p)
-			append(&urls, Typed{ical.unescape_text(p.value), t, pref})
+			append(&urls, Typed{value = ical.unescape_text(p.value), types = t, pref = pref, group = p.group})
 		case "ADR":
 			t, pref := types_of(&p)
 			parts := ical.split_unescaped(p.value, ';', context.temp_allocator)
@@ -194,7 +196,7 @@ from_component :: proc(c: ^ical.Component) -> Card {
 				types = t, pref = pref,
 				po_box = part(parts, 0), extended = part(parts, 1), street = part(parts, 2),
 				locality = part(parts, 3), region = part(parts, 4), postcode = part(parts, 5),
-				country = part(parts, 6),
+				country = part(parts, 6), group = p.group,
 			})
 		case "MEMBER", "X-ADDRESSBOOKSERVER-MEMBER":
 			append(&members, strings.trim_space(p.value))
@@ -325,8 +327,8 @@ to_component :: proc(c: Card, version := "4.0", prodid := "-//Palmframe//Contact
 	out := new(ical.Component)
 	out.name = "VCARD"
 	out.props = make([dynamic]ical.Prop, 0, 16)
-	add :: proc(out: ^ical.Component, name, value: string, params: []ical.Param = nil) {
-		append(&out.props, ical.Prop{name = name, value = value, params = params})
+	add :: proc(out: ^ical.Component, name, value: string, params: []ical.Param = nil, group := "") {
+		append(&out.props, ical.Prop{group = group, name = name, value = value, params = params})
 	}
 	add(out, "VERSION", v4 ? "4.0" : "3.0")
 	add(out, "PRODID", prodid)
@@ -377,7 +379,7 @@ to_component :: proc(c: Card, version := "4.0", prodid := "-//Palmframe//Contact
 			}
 			params = ps[:]
 		}
-		add(out, "EMAIL", ical.escape_text(e.value), params)
+		add(out, "EMAIL", ical.escape_text(e.value), params, e.group)
 	}
 	for t in c.phones {
 		if v4 {
@@ -386,17 +388,17 @@ to_component :: proc(c: Card, version := "4.0", prodid := "-//Palmframe//Contact
 			one := make([]string, 1)
 			one[0] = "uri"
 			append(&ps, ical.Param{name = "VALUE", values = one})
-			add(out, "TEL", strings.concatenate({"tel:", strings.trim_space(t.value)}), ps[:])
+			add(out, "TEL", strings.concatenate({"tel:", strings.trim_space(t.value)}), ps[:], t.group)
 		} else {
-			add(out, "TEL", ical.escape_text(t.value), typed_params(t, false))
+			add(out, "TEL", ical.escape_text(t.value), typed_params(t, false), t.group)
 		}
 	}
 	for u in c.urls {
-		add(out, "URL", u.value, typed_params(u, v4))
+		add(out, "URL", u.value, typed_params(u, v4), u.group)
 	}
 	for a in c.addresses {
 		add(out, "ADR", structured({a.po_box, a.extended, a.street, a.locality, a.region, a.postcode, a.country}),
-			typed_params(Typed{types = a.types, pref = a.pref}, v4))
+			typed_params(Typed{types = a.types, pref = a.pref}, v4), a.group)
 	}
 	if c.bday != "" {
 		add(out, "BDAY", c.bday)

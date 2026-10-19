@@ -33,6 +33,7 @@ apple_3_to_4_and_back :: proc(t: ^testing.T) {
 	testing.expect(t, strings.contains(out, "PHOTO:data:image/jpeg;base64,/9j/4AAQSkZJRg=="))
 	testing.expect(t, strings.contains(out, "X-SOCIALPROFILE"), "an unknown property survives")
 	testing.expect(t, strings.contains(out, "item1.X-ABADR:gb"), "and keeps its group")
+	testing.expect(t, strings.contains(out, "item1.ADR;TYPE=home:"), "the address keeps its pairing with X-ABADR")
 
 	back := convert(v4, "3.0")
 	out3 := ical.write(back, context.temp_allocator)
