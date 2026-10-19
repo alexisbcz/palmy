@@ -25,6 +25,7 @@ package palm
 //     command surface, by running this very binary with a fake surface.
 
 import "core:fmt"
+import "core:net"
 import "core:os"
 import "core:slice"
 import "core:strings"
@@ -153,6 +154,7 @@ selftest :: proc() {
 	test_http_parser()
 	test_recipes()
 	test_lifecycle()
+	test_replaces()
 	test_tampering()
 	test_http_repo()
 	test_passthrough()
@@ -480,6 +482,70 @@ test_resolver :: proc() {
 	universe_add(u2, mkpkg("baz", "1-r0", {"foo<1"}))
 	_, e4 := resolve(u2, {"bar", "baz"}, false)
 	check(!ok(e4), "a genuine conflict is refused")
+
+	// conflicts: refused whichever side names the other, and the error says
+	// who wanted what.
+	u3 := new(Universe)
+	universe_add(u3, mkpkg("mta-a", "1-r0"))
+	b := mkpkg("mta-b", "1-r0")
+	b.conflicts = {"mta-a"}
+	universe_add(u3, b)
+	_, e5 := resolve(u3, {"mta-a", "mta-b"}, false)
+	eq_i(e5.code, EXIT_REFUSED, "two conflicting packages are refused")
+	check(strings.contains(e5.msg, "mta-b-1-r0 conflicts with mta-a-1-r0") && strings.contains(e5.msg, "world wants mta-b"), "the conflict is explained: %s", e5.msg)
+	_, e6 := resolve(u3, {"mta-b", "mta-a"}, false)
+	check(!ok(e6) && strings.contains(e6.msg, "conflicts with"), "in either order: %s", e6.msg)
+	// A versioned conflict only bites the versions it names.
+	c := mkpkg("mta-c", "1-r0")
+	c.conflicts = {"mta-a<1"}
+	universe_add(u3, c)
+	_, e7 := resolve(u3, {"mta-a", "mta-c"}, false)
+	check(ok(e7), "conflicts = mta-a<1 allows mta-a 1: %s", e7.msg)
+
+	// Backtracking across providers: the preferred provider of cmd:mail
+	// conflicts with something in the world, so the other one is chosen.
+	u4 := new(Universe)
+	p1 := mkpkg("mailer-big", "9-r0", nil, {"cmd:mail"})
+	p1.conflicts = {"mta-a"}
+	universe_add(u4, p1)
+	universe_add(u4, mkpkg("mailer-small", "1-r0", nil, {"cmd:mail"}))
+	universe_add(u4, mkpkg("mta-a", "1-r0"))
+	universe_add(u4, mkpkg("app", "1-r0", {"cmd:mail"}))
+	r8, e8 := resolve(u4, {"mta-a", "app"}, false)
+	check(ok(e8), "the second provider is tried: %s", e8.msg)
+	if ok(e8) {
+		check("mailer-small" in r8.chosen && "mailer-big" not_in r8.chosen, "mailer-small chosen, mailer-big not")
+	}
+	// ... and when every provider is ruled out, the deepest reason is given.
+	universe_add(u4, mkpkg("app2", "1-r0", {"libz>=2"}))
+	universe_add(u4, mkpkg("libz", "1-r0"))
+	universe_add(u4, mkpkg("top", "1-r0", {"app2"}))
+	_, e9 := resolve(u4, {"top"}, false)
+	eq_i(e9.code, EXIT_NOT_FOUND, "an unsatisfiable dependency deep down")
+	check(strings.contains(e9.msg, "no version of libz satisfies libz>=2 (wanted by app2)"), "the error names the deepest failure: %s", e9.msg)
+
+	// replaces under upgrade: the installed old name gives way to the new one
+	// that provides it; outside upgrade nothing moves.
+	u5 := new(Universe)
+	db5 := new(DB)
+	old := mkpkg("oldtool", "1.0-r0", nil, nil, true)
+	append(&db5.pkgs, old)
+	universe_add(u5, old)
+	nt := mkpkg("newtool", "2.0-r0", nil, {"oldtool=2.0"})
+	nt.replaces = {"oldtool"}
+	universe_add(u5, nt)
+	universe_add(u5, mkpkg("user", "1-r0", {"oldtool"}))
+	r10, _ := resolve(u5, {"user"}, false)
+	check("oldtool" in r10.chosen && "newtool" not_in r10.chosen, "add leaves the replaced package alone")
+	find_replacements(u5, db5)
+	check(u5.replaced["oldtool"] == nt, "newtool is found as oldtool's replacement")
+	r11, e11 := resolve(u5, {"user"}, true)
+	check(ok(e11), "upgrade with a replacement resolves: %s", e11.msg)
+	if ok(e11) {
+		check("newtool" in r11.chosen && "oldtool" not_in r11.chosen, "upgrade takes the replacement")
+	}
+	_, e12 := resolve(u5, {"oldtool=1.0", "newtool"}, false)
+	check(!ok(e12) && strings.contains(e12.msg, "replaces"), "a package and its replacement are never installed together: %s", e12.msg)
 }
 
 test_http_parser :: proc() {
@@ -658,6 +724,16 @@ test_lifecycle :: proc() {
 	}
 
 	eq_i(R(root, "verify"), 0, "verify passes after install: %s", g_out)
+
+	// setuid survives install (chmod after chown, which clears it), a lost
+	// bit is a problem verify reports, and fix puts it back.
+	hello_bin := fmt.tprintf("%s/usr/bin/hello", root)
+	eq_i(int(disk_mode(hello_bin)), 0o4755, "the setuid bit is installed")
+	set_mode(hello_bin, 0o755)
+	eq_i(R(root, "verify"), EXIT_FAILED_GENERIC, "verify notices a lost setuid bit")
+	check(strings.contains(g_out, "/usr/bin/hello: mode 0755, want 4755"), "and says so: %s", g_out)
+	eq_i(R(root, "fix", "hello"), 0, "fix hello: %s", g_out)
+	eq_i(int(disk_mode(hello_bin)), 0o4755, "fix restores the setuid bit")
 	eq_i(R(root, "info", "--who-owns", "/usr/share/foo/a.txt"), 0, "who-owns")
 	check(strings.contains(g_out, "libfoo"), "who-owns names libfoo")
 	eq_i(R(root, "info", "-L", "hello", "--json"), 0, "info -L --json")
@@ -737,6 +813,57 @@ test_lifecycle :: proc() {
 	eq_i(R(root, "del", "hello"), EXIT_NOT_FOUND, "del of something not installed")
 }
 
+// conflicts and replaces, by argv: a project renamed between releases, and a
+// package that cannot sit beside another.
+test_replaces :: proc() {
+	section("conflicts and replaces")
+	r := scratch("recipes2")
+	repo := scratch("repo2/x86_64")
+	key := fmt.tprintf("%s.sec", g_key)
+	put(fmt.tprintf("%s/oldtool/tool", r), "old\n", 0o755)
+	put(fmt.tprintf("%s/oldtool/PALMBUILD", r), "pkgname = oldtool\npkgver = 1.0\nfile = tool -> /usr/bin/tool\nfile = tool -> /usr/share/oldtool/only-old\n")
+	put(fmt.tprintf("%s/rival/PALMBUILD", r), "pkgname = rival\npkgver = 1\nconflicts = newtool\ndir = /var/lib/rival\n")
+	put(fmt.tprintf("%s/selfish/PALMBUILD", r), "pkgname = selfish\npkgver = 1\nconflicts = selfish\n")
+	for n in ([?]string{"oldtool", "rival"}) {
+		eq_i(run("build", fmt.tprintf("%s/%s", r, n), "-o", repo), 0, "build %s: %s", n, g_out)
+	}
+	eq_i(run("build", fmt.tprintf("%s/selfish", r), "-o", repo), EXIT_USAGE, "a package may not conflict with itself")
+	eq_i(run("index", repo, "--key", key), 0, "index")
+	root := scratch("root-rep")
+	X :: proc(root: string, args: ..string) -> int {
+		all := make([dynamic]string, context.temp_allocator)
+		append(&all, "--root", root, "--initdb", "--repo", scratch("repo2"), "--keys-dir", scratch("keys"))
+		append(&all, ..args)
+		return run(..all[:])
+	}
+	eq_i(X(root, "add", "oldtool"), 0, "add oldtool: %s", g_out)
+
+	// The project is renamed: newtool replaces oldtool, provides its name,
+	// and takes over /usr/bin/tool.
+	put(fmt.tprintf("%s/newtool/tool", r), "new\n", 0o755)
+	put(fmt.tprintf("%s/newtool/PALMBUILD", r), "pkgname = newtool\npkgver = 2.0\nreplaces = oldtool\nprovides = oldtool=2.0\nfile = tool -> /usr/bin/tool\n")
+	eq_i(run("build", fmt.tprintf("%s/newtool", r), "-o", repo), 0, "build newtool: %s", g_out)
+	eq_i(run("index", repo, "--key", key), 0, "reindex")
+	eq_i(X(root, "info", "newtool", "--json"), 0, "info newtool")
+	check(strings.contains(g_out, `"replaces":["oldtool"]`), "the index carries replaces: %s", g_out)
+	eq_i(X(root, "add", "oldtool"), 0, "add does not replace")
+	eq_s(installed_version(root, "oldtool"), "1.0-r0", "oldtool stays on add")
+	eq_i(X(root, "upgrade", "--dry-run", "--json"), 0, "upgrade plan")
+	check(strings.contains(g_out, `"replaced_by":"newtool"`), "the plan says oldtool is replaced by newtool: %s", g_out)
+	eq_i(X(root, "upgrade"), 0, "upgrade: %s", g_out)
+	eq_s(installed_version(root, "oldtool"), "", "oldtool is gone")
+	eq_s(installed_version(root, "newtool"), "2.0-r0", "newtool is installed")
+	eq_s(slurp(fmt.tprintf("%s/usr/bin/tool", root)), "new\n", "/usr/bin/tool is newtool's")
+	check(!os.exists(fmt.tprintf("%s/usr/share/oldtool", root)), "oldtool's own files are gone")
+	eq_s(strings.trim_space(slurp(fmt.tprintf("%s/etc/palm/world", root))), "newtool", "world follows the new name")
+	eq_i(X(root, "verify"), 0, "verify after the replacement: %s", g_out)
+
+	// rival conflicts with newtool: refused, with the reason.
+	eq_i(X(root, "add", "rival"), EXIT_REFUSED, "a conflicting package is refused")
+	check(strings.contains(g_out, "rival-1-r0 conflicts with newtool-2.0-r0"), "the conflict is named: %s", g_out)
+	eq_s(installed_version(root, "rival"), "", "nothing installed")
+}
+
 test_tampering :: proc() {
 	section("tampering")
 	keys := scratch("keys")
@@ -810,7 +937,8 @@ test_http_repo :: proc() {
 	}
 	port := 20000 + os.get_pid() % 20000
 	null, _ := os.open("/dev/null", {.Write})
-	server, err := os.process_start(os.Process_Desc{command = {"python3", "-m", "http.server", fmt.tprintf("%d", port), "--bind", "127.0.0.1", "--directory", serve}, stdout = null, stderr = null})
+	// -p HTTP/1.1: python's server then keeps connections open, as a CDN does.
+	server, err := os.process_start(os.Process_Desc{command = {"python3", "-m", "http.server", fmt.tprintf("%d", port), "--bind", "127.0.0.1", "--directory", serve, "-p", "HTTP/1.1"}, stdout = null, stderr = null})
 	if err != nil {
 		check(false, "python3 http.server started: %v", err)
 		return
@@ -876,6 +1004,256 @@ test_http_repo :: proc() {
 
 	// Unreachable: a warning for update, not a crash.
 	eq_i(H(scratch("root-http4"), "http://127.0.0.1:1/none", "update"), EXIT_UNAVAILABLE, "an unreachable repository is reported as unavailable")
+	cdir := fmt.tprintf("%s/var/cache/palm/%s", root3, cache_slug(fmt.tprintf("http://127.0.0.1:%d/flat", port)))
+	check(os.exists(fmt.tprintf("%s/PALMINDEX", cdir)) && !os.exists(fmt.tprintf("%s/hello-1.0-r1.palm", cdir)), "--no-cache keeps the index but not the packages")
+
+	test_http_more(port, serve)
+	test_https(serve)
+}
+
+// A clean copy of the test repository under serve/<name>/x86_64.
+@(private = "file")
+serve_copy :: proc(serve, name: string) -> string {
+	dir := fmt.tprintf("%s/%s/x86_64", serve, name)
+	mkdir_p(dir)
+	for f in ([?]string{"PALMINDEX", "PALMINDEX.sig", "hello-1.0-r1.palm", "libfoo-0.9.1-r1.palm"}) {
+		os.copy_file(fmt.tprintf("%s/%s", dir, f), fmt.tprintf("%s/%s", g_repo, f))
+	}
+	return dir
+}
+
+@(private = "file")
+H2 :: proc(root, url: string, args: ..string) -> int {
+	all := make([dynamic]string, context.temp_allocator)
+	append(&all, "--root", root, "--initdb", "--repo", url, "--keys-dir", scratch("keys"))
+	append(&all, ..args)
+	return run(..all[:])
+}
+
+// keep-alive, mirrors, offline queries, rollback, resume
+test_http_more :: proc(port: int, serve: string) {
+	serve_copy(serve, "m2")
+	url := fmt.tprintf("http://127.0.0.1:%d/m2", port)
+
+	// An update is two requests, the index and its signature: one connection.
+	before := g_conns_opened
+	eq_i(H2(scratch("root-k"), url, "update", "--json"), 0, "update: %s", g_out)
+	eq_i(g_conns_opened - before, 1, "the index and its signature share one kept-alive connection")
+	check(strings.contains(g_out, `"generated":`) && !strings.contains(g_out, `"generated":0`), "update reports when the index was made: %s", g_out)
+
+	// Mirrors: the first is down, the second serves, and packages follow.
+	rootm := scratch("root-m")
+	line := fmt.tprintf("http://127.0.0.1:1/none %s", url)
+	eq_i(H2(rootm, line, "add", "hello"), 0, "a dead first mirror falls through to the second: %s", g_out)
+	eq_s(slurp(fmt.tprintf("%s/usr/bin/hello", rootm)), "#!/bin/sh\necho hello\n", "installed from the second mirror")
+
+	// Queries never touch the network: from the cache, and a repository not
+	// yet fetched is silently absent.
+	before = g_conns_opened
+	eq_i(H2(rootm, line, "list", "--available"), 0, "list from the cache")
+	check(strings.contains(g_out, "libfoo-0.9.1-r1"), "the cached index answers: %s", g_out)
+	eq_i(H2(rootm, line, "info", "libfoo"), 0, "info from the cache")
+	eq_i(H2(rootm, line, "search", "foo"), 0, "search from the cache")
+	eq_i(H2(rootm, line, "info", "-L", "libfoo"), 0, "info -L of a cached package")
+	eq_i(H2(scratch("root-q"), "http://127.0.0.1:1/none", "list"), 0, "list with nothing cached and nothing reachable")
+	check(!strings.contains(g_out, "warning") && !strings.contains(g_out, "connect"), "says nothing about the network: %s", g_out)
+	eq_i(g_conns_opened - before, 0, "list, info and search opened no connection")
+
+	// Rollback: an index older than the one already verified is refused,
+	// although its signature is good.
+	roll := serve_copy(serve, "roll")
+	rurl := fmt.tprintf("http://127.0.0.1:%d/roll", port)
+	key := fmt.tprintf("%s.sec", g_key)
+	os.set_env("SOURCE_DATE_EPOCH", "1900000000")
+	eq_i(run("index", roll, "--key", key), 0, "index dated 2030")
+	rootr := scratch("root-r")
+	eq_i(H2(rootr, rurl, "update", "--json"), 0, "update: %s", g_out)
+	check(strings.contains(g_out, `"generated":1900000000`), "the date is read back: %s", g_out)
+	eq_s(format_date(1900000000), "2030-03-17 17:46 UTC", "and shown as a date")
+	os.set_env("SOURCE_DATE_EPOCH", "1800000000")
+	eq_i(run("index", roll, "--key", key), 0, "index dated 2027")
+	eq_i(H2(rootr, rurl, "update"), EXIT_REFUSED, "an older index is refused")
+	check(strings.contains(g_out, "older than the 2030-03-17"), "and the refusal says why: %s", g_out)
+	eq_i(H2(rootr, rurl, "list", "--available"), 0, "the verified index is still the cached one")
+	// ... and a mirror serving the old one is skipped for one serving a newer.
+	newer := serve_copy(serve, "newer")
+	os.set_env("SOURCE_DATE_EPOCH", "1950000000")
+	eq_i(run("index", newer, "--key", key), 0, "index dated 2031")
+	eq_i(H2(rootr, fmt.tprintf("%s http://127.0.0.1:%d/newer", rurl, port), "update", "--json"), 0, "the stale first mirror is skipped: %s", g_out)
+	check(strings.contains(g_out, `"generated":1950000000`) && strings.contains(g_out, "/newer/x86_64"), "the newer index won: %s", g_out)
+	os.unset_env("SOURCE_DATE_EPOCH")
+
+	// Resume: half a package left by an interrupted download is finished;
+	// a corrupt half is thrown away and fetched again.
+	whole := slurp(fmt.tprintf("%s/hello-1.0-r1.palm", g_repo))
+	rootz := scratch("root-z")
+	eq_i(H2(rootz, url, "update"), 0, "update")
+	cache := fmt.tprintf("%s/var/cache/palm/%s", rootz, cache_slug(url))
+	put(fmt.tprintf("%s/hello-1.0-r1.palm.part", cache), whole[:len(whole) / 2])
+	libfoo := slurp(fmt.tprintf("%s/libfoo-0.9.1-r1.palm", g_repo))
+	put(fmt.tprintf("%s/libfoo-0.9.1-r1.palm.part", cache), strings.repeat("x", len(libfoo) / 2, context.temp_allocator))
+	eq_i(H2(rootz, url, "add", "hello"), 0, "add with partial downloads: %s", g_out)
+	eq_s(slurp(fmt.tprintf("%s/hello-1.0-r1.palm", cache)), whole, "the resumed package is whole")
+	eq_s(slurp(fmt.tprintf("%s/libfoo-0.9.1-r1.palm", cache)), libfoo, "the corrupt part was replaced")
+	check(!os.exists(fmt.tprintf("%s/hello-1.0-r1.palm.part", cache)) && !os.exists(fmt.tprintf("%s/libfoo-0.9.1-r1.palm.part", cache)), "no .part files remain")
+
+	// A package missing from the mirror: a clear message, nothing installed.
+	gone := serve_copy(serve, "gone")
+	_ = os.remove(fmt.tprintf("%s/libfoo-0.9.1-r1.palm", gone))
+	rootg := scratch("root-g")
+	eq_i(H2(rootg, fmt.tprintf("http://127.0.0.1:%d/gone", port), "add", "hello"), EXIT_UNAVAILABLE, "a package the mirror lacks")
+	check(strings.contains(g_out, "no mirror has it"), "is explained: %s", g_out)
+	check(!os.exists(fmt.tprintf("%s/usr/bin/hello", rootg)), "nothing installed")
+}
+
+// wait_port waits for something to listen on 127.0.0.1:port.
+@(private = "file")
+wait_port :: proc(port: int) -> bool {
+	for _ in 0 ..< 100 {
+		if s, err := net.dial_tcp_from_hostname_with_port_override("127.0.0.1", port); err == nil {
+			net.close(s)
+			return true
+		}
+		time.sleep(50 * time.Millisecond)
+	}
+	return false
+}
+
+// https against servers on localhost with certificates made here by
+// openssl: python's http.server (OpenSSL's choices of cipher and group, an
+// ECDSA leaf and an RSA leaf behind an intermediate), `openssl s_server`
+// forced onto ChaCha20-Poly1305 with P-256 and onto AES-256-GCM-SHA384, and
+// the refusals: wrong host, expired, unknown CA, no CA bundle at all.
+test_https :: proc(serve: string) {
+	section("https (tls.odin) against openssl")
+	if code, _ := exec("openssl", "version"); code != 0 {
+		fmt.println("  (skipped: no openssl)")
+		return
+	}
+	serve_copy(serve, "tls")
+	d := scratch("tls")
+	mkdir_p(d)
+	P :: proc(name: string) -> string {return scratch(fmt.tprintf("tls/%s", name))}
+	O :: proc(args: ..string) -> bool {
+		code, out := exec(..args)
+		if code != 0 {
+			fmt.printf("  openssl failed: %v\n%s\n", args, out)
+		}
+		return code == 0
+	}
+	put(P("ca.ext"), "basicConstraints=critical,CA:TRUE\nkeyUsage=critical,keyCertSign,cRLSign\n")
+	put(P("leaf.ext"), "subjectAltName=DNS:localhost,IP:127.0.0.1\nextendedKeyUsage=serverAuth\nbasicConstraints=CA:FALSE\n")
+	put(P("wrong.ext"), "subjectAltName=DNS:not-this-host.example\nextendedKeyUsage=serverAuth\n")
+	made := O("openssl", "req", "-x509", "-new", "-newkey", "ec", "-pkeyopt", "ec_paramgen_curve:P-256", "-nodes", "-keyout", P("ca.key"), "-out", P("ca.pem"), "-days", "2", "-subj", "/CN=palm selftest CA", "-addext", "basicConstraints=critical,CA:TRUE", "-addext", "keyUsage=critical,keyCertSign,cRLSign")
+	made &&= O("openssl", "req", "-x509", "-new", "-newkey", "ec", "-pkeyopt", "ec_paramgen_curve:P-256", "-nodes", "-keyout", P("other.key"), "-out", P("other.pem"), "-days", "2", "-subj", "/CN=someone else", "-addext", "basicConstraints=critical,CA:TRUE")
+	// leaf (ECDSA), wrong (wrong name), expired, inter (an intermediate CA) and rsa (an RSA leaf under it)
+	Leaf :: struct {
+		name, key, ext, ca, cakey: string,
+		expired:                   bool,
+	}
+	leaves := [?]Leaf {
+		{"leaf", "ec", "leaf.ext", "ca", "ca", false},
+		{"wrong", "ec", "wrong.ext", "ca", "ca", false},
+		{"expired", "ec", "leaf.ext", "ca", "ca", true},
+		{"inter", "ec", "ca.ext", "ca", "ca", false},
+		{"rsa", "rsa", "leaf.ext", "inter", "inter", false},
+		{"stranger", "ec", "leaf.ext", "other", "other", false},
+	}
+	for l in leaves {
+		if !made {break}
+		newkey := l.key == "rsa" ? "rsa:2048" : "ec"
+		args := make([dynamic]string, context.temp_allocator)
+		append(&args, "openssl", "req", "-new", "-newkey", newkey)
+		if l.key == "ec" {append(&args, "-pkeyopt", "ec_paramgen_curve:P-256")}
+		append(&args, "-nodes", "-keyout", P(fmt.tprintf("%s.key", l.name)), "-out", P(fmt.tprintf("%s.csr", l.name)), "-subj", fmt.tprintf("/CN=%s", l.name))
+		made &&= O(..args[:])
+		sign := make([dynamic]string, context.temp_allocator)
+		append(&sign, "openssl", "x509", "-req", "-in", P(fmt.tprintf("%s.csr", l.name)), "-CA", P(fmt.tprintf("%s.pem", l.ca)), "-CAkey", P(fmt.tprintf("%s.key", l.cakey)), "-CAcreateserial", "-out", P(fmt.tprintf("%s.pem", l.name)), "-extfile", P(l.ext))
+		if l.expired {
+			append(&sign, "-not_before", "20200101000000Z", "-not_after", "20200102000000Z")
+		} else {
+			append(&sign, "-days", "1")
+		}
+		made &&= O(..sign[:])
+	}
+	check(made, "test certificates made")
+	if !made {return}
+	// The RSA server presents its intermediate too.
+	put(P("rsa-chain.pem"), strings.concatenate({slurp(P("rsa.pem")), slurp(P("inter.pem"))}))
+
+	null, _ := os.open("/dev/null", {.Write})
+	defer os.close(null)
+	servers := make([dynamic]os.Process, context.temp_allocator)
+	defer for s in servers {
+		_ = os.process_kill(s)
+		_, _ = os.process_wait(s)
+	}
+	base := 20000 + (os.get_pid() + 7919) % 20000
+	Server :: struct {
+		cert, key: string,
+		openssl:   []string, // s_server options, or nil for python
+	}
+	specs := [?]Server {
+		{"leaf.pem", "leaf.key", nil},
+		{"rsa-chain.pem", "rsa.key", nil},
+		{"leaf.pem", "leaf.key", {"-ciphersuites", "TLS_CHACHA20_POLY1305_SHA256", "-groups", "P-256"}},
+		{"leaf.pem", "leaf.key", {"-ciphersuites", "TLS_AES_256_GCM_SHA384", "-groups", "X25519"}},
+		{"wrong.pem", "wrong.key", nil},
+		{"expired.pem", "expired.key", nil},
+		{"stranger.pem", "stranger.key", nil},
+	}
+	for sp, i in specs {
+		port := base + i
+		cmd := make([dynamic]string, context.temp_allocator)
+		if sp.openssl == nil {
+			append(&cmd, "python3", "-m", "http.server", fmt.tprintf("%d", port), "--bind", "127.0.0.1", "--directory", serve, "-p", "HTTP/1.1", "--tls-cert", P(sp.cert), "--tls-key", P(sp.key))
+		} else {
+			append(&cmd, "openssl", "s_server", "-quiet", "-accept", fmt.tprintf("127.0.0.1:%d", port), "-cert", P(sp.cert), "-key", P(sp.key), "-WWW", "-tls1_3")
+			append(&cmd, ..sp.openssl)
+		}
+		p, err := os.process_start(os.Process_Desc{command = cmd[:], working_dir = serve, stdout = null, stderr = null})
+		if err != nil {
+			check(false, "server %d started: %v", i, err)
+			return
+		}
+		append(&servers, p)
+	}
+	for i in 0 ..< len(specs) {
+		check(wait_port(base + i), "server %d listens", i)
+	}
+
+	os.set_env("PALM_CA_FILE", P("ca.pem"))
+	tls_reset_roots()
+	defer {
+		os.unset_env("PALM_CA_FILE")
+		tls_reset_roots()
+	}
+	U :: proc(port: int, host := "localhost") -> string {return fmt.tprintf("https://%s:%d/tls", host, port)}
+
+	root := scratch("root-tls")
+	eq_i(H2(root, U(base), "update", "--json"), 0, "https update (ECDSA P-256 leaf): %s", g_out)
+	eq_i(H2(root, U(base), "add", "hello"), 0, "https add: %s", g_out)
+	eq_s(slurp(fmt.tprintf("%s/usr/bin/hello", root)), "#!/bin/sh\necho hello\n", "installed over https")
+	before := g_conns_opened
+	eq_i(H2(scratch("root-tls1"), U(base), "add", "hello", "--no-cache"), 0, "a second install: %s", g_out)
+	eq_i(g_conns_opened - before, 3, "one TLS connection for the index, one per download worker")
+	eq_i(H2(scratch("root-tls2"), U(base, "127.0.0.1"), "update"), 0, "an IP address is matched against the certificate's IP names: %s", g_out)
+	eq_i(H2(scratch("root-tls3"), U(base + 1), "add", "hello"), 0, "RSA leaf behind an intermediate (RSA-PSS): %s", g_out)
+	eq_i(H2(scratch("root-tls4"), U(base + 2), "add", "hello"), 0, "ChaCha20-Poly1305 over P-256 (openssl s_server): %s", g_out)
+	eq_i(H2(scratch("root-tls5"), U(base + 3), "add", "hello"), 0, "AES-256-GCM-SHA384 over X25519 (openssl s_server): %s", g_out)
+
+	eq_i(H2(scratch("root-tls6"), U(base + 4), "update"), EXIT_UNAVAILABLE, "a certificate for another name is refused")
+	check(strings.contains(g_out, "not trusted (Hostname_Mismatch)"), "and named: %s", g_out)
+	eq_i(H2(scratch("root-tls7"), U(base + 5), "update"), EXIT_UNAVAILABLE, "an expired certificate is refused")
+	check(strings.contains(g_out, "not trusted (Expired)"), "and named: %s", g_out)
+	eq_i(H2(scratch("root-tls8"), U(base + 6), "update"), EXIT_UNAVAILABLE, "a certificate from an unknown CA is refused")
+	check(strings.contains(g_out, "not trusted (Unknown_Authority)"), "and named: %s", g_out)
+	eq_i(H2(scratch("root-tls9"), fmt.tprintf("https://127.0.0.1:%d/tls %s", base + 6, U(base)), "add", "hello"), 0, "an untrusted mirror falls through to a trusted one: %s", g_out)
+
+	os.set_env("PALM_CA_FILE", P("nonexistent.pem"))
+	tls_reset_roots()
+	eq_i(H2(scratch("root-tls10"), U(base), "update"), EXIT_UNAVAILABLE, "no CA bundle, no https")
+	check(strings.contains(g_out, "no CA certificates"), "and that is said: %s", g_out)
 }
 
 // ---------------------------------------------------------------------------

@@ -28,6 +28,7 @@ import "core:net"
 import "core:os"
 import "core:strconv"
 import "core:strings"
+import "core:sync"
 import "core:time"
 
 HTTP_MAX_BODY :: 1 << 31
@@ -147,7 +148,12 @@ Http_Client :: struct {
 @(thread_local)
 tl_client: Http_Client
 
+// g_conns_opened counts connections made, so the selftest can see keep-alive
+// at work.
+g_conns_opened: int
+
 conn_open :: proc(u: Http_Url) -> (^Conn, Err) {
+	sync.atomic_add(&g_conns_opened, 1)
 	c := new(Conn)
 	c.key = strings.clone(fmt.tprintf("%s://%s:%d", u.https ? "https" : "http", u.host, u.port))
 	c.host = strings.clone(u.host)

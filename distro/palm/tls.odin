@@ -408,7 +408,7 @@ alert_err :: proc(t: ^Tls, body: []byte) -> Err {
 	why := ""
 	switch desc {
 	case 40:
-		why = " (handshake_failure: no cipher, group or signature algorithm in common)"
+		why = " (handshake_failure: the server speaks no TLS 1.3, or shares no cipher, group or signature algorithm with palm)"
 	case 42, 43, 44, 45, 46:
 		why = " (the server did not accept the certificate exchange)"
 	case 70:

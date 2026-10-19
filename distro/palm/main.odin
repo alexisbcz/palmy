@@ -256,6 +256,7 @@ dispatch :: proc(args: []string) -> int {
 	defer {
 		g_quiet = saved_quiet
 		g_progress_json = saved_progress
+		http_close_all()
 	}
 
 	switch o.verb {
@@ -458,11 +459,11 @@ cmd_upgrade :: proc(o: ^Opts) -> Err {
 	db, e := db_open(o)
 	if !ok(e) {return e}
 	repos: []^Repo
-	skipped: int
+	skipped: []string
 	repos, skipped, e = open_repos(o, repo_mode(o))
 	if !ok(e) {return e}
-	if skipped > 0 && o.refresh {
-		warn("%d repositories could not be refreshed; upgrading from what was cached", skipped)
+	if len(skipped) > 0 && o.refresh {
+		warn("%d repositories could not be refreshed; upgrading from what was cached", len(skipped))
 	}
 	if !o.json {
 		for r in repos {
@@ -529,8 +530,8 @@ cmd_update :: proc(o: ^Opts) -> Err {
 			say("%d installed package(s) can be upgraded: palm upgrade", upgradable)
 		}
 	}
-	if skipped > 0 {
-		return fail(EXIT_UNAVAILABLE, "%d of %d repositories could not be reached", skipped, len(lines))
+	if len(skipped) > 0 {
+		return fail(EXIT_UNAVAILABLE, "%d of %d repositories could not be reached: %s", len(skipped), len(lines), strings.join(skipped, "; ", context.temp_allocator))
 	}
 	return Err{}
 }

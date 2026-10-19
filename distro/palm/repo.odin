@@ -99,7 +99,6 @@ keys_dir :: proc(o: ^Opts) -> string {
 	return rooted(o.root, "/etc/palm/keys")
 }
 
-@(private = "file")
 cache_slug :: proc(url: string) -> string {
 	b := make([]byte, len(url))
 	for c, i in transmute([]byte)url {
@@ -148,9 +147,11 @@ format_date :: proc(unix: i64) -> string {
 
 // open_repos loads and verifies every configured repository. A repository
 // that cannot be reached is a warning (as in apk) and is left out; a bad
-// signature is not, and refuses the whole operation. `skipped` counts the
-// repositories left out.
-open_repos :: proc(o: ^Opts, mode: Repo_Mode) -> (repos: []^Repo, skipped: int, e: Err) {
+// signature is not, and refuses the whole operation. `skipped` says why each
+// repository left out was left out (empty for one a query simply has no
+// cached index for).
+open_repos :: proc(o: ^Opts, mode: Repo_Mode) -> (repos: []^Repo, skipped: []string, e: Err) {
+	why := make([dynamic]string)
 	keys := load_trusted(keys_dir(o))
 	out := make([dynamic]^Repo)
 	for line in repo_lines(o) {
@@ -161,13 +162,13 @@ open_repos :: proc(o: ^Opts, mode: Repo_Mode) -> (repos: []^Repo, skipped: int, 
 		mirrors := make([dynamic]string)
 		for m in line {
 			if is_remote_url(m) != r.remote {
-				return nil, 0, fail(EXIT_USAGE, "repository line %q mixes local paths and URLs", strings.join(line, " ", context.temp_allocator))
+				return nil, nil, fail(EXIT_USAGE, "repository line %q mixes local paths and URLs", strings.join(line, " ", context.temp_allocator))
 			}
 			if !r.remote && !strings.has_prefix(m, "/") {
 				// A relative --repo is a convenience for the host side.
 				abs, aerr := os.get_absolute_path(m, context.allocator)
 				if aerr != nil {
-					return nil, 0, fail(EXIT_USAGE, "repository %q is neither a URL nor an absolute path", m)
+					return nil, nil, fail(EXIT_USAGE, "repository %q is neither a URL nor an absolute path", m)
 				}
 				append(&mirrors, abs)
 			} else {
@@ -179,15 +180,15 @@ open_repos :: proc(o: ^Opts, mode: Repo_Mode) -> (repos: []^Repo, skipped: int, 
 		le := load_index(o, r, mode, keys)
 		if le.code == EXIT_UNAVAILABLE {
 			if le.msg != "" {warn("%s", le.msg)}
-			skipped += 1
+			append(&why, le.msg)
 			continue
 		}
 		if !ok(le) {
-			return nil, 0, le
+			return nil, nil, le
 		}
 		append(&out, r)
 	}
-	return out[:], skipped, Err{}
+	return out[:], why[:], Err{}
 }
 
 @(private = "file")
