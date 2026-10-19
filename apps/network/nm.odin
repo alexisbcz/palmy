@@ -1,5 +1,8 @@
 // The NetworkManager side of the applet: everything that shells out to
 // `nmcli`, parses its terse output, and hands the result to the UI thread.
+// It is used where iwd is not on the system bus and nmcli is installed (a
+// development machine); Palmframe itself runs iwd (iwd.odin). The model,
+// the job queue and the worker below are shared by both.
 //
 // Two rules shape this file.
 //
@@ -113,6 +116,7 @@ Job :: struct {
 // for both would be a self-deadlock the moment a key asked for a rescan —
 // `sync.Mutex` is not reentrant, and the window simply stops redrawing.
 Store :: struct {
+	backend:  Backend, // set by the worker before its first job (iwd.odin)
 	qmu:      sync.Mutex,
 	mu:       sync.Mutex,
 	sem:      sync.Sema,
@@ -198,6 +202,13 @@ worker :: proc(t: ^thread.Thread) {
 		context.temp_allocator = virtual.arena_allocator(&arena)
 	}
 
+	backend := pick_backend()
+	free_all(context.temp_allocator)
+	sync.mutex_lock(&s.mu)
+	s.backend = backend
+	sync.mutex_unlock(&s.mu)
+	dbg("backend: %s", backend_name(backend))
+
 	for {
 		sync.sema_wait(&s.sem)
 
@@ -211,20 +222,7 @@ worker :: proc(t: ^thread.Thread) {
 		s.busy = job_label(job.kind)
 		sync.mutex_unlock(&s.qmu)
 
-		switch job.kind {
-		case .Refresh:
-			do_refresh(s)
-		case .Wifi:
-			do_wifi(s, false)
-		case .Rescan:
-			do_wifi(s, true)
-		case .Radio_On:
-			do_radio(s, true)
-		case .Radio_Off:
-			do_radio(s, false)
-		case .Connect:
-			do_connect(s, job.ssid, job.pw)
-		}
+		run_job(s, job.kind, job.ssid, job.pw)
 
 		if job.ssid != "" {delete(job.ssid)}
 		if job.pw != "" {delete(job.pw)}
@@ -234,6 +232,41 @@ worker :: proc(t: ^thread.Thread) {
 		s.busy = ""
 		s.pending -= 1
 		sync.mutex_unlock(&s.qmu)
+	}
+}
+
+// run_job runs one job against the store's backend, on the calling thread.
+run_job :: proc(s: ^Store, kind: Job_Kind, ssid := "", pw := "") {
+	if s.backend == .Iwd {
+		switch kind {
+		case .Refresh:
+			iwd_refresh(s)
+		case .Wifi:
+			iwd_wifi(s, false)
+		case .Rescan:
+			iwd_wifi(s, true)
+		case .Radio_On:
+			iwd_radio(s, true)
+		case .Radio_Off:
+			iwd_radio(s, false)
+		case .Connect:
+			iwd_connect(s, ssid, pw)
+		}
+		return
+	}
+	switch kind {
+	case .Refresh:
+		do_refresh(s)
+	case .Wifi:
+		do_wifi(s, false)
+	case .Rescan:
+		do_wifi(s, true)
+	case .Radio_On:
+		do_radio(s, true)
+	case .Radio_Off:
+		do_radio(s, false)
+	case .Connect:
+		do_connect(s, ssid, pw)
 	}
 }
 

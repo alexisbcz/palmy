@@ -1,0 +1,8 @@
+[Desktop Entry]
+Type=Application
+Name=Network
+Comment=Interfaces, addresses and Wi-Fi networks in range
+Exec=network
+Icon=wifi
+Terminal=false
+Categories=Settings;HardwareSettings;

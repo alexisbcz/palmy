@@ -1,8 +1,15 @@
-// network — a NetworkManager front end for palmy.
+// network — the network panel for palmy: iwd, or NetworkManager.
 //
 // Interfaces on the left, the selected interface's addressing and the live
-// Wi-Fi scan on the right. Every number on screen came out of `nmcli -t`; see
-// nm.odin for the parsing and the worker thread that runs it.
+// Wi-Fi scan on the right. On Palmframe every number comes from iwd over the
+// system bus and from the kernel (iwd.odin); where iwd is not running and
+// nmcli is, from `nmcli -t` (nm.odin, which also has the worker thread both
+// share). `network --status` prints what the backend reads and exits.
+//
+// It reads; it does not change the network. A scan and turning a radio on
+// are the only requests it makes. Turning a radio off and joining a network
+// would drop the connection the machine is using, and are logged as intents,
+// not carried out (TODO.md, "Known-unfixed, deliberately").
 //
 // Keyboard, because this compositor build cannot synthesize pointer clicks:
 //
@@ -65,6 +72,9 @@ main :: proc() {
 	// `--shots <dir>` renders the panel offscreen and exits without opening a
 	// window and without running a single nmcli command. See shot.odin.
 	for a, i in os.args[1:] {
+		if a == "--status" {
+			os.exit(status())
+		}
 		if a == "--shots" || a == "-shots" {
 			rest := os.args[1:]
 			if i + 1 >= len(rest) {
@@ -228,7 +238,7 @@ open_dialog :: proc(u: ^UI, ap: Ap) {
 	u.reveal = false
 	clear(&u.pw)
 	u.dlg_ssid = strings.clone(ap.ssid)
-	u.dlg_desc = fmt.aprintf("%s · channel %d · %s · %s", ap.security, ap.channel, ap.band, ap.rate)
+	u.dlg_desc = strings.clone(ap_detail(ap, false))
 }
 
 close_dialog :: proc(u: ^UI) {
@@ -467,7 +477,7 @@ toolbar_button :: proc(ctx: ^p.Ctx, u: ^UI, slot: int, ic: p.Icon, label: string
 headline :: proc(u: ^UI) -> string {
 	s := u.st
 	if !s.loaded {
-		return "Reading NetworkManager…"
+		return s.backend == .Iwd ? "Reading iwd…" : "Reading NetworkManager…"
 	}
 	up := 0
 	primary := ""
@@ -929,29 +939,7 @@ ap_row :: proc(ctx: ^p.Ctx, u: ^UI, ap: Ap, i: int) {
 	}
 	p.end(ctx)
 
-	band := ap.band == "" ? "—" : ap.band
-	if ap.bssids > 1 {
-		p.textf(
-			ctx,
-			"text-[11.5] leading-none text-muted-foreground truncate",
-			"%s · ch %d · %s · %s · %d radios",
-			ap.security,
-			ap.channel,
-			band,
-			ap.rate,
-			ap.bssids,
-		)
-	} else {
-		p.textf(
-			ctx,
-			"text-[11.5] leading-none text-muted-foreground truncate",
-			"%s · ch %d · %s · %s",
-			ap.security,
-			ap.channel,
-			band,
-			ap.rate,
-		)
-	}
+	p.text(ctx, ap_detail(ap, true), "text-[11.5] leading-none text-muted-foreground truncate")
 	p.end(ctx)
 
 	p.col(ctx, "w-[66] shrink-0 items-end gap-2")
@@ -977,8 +965,29 @@ empty_state :: proc(ctx: ^p.Ctx, ic: p.Icon, title, body: string) {
 	p.end(ctx)
 }
 
-// signal_bars is the four-bar meter every network list has, filled from
-// nmcli's own SIGNAL percentage.
+// ap_detail is a network's second line: security, channel, band, rate and
+// how many radios answer, leaving out what the backend does not know (iwd
+// reports the channel and rate of the network in use only).
+ap_detail :: proc(ap: Ap, radios: bool) -> string {
+	parts := make([dynamic]string, context.temp_allocator)
+	append(&parts, ap.security)
+	if ap.channel > 0 {
+		append(&parts, fmt.tprintf("ch %d", ap.channel))
+	}
+	if ap.band != "" {
+		append(&parts, ap.band)
+	}
+	if ap.rate != "" {
+		append(&parts, ap.rate)
+	}
+	if radios && ap.bssids > 1 {
+		append(&parts, fmt.tprintf("%d radios", ap.bssids))
+	}
+	return strings.join(parts[:], " · ", context.temp_allocator)
+}
+
+// signal_bars is the four-bar meter every network list has, filled from the
+// backend's signal percentage (nmcli's SIGNAL, or iwd's dBm mapped onto it).
 signal_bars :: proc(ctx: ^p.Ctx, signal: int, full: f32) {
 	filled := 1
 	switch {

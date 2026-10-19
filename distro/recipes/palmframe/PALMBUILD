@@ -15,4 +15,4 @@ depend   = palmframe-base linux busybox glibc palm-init palm palm-login palmd do
 depend   = palmy-wm greeter fonts libxkbcommon xkeyboard-config
 depend   = tzdata palm-locale
 depend   = palmframe-runtime
-depend   = term launcher files editor notes calc sysmon image docs sheets slides calendar reader photoshop maps money torrent store
+depend   = term launcher files editor notes calc sysmon image docs sheets slides calendar reader photoshop maps money torrent store network

@@ -296,11 +296,12 @@ declare -A DESC=(
 	[pickdemo]="Date and colour picker demo" [emoji]="Emoji picker"
 	[prose]="The prose engine behind docs (command line)"
 	[store]="Find, install and update software"
+	[network]="Network interfaces and Wi-Fi"
 )
 # The shelf each application sits on in Software's Discover view, the icon it
 # is drawn with there, and the paragraph on its page.
 declare -A CATEGORY=(
-	[term]=System [launcher]=System [sysmon]=System [store]=System
+	[term]=System [launcher]=System [sysmon]=System [store]=System [network]=System
 	[files]=Accessories [calc]=Accessories [maps]=Accessories [emoji]=Accessories
 	[editor]=Development [track]=Development [pickdemo]=Development
 	[notes]=Office [docs]=Office [sheets]=Office [slides]=Office
@@ -309,7 +310,7 @@ declare -A CATEGORY=(
 	[torrent]=Internet [shop]=Internet
 )
 declare -A ICON=(
-	[term]=square-terminal [launcher]=layout-grid [sysmon]=activity [store]=package
+	[term]=square-terminal [launcher]=layout-grid [sysmon]=activity [store]=package [network]=wifi
 	[files]=folder [calc]=calculator [maps]=map-pin [emoji]=sparkles
 	[editor]=code [track]=flag [pickdemo]=calendar-days
 	[notes]=notebook-pen [docs]=file-text [sheets]=file-spreadsheet [slides]=presentation
@@ -340,6 +341,7 @@ declare -A DETAILS=(
 	[emoji]="Browse and search every emoji by name. Pair it with fonts-emoji for colour."
 	[prose]="The engine behind the docs app's prose checker, as a command: it reads text and suggests plainer wording."
 	[store]="Discover applications by category, search, install and remove them, and keep the system up to date. Changes go through palmd and are shown as a plan before anything happens."
+	[network]="Every interface with its addresses, gateway and DNS, and the Wi-Fi networks in range with their signal, read from iwd and the kernel. It scans and can turn a radio on; it never drops a connection."
 )
 # --- browser (apps/browser) ----------------------------------------------------
 # The browser's chrome is small and installable like any application; the
@@ -362,6 +364,7 @@ for app in $apps; do
 	docs) deps="$deps prose" ;;   # runs prose as a subprocess
 	store) deps="$deps palm palmd" ;; # reads with palm, changes through palmd
 	emoji) deps="$deps wl-clipboard" ;; # copies the chosen emoji with wl-copy
+	network) deps="$deps iwd dbus" ;; # reads Wi-Fi from iwd on the system bus
 	esac
 	{
 		header " for distro/apps/default.list and EXTRA_APPS"
