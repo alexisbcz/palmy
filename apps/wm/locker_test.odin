@@ -125,6 +125,19 @@ locker_selftest :: proc(s: ^Server) {
 	login_fake_reply(s, {ok = true})
 	ws_check(!lock_active() && len(locker.pw) == 0 && locker.err == "", "the right password unlocks, and nothing of it is kept")
 
+	// A client locker (ext_session_lock_v1) that died leaves the session
+	// locked (lock.odin); the compositor's prompt is what opens it again.
+	{
+		lock_state = .Locked
+		lock_abandoned = true
+		ws_check(locker_internal(), "an abandoned client lock shows the compositor's prompt")
+		type(s, "palm")
+		locker_key(s, p.Key_Event{sym = p.KEY_RETURN})
+		ws_check(strings.contains(last_sent(), `"type":"unlock"`), "...which asks palm-login")
+		login_fake_reply(s, {ok = true})
+		ws_check(!lock_active() && !lock_abandoned, "...and the password unlocks it")
+	}
+
 	// --- idle --------------------------------------------------------------
 	{
 		app: p.App
