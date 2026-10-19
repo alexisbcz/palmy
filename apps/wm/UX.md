@@ -381,7 +381,13 @@ both windows' corners are rounded (pixel at frame corner = desktop colour).
 
 The minimized-window dock is removed. The bar becomes:
 
-    [◆ Palmframe] [1 2 3 … 9] [layout]  [▣ Terminal] [▣ gallery] [▢ counter]   … [tray] [kbd] [clock]
+    [◆ Palmframe] [▣ ▣ ▣ |] [1 2 3 … 9] [layout]  [▣ Terminal] [▣ gallery] [▢ counter]   … [tray] [kbd] [clock]
+
+The brand is the start button (P1-12), and the icons after it are the apps
+pinned to the bar (`bar_pins = on`): click opens the app or brings its window
+forward, middle-click always opens a new one, right-click offers New window,
+its desktop actions, and unpinning; a 2 px accent dash under one says it is
+running.
 
 - One entry per window on the current workspace, in tiling/creation order
   (stable, not stacking order), each up to 200 px: icon + title,
@@ -421,7 +427,7 @@ The default table is reconciled with the new model:
 
 | key                   | action                                                 |
 | --------------------- | ------------------------------------------------------ |
-| Super (tap)           | overview                                               |
+| Super (tap)           | start menu (P1-12); `super_tap = overview` for the overview |
 | Super+Return          | terminal                                               |
 | Super+Space / Super+D | launcher (layout cycling moves to Super+Backslash)     |
 | Super+Q               | close                                                  |
@@ -520,9 +526,12 @@ top. `hold:alt key:tab key:esc release:alt shot:` — focus unchanged.
 
 ### P1-2. Overview
 
-Opened by tapping Super (press and release with no other key within 400 ms),
-by Super+W, or by pushing the pointer into the top-left hot corner (1 px,
-150 ms dwell, `hot_corner = off` to disable). Every window of the current
+Opened by Super+W, by pushing the pointer into the top-left hot corner (1 px,
+150 ms dwell, `hot_corner = off` to disable), from the start button's
+right-click menu, or — with `super_tap = overview` — by tapping Super (press
+and release with no other key within 400 ms). The tap opens the start menu by
+default since P1-12; a pointer thrown into the corner and *clicked* lands on
+the start button, so the two share the corner without fighting over it. Every window of the current
 workspace is laid out scaled down, without overlap, preserving relative
 positions (a simple grid-fill sorted by window centre), each with its title
 under it and a close button on hover. Above them, a strip of workspace
@@ -555,14 +564,18 @@ Right-clicking the desktop (no window under the pointer) opens a menu in the
 window-menu style:
 
     Open Terminal             Super+Return
+    Open Files here           (~/Desktop, else home; if `files` is installed)
+    Apps                      Super            (the start menu)
     Launcher                  Super+Space
-    Software                  (if `software` is on PATH)
+    New window of  >          one row per running application
+    Software                  (if `store` is on PATH)
     ---------------------------------------
     Layout   >  Master · Monocle · Grid · Floating (current checked)
     Arrange windows (cascade)
     ---------------------------------------
-    Wallpaper…                (if `settings` exists; else hidden)
-    Settings                  (if `settings` exists; else hidden)
+    Change wallpaper…         settings appearance   (if `settings` exists)
+    Display settings…         settings displays     (if `settings` exists)
+    Settings                                        (if `settings` exists)
 
 Items whose program is not installed are hidden (`cfg_which`), never shown
 broken.
@@ -702,6 +715,79 @@ The pair is broken when either is moved.
 **Test:** snap A left and B right (`key:meta_l+left`, focus B,
 `key:meta_l+right`), `drag:640,400,800,400 up:left shot:` — A is 800 - gap wide,
 B fills the rest.
+
+### P1-12. The start menu
+
+A tap of Super, or a click on the start button (the brand), drops a panel
+from the button: search first, then pinned apps, then recent ones.
+
+    ┌──────────────────────────────────────────────┐
+    │ ⌕  Type to search apps, settings and files    │
+    │ Pinned                            All apps › │
+    │  [▣]   [▣]   [▣]   [▣]   [▣]   [▣]            │
+    │ Recent                                       │
+    │  [▣] Quarterly report.md   [▣] Terminal       │
+    │──────────────────────────────────────────────│
+    │ (N) Northwind · Switch identity       ⚙   ⏻  │
+    └──────────────────────────────────────────────┘
+
+- **Type immediately.** Any character goes to the search; the best match is
+  selected so Enter opens it. Results: applications through the launcher's
+  matcher (`kit:appindex`, one index and one ranking for both), the Settings
+  pages a word names ("dark", "wifi", "nat scr" — a settings page becomes the
+  best match when no app name starts a word with the query), recent files.
+- **Pinned** is a 6-column grid of the person's pins
+  (`~/.config/palmy/pinned`, ordered; a new account sees a default set of
+  what is installed). **All apps ›** lists everything by category, demos
+  (`X-Palmframe-Demo=true`) last and badged.
+- **Recent** mixes the apps launched lately (the launcher's usage file, now
+  with times) and the newest files in ~, Documents, Desktop, Downloads,
+  Pictures…; a file opens with the app whose `MimeType=` claims it.
+- **Right-click** an app: Open, its desktop actions, Pin to Start / Unpin,
+  Pin to bar / Unpin. The window menu (title bar and taskbar entry) offers
+  "New <app> window" and both pins for the window's application, found from
+  the client's pid (SO_PEERCRED → /proc/pid/exe → Exec).
+- **Footer:** the current identity (cloud/docs/shell.md — the handle `accounts
+  switch` last chose, its name and colour from identities.json; the local user
+  otherwise), which opens Accounts; Settings; and power: Log out on bare
+  metal, with restart and shut down left to the login screen until the
+  session has a privileged path to them (nested, all are logged intents).
+- **Keys:** arrows move by geometry (Up/Down to the nearest item in the row
+  above or below), Tab steps, PgUp/PgDn scroll, Menu opens the context menu,
+  Escape clears the query, then leaves All apps, then closes. A chord with
+  Super/Ctrl/Alt closes it and runs.
+
+It is drawn by the compositor, like the menus: it is on screen in the frame
+that handles the key (no process to start, the index kept between openings
+and rescanned only when the applications directories change), it works when
+every client — the launcher included — is broken, and it takes the keyboard
+the way the window menu does, with no layer-shell focus negotiation.
+
+**Test:** `key:meta_l wait:0.3 shot:` — the panel under the brand, the search
+field, Pinned and Recent. `type:sett key:ret wait:2 shot:` — Settings opened.
+`move:30,17 click shot:` — open again by the button; `key:esc shot:` — gone.
+
+### P1-13. The shell's look: dark or light, and an accent
+
+`theme = dark | light` and `accent = #rrggbb` in wm.conf restyle the bar, the
+title bars, the menus, the start menu, tooltips, toasts and the generated
+wallpaper (theme.odin's `pal`); `border_focus` follows the accent unless the
+file sets it. Settings writes them; the reload is quiet (no toast) when the
+file was saved rather than Super+Shift+R pressed. The overview, the switcher
+and the cheat sheet stay dark: they sit on a scrim.
+
+wm.conf also carries what Settings changes for the pointer and the keyboard
+on bare metal — `natural_scroll`, `tap_to_click`, `left_handed`,
+`pointer_speed`, `repeat_rate`, `repeat_delay` — and `timezone`, which the
+clock shows and every spawned program inherits as TZ. The layout has a
+per-user file, `~/.config/palmy/keyboard`, read before /etc/palm/keyboard.
+For readers, the wm publishes its outputs and keyboard to
+`$XDG_RUNTIME_DIR/palmy-wm.json` whenever they change.
+
+**Test:** guest `settings set appearance.theme light`, `wait:1.5 shot:` — the
+bar and title bars light, the wallpaper pale. `settings set
+mouse.natural_scroll on`, wheel down over a terminal — it scrolls the other
+way.
 
 ### P1-11. Window rules, extended
 

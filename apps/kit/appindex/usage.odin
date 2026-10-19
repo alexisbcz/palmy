@@ -437,5 +437,33 @@ opener_for :: proc(entries: []Entry, path: string) -> int {
 			}
 		}
 	}
-	return best
+	if best >= 0 {
+		return best
+	}
+	// An entry that does not declare its types (the runtime packages' own
+	// .desktop files) is still the obvious home for some: Palmframe's
+	// player plays what a player plays.
+	for f in FALLBACK_OPENERS {
+		if strings.has_prefix(mime, f.mime) {
+			if i := find_program(entries, f.prog); i >= 0 {
+				return i
+			}
+		}
+	}
+	return -1
+}
+
+@(private)
+FALLBACK_OPENERS := [?]struct {
+	mime, prog: string,
+} {
+	{"audio/", "audio"},
+	{"video/", "video"},
+	{"application/zip", "archive"},
+	{"application/x-tar", "archive"},
+	{"application/gzip", "archive"},
+	{"application/zstd", "archive"},
+	{"application/x-bittorrent", "torrent"},
+	{"image/", "image"},
+	{"text/", "editor"},
 }

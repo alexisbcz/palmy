@@ -10,6 +10,15 @@ icon_for :: proc(e: ^Entry) -> p.Icon {
 	if ic, ok := icon_named(e.icon); ok {
 		return ic
 	}
+	// Palmframe's own entries that name themselves (Icon=mixer) rather than
+	// a lucide glyph.
+	for a in ICON_ALIASES {
+		if a.name == e.icon || (e.icon == "" && a.name == exec_name(e)) {
+			if ic, ok := icon_named(a.lucide); ok {
+				return ic
+			}
+		}
+	}
 	n := e.lower
 	switch {
 	case has_any(n, "terminal", "console", "ghostty", "foot", "alacritty", "kitty"):
@@ -62,6 +71,52 @@ icon_for :: proc(e: ^Entry) -> p.Icon {
 		return ICON_PACKAGE
 	}
 	return ICON_PACKAGE
+}
+
+// ICON_ALIASES maps the names Palmframe's applications go by to the lucide
+// glyph that stands for them.
+ICON_ALIASES := [?]struct {
+	name, lucide: string,
+} {
+	{"ai", "bot"},
+	{"audio", "music"},
+	{"call", "phone"},
+	{"mixer", "volume-2"},
+	{"vault", "key-round"},
+	{"video", "clapperboard"},
+	{"videoedit", "scissors"},
+	{"calc", "calculator"},
+	{"docs", "file-text"},
+	{"editor", "code"},
+	{"files", "folder"},
+	{"launcher", "layout-grid"},
+	{"maps", "map-pin"},
+	{"money", "wallet"},
+	{"notes", "notebook-pen"},
+	{"photoshop", "palette"},
+	{"reader", "book-open"},
+	{"sheets", "file-spreadsheet"},
+	{"slides", "presentation"},
+	{"store", "store"},
+	{"sysmon", "activity"},
+	{"term", "square-terminal"},
+	{"torrent", "download"},
+	{"chat", "message-circle"},
+	{"contacts", "contact"},
+	{"accounts", "circle-user"},
+	{"forge", "anvil"},
+	{"home", "house"},
+	{"browser", "globe"},
+	{"settings", "settings"},
+	{"power", "battery"},
+	{"ocr", "scan-text"},
+	{"colorpick", "pipette"},
+	{"track", "flag"},
+	{"emoji", "sparkles"},
+	{"drive", "hard-drive"},
+	{"network", "wifi"},
+	{"screenshot", "camera"},
+	{"captions", "captions"},
 }
 
 // hue_for is a stable tile colour per entry, from the same eight hues the
