@@ -1,8 +1,11 @@
 [Desktop Entry]
 Type=Application
 Name=Browser
-Comment=Browse the web with Chromium or Firefox, per identity
-Exec=browser
+GenericName=Web browser
+Comment=Browse the web, one profile per identity
+Exec=browser %u
 Icon=globe
 Terminal=false
 Categories=Network;WebBrowser;
+Keywords=web;internet;www;chromium;firefox;
+MimeType=text/html;x-scheme-handler/http;x-scheme-handler/https;

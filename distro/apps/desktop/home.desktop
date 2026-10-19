@@ -1,0 +1,11 @@
+[Desktop Entry]
+Type=Application
+Name=Home
+GenericName=Hub
+Comment=Today across your identities, on sample data
+Exec=home
+Icon=house
+Terminal=false
+Categories=Office;
+Keywords=today;inbox;hub;overview;
+X-Palmframe-Demo=true

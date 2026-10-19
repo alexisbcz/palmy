@@ -1,8 +1,11 @@
 [Desktop Entry]
 Type=Application
 Name=Shop
-Comment=Shop demo
+GenericName=Storefront demo
+Comment=A demonstration storefront that sells nothing
 Exec=shop
 Icon=tag
 Terminal=false
 Categories=Network;
+Keywords=store;catalogue;basket;demo;
+X-Palmframe-Demo=true

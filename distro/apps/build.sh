@@ -27,8 +27,9 @@ ODIN="${ODIN:-odin}"
 mkdir -p "$OUT" "$LOGS"
 
 # Directories under apps/ that are not applications: the shared kit, the
-# prose library the docs app imports, and the tools tree (an X11 harness).
-NOT_APPS=" kit prose tools "
+# prose library the docs app imports, the tools tree (an X11 harness), and
+# cloudkit (the Odin client library the cloud apps import).
+NOT_APPS=" kit prose tools cloudkit "
 
 # Where an application's binary name must differ from its directory. apps/palm
 # is the application command dispatcher (`palm schema`, `palm notes ...`);
@@ -73,6 +74,7 @@ build_one() {
 	start=$(date +%s)
 	if (cd "$ROOT" && "$ODIN" build "apps/$app" -o:speed \
 		-collection:palmy=palmy -collection:kit=apps/kit -collection:shadcn=shadcn \
+		-collection:drive=cloud/drive -collection:forge=cloud/forge \
 		-out:"$OUT/$bin.tmp") >"$log" 2>&1; then
 		mv -f "$OUT/$bin.tmp" "$OUT/$bin"
 		end=$(date +%s)

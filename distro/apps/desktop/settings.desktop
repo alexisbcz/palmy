@@ -1,0 +1,10 @@
+[Desktop Entry]
+Type=Application
+Name=Settings
+GenericName=System settings
+Comment=Appearance, displays, keyboard, mouse, sound, network, time and more
+Exec=settings
+Icon=settings
+Terminal=false
+Categories=Settings;System;
+Keywords=preferences;control;dark;light;theme;wallpaper;keyboard;mouse;touchpad;sound;volume;wifi;network;timezone;password;update;about;

@@ -1,8 +1,11 @@
 [Desktop Entry]
 Type=Application
 Name=Text Editor
+GenericName=Text editor
 Comment=Edit plain text and code
-Exec=editor
-Icon=editor
+Exec=editor %f
+Icon=code
 Terminal=false
-Categories=Utility;TextEditor;Development;
+Categories=Development;TextEditor;Utility;
+Keywords=text;code;edit;notepad;source;
+MimeType=text/plain;text/markdown;

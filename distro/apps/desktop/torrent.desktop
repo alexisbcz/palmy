@@ -1,8 +1,11 @@
 [Desktop Entry]
 Type=Application
 Name=Torrent
-Comment=Download with BitTorrent
-Exec=torrent
-Icon=torrent
+GenericName=BitTorrent client
+Comment=Download and share with BitTorrent
+Exec=torrent %f
+Icon=download
 Terminal=false
 Categories=Network;FileTransfer;P2P;
+Keywords=bittorrent;download;magnet;
+MimeType=application/x-bittorrent;

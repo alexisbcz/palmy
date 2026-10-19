@@ -1,9 +1,10 @@
 [Desktop Entry]
 Type=Application
 Name=Launcher
-Comment=Find and start applications
+GenericName=Application launcher
+Comment=Find an application by typing part of its name
 Exec=launcher
-Icon=launcher
+Icon=layout-grid
 Terminal=false
 Categories=Utility;
-NoDisplay=true
+Keywords=run;open;search;apps;rofi;dmenu;

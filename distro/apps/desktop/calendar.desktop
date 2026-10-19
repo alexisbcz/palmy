@@ -1,8 +1,10 @@
 [Desktop Entry]
 Type=Application
 Name=Calendar
-Comment=Your schedule
+GenericName=Calendar
+Comment=Your events by day, week and month
 Exec=calendar
 Icon=calendar
 Terminal=false
 Categories=Office;Calendar;
+Keywords=events;schedule;agenda;meeting;date;

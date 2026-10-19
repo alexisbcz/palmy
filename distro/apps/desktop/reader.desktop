@@ -1,8 +1,11 @@
 [Desktop Entry]
 Type=Application
 Name=Reader
+GenericName=Book reader
 Comment=Read books and documents
-Exec=reader
-Icon=reader
+Exec=reader %f
+Icon=book-open
 Terminal=false
 Categories=Office;Viewer;
+Keywords=book;ebook;epub;pdf;read;
+MimeType=application/pdf;application/epub+zip;

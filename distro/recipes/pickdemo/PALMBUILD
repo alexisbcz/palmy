@@ -14,3 +14,4 @@ depend   = glibc fonts libxkbcommon
 provides = cmd:pickdemo
 
 file     = ${PALMFRAME_OUT}/bin/pickdemo -> /usr/bin/pickdemo mode 0755
+file     = ${PALMFRAME_ROOT}/distro/apps/desktop/pickdemo.desktop -> /usr/share/applications/pickdemo.desktop mode 0644

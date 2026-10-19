@@ -1,26 +1,58 @@
-# The applications in Palmframe's default install: works_minimal = yes in
-# apps.tsv and worth having on a fresh system. One binary name per line; each
-# is distro/out/bin/<name> -> /usr/bin/<name>, with
+# The applications in Palmframe's default install: works_minimal = yes (or
+# partial, where what works is worth having) in apps.tsv. One binary name per
+# line; each is distro/out/bin/<name> -> /usr/bin/<name>, with
 # distro/apps/desktop/<name>.desktop -> /usr/share/applications/ where one
 # exists (wm and greeter are the session, not launchable applications).
+#
+# Packaged but not installed by default (distro/recipes/generate.sh
+# EXTRA_APPS and the runtime block): the demos (shop, pickdemo, home), ai
+# (needs ollama), ocr (needs an API key and poppler), bluetooth (needs a
+# kernel with Bluetooth), power and colorpick (partial).
 wm
 greeter
+
+# The desktop
 term
 launcher
+settings
 files
-editor
-notes
-calc
-sysmon
-image
+store
+
+# Office
 docs
 sheets
 slides
 calendar
+contacts
+notes
 reader
-photoshop
-maps
 money
+
+# Internet and your account
+browser
+mail
+chat
+accounts
+forge
 torrent
-store
 network
+
+# Media
+image
+photoshop
+audio
+video
+videoedit
+mixer
+
+# Utilities
+editor
+calc
+sysmon
+maps
+emoji
+clipboard
+archive
+vault
+track
+call

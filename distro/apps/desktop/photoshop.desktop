@@ -1,8 +1,11 @@
 [Desktop Entry]
 Type=Application
 Name=Paint
-Comment=Edit raster images in layers
-Exec=photoshop
-Icon=photoshop
+GenericName=Image editor
+Comment=Edit pictures with layers and brushes
+Exec=photoshop %f
+Icon=palette
 Terminal=false
 Categories=Graphics;RasterGraphics;
+Keywords=draw;paint;photo;edit;layers;
+MimeType=image/png;image/jpeg;

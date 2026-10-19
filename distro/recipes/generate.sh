@@ -284,7 +284,7 @@ fonts_recipe fonts-emoji emoji "Noto Color Emoji" sparkles \
 # wm and greeter, which have hand-written recipes as the session) plus a few
 # that work on the bare system but are not installed by default -- they are
 # what `palm add` on a fresh machine has to choose from.
-EXTRA_APPS="shop track pickdemo emoji prose"
+EXTRA_APPS="shop pickdemo prose home power colorpick"
 declare -A DESC=(
 	[term]="The palmy terminal" [launcher]="Application launcher"
 	[files]="File manager" [editor]="Text editor" [notes]="Markdown notes"
@@ -297,17 +297,24 @@ declare -A DESC=(
 	[prose]="The prose engine behind docs (command line)"
 	[store]="Find, install and update software"
 	[network]="Network interfaces and Wi-Fi"
+	[settings]="System settings" [accounts]="Your Palmframe account and its identities"
+	[contacts]="Address book" [chat]="Messages" [forge]="Code hosting: repositories, reviews, issues"
+	[home]="Today across your identities (prototype)" [power]="Battery and power"
+	[colorpick]="Colour picker"
 )
 # The shelf each application sits on in Software's Discover view, the icon it
 # is drawn with there, and the paragraph on its page.
 declare -A CATEGORY=(
 	[term]=System [launcher]=System [sysmon]=System [store]=System [network]=System
+	[settings]=System [accounts]=System [power]=System
 	[files]=Accessories [calc]=Accessories [maps]=Accessories [emoji]=Accessories
-	[editor]=Development [track]=Development [pickdemo]=Development
+	[colorpick]=Accessories
+	[editor]=Development [track]=Development [pickdemo]=Development [forge]=Development
 	[notes]=Office [docs]=Office [sheets]=Office [slides]=Office
 	[calendar]=Office [reader]=Office [money]=Office [prose]=Office
+	[contacts]=Office [home]=Office
 	[image]=Graphics [photoshop]=Graphics
-	[torrent]=Internet [shop]=Internet
+	[torrent]=Internet [shop]=Internet [chat]=Internet
 )
 declare -A ICON=(
 	[term]=square-terminal [launcher]=layout-grid [sysmon]=activity [store]=package [network]=wifi
@@ -316,6 +323,8 @@ declare -A ICON=(
 	[notes]=notebook-pen [docs]=file-text [sheets]=file-spreadsheet [slides]=presentation
 	[calendar]=calendar [reader]=book-open [money]=credit-card [prose]=type
 	[image]=image [photoshop]=palette [torrent]=download [shop]=tag
+	[settings]=settings [accounts]=circle-user [contacts]=contact [chat]=message-circle
+	[forge]=git-branch [home]=house [power]=battery [colorpick]=pipette
 )
 declare -A DETAILS=(
 	[term]="A terminal with tabs. It runs your shell, follows the system theme, and was checked against ghostty cell by cell."
@@ -342,6 +351,14 @@ declare -A DETAILS=(
 	[prose]="The engine behind the docs app's prose checker, as a command: it reads text and suggests plainer wording."
 	[store]="Discover applications by category, search, install and remove them, and keep the system up to date. Changes go through palmd and are shown as a plan before anything happens."
 	[network]="Every interface with its addresses, gateway and DNS, and the Wi-Fi networks in range with their signal, read from iwd and the kernel. It scans and can turn a radio on; it never drops a connection."
+	[settings]="Appearance (dark or light, the accent, the wallpaper), keyboard layout and repeat, mouse and touchpad, sound, the time zone, your password, and what the displays, network, updates and hardware are. Every change is applied by the window manager within a second; settings get and set do the same from a terminal."
+	[accounts]="Sign in to Palmframe, see the identities your account holds, switch the current one and the sessions this machine keeps for each."
+	[contacts]="People and how to reach them, kept per identity and synced with your Palmframe account."
+	[chat]="Conversations, with the identity you write as always shown. Talks to a chat server: Palmframe's, or one on your network."
+	[forge]="Repositories owned by your identities: browse code, review changes, track issues. Works against a Palmframe forge server."
+	[home]="A prototype of the hub that shows today across every identity: mail, events, files and people, on invented sample data."
+	[power]="Battery charge and health, read from /sys/class/power_supply."
+	[colorpick]="Keep a palette of colours and copy them in any format. Picking from the screen needs a screenshot tool."
 )
 # --- browser (apps/browser) ----------------------------------------------------
 # The browser's chrome is small and installable like any application; the
@@ -356,7 +373,13 @@ ICON[browser]=globe
 DETAILS[browser]="A web browser whose tabs, address bar, bookmarks and settings are Palmframe's own, with pages drawn by the engine you choose per identity: Chromium (palm-browser-cef) or Firefox (firefox). One profile per identity, so cookies never cross between them."
 # --- end browser ---------------------------------------------------------------
 apps="$(grep -v '^#' "$DISTRO/apps/default.list" | grep -vx -e wm -e greeter -e '') $EXTRA_APPS"
+# The applications the runtime block packages (their RT_APP_DEPS keys) are
+# left to it: it writes them with the subprocess dependencies they need
+# (mail -> mailcore, audio -> ffmpeg pipewire ...). Listing one in
+# default.list installs it; it does not make this loop write a poorer recipe.
+RT_OWNED=" $(sed -n '/^declare -A RT_APP_DEPS=(/,/^)/p' "$HERE/runtime/generate.sh" | grep -o '\[[a-z0-9-]*\]' | tr -d '[]' | tr '\n' ' ') "
 for app in $apps; do
+	case "$RT_OWNED" in *" $app "*) continue ;; esac
 	deps="glibc fonts libxkbcommon"
 	case "$app" in
 	prose) deps="glibc" ;;

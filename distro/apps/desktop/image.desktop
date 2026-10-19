@@ -1,8 +1,11 @@
 [Desktop Entry]
 Type=Application
 Name=Image Viewer
-Comment=View images
-Exec=image
+GenericName=Image viewer
+Comment=Look through pictures
+Exec=image %f
 Icon=image
 Terminal=false
 Categories=Graphics;Viewer;
+Keywords=photo;picture;png;jpeg;gallery;
+MimeType=image/png;image/jpeg;image/gif;image/bmp;

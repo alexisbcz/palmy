@@ -1,0 +1,10 @@
+[Desktop Entry]
+Type=Application
+Name=Power
+GenericName=Battery
+Comment=Battery charge and health
+Exec=power
+Icon=battery
+Terminal=false
+Categories=Settings;HardwareSettings;
+Keywords=battery;power;charge;energy;

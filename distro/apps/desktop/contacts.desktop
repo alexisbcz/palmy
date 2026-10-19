@@ -1,0 +1,10 @@
+[Desktop Entry]
+Type=Application
+Name=Contacts
+GenericName=Address book
+Comment=People and how to reach them
+Exec=contacts
+Icon=contact
+Terminal=false
+Categories=Office;ContactManagement;
+Keywords=people;address;phone;email;

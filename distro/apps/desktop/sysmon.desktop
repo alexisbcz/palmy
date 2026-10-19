@@ -1,8 +1,10 @@
 [Desktop Entry]
 Type=Application
 Name=System Monitor
-Comment=Processes, memory, network and sensors
+GenericName=Task manager
+Comment=Processes, CPU, memory and disks
 Exec=sysmon
-Icon=sysmon
+Icon=activity
 Terminal=false
 Categories=System;Monitor;
+Keywords=task;process;cpu;memory;htop;top;kill;

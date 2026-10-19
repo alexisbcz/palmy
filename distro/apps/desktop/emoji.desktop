@@ -1,8 +1,10 @@
 [Desktop Entry]
 Type=Application
 Name=Emoji
-Comment=Find and copy an emoji
+GenericName=Emoji picker
+Comment=Find an emoji by name and copy it
 Exec=emoji
 Icon=sparkles
 Terminal=false
 Categories=Utility;
+Keywords=emoji;smiley;symbols;unicode;

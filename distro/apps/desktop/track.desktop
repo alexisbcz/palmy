@@ -1,8 +1,10 @@
 [Desktop Entry]
 Type=Application
 Name=Track
-Comment=Issue tracker
+GenericName=Issue tracker
+Comment=Issues kept as plain files
 Exec=track
 Icon=flag
 Terminal=false
 Categories=Development;ProjectManagement;
+Keywords=issues;bugs;tasks;todo;

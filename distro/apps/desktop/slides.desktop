@@ -1,8 +1,10 @@
 [Desktop Entry]
 Type=Application
 Name=Slides
-Comment=Presentations
-Exec=slides
-Icon=slides
+GenericName=Presentations
+Comment=Make and present slide decks
+Exec=slides %f
+Icon=presentation
 Terminal=false
 Categories=Office;Presentation;
+Keywords=presentation;deck;keynote;powerpoint;

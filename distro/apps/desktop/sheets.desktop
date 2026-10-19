@@ -1,8 +1,11 @@
 [Desktop Entry]
 Type=Application
 Name=Sheets
-Comment=Spreadsheets
-Exec=sheets
-Icon=sheets
+GenericName=Spreadsheet
+Comment=Spreadsheets with formulas and charts
+Exec=sheets %f
+Icon=file-spreadsheet
 Terminal=false
 Categories=Office;Spreadsheet;
+Keywords=spreadsheet;excel;csv;table;formula;
+MimeType=text/csv;text/tab-separated-values;

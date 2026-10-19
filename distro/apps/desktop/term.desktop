@@ -1,8 +1,10 @@
 [Desktop Entry]
 Type=Application
 Name=Terminal
-Comment=A terminal emulator
+GenericName=Terminal
+Comment=Run commands in a shell, with tabs
 Exec=term
-Icon=term
+Icon=square-terminal
 Terminal=false
 Categories=System;TerminalEmulator;
+Keywords=shell;console;command;prompt;bash;sh;

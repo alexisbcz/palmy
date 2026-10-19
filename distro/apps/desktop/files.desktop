@@ -1,8 +1,11 @@
 [Desktop Entry]
 Type=Application
 Name=Files
-Comment=Browse files and folders
-Exec=files
-Icon=files
+GenericName=File manager
+Comment=Browse and organise your folders
+Exec=files %f
+Icon=folder
 Terminal=false
 Categories=System;FileManager;
+Keywords=folder;directory;explorer;finder;browse;
+MimeType=inode/directory;

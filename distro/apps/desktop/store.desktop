@@ -1,8 +1,10 @@
 [Desktop Entry]
 Type=Application
 Name=Software
+GenericName=Software centre
 Comment=Find, install and update software
 Exec=store
 Icon=store
 Terminal=false
 Categories=System;PackageManager;
+Keywords=install;apps;packages;update;upgrade;palm;store;

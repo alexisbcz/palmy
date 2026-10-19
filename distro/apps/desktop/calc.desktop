@@ -1,8 +1,10 @@
 [Desktop Entry]
 Type=Application
 Name=Calculator
-Comment=Expressions, functions and variables
+GenericName=Calculator
+Comment=Work out sums, with a history
 Exec=calc
-Icon=calc
+Icon=calculator
 Terminal=false
 Categories=Utility;Calculator;
+Keywords=math;sum;arithmetic;

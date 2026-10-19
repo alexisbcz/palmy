@@ -1,8 +1,11 @@
 [Desktop Entry]
 Type=Application
 Name=Money
-Comment=Accounts and budgets
-Exec=money
-Icon=money
+GenericName=Personal finance
+Comment=Accounts, budgets and where the money went
+Exec=money %f
+Icon=wallet
 Terminal=false
 Categories=Office;Finance;
+Keywords=bank;budget;finance;expenses;accounts;
+MimeType=application/x-ofx;

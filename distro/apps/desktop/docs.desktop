@@ -1,8 +1,11 @@
 [Desktop Entry]
 Type=Application
 Name=Docs
+GenericName=Word processor
 Comment=Write documents
-Exec=docs
-Icon=docs
+Exec=docs %f
+Icon=file-text
 Terminal=false
 Categories=Office;WordProcessor;
+Keywords=document;write;word;text;report;
+MimeType=application/vnd.openxmlformats-officedocument.wordprocessingml.document;application/vnd.oasis.opendocument.text;application/rtf;

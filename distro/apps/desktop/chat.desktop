@@ -1,0 +1,10 @@
+[Desktop Entry]
+Type=Application
+Name=Chat
+GenericName=Messages
+Comment=Conversations, as the identity you choose
+Exec=chat
+Icon=message-circle
+Terminal=false
+Categories=Network;InstantMessaging;Chat;
+Keywords=messages;im;conversation;talk;

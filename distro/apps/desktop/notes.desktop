@@ -1,8 +1,10 @@
 [Desktop Entry]
 Type=Application
 Name=Notes
+GenericName=Notes
 Comment=Markdown notes kept as files
 Exec=notes
-Icon=notes
+Icon=notebook-pen
 Terminal=false
 Categories=Office;Utility;
+Keywords=notes;markdown;notebook;jot;memo;

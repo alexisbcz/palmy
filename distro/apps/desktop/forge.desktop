@@ -1,0 +1,10 @@
+[Desktop Entry]
+Type=Application
+Name=Forge
+GenericName=Code hosting
+Comment=Repositories, reviews and issues
+Exec=forge
+Icon=anvil
+Terminal=false
+Categories=Development;RevisionControl;
+Keywords=git;repository;code;review;issues;pull request;

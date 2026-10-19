@@ -1,8 +1,11 @@
 [Desktop Entry]
 Type=Application
 Name=Maps
-Comment=Offline maps
-Exec=maps
-Icon=maps
+GenericName=Maps
+Comment=Explore a city offline
+Exec=maps %f
+Icon=map-pin
 Terminal=false
 Categories=Utility;Maps;
+Keywords=map;streets;directions;
+MimeType=application/geo+json;

@@ -1,0 +1,10 @@
+[Desktop Entry]
+Type=Application
+Name=Colour Picker
+GenericName=Colour picker
+Comment=A palette of colours to copy in any format
+Exec=colorpick
+Icon=pipette
+Terminal=false
+Categories=Graphics;Utility;
+Keywords=color;colour;hex;rgb;palette;
