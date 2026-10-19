@@ -19,8 +19,13 @@
 //
 //	config.json            {"url": ..., "anon_key": ...}, optional
 //	session.json           the person's own session              0600
-//	scoped/<handle>.json   a session scoped to one identity        0600
+//	scoped/<handle>.json   this machine's session for one identity 0600
+//	delegated/<name>.json  a session minted to hand to an assistant 0600
 //	current                the identity the person last switched to
+//
+// $PALM_CLOUD_SESSION names one session file to use instead, which is how a
+// delegated session is handed to the program that holds it. It must hold a
+// scoped session; an unscoped one is refused rather than used.
 //
 // The directory is 0700. Files are written to a temporary name and renamed,
 // so a crash never leaves half a token behind.
@@ -101,6 +106,7 @@ Client :: struct {
 	anon_key:   string,
 	dir:        string, // the token store
 	scope:      string, // PALM_IDENTITY at open, "" for the person
+	session_file: string, // $PALM_CLOUD_SESSION, when a delegated session is in use
 	session:    Session,
 	has_session: bool,
 	user_agent: string,
@@ -132,6 +138,27 @@ open :: proc(url := "", anon_key := "", dir := "", scope := "", app := "cloudkit
 	if c.scope != "" && !handle_ok(c.scope) {
 		return c, Error{kind = .Invalid, message = fmt.aprintf("not an identity handle: %q", c.scope)}
 	}
+	if f := os.get_env("PALM_CLOUD_SESSION", context.temp_allocator); f != "" {
+		c.session_file = strings.clone(f)
+		c.session, c.has_session = session_load(f)
+		if c.has_session && c.session.identity_id == "" {
+			session_free(&c.session)
+			c.has_session = false
+			return c, Error{kind = .Out_Of_Scope, code = "palm_identity",
+				message = fmt.aprintf("%s does not hold a scoped session; PALM_CLOUD_SESSION is only for sessions scoped to one identity", f)}
+		}
+		if c.has_session {
+			if c.scope != "" && c.scope != c.session.handle {
+				return c, Error{kind = .Out_Of_Scope, code = "palm_identity",
+					message = fmt.aprintf("PALM_IDENTITY is %q but the session in %s acts for %q", c.scope, f, c.session.handle)}
+			}
+			if c.scope == "" {
+				delete(c.scope)
+				c.scope = strings.clone(c.session.handle)
+			}
+		}
+		return c, {}
+	}
 	c.session, c.has_session = session_load(session_path(c, context.temp_allocator))
 	return c, {}
 }
@@ -145,6 +172,7 @@ close :: proc(c: ^Client) {
 	delete(c.anon_key)
 	delete(c.dir)
 	delete(c.scope)
+	delete(c.session_file)
 	delete(c.user_agent)
 	free(c)
 }
@@ -465,6 +493,9 @@ store_dir :: proc(allocator := context.allocator) -> string {
 }
 
 session_path :: proc(c: ^Client, allocator := context.allocator) -> string {
+	if c.session_file != "" {
+		return strings.clone(c.session_file, allocator)
+	}
 	if c.scope != "" {
 		return pjoin({c.dir, "scoped", fmt.tprintf("%s.json", c.scope)}, allocator)
 	}
@@ -531,16 +562,21 @@ session_save :: proc(c: ^Client) -> Error {
 	return write_private(session_path(c, context.temp_allocator), session_text(c.session))
 }
 
+delegated_path :: proc(c: ^Client, handle, device_id: string, allocator := context.allocator) -> string {
+	short := device_id[:min(8, len(device_id))]
+	return pjoin({c.dir, "delegated", fmt.tprintf("%s-%s.json", handle, short)}, allocator)
+}
+
 // save_scoped stores a scoped session under its handle, for a later process
-// started with PALM_IDENTITY=<handle>.
-save_scoped :: proc(c: ^Client, s: Session) -> Error {
+// started with PALM_IDENTITY=<handle>, or at `path` when one is given.
+save_scoped :: proc(c: ^Client, s: Session, path := "") -> Error {
 	if !handle_ok(s.handle) {
 		return Error{kind = .Invalid, message = strings.clone("a scoped session needs its identity's handle")}
 	}
 	if s.identity_id == "" {
 		return Error{kind = .Out_Of_Scope, message = strings.clone("refusing to store an unscoped token as scoped")}
 	}
-	return write_private(scoped_path(c, s.handle, context.temp_allocator), session_text(s))
+	return write_private(path != "" ? path : scoped_path(c, s.handle, context.temp_allocator), session_text(s))
 }
 
 // forget drops the session in use, from memory and from disk.
@@ -567,7 +603,7 @@ write_private :: proc(path, text: string) -> Error {
 	// make_directory_all leaves existing directories alone, and the umask
 	// can only narrow; tighten both levels explicitly.
 	os.chmod(dir, os.perm_number(0o700))
-	if filepath.base(dir) == "scoped" {
+	if b := filepath.base(dir); b == "scoped" || b == "delegated" {
 		os.chmod(filepath.dir(dir), os.perm_number(0o700))
 	}
 	tmp := fmt.tprintf("%s.tmp.%d", path, os.get_pid())

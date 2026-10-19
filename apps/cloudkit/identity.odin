@@ -124,6 +124,13 @@ Minted :: struct {
 	device_id:  string,
 	session_id: string,
 	identity:   Identity,
+	path:       string, // where the session was stored, "" if it was not
+}
+
+// Where scope_to keeps what it minted.
+Scope_Store :: enum u8 {
+	Machine, // scoped/<handle>.json: this machine's own session for the identity
+	Delegated, // delegated/<handle>-<device>.json: to hand to one program, via PALM_CLOUD_SESSION
 }
 
 // scope_to mints a session that acts for one identity only, takes it up, and
@@ -132,7 +139,10 @@ Minted :: struct {
 // may do this; the server refuses anything else.
 //
 // `kind` is "device" or "assistant". `expires_in` is seconds, 0 for none.
-scope_to :: proc(c: ^Client, ident: Identity, device_name: string, kind := "device", expires_in := 0) -> (m: Minted, e: Error) {
+// `store` says where it is kept: .Machine replaces this machine's session for
+// the identity (what `accounts switch` does); .Delegated keeps it apart, so
+// handing a session to an assistant never replaces the machine's own.
+scope_to :: proc(c: ^Client, ident: Identity, device_name: string, kind := "device", expires_in := 0, store := Scope_Store.Machine) -> (m: Minted, e: Error) {
 	if c.scope != "" {
 		return {}, out_of_scope_local(c)
 	}
@@ -159,11 +169,12 @@ scope_to :: proc(c: ^Client, ident: Identity, device_name: string, kind := "devi
 		return {}, Error{kind = .Failed, message = strings.clone("the minted token does not carry the identity it was minted for")}
 	}
 	s.handle = strings.clone(ident.handle)
-	if se := save_scoped(c, s); !ok(se) {
-		return {}, se
-	}
 	m.device_id = strings.clone(get_str(v, "device_id"))
 	m.session_id = strings.clone(get_str(v, "session_id"))
+	m.path = store == .Delegated ? delegated_path(c, ident.handle, m.device_id) : scoped_path(c, ident.handle)
+	if se := save_scoped(c, s, m.path); !ok(se) {
+		return {}, se
+	}
 	m.identity = ident
 	return m, {}
 }
