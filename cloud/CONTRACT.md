@@ -30,6 +30,10 @@ apps/chat/, apps/call/ chat and calls (owned by chat & calls)
 apps/docs/, sheets/, slides/  the office suite (owned by office)
 apps/vault/            the password manager, end-to-end encrypted (owned by vault)
 apps/notes/            notes per identity, synced (owned by notes)
+apps/ai/               the assistant, one per identity (owned by assistant)
+apps/home/, apps/index/  the hub and the local search index (owned by search)
+apps/notify/           notifications, quiet policies per identity (owned by notifications)
+apps/welcome/          first-run onboarding (owned by onboarding)
 ```
 
 Migration file names are `<timestamp>_<name>.sql`. The ranges are:
@@ -47,6 +51,8 @@ Migration file names are `<timestamp>_<name>.sql`. The ranges are:
 | collab   | `20261019800000`–`20261019899999` | `collab_`   |
 | vault    | `20261019900000`–`20261019999999` | `vault_`    |
 | notes    | `20261020000000`–`20261020099999` | `notes_`    |
+| assistant| `20261020100000`–`20261020199999` | `assistant_`|
+| notify   | `20261020300000`–`20261020399999` | `notify_`   |
 
 ## Identities
 
