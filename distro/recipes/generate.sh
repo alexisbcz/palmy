@@ -284,7 +284,7 @@ fonts_recipe fonts-emoji emoji "Noto Color Emoji" sparkles \
 # wm and greeter, which have hand-written recipes as the session) plus a few
 # that work on the bare system but are not installed by default -- they are
 # what `palm add` on a fresh machine has to choose from.
-EXTRA_APPS="shop pickdemo prose home power colorpick"
+EXTRA_APPS="shop pickdemo prose home power colorpick chat forge"
 declare -A DESC=(
 	[term]="The palmy terminal" [launcher]="Application launcher"
 	[files]="File manager" [editor]="Text editor" [notes]="Markdown notes"

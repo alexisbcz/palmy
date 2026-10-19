@@ -7,7 +7,8 @@
 # Packaged but not installed by default (distro/recipes/generate.sh
 # EXTRA_APPS and the runtime block): the demos (shop, pickdemo, home), ai
 # (needs ollama), ocr (needs an API key and poppler), bluetooth (needs a
-# kernel with Bluetooth), power and colorpick (partial).
+# kernel with Bluetooth), power and colorpick (partial), chat and forge (they
+# need a chat or forge server; without one they say "not connected").
 wm
 greeter
 
@@ -31,9 +32,7 @@ money
 # Internet and your account
 browser
 mail
-chat
 accounts
-forge
 torrent
 network
 

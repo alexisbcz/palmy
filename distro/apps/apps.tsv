@@ -47,3 +47,10 @@ vault	vault	yes	wl-copy, wl-paste	partial	vault --selftest 4678/0 and wl-copy/wl
 video	video	yes	ffmpeg, ffprobe, pw-cat	yes	ffmpeg (from source) + pw-cat. QEMU (distro/recipes/runtime/test-runtime.py): video --selftest 248/0; the app plays an H.264/AAC MP4 made by the guest's own ffmpeg
 videoedit	videoedit	yes	ffmpeg, ffprobe, pw-cat; media from ~/Videos ($PALMY_VIDEOEDIT_MEDIA)	partial	runs; in QEMU videoedit --selftest's one failure is the 'subtitles' filter (ffmpeg is built without libass); 362/0 on the build host. Export uses libx264 (built in). Media, export and project default to ~/Videos (no /home/alex paths any more)
 wm	wm	yes	libxkbcommon.so.0 (its own keymap), /dev/dri, /dev/input	yes	the session; bare-metal backend owned and verified by the wm agent, not here
+settings	settings	yes	wm.conf and ~/.config/palmy/keyboard (the wm applies them); optional: wpctl, palm, ip, iwctl, term + passwd	yes	QEMU (.scratch shell run): opened from the start menu and from the desktop menu; settings set appearance.theme light turned the bar light within a second; settings --selftest 49/0
+accounts	accounts	yes	a Palmframe cloud (Supabase) to sign in to	partial	starts and shows the sign-in screen in QEMU; signing in needs the cloud
+contacts	contacts	yes	a Palmframe cloud for sync	partial	starts in QEMU; empty until signed in
+browser	browser	yes	an engine package: palm-browser-cef or firefox	partial	the chrome starts in QEMU; pages need an engine, which says so in the window
+forge	forge	yes	a forge server (cloud/forge)	partial	starts in QEMU and says 'Not connected' without a server; packaged (EXTRA_APPS), not installed by default
+home	home	yes	none (invented fixtures)	partial	a prototype on sample data; packaged as a demo (X-Palmframe-Demo)
+drive	drive	yes (-collection:drive=cloud/drive)	a drive configuration (cloud/drive/dev/seed.sh)	no	exits 6 without a configuration, so it is not packaged
