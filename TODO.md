@@ -87,6 +87,20 @@ any prompt they touch:**
 
 ## K1 — `[12px]` is silently dropped
 
+> **Done.** `[12px]` is the bare number, `[N%]` is a percentage wherever a
+> dimension is expected (`w-`, `h-`, `min-`/`max-`, insets), and `rem`/`em`
+> are refused rather than guessed: palmy has no root font size, and 16 would
+> be right on some screens and silently wrong on others. A dropped numeric
+> bracket value is reported once on stderr (`palmy: dropped the class value
+> [3rem]: ...`); colour brackets are not. `tests/bracket_units_test.odin`.
+> Parity unchanged, metrics byte-identical. What the grep finds now: the 41
+> `text-[9px]`/`[10px]`/`[11px]` in `apps/track/ui.odin` now render at the
+> size asked for (they were at the inherited size, so `track` will look
+> smaller); `apps/track/repro/flexwrap` and the `[420px]` in
+> `apps/track/selftest.odin` now really constrain the row, so that repro now
+> reproduces; `max-h-[86%]` at `apps/captions/ui.odin` now applies. None
+> relied on being dropped in a way that should stay.
+
 `scale` in `palmy/class.odin:296` parses a bracket value with
 `strconv.parse_f32` at line 305, which rejects a unit suffix:
 `parse_f32("420px")` returns `ok=false`, so **the whole class is discarded with
@@ -143,6 +157,11 @@ reproduce, and the tracker reported a live bug as fixed.
 
 ## K2 — `p.slider`'s knob walks off the end of its track
 
+> **Done.** Track, fill and knob are placed with `inset`; the knob's centre
+> travels between half a knob in from each end and the pointer maps onto the
+> same span. `tests/slider_test.odin` asserts the geometry and the painted
+> pixels at 0, 25, 50 and 100; rendered and looked at.
+
 `slider` offsets its knob with `margin[LEFT] = -8`, and **a negative margin does
 not apply to an absolutely positioned child**. Measured on a 248px track: at
 value 25 the knob rect sits at x=78 where its *centre* should be 78, and at
@@ -170,11 +189,19 @@ value 100 the rect is 264..280 while the track ends at 264 — painted pixels
 
 ## K3 — small gaps, each reported by a real application
 
+> **Mostly done**: `window_size(app)`; `push_styled` resolves `current` in the
+> caller's classes; `Key_Event.unshifted` (the key's first-level keysym in the
+> active layout, from `xkb_keymap_key_get_syms_by_level` / the X11 core
+> mapping; `term` uses it); text direction on `Style`; and a `wl_data_device`
+> client. Left: the note on `kit.clipboard_*` (kit is not palmy's), `xdg_popup`,
+> ZWJ, the asynchronous keyboard re-bind, the contrast decision, and the
+> clipboard app's type-aware API (rows below).
+
 | gap | reported by | note |
 | --- | --- | --- |
-| no window size accessor outside a frame | `reader` | reads `app.win.width`/`height` directly. `offscreen_size` exists for the offscreen half; this is the `app.odin` half |
-| `push_styled` does not resolve `text-current` | `call` | it applies the caller's class *after* `push_node`, so `palmy.button(ui, "Save", "border-current")` leaves the sentinel and draws nothing. Everything from `div`/`row`/`col`/`apply`/`text`/`icon`/`image` is already right. One line: capture `style.fg` before `apply_classes`, then `resolve_current` |
-| `Key_Event` carries no unshifted codepoint | `term` | the VT key encoder needs it to tell `Ctrl+Shift+2` from `Ctrl+@`; libghostty and the Kitty protocol both take both. `apps/term/keymap.odin` recovers it from a US-layout reverse table, exact on US and UK and wrong for one chord elsewhere. Fill it from `xkb_state_key_get_one_sym` with the shift level forced to 0 |
+| ~~no window size accessor outside a frame~~ **done**, `window_size(app)` | `reader` | reads `app.win.width`/`height` directly. `offscreen_size` exists for the offscreen half; this is the `app.odin` half |
+| ~~`push_styled` does not resolve `text-current`~~ **done** | `call` | it applies the caller's class *after* `push_node`, so `palmy.button(ui, "Save", "border-current")` leaves the sentinel and draws nothing. Everything from `div`/`row`/`col`/`apply`/`text`/`icon`/`image` is already right. One line: capture `style.fg` before `apply_classes`, then `resolve_current` |
+| ~~`Key_Event` carries no unshifted codepoint~~ **done**, `Key_Event.unshifted` | `term` | the VT key encoder needs it to tell `Ctrl+Shift+2` from `Ctrl+@`; libghostty and the Kitty protocol both take both. `apps/term/keymap.odin` recovers it from a US-layout reverse table, exact on US and UK and wrong for one chord elsewhere. Fill it from `xkb_state_key_get_one_sym` with the shift level forced to 0 |
 | ~~no text direction on `Style`~~ | `palmy` itself | **done**: `Style.text_dir`, from `dir-ltr`/`dir-rtl`/`dir-auto`, reaches `wrap_text`, and `text_area` draws each row at its paragraph's direction |
 | `kit.clipboard_set`/`get` fork a process | `term` | calling them inside the frame while a reader thread wants the same mutex is a once-a-month deadlock. `term` now goes through `palmy.clipboard_*`, which does not fork; kit's should too (see *The system*) and say they fork in the fallback |
 | `wl_data_device` client: text only | `clipboard` | **the client exists now** (`palmy/clipboard.odin`), but its API is text: set, get. The `clipboard` app needs a selection-changed notification carrying the offer's type list and a read of one type from that same offer, which is what removes the two-call race — **including the sensitivity gate** — between `wl-paste --watch` and `--list-types`. The offer and its types are already tracked per selection; exposing them is the remaining work |
@@ -204,6 +231,11 @@ value 100 the rect is 264..280 while the track ends at 264 — painted pixels
 > reported.
 
 ## K4 — eight applications still pin the frame loop at vsync
+
+> **palmy's site and `launcher` are done**: the text field caret already
+> used `caret_on`; `launcher`'s caret and toast timer now do too, idle CPU
+> 39.6% → 1.0% of a core on headless sway. Seven remain: `archive`, `chat`,
+> `clipboard`, `emoji`, `kit`, `slides`, `vault`.
 
 `wake(app)`, `wake_after`, `wake_at` and `wake_cancel` exist now and work on
 both backends. Two applications were converted as the proof — `colorpick` went
