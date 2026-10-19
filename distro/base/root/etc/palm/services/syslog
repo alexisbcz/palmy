@@ -1,3 +1,4 @@
-# busybox syslogd: what programs send to /dev/log, in /var/log/messages.
-cmd     = /sbin/syslogd -n -L -O /var/log/messages -s 1024 -b 2
+# busybox syslogd: what programs send to /dev/log, in /var/log/messages
+# (root 0600; the wrapper sets the umask and fixes an older file's mode).
+cmd     = /usr/lib/palmframe/syslog
 restart = always

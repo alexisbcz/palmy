@@ -22,7 +22,7 @@ import "core:strings"
 RESERVED_NAMES := [?]string {
 	"root", "bin", "daemon", "adm", "lp", "sync", "shutdown", "halt", "mail",
 	"news", "uucp", "operator", "man", "nobody", "nogroup", "greeter",
-	"wheel", "video", "input", "audio", "tty", "users", "sshd", "disk", "kmem",
+	"wheel", "video", "input", "audio", "tty", "users", "sshd", "disk", "kmem", "dbus", "netdev",
 }
 
 validate :: proc(p: Plan) -> (ok: bool, problems: []string) {

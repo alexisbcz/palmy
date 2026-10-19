@@ -1,0 +1,10 @@
+#!/bin/sh
+# busybox syslogd for palm-init (/etc/palm/services/syslog), with
+# /var/log/messages readable by root only: it carries the authpriv lines of
+# palm-login, doas and passwd. syslogd creates the file and its rotations
+# 0666 minus the umask, so the umask decides; an older 0644 file is fixed.
+umask 077
+touch /var/log/messages
+chown 0:0 /var/log/messages
+chmod 0600 /var/log/messages /var/log/messages.[0-9] 2>/dev/null
+exec /sbin/syslogd -n -L -O /var/log/messages -s 1024 -b 2

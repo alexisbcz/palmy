@@ -4,6 +4,8 @@ wheel:x:10:root,palm
 audio:x:63:palm
 video:x:39:palm,greeter
 input:x:97:palm,greeter
+dbus:x:81:
+netdev:x:86:
 greeter:x:900:
 palm:x:1000:
 nogroup:x:65534:
