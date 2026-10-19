@@ -11,6 +11,12 @@ package main
 //	device rules       which /dev names get which group and mode
 //	locale.conf        which variables services get from /etc/locale.conf
 //	mask               /etc/palm/services.off/<name> masks a service
+//	reload             SIGHUP's decisions: start, change, stop, keep, errors
+//	fstab              lines, octal escapes, mount options to flags + data
+//	probe              ext4 / FAT16 / FAT32 / swap superblocks, tags
+//	zram               /etc/palm/zram, the size, the swap header
+//	GPT                CRC32, growing the last partition, both headers
+//	hooks              early.d merging, masking and order
 //
 // It touches nothing on the machine and needs no privileges.
 
@@ -18,10 +24,8 @@ import "core:fmt"
 import "core:strings"
 import "core:sys/linux"
 
-@(private = "file")
 failures := 0
 
-@(private = "file")
 check :: proc(name: string, ok: bool, detail := "") {
 	fmt.printfln("%s  %-52s  %s", ok ? "pass" : "FAIL", name, detail)
 	if !ok {failures += 1}
@@ -185,6 +189,18 @@ export LC_MESSAGES='de_DE.UTF-8'
 		linux.unlink(strings.clone_to_cstring(strings.concatenate({dir, "/palm-login"}, context.temp_allocator), context.temp_allocator))
 		linux.rmdir(strings.clone_to_cstring(dir, context.temp_allocator))
 		check("mask: no mask directory, nothing masked", !masked("palm-login", dir))
+	}
+
+	selftest_reload()
+	selftest_fstab()
+	selftest_probe()
+	selftest_zram()
+	selftest_gpt()
+	selftest_hooks()
+	{
+		msg := "add@/devices/pci0000:00/0000:00:04.0/usb1/1-1\x00ACTION=add\x00SUBSYSTEM=usb\x00MODALIAS=usb:v0627p0001d0000dc00dsc00dp00ic03isc01ip01in00\x00"
+		ev, ok := parse_uevent(transmute([]u8)msg)
+		check("uevent: MODALIAS is read (for modprobe)", ok && strings.has_prefix(ev.modalias, "usb:v0627p0001"), ev.modalias)
 	}
 
 	check("trim_comment: leading #", trim_comment("# all comment") == "")

@@ -1,0 +1,41 @@
+# Network services, for getservbyname(3) and getaddrinfo(3) with a service
+# name ("http" rather than 80). The short list of what a desktop asks for by
+# name; the full table is IANA's.
+ftp-data	20/tcp
+ftp		21/tcp
+ssh		22/tcp
+telnet		23/tcp
+smtp		25/tcp		mail
+domain		53/tcp
+domain		53/udp
+bootps		67/udp
+bootpc		68/udp
+tftp		69/udp
+http		80/tcp		www
+pop3		110/tcp
+ntp		123/udp
+imap		143/tcp		imap2
+snmp		161/udp
+ldap		389/tcp
+https		443/tcp
+https		443/udp
+submissions	465/tcp		smtps
+syslog		514/udp
+submission	587/tcp
+ldaps		636/tcp
+imaps		993/tcp
+pop3s		995/tcp
+socks		1080/tcp
+openvpn		1194/udp
+mqtt		1883/tcp
+nfs		2049/tcp
+nfs		2049/udp
+mysql		3306/tcp
+rdp		3389/tcp
+mdns		5353/udp
+postgresql	5432/tcp
+amqp		5672/tcp
+x11		6000/tcp
+irc		6667/tcp
+http-alt	8080/tcp	webcache
+git		9418/tcp

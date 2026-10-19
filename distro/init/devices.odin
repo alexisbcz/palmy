@@ -65,6 +65,7 @@ Uevent :: struct {
 	devpath:   string,
 	subsystem: string,
 	devname:   string,
+	modalias:  string,
 }
 
 // parse_uevent decodes one datagram. Messages re-broadcast by a udev daemon
@@ -93,6 +94,8 @@ parse_uevent :: proc(msg: []u8) -> (ev: Uevent, ok: bool) {
 			ev.subsystem = val
 		case "DEVNAME":
 			ev.devname = val
+		case "MODALIAS":
+			ev.modalias = val
 		}
 	}
 	return ev, ev.action != ""
@@ -193,7 +196,11 @@ hotplug_drain :: proc() {
 		n := linux.syscall(linux.SYS_recvfrom, devices.sock, &buf[0], len(buf), 0, 0, 0)
 		if n <= 0 {return}
 		ev, ok := parse_uevent(buf[:n])
-		if !ok || ev.devname == "" {continue}
+		if !ok {continue}
+		if ev.action == "add" && ev.modalias != "" {
+			hotplug_modprobe(ev.modalias)
+		}
+		if ev.devname == "" {continue}
 		if ev.action == "add" || ev.action == "change" {
 			apply_rule(ev.devname)
 		}

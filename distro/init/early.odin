@@ -2,8 +2,9 @@ package main
 
 // Early boot: everything that has to be true before the first service runs.
 //
-//	/ read-write, then /proc /sys /dev /dev/pts /dev/shm /run /tmp
+//	/proc /sys /dev /dev/pts /dev/shm /run /tmp (before `/` is writable)
 //	/dev/console reopened as fds 0 1 2, /dev/fd and friends
+//	/var's directories and links, /etc/machine-id (once `/` is writable)
 //	the hostname from /etc/hostname
 //	lo up
 //
@@ -29,16 +30,6 @@ EARLY_MOUNTS := []Mount {
 	{"tmp", "/tmp", "tmpfs", {.NOSUID, .NODEV}, "mode=1777"},
 }
 
-// remount_root_rw makes / writable. The kernel mounts the root read-only
-// when the command line says `ro` (limine's default entry does), and an
-// initramfs root is writable already, where the remount is a no-op.
-remount_root_rw :: proc() {
-	err := linux.mount(nil, "/", nil, {.REMOUNT}, nil)
-	if err != .NONE {
-		say("cannot remount / read-write (%v)", err)
-	}
-}
-
 mount_early :: proc() {
 	for m in EARLY_MOUNTS {
 		target := string(m.target)
@@ -61,7 +52,13 @@ mount_early :: proc() {
 		{"/proc/kcore", "/dev/core"},
 	}
 	for l in links {linux.symlink(l[0], l[1])}
+	mkdir_p("/run/lock", 0o1777)
+	linux.chmod("/run/lock", transmute(linux.Mode)u32(0o1777))
+}
 
+// prepare_var runs once `/` is writable and fstab's filesystems (a separate
+// /var among them) are mounted.
+prepare_var :: proc() {
 	// The tree under /var that services write into. /var/run and /var/lock
 	// point into /run so their contents are gone at the next boot, which is
 	// what every program that writes a pid file there assumes.
@@ -70,8 +67,28 @@ mount_early :: proc() {
 	linux.chmod("/var/tmp", transmute(linux.Mode)u32(0o1777))
 	if !exists("/var/run") {linux.symlink("../run", "/var/run")}
 	if !exists("/var/lock") {linux.symlink("../run/lock", "/var/lock")}
-	mkdir_p("/run/lock", 0o1777)
-	linux.chmod("/run/lock", transmute(linux.Mode)u32(0o1777))
+}
+
+// machine_id writes /etc/machine-id on the first boot that finds it missing
+// or empty: 32 lower-case hex digits from the kernel's random pool and a
+// newline, the systemd format that D-Bus, browsers and journal readers
+// expect. The image ships without one, so every copy of it gets its own.
+machine_id :: proc() {
+	if text, ok := read_file("/etc/machine-id", context.temp_allocator); ok && len(strings.trim_space(text)) == 32 {
+		return
+	}
+	id: [16]u8
+	if n, err := linux.getrandom(id[:], {}); err != .NONE || n != 16 {return}
+	hex := "0123456789abcdef"
+	out: [33]u8
+	for b, i in id {
+		out[2 * i] = hex[b >> 4]
+		out[2 * i + 1] = hex[b & 15]
+	}
+	out[32] = '\n'
+	if write_file("/etc/machine-id", string(out[:]), 0o444) {
+		say("machine id %s", string(out[:32]))
+	}
 }
 
 // is_mounted looks the target up in /proc/self/mounts. Before /proc is

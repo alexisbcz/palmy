@@ -1,3 +1,10 @@
-# palm-init mounts /proc /sys /dev /dev/pts /dev/shm /run /tmp itself and
-# remounts / read-write; this file is for anything beyond that (busybox mount -a).
+# palm-init mounts what is listed here at boot, once it has mounted /proc
+# /sys /dev /dev/pts /dev/shm /run /tmp itself (lines for those are skipped).
+# It checks and remounts `/` from its line, then mounts the rest in order and
+# turns on swap lines (distro/init/fstab.odin). The disk image adds `/` and
+# the EFI system partition by label; the installer adds them by PARTUUID.
+#
+# Devices: /dev/..., UUID=, LABEL=, PARTUUID=, PARTLABEL=. A pass of 1 or 2
+# runs fsck.<type> -p first, when one is installed.
+#
 # <device>  <mountpoint>  <type>  <options>  <dump>  <pass>

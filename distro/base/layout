@@ -61,11 +61,15 @@ symlink var/run         ../run
 symlink var/lock        ../run/lock
 symlink etc/mtab        ../proc/self/mounts
 # The time zone, as glibc and the greeter's clock read it: a symlink into
-# tzdata. UTC until the installer points it at the zone picked (and writes
-# /etc/timezone beside it). Without the tzdata package installed the link
-# dangles, and everything that reads it falls back to UTC — the same answer.
+# tzdata, and its name in /etc/timezone. UTC until the installer points it at
+# the zone picked, or the image builder at TIMEZONE= (distro/image/build.sh).
+# Without the tzdata package installed the link dangles, and everything that
+# reads it falls back to UTC — the same answer.
 symlink etc/localtime   ../usr/share/zoneinfo/UTC
 
 mode    etc/shadow      0600
 mode    usr/share/udhcpc/default.script 0755
 dir     etc/palm/keys   0755
+# The administrator's early-boot hooks (distro/notes/init.md); packages put
+# theirs in /usr/lib/palm-init/early.d, which palm-init owns.
+dir     etc/palm/early.d 0755

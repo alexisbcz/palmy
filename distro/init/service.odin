@@ -58,6 +58,7 @@ Service_State :: enum u8 {
 	Running,
 	Backoff,
 	Done,
+	Stopping, // SIGTERM sent by a reload; SIGKILL at stop_at
 }
 
 Service :: struct {
@@ -77,6 +78,10 @@ Service :: struct {
 	restart_at: i64,
 	backoff_ms: i64,
 	warned:     bool,
+	builtin:    bool, // network, single: no file of its own
+	stop_at:    i64,
+	removing:   bool, // Stopping because its file is gone or masked
+	pending:    ^Service, // Stopping to restart with this definition
 }
 
 AFTER_TIMEOUT_MS :: 30_000
@@ -162,45 +167,270 @@ find_service :: proc(name: string) -> ^Service {
 	return nil
 }
 
-// load_services reads /etc/palm/services, adding the ones not already known.
-// Called at boot and again on SIGHUP, so installing a package that ships a
-// service and sending `kill -HUP 1` starts it without a reboot. Services
-// already known are left alone; a removed file does not stop anything.
+// Service_File is one entry of /etc/palm/services as read now: parsed, or
+// the reason it could not be, or masked.
+Service_File :: struct {
+	name:   string,
+	def:    ^Service,
+	err:    string,
+	masked: bool,
+}
+
+// read_service_files reads every file in the services directory. The parsed
+// services keep slices of their text, so both live in the permanent
+// allocator for as long as the service does.
+read_service_files :: proc(dir := SERVICE_DIR, mask_dir := MASK_DIR) -> (files: [dynamic]Service_File, ok: bool) {
+	files = make([dynamic]Service_File, context.temp_allocator)
+	names, lok := list_dir(dir)
+	if !lok {return files, false}
+	slice.sort(names[:])
+	for name in names {
+		if strings.has_prefix(name, ".") || strings.has_suffix(name, "~") {continue}
+		f := Service_File{name = name}
+		if masked(name, mask_dir) {
+			f.masked = true
+			append(&files, f)
+			continue
+		}
+		text, rok := read_file(strings.concatenate({dir, "/", name}, context.temp_allocator))
+		if !rok {
+			f.err = "cannot be read"
+			append(&files, f)
+			continue
+		}
+		parsed, err := parse_service(name, text)
+		if err != "" {
+			f.err = strings.clone(err, context.temp_allocator)
+			append(&files, f)
+			continue
+		}
+		f.def = new(Service)
+		f.def^ = parsed
+		append(&files, f)
+	}
+	return files, true
+}
+
+// load_services is the boot's first read of /etc/palm/services. A file named
+// after a built-in (network) replaces it.
 load_services :: proc() -> int {
-	names, ok := list_dir(SERVICE_DIR)
+	files, ok := read_service_files()
 	if !ok {
 		say("no %s; nothing to supervise", SERVICE_DIR)
 		return 0
 	}
-	slice.sort(names[:])
 	added := 0
-	for name in names {
-		if strings.has_prefix(name, ".") || strings.has_suffix(name, "~") {continue}
-		if find_service(name) != nil {continue}
-		if masked(name) {
-			say("service %s is masked by %s/%s; not started", name, MASK_DIR, name)
-			continue
+	for f in files {
+		switch {
+		case f.masked:
+			say("service %s is masked by %s/%s; not started", f.name, MASK_DIR, f.name)
+		case f.err != "":
+			say("service %s: %s — not started", f.name, f.err)
+		case:
+			if old := find_service(f.name); old != nil {remove_service(old)}
+			f.def.wait_since = now_ms()
+			append(&sup.services, f.def)
+			added += 1
 		}
-		// The parsed service keeps slices of the text, so it is read into
-		// the permanent allocator and lives as long as the service does.
-		text, rok := read_file(strings.concatenate({SERVICE_DIR, "/", name}, context.temp_allocator))
-		if !rok {
-			say("cannot read service %s", name)
-			continue
-		}
-		s := new(Service)
-		parsed, err := parse_service(name, text)
-		if err != "" {
-			say("service %s: %s — not started", name, err)
-			free(s)
-			continue
-		}
-		s^ = parsed
-		s.wait_since = now_ms()
-		append(&sup.services, s)
-		added += 1
 	}
 	return added
+}
+
+// --- reload (SIGHUP) -----------------------------------------------------------
+//
+// `kill -HUP 1` makes /etc/palm/services the truth again, for packages that
+// add, change or remove a service:
+//
+//	a new file                       started
+//	a definition that changed        restarted with the new one: SIGTERM to
+//	                                 its process group, SIGKILL after 3 s,
+//	                                 then started again. A one-shot that has
+//	                                 already finished only takes the new
+//	                                 definition; it is not run a second time.
+//	a file removed, or masked        stopped the same way, and forgotten
+//	a file that no longer parses     left running as it was, with a warning
+//	the same definition              left alone (comments and spacing are
+//	                                 not part of a definition)
+//
+// The built-in `network` is replaced or stopped only by a file (or a mask)
+// of its name. In palm.single SIGHUP does nothing: there are no services.
+
+Reload_Action :: enum u8 {
+	Keep,
+	Start,
+	Change,
+	Stop,
+	Broken, // the file has an error: keep what runs
+}
+
+Reload_Step :: struct {
+	name:   string,
+	action: Reload_Action,
+	def:    ^Service, // Start, Change
+	err:    string, // Broken
+}
+
+same_definition :: proc(a, b: ^Service) -> bool {
+	if a.user != b.user || a.restart != b.restart || a.after != b.after || a.tty != b.tty {return false}
+	if len(a.cmd) != len(b.cmd) || len(a.env) != len(b.env) {return false}
+	for c, i in a.cmd {if c != b.cmd[i] {return false}}
+	for e, i in a.env {if e != b.env[i] {return false}}
+	return true
+}
+
+// plan_reload compares what is supervised with what the files say. It only
+// decides; apply_reload_step acts. Kept separate so the selftest can check
+// every decision without forking anything.
+plan_reload :: proc(current: []^Service, files: []Service_File, allocator := context.temp_allocator) -> []Reload_Step {
+	steps := make([dynamic]Reload_Step, allocator)
+	for s in current {
+		file: ^Service_File = nil
+		for &f in files {
+			if f.name == s.name {file = &f}
+		}
+		switch {
+		case file == nil:
+			append(&steps, Reload_Step{name = s.name, action = s.builtin ? .Keep : .Stop})
+		case file.masked:
+			append(&steps, Reload_Step{name = s.name, action = .Stop})
+		case file.err != "":
+			append(&steps, Reload_Step{name = s.name, action = .Broken, err = file.err})
+		case s.builtin || !same_definition(s, file.def):
+			append(&steps, Reload_Step{name = s.name, action = .Change, def = file.def})
+		case:
+			append(&steps, Reload_Step{name = s.name, action = .Keep})
+		}
+	}
+	for f in files {
+		known := false
+		for s in current {
+			if s.name == f.name {known = true}
+		}
+		if known || f.masked {continue}
+		if f.err != "" {
+			append(&steps, Reload_Step{name = f.name, action = .Broken, err = f.err})
+		} else {
+			append(&steps, Reload_Step{name = f.name, action = .Start, def = f.def})
+		}
+	}
+	return steps[:]
+}
+
+reload_services :: proc() {
+	files, ok := read_service_files()
+	if !ok {
+		say("SIGHUP: no %s; nothing changed", SERVICE_DIR)
+		return
+	}
+	steps := plan_reload(sup.services[:], files[:])
+	counts: [Reload_Action]int
+	for st in steps {
+		counts[st.action] += 1
+		apply_reload_step(st)
+	}
+	// Definitions read but not taken are freed.
+	for f in files {
+		if f.def == nil {continue}
+		taken := false
+		for st in steps {
+			if st.def == f.def && (st.action == .Start || st.action == .Change) {taken = true}
+		}
+		if !taken {free(f.def)}
+	}
+	broken := counts[.Broken] > 0 ? fmt.tprintf(", %d with errors", counts[.Broken]) : ""
+	say("SIGHUP: %d new, %d changed, %d removed, %d unchanged%s", counts[.Start], counts[.Change], counts[.Stop], counts[.Keep], broken)
+}
+
+apply_reload_step :: proc(st: Reload_Step) {
+	now := now_ms()
+	s := find_service(st.name)
+	switch st.action {
+	case .Keep:
+	case .Broken:
+		say("service %s: %s — %s", st.name, st.err, s != nil ? "kept as it was" : "not started")
+	case .Start:
+		st.def.wait_since = now
+		append(&sup.services, st.def)
+		say("service %s added", st.name)
+	case .Stop:
+		if s == nil {return}
+		if s.pending != nil {
+			free(s.pending)
+			s.pending = nil
+		}
+		if (s.state == .Running || s.state == .Stopping) && s.pid > 0 {
+			s.removing = true
+			begin_stop(s)
+		} else {
+			say("service %s removed", st.name)
+			remove_service(s)
+		}
+	case .Change:
+		if s == nil {return}
+		if (s.state == .Running || s.state == .Stopping) && s.pid > 0 {
+			if s.pending != nil {free(s.pending)}
+			s.pending = st.def
+			s.removing = false
+			begin_stop(s)
+			return
+		}
+		was_done := s.state == .Done
+		take_definition(s, st.def)
+		if was_done && s.restart == .Never {
+			say("service %s changed; it has already run, so it is not run again", st.name)
+			return
+		}
+		say("service %s changed", st.name)
+		s.state = .Waiting
+		s.wait_since = now
+		s.backoff_ms = 0
+	}
+}
+
+// take_definition swaps in a new definition and keeps the supervisor state.
+// The old definition's strings are not freed: a reload is rare, and they
+// are small.
+take_definition :: proc(s: ^Service, def: ^Service) {
+	old := s^
+	s^ = def^
+	s.state = old.state
+	s.pid = old.pid
+	s.started_at = old.started_at
+	s.wait_since = old.wait_since
+	s.restart_at = old.restart_at
+	s.backoff_ms = old.backoff_ms
+	free(def)
+}
+
+begin_stop :: proc(s: ^Service) {
+	if s.state == .Stopping {return}
+	say("stopping %s (%s)", s.name, s.removing ? "removed" : "changed")
+	s.state = .Stopping
+	s.stop_at = now_ms() + 3000
+	signal_service(s, .SIGTERM)
+}
+
+signal_service :: proc(s: ^Service, sig: linux.Signal) {
+	if s.pid <= 0 {return}
+	linux.kill(-s.pid, sig)
+	linux.kill(s.pid, sig)
+	if sig == .SIGTERM && s.tty != "" {
+		// An interactive shell ignores SIGTERM but not a hangup, which is
+		// what its terminal going away means anyway.
+		linux.kill(-s.pid, .SIGHUP)
+		linux.kill(-s.pid, .SIGCONT)
+	}
+}
+
+remove_service :: proc(s: ^Service) {
+	for x, i in sup.services {
+		if x == s {
+			ordered_remove(&sup.services, i)
+			break
+		}
+	}
+	if s.pending != nil {free(s.pending)}
+	free(s)
 }
 
 // add_builtin_network registers the udhcpc one-shot when there is an eth0 and
@@ -213,6 +443,7 @@ add_builtin_network :: proc() {
 	s.restart = .Never
 	s.env = make([dynamic]string)
 	s.wait_since = now_ms()
+	s.builtin = true
 	udhcpc := resolve_cmd("udhcpc")
 	if exists("/sys/class/net/eth0") && udhcpc != "" {
 		// -b: background after the first attempt even without a lease;
@@ -238,6 +469,7 @@ add_single_shell :: proc() {
 	s.name = "single"
 	s.user = "root"
 	s.restart = .Always
+	s.builtin = true
 	s.cmd = slice.clone([]string{"/bin/sh", "-l"})
 	s.tty = console_tty()
 	s.env = make([dynamic]string)
@@ -282,6 +514,8 @@ after_ready :: proc(s: ^Service, now: i64) -> bool {
 		}
 		return true
 	}
+	// A dependency being restarted by a reload (Stopping) is not ready
+	// until its new definition is up.
 	switch dep.restart {
 	case .Never:
 		if dep.state == .Done {return true}
@@ -325,6 +559,13 @@ supervise :: proc() -> i64 {
 				} else {
 					due(&next, s.restart_at, now)
 				}
+			case .Stopping:
+				if now >= s.stop_at {
+					say("%s did not stop in 3s; SIGKILL", s.name)
+					signal_service(s, .SIGKILL)
+					s.stop_at = now + 1000
+				}
+				due(&next, s.stop_at, now)
 			case .Running, .Done:
 			}
 		}
@@ -339,6 +580,24 @@ service_exited :: proc(s: ^Service, status: u32) {
 	how := describe_status(status)
 	if sup.stopping {
 		s.state = .Done
+		return
+	}
+	if s.state == .Stopping {
+		if s.removing {
+			say("%s stopped and removed", s.name)
+			remove_service(s)
+		} else if s.pending != nil {
+			def := s.pending
+			s.pending = nil
+			take_definition(s, def)
+			say("%s stopped; starting it with its new definition", s.name)
+			s.state = .Waiting
+			s.wait_since = now
+			s.backoff_ms = 0
+		} else {
+			s.state = .Waiting
+			s.wait_since = now
+		}
 		return
 	}
 	if s.restart == .Never {
@@ -521,7 +780,7 @@ child_fail :: proc(msg: string) -> ! {
 stop_all :: proc() {
 	sup.stopping = true
 	for s in sup.services {
-		if s.state == .Running && s.pid > 0 {
+		if (s.state == .Running || s.state == .Stopping) && s.pid > 0 {
 			say("stopping %s", s.name)
 		}
 	}
@@ -531,15 +790,10 @@ stop_all :: proc() {
 	// tcdrain(3).
 	linux.ioctl(2, TCSBRK, 1)
 	for s in sup.services {
-		if s.state == .Running && s.pid > 0 {
-			linux.kill(-s.pid, .SIGTERM)
-			linux.kill(s.pid, .SIGTERM)
-			if s.tty != "" {
-				// An interactive shell ignores SIGTERM but not a hangup,
-				// which is what its terminal going away means anyway.
-				linux.kill(-s.pid, .SIGHUP)
-				linux.kill(-s.pid, .SIGCONT)
-			}
+		if (s.state == .Running || s.state == .Stopping) && s.pid > 0 {
+			// signal_service also hangs up a tty service: an interactive
+			// shell ignores SIGTERM but not that.
+			signal_service(s, .SIGTERM)
 		}
 	}
 	linux.kill(-1, .SIGTERM)

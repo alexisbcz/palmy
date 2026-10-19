@@ -162,8 +162,9 @@ def scenario_login(args):
         m.expect(r"palm-init: Palmframe is starting", 30, "palm-init announces itself")
         m.check("palm-init runs as PID 1", True)
         m.check("early mounts", m.expect(r"palm-init: mounted /proc /sys /dev", 10) is not None)
-        m.check("hostname set", m.expect(r"palm-init: hostname palmframe", 10) is not None)
+        m.check("early hooks run", m.expect(r"palm-init: early hook 20-order done", 10) is not None)
         m.check("coldplug", m.expect(r"palm-init: device permissions set on \d+ nodes", 10) is not None)
+        m.check("hostname set", m.expect(r"palm-init: hostname palmframe", 10) is not None)
         m.check("lo up", m.expect(r"palm-init: lo up", 10) is not None)
         m.check("getty started", m.expect(r"palm-init: started getty-ttyS0", 10) is not None)
         m.expect(r"palmframe login: ", 30, "login prompt on ttyS0", must=True)
@@ -213,6 +214,46 @@ def scenario_login(args):
 
         out = m.run("ls /var/log; head -3 /var/log/network.log")
         m.check("service logs in /var/log", "network.log" in out, out)
+
+        out = m.run("cat /run/early")
+        m.check("early hooks: /etc replaced /usr/lib's 10-mark, then 20-order", out.split("\n")[:2] == ["etc-10", "20 early services=0"], out)
+        m.check("early hooks ran before any service", "services=0" in out, out)
+
+        out = m.run("cat /proc/swaps; ls /sys/block | grep -c zram || true")
+        if out.strip().endswith("0"):
+            m.check("no zram in this kernel: said so, no swap", "zram: this kernel has no zram" in m.buf, out)
+        else:
+            m.check("zram swap is on, priority 100", re.search(r"/dev/zram0\s+partition\s+\d+\s+\d+\s+100", out) is not None, out)
+        out = m.run("cat /etc/machine-id")
+        m.check("/etc/machine-id written (32 hex digits)", re.fullmatch(r"[0-9a-f]{32}\n", out) is not None, out)
+
+        # SIGHUP: a new service starts, a changed one restarts with its new
+        # definition, a removed one stops.
+        def sleepers():
+            return m.run("ps -o args | grep '^/bin/sleep 10[0-9][0-9]' | sed 's|^/bin/||' | sort || true").split("\n")
+        m.run("printf 'cmd = /bin/sleep 1001\\n' > /etc/palm/services/huptest; kill -HUP 1")
+        m.check("SIGHUP: one new service", m.expect(r"palm-init: SIGHUP: 1 new, 0 changed, 0 removed", 5) is not None)
+        time.sleep(0.5)
+        m.check("SIGHUP: the new service runs", "sleep 1001" in sleepers(), sleepers())
+        m.run("printf '# a comment\\ncmd  =  /bin/sleep  1001\\n' > /etc/palm/services/huptest; kill -HUP 1")
+        m.check("SIGHUP: a comment is not a change", m.expect(r"palm-init: SIGHUP: 0 new, 0 changed, 0 removed", 5) is not None)
+        m.run("printf 'cmd = /bin/sleep 1002\\n' > /etc/palm/services/huptest; kill -HUP 1")
+        m.check("SIGHUP: a changed service is restarted", m.expect(r"palm-init: huptest stopped; starting it with its new definition", 8) is not None)
+        time.sleep(0.5)
+        s = sleepers()
+        m.check("SIGHUP: the new definition runs, the old one is gone", "sleep 1002" in s and "sleep 1001" not in s, s)
+        m.run("printf 'cmdd = /bin/sleep 1003\\n' > /etc/palm/services/huptest; kill -HUP 1")
+        m.check("SIGHUP: a broken file keeps the running service", m.expect(r"palm-init: service huptest: line 1: unknown key \"cmdd\" — kept as it was", 5) is not None)
+        m.run("rm /etc/palm/services/huptest; kill -HUP 1")
+        m.check("SIGHUP: a removed service is stopped", m.expect(r"palm-init: huptest stopped and removed", 8) is not None)
+        time.sleep(0.3)
+        s = sleepers()
+        m.check("SIGHUP: nothing of it is left", not any("sleep 10" in x for x in s), s)
+        m.run("printf 'cmd = /bin/sleep 1004\\n' > /etc/palm/services/huptest2; kill -HUP 1; sleep 0.5; touch /etc/palm/services.off/huptest2 2>/dev/null || { mkdir -p /etc/palm/services.off && touch /etc/palm/services.off/huptest2; }; kill -HUP 1")
+        m.check("SIGHUP: masking a running service stops it", m.expect(r"palm-init: huptest2 stopped and removed", 8) is not None)
+        m.run("rm -f /etc/palm/services/huptest2 /etc/palm/services.off/huptest2")
+        out = m.run("ps -o args | grep -c '^/sbin/syslogd' || true")
+        m.check("SIGHUP: unchanged services were left running", out.strip() == "1", out)
 
         # An orphan: a shell that backgrounds a child and exits at once.
         # When the child finishes it is reparented to PID 1, which must reap it.
@@ -303,13 +344,120 @@ def scenario_disk(args):
     return m.failures
 
 
+def gpt_of(disk):
+    """sfdisk's view of the disk: (last LBA of partition 2, disk sectors, verify output)."""
+    r = subprocess.run(["sfdisk", "--json", disk], capture_output=True, text=True)
+    table = json.loads(r.stdout)["partitiontable"] if r.returncode == 0 else {}
+    parts = table.get("partitions", [])
+    end = parts[1]["start"] + parts[1]["size"] - 1 if len(parts) > 1 else -1
+    v = subprocess.run(["sfdisk", "--verify", disk], capture_output=True, text=True)
+    return end, os.path.getsize(disk) // 512, (v.stdout + v.stderr).strip(), table.get("lastlba", -1)
+
+
+def root_fsck(disk, work):
+    """e2fsck -fn on partition 2, copied out of the disk image."""
+    r = subprocess.run(["sfdisk", "--json", disk], capture_output=True, text=True)
+    p = json.loads(r.stdout)["partitiontable"]["partitions"][1]
+    part = os.path.join(work, "grow.root.ext4")
+    subprocess.run(["dd", f"if={disk}", f"of={part}", "bs=512", f"skip={p['start']}", f"count={p['size']}",
+                    "conv=sparse", "status=none"], check=True)
+    r = subprocess.run(["e2fsck", "-fn", part], capture_output=True, text=True)
+    d = subprocess.run(["dumpe2fs", "-h", part], capture_output=True, text=True)
+    os.unlink(part)
+    m = re.search(r"Block count:\s+(\d+).*?Block size:\s+(\d+)", d.stdout, re.S)
+    size = int(m.group(1)) * int(m.group(2)) if m else 0
+    return r.returncode, r.stdout + r.stderr, size, p["size"] * 512
+
+
+def login_root(m):
+    m.expect(r"palmframe login: ", 40, "login prompt", must=True)
+    m.send("root")
+    m.expect(r"Password: ", 10)
+    m.send("palm")
+    m.expect(r"root@palmframe[^\n]*# ", 15, "shell", must=True)
+
+
+def scenario_grow(args):
+    print("grow: GPT disk enlarged after it was built; grow-root, ESP, swap, fsck policy, clean shutdown")
+    failures = []
+    disk = args.grow_disk
+    end0, sectors, _, _ = gpt_of(disk)
+    print(f"  ....  before boot: root ends at sector {end0}, disk has {sectors} sectors")
+    append = "console=ttyS0 root=/dev/vda2 ro rootfstype=ext4 init=/sbin/init panic=-1 quiet"
+    m = Machine(args, "grow", append, disk=disk)
+    machine_id = ""
+    try:
+        m.expect(r"palm-init: Palmframe is starting", 30, "palm-init starts", must=True)
+        m.check("fsck of / is attempted (no fsck.ext4 in this busybox: said so)", m.expect(r"palm-init: fsck /: no fsck.ext4; not checked", 10) is not None)
+        m.check("grow-root: the partition is extended", m.expect(r"palm-init: grow-root: vda2 now ends at 1023 MiB \(was 159 MiB\)", 10) is not None)
+        m.check("grow-root: ext4 grown online", m.expect(r"palm-init: grow-root: / grown from 128 MiB to 992 MiB", 15) is not None)
+        m.check("fstab: the ESP mounted by label", m.expect(r"palm-init: mounted /dev/vda1 on /boot/efi \(vfat\)", 10) is not None)
+        login_root(m)
+        out = m.run("df -m / | tail -1; cat /proc/swaps; grep -E ' /(boot/efi)? ' /proc/mounts; ls /etc/palm/grow-root 2>&1; cat /etc/machine-id")
+        print("        " + out.strip().replace("\n", "\n        "))
+        df = re.search(r"^/dev/(?:root|vda2)\s+(\d+)\s+\d+\s+\d+", out, re.M)
+        m.check("df: / is about 1 GiB now", df is not None and int(df.group(1)) > 900, out)
+        m.check("/ is mounted rw with fstab's relatime", re.search(r"^/dev/(?:root|vda2) / ext4 rw,relatime", out, re.M) is not None, out)
+        m.check("/boot/efi is vfat with fmask/dmask 0077 and utf8", re.search(r"/dev/vda1 /boot/efi vfat rw,relatime,fmask=0077,dmask=0077.*utf8", out) is not None, out)
+        m.check("/etc/palm/grow-root is gone", "No such file" in out, out)
+        mid = re.search(r"^([0-9a-f]{32})$", out, re.M)
+        machine_id = mid.group(1) if mid else ""
+        m.check("a machine id was made", machine_id != "", out)
+        # A swap file, the way a person adds one, for the second boot.
+        out = m.run("dd if=/dev/zero of=/swapfile bs=1M count=16 2>/dev/null && chmod 600 /swapfile && mkswap /swapfile >/dev/null && "
+                    "printf '/swapfile\\tnone\\tswap\\tsw,pri=5\\t0 0\\n' >> /etc/fstab && echo made", 20)
+        m.check("a swap file made in the guest", "made" in out, out)
+        m.send("poweroff")
+        m.check("shutdown: /boot/efi unmounted", m.expect(r"palm-init: unmounted /boot/efi", 10) is not None)
+        m.check("shutdown: / read-only", m.expect(r"palm-init: / remounted read-only", 10) is not None)
+        m.check("QEMU exits on poweroff", m.wait_exit(20))
+    except Abort:
+        pass
+    finally:
+        m.close()
+    failures += m.failures
+
+    end1, sectors, verify, lastlba = gpt_of(disk)
+    def check(what, cond, detail=""):
+        print(f"  {'pass' if cond else 'FAIL'}  {what}" + (f"  ({detail})" if detail and not cond else ""))
+        if not cond:
+            failures.append(what)
+    check("host: sfdisk --verify finds the GPT clean (backup at the end)", "No errors detected" in verify and lastlba == sectors - 34, verify)
+    check("host: partition 2 ends on the last whole MiB", (end1 + 1) % 2048 == 0 and sectors - 34 - end1 <= 2048, f"{end1} of {sectors}")
+    rc, text, fs, part = root_fsck(disk, args.work)
+    check("host: e2fsck -fn finds the grown filesystem clean", rc == 0, text)
+    check("host: the filesystem fills the partition", 0 <= part - fs < 1 << 20, f"fs {fs} part {part}")
+
+    print("grow (second boot): nothing left to grow, same machine id")
+    m = Machine(args, "grow2", append, disk=disk)
+    try:
+        m.check("fstab: the swap file is on", m.expect(r"palm-init: swap on /swapfile", 30) is not None)
+        login_root(m)
+        m.check("no grow-root on the second boot", "grow-root" not in m.buf, m.buf[-2000:])
+        out = m.run("cat /etc/machine-id; cat /proc/swaps")
+        m.check("the machine id survived the reboot", machine_id != "" and out.split("\n")[0] == machine_id, out)
+        m.check("/swapfile is in /proc/swaps with priority 5", re.search(r"^/swapfile\s+file\s+\d+\s+\d+\s+5$", out, re.M) is not None, out)
+        if "/dev/zram0" in out:
+            m.check("zram beside the swap file, higher priority", re.search(r"/dev/zram0\s+partition\s+\d+\s+\d+\s+100", out) is not None, out)
+        m.send("poweroff")
+        m.check("shutdown: swap off", m.expect(r"palm-init: swap off /swapfile", 15) is not None)
+        m.check("QEMU exits on poweroff", m.wait_exit(20))
+    except Abort:
+        pass
+    finally:
+        m.close()
+    failures += m.failures
+    return failures
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--kernel", required=True)
     ap.add_argument("--initrd", required=True)
     ap.add_argument("--work", required=True)
     ap.add_argument("--disk", required=True)
-    ap.add_argument("scenario", choices=["login", "single", "disk", "all"])
+    ap.add_argument("--grow-disk", required=True)
+    ap.add_argument("scenario", choices=["login", "single", "disk", "grow", "all"])
     args = ap.parse_args()
 
     failures = []
@@ -319,6 +467,8 @@ def main():
         failures += scenario_single(args)
     if args.scenario in ("disk", "all"):
         failures += scenario_disk(args)
+    if args.scenario in ("grow", "all"):
+        failures += scenario_grow(args)
     print(f"test-boot: {'all passed' if not failures else f'{len(failures)} failed'}; transcripts in {args.work}")
     sys.exit(1 if failures else 0)
 

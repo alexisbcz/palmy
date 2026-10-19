@@ -2,10 +2,20 @@ package main
 
 // palm-init — Palmframe's PID 1.
 //
-// The kernel runs it as /sbin/init. It brings the machine up (early.odin),
-// gives the GPU, input and sound devices to their groups (devices.odin),
-// starts and keeps alive the services in /etc/palm/services (service.odin),
-// reaps every orphan, and brings the machine down when asked.
+// The kernel runs it as /sbin/init. It brings the machine up, in this order:
+//
+//	/proc /sys /dev /run /tmp                          early.odin
+//	`/` checked (fsck) and remounted as fstab says     fstab.odin
+//	`/` grown to fill its disk, once, if asked         growroot.odin
+//	the early hooks: kernel modules and the like       hooks.odin
+//	GPU, input, sound and tty device permissions       devices.odin
+//	the rest of /etc/fstab, swap; zram swap            fstab.odin, zram.odin
+//	/var, /etc/machine-id, the hostname, lo            early.odin
+//	the services in /etc/palm/services                 service.odin
+//
+// then keeps the services alive, reaps every orphan, and brings the machine
+// down when asked: services stopped, swap off, filesystems unmounted, `/`
+// read-only.
 //
 // "Asked" follows busybox's convention, so busybox's own `reboot`, `poweroff`
 // and `halt` — which just signal PID 1 — work without a palm-init-specific
@@ -14,7 +24,8 @@ package main
 //	SIGTERM  reboot        SIGUSR2  poweroff
 //	SIGINT   reboot        SIGUSR1  halt
 //	         (ctrl-alt-del)
-//	SIGHUP   re-read /etc/palm/services and start what is new
+//	SIGHUP   re-read /etc/palm/services: start what is new, restart what
+//	         changed, stop what was removed (service.odin, "reload")
 //
 // The main loop is one ppoll over two descriptors: a signalfd carrying every
 // signal init cares about (they are blocked, so they only ever arrive there,
@@ -33,6 +44,9 @@ import "core:os"
 import "core:sys/linux"
 
 SIGNALS := []linux.Signal{.SIGCHLD, .SIGTERM, .SIGINT, .SIGUSR1, .SIGUSR2, .SIGHUP, .SIGPWR}
+
+// single is palm.single: no services, and SIGHUP does not load any.
+single: bool
 
 Shutdown :: enum u8 {
 	None,
@@ -77,7 +91,6 @@ boot :: proc() {
 	linux.chdir("/")
 
 	say("Palmframe is starting")
-	remount_root_rw()
 	mount_early()
 	reopen_console()
 
@@ -85,8 +98,22 @@ boot :: proc() {
 	if text, ok := read_file("/proc/cmdline", context.temp_allocator); ok {
 		cmd = parse_cmdline(text)
 	}
+	single = cmd.single
 
-	set_hostname()
+	// `/`: checked while the kernel still has it read-only, then remounted
+	// as fstab says (fstab.odin), then grown if the image asks (growroot).
+	fstab := load_fstab()
+	switch check_root(fstab) {
+	case .Reboot:
+		linux.sync()
+		say("rebooting after the check of /")
+		linux.reboot(.RB_MAGIC_1, .RB_MAGIC_2, .RB_AUTOBOOT, nil)
+	case .Broken:
+		say("/ has errors; it stays read-only")
+	case .Fine:
+		remount_root(fstab)
+		grow_root()
+	}
 
 	passwd_text, _ := read_file("/etc/passwd")
 	group_text, _ := read_file("/etc/group")
@@ -94,9 +121,18 @@ boot :: proc() {
 	sup.groups = parse_group(group_text)
 	sup.autologin = cmd.autologin
 
+	// The hotplug socket opens before the early hooks, so the devices of
+	// modules they load are seen; the coldplug walk comes after them.
 	devices_init(sup.groups)
 	hotplug_open()
+	run_early_hooks()
 	coldplug()
+
+	mount_fstab(fstab)
+	zram_setup()
+	prepare_var()
+	machine_id()
+	set_hostname()
 
 	if link_up("lo") {
 		say("lo up")
@@ -156,8 +192,11 @@ run :: proc(sfd: linux.Fd) -> Shutdown {
 				case .SIGUSR1:
 					return .Halt
 				case .SIGHUP:
-					n := load_services()
-					say("SIGHUP: %d new services", n)
+					if single {
+						say("SIGHUP: palm.single runs no services; nothing to reload")
+					} else {
+						reload_services()
+					}
 				case:
 				}
 			}
@@ -178,11 +217,7 @@ shutdown :: proc(request: Shutdown) {
 	say("%s", what[request])
 	stop_all()
 	linux.sync()
-	if err := linux.mount(nil, "/", nil, {.REMOUNT, .RDONLY}, nil); err != .NONE {
-		say("cannot remount / read-only (%v); synced anyway", err)
-	} else {
-		say("/ remounted read-only")
-	}
+	unmount_all()
 	linux.sync()
 	op: linux.Reboot_Operation
 	switch request {

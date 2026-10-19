@@ -12,9 +12,13 @@ pkgdesc  = Palmframe's init and service supervisor
 license  = MIT
 category = System
 icon     = activity
-details  = PID 1. It mounts the filesystems, sets device permissions at boot and on hotplug, starts the services in /etc/palm/services and restarts them when they exit, and shuts the machine down cleanly.
+details  = PID 1. It checks and mounts the filesystems in /etc/fstab, turns on swap in compressed memory, runs the early-boot hooks, sets device permissions at boot and on hotplug, starts the services in /etc/palm/services and restarts them when they exit or change, and shuts the machine down cleanly.
 depend   = palmframe-base busybox
 provides = cmd:init
 
 file     = ${PALMFRAME_OUT}/bin/palm-init -> /usr/bin/palm-init mode 0755
 symlink  = /usr/bin/init -> palm-init
+# Early-boot hooks that packages ship (a kernel's module loader, say): run in
+# name order, before devices, fstab and services (distro/notes/init.md).
+dir      = /usr/lib/palm-init mode 0755
+dir      = /usr/lib/palm-init/early.d mode 0755

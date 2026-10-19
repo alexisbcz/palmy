@@ -23,6 +23,15 @@
 #    place with dd, and sfdisk writes the table straight into the image file.
 # 4. `limine bios-install` makes the same disk boot on legacy BIOS as well;
 #    UEFI (OVMF) is what distro/run-qemu.sh uses by default.
+# 5. The image is small (the installed size plus ROOT_EXTRA_MIB) and grows
+#    itself: the root is the last partition, and /etc/palm/grow-root makes
+#    palm-init extend it and its filesystem to the end of the disk on the
+#    first boot. `qemu-img resize` or `truncate -s 32G` the copy you boot,
+#    or dd it onto a real disk. Swap is zram (/etc/palm/zram), so there is no
+#    swap partition to size.
+#
+#	TIMEZONE=Europe/Paris distro/image/build.sh    /etc/localtime (UTC;
+#	                                               `host` = the build host's)
 set -euo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
 DISTRO="$(dirname "$HERE")"
@@ -40,7 +49,20 @@ LIMINE_SHARE="${LIMINE_SHARE:-/usr/share/limine}"
 # to a temp file beside its destination, then renamed).
 ESP_MIB=${ESP_MIB:-128}
 ROOT_EXTRA_MIB=${ROOT_EXTRA_MIB:-1024}
-CMDLINE="${CMDLINE:-root=/dev/vda2 rw console=tty0 console=ttyS0,115200 quiet loglevel=3}"
+# `ro`: the kernel mounts the root read-only, so palm-init can fsck it
+# (e2fsck -p) before remounting it read-write from its /etc/fstab line.
+CMDLINE="${CMDLINE:-root=/dev/vda2 ro console=tty0 console=ttyS0,115200 quiet loglevel=3}"
+# The time zone /etc/localtime points at: a tzdata name (Europe/Paris), or
+# `host` for the build host's own. UTC by default, like a fresh install
+# before its time zone page.
+TIMEZONE="${TIMEZONE:-UTC}"
+if [ "$TIMEZONE" = host ]; then
+	TIMEZONE="$(readlink -f /etc/localtime | sed -n 's|.*/zoneinfo/||p')"
+	[ -n "$TIMEZONE" ] || TIMEZONE=UTC
+fi
+# Besides the system: e2fsprogs and dosfstools, so that palm-init can check
+# `/` and the EFI system partition at boot (fsck.ext4, fsck.fat).
+PACKAGES="${PACKAGES:-palmframe palmframe-demo e2fsprogs dosfstools}"
 
 for f in "$PALM" "$REPO/PALMINDEX" "$REPO/PALMINDEX.sig" "$KEYS/palmframe.pub"; do
 	[ -f "$f" ] || { echo "image: $f is missing (run make -C distro repo)" >&2; exit 1; }
@@ -56,8 +78,28 @@ mkdir -p "$WORK" "$ROOTFS"
 # The keys directory holds palmframe.sec too; palm only reads *.pub from it.
 root_bytes_file="$WORK/root.bytes"
 fakeroot -- bash -euo pipefail -c '
-	palm=$1 rootfs=$2 repo=$3 keys=$4 work=$5 extra=$6
-	"$palm" --root "$rootfs" --initdb --repo "$repo" --keys-dir "$keys" --yes add palmframe palmframe-demo
+	palm=$1 rootfs=$2 repo=$3 keys=$4 work=$5 extra=$6 tz=$7 packages=$8
+	"$palm" --root "$rootfs" --initdb --repo "$repo" --keys-dir "$keys" --yes add $packages
+
+	# What makes this root the disk image rather than any root: palm
+	# reports these edits as "modified (config)", like every edit in /etc.
+	#  - `/` and the EFI system partition by the labels given below, so
+	#    palm-init checks `/` and mounts the ESP at /boot/efi.
+	#  - /etc/palm/grow-root: on its first boot palm-init grows the root
+	#    partition and filesystem to the end of whatever disk the image was
+	#    copied onto (distro/init/growroot.odin), then deletes the file.
+	#  - the time zone.
+	#  - no /etc/machine-id: palm-init makes one on the first boot, so two
+	#    copies of the image are two machines.
+	cat >>"$rootfs/etc/fstab" <<-FSTAB
+	LABEL=palmframe	/	ext4	rw,relatime	0 1
+	LABEL=PALMESP	/boot/efi	vfat	rw,relatime,fmask=0077,dmask=0077,shortname=mixed,utf8,errors=remount-ro	0 2
+	FSTAB
+	: >"$rootfs/etc/palm/grow-root"
+	[ -e "$rootfs/usr/share/zoneinfo/$tz" ] || { echo "image: no time zone $tz in tzdata" >&2; exit 1; }
+	ln -sfn "../usr/share/zoneinfo/$tz" "$rootfs/etc/localtime"
+	echo "$tz" >"$rootfs/etc/timezone"
+	rm -f "$rootfs/etc/machine-id"
 
 	# The repository the installed system uses is the one palmframe-base
 	# ships in /etc/palm/repositories (the build host over QEMU user
@@ -72,7 +114,7 @@ fakeroot -- bash -euo pipefail -c '
 	echo $((mib * 1024 * 1024)) > "$work/root.bytes"
 	truncate -s "${mib}M" "$work/root.ext4"
 	mkfs.ext4 -q -F -L palmframe -E root_owner=0:0 -d "$rootfs" "$work/root.ext4"
-' fakeroot-image "$PALM" "$ROOTFS" "$REPO" "$KEYS" "$WORK" "$ROOT_EXTRA_MIB"
+' fakeroot-image "$PALM" "$ROOTFS" "$REPO" "$KEYS" "$WORK" "$ROOT_EXTRA_MIB" "$TIMEZONE" "$PACKAGES"
 ROOT_BYTES=$(cat "$root_bytes_file")
 
 # Ownership as the image records it, read back with debugfs rather than

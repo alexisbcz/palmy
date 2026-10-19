@@ -1,0 +1,10 @@
+# Swap in compressed RAM (zram), set up by palm-init at boot. No swap
+# partition or file is needed; pages swapped out are compressed (zstd keeps
+# about a third of their size) and stay in memory. Disk swap in /etc/fstab
+# can sit beside it with a lower priority. distro/init/zram.odin.
+#
+# size = 0 turns it off.
+size      = 50%
+max       = 4G
+algorithm = zstd
+priority  = 100
