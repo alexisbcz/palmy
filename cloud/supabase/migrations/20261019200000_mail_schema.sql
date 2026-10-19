@@ -127,6 +127,10 @@ create table public.mail_messages (
 	bcc            jsonb not null default '[]',
 	preview        text not null default '',
 	has_attachment boolean not null default false,
+	-- What the JMAP `text` filter matches against: subject, preview and the
+	-- address fields, folded. Bodies beyond the preview are not indexed yet.
+	search         text generated always as (lower(
+	                   subject || ' ' || preview || ' ' || "from"::text || ' ' || "to"::text || ' ' || cc::text)) stored,
 	created_at     timestamptz not null default now(),
 	unique (identity_id, id),
 	foreign key (identity_id, thread_id) references public.mail_threads (identity_id, id) on delete cascade,

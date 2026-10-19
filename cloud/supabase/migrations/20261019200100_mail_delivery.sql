@@ -162,7 +162,8 @@ $$;
 -- Store one copy of a message into one identity. Not granted to anyone: the
 -- two entry points below decide who may cause it.
 create function public.mail_store(
-	p_identity uuid, p_raw bytea, p_meta jsonb, p_roles text[], p_keywords text[]
+	p_identity uuid, p_raw bytea, p_meta jsonb, p_roles text[], p_keywords text[],
+	p_boxes uuid[] default null
 ) returns uuid
 language plpgsql security definer
 set search_path = ''
@@ -203,9 +204,13 @@ begin
 		insert into public.mail_threads (identity_id) values (p_identity) returning id into v_thread;
 	end if;
 
-	select array_agg(b.id order by b.sort_order) into v_boxes
-	from public.mail_mailboxes b
-	where b.identity_id = p_identity and b.role = any (p_roles);
+	if p_boxes is not null then
+		v_boxes := p_boxes;
+	else
+		select array_agg(b.id order by b.sort_order) into v_boxes
+		from public.mail_mailboxes b
+		where b.identity_id = p_identity and b.role = any (p_roles);
+	end if;
 
 	begin
 		v_sent := (p_meta ->> 'sentAt')::timestamptz;
@@ -268,7 +273,7 @@ begin
 			v_out := v_out || jsonb_build_object('rcpt', v_rcpt, 'status', 'delivered', 'duplicate', true);
 			continue;
 		end if;
-		v_msg := public.mail_store(v_id, p_raw, p_meta, array['inbox'], '{}');
+		v_msg := public.mail_store(v_id, p_raw, p_meta - 'bcc', array['inbox'], '{}');
 		v_done := v_done || v_id;
 		v_out := v_out || jsonb_build_object('rcpt', v_rcpt, 'status', 'delivered');
 	end loop;
@@ -356,7 +361,8 @@ begin
 			continue;
 		end if;
 		if not (v_id = any (v_done)) then
-			perform public.mail_store(v_id, p_raw, p_meta, array['inbox'], '{}');
+			-- The recipient's copy never carries the Bcc list.
+			perform public.mail_store(v_id, p_raw, p_meta - 'bcc', array['inbox'], '{}');
 			v_done := v_done || v_id;
 		end if;
 		v_local := v_local + 1;
@@ -368,19 +374,40 @@ begin
 end
 $$;
 
+-- Import: put a message into the caller's own identity, in mailboxes of its
+-- choosing (JMAP Email/import, and drafts). The mailbox-ownership trigger
+-- refuses a mailbox of another identity.
+create function public.mail_import(p_identity uuid, p_raw bytea, p_meta jsonb, p_boxes uuid[], p_keywords text[])
+returns uuid
+language plpgsql security definer
+set search_path = ''
+as $$
+begin
+	if not public.can_access_identity(p_identity) then
+		raise exception 'this session cannot write to that identity' using errcode = '42501';
+	end if;
+	if p_boxes is null or cardinality(p_boxes) = 0 then
+		raise exception 'mailboxIds must name at least one mailbox' using errcode = '22023';
+	end if;
+	return public.mail_store(p_identity, p_raw, p_meta, '{}', coalesce(p_keywords, '{}'), p_boxes);
+end
+$$;
+
 -- Execution rights. Postgres grants EXECUTE to PUBLIC by default; take it
 -- back everywhere and give it out deliberately.
 revoke execute on function
 	public.mail_default_domain(), public.mail_address_of(uuid), public.mail_is_local(text),
 	public.mail_resolve(text), public.mail_ensure_mailboxes_internal(uuid), public.mail_bootstrap(),
 	public.mail_identities(), public.mail_mailbox_counts(uuid),
-	public.mail_store(uuid, bytea, jsonb, text[], text[]),
+	public.mail_store(uuid, bytea, jsonb, text[], text[], uuid[]),
+	public.mail_import(uuid, bytea, jsonb, uuid[], text[]),
 	public.mail_deliver(bytea, jsonb, text[]), public.mail_submit(uuid, bytea, jsonb, text[]),
 	public.mail_check_mailboxes(), public.mail_gc_blob(), public.mail_log_change()
 from public, anon, authenticated;
 
 grant execute on function public.mail_bootstrap(), public.mail_identities(),
 	public.mail_mailbox_counts(uuid), public.mail_submit(uuid, bytea, jsonb, text[]),
+	public.mail_import(uuid, bytea, jsonb, uuid[], text[]),
 	public.mail_address_of(uuid), public.mail_default_domain(), public.mail_is_local(text)
 to authenticated, service_role;
 

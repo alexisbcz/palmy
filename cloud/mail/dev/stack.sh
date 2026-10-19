@@ -6,6 +6,7 @@
 #   cloud/mail/dev/stack.sh test      run cloud/supabase/tests/mail_*.sql with pgTAP
 #   cloud/mail/dev/stack.sh psql      a shell on the database
 #   cloud/mail/dev/stack.sh down      remove the containers (the data goes with them)
+#   cloud/mail/dev/stack.sh reset     down, up, migrate: a fresh database
 #
 # Why not `supabase start`: on this host the firewall blocks Docker bridge
 # networking, so every container here runs with --network host on ports in
@@ -114,6 +115,9 @@ psql)
 down)
 	docker rm -f "$rest" "$auth" "$db" >/dev/null 2>&1 || true
 	echo "stack: removed"
+	;;
+reset)
+	"$0" down && "$0" up && "$0" migrate
 	;;
 *)
 	sed -n '2,10p' "$0"
