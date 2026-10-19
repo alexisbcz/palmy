@@ -285,6 +285,13 @@ req_data_device :: proc(s: ^Server, c: ^Client, o: Object, id: u32, op: u16, r: 
 		}
 		if !data_serial_ok(s, serial) {
 			log_line("client %d set_selection with serial %d we never issued", c.index, serial)
+			// Rejected: say so, so the client knows its copy did not take
+			// and can tell the user or fall back, instead of believing it
+			// owns the clipboard.
+			if so, ok := obj_get(c, sid); sid != 0 && ok && so.kind == .Data_Source {
+				event(c, sid, 2) // wl_data_source.cancelled
+				client_flush(c)
+			}
 			return
 		}
 		if !data_has_focus(s, c) {
@@ -618,6 +625,12 @@ req_prim :: proc(s: ^Server, c: ^Client, o: Object, id: u32, op: u16, r: ^Reader
 			// accepts either.
 			if !data_serial_ok(s, serial) {
 				log_line("client %d primary set_selection with serial %d we never issued", c.index, serial)
+				if so, ok := obj_get(c, sid); sid != 0 && ok && so.kind == .Prim {
+					if ns := (^Prim_Obj)(so.p); ns != nil && ns.role == .Source && !ns.gone {
+						event(c, sid, 1) // zwp_primary_selection_source_v1.cancelled
+						client_flush(c)
+					}
+				}
 				return
 			}
 			if !data_has_focus(s, c) {
