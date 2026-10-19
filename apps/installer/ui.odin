@@ -8,14 +8,12 @@ package main
 // near-black wash, the same zinc card and border tokens, Geist, lucide icons,
 // shadcn's buttons and inputs.
 //
-// Right to left. palmy shapes and orders Arabic text and aligns a paragraph
-// to the side its script starts from, but its flex layout has no
-// `flex-row-reverse` and no notion of a layout direction. So the installer
-// mirrors itself: every horizontal row is opened with `hrow` and closed with
-// `hend`, and `hend` reverses the row's children (and swaps justify-start for
-// justify-end) when the language is written right to left. Text that sits in
-// a column is right-aligned through `txt`. Chevrons are swapped by `fwd_icon`
-// and `back_icon`. Nothing else knows about direction.
+// Right to left. When the language is written right to left, `draw` puts
+// palmy's `dir-rtl` on the root: every row below it runs right to left, as
+// CSS's `direction: rtl` does, and the Tab order (the tree's order) follows
+// the reading order. Text that sits in a column is aligned to the
+// interface's direction through `txt`; chevrons are swapped by `fwd_icon`
+// and `back_icon`; the log, being machine text, is `dir-ltr`.
 
 import "core:fmt"
 import "core:time"
@@ -50,47 +48,31 @@ register_dark_theme :: proc() {
 // Direction
 // ---------------------------------------------------------------------------
 
-hrow :: proc(ui: ^p.Ctx, class := "") -> int {
-	return p.row(ui, class)
-}
-
-hend :: proc(ui: ^p.Ctx, idx: int) {
-	if is_rtl() {
-		mirror(ui, idx)
-	}
-	p.end(ui)
-}
-
-// mirror reverses a node's children in place. Ids were fixed when the nodes
-// were pushed, so focus, hover and widget state are untouched; only the order
-// layout places them in changes, and with it the Tab order, which is then
-// right to left as it should be.
-mirror :: proc(ui: ^p.Ctx, idx: int) {
-	n := &ui.nodes[idx]
-	prev := -1
-	c := n.first_child
-	for c >= 0 {
-		next := ui.nodes[c].next
-		ui.nodes[c].next = prev
-		prev = c
-		c = next
-	}
-	n.first_child, n.last_child = n.last_child, n.first_child
-	#partial switch n.style.justify {
-	case .Start:
-		n.style.justify = .End
-	case .End:
-		n.style.justify = .Start
-	}
-}
-
 // txt is p.text for a line that sits in a column, aligned to the
 // interface's direction rather than the string's: in a right-to-left
 // interface a device path or an English layout name hugs the right edge, and
 // in a left-to-right one "العربية" on the language page lines up on the left
 // with the names above it.
-txt :: proc(ui: ^p.Ctx, s: string, class := "") -> int {
+// text and textf are p.text and p.textf with `dir-auto`: under the root's
+// `dir-rtl` a paragraph would otherwise be right to left whatever it says,
+// and "/dev/vda" or "20.0 GiB" would be drawn "dev/vda/" and "GiB 20.0".
+// Each paragraph takes its direction from its own first strong character,
+// as it did before palmy had a layout direction; Arabic sentences that start
+// with Latin text carry a RIGHT-TO-LEFT MARK from `tr` for that reason.
+text :: proc(ui: ^p.Ctx, s: string, class := "") -> int {
 	idx := p.text(ui, s, class)
+	p.apply(ui, "dir-auto", idx)
+	return idx
+}
+
+textf :: proc(ui: ^p.Ctx, class: string, format: string, args: ..any) -> int {
+	idx := p.textf(ui, class, format, ..args)
+	p.apply(ui, "dir-auto", idx)
+	return idx
+}
+
+txt :: proc(ui: ^p.Ctx, s: string, class := "") -> int {
+	idx := text(ui, s, class)
 	p.apply(ui, is_rtl() ? "text-right" : "text-left", idx)
 	return idx
 }
@@ -130,13 +112,10 @@ button :: proc(ui: ^p.Ctx, st: ^St, label: string, ic: Maybe(p.Icon), v: sc.Vari
 	if i, has := ic.?; has && !icon_after {
 		p.icon(ui, i, "size-4")
 	}
-	p.text(ui, label, "whitespace-nowrap")
+	text(ui, label, "whitespace-nowrap")
 	p.style(ui).shrink = 0
 	if i, has := ic.?; has && icon_after {
 		p.icon(ui, i, "size-4")
-	}
-	if is_rtl() {
-		mirror(ui, idx)
 	}
 	sc.button_end(ui)
 	return hit
@@ -158,18 +137,15 @@ draw :: proc(st: ^St, ui: ^p.Ctx) {
 	poll_install(st)
 
 	p.col(ui, "w-full h-full bg-background text-foreground")
+	if is_rtl() {
+		p.apply(ui, "dir-rtl")
+	}
 	defer p.end(ui)
 
 	p.div(ui, "absolute inset-0 bg-gradient-to-b from-[#121217] to-[#07070a]")
 	p.end(ui)
 
-	// Every element's id includes the language. palmy wraps a text node at
-	// no more than the width that id had last frame (measure in
-	// palmy/layout.odin), so a label that becomes longer in the new language
-	// would otherwise stay as narrow as the old one and break onto two lines.
-	// Fresh ids on a language switch start every label from its own width.
-	p.key(ui, cur_language(st).code)
-	body := hrow(ui, "w-full h-full")
+	body := p.row(ui, "w-full h-full")
 	rail(st, ui)
 	p.col(ui, "flex-1 h-full min-w-0")
 	{
@@ -180,7 +156,7 @@ draw :: proc(st: ^St, ui: ^p.Ctx) {
 		footer(st, ui)
 	}
 	p.end(ui)
-	hend(ui, body)
+	p.end(ui)
 
 	if st.confirm_open {
 		erase_dialog(st, ui)
@@ -252,7 +228,7 @@ rail :: proc(st: ^St, ui: ^p.Ctx) {
 	defer p.end(ui)
 
 	// The product.
-	brand := hrow(ui, "items-center gap-3 px-2")
+	brand := p.row(ui, "items-center gap-3 px-2")
 	{
 		p.div(ui, "size-9 rounded-lg bg-primary items-center justify-center")
 		p.icon(ui, II_PACKAGE, "size-5 text-primary-foreground")
@@ -262,7 +238,7 @@ rail :: proc(st: ^St, ui: ^p.Ctx) {
 		txt(ui, tr("Installer"), "text-xs text-muted-foreground")
 		p.end(ui)
 	}
-	hend(ui, brand)
+	p.end(ui)
 
 	// The steps.
 	p.col(ui, "gap-1")
@@ -271,7 +247,7 @@ rail :: proc(st: ^St, ui: ^p.Ctx) {
 		current := pg == st.page
 		done := pg < st.page || (pg == .Done && st.page == .Done)
 		reachable := can_go_to(st, pg) && !current
-		item := hrow(ui, "items-center gap-3 px-2 py-2 rounded-lg")
+		item := p.row(ui, "items-center gap-3 px-2 py-2 rounded-lg")
 		if current {
 			p.apply(ui, "bg-accent")
 		} else if reachable {
@@ -288,10 +264,10 @@ rail :: proc(st: ^St, ui: ^p.Ctx) {
 				p.icon(ui, II_CHECK, "size-4 text-primary-foreground")
 			case current:
 				p.div(ui, DISC + " border-foreground bg-background")
-				p.textf(ui, "text-xs font-semibold text-foreground", "%d", int(pg) + 1)
+				textf(ui, "text-xs font-semibold text-foreground", "%d", int(pg) + 1)
 			case:
 				p.div(ui, DISC + " border-border")
-				p.textf(ui, "text-xs text-muted-foreground", "%d", int(pg) + 1)
+				textf(ui, "text-xs text-muted-foreground", "%d", int(pg) + 1)
 			}
 			p.end(ui)
 			p.col(ui, "flex-1 min-w-0")
@@ -302,7 +278,7 @@ rail :: proc(st: ^St, ui: ^p.Ctx) {
 			)
 			p.end(ui)
 		}
-		hend(ui, item)
+		p.end(ui)
 	}
 	p.end(ui)
 
@@ -311,9 +287,9 @@ rail :: proc(st: ^St, ui: ^p.Ctx) {
 	// What the keys do, and what kind of run this is.
 	p.col(ui, "gap-3 px-2")
 	if st.backend.demo {
-		b := hrow(ui, "items-center gap-2")
+		b := p.row(ui, "items-center gap-2")
 		sc.badge(ui, tr("Demo"), .Destructive)
-		hend(ui, b)
+		p.end(ui)
 		txt(ui, tr("Nothing on this computer will be changed."), "text-xs text-muted-foreground")
 	}
 	if st.page < .Install {
@@ -325,10 +301,10 @@ rail :: proc(st: ^St, ui: ^p.Ctx) {
 }
 
 keys_hint :: proc(ui: ^p.Ctx, key, what: string) {
-	r := hrow(ui, "items-center gap-2")
+	r := p.row(ui, "items-center gap-2")
 	sc.kbd(ui, key)
-	p.text(ui, what, "text-xs text-muted-foreground whitespace-nowrap")
-	hend(ui, r)
+	text(ui, what, "text-xs text-muted-foreground whitespace-nowrap")
+	p.end(ui)
 }
 
 page_subtitle :: proc(pg: Page) -> string {
@@ -393,23 +369,21 @@ footer :: proc(st: ^St, ui: ^p.Ctx) {
 		// its own button.
 		return
 	}
-	bar := hrow(ui, "w-full items-center gap-4 px-12 py-5 border-t border-border")
-	defer hend(ui, bar)
+	bar := p.row(ui, "w-full items-center gap-4 px-12 py-5 border-t border-border")
+	defer p.end(ui)
 
 	if can_go_back(st) {
 		if button(ui, st, tr("Back"), back_icon(), .Outline) {
 			go_back(st)
 		}
 	}
-	// The reason Next is not available fills the space between the buttons
-	// (rather than a spacer and a shrink-wrapped label: see the note on the
-	// language key in `draw` — the reason changes as the page is filled in).
+	// The reason Next is not available fills the space between the buttons.
 	ok, why := can_leave(st)
 	reason := ""
 	if !ok && why != "" && (st.page != .Account || st.tried) {
 		reason = tr(why)
 	}
-	p.text(ui, reason, is_rtl() ? "flex-1 text-xs text-muted-foreground text-left" : "flex-1 text-xs text-muted-foreground text-right")
+	text(ui, reason, is_rtl() ? "flex-1 text-xs text-muted-foreground text-left" : "flex-1 text-xs text-muted-foreground text-right")
 
 	label := tr("Next")
 	variant := sc.Variant.Default
@@ -441,7 +415,7 @@ erase_dialog :: proc(st: ^St, ui: ^p.Ctx) {
 	p.col(ui, "w-[520] p-6 gap-5 rounded-xl border border-border bg-card shadow-2xl")
 	defer p.end(ui)
 
-	top := hrow(ui, "items-start gap-4")
+	top := p.row(ui, "items-start gap-4")
 	{
 		p.div(ui, "size-10 rounded-full bg-destructive/15 items-center justify-center shrink-0")
 		p.icon(ui, II_TRIANGLE_ALERT, "size-5 text-destructive")
@@ -456,9 +430,9 @@ erase_dialog :: proc(st: ^St, ui: ^p.Ctx) {
 		)
 		p.end(ui)
 	}
-	hend(ui, top)
+	p.end(ui)
 
-	actions := hrow(ui, "items-center gap-3 justify-end")
+	actions := p.row(ui, "items-center gap-3 justify-end")
 	{
 		n := p.node_count(ui)
 		if button(ui, st, tr("Cancel"), nil, .Outline) {
@@ -473,7 +447,7 @@ erase_dialog :: proc(st: ^St, ui: ^p.Ctx) {
 			confirm_erase(st)
 		}
 	}
-	hend(ui, actions)
+	p.end(ui)
 }
 
 disk_model :: proc(d: Disk) -> string {
@@ -487,7 +461,7 @@ disk_model :: proc(d: Disk) -> string {
 // under it). Space or a click toggles it; Enter on it is Next, as everywhere
 // else.
 checkbox :: proc(ui: ^p.Ctx, on: ^bool, label: string, detail := "") {
-	check := hrow(ui, "w-full items-start gap-3 py-1 rounded-md")
+	check := p.row(ui, "w-full items-start gap-3 py-1 rounded-md")
 	p.focusable(ui, check)
 	p.apply(ui, "cursor-pointer")
 	if p.focused(ui, check) {
@@ -507,7 +481,7 @@ checkbox :: proc(ui: ^p.Ctx, on: ^bool, label: string, detail := "") {
 		}
 		p.end(ui)
 	}
-	hend(ui, check)
+	p.end(ui)
 	if toggled {
 		on^ = !on^
 	}

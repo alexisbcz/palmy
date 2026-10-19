@@ -385,12 +385,13 @@ test_rtl :: proc() {
 	a, b: int
 	for _ in 0 ..< 2 {
 		ui := p.offscreen_begin(off)
-		r := hrow(ui, "w-full gap-2")
+		r := p.row(ui, "w-full gap-2 dir-rtl")
 		a = p.div(ui, "w-10 h-10")
 		p.end(ui)
 		b = p.div(ui, "w-20 h-10")
 		p.end(ui)
-		hend(ui, r)
+		p.end(ui)
+		_ = r
 		p.offscreen_end(off)
 	}
 	ra := p.node_rect(&off.ctx, a)

@@ -108,7 +108,7 @@ page_language :: proc(st: ^St, ui: ^p.Ctx) {
 	for l, i in st.languages {
 		p.key(ui, fmt.tprintf("lang-%s", l.code))
 		sel := i == st.lang_i
-		row := hrow(ui, "w-full items-center gap-4 px-4 py-3 rounded-lg border")
+		row := p.row(ui, "w-full items-center gap-4 px-4 py-3 rounded-lg border")
 		p.apply(ui, sel ? "border-ring bg-accent/50" : "border-border bg-card/60 hover:bg-muted cursor-pointer")
 		if p.clickable(ui, row) {
 			pick_language(st, i)
@@ -129,7 +129,7 @@ page_language :: proc(st: ^St, ui: ^p.Ctx) {
 				p.icon(ui, II_CHECK, "size-4 text-foreground")
 			}
 		}
-		hend(ui, row)
+		p.end(ui)
 	}
 }
 
@@ -139,8 +139,8 @@ page_language :: proc(st: ^St, ui: ^p.Ctx) {
 
 page_keyboard :: proc(st: ^St, ui: ^p.Ctx) {
 	now := p.elapsed(ui)
-	cols := hrow(ui, "w-full flex-1 min-h-0 gap-6")
-	defer hend(ui, cols)
+	cols := p.row(ui, "w-full flex-1 min-h-0 gap-6")
+	defer p.end(ui)
 
 	// Layouts, searchable.
 	p.col(ui, "flex-1 h-full min-w-0 gap-3")
@@ -160,7 +160,7 @@ page_keyboard :: proc(st: ^St, ui: ^p.Ctx) {
 			k := st.keyboards[st.layouts[li]]
 			p.key(ui, fmt.tprintf("kb-%s", k.layout))
 			sel := li == st.layout_i
-			row := hrow(ui, LIST_ROW)
+			row := p.row(ui, LIST_ROW)
 			p.apply(ui, sel ? LIST_SEL : LIST_IDLE)
 			if p.clickable(ui, row) {
 				pick_layout(st, li, now)
@@ -168,8 +168,8 @@ page_keyboard :: proc(st: ^St, ui: ^p.Ctx) {
 			p.col(ui, "flex-1 min-w-0")
 			txt(ui, keyboard_name(k.description), "text-sm whitespace-nowrap truncate")
 			p.end(ui)
-			p.text(ui, k.layout, "text-xs font-mono text-muted-foreground")
-			hend(ui, row)
+			text(ui, k.layout, "text-xs font-mono text-muted-foreground")
+			p.end(ui)
 			if sel {
 				keep_visible(st, ui, list, row)
 			}
@@ -192,7 +192,7 @@ page_keyboard :: proc(st: ^St, ui: ^p.Ctx) {
 		{
 			p.key(ui, "variant-default")
 			sel := st.variant == ""
-			row := hrow(ui, LIST_ROW)
+			row := p.row(ui, LIST_ROW)
 			p.apply(ui, sel ? LIST_SEL : LIST_IDLE)
 			if p.clickable(ui, row) {
 				pick_variant(st, "", now)
@@ -200,13 +200,13 @@ page_keyboard :: proc(st: ^St, ui: ^p.Ctx) {
 			p.col(ui, "flex-1 min-w-0")
 			txt(ui, tr("Default"), "text-sm")
 			p.end(ui)
-			hend(ui, row)
+			p.end(ui)
 		}
 		for idx in variants_of(st) {
 			k := st.keyboards[idx]
 			p.key(ui, fmt.tprintf("variant-%s", k.variant))
 			sel := st.variant == k.variant
-			row := hrow(ui, LIST_ROW)
+			row := p.row(ui, LIST_ROW)
 			p.apply(ui, sel ? LIST_SEL : LIST_IDLE)
 			if p.clickable(ui, row) {
 				pick_variant(st, k.variant, now)
@@ -214,8 +214,8 @@ page_keyboard :: proc(st: ^St, ui: ^p.Ctx) {
 			p.col(ui, "flex-1 min-w-0")
 			txt(ui, keyboard_name(k.description), "text-sm whitespace-nowrap truncate")
 			p.end(ui)
-			p.text(ui, k.variant, "text-xs font-mono text-muted-foreground")
-			hend(ui, row)
+			text(ui, k.variant, "text-xs font-mono text-muted-foreground")
+			p.end(ui)
 		}
 		_ = base
 		p.end(ui)
@@ -278,7 +278,7 @@ page_timezone :: proc(st: ^St, ui: ^p.Ctx) {
 	y, mon, d := time.date(local)
 	wd := time.weekday(local)
 
-	card := hrow(ui, "w-full items-center gap-5 px-5 py-4 rounded-xl border border-border bg-card")
+	card := p.row(ui, "w-full items-center gap-5 px-5 py-4 rounded-xl border border-border bg-card")
 	{
 		p.div(ui, "size-11 rounded-full bg-muted items-center justify-center shrink-0")
 		p.icon(ui, II_MAP_PIN, "size-5 text-foreground")
@@ -297,9 +297,9 @@ page_timezone :: proc(st: ^St, ui: ^p.Ctx) {
 			txt(ui, trf("%s · no time zone data on this system", z.name), "text-xs font-mono text-muted-foreground")
 		}
 		p.end(ui)
-		p.textf(ui, "text-5xl font-semibold tracking-tight text-foreground tabular-nums", "%02d:%02d", h, m)
+		textf(ui, "text-5xl font-semibold tracking-tight text-foreground tabular-nums", "%02d:%02d", h, m)
 	}
-	hend(ui, card)
+	p.end(ui)
 
 	n := p.node_count(ui)
 	if changed, _ := sc.input(ui, &st.zone_search, tr("Search for a city, a region or a country")); changed {
@@ -316,7 +316,7 @@ page_timezone :: proc(st: ^St, ui: ^p.Ctx) {
 		zz := st.zones[i]
 		p.key(ui, fmt.tprintf("tz-%s", zz.name))
 		sel := i == st.zone_i
-		row := hrow(ui, LIST_ROW)
+		row := p.row(ui, LIST_ROW)
 		p.apply(ui, sel ? LIST_SEL : LIST_IDLE)
 		if p.clickable(ui, row) {
 			pick_zone(st, i)
@@ -329,8 +329,8 @@ page_timezone :: proc(st: ^St, ui: ^p.Ctx) {
 			country := country_name(zz.country_code, zz.country)
 			place = zz.region == "" ? country : fmt.tprintf("%s · %s", country, zz.region)
 		}
-		p.text(ui, place, "text-xs text-muted-foreground whitespace-nowrap")
-		hend(ui, row)
+		text(ui, place, "text-xs text-muted-foreground whitespace-nowrap")
+		p.end(ui)
 		if sel {
 			keep_visible(st, ui, list, row)
 		}
@@ -354,7 +354,7 @@ page_disk :: proc(st: ^St, ui: ^p.Ctx) {
 	defer p.end(ui)
 
 	// The only mode, stated plainly before anything can be chosen.
-	note := hrow(ui, "w-full items-start gap-3 p-4 rounded-lg border border-border bg-card/60")
+	note := p.row(ui, "w-full items-start gap-3 p-4 rounded-lg border border-border bg-card/60")
 	{
 		p.icon(ui, II_INFO, "size-4 text-muted-foreground mt-px shrink-0")
 		p.col(ui, "flex-1 gap-1 min-w-0")
@@ -366,7 +366,7 @@ page_disk :: proc(st: ^St, ui: ^p.Ctx) {
 		)
 		p.end(ui)
 	}
-	hend(ui, note)
+	p.end(ui)
 
 	if len(st.disks) == 0 {
 		txt(ui, tr("No disks were found. Attach a disk and restart the installer."), "text-sm text-destructive")
@@ -377,7 +377,7 @@ page_disk :: proc(st: ^St, ui: ^p.Ctx) {
 		p.key(ui, fmt.tprintf("disk-%s", d.name))
 		usable, why := disk_usable(d)
 		sel := i == st.disk_i
-		row := hrow(ui, "w-full items-center gap-4 px-4 py-3 rounded-lg border")
+		row := p.row(ui, "w-full items-center gap-4 px-4 py-3 rounded-lg border")
 		switch {
 		case sel:
 			p.apply(ui, "border-ring bg-accent/50")
@@ -397,15 +397,15 @@ page_disk :: proc(st: ^St, ui: ^p.Ctx) {
 			p.icon(ui, d.removable ? II_USB : II_HARD_DRIVE, "size-5 text-foreground")
 			p.end(ui)
 			p.col(ui, "flex-1 gap-1 min-w-0")
-			head := hrow(ui, "items-center gap-2")
-			p.text(ui, d.path, "text-sm font-medium font-mono text-foreground")
+			head := p.row(ui, "items-center gap-2")
+			text(ui, d.path, "text-sm font-medium font-mono text-foreground")
 			if d.removable {
 				sc.badge(ui, tr("Removable"), .Secondary)
 			}
 			if d.has_partitions && usable {
 				sc.badge(ui, tr("Has partitions"), .Outline)
 			}
-			hend(ui, head)
+			p.end(ui)
 			txt(ui, disk_model(d), "text-xs text-muted-foreground")
 			if !usable {
 				txt(ui, tr(why), "text-xs text-muted-foreground")
@@ -413,9 +413,9 @@ page_disk :: proc(st: ^St, ui: ^p.Ctx) {
 				txt(ui, tr("Its partitions and everything on them will be erased."), "text-xs text-muted-foreground")
 			}
 			p.end(ui)
-			p.text(ui, size_label(d.size_bytes), "text-sm font-medium text-foreground whitespace-nowrap tabular-nums")
+			text(ui, size_label(d.size_bytes), "text-sm font-medium text-foreground whitespace-nowrap tabular-nums")
 		}
-		hend(ui, row)
+		p.end(ui)
 	}
 
 	// The swap file, under the disks because it takes room on the one chosen.
@@ -430,8 +430,8 @@ page_disk :: proc(st: ^St, ui: ^p.Ctx) {
 
 page_account :: proc(st: ^St, ui: ^p.Ctx) {
 	probs := validate_account(account_of(st))
-	cols := hrow(ui, "w-full max-w-[880] items-start gap-8")
-	defer hend(ui, cols)
+	cols := p.row(ui, "w-full max-w-[880] items-start gap-8")
+	defer p.end(ui)
 
 	p.col(ui, "flex-1 gap-5 min-w-0")
 	{
@@ -503,11 +503,11 @@ text_field :: proc(
 	}
 
 	if shown {
-		r := hrow(ui, "items-center gap-1.5")
+		r := p.row(ui, "items-center gap-1.5")
 		p.icon(ui, II_CIRCLE_ALERT, "size-3.5 text-destructive shrink-0")
 		// flex-1: one problem replaces another at the same id (see `draw`).
 		txt(ui, tr(problem), "flex-1 min-w-0 text-xs text-destructive")
-		hend(ui, r)
+		p.end(ui)
 	} else if hint != "" {
 		txt(ui, hint, "text-xs text-muted-foreground")
 	}
@@ -518,9 +518,9 @@ strength_meter :: proc(ui: ^p.Ctx, s: Strength) {
 	if s == .None {
 		return
 	}
-	r := hrow(ui, "w-full items-center gap-3 -mt-2")
-	defer hend(ui, r)
-	bars := hrow(ui, "flex-1 gap-1.5")
+	r := p.row(ui, "w-full items-center gap-3 -mt-2")
+	defer p.end(ui)
+	bars := p.row(ui, "flex-1 gap-1.5")
 	lit := int(s) // Weak 1, Fair 2, Strong 3
 	colour := "bg-destructive"
 	if s == .Fair {
@@ -532,8 +532,8 @@ strength_meter :: proc(ui: ^p.Ctx, s: Strength) {
 		p.div(ui, i <= lit ? fmt.tprintf("flex-1 h-1 rounded-full %s", colour) : "flex-1 h-1 rounded-full bg-muted")
 		p.end(ui)
 	}
-	hend(ui, bars)
-	p.text(ui, strength_label(s), "text-xs text-muted-foreground whitespace-nowrap")
+	p.end(ui)
+	text(ui, strength_label(s), "text-xs text-muted-foreground whitespace-nowrap")
 }
 
 // ---------------------------------------------------------------------------
@@ -549,7 +549,7 @@ page_summary :: proc(st: ^St, ui: ^p.Ctx) {
 	defer p.end(ui)
 
 	d, _ := cur_disk(st)
-	warn := hrow(ui, "w-full items-start gap-3 p-4 rounded-lg border border-destructive/50 bg-destructive/10")
+	warn := p.row(ui, "w-full items-start gap-3 p-4 rounded-lg border border-destructive/50 bg-destructive/10")
 	{
 		p.icon(ui, II_TRIANGLE_ALERT, "size-4 text-destructive mt-px shrink-0")
 		p.col(ui, "flex-1 gap-1 min-w-0")
@@ -557,7 +557,7 @@ page_summary :: proc(st: ^St, ui: ^p.Ctx) {
 		txt(ui, trf("%s, %s. Everything on it will be lost when you press Install.", disk_model(d), size_label(d.size_bytes)), "text-sm text-destructive/90")
 		p.end(ui)
 	}
-	hend(ui, warn)
+	p.end(ui)
 
 	p.col(ui, "w-full rounded-xl border border-border bg-card")
 	{
@@ -577,7 +577,7 @@ page_summary :: proc(st: ^St, ui: ^p.Ctx) {
 	p.end(ui)
 
 	if len(st.core_problems) > 0 {
-		box := hrow(ui, "w-full items-start gap-3 p-4 rounded-lg border border-destructive/50 bg-destructive/10")
+		box := p.row(ui, "w-full items-start gap-3 p-4 rounded-lg border border-destructive/50 bg-destructive/10")
 		p.icon(ui, II_CIRCLE_ALERT, "size-4 text-destructive mt-px shrink-0")
 		p.col(ui, "flex-1 gap-1 min-w-0")
 		txt(ui, tr("The installer refused this plan"), "text-sm font-semibold text-destructive")
@@ -585,13 +585,13 @@ page_summary :: proc(st: ^St, ui: ^p.Ctx) {
 			txt(ui, text_tr(pr), "text-sm text-destructive/90")
 		}
 		p.end(ui)
-		hend(ui, box)
+		p.end(ui)
 	}
 }
 
 summary_row :: proc(st: ^St, ui: ^p.Ctx, target: Page, ic: p.Icon, label, value, detail: string, last := false) {
 	p.key(ui, fmt.tprintf("sum-%s", label))
-	r := hrow(ui, "w-full items-center gap-4 px-5 py-3")
+	r := p.row(ui, "w-full items-center gap-4 px-5 py-3")
 	if !last {
 		p.apply(ui, "border-b border-border")
 	}
@@ -614,9 +614,9 @@ summary_row :: proc(st: ^St, ui: ^p.Ctx, target: Page, ic: p.Icon, label, value,
 		consumed_enter = true
 		go_to(st, target)
 	}
-	p.text(ui, tr("Change"), "whitespace-nowrap")
+	text(ui, tr("Change"), "whitespace-nowrap")
 	sc.button_end(ui)
-	hend(ui, r)
+	p.end(ui)
 }
 
 // ---------------------------------------------------------------------------
@@ -660,46 +660,46 @@ page_install :: proc(st: ^St, ui: ^p.Ctx) {
 
 	card := p.col(ui, "w-full gap-4 p-6 rounded-xl border border-border bg-card")
 	{
-		head := hrow(ui, "w-full items-center gap-3")
+		head := p.row(ui, "w-full items-center gap-3")
 		if failed {
 			p.icon(ui, II_TRIANGLE_ALERT, "size-5 text-destructive shrink-0")
-			p.text(ui, tr("The installation failed"), "text-lg font-semibold text-destructive whitespace-nowrap")
+			text(ui, tr("The installation failed"), "text-lg font-semibold text-destructive whitespace-nowrap")
 		} else {
 			sc.spinner(ui, "size-5", f32(ui.now))
-			p.text(ui, step_name(snap.progress.step), "text-lg font-semibold text-foreground whitespace-nowrap")
+			text(ui, step_name(snap.progress.step), "text-lg font-semibold text-foreground whitespace-nowrap")
 		}
 		p.spacer(ui)
-		p.textf(ui, "text-sm font-medium text-muted-foreground tabular-nums", "%d%%", int(frac * 100 + 0.5))
-		hend(ui, head)
+		textf(ui, "text-sm font-medium text-muted-foreground tabular-nums", "%d%%", int(frac * 100 + 0.5))
+		p.end(ui)
 
 		sc.progress_track(ui, frac * 100)
 
 		// The steps, ticked off as they pass.
-		steps := hrow(ui, "w-full items-center gap-4 flex-wrap")
+		steps := p.row(ui, "w-full items-center gap-4 flex-wrap")
 		for s in Install_Step {
 			if s == .Done {
 				continue
 			}
 			p.key(ui, fmt.tprintf("step-%v", s))
-			r := hrow(ui, "items-center gap-1.5")
+			r := p.row(ui, "items-center gap-1.5")
 			switch {
 			case s < snap.progress.step || snap.progress.step == .Done:
 				p.icon(ui, II_CHECK, "size-3.5 text-emerald-400")
-				p.text(ui, step_name(s), "text-xs text-foreground whitespace-nowrap")
+				text(ui, step_name(s), "text-xs text-foreground whitespace-nowrap")
 			case s == snap.progress.step && !failed:
 				p.icon(ui, II_LOADER_CIRCLE, "size-3.5 text-foreground", f32(ui.now))
-				p.text(ui, step_name(s), "text-xs font-medium text-foreground whitespace-nowrap")
+				text(ui, step_name(s), "text-xs font-medium text-foreground whitespace-nowrap")
 			case s == snap.progress.step && failed:
 				p.icon(ui, II_CIRCLE_ALERT, "size-3.5 text-destructive")
-				p.text(ui, step_name(s), "text-xs font-medium text-destructive whitespace-nowrap")
+				text(ui, step_name(s), "text-xs font-medium text-destructive whitespace-nowrap")
 			case:
 				p.div(ui, "size-3.5 rounded-full border border-border")
 				p.end(ui)
-				p.text(ui, step_name(s), "text-xs text-muted-foreground whitespace-nowrap")
+				text(ui, step_name(s), "text-xs text-muted-foreground whitespace-nowrap")
 			}
-			hend(ui, r)
+			p.end(ui)
 		}
-		hend(ui, steps)
+		p.end(ui)
 
 		if failed {
 			txt(ui, snap.err, "text-sm font-mono text-destructive/90")
@@ -714,7 +714,7 @@ page_install :: proc(st: ^St, ui: ^p.Ctx) {
 
 	// The log, folded away until asked for (and unfolded on failure).
 	open := st.log_open || failed
-	bar := hrow(ui, "w-full items-center gap-3")
+	bar := p.row(ui, "w-full items-center gap-3")
 	if button(ui, st, open ? tr("Hide details") : tr("Show details"), open ? II_CHEVRON_UP : II_CHEVRON_DOWN, .Ghost) {
 		st.log_open = !st.log_open
 	}
@@ -728,16 +728,13 @@ page_install :: proc(st: ^St, ui: ^p.Ctx) {
 			st.note = restart_machine(&st.backend)
 		}
 	}
-	hend(ui, bar)
+	p.end(ui)
 
 	if open {
-		box := p.col(ui, "w-full flex-1 min-h-0 p-3 gap-0.5 rounded-lg border border-border bg-black/40 overflow-scroll")
+		// A log is machine text: it reads left to right in any language.
+		box := p.col(ui, "w-full flex-1 min-h-0 p-3 gap-0.5 rounded-lg border border-border bg-black/40 overflow-scroll dir-ltr")
 		for line in snap.log {
-			p.text(ui, line, strings.has_prefix(line, "error") ? "text-xs font-mono text-destructive whitespace-nowrap" : "text-xs font-mono text-muted-foreground whitespace-nowrap")
-			if is_rtl() {
-				// A log is machine text: it reads left to right in any language.
-				p.apply(ui, "text-left")
-			}
+			text(ui, line, strings.has_prefix(line, "error") ? "text-xs font-mono text-destructive whitespace-nowrap" : "text-xs font-mono text-muted-foreground whitespace-nowrap")
 		}
 		p.end(ui)
 		// Follow the newest line.
@@ -762,7 +759,7 @@ page_done :: proc(st: ^St, ui: ^p.Ctx) {
 	p.div(ui, "size-20 rounded-full bg-emerald-950 border border-emerald-700 items-center justify-center")
 	p.icon(ui, II_CIRCLE_CHECK, "size-10 text-emerald-400")
 	p.end(ui)
-	p.text(ui, tr("Palmframe is installed"), "text-2xl font-semibold text-foreground text-center")
+	text(ui, tr("Palmframe is installed"), "text-2xl font-semibold text-foreground text-center")
 	p.text(
 		ui,
 		tr("Remove the installation medium, then restart the computer to start your new system."),
@@ -774,6 +771,6 @@ page_done :: proc(st: ^St, ui: ^p.Ctx) {
 	}
 	take_focus(st, ui, n)
 	if st.note != "" {
-		p.text(ui, st.note, "text-xs font-mono text-muted-foreground text-center")
+		text(ui, st.note, "text-xs font-mono text-muted-foreground text-center")
 	}
 }

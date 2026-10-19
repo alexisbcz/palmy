@@ -143,7 +143,6 @@ def type_account(m, full, host, pw):
     time.sleep(0.2)
     m.key("tab")  # computer name, prefilled
     time.sleep(0.2)
-    m.key("end")
     for _ in range(16):
         m.key("backspace")
     m.type_on("us", host)

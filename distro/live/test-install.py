@@ -248,9 +248,6 @@ def gui():
         time.sleep(0.2)
         m.key("tab")  # computer name, prefilled "palmframe"
         time.sleep(0.2)
-        # A field reached with Tab has its caret at the start (palmy keeps the
-        # caret where it was, 0 for a new field), so go to the end first.
-        m.key("end")
         for _ in range(16):
             m.key("backspace")
         m.type_on("fr", "analytical")
