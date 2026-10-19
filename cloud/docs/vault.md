@@ -340,10 +340,10 @@ required, since it is every password in the clear).
 
 ## Autofill: the protocol
 
-The browser asks the vault for logins over a Unix socket. The vault side and
-a reference client (`vault autofill-client`, which is what the browser does,
-from a terminal) are built and tested; the browser side is the browser
-agent's, and the exact integration is below.
+The browser asks the vault for logins over a Unix socket. The vault side, a
+reference client (`vault autofill-client`, what the browser does, from a
+terminal) and the browser side on both engines are built and tested;
+"The browser side" below says how.
 
 **Transport.** `$XDG_RUNTIME_DIR/palm-vault/autofill.sock`, directory 0700,
 socket 0600. One JSON object per line each way; 64 KiB per line at most. The
@@ -362,6 +362,7 @@ and `/proc/<pid>/exe` are shown in every prompt.
 | `query` | `{"op":"query","origin":"https://github.com","identity":"alice"}` | `{"ok":true,"state":…,"candidates":[{"id","title","username","match":"exact"\|"subdomain","totp":bool}]}` | auth; **never a password** |
 | `fill` | `{"op":"fill","id":"…","origin":"…","identity":"…"}` | `{"ok":true,"username","password","totp"?}` | auth, the origin matching the item, the identity owning it, and the person's "Allow once" (or an earlier "Always on this site" for that pair, item and origin) |
 | `save` | `{"op":"save","origin","identity","username","password","title"?}` | `{"ok":true,"saved":true}` | auth, the person |
+| `save` (update) | `{"op":"save","id","origin","identity","username","password"}` | `{"ok":true,"saved":true,"updated":true}` | auth, the item matching the origin and owned by the identity, the person |
 | `state` | `{"op":"state"}` | `{"ok":true,"state":…}` | auth |
 
 **Origin binding.** The browser names the *top-level* origin of the tab, as
@@ -384,61 +385,142 @@ user can read the browser's profile (and its pairing key), ptrace either
 process, or replace the browser binary. Pairing and confirmation make that
 visible; they are not a sandbox.
 
-### Wiring it into apps/browser
+### The browser side (built)
 
-The browser already has everything the protocol needs: it knows the top-level
-URL of every view (`PB_URL`), the identity of the window (its profile), and a
-host process per engine that can run script in the page. The change is
-small and specified here so the browser agent can make it:
+apps/browser is the client, on both of its engines. What was planned here
+is what was built, with the deviations listed at the end of this section.
 
-1. **Client** (`apps/browser/autofill.odin`, Odin, ~200 lines): connect to
-   the socket, `hello`, and on first use `pair` with a 32-byte key generated
-   with `crypto.rand_bytes`, shown to the person as the 6-digit code
-   (`SHA-256("palm-vault/autofill-pair/v1" ‖ key)`, first 4 bytes big-endian
-   mod 10⁶, as `### ###`) next to the vault's prompt. Keep
-   `{pair_id, key}` in `$XDG_DATA_HOME/palmframe/browser/<identity>/vault-pair.json`,
-   0600. Every connection then `auth`s with `HMAC-SHA256(key, challenge)`.
-   `apps/vault/autofill.odin`'s `af_dial`, `af_call`, `af_req` and `af_proof`
-   are the reference to copy; `vault autofill-client` exercises all of it.
-2. **When to ask**: on `PB_URL` for a view (and when a password field gets
-   focus, below), send `query` with the view's current origin and the
-   profile's **identity handle** (the account handle, from
-   `~/.config/palmframe/identities.json`, not the profile directory name).
-   Show the candidates in the chrome (a key icon in the address bar, and a
-   palmy dropdown anchored under the focused field). Never cache passwords.
-3. **Filling**: when the person picks a candidate, send `fill`. The vault
-   asks the person; on `ok`, send the engine a new request
-   `PB_FILL = 23 /* str origin, str username, str password */`. The host
-   **re-checks that the view's top-level origin still equals `origin`**
-   (CEF: `browser->GetMainFrame()->GetURL()`; Gecko: the BiDi
-   `browsingContext.getTree` URL of the top context) and drops the request if
-   the page navigated meanwhile, then fills:
-   - CEF: `frame->ExecuteJavaScript` of a fixed function, with the two values
-     passed as JSON string literals produced by a JSON encoder (never
-     concatenated text), that finds the focused `input[type=password]` (or the
-     one in the focused element's form), the closest preceding text/email
-     input as the username, sets `.value`, and dispatches `input` and
-     `change` events.
-   - Gecko: `script.callFunction` in the top-level realm with the same
-     function and the values as BiDi `arguments`, which are serialized by the
-     protocol rather than spliced into source.
-   Wipe both strings in the chrome and the host after use.
-4. **Focus events** (host → chrome, new): `PB_FIELD_FOCUS = 121 /* u8 kind:
-   0 none, 1 username, 2 password, 3 one-time code */`, from a preload
-   script's `focusin` listener (CEF: inject at `OnLoadEnd`; Gecko: the
-   existing preload script and channel). It lets the chrome offer the
-   dropdown at the right moment, and fill a TOTP code into an OTP field.
-5. **Saving**: `PB_FORM_SUBMIT = 122 /* str origin, str username, str password */`
-   from the same preload script on a form submit that carried a password; the
-   chrome sends `save` and the vault asks the person.
-6. **Turn off the engines' own password managers**: CEF with
-   `credentials_enable_service=false` and `profile.password_manager_enabled=false`
-   in the profile prefs (it uses Chromium's unencrypted `basic` store on
-   Palmframe today); Firefox already has `signon.rememberSignons=false`.
+```
+ page (autofill.js, where page script cannot reach it)
+   │  focus on a login field / a trusted submit with a password
+   ▼
+ engine host ── PB_FIELD_FOCUS / PB_FORM_SUBMIT (top-level origin, its own) ──▶ chrome
+                                                                                 │ query / fill / save
+ engine host ◀── PB_FILL (origin, username, password, otp) ────────────────────  │ (worker thread,
+   │  re-checks the top-level origin, then fills                                 ▼  autofill.sock)
+   ▼                                                                           vault
+ page: the native value setter, then `input` and `change`
+```
 
-The tests that should come with it: the chrome against `vault autofill`
-(headless, `--allow once`), asserting that a fill for a view whose URL
-changed between `fill` and `PB_FILL` is dropped by the host.
+**The page half** is one file, `apps/browser/engine/autofill.js`, used by both
+hosts. It reports focus on username, current-password and one-time-code
+fields of the top-level document (never a frame: it does nothing in one, and
+both hosts drop reports from any context but the top-level one), with the
+field's rectangle so the chrome can anchor its list, and the page's
+`location.origin`, which the host compares with its own idea of the
+top-level origin. It reports a trusted `submit` (`isTrusted` is unforgeable)
+of a form carrying a password: username (a hidden `autocomplete=username`
+field counts), the new password, and the current one of a change-password
+form. It fills only when called by its host, only if `location.origin` is
+still the origin the person filled for, never into a form whose action posts
+to another origin, a password only into `type=password`, and through the
+`HTMLInputElement` value setter captured before page script ran — which is
+also what makes React's controlled inputs see the change — followed by
+`input` (`insertReplacementText`) and `change`. The password is handed to no
+function a page could have replaced.
+
+- **Chromium** (`engine/cef/host.c`): the renderer's `OnContextCreated`
+  evaluates autofill.js in the top-level frame before any page script and
+  calls it with a native `report` function and the name of a wake-up event
+  (128 random bits). No reference into the page's script world is kept —
+  holding one stalled the next same-site navigation of the frame, found the
+  hard way. A fill goes browser process → renderer as a process message; the
+  browser process first compares `GetMainFrame()->GetURL()`'s origin with the
+  fill's, the renderer compares the frame's URL again, parks the values,
+  dispatches the wake-up event; the listener autofill.js registered pulls the
+  values from `report('pull')` (V8 strings from native code, never source
+  text) and answers `report('result', status)`. The parked values are wiped
+  when pulled and when the dispatch returns, so a page that learns the
+  event's name can wake the listener and get nothing. Blink creates script
+  contexts lazily, so the host runs `void 0` in the top-level frame at load
+  start and end to make sure a script-less login page gets one.
+- **Firefox** (`engine/gecko/host.odin`): a second BiDi preload script, in
+  the sandbox `palm-autofill` (a realm of its own, seeing the DOM through
+  Xray wrappers), with a channel. A fill first asks
+  `browsingContext.getTree` for the top-level context's URL, drops the fill
+  if its origin is not the fill's, then calls `script.callFunction` in that
+  sandbox with the values as BiDi `arguments`.
+
+**Messages** (engine/proto.h, pb/proto.odin, round-tripped by the self-test):
+`PB_FILL = 23 (str origin, str username, str password, str otp)`,
+`PB_FIELD_FOCUS = 121 (u8 kind, f32 x, y, w, h, str origin)`,
+`PB_FORM_SUBMIT = 122 (str origin, str username, str password, str old_password)`,
+`PB_FILL_RESULT = 123 (u8 status: ok, origin changed, no field, form posts elsewhere, failed)`.
+Messages carrying a password are built without reallocation and zeroed
+after sending, in both hosts and the chrome.
+
+**The chrome** (`apps/browser/autofill.odin`): a worker thread owns the
+socket — `hello`, `auth` with the pairing in
+`<profile>/vault-pair.json` (0600), `query`, `fill`, `save` — so a vault
+waiting for the person never stalls a frame. The tab's identity is the
+profile's identity handle (`identities.json` when it names the profile).
+
+- A login field focused by the person (within 1.5 s of a key or click in
+  the page) opens the dropdown under it; one the page focused itself (an
+  `autofocus`) arms it and **Down** opens it, as in other browsers. Down/Up
+  choose, Enter fills, Escape closes; every other key goes to the page.
+  Rows: the logins for this origin and identity, "Open Passwords"; or
+  "Locked — unlock", or "Connect to Passwords…", or "Open Passwords" when
+  the vault is not running.
+- **Pairing** is started from the dropdown: the browser shows the six-digit
+  code in the list while the vault shows it in its prompt.
+- **Fill login** from the address bar's key icon (shown when the vault has
+  logins for the page) or the ⋯ menu opens the same list under the address
+  bar and fills the page's login field.
+- **Saving**: after a submit, a bar across the page — "Save this login to
+  <identity>?" or "Update the password for <user>?" — takes the keyboard
+  (Enter answers, Escape is "Not now"). It is an update when the vault has a
+  login with that username here, or when a change-password form's old
+  password is the one just filled. A submit of exactly the password just
+  filled offers nothing; the browser recognises it by an HMAC under a
+  per-process key, never by keeping it. The password lives in the bar until
+  the bar closes. `save` gained an `id`: an update, under the same origin
+  and identity bindings as a fill, and the person's approval; the old
+  password goes to the item's history.
+
+**The engines' own password storage is off.** Chromium:
+`credentials_enable_service`, `credentials_enable_autosignin`,
+`profile.password_manager_enabled`, `autofill.profile_enabled`,
+`autofill.credit_card_enabled` are set false on the global request context
+at start (persisted in the profile's Preferences). Checked rather than
+assumed: with them unset, a hand-typed sign-in left the username in the
+profile's `Web Data` (Chromium's form history) — with them set, neither the
+username nor the password appears in any profile file; `Login Data` stays
+empty either way (Alloy-style CEF has no save bubble). Firefox:
+`signon.rememberSignons`, `signon.autofillForms`, `signon.generation.enabled`,
+breach alerts and Relay off, `browser.formfill.enable` off (form history
+would keep usernames), address and card autofill off, and
+`browser.sessionstore.privacy_level` 2 (no form contents in the session
+store). `autofill-test.sh` ends by searching both engines' profiles for
+every password it used: none appears.
+
+**Tests.** `browser --selftest` covers the messages, origins, the pairing
+code and file, the identity handle and the controller (dropdown, keys,
+fill, save or update). `apps/browser/autofill-test.sh <browser> <vault>`
+runs the window offscreen (`browser autofill-run`) on both engines against
+a local HTTPS site (`testdata/autofill/server.py`, `*.localhost`, a
+self-signed certificate trusted only in test mode — Chromium by its
+public-key hash, Firefox's BiDi session by `acceptInsecureCerts`) and a
+headless vault: pairing; fill and sign in while the page polls its fields
+(nothing before the pick); React-style controlled inputs; a lookalike host
+and plain http (nothing offered, a forced fill refused); a cross-origin
+iframe (never reported); a form whose action moves to another origin on
+focus (fill refused, nothing posted); the page navigating while the vault
+asks (dropped by the host); locked, absent and a forged pairing key; a
+password change accepted as an update; a hand-typed login declined; and
+the profile search. `apps/browser/autofill-e2e.sh` does the account flow
+against `cloud/dev`: sign up, a second device enrolled, fill, sign in,
+change the password, "Update password", the phone reads the new password
+after a sync; the work identity's profile gets nothing.
+
+**Deviations from the plan above, and why.** `PB_FILL` carries an OTP code
+too (the one-time-code field kind). `PB_FIELD_FOCUS` carries the field's
+rectangle and the host's origin, `PB_FORM_SUBMIT` the old password, and
+`PB_FILL_RESULT` is new: the person is told why a fill did not happen.
+Chromium fills through the renderer rather than `ExecuteJavaScript`, so no
+source text ever contains a value. `vault autofill` gained `--locked`,
+`--delay` and `--local/--vault-file`, and syncs after a save; the window
+syncs after a save too.
 
 ## The assistant never reads the vault
 
@@ -494,7 +576,15 @@ and the error names the source.
    question. It is the vault's only third-party request.
 4. **Hiding item counts** with padding rows: cheap to add, changes storage by
    a constant factor.
-5. **Hosted Supabase**: the vault adds no new dependency on the gateway rule,
+5. **Autofill's "Update password?" for hand-typed sign-ins.** Today it is
+   offered whenever the username matches a saved login, because the vault
+   will not tell a paired program whether a password equals the stored one.
+   A vault-side comparison that only answers inside its own prompt would
+   remove the false offers at no cost to that rule.
+6. **Autofill in same-origin iframes.** Off today (a frame's report is
+   dropped). Allowing frames whose origin equals the top-level origin is safe
+   by the same rule and needs the frame offset in the field rectangle.
+7. **Hosted Supabase**: the vault adds no new dependency on the gateway rule,
    but the assistant restriction depends on `public.devices.kind`, which only
    accounts' `mint_scoped_session` sets — keep it that way.
 
@@ -512,6 +602,11 @@ and the error names the source.
 - **KDBX 3, key files, Twofish** are refused rather than read.
 - **Search** covers titles, usernames, URLs and tags in memory; there is no
   index, which is fine for thousands of items and not for millions.
-- **The autofill client in the browser** is specified above, not built here.
+- **Autofill gaps**: no fill inside iframes, even same-origin ones; no
+  shadow-DOM login fields; logins without a `<form>` are seen on Enter in the
+  password field, not on a button click; no "suggest a strong password" on
+  new-password fields; the browser cannot tell an unchanged password on a
+  hand-typed sign-in (no oracle, by design), so it offers "Update" whenever
+  the username matches; one fill at a time per window.
 - **Memory**: the account vault holds every decrypted item while unlocked,
   like the local one; `mlock` is still not used (SECURITY.md).

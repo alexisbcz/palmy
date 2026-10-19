@@ -293,6 +293,21 @@ program running as you can read the browser's profile (and its pairing key),
 ptrace the browser or this process, or replace the browser binary. Pairing
 and confirmation make that visible; they are not a sandbox.
 
+**Autofill against web pages** (the browser's side, cloud/docs/vault.md).
+The browser names the top-level origin its engine host reports — never a
+frame's, never one the page states — and the host checks it again before a
+fill reaches the page; a page that navigated meanwhile gets nothing. Fields
+in iframes are never reported or filled. A form that posts to another origin
+is not filled. A page reads empty fields until the person picks a login, and
+the password reaches the page only as the field's value. What this cannot
+stop: once a field holds the password, script on that origin can read it —
+the origin the login was saved for is trusted with it, as in every browser;
+a site with an XSS hole hands it to the attacker after a fill. Pages see
+`input` events with no data and `change`; nothing names the vault. A save or
+update offered after a submit carries what the page submitted; the person
+decides, and an update never tells the browser whether the stored password
+was the same (that would let a paired program test guesses unasked).
+
 **Post-quantum, partly.** Keys sealed to identities use ML-KEM-768 alongside
 X25519, so recorded ciphertext is not opened by a future quantum computer
 breaking X25519 alone. Signatures (Ed25519) and the one-time device enrolment

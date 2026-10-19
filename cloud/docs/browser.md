@@ -38,6 +38,8 @@ glibc (see *Packaging*).
 | prefers-color-scheme follows the chrome | yes (DevTools emulation) | yes, read at engine start |
 | Sandbox | Chromium's: user, PID and net namespaces + seccomp (observed) | Firefox's own content sandbox |
 | Runs headless (screenshots, tests) | yes | yes |
+| Logins from the vault (fill, save, update) | yes (autofill.js in the renderer, before page script) | yes (autofill.js in a BiDi sandbox) |
+| The engine's own password manager | off (prefs checked) | off (prefs) |
 
 ## Research
 
@@ -241,9 +243,8 @@ line, and the tab strip always shows which engine is drawing.
   error, never the page.
 - **Chromium**: namespace sandbox + seccomp for renderers (observed), no
   setuid helper shipped; `PALM_BROWSER_NO_SANDBOX=1` turns it off and the host
-  says so in its log. Passwords use Chromium's `basic` store (no keyring on
-  Palmframe), i.e. obfuscated, not encrypted against a local attacker. No
-  session bus is used.
+  says so in its log. Chromium's password manager and form autofill are off;
+  passwords live in the vault (below). No session bus is used.
 - **Firefox**: its own content sandbox; the compositor it talks to exists
   only for this window, so Firefox sees no other client and no real seat.
   BiDi listens on 127.0.0.1 on a random port for the life of the window.
@@ -255,6 +256,41 @@ line, and the tab strip always shows which engine is drawing.
   with that directory only.
 - **Sync** goes through a session scoped to the profile's identity; the
   database refuses other identities' rows (tested, below).
+- **Autofill** names only the top-level origin the engine host knows, the
+  host re-checks it before a fill, iframes are never filled, and a page sees
+  nothing before the person picks a login (below, and cloud/docs/vault.md).
+- **Test mode**: `PALM_BROWSER_TEST_CERTS=1` makes the Firefox session accept
+  self-signed certificates and `PALM_BROWSER_TEST_SPKI=<hash>` makes
+  Chromium trust exactly one public key; both say so in the host log, and
+  only the autofill tests set them.
+
+## Autofill: logins from the vault
+
+The browser is the vault's autofill client (`autofill.odin`; protocol and
+security in cloud/docs/vault.md, "The browser side"). Focus a login field
+and a list of this identity's logins for the page opens under it — Down,
+Enter, Escape; a field the page focused itself opens on Down. The first
+time, the list offers to connect, and the six-digit code shows in the list
+while the vault asks. The key in the address bar (and "Fill login" in the
+menu) fills from there. After a submit the bar offers "Save this login to
+<identity>?" or "Update the password for …?", and takes the keyboard.
+
+![The list under the field (Chromium)](../../apps/browser/shots/autofill-dropdown-chromium-light.png)
+
+![Pairing, dark (Firefox)](../../apps/browser/shots/autofill-pairing-firefox-dark.png)
+
+![Update the password (Chromium, dark)](../../apps/browser/shots/autofill-update-chromium-dark.png)
+
+**Differences between the engines.** None in behaviour the tests can see.
+In mechanism: Chromium runs the page script in the page's own world (from
+`OnContextCreated`, before page script, everything it uses captured at that
+moment) and reaches it with a wake-up event whose name is random; Firefox
+runs it in a separate realm (a BiDi sandbox) that page script cannot see at
+all — the stronger isolation. Chromium skips `autofocus` on a document
+reached by an address-bar navigation after the first; the field is then
+reported when the page or the person focuses it. Firefox's BiDi session
+accepts self-signed certificates for the whole session in test mode;
+Chromium trusts exactly one key.
 
 ## Bookmarks, designed to sync — and syncing
 
@@ -379,13 +415,25 @@ What the distribution still has to provide or decide:
 
 ## Testing
 
-- `browser --selftest` — 660 checks: protocol round-trips (and a truncated
+- `browser --selftest` — 705 checks (660 before autofill): protocol round-trips (and a truncated
   frame refused), fractional keys, the merge laws, tree repair rules, history
   tombstones, omnibox input resolution, Netscape import/export, every
   internal page rendered offscreen, tab bookkeeping, and **both engines
   rendering a real page whose background colour is then found in the
   window's pixels** (skipped per engine when not installed).
 - `apps/browser/sync-e2e.sh` — sync against `cloud/dev`, 30/30.
+- `apps/browser/autofill-test.sh <browser> <vault>` — autofill on both
+  engines against a loopback HTTPS site and a headless vault, every security
+  case, then a search of both profiles for every password used: 56/56.
+- `apps/browser/autofill-e2e.sh <browser> <vault> <accounts>` — the account
+  flow against `cloud/dev`: fill, sign in, change the password, update,
+  read it on a second device: 35/35.
+- `browser autofill-run --url … --steps …` — the window offscreen, keys and
+  checks against the real vault socket; the autofill shots were made with it.
+- `apps/browser/autofill-demo.mp4` — the real window (Chromium) on a private
+  compositor, keyboard only, from `autofill-demo.txt`: connect to Passwords,
+  fill, sign in, change the password on the site, update it in the vault
+  (an account identity on `cloud/dev`).
 - `cloud/dev/test.sh` — `browser_bookmarks.sql` 27/27.
 - `browser shot OUT.png URL [--engine] [--theme dark] [--omnibox TEXT]
   [--overlay menu|identity|bookmark|downloads|shortcuts]` — the window
@@ -412,7 +460,6 @@ not sync. Sync has no background timer. No per-site permissions UI
 denies, Firefox asks inside the page).
 
 **Chromium.** The scrollbar keeps Chromium's native colours in dark mode.
-Passwords are not saved to an encrypted store.
 
 **Firefox.** No find counts; download progress unknown until the end;
 `window.open` loses its `opener`; page dialogs are Firefox's own (drawn
@@ -435,20 +482,24 @@ image set with `wl_pointer.set_cursor` (rather than cursor-shape) is ignored.
    (would mean a modified Firefox, which this design avoids on purpose).
 5. **History sync** — designed (grow-only set + tombstones), not built, and
    arguably should stay local.
-6. **Password storage** — leave to the vault work, or let each engine keep
-   its own (today: Chromium's basic store, Firefox's off).
+6. **Password storage** — decided: the vault only; both engines' own
+   password managers and form history are off.
 
 ## Files
 
 ```
 apps/browser/                 the app (Odin): chrome, store, sync, CLI, self-test
   engine.odin                 the engine interface and the host-process transport
+  autofill.odin               the vault client, the dropdown, the save bar
+  afrun.odin                  `browser autofill-run`: scripted offscreen runs
+  engine/autofill.js          the page half of autofill, both engines
   pb/                         the protocol (Odin), shared with the Gecko host
   engine/proto.h              the protocol (C reference)
   engine/cef/host.c, build.sh the Chromium host
   engine/gecko/               the Firefox host: compositor, seat, BiDi
   engine/fonts.conf           fontconfig for systems without /etc/fonts
   shots/ demo.mp4 demo-firefox.mp4 demo.txt testdata/popups.html sync-e2e.sh
+  autofill-test.sh autofill-e2e.sh testdata/autofill/ autofill-demo.mp4
 cloud/supabase/migrations/20261019400000_browser_bookmarks.sql
 cloud/supabase/tests/browser_bookmarks.sql
 distro/recipes/browser/       generated (generate.sh block)
