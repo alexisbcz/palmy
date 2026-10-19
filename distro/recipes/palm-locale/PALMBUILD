@@ -21,6 +21,7 @@ file     = ${PALMFRAME_ROOT}/distro/locale/es/countries.msg -> /usr/share/palm/l
 file     = ${PALMFRAME_ROOT}/distro/locale/es/greeter.msg -> /usr/share/palm/locale/es/greeter.msg mode 0644
 file     = ${PALMFRAME_ROOT}/distro/locale/es/installer.msg -> /usr/share/palm/locale/es/installer.msg mode 0644
 file     = ${PALMFRAME_ROOT}/distro/locale/es/keyboards.msg -> /usr/share/palm/locale/es/keyboards.msg mode 0644
+file     = ${PALMFRAME_ROOT}/distro/locale/fr/accounts.msg -> /usr/share/palm/locale/fr/accounts.msg mode 0644
 file     = ${PALMFRAME_ROOT}/distro/locale/fr/countries.msg -> /usr/share/palm/locale/fr/countries.msg mode 0644
 file     = ${PALMFRAME_ROOT}/distro/locale/fr/greeter.msg -> /usr/share/palm/locale/fr/greeter.msg mode 0644
 file     = ${PALMFRAME_ROOT}/distro/locale/fr/installer.msg -> /usr/share/palm/locale/fr/installer.msg mode 0644

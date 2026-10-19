@@ -95,14 +95,13 @@ module and writing `/usr/lib/modules/<release>/modules.dep.bb` into the
 linux package's directory. On a real machine palm-init runs it for every
 device a hotplug adds, each time rescanning 35 MB.
 
-The fix is outside this area, two lines:
+Fixed after the merge, as proposed here:
 
 - `distro/recipes/generate.sh`: `BB_SKIP=" init linuxrc chat modprobe insmod
   depmod modinfo "` (busybox's `lsmod` and `rmmod` are fine and stay);
 - `distro/recipes/linux/PALMBUILD`: `symlink = /usr/bin/modprobe ->
   palm-modules` (palm-modules accepts `-a -b -q --` and behaves as modprobe).
-  The `modules` service can then be dropped, since palm-init's hotplug
-  covers it.
+  The `modules` service is dropped, since palm-init's hotplug covers it.
 
 The symlink cannot be added before the first change: palm refuses two
 packages owning `/usr/bin/modprobe`, and the image would not build.

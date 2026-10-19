@@ -133,7 +133,7 @@ def main():
         # /boot/vmlinuz is left out of the initramfs on purpose (build.sh: the
         # kernel is on the ISO beside it), so verify reports exactly that.
         out, _ = m.run("ls /etc/palm/services.off; ps -o args | grep -c '[p]alm-login'; "
-                       "palm verify | grep -v -e 'modified (config)' -e 'problem(s) found' -e '^linux: /boot/vmlinuz: missing$'; echo verify-other=$?")
+                       "palm verify | grep -v -e 'modified (config)' -e 'problem(s) found' -e '^linux: /boot/vmlinuz: missing$' -e '^linux: /boot/efi/vmlinuz: missing$'; echo verify-other=$?")
         m.check("palm-login and getty-ttyS0 masked (palm-login not running); palm verify finds only the left-out kernel",
                 "palm-login" in out and "getty-ttyS0" in out and re.search(r"^0$", out, re.M) is not None
                 and "verify-other=1" in out, out)

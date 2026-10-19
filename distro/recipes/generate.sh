@@ -135,7 +135,7 @@ EOF
 # busybox's PPP `chat`, which collides with the chat application's name, and
 # passwd, which distro/passwd replaces (busybox is not setuid, so its passwd
 # works only for root).
-BB_SKIP=" init linuxrc chat passwd "
+BB_SKIP=" init linuxrc chat passwd modprobe insmod depmod modinfo "
 BB_VER="$( (set +o pipefail; "$BUSYBOX" 2>/dev/null | head -1 | sed -n "s/^BusyBox v\([0-9.]*\).*/\1/p") )"
 {
 	header " from \`busybox --list\`"
@@ -577,3 +577,6 @@ depend   = tzdata palm-locale
 depend   = $(grep -v '^#' "$DISTRO/apps/default.list" | grep -vx -e wm -e greeter -e '' | tr '\n' ' ' | sed 's/ $//')
 EOF
 } | emit palmframe
+
+# --- firmware: one package per host firmware package (distro/recipes/linux-firmware)
+"$HERE/linux-firmware/generate.sh"

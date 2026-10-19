@@ -135,7 +135,7 @@ fakeroot -- bash -euo pipefail -c '
 	mknod -m 0600 "$rootfs/dev/console" c 5 1
 	mknod -m 0666 "$rootfs/dev/null" c 1 3
 
-	(cd "$rootfs" && find . -path ./boot/vmlinuz -prune -o -print | LC_ALL=C sort |
+	(cd "$rootfs" && find . \( -path ./boot/vmlinuz -o -path ./boot/efi \) -prune -o -print | LC_ALL=C sort |
 		cpio --quiet -o -H newc --reproducible) |
 		zstd -q -T0 -"$level" >"$out"
 ' fakeroot-live "$PALM" "$ROOTFS" "$REPO" "$KEYS" "$ISOROOT/boot/initramfs.zst" "$ZSTD_LEVEL" \
