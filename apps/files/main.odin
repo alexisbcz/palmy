@@ -44,6 +44,9 @@ main :: proc() {
 	// opens a window and never reads the real home directory; see shot.odin.
 	args := os.args[1:]
 	for a, i in args {
+		if a == "--selftest" {
+			os.exit(selftest())
+		}
 		if a == "--shots" {
 			dir := i + 1 < len(args) ? args[i + 1] : "shots"
 			os.exit(shots(dir))
@@ -72,6 +75,7 @@ main :: proc() {
 	st.tz_offset = local_offset()
 	st.now = time.now()
 	build_places(&st)
+	drive_init(&st, app)
 
 	home := os.get_env("HOME", context.temp_allocator)
 	if home == "" {
@@ -197,6 +201,12 @@ handle_keys :: proc(ui: ^p.Ctx, st: ^State, app: ^p.App) {
 		}
 	}
 
+	// The Share… prompt owns the keyboard while it is open.
+	if st.drive.share_open {
+		drive_share_keys(ui, st)
+		return
+	}
+
 	// The context menu owns the keyboard while it is open.
 	if st.menu_open {
 		items := menu_items(st)
@@ -240,6 +250,12 @@ handle_keys :: proc(ui: ^p.Ctx, st: ^State, app: ^p.App) {
 	}
 	if p.shortcut(ui, 'i', {.Ctrl}) || (!typing && plain(ui, 'i')) {
 		st.inspector = !st.inspector
+	}
+	if p.shortcut(ui, 'x', {.Ctrl}) {
+		drive_cut(st)
+	}
+	if p.shortcut(ui, 'v', {.Ctrl}) {
+		drive_paste(st)
 	}
 	if p.shortcut(ui, 'c', {.Ctrl}) {
 		do_menu(st, .Copy_Path)
@@ -469,6 +485,10 @@ Menu_Action :: enum {
 	Toggle_Hidden,
 	View_List,
 	View_Grid,
+	Cut,
+	Paste,
+	Share,
+	Copy_Link,
 }
 
 Menu_Item :: struct {
@@ -519,6 +539,26 @@ menu_items :: proc(st: ^State) -> []Menu_Item {
 	append(
 		&out,
 		Menu_Item {
+			label = "Cut",
+			shortcut = "Ctrl X",
+			icon = ICON_SCISSORS,
+			action = .Cut,
+			disabled = !has,
+		},
+	)
+	append(
+		&out,
+		Menu_Item {
+			label = st.drive.cut == "" ? "Paste" : tfmt("Paste %s", base_of(st.drive.cut)),
+			shortcut = "Ctrl V",
+			icon = ICON_CLIPBOARD_PASTE,
+			action = .Paste,
+			disabled = st.drive.cut == "",
+		},
+	)
+	append(
+		&out,
+		Menu_Item {
 			label = "Enclosing Folder",
 			shortcut = "Backspace",
 			icon = ICON_CORNER_UP_LEFT,
@@ -526,6 +566,13 @@ menu_items :: proc(st: ^State) -> []Menu_Item {
 			disabled = st.cwd == "/",
 		},
 	)
+	// Anything inside a drive can be shared and linked, as its owner.
+	if has {
+		if _, rel, in_drive := drive_of(&st.drive, e.path); in_drive && rel != "" {
+			append(&out, Menu_Item{label = "Share…", icon = ICON_SHARE_2, action = .Share, rule = true, heading = "Drive"})
+			append(&out, Menu_Item{label = "Copy Link", icon = ICON_LINK, action = .Copy_Link})
+		}
+	}
 	append(
 		&out,
 		Menu_Item {
@@ -672,6 +719,18 @@ do_menu :: proc(st: ^State, a: Menu_Action) {
 		set_view(st, .List)
 	case .View_Grid:
 		set_view(st, .Grid)
+	case .Cut:
+		drive_cut(st)
+	case .Paste:
+		drive_paste(st)
+	case .Share:
+		if has {
+			drive_share_open(st, e.path)
+		}
+	case .Copy_Link:
+		if has {
+			drive_copy_link(st, e.path)
+		}
 	}
 	st.menu_open = false
 }
@@ -715,6 +774,9 @@ frame :: proc(ui: ^p.Ctx, st: ^State) {
 
 	if st.menu_open {
 		context_menu(ui, st)
+	}
+	if st.drive.share_open {
+		drive_share_dialog(ui, st)
 	}
 	toast(ui, st)
 }
@@ -1093,6 +1155,7 @@ list_view :: proc(ui: ^p.Ctx, st: ^State) {
 				hl ? "size-3 shrink-0 text-white/70" : "size-3 shrink-0 text-muted-foreground",
 			)
 		}
+		badge_icon(ui, drive_badge(&st.drive, e.path, e.name), hl)
 		p.end(ui)
 
 		meta := hl ? "text-[12] text-white/75 whitespace-nowrap" : "text-[12] text-muted-foreground whitespace-nowrap"
@@ -1279,10 +1342,38 @@ inspector :: proc(ui: ^p.Ctx, st: ^State) {
 	field(ui, "Size", e.is_dir ? "--" : e.size_text)
 	field(ui, "Modified", e.date_text)
 	field(ui, "Where", parent_of(e.path))
+	if id, _, in_drive := drive_of(&st.drive, e.path); in_drive {
+		state := "checking…"
+		switch drive_badge(&st.drive, e.path, e.name) {
+		case .Synced:
+			state = "synced"
+		case .Pending:
+			state = st.drive.offline ? "waiting to sync (offline)" : "waiting to sync"
+		case .Conflict:
+			state = "conflict: both versions kept"
+		case .None:
+		}
+		field(ui, "Drive", tfmt("%s · %s", id.handle, state))
+	}
 	if e.is_link {
 		field(ui, "Kind", "Alias")
 	}
 	p.end(ui)
+}
+
+// badge_icon is a drive file's sync state, after its name: a cloud with a
+// tick when it is synced, an arrow when a pass would move it, a warning for
+// a conflict. Outside a drive it draws nothing.
+badge_icon :: proc(ui: ^p.Ctx, b: Drive_Badge, hl: bool) {
+	switch b {
+	case .None:
+	case .Synced:
+		p.icon(ui, ICON_CLOUD_CHECK, hl ? "size-3.5 shrink-0 text-white/80" : "size-3.5 shrink-0 text-emerald-500")
+	case .Pending:
+		p.icon(ui, ICON_CLOUD_UPLOAD, hl ? "size-3.5 shrink-0 text-white/80" : "size-3.5 shrink-0 text-amber-500")
+	case .Conflict:
+		p.icon(ui, ICON_TRIANGLE_ALERT, hl ? "size-3.5 shrink-0 text-white" : "size-3.5 shrink-0 text-red-500")
+	}
 }
 
 field :: proc(ui: ^p.Ctx, label, value: string) {

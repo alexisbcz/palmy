@@ -110,6 +110,8 @@ State :: struct {
 
 	tz_offset:  i64, // seconds east of UTC, so dates read as local time
 	now:        time.Time,
+
+	drive:      Drive, // palm-drive's folders, badges, Share… (drive.odin)
 }
 
 // ---------------------------------------------------------------------------
@@ -429,6 +431,7 @@ go_to :: proc(st: ^State, path: string, record := true) {
 	st.sel = 0
 	st.top = 0
 	load_dir(st, st.cwd)
+	drive_refresh(st)
 }
 
 // reload re-reads the current directory and keeps the selection on the same
@@ -439,6 +442,7 @@ reload :: proc(st: ^State) {
 		name = strings.clone(e.name, context.temp_allocator)
 	}
 	load_dir(st, st.cwd)
+	drive_refresh(st)
 	if name != "" {
 		for v, i in st.vis {
 			if st.entries[v].name == name {

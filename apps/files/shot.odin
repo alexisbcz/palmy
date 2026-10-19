@@ -125,6 +125,43 @@ shots :: proc(dir: string) -> int {
 	step(off, app, &st)
 	shot(off, dir, "05-files-home", &n)
 
+	// Drive: two fabricated identities' folders, as palm-drive identities and
+	// status would describe them (no palm-drive is run), with a sync badge on
+	// each row and the Drive group of the context menu.
+	{
+		alice := fmt.tprintf("%s/Drive/alice", home)
+		work := fmt.tprintf("%s/Drive/alice.northwind", home)
+		_ = os.make_directory_all(fmt.tprintf("%s/Q3 Board pack", alice), os.perm(0o700))
+		_ = os.make_directory_all(work, os.perm(0o700))
+		for f in ([?]string{"notes.md", "report.txt", "report (conflicted copy, laptop, 2026-10-19 14.03).txt", "budget.xlsx"}) {
+			_ = os.write_entire_file(fmt.tprintf("%s/%s", alice, f), transmute([]u8)string("palmy fixture\n"))
+		}
+		// fmt reads braces as its own, so the JSON is put together by hand.
+		ids := strings.concatenate({
+			`{"ok":true,"identities":[{"handle":"alice","name":"Alice","kind":"personal","root":"`, alice,
+			`"},{"handle":"alice.northwind","name":"Northwind","kind":"work","root":"`, work, `"}]}`,
+		}, context.temp_allocator)
+		st.drive.ids = drive_parse_identities(ids)
+		for id in st.drive.ids {
+			append(&st.places, Place{id.name, id.root, ICON_CLOUD, drive_tint(id.kind), "Drive"})
+		}
+		status := strings.concatenate({
+			`{"identities":[{"handle":"alice","root":"`, alice,
+			`","offline":false,"actions":["would Upload_Change notes.md","would Conflict report.txt","would Download Q3 Board pack/deck.pptx"]}]}`,
+		}, context.temp_allocator)
+		st.drive.offline = drive_parse_status(status, &st.drive.badges, &st.drive.known)
+		go_to(&st, strings.clone(alice))
+		sync_place(&st)
+		st.sel = 2
+		st.menu_open = true
+		st.menu_sel = 0
+		st.menu_at = {520, 200}
+		step(off, app, &st)
+		step(off, app, &st)
+		shot(off, dir, "06-files-drive", &n)
+		st.menu_open = false
+	}
+
 	fmt.printfln("files --shots: %d PNGs in %s", n, dir)
 	return 0
 }
