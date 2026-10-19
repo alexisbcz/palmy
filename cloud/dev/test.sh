@@ -15,7 +15,7 @@ if ! docker exec "$(palm_db_container)" true 2>/dev/null; then
 	exit 6
 fi
 
-palm_psql -c 'create extension if not exists pgtap with schema extensions' >/dev/null
+palm_psql -c 'set client_min_messages = warning' -c 'create extension if not exists pgtap with schema extensions' >/dev/null
 
 files=()
 for f in "$PALM_SUPABASE_DIR"/tests/*.sql; do
