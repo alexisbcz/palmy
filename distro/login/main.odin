@@ -30,6 +30,10 @@ package login
 //	palm-login --test --sock PATH --shadow F [--passwd F] [--group F]
 //	                                             the protocol only, unprivileged:
 //	                                             sessions are reported, never started
+//	    [--session-sock PATH [--session-user U --session-uid N --session-leader PID]
+//	     [--vt-active F] [--utmp F]]
+//	                                             ...and the session socket, answering
+//	                                             for a pretend session (session_ipc.odin)
 //	palm-login --selftest                        crypt vectors, parsers, IPC round trip
 //	palm-login --hash PASSWORD [--salt S] [--rounds N]
 //	                                             a $6$ hash for /etc/shadow
@@ -96,6 +100,19 @@ Daemon :: struct {
 	// utmp, wtmp and lastlog; empty paths in --test mode, which records
 	// nothing.
 	utmp:           auth.Utmp_Paths,
+
+	// The session socket (session_ipc.odin): who it answers for, and a
+	// power action waiting for the session to end. -1 when there is none.
+	session_listen_fd: linux.Fd,
+	session_sock_path: string,
+	seat:           Seat_Session,
+	power_after:    string,
+	power_at:       time.Tick,
+	// Where the other logins are read from (utmp), and the unlock tally:
+	// /run/faillock on the system; in memory in --test mode.
+	others_utmp:    string,
+	faillock_dir:   string,
+	test_tally:     auth.Tally,
 }
 
 // The graphical seat's line in utmp and wtmp, and its utmp slot id.
@@ -120,6 +137,16 @@ main :: proc() {
 	d := new(Daemon)
 	d.paths = SYSTEM_PATHS
 	d.sock_path = SOCK_PATH
+	d.session_listen_fd = -1
+	d.faillock_dir = auth.FAILLOCK_DIR
+	d.others_utmp = auth.UTMP_PATH
+	test_seat: struct {
+		user:   string,
+		uid:    int,
+		leader: int,
+	}
+	test_seat.uid = -1
+	session_sock := ""
 
 	args := os.args[1:]
 	for i := 0; i < len(args); i += 1 {
@@ -142,6 +169,21 @@ main :: proc() {
 			d.paths.passwd = value(args, &i)
 		case "--group":
 			d.paths.group = value(args, &i)
+		case "--session-sock":
+			session_sock = value(args, &i)
+		case "--session-user":
+			// --test only: pretend palm-login started a session as this
+			// user, uid and leader pid, so the session socket's refusals
+			// can be exercised without root.
+			test_seat.user = value(args, &i)
+		case "--session-uid":
+			test_seat.uid, _ = strconv.parse_int(value(args, &i))
+		case "--session-leader":
+			test_seat.leader, _ = strconv.parse_int(value(args, &i))
+		case "--vt-active":
+			d.paths.vt_active = value(args, &i)
+		case "--utmp":
+			d.others_utmp = value(args, &i)
 		case "--selftest":
 			os.exit(selftest())
 		case "--hash":
@@ -172,6 +214,8 @@ main :: proc() {
 				"palm-login                     the login daemon (root only)\n" +
 				"palm-login --test --sock PATH --shadow FILE [--passwd FILE] [--group FILE]\n" +
 				"                               serve the protocol unprivileged; never starts a session\n" +
+				"    [--session-sock PATH [--session-user U --session-uid N --session-leader PID] [--vt-active F] [--utmp F]]\n" +
+				"                               ...and the session socket, for a pretend session\n" +
 				"palm-login --selftest          crypt vectors, account parsers, an IPC round trip\n" +
 				"palm-login --hash PASSWORD [--salt S] [--rounds N]\n" +
 				"                               print a $6$ hash for /etc/shadow",
@@ -191,6 +235,28 @@ main :: proc() {
 		fmt.eprintln("palm-login: --test needs its own --sock, not the system socket")
 		os.exit(2)
 	}
+	if d.test {
+		// Nothing of the system's in test mode unless named.
+		if d.paths.vt_active == VT_ACTIVE_PATH {
+			d.paths.vt_active = ""
+		}
+		if d.others_utmp == auth.UTMP_PATH {
+			d.others_utmp = ""
+		}
+		if session_sock == SESSION_SOCK_PATH {
+			fmt.eprintln("palm-login: --test needs its own --session-sock")
+			os.exit(2)
+		}
+	} else {
+		if session_sock == "" {
+			session_sock = SESSION_SOCK_PATH
+		}
+		if test_seat.user != "" {
+			fmt.eprintln("palm-login: --session-user is for --test mode only")
+			os.exit(2)
+		}
+	}
+	d.session_sock_path = session_sock
 
 	posix.signal(.SIGPIPE, auto_cast posix.SIG_IGN)
 	posix.signal(.SIGTERM, on_term)
@@ -237,6 +303,24 @@ main :: proc() {
 	d.listen_fd = fd
 	secure_socket(d)
 	fmt.eprintfln("palm-login: listening on %s%s", d.sock_path, d.test ? " (test mode: no sessions are started)" : "")
+	if d.session_sock_path != "" {
+		sfd, serr := listen_unix(d.session_sock_path)
+		if serr != "" {
+			fmt.eprintfln("palm-login: %s (no session socket: Lock and power from the session will not work)", serr)
+		} else {
+			d.session_listen_fd = sfd
+			// root's, 0600, until a session is running (seat_begin).
+			cpath := strings.clone_to_cstring(d.session_sock_path, context.temp_allocator)
+			if !d.test {
+				linux.chown(cpath, 0, 0)
+			}
+			linux.chmod(cpath, {.IRUSR, .IWUSR})
+			fmt.eprintfln("palm-login: session socket on %s", d.session_sock_path)
+		}
+	}
+	if d.test && test_seat.user != "" {
+		seat_begin(d, test_seat.user, u32(max(test_seat.uid, 0)), u32(max(test_seat.uid, 0)), linux.Pid(test_seat.leader), d.paths.vt_active != "")
+	}
 
 	if !d.test {
 		if user := autologin_user(); user != "" {
@@ -328,6 +412,8 @@ run :: proc(d: ^Daemon) {
 
 		fds := make([dynamic]linux.Poll_Fd, context.temp_allocator)
 		append(&fds, linux.Poll_Fd{fd = d.listen_fd, events = {.IN}})
+		// Always polled, so the indexes below stay fixed; -1 is ignored.
+		append(&fds, linux.Poll_Fd{fd = d.session_listen_fd, events = {.IN}})
 		for c in d.conns {
 			append(&fds, linux.Poll_Fd{fd = c.fd, events = {.IN}})
 		}
@@ -351,13 +437,26 @@ run :: proc(d: ^Daemon) {
 				append(&d.conns, c)
 			}
 		}
+		if .IN in fds[1].revents {
+			for {
+				cfd, ae := linux.accept(d.session_listen_fd, (^linux.Sock_Addr_Un)(nil), {.CLOEXEC})
+				if ae != .NONE {
+					break
+				}
+				c := new(Conn)
+				c.fd = cfd
+				c.session = true
+				c.peer, c.has_peer = peer_cred(cfd)
+				append(&d.conns, c)
+			}
+		}
 
 		// Walk backwards so closing a connection does not skip the next one.
 		for i := len(d.conns) - 1; i >= 0; i -= 1 {
 			c := d.conns[i]
 			readable := false
-			if i + 1 < len(fds) && fds[i + 1].fd == c.fd {
-				r := fds[i + 1].revents
+			if i + 2 < len(fds) && fds[i + 2].fd == c.fd {
+				r := fds[i + 2].revents
 				readable = .IN in r || .HUP in r || .ERR in r
 			}
 			if !conn_service(&d.handler, c, readable) {
@@ -396,6 +495,19 @@ supervise :: proc(d: ^Daemon) {
 		}
 	}
 
+	// The session asked for a power action and has not left yet.
+	if d.child_kind == .User && d.power_after != "" {
+		waited := time.tick_since(d.power_at)
+		if !d.term_sent && waited > POWER_GRACE {
+			fmt.eprintfln("palm-login: the session is still running %v after asking for %s; sending SIGTERM", POWER_GRACE, d.power_after)
+			signal_session(d.child, .SIGTERM)
+			d.term_sent = true
+		} else if d.term_sent && !d.kill_sent && waited > POWER_GRACE + KILL_GRACE {
+			signal_session(d.child, .SIGKILL)
+			d.kill_sent = true
+		}
+	}
+
 	if d.child_kind != .None {
 		return
 	}
@@ -427,6 +539,7 @@ session_ended :: proc(d: ^Daemon, status: u32) {
 	if d.child_kind == .User {
 		auth.record_logout(d.utmp, i32(d.child), SEAT_LINE, SEAT_ID)
 		auth.logf(.Info, "session of %q closed", d.child_user)
+		seat_end(d)
 	}
 	vt_return(d)
 
@@ -443,6 +556,19 @@ session_ended :: proc(d: ^Daemon, status: u32) {
 	if d.child_kind == .User {
 		d.quick_deaths = 0
 		d.next_start = {}
+		if d.power_after != "" {
+			// The session's teardown is done (utmp, the tty, its process
+			// group); now the machine. The greeter comes back only if that
+			// fails to happen within a minute.
+			auth.logf(.Notice, "the session has ended; running %s", d.power_after)
+			if why := run_power(d.power_after); why != "" {
+				fmt.eprintfln("palm-login: %s: %s", d.power_after, why)
+			} else {
+				d.next_start = time.tick_add(time.tick_now(), 60 * time.Second)
+			}
+			delete(d.power_after)
+			d.power_after = ""
+		}
 	}
 	d.child = 0
 	d.child_kind = .None
@@ -498,6 +624,11 @@ launch :: proc(d: ^Daemon, kind: Child_Kind, acct: auth.Account, groups: []u32, 
 	if vt_lend(d, acct) {
 		append(&full, fmt.tprintf("XDG_VTNR=%d", SESSION_VT))
 	}
+	if kind == .User && d.session_listen_fd >= 0 {
+		// Where the session's wm asks for Lock's password check and for
+		// Restart and Shut down (session_ipc.odin).
+		append(&full, fmt.tprintf("PALM_SESSION_SOCK=%s", d.session_sock_path))
+	}
 	append(&full, ..env)
 	spec := Session_Spec {
 		acct   = acct,
@@ -525,6 +656,7 @@ launch :: proc(d: ^Daemon, kind: Child_Kind, acct: auth.Account, groups: []u32, 
 	if kind == .User {
 		auth.record_login(d.utmp, i32(pid), SEAT_LINE, SEAT_ID, acct.name, acct.uid)
 		auth.logf(.Info, "session opened for %q (uid %d) on %s", acct.name, acct.uid, SEAT_LINE)
+		seat_begin(d, acct.name, acct.uid, acct.gid, pid, d.vt_lent)
 	}
 	d.child = pid
 	d.child_kind = kind
@@ -600,25 +732,16 @@ test_start :: proc(h: ^Handler, req: Start_Request) -> string {
 
 // daemon_power runs busybox's /sbin/poweroff or /sbin/reboot as root. Those
 // signal palm-init, which stops every service — this daemon included — and
-// takes the machine down; the reply goes out before that happens.
+// takes the machine down; the reply goes out before that happens. From the
+// greeter's socket only while no user session runs: the session has its
+// own way, with its own rules (session_ipc.odin).
 daemon_power :: proc(h: ^Handler, action: string) -> string {
 	d := (^Daemon)(h.data)
 	if d.child_kind == .User {
 		return "a user session is running"
 	}
-	prog := action == "poweroff" ? cstring("/sbin/poweroff") : cstring("/sbin/reboot")
-	argv := [2]cstring{prog, nil}
-	envp := [1]cstring{nil}
-	pid, e := linux.fork()
-	if e != .NONE {
-		return fmt.tprintf("fork: %v", e)
-	}
-	if pid == 0 {
-		linux.execve(prog, raw_data(argv[:]), raw_data(envp[:]))
-		linux.exit(127)
-	}
-	fmt.eprintfln("palm-login: the greeter asked for %s (pid %d)", action, pid)
-	return ""
+	fmt.eprintfln("palm-login: the greeter asked for %s", action)
+	return run_power(action)
 }
 
 test_power :: proc(h: ^Handler, action: string) -> string {
@@ -666,4 +789,8 @@ shutdown :: proc(d: ^Daemon) {
 	}
 	linux.close(d.listen_fd)
 	linux.unlink(strings.clone_to_cstring(d.sock_path, context.temp_allocator))
+	if d.session_listen_fd >= 0 {
+		linux.close(d.session_listen_fd)
+		linux.unlink(strings.clone_to_cstring(d.session_sock_path, context.temp_allocator))
+	}
 }

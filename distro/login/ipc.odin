@@ -19,6 +19,10 @@ package login
 // plus one request greetd does not have, power{action: "poweroff"|"reboot"},
 // which the greeter sends only when it knows it is talking to palm-login.
 //
+// The same framing serves the session socket (session_ipc.odin), whose
+// connections are marked `session` and answered by handle_session_request:
+// unlock and power from the running session, and nothing of greetd's.
+//
 // Each connection carries at most one session under configuration. The state
 // machine is greetd's: create_session asks for a secret, the answer either
 // authenticates the session or ends it with an auth_error, and only an
@@ -84,6 +88,12 @@ Conn :: struct {
 	// connection's further requests wait in `inbuf`.
 	held:     string,
 	held_at:  time.Tick,
+
+	// A connection to the session socket (session_ipc.odin), and who is at
+	// the other end of it (SO_PEERCRED, read when it was accepted).
+	session:  bool,
+	has_peer: bool,
+	peer:     Peer,
 }
 
 // Start_Request is what a successful start_session hands the daemon: who to
@@ -204,7 +214,6 @@ next_frame :: proc(buf: ^[dynamic]u8, allocator := context.temp_allocator) -> (p
 // Requests
 // ---------------------------------------------------------------------------
 
-@(private = "file")
 jstr :: proc(obj: json.Object, key: string) -> (string, bool) {
 	if v, ok := obj[key]; ok {
 		if s, is := v.(json.String); is {
@@ -264,6 +273,10 @@ handle_request :: proc(h: ^Handler, c: ^Conn, payload: string) -> (reply: string
 	obj, is_obj := v.(json.Object)
 	if !is_obj {
 		return reply_error("error", "the request is not a JSON object"), false, true
+	}
+
+	if c.session {
+		return handle_session_request(h, c, obj)
 	}
 
 	kind, _ := jstr(obj, "type")

@@ -247,6 +247,9 @@ LANG=fr_CA.UTF-8
 	// --- 3. IPC round trip --------------------------------------------------
 	ipc_round_trip()
 
+	// --- 4. the session socket ----------------------------------------------
+	session_socket_tests()
+
 	fmt.println(strings.repeat("-", 78, context.temp_allocator))
 	fmt.printfln("%d checks, %d failed", checks, failures)
 	return failures == 0 ? 0 : 1
@@ -686,5 +689,253 @@ ipc_round_trip :: proc() {
 			linux.close(fd4)
 		}
 		check("ipc: the daemon is still serving afterwards", alive)
+	}
+}
+
+// ---------------------------------------------------------------------------
+// The session socket (session_ipc.odin)
+// ---------------------------------------------------------------------------
+
+@(private = "file")
+start_test_daemon :: proc(dir, tag: string, extra: []string) -> (pid: linux.Pid, sock, ssock: string) {
+	sock = fmt.tprintf("%s/%s.sock", dir, tag)
+	ssock = fmt.tprintf("%s/%s.session.sock", dir, tag)
+	list := make([dynamic]cstring, context.temp_allocator)
+	for a in ([]string{
+		"palm-login", "--test", "--sock", sock, "--session-sock", ssock,
+		"--passwd", fmt.tprintf("%s/passwd", dir), "--shadow", fmt.tprintf("%s/shadow", dir),
+		"--group", fmt.tprintf("%s/group", dir),
+	}) {
+		append(&list, strings.clone_to_cstring(a, context.temp_allocator))
+	}
+	for a in extra {
+		append(&list, strings.clone_to_cstring(a, context.temp_allocator))
+	}
+	append(&list, nil)
+	envp := []cstring{nil}
+	logfd, _ := linux.open(
+		strings.clone_to_cstring(fmt.tprintf("%s/%s.log", dir, tag), context.temp_allocator),
+		{.WRONLY, .CREAT, .TRUNC},
+		{.IRUSR, .IWUSR},
+	)
+	p, fe := linux.fork()
+	if fe != .NONE {
+		return -1, sock, ssock
+	}
+	if p == 0 {
+		linux.dup2(logfd, 1)
+		linux.dup2(logfd, 2)
+		linux.execve("/proc/self/exe", raw_data(list[:]), raw_data(envp))
+		linux.exit(127)
+	}
+	linux.close(logfd)
+	for _ in 0 ..< 100 {
+		if f, ok := dial(ssock); ok {
+			linux.close(f)
+			break
+		}
+		time.sleep(20 * time.Millisecond)
+	}
+	return p, sock, ssock
+}
+
+@(private = "file")
+stop_test_daemon :: proc(pid: linux.Pid) {
+	if pid > 0 {
+		linux.kill(pid, .SIGTERM)
+		status: u32
+		linux.wait4(pid, &status, {}, nil)
+	}
+}
+
+@(private = "file")
+unlock_req :: proc(pw: string) -> string {
+	sb := strings.builder_make(context.temp_allocator)
+	strings.write_string(&sb, `{"type":"unlock","password":`)
+	json_quote(&sb, pw)
+	strings.write_string(&sb, "}")
+	return strings.to_string(sb)
+}
+
+@(private = "file")
+power_req :: proc(action: string, dry: bool, pw: Maybe(string) = nil) -> string {
+	sb := strings.builder_make(context.temp_allocator)
+	fmt.sbprintf(&sb, `{{"type":"power","action":"%s","dry_run":%v`, action, dry)
+	if p, ok := pw.?; ok {
+		strings.write_string(&sb, `,"password":`)
+		json_quote(&sb, p)
+	}
+	strings.write_string(&sb, "}")
+	return strings.to_string(sb)
+}
+
+// ask_once dials, asks one thing, hangs up.
+@(private = "file")
+ask_once :: proc(path, payload: string) -> Reply {
+	fd, ok := dial(path)
+	if !ok {
+		return {type = "no-connect"}
+	}
+	defer linux.close(fd)
+	return ask(fd, payload)
+}
+
+@(private = "file")
+session_socket_tests :: proc() {
+	dir := fmt.tprintf("/tmp/palm-login-session-selftest-%d", linux.getpid())
+	os.make_directory(dir, os.perm(0o700))
+	defer os.remove_all(dir)
+	write :: proc(path, text: string) {
+		_ = os.write_entire_file(path, transmute([]u8)text)
+	}
+	write(fmt.tprintf("%s/passwd", dir), FIXTURE_PASSWD)
+	write(fmt.tprintf("%s/shadow", dir), FIXTURE_SHADOW)
+	write(fmt.tprintf("%s/group", dir), FIXTURE_GROUP)
+	vt := fmt.tprintf("%s/active", dir)
+	write(vt, "tty1\n")
+	utmp := fmt.tprintf("%s/utmp", dir)
+	me := linux.getpid()
+	uid := u32(linux.getuid())
+
+	// The session as palm-login would have started it: this process is
+	// its leader, and runs as its uid.
+	pid, gsock, ssock := start_test_daemon(dir, "a", {
+		"--session-user", "palm", "--session-uid", fmt.tprintf("%d", uid),
+		"--session-leader", fmt.tprintf("%d", me), "--vt-active", vt, "--utmp", utmp,
+	})
+	defer stop_test_daemon(pid)
+	{
+		st: linux.Stat
+		linux.stat(strings.clone_to_cstring(ssock, context.temp_allocator), &st)
+		mode := transmute(u32)st.mode & 0o777
+		check("session: the socket is 0600", mode == 0o600, fmt.tprintf("%o", mode))
+	}
+
+	t0 := time.tick_now()
+	r := ask_once(ssock, unlock_req("wrong"))
+	took := time.tick_since(t0)
+	check("session: unlock with a wrong password is auth_error", r.type == "error" && r.error_type == "auth_error", r.description)
+	check("session: ...answered late", took >= 140 * time.Millisecond, fmt.tprintf("%v", took))
+	r = ask_once(ssock, unlock_req("palm"))
+	check("session: unlock with the session user's password", r.type == "success", r.description)
+	r = ask_once(ssock, unlock_req(""))
+	check("session: an empty password does not unlock", r.error_type == "auth_error", r.description)
+
+	r = ask_once(ssock, power_req("reboot", true))
+	check("session: power dry run, alone on the machine: allowed", r.type == "success", r.description)
+	r = ask_once(ssock, power_req("halt-and-catch-fire", true))
+	check("session: an unknown power action is refused", r.type == "error", r.description)
+	r = ask_once(ssock, create("palm"))
+	check("session: greetd requests are refused on the session socket", r.type == "error" && strings.contains(r.description, "does not take"), r.description)
+	r = ask_once(ssock, START)
+	check("session: start_session is refused on the session socket", r.type == "error", r.description)
+	r = ask_once(gsock, `{"type":"unlock","password":"palm"}`)
+	check("session: unlock is not a greeter request", r.type == "error" && strings.contains(r.description, "unknown"), r.description)
+
+	// Switched to another VT: not in front, so no power; unlock still works.
+	write(vt, "tty2\n")
+	r = ask_once(ssock, power_req("poweroff", true))
+	check("session: power is refused while the session is not on screen", r.type == "error" && strings.contains(r.description, "on screen"), r.description)
+	r = ask_once(ssock, unlock_req("palm"))
+	check("session: ...unlock is not", r.type == "success", r.description)
+	write(vt, "tty1\n")
+
+	// Someone else logged in (root on the serial console, alive: our pid).
+	auth.utmp_put(utmp, auth.make_utmp(auth.UT_USER_PROCESS, i32(me), "ttyS0", "S0", "root"))
+	r = ask_once(ssock, power_req("poweroff", true))
+	check(
+		"session: others logged in: power asks for a password (palm is in wheel)",
+		r.error_type == "auth_required" && strings.contains(r.description, "root on ttyS0"),
+		r.description,
+	)
+	r = ask_once(ssock, power_req("poweroff", true, "nope"))
+	check("session: ...a wrong one is refused", r.error_type == "auth_error", r.description)
+	r = ask_once(ssock, power_req("poweroff", true, "palm"))
+	check("session: ...the right one overrides", r.type == "success", r.description)
+	auth.utmp_put(utmp, auth.make_utmp(auth.UT_DEAD_PROCESS, i32(me), "ttyS0", "S0", ""))
+	r = ask_once(ssock, power_req("poweroff", true))
+	check("session: once they have logged out, no password", r.type == "success", r.description)
+
+	// The unlock rate limit (base 150 ms in test mode): after three
+	// failures the right password is refused unchecked until the wait ends.
+	{
+		for _ in 0 ..< 3 {
+			ask_once(ssock, unlock_req("wrong"))
+		}
+		r = ask_once(ssock, unlock_req("palm"))
+		check("session: unlock is rate limited", r.error_type == "auth_error" && strings.contains(r.description, "Too many"), r.description)
+		time.sleep(400 * time.Millisecond)
+		r = ask_once(ssock, unlock_req("palm"))
+		check("session: ...and works after the wait", r.type == "success", r.description)
+	}
+
+	// A process of the same user that is not part of the session: a
+	// grandchild whose parent has exited, so it hangs under init (or a
+	// subreaper), no longer below the session leader.
+	{
+		fds: [2]linux.Fd
+		linux.pipe2(&fds, {.CLOEXEC})
+		child, _ := linux.fork()
+		if child == 0 {
+			grand, _ := linux.fork()
+			if grand != 0 {
+				linux.exit(0)
+			}
+			for _ in 0 ..< 200 {
+				if pp, ok := proc_ppid(i32(linux.getpid())); ok && pp != i32(child) && pp != 0 {
+					break
+				}
+				time.sleep(5 * time.Millisecond)
+			}
+			rr := ask_once(ssock, unlock_req("palm"))
+			msg := fmt.tprintf("%s|%s", rr.type, rr.description)
+			linux.write(fds[1], transmute([]u8)msg)
+			linux.exit(0)
+		}
+		linux.close(fds[1])
+		status: u32
+		linux.wait4(child, &status, {}, nil)
+		buf: [256]u8
+		pf := [1]linux.Poll_Fd{{fd = fds[0], events = {.IN}}}
+		linux.poll(pf[:], 5000)
+		n, _ := linux.read(fds[0], buf[:])
+		linux.close(fds[0])
+		got := string(buf[:max(n, 0)])
+		check(
+			"session: a process of the same user outside the session is refused",
+			strings.has_prefix(got, "error|") && strings.contains(got, "process of the running session"),
+			got,
+		)
+	}
+
+	r = ask_once(ssock, power_req("reboot", false))
+	check("session: power{reboot} from the session is accepted (test mode ends nothing)", r.type == "success", r.description)
+
+	// Another user's session: our uid is not the one it was started as.
+	{
+		p2, _, s2 := start_test_daemon(dir, "b", {
+			"--session-user", "palm", "--session-uid", fmt.tprintf("%d", uid + 1), "--session-leader", fmt.tprintf("%d", me),
+		})
+		r2 := ask_once(s2, unlock_req("palm"))
+		check("session: another user is refused", r2.type == "error" && strings.contains(r2.description, "own user"), r2.description)
+		r3 := ask_once(s2, power_req("poweroff", true))
+		check("session: ...for power too", r3.type == "error" && strings.contains(r3.description, "own user"), r3.description)
+		stop_test_daemon(p2)
+	}
+	// A session we are not part of (its leader is a kernel thread).
+	{
+		p3, _, s3 := start_test_daemon(dir, "c", {
+			"--session-user", "palm", "--session-uid", fmt.tprintf("%d", uid), "--session-leader", "2",
+		})
+		r4 := ask_once(s3, power_req("poweroff", true))
+		check("session: a process outside the session is refused", r4.type == "error" && strings.contains(r4.description, "process of the running session"), r4.description)
+		stop_test_daemon(p3)
+	}
+	// No session at all (the greeter is up).
+	{
+		p4, _, s4 := start_test_daemon(dir, "d", {})
+		r5 := ask_once(s4, unlock_req("palm"))
+		check("session: with no session running, nothing is answered for", r5.type == "error" && strings.contains(r5.description, "no user session"), r5.description)
+		stop_test_daemon(p4)
 	}
 }

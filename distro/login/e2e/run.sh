@@ -36,7 +36,7 @@ mkdir -p /run/test/greeter-home /run/test/palm-home
 chmod 777 /run/test
 chown 900:900 /run/test/greeter-home
 chown 1000:1000 /run/test/palm-home
-install -m 644 "$HERE/greeter-client.py" "$HERE/stuck-greeter.py" /run/test/
+install -m 644 "$HERE/greeter-client.py" "$HERE/stuck-greeter.py" "$HERE/session-client.py" /run/test/
 # busybox's who and last read the records palm-login writes, exactly as on
 # the installed system.
 install -m 755 "$ROOT/distro/out/busybox" /run/test/busybox
@@ -98,5 +98,31 @@ expect "autologin started the session as palm"  grep -q "uid=1000" /run/test/aut
 echo "=== 3. a greeter that will not exit after start_session"
 daemon 13 PALM_GREETER_CMD="/usr/bin/python3 /run/test/stuck-greeter.py"
 expect "it was terminated and the session ran"  test -e /run/test/stuck-done
+
+echo "=== 4. the session socket: unlock and power from the session, refusals from outside it"
+rm -f /run/test/powered /run/test/session-ready /run/test/session-client.txt /run/test/outsider-*.txt
+outsiders() {
+	for _ in $(seq 50); do [ -e /run/test/session-ready ] && break; sleep 0.1; done
+	# palm again, but not a process of the session (started from here).
+	setpriv --reuid=1000 --regid=1000 --clear-groups /usr/bin/python3 /run/test/session-client.py outsider
+	# Another user: the socket is palm's, 0600, while palm's session runs.
+	setpriv --reuid=900 --regid=900 --clear-groups /usr/bin/python3 /run/test/session-client.py outsider
+	ls -ln /run/palm-login.session.sock > /run/test/sock-during.txt
+}
+outsiders &
+daemon 12 PALM_AUTOLOGIN=palm PALM_DEFAULT_SESSION="/usr/bin/python3 /run/test/session-client.py" PALM_GREETER_CMD="/bin/sleep 30" | tee /run/test/daemon4.log
+wait
+echo "--- what the session and the outsiders saw"; cat /run/test/session-client.txt /run/test/outsider-*.txt; cat /run/test/powered
+expect "the session gets PALM_SESSION_SOCK, palm's, 0600"  grep -q "^sock=/run/palm-login.session.sock uid=1000 mode=600" /run/test/session-client.txt
+expect "unlock: a wrong password is refused late"          grep -q "^unlock wrong: error auth_error after [1-9]" /run/test/session-client.txt
+expect "unlock: the faillock tally is the one doas uses"   test -f /run/faillock/1000
+expect "unlock: the right password is accepted"           grep -q "^unlock right: success" /run/test/session-client.txt
+expect "power: a dry run from the session is allowed"     grep -q "^power dry run: success" /run/test/session-client.txt
+expect "power: palm outside the session is refused"       grep -q "^outsider uid=1000: error only a process of the running session" /run/test/outsider-1000.txt
+expect "power: another user cannot even connect"          grep -q "^outsider uid=900: no-connect" /run/test/outsider-900.txt
+expect "power: reboot from the session is accepted"       grep -q "^power reboot: success" /run/test/session-client.txt
+expect "once ending, the socket answers nothing more"     grep -q "^unlock once ending: error the session is already ending" /run/test/session-client.txt
+expect "the session ended, then /sbin/reboot ran as root" sh -c 'grep -q "uid=0" /run/test/powered && grep -n "session of \"palm\" closed\|running /sbin/reboot" /run/test/daemon4.log | head -1 | grep -q closed'
+expect "no greeter was started in between"                sh -c '! grep -q "started \[\"/bin/sleep\"" /run/test/daemon4.log'
 
 exit $fail

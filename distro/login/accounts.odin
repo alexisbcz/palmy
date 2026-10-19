@@ -20,6 +20,8 @@ Paths :: struct {
 	localtime:   string,
 	// The session hooks (session.odin); "" runs none.
 	session_d:   string,
+	// The active VT's name ("tty1"): whether the session is on screen.
+	vt_active:   string,
 }
 
 SYSTEM_PATHS :: Paths {
@@ -30,6 +32,7 @@ SYSTEM_PATHS :: Paths {
 	timezone    = "/etc/timezone",
 	localtime   = "/etc/localtime",
 	session_d   = SESSION_HOOK_DIR,
+	vt_active   = VT_ACTIVE_PATH,
 }
 
 read_text :: auth.read_text

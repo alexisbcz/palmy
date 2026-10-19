@@ -225,3 +225,60 @@ record_boot :: proc(p: Utmp_Paths, uptime_sec: i64) {
 	utmp_put(p.utmp, r)
 	wtmp_append(p.wtmp, r)
 }
+
+// Login is one live login from utmp, as `who` would print it.
+Login :: struct {
+	user: string,
+	line: string,
+	pid:  i32,
+}
+
+@(private = "file")
+cstr_field :: proc(b: []u8, allocator := context.allocator) -> string {
+	n := 0
+	for n < len(b) && b[n] != 0 {
+		n += 1
+	}
+	return strings.clone(string(b[:n]), allocator)
+}
+
+// utmp_logins lists the USER_PROCESS records of utmp whose process is still
+// alive, leaving out the line `skip_line` (the graphical seat's own). A
+// record whose process has gone is a session that ended without its logout
+// being written (a crash, a killed getty) and is not a login any more. Read
+// under a shared lock, like getutent(3).
+utmp_logins :: proc(path: string, skip_line: string, allocator := context.allocator) -> []Login {
+	if path == "" {
+		return nil
+	}
+	fd, e := linux.open(strings.clone_to_cstring(path, context.temp_allocator), {.NOFOLLOW, .CLOEXEC})
+	if e != .NONE {
+		return nil
+	}
+	defer linux.close(fd)
+	lock_whole(fd, .RDLCK)
+	defer lock_whole(fd, .UNLCK)
+	out := make([dynamic]Login, allocator)
+	off: i64 = 0
+	for {
+		r: Utmp
+		n, re := linux.pread(fd, ([^]u8)(&r)[:size_of(Utmp)], off)
+		if re != .NONE || n < size_of(Utmp) {
+			break
+		}
+		off += size_of(Utmp)
+		if r.type != UT_USER_PROCESS || r.pid <= 0 || r.user[0] == 0 {
+			continue
+		}
+		line := cstr_field(r.line[:], context.temp_allocator)
+		if line == skip_line {
+			continue
+		}
+		// kill(pid, 0): EPERM still means the process exists.
+		if ke := linux.kill(linux.Pid(r.pid), linux.Signal(0)); ke != .NONE && ke != .EPERM {
+			continue
+		}
+		append(&out, Login{user = cstr_field(r.user[:], allocator), line = strings.clone(line, allocator), pid = r.pid})
+	}
+	return out[:]
+}

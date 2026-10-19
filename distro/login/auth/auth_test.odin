@@ -223,3 +223,28 @@ test_utmp :: proc(t: ^testing.T) {
 	w, _ = read_text(p.wtmp)
 	testing.expect_value(t, len(w), 5 * size_of(Utmp))
 }
+
+@(test)
+test_utmp_logins :: proc(t: ^testing.T) {
+	dir := tmpdir("utmp-logins")
+	defer os.remove_all(dir)
+	p := Utmp_Paths{fmt.tprintf("%s/utmp", dir), fmt.tprintf("%s/wtmp", dir), fmt.tprintf("%s/lastlog", dir)}
+	me := i32(linux.getpid())
+	record_boot(p, 30)
+	// The graphical seat (skipped), root on the serial console (alive: our
+	// own pid), a login whose process is gone (no such pid), and a line
+	// that logged out.
+	record_login(p, me, "seat0", "s0", "palm", 1000)
+	record_login(p, me, "ttyS0", "S0", "root", 0)
+	record_login(p, 0x3ffffff0, "tty2", "2", "palm", 1000)
+	record_login(p, me, "tty3", "3", "palm", 1000)
+	record_logout(p, me, "tty3", "3")
+
+	got := utmp_logins(p.utmp, "seat0", context.temp_allocator)
+	testing.expect_value(t, len(got), 1)
+	if len(got) == 1 {
+		testing.expect_value(t, got[0].user, "root")
+		testing.expect_value(t, got[0].line, "ttyS0")
+	}
+	testing.expect_value(t, len(utmp_logins(fmt.tprintf("%s/none", dir), "seat0", context.temp_allocator)), 0)
+}
