@@ -626,6 +626,46 @@ bare_pace_wait_ms :: proc() -> int {
 	return int((left + 999_999) / 1_000_000)
 }
 
+// bare_outputs gives the workspace layer one output per head, named after
+// the connector, so each head has its own bar, its own workspace and its own
+// tiling area. The output that stood in for the nested host window becomes
+// the first head; a head that goes away is disabled, which moves its
+// workspaces to a survivor (ws_output_disable).
+bare_outputs :: proc(s: ^Server) {
+	heads := drm_heads()
+	if len(heads) == 0 {
+		return
+	}
+	ws_ensure(s)
+	for &o in s.outputs {
+		if o.host {
+			h := heads[0]
+			delete(o.name)
+			o.name = strings.clone(h.name)
+			o.host = false
+			s.needs_layout = true
+		}
+	}
+	for h in heads {
+		ws_output_upsert(s, h.name, h.x, h.y, int(h.mode.hdisplay), int(h.mode.vdisplay), 1)
+	}
+	for o in s.outputs {
+		if !o.enabled {
+			continue
+		}
+		present := false
+		for h in heads {
+			if h.name == o.name {
+				present = true
+			}
+		}
+		if !present {
+			fmt.printfln("wm: output %s gone", o.name)
+			ws_output_disable(s, o.name)
+		}
+	}
+}
+
 // bare_layout re-reads the head layout into the compositor's notion of the
 // output. The workspace and layer code know one host-sized output; with one
 // head that is exactly the head, and with several it is their bounding box.
@@ -633,11 +673,11 @@ bare_layout :: proc(s: ^Server, app: ^p.App) -> (changed: bool) {
 	w, h := drm_layout_extent()
 	w, h = max(w, 1), max(h, 1)
 	n := len(drm_heads())
+	bare_outputs(s)
 	if w != s.out_w || h != s.out_h || n != bare_out.heads {
 		s.out_w, s.out_h = w, h
 		bare_out.heads = n
 		app.win.width, app.win.height = w, h
-		ws_sync_host(s, w, h)
 		s.dirty = true
 		changed = true
 		fmt.printfln("wm: layout now %dx%d over %d head(s)", w, h, n)
@@ -668,6 +708,18 @@ bare_pointer :: proc(s: ^Server, app: ^p.App) {
 		}
 	}
 	scrolled := in_.scroll != {}
+	// With several heads, a click on another head makes the workspace it
+	// shows the current one, so the next window opens where the user is.
+	if buttons && len(s.outputs) > 1 && !ov.open && !sw.open && !menu.open {
+		mp := [2]int{int(in_.mouse.x), int(in_.mouse.y)}
+		oi := ws_output_at(s, mp.x, mp.y)
+		if oi >= 0 && oi < len(s.outputs) && s.outputs[oi].enabled {
+			if act := s.outputs[oi].active; act != s.cur_ws && act >= 0 && act < len(s.workspaces) && s.workspaces[act].output == oi {
+				ws_switch(s, act)
+				damage_all()
+			}
+		}
+	}
 	before := s.ptr_surf
 	hover_t, hover_btn, drag, dirty, focus := s.hover_t, s.hover_btn, s.drag, s.dirty, s.kbd_surf
 	handle_pointer(s, app, 1)
@@ -756,7 +808,7 @@ bare_main :: proc(display, conf: string) -> int {
 		session_kiosk_preset(&s.cfg)
 	}
 	ws_ensure(s)
-	ws_sync_host(s, s.out_w, s.out_h)
+	bare_outputs(s)
 
 	// The keyboard: /etc/palm/keyboard through our own XKB compiler, our own
 	// keymap fd, no libxkbcommon; SIGHUP and changes to the file reload it.

@@ -2013,7 +2013,7 @@ drm_dispatch :: proc() -> (redraw: bool) {
 			if rerr != .NONE || got <= 0 {
 				break
 			}
-			if drm_handle_events(buf[:got]) {
+			if drm_handle_events(c, buf[:got]) {
 				redraw = true
 			}
 		}
@@ -2025,7 +2025,7 @@ drm_dispatch :: proc() -> (redraw: bool) {
 }
 
 @(private = "file")
-drm_handle_events :: proc(data: []u8) -> (redraw: bool) {
+drm_handle_events :: proc(card: ^Drm_Card, data: []u8) -> (redraw: bool) {
 	off := 0
 	for off + size_of(Drm_Event_Header) <= len(data) {
 		hdr := (^Drm_Event_Header)(raw_data(data[off:]))^
@@ -2036,7 +2036,7 @@ drm_handle_events :: proc(data: []u8) -> (redraw: bool) {
 		case DRM_EVENT_FLIP_COMPLETE, DRM_EVENT_VBLANK:
 			if int(hdr.length) >= size_of(Drm_Event_Vblank) {
 				ev := (^Drm_Event_Vblank)(raw_data(data[off:]))^
-				if drm_flip_done(ev) {
+				if drm_flip_done(card, ev) {
 					redraw = true
 				}
 			}
@@ -2047,17 +2047,34 @@ drm_handle_events :: proc(data: []u8) -> (redraw: bool) {
 }
 
 @(private = "file")
-drm_flip_done :: proc(ev: Drm_Event_Vblank) -> bool {
+drm_flip_done :: proc(card: ^Drm_Card, ev: Drm_Event_Vblank) -> bool {
 	// user_data is the head pointer we put in the flip request. Trusting a
 	// pointer round-tripped through the kernel is fine — it is our own fd —
 	// but it is still checked against the head list before use, because a
-	// stale event can arrive after a head has been torn down.
+	// stale event can arrive after a head has been torn down. Only the heads
+	// of the card whose fd delivered the event are candidates: CRTC ids are
+	// per card, and two cards routinely both have a CRTC 37.
 	target := rawptr(uintptr(ev.user_data))
-	for c in drm_state.cards {
-		for h in c.heads {
-			if rawptr(h) != target && !(ev.crtc_id != 0 && ev.crtc_id == h.crtc_id) {
-				continue
+	match: ^Drm_Head
+	for h in card.heads {
+		if rawptr(h) == target {
+			match = h
+			break
+		}
+	}
+	if match == nil && ev.crtc_id != 0 {
+		for h in card.heads {
+			if h.crtc_id == ev.crtc_id {
+				match = h
+				break
 			}
+		}
+	}
+	for h in card.heads {
+		if h != match {
+			continue
+		}
+		{
 			h.awaiting_flip = false
 			if h.queued >= 0 {
 				h.front = h.queued
@@ -3254,15 +3271,41 @@ drm_selftest_swapchain :: proc() {
 	e2 := (^Drm_Event_Vblank)(raw_data(stream[size_of(Drm_Event_Vblank):]))
 	e2^ = ev
 	e2.crtc_id = 42
+	nocard: Drm_Card
 	drm_check(
-		!drm_handle_events(stream[:]),
+		!drm_handle_events(&nocard, stream[:]),
 		"events for an unknown head must be dropped, not matched",
 	)
 	trunc := stream[:size_of(Drm_Event_Vblank) + 4]
-	drm_check(!drm_handle_events(trunc), "a truncated trailing event must not be parsed")
+	drm_check(!drm_handle_events(&nocard, trunc), "a truncated trailing event must not be parsed")
 	bogus := [8]u8{}
 	(^Drm_Event_Header)(raw_data(bogus[:]))^ = {kind = 99, length = 0}
-	drm_check(!drm_handle_events(bogus[:]), "a zero-length event must not loop forever")
+	drm_check(!drm_handle_events(&nocard, bogus[:]), "a zero-length event must not loop forever")
+
+	// Two cards, each with a head on a CRTC numbered 37 (two virtio-gpus do
+	// exactly this). A completion read from card B's fd is card B's head's,
+	// even when card A is first in the list and its head is also waiting.
+	{
+		ca, cb: Drm_Card
+		ha, hb: Drm_Head
+		ha.card, hb.card = &ca, &cb
+		ha.crtc_id, hb.crtc_id = 37, 37
+		ha.awaiting_flip, hb.awaiting_flip = true, true
+		ha.queued, hb.queued = 1, 1
+		append(&ca.heads, &ha)
+		append(&cb.heads, &hb)
+		defer delete(ca.heads)
+		defer delete(cb.heads)
+		eb := ev
+		eb.user_data = u64(uintptr(&hb))
+		eb.crtc_id = 37
+		drm_check(drm_flip_done(&cb, eb), "card B's completion is matched")
+		drm_check(!hb.awaiting_flip && ha.awaiting_flip, "to card B's head, not card A's with the same CRTC id")
+		ex := ev
+		ex.user_data = 0
+		ex.crtc_id = 37
+		drm_check(drm_flip_done(&ca, ex) && !ha.awaiting_flip, "without user_data the CRTC id is matched within the card")
+	}
 
 	// Tight pitch: the canvas must alias the mapping with no shadow at all.
 	tight := new(Drm_Head, context.temp_allocator)

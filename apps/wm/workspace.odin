@@ -471,6 +471,30 @@ ws_output_upsert :: proc(s: ^Server, name: string, x, y, w, h: int, scale: f32) 
 			}
 		}
 	}
+	// Otherwise it takes the first workspace nobody is looking at and nothing
+	// is on, the way i3 and sway hand one out, so a second monitor does not
+	// show the first one's workspace again.
+	owned := false
+	for w in s.workspaces {
+		if w.output == oi {
+			owned = true
+			break
+		}
+	}
+	if !owned {
+		for &w, i in s.workspaces {
+			visible := false
+			for o in s.outputs {
+				if o.enabled && o.active == i {
+					visible = true
+				}
+			}
+			if !visible && i != s.cur_ws && len(w.stack) == 0 {
+				w.output = oi
+				break
+			}
+		}
+	}
 	s.outputs[oi].active = ws_first_of_output(s, oi)
 	s.needs_layout = true
 	s.dirty = true

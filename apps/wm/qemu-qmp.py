@@ -5,7 +5,8 @@
 # A script is a list of steps, one per argument:
 #
 #   wait:<seconds>            sleep
-#   shot:<file.png>           QMP screendump, PNG
+#   shot:<file.png>[:head]    QMP screendump, PNG (head: of a multi-output GPU,
+#                             or @id: the display device with that QOM id)
 #   type:<text>               type ASCII text on the virtio keyboard
 #   key:<qcode>[+<qcode>...]  press a chord, release in reverse (key:meta_l+ret)
 #   move:<x>,<y>              absolute pointer to output pixel x,y (virtio-tablet)
@@ -135,8 +136,16 @@ def main():
         if kind == "wait":
             time.sleep(float(rest))
         elif kind == "shot":
-            q.cmd("screendump", filename=rest, format="png")
-            print(f"shot {rest}", flush=True)
+            # shot:<file.png>[:<head>] -- a head other than 0 of a
+            # multi-output display device
+            fn, _, head = rest.partition(":")
+            if head.startswith("@"):
+                q.cmd("screendump", filename=fn, format="png", device=head[1:])
+            elif head:
+                q.cmd("screendump", filename=fn, format="png", head=int(head))
+            else:
+                q.cmd("screendump", filename=fn, format="png")
+            print(f"shot {fn}", flush=True)
         elif kind == "type":
             for ch in rest.replace("\\n", "\n"):
                 code, shift = qcode_for(ch)
