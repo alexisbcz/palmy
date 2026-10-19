@@ -54,6 +54,10 @@ about a membership row:
 - Messages carry the author's handle, name and colour as the space saw them,
   so history keeps its names when people leave; `identities` stays private to
   its owner.
+- **Deleting an identity** (or the person) deletes its own spaces, and in
+  other spaces removes it as leaving does. Its messages, and the channels and
+  calls it started, stay for the others with the author unlinked (null) and
+  the name kept (`20261019700200_rtc_erase.sql`, pgTAP `accounts_erase.sql`).
 
 The test the contract asks for, in `rtc_rls.sql`: a session scoped to identity
 A reads none of B's spaces, channels, messages, reactions, calls or
