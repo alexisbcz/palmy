@@ -415,11 +415,11 @@ toolbar :: proc(ui: ^p.Ctx, st: ^State) {
 	}
 	p.end(ui)
 
-	// Compose. The accent action, and the only one with a label.
+	// Compose. The only toolbar action with a label; shadcn's outline variant.
 	{
 		idx := p.row(
 			ui,
-			"h-8 shrink-0 items-center gap-1.5 pl-2 pr-2.5 rounded-lg bg-primary text-primary-foreground cursor-pointer transition hover:bg-primary/80",
+			"h-8 shrink-0 items-center gap-1.5 pl-2 pr-2.5 rounded-lg border border-border bg-background text-foreground cursor-pointer transition hover:bg-muted",
 		)
 		if p.clickable(ui, idx) {
 			compose_new(st)
@@ -427,8 +427,8 @@ toolbar :: proc(ui: ^p.Ctx, st: ^State) {
 		p.icon(ui, ICON_SQUARE_PEN, "size-3.5 shrink-0")
 		p.text(ui, "Compose", "text-[13] font-medium whitespace-nowrap")
 		p.style(ui).shrink = 0
-		p.div(ui, "flex-row h-4 min-w-4 items-center justify-center rounded-sm bg-white/20 px-1 shrink-0")
-		p.text(ui, "C", "text-[10] font-semibold text-white")
+		p.div(ui, "flex-row h-4 min-w-4 items-center justify-center rounded-sm bg-muted px-1 shrink-0")
+		p.text(ui, "C", "text-[10] font-semibold text-muted-foreground")
 		p.end(ui)
 		p.end(ui)
 	}
