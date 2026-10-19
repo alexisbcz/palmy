@@ -83,13 +83,42 @@ what the contract describes; verified in QEMU (Restart in the greeter ->
 - `/var/log` must exist; `/run` is palm-init's tmpfs; `/run/user` is created.
 - The greeter account's home (`/var/lib/greeter`) is already in base/layout.
 
+## Session hooks and the VT (integration round)
+
+- **`/etc/palm/session.d/`.** Before a user session's command is exec'd,
+  every executable there (regular file with an x bit, not hidden, not `~`,
+  `.new` or `.bak`), in name order, is forked from the session's child after
+  setgroups/setgid/setuid and chdir: as the user, with the session's
+  environment, stdin `/dev/null`, output in the session log, and in the
+  session's process group, so the SIGHUP/SIGTERM palm-login sends that group
+  when the session ends reach them too. Nobody waits for them: the session
+  program inherits them (wm reaps), palm-init adopts what outlives it. Not
+  for the greeter's session. `PALM_SESSION_D` replaces the directory (the e2e
+  test). PipeWire's `50-pipewire` is the first user.
+- **The VT for wm.** Both sessions (greeter and user) run on VT 1: before
+  each, `/dev/tty1` is chown'd to the session's user, group tty, 0620, and
+  `XDG_VTNR=1` goes into its environment; `setsid()` is kept, so wm opens the
+  tty and it becomes its controlling terminal, which the VT ioctls require.
+  When the session ends the tty goes back to root:tty 0620. Where the chown
+  is refused (the e2e namespace) nothing is lent and nothing changes. On the
+  image: the greeter's wm logs `vt: tty1 in graphics mode, VT_PROCESS`, the
+  user's has `XDG_VTNR=1` and `/dev/tty1` is `palm:tty`; Ctrl+Alt+F2 made
+  tty2 the active console (`/sys/class/tty/tty0/active`), Ctrl+Alt+F1 came
+  back and typing in term worked; after SUPER+SHIFT+E the next greeter had
+  the tty. tty2 has no getty, so it is a blank console.
+- Tests: `palm-login --selftest` 81 -> 83 (session.d listing), `login/e2e`
+  18 -> 22 (a hook runs as palm with the session environment, in the
+  session's process group, is ended with it; a non-executable is skipped).
+
 ## Open points / for other areas
 
-- Sessions get `/dev/null` as stdin, not a VT. The wm in QEMU works that way
-  (KMS + evdev directly). If the wm ever wants a VT (KD_GRAPHICS, VT switching),
-  palm-login can hand it `/dev/tty1` — ask here. It deliberately does not make
-  the tty the session's controlling terminal, so ctrl-C on the console keyboard
-  can never kill the session.
+- Sessions get `/dev/null` as stdin. palm-login lends `/dev/tty1` to wm
+  (above) but deliberately does not make it the session's controlling
+  terminal itself, so ctrl-C on the console keyboard can never kill the
+  session; wm takes it when it opens the VT.
+- A SIGKILLed PipeWire leaves its socket in `/run/user/<uid>`, and the next
+  session's `50-pipewire` then starts nothing: palm-login does not empty the
+  runtime directory between sessions.
 - The clock on the greeter shows UTC: Palmframe has no timezone setting yet.
 - busybox's own `login` on ttyS0 ignores shadow aging; only palm-login,
   doas and passwd honour it.
@@ -186,5 +215,6 @@ makes its real uid root before writing, so the caller can no longer signal it.
   nothing but its own start and exit lines — `/var/log/messages` on the image
   has been empty of every program's messages, `logger` included. With `-L`
   everything arrives (checked on the host in a namespace and in QEMU).
-  Consider also making /var/log/messages 0600 (busybox creates it 0644 and it
-  now carries authpriv lines with command lines).
+  /var/log/messages is now 0600 root: syslogd runs from
+  `/usr/lib/palmframe/syslog` (palmframe-base), which sets umask 077 and
+  fixes an older file's mode (test-runtime.py checks it).

@@ -58,9 +58,10 @@ Other targets:
 | `make -C distro run` | `distro/run-qemu.sh` |
 | `make -C distro test` | the headless boot test (`image/test-boot.py`); screenshots in `distro/out/shots/` |
 | `make -C distro test-installer` | `palm-install --selftest` and `installer --selftest`; no disk is touched |
-| `make -C distro test-install` | builds the ISO, then `live/test-install.py`: a GUI and a CLI install in QEMU, each booted afterwards |
+| `make -C distro test-install` | builds the ISO, then `live/test-install.py` (a GUI and a CLI install in QEMU, each booted afterwards) and `live/test-install-more.py` (Japanese onto NVMe with the pointer, Arabic under SeaBIOS, two disks in one machine) |
+| `make -C distro publish` | after `repo`: `repo-publish/publish.sh`, which signs the repository with the release key and uploads it (`ARGS=--dry-run` stages and checks without uploading) |
 | `make -C distro serve` | serve the repository on :8080 for the guest's `palm update` (`PORT=8091` for another port) |
-| `make -C distro check-libs` | fail if a shipped binary needs anything but libc, libm and the loader |
+| `make -C distro check-libs` | fail if a shipped binary links anything but glibc and what its recipe's dependencies provide (`apps/check-libs.py`) |
 | `make -C distro clean` | remove the packages, root and image; keeps the kernel, busybox and the signing key |
 
 `distro/run-qemu.sh` options:
@@ -110,13 +111,20 @@ With `--iso` or `--disk`, OVMF's variable store is kept beside the disk as
 so the entry is still there when the disk boots without the ISO. Add `--bios`
 for SeaBIOS.
 
-The ISO is 74 MB. limine offers two entries, *Install Palmframe* and
+The ISO is 576 MB. limine offers two entries, *Install Palmframe* and
 *Install Palmframe (serial console only)*. The whole system runs from RAM: a
-57 MB zstd initramfs, about 81 MiB unpacked, holding 19 packages (the base
-system, the kiosk wm, term, the installer and its tools, and a 100 KB
-Japanese subset of Noto Sans CJK) and, in `/usr/share/palm/repo`, a signed
-repository of the 36 packages an installation needs: `palmframe`, its
-dependencies and `fonts-cjk`. Installing therefore needs no network.
+559 MB zstd initramfs, about 608 MiB unpacked, holding 28 packages (the base
+system, the kiosk wm, term, the installer and its tools, a 100 KB Japanese
+subset of Noto Sans CJK, and firmware) and, in `/usr/share/palm/repo`, a
+signed repository of the 93 packages an installation needs: `palmframe`,
+its dependencies, `fonts-cjk` and the firmware. Installing therefore needs
+no network. Most of the size is firmware, there twice (installed, so the
+live system's own GPU, Wi-Fi and Ethernet start, and as packages for the
+install): `LIVE_FIRMWARE` in `live/build.sh` names it, by default the Intel,
+AMD GPU, Realtek and MediaTek parts of `linux-firmware` and
+`wireless-regdb`. `LIVE_FIRMWARE=linux-firmware` carries all 440 MB,
+`LIVE_FIRMWARE=` none (then the ISO is 179 MB). The live system needs
+about 1.5 GB of RAM with the default.
 palm-init starts the `installer` service, which
 runs `wm --drm --kiosk --exec installer` as root, and a root shell on the
 serial console. `palm-login` and `getty-ttyS0` are masked by files in
@@ -208,6 +216,7 @@ echo gracehopper | palm-install --disk /dev/vdb --language de_DE --keyboard de \
 | `--swap <size>` | a swap file on the root, `2G` or `512M`; default none |
 | `--no-efi-entry` | do not write a UEFI `Boot####` variable |
 | `--no-bios-boot` | do not run `limine bios-install` |
+| `--no-firmware` | install no firmware (by default: `linux-firmware`, or the parts of it the repository carries) |
 | `--answers <file>` | `key = value` lines with the option names; options win |
 | `--yes`, `--dry-run`, `--json`, `--verbose` | `--json` gives each problem's code and each progress line's |
 | `--list-disks`, `--list-layouts`, `--list-zones`, `--list-languages` | |
@@ -293,7 +302,10 @@ under a BIOS alike.
 
 The root is mounted at `/mnt/target` and the ESP at `/mnt/target/boot/efi`.
 Then `palm --root /mnt/target --initdb add palmframe` installs from the
-medium's repository: 33 packages, plus `fonts-cjk` for Japanese. The
+medium's repository: `palmframe` and its dependencies, plus `fonts-cjk` for
+Japanese, plus firmware: `linux-firmware` when the repository has it (a
+network one), else the firmware parts the repository carries, which from
+the medium are the live system's (`installer/core/firmware.odin`). The
 `palmframe-demo` package that the disk image adds is not installed, so
 neither is `/home/palm`. Then the configure step writes:
 
@@ -550,6 +562,13 @@ the user, with `/run/user/<uid>` created 0700 and the session's output in
 `/var/log/session-<user>.log`, then the greeter again. `palm.autologin=<user>`
 skips the greeter for the first session only.
 
+Every executable in `/etc/palm/session.d/` (PipeWire's `50-pipewire` is the
+first) runs beside a user's session, as the user, with its environment, in
+its process group, and ends with it. Both sessions run on VT 1: palm-login
+lends `/dev/tty1` to the session's user and sets `XDG_VTNR=1`, which is what
+wm needs to switch VTs itself (Ctrl+Alt+F1..F12), and takes the tty back
+afterwards.
+
 One addition to greetd's protocol: `{"type":"power","action":"poweroff"|"reboot"}`.
 The greeter runs unprivileged and busybox's `poweroff` works by signalling
 PID 1, which an ordinary user may not do, so palm-login runs it as root. It
@@ -770,32 +789,26 @@ on real hardware yet.
   laptop drivers as modules that `palm-modules` loads, firmware packages
   split as Arch splits them; `notes/kernel.md`), and an NVMe root with
   e1000e and HD Audio works in QEMU, but no GPU driver other than QEMU's has
-  ever taken over the screen, and nothing installs the firmware yet.
-- **The disk image's limine.conf boots a copy.** The linux package installs
-  the kernel as `/boot/efi/vmlinuz`, which on the mounted ESP is the
-  `/vmlinuz` the installer's limine.conf boots, so `palm upgrade linux`
-  reaches the boot loader there. The image still boots `boot():/boot/vmlinuz`,
-  a copy made at build time (`notes/kernel-image.patch` is the fix).
+  ever taken over the screen. The installer installs firmware and the live
+  medium carries part of it (*Installing*); the disk image has none.
 - **No su.** palm becomes root with `doas`; busybox's `su` is still there and
   still fails for anyone but root.
 - **glibc, libxkbcommon and xkeyboard-config come from the build host** (Arch),
   not from source.
-- **The window manager on bare metal** has no VT switching (Ctrl+Alt+Fn does
-  nothing, the console is not put into graphics mode), enumerates input
-  devices once at startup so hotplugged keyboards and mice are ignored, has
-  only ever run one monitor, and repaints the whole screen on the CPU every
-  frame. Clients see keys as press and release pairs, so none can see a key
-  held down. `notes/wm.md`.
+- **The window manager on bare metal** has only run in QEMU: VT switching,
+  input hotplug, real key presses with client-side repeat, damage tracking
+  and two heads all work there (`notes/wm.md`); it still composites on the
+  CPU, has no `linux-dmabuf` (no GPU clients) and no XWayland.
 - **The clipboard is native.** palmy speaks `wl_data_device` and the
   primary selection itself, and `kit.clipboard_set`/`get` try it first;
   wl-clipboard is shipped as the fallback.
-- **Applications.** 29 of the 48 programs work, 14 partly, 5 not at all
-  (`apps/apps.tsv`). D-Bus, iwd, PipeWire, BlueZ, FFmpeg, OpenSSL and bsdtar
-  are shipped (`palmframe-runtime`, `notes/runtime.md`), but the kernel lacks
-  what iwd and BlueZ need, PipeWire is not yet started by palm-login, and
-  `network` still speaks only NetworkManager. `files` and the launcher still offer
-  `foot` as the terminal. The `chat` app is not packaged, and busybox's `chat`
-  applet is left out because the names clash.
+- **Applications.** 30 of the 48 programs work, 14 partly, 4 not at all
+  (`apps/apps.tsv`). D-Bus (as user `dbus`), iwd, PipeWire (started in each
+  session by palm-login), BlueZ, FFmpeg, OpenSSL and bsdtar are shipped and
+  run on the shipped kernel (`palmframe-runtime`, `notes/runtime.md`), and
+  `network` reads iwd. The launcher still offers `foot` as the terminal.
+  The `chat` app is not packaged, and busybox's `chat` applet is left out
+  because the names clash.
 - **The installer** has the gaps listed in the root `TODO.md` under
   *Distribution*. The main ones: an installed disk boots only through UEFI,
   and part of the interface stays in English.
@@ -807,6 +820,3 @@ on real hardware yet.
   whole in memory to install. `notes/palm.md` has the list.
 - **busybox's serial `login`** ignores shadow's aging fields and has only its
   own fixed delay; palm-login, doas and passwd honour both.
-- **Small visual faults** seen in the verification screenshots: a single left
-  click in term leaves a one-cell selection, and the greeter's Shut Down
-  button shows no hover state.

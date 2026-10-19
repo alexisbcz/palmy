@@ -32,7 +32,7 @@ new application appears, `distro/Makefile` only learns of its binary on the
 | needed by | dependency | decision |
 | --- | --- | --- |
 | iwd, bluetoothd | D-Bus system bus | **ship**, built from source without systemd/X11/audit (`dbus.build`). No session bus. |
-| network | NetworkManager (`nmcli`) | **replace with iwd** — see below. The app has to change. |
+| network | NetworkManager (`nmcli`) | **replace with iwd** — see below. Done: `apps/network/iwd.odin`. |
 | Wi-Fi | wpa_supplicant or iwd + DHCP client | **iwd**, from source. It needs no OpenSSL, libnl or wpa_supplicant (crypto is the kernel's), and does DHCP itself (`EnableNetworkConfiguration=true`), so no dhcpcd. DNS goes through a 20-line `resolvconf` shim it ships. Wired stays palm-init's udhcpc. |
 | audio, video, mixer, call | PipeWire, WirePlumber, pw-cat, wpctl, pactl | **ship** (host-copied). PipeWire does not need a bus (RTKit and portal modules just warn). wpctl needs WirePlumber; pactl needs pipewire-pulse; all three are started per session by one `pipewire` (`pipewire.conf.d/50-palmframe.conf`). Plain ALSA would not do: the apps call pw-cat/wpctl/pactl by name. |
 | PipeWire's ALSA monitor | udev | **no udevd**: a palm-init one-shot (`sound-cards`) writes `/run/udev/data/+sound:cardN` with `SOUND_INITIALIZED=1`, which is the one property PipeWire gates on. Hotplugged (USB) cards are not covered. libudev itself comes from systemd-libs (a library only; no systemd daemon runs). |
@@ -65,13 +65,16 @@ it would cost more than it gives:
   /usr/bin/NetworkManager /usr/bin/nmcli`), on top of wpa_supplicant or iwd
   for Wi-Fi anyway.
 
-**Proposal for `apps/network`:** talk to iwd directly over the system bus. iwd's
-D-Bus API (`net.connman.iwd`: `Station.Scan`, `Station.GetOrderedNetworks`,
-`Network.Connect` with an `Agent` for the passphrase, `Device.Powered`,
-`KnownNetwork`) covers every action the app has; `apps/wm/dbus.odin` is
-already a hand-rolled D-Bus client that could move into kit. Wired status
-comes from `/sys/class/net` and `/proc/net/route`. Until then `iwctl` works
-from a terminal (members of `wheel` may use iwd: iwd's bus policy).
+**`apps/network` on iwd** (done in the integration round): it talks to iwd
+directly over the system bus with wm's D-Bus client, moved to
+`apps/kit/dbus` (`import "kit:dbus"`): `ObjectManager.GetManagedObjects`,
+`Station.GetOrderedNetworks`, `Station.Scan`, `StationDiagnostic`, and
+`Device.Powered = true`. Wired status comes from `/sys/class/net`,
+`ip -o addr` and `/proc/net/route`. It still does not join networks or turn
+radios off: TODO.md keeps `apps/network` from changing network state, so
+`Network.Connect` (which would need an `Agent` for the passphrase) and
+`Powered = false` stay logged intents. `iwctl` is how to join a network
+(members of `wheel` and `netdev` may use iwd: iwd's bus policy).
 
 ## How the packages are made
 
@@ -109,8 +112,10 @@ against what the packages install — these and every other recipe in
 that owns it, as a package of that name holding only the libraries asked for
 (`glib2`, `systemd-libs`, `readline`…; named `<x>-libs` if a hand-written
 recipe already has the name). A library another recipe ships is depended on,
-not copied: e2fsprogs ships libblkid, so `util-linux-libs` depends on
-`e2fsprogs` (see requests). Packages the manifest stops producing have their
+not copied (glibc's, libxkbcommon's). util-linux-libs is a host package of
+the manifest itself, holding libblkid and libuuid for e2fsprogs (which
+depends on it) and whatever else is linked (libmount, libsmartcols).
+Packages the manifest stops producing have their
 recipe removed. The output is committed, so the recipes show exactly what each
 package holds.
 
@@ -147,9 +152,9 @@ palm-init service files shipped by the packages (in `/etc/palm/services`):
 
 | file | package | what |
 | --- | --- | --- |
-| `dbus` | dbus | `/usr/lib/palmframe/dbus-system`: makes `/run/dbus` and `/etc/machine-id`, execs `dbus-daemon --nofork`. Built to run as user `dbus`; until `/etc/passwd` has one, the wrapper runs it as `nobody` from a copy of `system.conf`. |
-| `iwd` | iwd | `/usr/lib/iwd/iwd`, `after = dbus`. Exits at once on a kernel without the crypto API (below). |
-| `bluetooth` | bluez | `bluetoothd --nodetach`, `after = dbus`. Exits without `CONFIG_BT`; palm-init retries every 30 s. |
+| `dbus` | dbus | `/usr/lib/palmframe/dbus-system`: makes `/run/dbus` and `/etc/machine-id`, execs `dbus-daemon --nofork`, which drops to user `dbus` (81, in palmframe-base since the integration round). The wrapper's fallback to `nobody` only applies to a system whose `/etc/passwd` has no `dbus`. |
+| `iwd` | iwd | `/usr/lib/iwd/iwd`, `after = dbus`. Needs the kernel's crypto API (built in now) and `/usr/bin/resolvconf` (the shim; see below). |
+| `bluetooth` | bluez | `bluetoothd --nodetach`, `after = dbus`. Bluetooth is a module the kernel loads when bluetoothd opens its socket. |
 | `sound-cards` | pipewire | the one-shot above. |
 
 `after = dbus` is satisfied when dbus-daemon is *running*, not when its socket
@@ -157,14 +162,24 @@ exists, so the first bluetoothd sometimes loses the race and is restarted a
 second later. Harmless; a readiness notion in palm-init would fix it.
 
 **The user session.** PipeWire must run as the user, with the session's
-`XDG_RUNTIME_DIR`. palm-login execs `wm --drm` directly, and the wm's
-autostart is the user's own config (empty by design), so there is no hook
-today. The package ships `/etc/palm/session.d/50-pipewire` (exits if
-`$XDG_RUNTIME_DIR/pipewire-0` exists, else execs `pipewire`). **Request to
-palm-login:** before exec'ing the session command, run every executable in
-`/etc/palm/session.d/` (sorted) in the background, as the user, with the
-session environment, in the session's process group, and kill them when the
-session ends. In the tests it was started by hand the same way.
+`XDG_RUNTIME_DIR`. The package ships `/etc/palm/session.d/50-pipewire`
+(exits if `$XDG_RUNTIME_DIR/pipewire-0` exists, else execs `pipewire`), and
+palm-login runs every executable in `/etc/palm/session.d/` in name order,
+in the background, as the user, with the session environment and log, in
+the session's process group, so it ends with the session
+(`distro/notes/login.md`). test-runtime.py checks both: PipeWire,
+WirePlumber and pipewire-pulse run as palm after the login with nothing
+started by hand, and none of palm's processes is left after SUPER+SHIFT+E.
+
+One gap: if PipeWire is killed with SIGKILL, its socket stays in
+`/run/user/<uid>` (palm-login does not empty the runtime directory), and the
+next session's hook sees it and starts nothing.
+
+**iwd's resolvconf shim** (`runtime/files/iwd/usr/bin/resolvconf`) was
+missing from git: `.gitignore`'s `bin/` left it out, so a fresh checkout
+generated an iwd recipe without it and iwd failed its resolve module and
+exited at every start. The ignore rule now lets hand-written `/usr/bin`
+files through.
 
 ## Verification
 
@@ -178,9 +193,14 @@ python3 -I distro/recipes/runtime/test-runtime.py \
     --kernel distro/build/kernel-runtime/bzImage --ollama           # + kernel.config
 ```
 
-With the stock kernel: 4 failures, all iwd (missing crypto) and one openssl
-check string fixed since. With the kernel built from `palmframe.config` +
-`runtime/kernel.config` (`--kernel`): **all passed**:
+Since the integration round the shipped kernel has what this needed
+(`runtime/kernel.config` is merged into `distro/kernel/palmframe.config`),
+and `test-runtime.py` with no `--kernel` passes all 24 checks; it loads
+`mac80211_hwsim` itself (a module nothing loads by its own), checks that the
+bus runs as `dbus` and `/var/log/messages` is root's 0600, and expects
+PipeWire from palm-login's hook. Before that, with the stock kernel: 4
+failures, all iwd (missing crypto). With the kernel built from
+`palmframe.config` + `runtime/kernel.config` (`--kernel`): **all passed**:
 
 - dbus-daemon (as nobody), iwd and bluetoothd run as palm-init services;
   `net.connman.iwd` and `org.bluez` are on the system bus; `bluetoothctl show`
@@ -206,9 +226,7 @@ check string fixed since. With the kernel built from `palmframe.config` +
   (`distro/out/shots/runtime-*.png`) are summarised in `apps.tsv`.
 
 Not verified: real hardware of any kind; Bluetooth pairing (no controller);
-iwd against a real access point or EAP; USB sound; PipeWire started by
-palm-login (the hook does not exist yet); the live ISO with these packages
-(it builds — see size — but was not booted); the vault GUI and the
+iwd against a real access point or EAP; USB sound; the vault GUI and the
 mailcore/ocr selftests that ended up writing under `/root` in the harness
 (the same shell reported `HOME=/home/palm`; not chased further).
 
@@ -242,27 +260,20 @@ those the Arch packages put under `/usr/share/licenses/<package>/`.
 
 ## Requests to other areas
 
-- **kernel** (`distro/kernel/palmframe.config`): add `runtime/kernel.config`
-  — the crypto API iwd needs (it exits without it), `CONFIG_BT` and its
-  drivers, `CONFIG_MAC80211_HWSIM` (or only in a test config),
-  `CONFIG_SND_USB_AUDIO`. Real Wi-Fi drivers need a firmware decision.
-- **base** (`distro/base/root/etc/passwd`, `group`): add user and group
-  `dbus` (uid/gid 81, home `/`, shell `/sbin/nologin`) so the bus does not run
-  as nobody; add group `netdev` or accept iwd's policy warning.
-- **palm-login**: the `/etc/palm/session.d/` hook above.
+- ~~kernel~~ done in the integration round: the crypto API built in,
+  Bluetooth and `mac80211_hwsim` as modules, USB audio was already a module;
+  the firmware decision is in `distro/notes/kernel.md` (Firmware).
+- ~~base~~ done: user and group `dbus` (81), group `netdev`.
+- ~~palm-login~~ done: the `/etc/palm/session.d/` hook.
 - **palm-init**: optionally write the udev database entry for sound cards on
   the uevent it already handles (then `sound-cards` can go), and a readiness
   notion for `after =`.
-- **integrator** (`generate.sh` outside the runtime block): the `palmframe`
-  meta-package now has `depend = palmframe-runtime` (one line, added here);
-  e2fsprogs should depend on `util-linux-libs` instead of shipping
-  libblkid/libuuid itself, so glib does not pull mkfs into every install;
-  `emoji` should depend on `wl-clipboard`; switching glibc to the source
-  build as described above.
-- **apps**: `network` needs an iwd backend; `videoedit` has `/home/alex` media
-  and output paths and wants libass (`subtitles`); the launcher and the
-  application `.desktop` entries for the new packages live in
-  `distro/recipes/runtime/desktop/` until `distro/apps/desktop/` takes them;
-  `apps/store/icons.odin` does not draw the icons these recipes name
-  (bluetooth, wifi, volume-2, mail, archive, phone, clipboard, key-round, bot,
-  layers, audio-lines, sliders-horizontal, network, clapperboard, scan-text).
+- **integrator**: done — e2fsprogs depends on `util-linux-libs` (now a host
+  package of this manifest holding libblkid and libuuid) instead of
+  shipping them; `emoji` depends on `wl-clipboard`. Still open: switching
+  glibc to the source build as described above.
+- **apps**: done — `network` reads iwd over D-Bus (`apps/network/iwd.odin`,
+  `kit:dbus`) and is in the default set; `videoedit`'s paths are the
+  user's (it still wants libass for `subtitles`); the `.desktop` entries
+  live in `distro/apps/desktop/`; Software draws every icon the recipes
+  name.

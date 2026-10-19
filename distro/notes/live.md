@@ -104,11 +104,13 @@ palm-init would let the package do it instead — a nice-to-have for
   ISO is written to a USB stick (tested as a raw virtio disk), it is a disk
   with an ISO 9660 signature — install_core's `has_iso9660` covers that.
 - **limine** is packaged (`/usr/share/limine/BOOTX64.EFI`,
-  `limine-bios.sys`) and installed on the live system, which is where
-  `boot.odin`'s `limine_dir` fallback finds it. Its tool, for `limine
-  bios-install`, is in the palm-install package as
-  `/usr/lib/palm-install/limine`, because the limine package ships only the
-  boot files. It is not in the default `palmframe` set.
+  `limine-bios.sys`, and its tool `/usr/bin/limine` for `limine
+  bios-install`) and installed on the live system, which is where
+  `boot.odin`'s `limine_dir` fallback finds it. It is not in the default
+  `palmframe` set.
+- **Firmware**: `LIVE_FIRMWARE` in `build.sh` (one variable) names the
+  firmware packages the live root installs and its repository carries;
+  `distro/notes/kernel.md` (Firmware) has the decision and the sizes.
 - **mkfs**: `mkfs.ext4` (mke2fs under that name; `/etc/mke2fs.conf` from the
   host) and `mkfs.fat` are real e2fsprogs/dosfstools binaries. busybox owns
   `mke2fs`, `mkfs.ext2`, `mkfs.vfat`, `mkdosfs`, `chattr`, `lsattr` as

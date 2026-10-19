@@ -25,9 +25,19 @@ framebuffer, and a USB or PS/2 keyboard. Everything that needs firmware from
 `/usr/lib/firmware`, or exists only on some machines, is a module: amdgpu,
 radeon, i915, xe, nouveau, iwlwifi, ath9k–12k, mt76, rtw88/89, brcmfmac,
 e1000e, igc, r8169, HDA and Sound Open Firmware, i2c-hid and multitouch,
-thinkpad_acpi and the other vendor drivers, dm-crypt, zram, exfat, ntfs3.
-Namespaces, cgroups v2, seccomp, BPF and Landlock are built in for
-sandboxing later.
+thinkpad_acpi and the other vendor drivers, Bluetooth (core, protocols
+and controllers; bluetoothd's socket loads it), mac80211_hwsim (for tests;
+nothing loads it by itself), exfat, ntfs3. Namespaces, cgroups v2, seccomp,
+BPF and Landlock are built in for sandboxing later.
+
+Built in as well, since the integration round, because every machine needs
+them and they are small: the kernel's crypto API that iwd does all its
+cryptography through (AF_ALG hashes and ciphers, keyctl Diffie-Hellman, the
+X.509/PKCS parsers; iwd exits at start without them), and dm-crypt with
+`BLK_DEV_DM`, XTS and AES(-NI), so the initramfs an encrypted root will need
+(`distro/notes/installer-core.md`, Encryption) holds no modules and does not
+depend on the kernel's version. `distro/recipes/runtime/kernel.config` was
+the proposal; it is merged.
 
 The built-in command line is `rootwait=30` (`CONFIG_CMDLINE`), prepended to
 whatever limine passes, because an NVMe or USB root can appear after the
@@ -180,16 +190,23 @@ next to the other host-copied packages, one line near the tzdata section:
 Its outputs are committed, so until then they are simply as current as the
 host was when they were written.
 
-**Nothing depends on the firmware yet.** `palmframe` does not, so the QEMU
-image is unchanged. For a real machine it should be installed, and that is
-a decision for the image, installer and live areas, written down here:
-the live ISO embeds the whole repository in an initramfs held in RAM, so
-adding 440 MB of firmware there (twice: installed and as packages) is not
-reasonable. The suggestion: the installer installs `linux-firmware` onto the
-target when the repository has it; the live medium installs (and carries in
-its repository) only `linux-firmware-intel`, `-amdgpu`, `-realtek` and
-`-mediatek` and `wireless-regdb` (the common laptop GPUs, Wi-Fi and
-Ethernet), about 215 MB; the full set comes from the network repository.
+**Who installs it** (decided in the integration round, as suggested here).
+`palmframe` does not depend on firmware, so the QEMU image is unchanged.
+The live ISO embeds its repository in an initramfs held in RAM, so all
+440 MB there (twice: installed and as packages) is not reasonable. So:
+
+- the live medium installs, and carries in its repository, the packages
+  `distro/live/build.sh`'s `LIVE_FIRMWARE` names, by default
+  `linux-firmware-intel`, `-amdgpu`, `-realtek`, `-mediatek` and
+  `wireless-regdb` (the common laptop GPUs, Wi-Fi and Ethernet; with
+  `-whence` ~215 MB). `LIVE_FIRMWARE=linux-firmware` carries all of it,
+  `LIVE_FIRMWARE=` none. The ISO is 576 MB with the default, 179 MB
+  without;
+- the installer (`install_core`, `firmware.odin`) adds `linux-firmware` to
+  every install whose repository lists it (a network one), and otherwise
+  every firmware part the repository has, i.e. the medium's;
+  `palm-install --no-firmware` installs none. `palm add linux-firmware`
+  fills in the rest later.
 
 ## What was verified
 
@@ -248,9 +265,9 @@ any device other than cfg80211's database; the live ISO with modules.
 - **Early microcode** needs either an initramfs or limine `module_path`
   with an early-cpio of `amd-ucode`/`intel-ucode`; neither is done. The
   kernel has `CONFIG_MICROCODE=y`, so microcode from the firmware is used.
-- **An encrypted root** needs an initramfs to unlock it. dm-crypt is a
-  module and the kernel has the AF_ALG interfaces cryptsetup uses; there is
-  no cryptsetup and no initramfs.
+- **An encrypted root** needs an initramfs to unlock it. dm-crypt, XTS,
+  AES and the AF_ALG interfaces cryptsetup uses are built in; there is no
+  cryptsetup and no initramfs.
 - **Old modules are removed on upgrade.** `palm upgrade linux` to a new
   release deletes the running kernel's `/usr/lib/modules/<old>`; until the
   restart nothing more can be loaded (the same as on Arch).

@@ -173,19 +173,21 @@ listens, output prefixed `guest:` in serial.log).
 
 ## What I need from others
 
-- **palm-login**: for VT switching, before starting a session on VT n:
-  `chown <user>:tty /dev/ttyN; chmod 0620 /dev/ttyN`, put `XDG_VTNR=N` in the
-  session environment, keep the existing `setsid()` (wm must be a session
-  leader with no controlling terminal), and give the tty back to root:tty
-  0620 when the session ends. Nothing else; wm does the VT ioctls itself.
-- **palmy (client side)**: (1) key repeat under wm runs at ~2 keys/s instead
-  of `repeat_info`'s 25/s (seen in term in QEMU; wm sends one press, no
-  release, and repeat_info 25/400). (2) palmy clients commit their whole
-  surface as damage (`damage_buffer` of everything) on every frame, and
-  term commits on every pointer motion; with real damage rectangles wm would
-  repaint only those. (3) term scrolls back on positive `wl_pointer.axis`
-  values, which Wayland defines as down: a wheel turned up (negative) does
-  not scroll back in QEMU.
+- ~~palm-login: the VT handover~~ done in the integration round, as asked:
+  `/dev/tty1` lent to the session's user (user:tty 0620), `XDG_VTNR=1`,
+  `setsid()` kept, root:tty again afterwards. Verified on the image:
+  `wm: vt: tty1 in graphics mode, VT_PROCESS`, Ctrl+Alt+F2 made tty2 active,
+  Ctrl+Alt+F1 came back and typing worked (`distro/notes/login.md`).
+- ~~palmy (client side)~~ done: (1) the repeat ran at ~2/s because palmy
+  only generated repeats inside its own wait, and term blocks between frames
+  in a poll of its own for up to a second; palmy now pumps a due repeat
+  first and `p.key_repeat_timeout` tells such an app when to wake. On the
+  image a key held 2 s typed 40 characters (25/s after 400 ms). (2) palmy
+  sends real damage: each frame is compared with the last one sent, the
+  changed rows become up to 16 `damage_buffer` rectangles, and an unchanged
+  frame is not committed at all (`palmy/damage.odin`; `PALMY_DAMAGE=off`
+  restores whole-surface damage). (3) term: a wheel turned up (negative)
+  scrolls back, down scrolls forward.
 
 - **apps/kit (`kit.FONT_DIR`)** is an absolute path into this checkout
   (`/home/alex/Work/palmy/parity/web/public/fonts`). Every kit app (term,
@@ -327,9 +329,8 @@ keyboard 68 -> 82 (clock 13), `--input-selftest` evdev 118 and xkb 134
   iteration, so keys arriving in the same poll batch as the toggle may still
   be resolved in the old group.
 
-- VT switching needs palm-login to hand over the VT (chown + XDG_VTNR, see
-  above). Until it does, wm on the image logs `vt: none` and runs without
-  it, as before. Only exercised in QEMU through `qemu-test.sh --vt 1`.
+- VT switching runs on the image since palm-login hands over tty1 (above);
+  only ever in QEMU.
 - Output hotplug was not exercised: the kernel has no PCI hotplug driver
   (`CONFIG_HOTPLUG_PCI_ACPI`/`_PCIE` off) and QEMU enables a virtio-gpu's
   second output only when a UI resizes it, which `-display none` never does.
@@ -342,6 +343,5 @@ keyboard 68 -> 82 (clock 13), `--input-selftest` evdev 118 and xkb 134
   clicks (grab, click-outside dismissal) and GTK/Firefox popups were not run
   on a real seat. Firefox maps a `<select>` as a popup only with a real input
   serial.
-- palmy's term repeats a held key at about 2/s under wm (it should be 25/s
-  after 400 ms; wm sends `repeat_info(25, 400)` and a single press). That is
-  in palmy's client-side repeat, not the wire (see "What I need").
+- The CPU numbers in the damage table above were measured before palmy sent
+  real damage; they have not been measured again.

@@ -317,14 +317,16 @@ passes 173 of 173. What W1 asked for and did not happen:
   in QEMU): one output per head, its own bar and workspace. Plugging and
   unplugging a monitor was not exercised: the Palmframe kernel has no PCI
   hotplug and QEMU's virtio-gpu enables extra outputs only from a UI.
-- **VT switching needs palm-login's part.** wm does the whole VT dance
-  without logind (`apps/wm/vt.odin`, verified in QEMU), but on the image
-  palm-login must chown the session's tty to the user and set `XDG_VTNR`
-  (`distro/notes/wm.md`, "What I need from others"); until then wm logs
-  `vt: none` and runs without Ctrl+Alt+Fn.
-- **Damage tracking is one rectangle per frame**, and palmy clients damage
-  their whole surface on every commit, so a palmy app on screen still costs
-  most of a repaint per frame. Measured numbers are in `distro/notes/wm.md`.
+- **Damage tracking is one rectangle per frame** in wm. palmy clients now
+  send real damage (the rows that changed, up to 16 rectangles, and no
+  commit at all for an unchanged frame: `palmy/damage.odin`), but wm folds
+  them into one box, and the CPU numbers in `distro/notes/wm.md` were
+  measured before the client side changed.
+- Done in the integration round: palm-login hands wm the VT (tty1 lent to
+  the session's user, `XDG_VTNR=1`), and Ctrl+Alt+F2/F1 switch on the
+  image; palmy's key repeat runs at 25/s under wm (it ran at ~2/s in term,
+  which blocks between frames in its own poll); term scrolls back on a wheel
+  turned up.
 - Done in this round (details in `distro/notes/wm.md`): input hotplug,
   VT switching without logind, real key press/release with client-side
   repeat, damage tracking, `xdg_popup` with a real positioner (a browser's
@@ -350,20 +352,14 @@ the areas' notes name.
 
 - **Encryption is designed, not built.** `distro/notes/installer-core.md`
   (*Encryption*) has the design: a LUKS2 root, an initramfs on the ESP that
-  asks for the passphrase, a host-copied `cryptsetup` package and four
-  kernel options (`CONFIG_DM_CRYPT` and the ciphers), none of which exist
-  yet.
+  asks for the passphrase, a host-copied `cryptsetup` package and the kernel
+  options (`CONFIG_DM_CRYPT` and the ciphers). The kernel options are set,
+  built in; the package, the initramfs and the installer's side are not.
 - **The wm bar's date** (`Tue 13 Oct`) and its empty-desktop hint are
   English in every language, because wm has no catalogue.
-- **The greeter still mirrors its rows by hand** (`apps/greeter`, `if rtl`
-  branches). The installer now uses one `dir-rtl` on its root and
-  `dir-auto` on its text nodes; the greeter could do the same.
 - **NVMe under a BIOS needs a boot index.** QEMU's SeaBIOS never tries an
   NVMe disk unless it has one (what choosing it in a BIOS boot menu does);
-  with one, an installed NVMe disk boots through limine's BIOS stages. The
-  shipped kernel config also lacks `CONFIG_BLK_DEV_NVME`, so NVMe disks are
-  invisible to the live system and the installed one until it is set
-  (the QEMU run used a kernel with it).
+  with one, an installed NVMe disk boots through limine's BIOS stages.
 - **Some old BIOSes refuse a GPT disk whose protective MBR entry is not
   marked active** (parted's `pmbr_boot`). The installer leaves it inactive,
   as UEFI asks; no such BIOS was at hand.
@@ -383,26 +379,12 @@ the areas' notes name.
 
 ## The system
 
-- **The disk image boots a copy of the kernel.** The linux package now
-  installs `/boot/efi/vmlinuz`, which on the mounted ESP is the `/vmlinuz`
-  the installer's limine.conf boots, so `palm upgrade linux` reaches limine
-  there (verified in QEMU, `distro/kernel/test-hardware.py esp`). The
-  image's limine.conf still names `boot():/boot/vmlinuz`, a copy made at
-  build time, and `palm verify` reports `/boot/efi/vmlinuz` missing;
-  `distro/notes/kernel-image.patch` is the four-line fix. The live build
-  should also prune `./boot/efi` from its initramfs.
-- **busybox's modprobe cannot load the kernel's `.ko.zst` modules**, and it
-  is the `modprobe` palm-init runs on hotplug. Drop `modprobe insmod depmod
-  modinfo` from busybox (`BB_SKIP` in `distro/recipes/generate.sh`) and add
-  `symlink = /usr/bin/modprobe -> palm-modules` to the linux recipe; until
-  then the linux package's `modules` service does the hotplug loading
-  (`distro/notes/kernel.md`).
-- **Nothing installs firmware.** `linux-firmware` and its parts (440 MB
-  packed) are in the repository, but neither `palmframe` nor the installer
-  nor the live medium installs them, so on real hardware amdgpu, i915's
-  display firmware and every Wi-Fi card would be missing theirs.
-  `distro/notes/kernel.md` suggests a split. `generate.sh` should also call
-  `distro/recipes/linux-firmware/generate.sh`.
+- **The disk image has no firmware.** The installer installs
+  `linux-firmware` (or, from the medium, the parts the live ISO carries:
+  `LIVE_FIRMWARE` in `distro/live/build.sh`), and the live system runs with
+  those parts; the disk image, built for QEMU, has none
+  (`distro/notes/kernel.md`, Firmware). The firmware also makes the ISO
+  576 MB, held in RAM.
 - **busybox's `su` still fails** for anyone but root (busybox is not setuid).
   `doas` and `passwd` (distro/doas, distro/passwd) replace what mattered;
   `su` could be dropped from the busybox package.
@@ -419,10 +401,11 @@ the areas' notes name.
   AHCI, PCIe hotplug), but no native GPU driver, Wi-Fi card or SOF audio
   has run. No early microcode, no initramfs for an encrypted root, and no
   fallback boot entry with the previous kernel (`distro/notes/kernel.md`).
-- **Not exercised in the image:** Restart from the greeter, logging out with
-  SUPER+SHIFT+E, the autologin and single-user limine entries, and the
-  windowed `distro/run-qemu.sh` (all testing was headless). Restart and
-  logout passed in the login agent's own initramfs boot.
+- **Not exercised in the image:** Restart from the greeter, the autologin
+  and single-user limine entries, and the windowed `distro/run-qemu.sh`
+  (all testing was headless). Restart passed in the login agent's own
+  initramfs boot; logging out with SUPER+SHIFT+E now runs in
+  `distro/recipes/runtime/test-runtime.py`.
 - **The public repository is published by hand** from one machine
   (`distro/repo-publish/publish.sh`, the release key in
   `~/.config/palmframe/keys/`). No CI publishes it, the key has no backup or
@@ -433,18 +416,13 @@ the areas' notes name.
 - **palm**: no revocation checking in its TLS client, indexes do not expire,
   and each package is decompressed whole in memory to install
   (`distro/notes/palm.md`, *Not done*).
-- **Runtime dependencies** (`distro/notes/runtime.md`): the kernel config lacks
-  what iwd (crypto API) and BlueZ (`CONFIG_BT`) need — proposed in
-  `distro/recipes/runtime/kernel.config`; PipeWire is not started by
-  palm-login yet (needs a `/etc/palm/session.d` hook); `apps/network` speaks
-  only NetworkManager while the system ships iwd; the bus runs as `nobody`
-  until base has a `dbus` user; poppler, whisper.cpp and v4l-utils are not
-  shipped.
+- **Runtime dependencies** (`distro/notes/runtime.md`): poppler,
+  whisper.cpp and v4l-utils are not shipped, and ffmpeg has no libass
+  (videoedit's `subtitles`). The kernel's crypto API and Bluetooth,
+  PipeWire started by palm-login, `apps/network` on iwd and the bus running
+  as `dbus` are done (test-runtime.py passes on the shipped kernel).
 - **busybox's serial `login`** ignores shadow's aging fields; palm-login,
   doas and passwd honour them.
-- **A cosmetic fault** in the verification screenshots: the greeter's Shut
-  Down button has no hover state. (`term`'s one-cell selection on a single
-  click is fixed.)
 
 ---
 

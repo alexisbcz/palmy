@@ -35,6 +35,7 @@ those names, types and signatures. Additions (all optional for a front end):
 | `keyboard_settings(k)`, `keyboard_needs_latin(layout)` | the body of `/etc/palm/keyboard`, shared with the GUI's live switch |
 | `load_option_partition`, `boot_entry_description` | the UEFI entry's partition GUID and name |
 | `Plan.swap_bytes`, `Zone.country_code`, `Options.limine_tool`, `Options.no_bios_boot` | swap file, translation key, BIOS boot |
+| `Plan.no_firmware`, `firmware_for_repo`, `firmware_from_index` | the packages step adds `linux-firmware` when the repository lists it (or is a network one), else every firmware part it lists (the live medium's); `no_firmware` (palm-install `--no-firmware`) adds none; `distro/notes/kernel.md`, Firmware |
 
 Semantics a front end should know:
 
@@ -78,10 +79,9 @@ Semantics a front end should know:
   `boot/limine/` and runs `limine bios-install <disk> 3`: limine's stage 1
   goes into the protective MBR's boot code (the 0xEE entry is untouched) and
   stage 2 into partition 3; stage 2 finds `limine-bios.sys` and
-  `limine.conf` on the FAT32 ESP. The tool is limine's own, which the
-  `palm-install` package carries as `/usr/lib/palm-install/limine`
-  (`LIMINE_TOOL_PRIVATE`; `limine` in PATH wins) because the limine package
-  ships only boot files. A failure fails the install only when the machine
+  `limine.conf` on the FAT32 ESP. The tool is limine's own,
+  `/usr/bin/limine` from the limine package (found in PATH; palm-install
+  used to carry a private copy). A failure fails the install only when the machine
   itself booted through a BIOS; otherwise it is a warning. The protective
   MBR's entry is not marked active: UEFI says not to, and SeaBIOS does not
   need it. Some old BIOSes refuse a GPT disk without it (parted's
@@ -256,7 +256,8 @@ here instead.
 - **What it needs from others.** The kernel: `CONFIG_DM_CRYPT=y`,
   `CONFIG_BLK_DEV_DM=y`, `CONFIG_CRYPTO_XTS=y`, `CONFIG_CRYPTO_AES_NI_INTEL=y`
   (and the generic AES), `CONFIG_CRYPTO_USER_API_SKCIPHER=y` (cryptsetup
-  benchmarks through AF_ALG). None is set today. A `cryptsetup` package,
+  benchmarks through AF_ALG). All of them are set, built in, since the
+  integration round. A `cryptsetup` package,
   copied from the build host like e2fsprogs: `cryptsetup` plus
   libcryptsetup, libdevmapper, libjson-c, libargon2, libcrypto (OpenSSL),
   libpopt, libuuid, libblkid — about 6 MB, every library glibc-only.
