@@ -1,16 +1,19 @@
 import type { Route } from "./+types/docs.slug";
+import { seo } from "~/lib/seo";
 import { Shell } from "~/components/shell";
 import { DocArticle } from "~/components/doc-page";
 import { tocOf } from "~/lib/doc";
 import { PALMY_DOCS } from "~/content/docs-palmy";
 import { palmySidebar } from "~/lib/nav";
 
-export function meta({ loaderData: data }: Route.MetaArgs) {
+export function meta({ loaderData: data, location }: Route.MetaArgs) {
   if (!data) return [{ title: "Not found — palmy" }];
-  return [
-    { title: `${data.title} — palmy` },
-    { name: "description", content: data.description },
-  ];
+  return seo({
+    title: `${data.title} — palmy`,
+    fullTitle: true,
+    description: data.description,
+    path: location.pathname,
+  });
 }
 
 export function loader({ params }: Route.LoaderArgs) {

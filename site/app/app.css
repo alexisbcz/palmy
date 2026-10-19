@@ -1,6 +1,10 @@
 @import "tailwindcss";
 @import "tw-animate-css";
 @import "shadcn/tailwind.css";
+@import "@fontsource-variable/geist";
+@import "@fontsource-variable/geist-mono";
+@import "./content/generated/shiki.css";
+@import "./markdown.css";
 
 @custom-variant dark (&:is(.dark *));
 
@@ -9,10 +13,10 @@
     "Apple Color Emoji", "Segoe UI Emoji", "Segoe UI Symbol", "Noto Color Emoji";
 }
 
-
 @theme inline {
   --font-heading: var(--font-sans);
-  --font-sans: 'Geist Variable', sans-serif;
+  --font-sans: 'Geist Variable', ui-sans-serif, system-ui, sans-serif;
+  --font-mono: 'Geist Mono Variable', ui-monospace, SFMono-Regular, Menlo, monospace;
   --color-sidebar-ring: var(--sidebar-ring);
   --color-sidebar-border: var(--sidebar-border);
   --color-sidebar-accent-foreground: var(--sidebar-accent-foreground);
@@ -223,4 +227,128 @@ body {
 .thin-scroll::-webkit-scrollbar-thumb {
   background: var(--border);
   border-radius: 9999px;
+}
+
+@layer components {
+  .fd-steps {
+    position: relative;
+    margin-inline-start: 1rem;
+    padding-inline-start: 1.75rem;
+    border-inline-start: 1px solid var(--border);
+    counter-reset: step;
+  }
+  .fd-step {
+    position: relative;
+  }
+  .fd-step::before {
+    position: absolute;
+    inset-inline-start: calc(-1.75rem - 1rem - 0.5px);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 2rem;
+    height: 2rem;
+    border: 1px solid var(--border);
+    border-radius: 9999px;
+    background-color: var(--background);
+    color: var(--foreground);
+    font-size: 0.875rem;
+    font-weight: 500;
+    line-height: 1.25rem;
+    content: counter(step);
+    counter-increment: step;
+  }
+  .fd-step > :first-child {
+    margin-top: 0;
+  }
+  .fd-step + .fd-step {
+    margin-top: 2rem;
+  }
+  .shiki:not(.not-docs-codeblock *) {
+    --padding-left: 1rem;
+    --padding-right: 1rem;
+  }
+  .shiki:not(.not-docs-codeblock *) code span {
+    color: var(--shiki-light);
+    font-style: var(--shiki-light-font-style);
+  }
+  .dark .shiki:not(.not-docs-codeblock *) code span {
+    color: var(--shiki-dark);
+    font-style: var(--shiki-dark-font-style);
+  }
+  .shiki:not(.not-docs-codeblock *) .line {
+    position: relative;
+    padding-left: var(--padding-left);
+    padding-right: var(--padding-right);
+  }
+  .shiki:not(.not-docs-codeblock *) .line:empty {
+    height: 1lh;
+  }
+  .shiki.has-focused:not(.not-docs-codeblock *) .line:not(.focused) {
+    filter: blur(2px);
+    transition: filter 200ms;
+  }
+  .shiki.has-focused:not(.not-docs-codeblock *):hover .line:not(.focused) {
+    filter: blur(0);
+  }
+  .shiki:not(.not-docs-codeblock *) .diff::before {
+    position: absolute;
+    left: 0.375rem;
+  }
+  .shiki:not(.not-docs-codeblock *) .diff.remove {
+    --docs-counter-color: rgb(230, 10, 100);
+    background-color: rgba(200, 10, 100, 0.12);
+  }
+  .shiki:not(.not-docs-codeblock *) .diff.remove::before {
+    content: "-";
+    color: rgb(230, 10, 100);
+  }
+  .shiki:not(.not-docs-codeblock *) .diff.add {
+    --docs-counter-color: rgb(10, 200, 100);
+    background-color: rgba(14, 180, 100, 0.1);
+  }
+  .shiki:not(.not-docs-codeblock *) .diff.add::before {
+    content: "+";
+    color: rgb(10, 200, 100);
+  }
+  .shiki:not(.not-docs-codeblock *) .highlighted {
+    --docs-counter-color: var(--primary);
+    background-color: color-mix(in oklab, var(--primary) 10%, transparent);
+  }
+  .shiki:not(.not-docs-codeblock *) .highlighted::after {
+    position: absolute;
+    inset-block: 0;
+    left: 0;
+    border-left: 2px solid color-mix(in oklab, var(--primary) 50%, transparent);
+    content: "";
+  }
+  .shiki:not(.not-docs-codeblock *) .highlighted-word {
+    margin-block: -1px;
+    padding: 1px;
+    border: 1px solid color-mix(in oklab, var(--primary) 30%, transparent);
+    border-radius: calc(var(--radius) * 0.8);
+    background-color: color-mix(in oklab, var(--primary) 10%, transparent);
+    font-weight: 500;
+  }
+  .shiki[data-line-numbers]:not(.not-docs-codeblock *) .line {
+    counter-increment: line;
+    padding-left: calc(var(--padding-left) + 1.75rem);
+  }
+  .shiki[data-line-numbers]:not(.not-docs-codeblock *) .line::after {
+    position: absolute;
+    inset-block: 0;
+    left: 0;
+    width: 1.75rem;
+    color: color-mix(in oklab, var(--docs-counter-color, var(--muted-foreground)) 60%, transparent);
+    text-align: right;
+    content: counter(line);
+  }
+  code.shiki:not(.not-docs-codeblock *) span {
+    color: var(--shiki-light);
+    font-style: var(--shiki-light-font-style);
+  }
+  .dark code.shiki:not(.not-docs-codeblock *) span {
+    color: var(--shiki-dark);
+    font-style: var(--shiki-dark-font-style);
+  }
 }

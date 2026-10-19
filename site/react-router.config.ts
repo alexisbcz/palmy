@@ -53,12 +53,26 @@ if (COMPONENT_SLUGS.length !== 61) {
   );
 }
 
+/**
+ * The Markdown-driven pages, from the nav scripts/sync-docs.mjs writes. It is
+ * plain JSON, so unlike the .tsx content it can be read here directly.
+ */
+const generated = JSON.parse(
+  readFileSync(here("./app/content/generated/nav.json"), "utf8"),
+) as Record<string, { groups: { pages: { url: string }[] }[] }>;
+const GENERATED_PATHS = Object.values(generated).flatMap((c) =>
+  c.groups.flatMap((g) => g.pages.map((p) => p.url)),
+);
+
 const paths = [
   "/",
   "/docs",
   "/palmframe",
   "/components",
   "/apps",
+  "/distro",
+  "/reference",
+  ...GENERATED_PATHS,
   ...docSlugs("./app/content/docs-palmy.tsx", 17).map((s) => `/docs/${s}`),
   ...docSlugs("./app/content/docs-palmframe.tsx", 9).map((s) => `/palmframe/${s}`),
   ...COMPONENT_SLUGS.map((s) => `/components/${s}`),

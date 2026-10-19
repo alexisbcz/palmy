@@ -1,4 +1,5 @@
 import { Link } from "react-router";
+import { seo } from "~/lib/seo";
 import { Shell } from "~/components/shell";
 import { Callout, StatusBadge, Ticks } from "~/components/bits";
 import { Shot } from "~/components/shot";
@@ -6,13 +7,11 @@ import { APPS, CATEGORIES, appsByCategory } from "~/content/apps";
 import type { TocEntry } from "~/lib/doc";
 
 export function meta() {
-  return [
-    { title: "Applications — Palmframe" },
-    {
-      name: "description",
-      content: `${APPS.length} applications built on palmy: a window manager, a login greeter, a file browser, a mail stack, an office suite, media players and more.`,
-    },
-  ];
+  return seo({
+    title: "Applications",
+    description: `${APPS.length} applications built on palmy: a window manager, a login greeter, a file browser, a mail stack, an office suite, media players and more.`,
+    path: "/apps",
+  });
 }
 
 function slugifyCategory(c: string) {

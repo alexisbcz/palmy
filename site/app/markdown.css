@@ -1,0 +1,92 @@
+/* --------------------------------------------------------------------------
+   Pages rendered from the repository's Markdown (app/components/markdown).
+   They share .prose-doc with the hand-written pages; these rules cover what
+   Markdown produces that the hand-written pages do not: flat headings, bare
+   tables, nested lists, figures, key caps and code blocks.
+   Imported from app.css, so Tailwind's @apply works here.
+   -------------------------------------------------------------------------- */
+
+/* Components inside the prose column opt out of its element styles. The
+   .prose-doc rules are unlayered, so utilities alone cannot override them. */
+.prose-doc .not-prose ul,
+.prose-doc .not-prose ol {
+  margin: 0;
+  list-style: none;
+}
+.prose-doc .not-prose code {
+  border: 0;
+  background: transparent;
+  padding: 0;
+}
+.prose-doc .not-prose a {
+  text-decoration: none;
+  font-weight: inherit;
+}
+
+.md-doc > h2:first-child {
+  margin-top: 0;
+}
+.md-doc li > ul,
+.md-doc li > ol {
+  margin-top: 0.5rem;
+}
+.md-doc li > p + p {
+  margin-top: 0.5rem;
+}
+.md-doc .md-table table {
+  @apply m-0 w-full text-left text-sm;
+}
+.md-doc .md-table thead {
+  @apply bg-muted/50;
+}
+.md-doc .md-table thead th {
+  @apply border-b px-3 py-2 text-xs font-semibold tracking-wide whitespace-nowrap text-muted-foreground uppercase;
+}
+.md-doc .md-table tbody td {
+  @apply border-b-0 px-3 py-2 align-top leading-6 text-foreground/85;
+}
+.md-doc .md-table tbody tr + tr td {
+  @apply border-t;
+}
+/* A code span that wraps keeps its frame on both lines. */
+.md-doc :not(pre) > code {
+  -webkit-box-decoration-break: clone;
+  box-decoration-break: clone;
+}
+.md-doc .md-table td code {
+  @apply text-[0.8125em] break-words;
+}
+.md-doc figure figcaption {
+  @apply text-sm leading-6;
+}
+.md-doc hr {
+  @apply my-10 border-t;
+}
+.md-doc .keys {
+  @apply inline-flex flex-wrap items-center gap-x-0.5 gap-y-1 text-muted-foreground;
+}
+.md-doc .chord {
+  @apply inline-flex items-center gap-0.5 whitespace-nowrap;
+}
+.md-doc kbd {
+  @apply inline-flex h-6 min-w-6 items-center justify-center rounded-md border border-b-2 bg-muted px-1.5 font-mono text-xs font-medium whitespace-nowrap text-foreground;
+}
+
+/* Code blocks: the docscn CodeBlock supplies the frame, Shiki the colours. */
+.md-doc figure.shiki pre {
+  @apply m-0 bg-transparent p-0 font-mono leading-6;
+}
+.md-doc figure.shiki pre code {
+  @apply border-0 bg-transparent p-0 text-[0.8125rem];
+}
+
+/* Steps (docscn): the heading of each step sits beside its number. */
+.md-doc .fd-steps {
+  margin-top: 1.5rem;
+}
+.md-doc .fd-step > h3:first-child {
+  @apply mt-0 pt-1;
+}
+.md-doc .fd-step > * + * {
+  margin-top: 1rem;
+}

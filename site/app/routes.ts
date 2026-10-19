@@ -13,4 +13,10 @@ export default [
   route("components/:slug", "routes/components.slug.tsx"),
 
   route("apps", "routes/apps.tsx"),
+
+  route("distro", "routes/distro.index.tsx"),
+  route("distro/:slug", "routes/distro.slug.tsx"),
+
+  route("reference", "routes/reference.index.tsx"),
+  route("reference/:slug", "routes/reference.slug.tsx"),
 ] satisfies RouteConfig;

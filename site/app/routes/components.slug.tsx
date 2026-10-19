@@ -1,4 +1,5 @@
 import { Link } from "react-router";
+import { seo } from "~/lib/seo";
 import type { Route } from "./+types/components.slug";
 import { Shell } from "~/components/shell";
 import { Callout, DataTable, StatusBadge, Ticks } from "~/components/bits";
@@ -13,12 +14,14 @@ import {
 } from "~/content/components";
 import type { TocEntry } from "~/lib/doc";
 
-export function meta({ loaderData: data }: Route.MetaArgs) {
+export function meta({ loaderData: data, location }: Route.MetaArgs) {
   if (!data) return [{ title: "Not found — Components" }];
-  return [
-    { title: `${data.title} — palmy components` },
-    { name: "description", content: data.blurb },
-  ];
+  return seo({
+    title: `${data.title} — palmy components`,
+    fullTitle: true,
+    description: data.blurb,
+    path: location.pathname,
+  });
 }
 
 export function loader({ params }: Route.LoaderArgs) {

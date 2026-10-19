@@ -2,6 +2,7 @@ import { PALMY_DOCS } from "~/content/docs-palmy";
 import { PALMFRAME_DOCS } from "~/content/docs-palmframe";
 import { COMPONENTS } from "~/content/components";
 import type { DocPage } from "~/lib/doc";
+import { collectionPages } from "~/lib/generated-nav";
 
 export type NavLink = {
   to: string;
@@ -56,6 +57,11 @@ export function palmySidebar(): NavGroup[] {
       .filter((d): d is DocPage => Boolean(d))
       .map((d) => ({ to: `/docs/${d.slug}`, label: d.title })),
   }));
+
+  groups.push({
+    title: "Generated reference",
+    links: collectionPages("reference").map((p) => ({ to: p.url, label: p.nav })),
+  });
 
   // Anything added to the content file but not placed above still appears,
   // so a new page can never be silently missing from the sidebar.
@@ -125,9 +131,10 @@ export function componentsSidebar(): NavGroup[] {
 /* Top navigation                                                              */
 /* -------------------------------------------------------------------------- */
 
-export const TOP_NAV: NavLink[] = [
-  { to: "/docs/introduction", label: "palmy" },
-  { to: "/components", label: "Components" },
-  { to: "/palmframe/overview", label: "Palmframe" },
-  { to: "/apps", label: "Apps" },
+export const TOP_NAV: (NavLink & { match: string })[] = [
+  { to: "/distro/overview", label: "Distribution", match: "/distro" },
+  { to: "/docs/introduction", label: "palmy", match: "/docs|/reference" },
+  { to: "/components", label: "Components", match: "/components" },
+  { to: "/apps", label: "Apps", match: "/apps" },
+  { to: "/palmframe/overview", label: "Vision", match: "/palmframe" },
 ];

@@ -23,7 +23,7 @@
  */
 
 import { spawn } from "node:child_process";
-import { createReadStream, existsSync, statSync } from "node:fs";
+import { createReadStream, existsSync, readFileSync, statSync } from "node:fs";
 import { createServer } from "node:http";
 import { extname, join, normalize } from "node:path";
 import { setTimeout as sleep } from "node:timers/promises";
@@ -38,10 +38,19 @@ const PORT = Number(process.env.PORT ?? 41731);
 const BASE = baseArg ?? `http://127.0.0.1:${PORT}`;
 
 /** What the content is expected to produce. Mismatch means a missing page. */
+const GENERATED_NAV = JSON.parse(
+  readFileSync(join(process.cwd(), "app/content/generated/nav.json"), "utf8"),
+);
+const generatedCount = (c) =>
+  GENERATED_NAV[c].groups.reduce((n, g) => n + g.pages.length, 0);
+
 const EXPECT = {
   "/docs/": 17,
   "/palmframe/": 9,
   "/components/": 61,
+  // The synced pages: as many as scripts/sync-docs.mjs listed in its nav.
+  "/distro/": generatedCount("distro"),
+  "/reference/": generatedCount("reference"),
 };
 
 /* -------------------------------------------------------------------------- */

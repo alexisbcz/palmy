@@ -1,4 +1,5 @@
 import { Link } from "react-router";
+import { seo } from "~/lib/seo";
 import { Shell } from "~/components/shell";
 import { Callout, DataTable, StatusBadge, Ticks } from "~/components/bits";
 import { componentsSidebar } from "~/lib/nav";
@@ -11,14 +12,12 @@ import {
 } from "~/content/components";
 
 export function meta() {
-  return [
-    { title: "Components — palmy" },
-    {
-      name: "description",
-      content:
-        "All 61 shadcn/ui components, the Odin that produces each one, and what the Odin version does and does not do.",
-    },
-  ];
+  return seo({
+    title: "Components",
+    description:
+      "All 61 shadcn/ui components, the Odin that produces each one, and what the Odin version does and does not do.",
+    path: "/components",
+  });
 }
 
 const GAP_LABEL = {

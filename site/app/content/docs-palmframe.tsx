@@ -61,6 +61,13 @@ export const PALMFRAME_DOCS: DocPage[] = [
                 <Link to="/apps">The applications</Link>, each with a scripted
                 demo recorded on a private headless compositor.
               </li>
+              <li>
+                <Link to="/distro/overview">A first version of the
+                distribution</Link>: a kernel, a busybox userland, and an init,
+                a login daemon and a package manager written in Odin, booting
+                in QEMU to the greeter and the window manager, with a graphical
+                installer. It has never run on real hardware.
+              </li>
             </ul>
           </>
         ),
@@ -74,7 +81,9 @@ export const PALMFRAME_DOCS: DocPage[] = [
               <StatusBadge status="planned" label="Written down, not built" />
             </div>
             <p>
-              Everything in this half of the site. Saying so plainly is the
+              Everything in this half of the site, which is about what the
+              distribution is for rather than the system that boots today.
+              Saying so plainly is the
               point: a plan presented as a feature is the one failure mode a
               document like this has.
             </p>

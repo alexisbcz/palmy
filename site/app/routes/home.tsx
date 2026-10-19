@@ -1,4 +1,5 @@
 import { Link } from "react-router";
+import { seo } from "~/lib/seo";
 import { ArrowRightIcon } from "lucide-react";
 import { SiteFooter, SiteHeader } from "~/components/shell";
 import { CodeBlock } from "~/components/code-block";
@@ -9,14 +10,13 @@ import { COMPONENTS, PARITY_SUMMARY } from "~/content/components";
 import { APPS } from "~/content/apps";
 
 export function meta() {
-  return [
-    { title: "Palmframe — a Linux distribution with its own UI toolkit" },
-    {
-      name: "description",
-      content:
-        "palmy is a UI toolkit written from scratch in Odin: Wayland and X11 hand-rolled, a software rasterizer, flexbox, and Tailwind class strings. Palmframe is the distribution being built on it.",
-    },
-  ];
+  return seo({
+    title: "Palmframe — a Linux distribution with its own UI toolkit",
+    fullTitle: true,
+    description:
+      "palmy is a UI toolkit written from scratch in Odin: Wayland and X11 hand-rolled, a software rasterizer, flexbox, and Tailwind class strings. Palmframe is a small Linux distribution built on it, which boots in QEMU.",
+    path: "/",
+  });
 }
 
 const HERO = `for ui in palmy.frames(app) {
@@ -76,9 +76,10 @@ export default function Home() {
               <div className="mb-5 flex flex-wrap items-center gap-2">
                 <StatusBadge status="built" label="Toolkit: built, measured" />
                 <StatusBadge
-                  status="planned"
-                  label="Distribution: a plan"
+                  status="partial"
+                  label="Distribution: boots in QEMU"
                 />
+                <StatusBadge status="planned" label="The AI system: a plan" />
               </div>
               <h1 className="text-4xl font-bold tracking-tight sm:text-5xl">
                 A UI toolkit with a three-line dependency list.
@@ -92,9 +93,12 @@ export default function Home() {
               </p>
               <p className="mt-4 text-base leading-7 text-muted-foreground">
                 <strong className="text-foreground">Palmframe</strong> is the
-                distribution being built on it, for a machine where AI is part
-                of the system rather than a website you visit. That half is a
-                plan, and every page of it says so.
+                Linux distribution built on it: an init, a login daemon and a
+                package manager written in Odin, booting in QEMU to a greeter
+                and the window manager, with a graphical installer. It has never
+                run on real hardware. What it is for, a machine where AI is part
+                of the system rather than a website you visit, is still a plan,
+                and every page of that says so.
               </p>
 
               <div className="mt-7 flex flex-wrap gap-3">
@@ -104,6 +108,12 @@ export default function Home() {
                 >
                   Read the docs
                   <ArrowRightIcon className="size-4" />
+                </Link>
+                <Link
+                  to="/distro/quick-start"
+                  className="inline-flex items-center gap-2 rounded-lg border px-4 py-2 text-sm font-medium transition hover:bg-accent"
+                >
+                  Boot the distribution
                 </Link>
                 <Link
                   to="/components"
@@ -233,12 +243,73 @@ export default function Home() {
           </div>
         </section>
 
+        {/* The distribution ----------------------------------------------- */}
+        <section className="border-t">
+          <div className="mx-auto max-w-[1600px] px-4 py-16 lg:px-6">
+            <div className="flex flex-wrap items-center gap-3">
+              <h2 className="text-2xl font-semibold tracking-tight">
+                The distribution
+              </h2>
+              <StatusBadge status="partial" label="QEMU only, never on real hardware" />
+            </div>
+            <p className="mt-2 max-w-2xl text-sm leading-7 text-muted-foreground">
+              <code>make distro</code> builds a kernel, a static busybox
+              userland, and an init, a login daemon and a package manager
+              written in Odin into one disk image. It boots from UEFI firmware
+              through limine to a graphical login and the window manager. A
+              live ISO carries a graphical installer, translated into five
+              languages, that puts the system on a disk of its own.
+            </p>
+            <div className="mt-6 grid gap-4 md:grid-cols-3">
+              {[
+                ["/docs-img/distro/docs/greeter.png", "The greeter, inside wm --drm --kiosk"],
+                ["/docs-img/distro/docs/desktop.png", "After logging in: two terminals, tiled"],
+                ["/docs-img/distro/docs/installer-language.png", "The installer's first step"],
+              ].map(([src, caption]) => (
+                <figure key={src} className="min-w-0 space-y-2">
+                  <img
+                    src={src}
+                    alt={caption}
+                    loading="lazy"
+                    decoding="async"
+                    width={1280}
+                    height={800}
+                    className="h-auto w-full rounded-xl border"
+                  />
+                  <figcaption className="text-xs text-muted-foreground">{caption}</figcaption>
+                </figure>
+              ))}
+            </div>
+            <p className="mt-3 text-xs text-muted-foreground">
+              QMP screendumps from a verification run, not mock-ups.
+            </p>
+            <div className="mt-6 grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
+              <Feature title="Quick start" to="/distro/quick-start">
+                From a checkout to the desktop in QEMU, then an install onto a
+                disk of its own.
+              </Feature>
+              <Feature title="Architecture" to="/distro/architecture">
+                Firmware, limine, Linux, palm-init, palm-login and the window
+                manager, and where each lives.
+              </Feature>
+              <Feature title="palm" to="/distro/palm">
+                A package manager modelled on Alpine&rsquo;s apk: a world
+                file, signed indexes, declarative recipes.
+              </Feature>
+              <Feature title="What is missing" to="/distro/missing">
+                Why this is not yet something to run on real hardware, item by
+                item.
+              </Feature>
+            </div>
+          </div>
+        </section>
+
         {/* Palmframe ------------------------------------------------------- */}
         <section className="border-t bg-muted/30">
           <div className="mx-auto max-w-[1600px] px-4 py-16 lg:px-6">
             <div className="flex flex-wrap items-center gap-3">
               <h2 className="text-2xl font-semibold tracking-tight">
-                Palmframe
+                Where it is going
               </h2>
               <StatusBadge status="planned" label="A plan, not a shipped thing" />
             </div>
@@ -275,8 +346,9 @@ export default function Home() {
               <Callout kind="planned" title="Where the line is">
                 <p>
                   The toolkit is measured against a browser and has a test
-                  suite. The distribution does not. Pages in the Palmframe half
-                  of this site carry a{" "}
+                  suite. The distribution has been verified in QEMU, and its
+                  pages say what was run. The ideas above have neither. Pages
+                  about them carry a{" "}
                   <StatusBadge status="planned" className="align-middle" />{" "}
                   badge, and the sidebar marks them too, so a plan is never
                   quietly presented as a feature.
