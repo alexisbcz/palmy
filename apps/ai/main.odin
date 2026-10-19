@@ -422,6 +422,16 @@ add_event :: proc(st: ^St, v: ck.Value, acts: []Action = nil) {
 	case "refused":
 		append(&st.items, Item{kind = .Refused, tool = strings.clone(ck.get_str(v, "tool")), text = strings.clone(ck.get_str(v, "why"))})
 	case "proposal":
+		// The step that made it is finished: what it produced is the card.
+		for k := len(st.items) - 1; k >= 0; k -= 1 {
+			it := &st.items[k]
+			if it.kind == .Step && it.tool == ck.get_str(v, "tool") && !it.done {
+				it.done = true
+				it.ok = true
+				it.result = strings.clone("proposed to you — nothing done until you confirm")
+				break
+			}
+		}
 		id := ck.get_str(v, "action_id")
 		status := "proposed"
 		for a in acts {if a.id == id {status = a.status}}

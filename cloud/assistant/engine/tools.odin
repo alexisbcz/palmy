@@ -291,7 +291,7 @@ Run :: struct {
 tool_env :: proc(allocator := context.temp_allocator) -> []string {
 	keep := [?]string {
 		"HOME", "PATH", "PALM_CLOUD_URL", "PALM_CLOUD_ANON_KEY", "PALM_CLOUD_SESSION", "PALM_IDENTITY",
-		"PALM_DAV_URL", "PALM_DAV_CACHE", "PALMY_NOTES_DIR", "PALM_ASSISTANT_STATE", "PALM_AUDIT", "TMPDIR", "XDG_DATA_HOME", "TZ", "LANG",
+		"PALM_DAV_URL", "PALM_DAV_CACHE", "PALMY_NOTES_DIR", "PALM_ASSISTANT_STATE", "PALM_INDEX_DIR", "PALM_AUDIT", "TMPDIR", "XDG_DATA_HOME", "TZ", "LANG",
 	}
 	out := make([dynamic]string, allocator)
 	for k in keep {

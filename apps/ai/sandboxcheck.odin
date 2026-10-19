@@ -30,6 +30,8 @@ sandbox_check_run :: proc() -> (out: string, err: string) {
 	put(fmt.tprintf("%s/.local/share/palm/cloud/session.json", home), "{}\n")
 	put(fmt.tprintf("%s/.local/share/palm/cloud/scoped/%s.json", home, other), "{}\n")
 	put(fmt.tprintf("%s/.ssh/id_ed25519", home), "-----BEGIN OPENSSH PRIVATE KEY-----\n")
+	put(fmt.tprintf("%s/.local/share/palm/index/%s/manifest", home, own), "own index\n")
+	put(fmt.tprintf("%s/.local/share/palm/index/%s/manifest", home, other), "PERSONAL-CANARY-7731\n")
 
 	tools := tools_dir()
 	tool := ""

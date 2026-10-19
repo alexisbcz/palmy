@@ -417,6 +417,7 @@ Places :: struct {
 	notes:  string, // ~/Notes/<handle>
 	mail:   string, // ~/Mail/<handle>, the identity's Maildir
 	state:  string, // ~/.local/share/palm/assistant/<handle>: session, scratch, audit, DAV copy
+	index:  string, // ~/.local/share/palm/index/<handle>: the search index, read only
 }
 
 places_for :: proc(home, handle: string, allocator := context.allocator) -> Places {
@@ -427,6 +428,7 @@ places_for :: proc(home, handle: string, allocator := context.allocator) -> Plac
 		notes = fmt.aprintf("%s/Notes/%s", home, handle, allocator = allocator),
 		mail = fmt.aprintf("%s/Mail/%s", home, handle, allocator = allocator),
 		state = fmt.aprintf("%s/.local/share/palm/assistant/%s", home, handle, allocator = allocator),
+		index = fmt.aprintf("%s/.local/share/palm/index/%s", home, handle, allocator = allocator),
 	}
 }
 
@@ -461,6 +463,9 @@ SYSTEM_DEVICES := [?]string{"/dev/null", "/dev/urandom", "/dev/zero"}
 policy_for :: proc(pl: Places, tools: []string, ports: []u16, allocator := context.allocator) -> Policy {
 	ro := make([dynamic]string, allocator)
 	for s in SYSTEM_READ {append(&ro, s)}
+	// The identity's own search index, read only: the daemon writes it, as
+	// the person, and the assistant may only search it.
+	append(&ro, pl.index)
 	ex := make([dynamic]string, allocator)
 	for s in SYSTEM_EXEC {append(&ex, s)}
 	for t in tools {append(&ex, t)}

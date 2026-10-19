@@ -64,6 +64,8 @@ main :: proc() {
 	write(fmt.tprintf("%s/.local/share/palm/cloud/session.json", home), "{\"refresh_token\":\"the-person\"}\n")
 	write(fmt.tprintf("%s/.local/share/palm/cloud/scoped/%s.json", home, other), "{\"refresh_token\":\"personal-device\"}\n")
 	write(fmt.tprintf("%s/.ssh/id_ed25519", home), "-----BEGIN OPENSSH PRIVATE KEY-----\n")
+	write(fmt.tprintf("%s/manifest", op.index), "own index\n")
+	write(fmt.tprintf("%s/manifest", xp.index), "PERSONAL-CANARY-7731\n")
 
 	// A tool directory with one binary in it: this program itself, run with
 	// --exit-0, stands in for a tool.

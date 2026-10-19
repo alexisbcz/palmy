@@ -20,7 +20,7 @@ for a in "$@"; do
 	*) targets+=("$a") ;;
 	esac
 done
-[ ${#targets[@]} -gt 0 ] || targets=(ai mail sandbox-check drive calendar contacts notes chat forge accounts davd)
+[ ${#targets[@]} -gt 0 ] || targets=(ai mail sandbox-check drive calendar contacts notes chat forge index accounts davd)
 coll=(
 	-collection:palmy="$root/palmy"
 	-collection:shadcn="$root/shadcn"
@@ -42,6 +42,7 @@ for t in "${targets[@]}"; do
 	davd) build "$here/bin/palm-davd" "$root/cloud/dav" & ;;
 	accounts) build "$here/bin/accounts" "$root/apps/accounts" & ;;
 	drive | calendar | contacts | notes | chat | forge) build "$here/bin/tools/$t" "$root/apps/$t" & ;;
+	index) [ -d "$root/apps/index" ] && build "$here/bin/tools/index" "$root/apps/index" & ;;
 	*) echo "unknown target $t" >&2; exit 2 ;;
 	esac
 	pids+=($!)

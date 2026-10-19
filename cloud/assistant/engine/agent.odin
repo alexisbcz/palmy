@@ -1009,6 +1009,32 @@ remember :: proc(a: ^Agent, t: ^Tool, args: map[string]string, r: Run) -> (text,
 		brief = fmt.tprintf("%d event(s)", len(evs))
 		label = "the calendar"
 		if len(evs) > 0 {append(&a.seen.sources, Source{kind = "calendar", label = "calendar events"})}
+	case "index_search":
+		// The search area's index (cloud/docs/search.md). Every result names
+		// its identity; one that names another identity would be a bug in the
+		// index, and is dropped here rather than shown.
+		results := ck.array(ck.get(v, "results"))
+		n := 0
+		for r in results {
+			if ck.get_str(r, "identity") != a.req.identity.handle {continue}
+			n += 1
+			kind := ck.get_str(r, "kind")
+			title := ck.get_str(r, "title")
+			who := ck.get_str(r, "who")
+			fmt.sbprintf(&b, "%d. %s | %s | %s | %s | %s\n", n, kind, title, who, ck.get_str(r, "date")[:min(10, len(ck.get_str(r, "date")))], ck.get_str(r, "snippet"))
+			note_correspondent(&a.seen, who, fmt.tprintf("the %s %q", kind, short(title, 40)))
+			note_content(&a.seen, ck.get_str(r, "snippet"), fmt.tprintf("the %s %q", kind, short(title, 40)))
+			// palm://<identity>/mail/<id>: a message the mail tools can open.
+			uri := ck.get_str(r, "uri")
+			prefix := fmt.tprintf("palm://%s/mail/", a.req.identity.handle)
+			if kind == "mail" && strings.has_prefix(uri, prefix) {
+				lbl := fmt.tprintf("mail %d: %s — %s", len(a.seen.messages) + 1, short(who, 40), short(title, 50))
+				add_candidate(&a.seen.messages, {key = uri[len(prefix):], label = lbl, origin = .Correspondent, source = "the index"})
+			}
+		}
+		brief = fmt.tprintf("%d result(s)", n)
+		label = fmt.tprintf("search results for %q", args["query"])
+		if n > 0 {append(&a.seen.sources, Source{kind = "search", label = strings.clone(label)})}
 	case "mail_draft":
 		id := ck.get_str(v, "id")
 		lbl := fmt.tprintf("draft to %s: %s", short(ck.get_str(v, "to"), 40), short(ck.get_str(v, "subject"), 50))

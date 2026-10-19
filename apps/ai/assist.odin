@@ -649,6 +649,7 @@ assist :: proc(p: ^Person, ask: Ask) -> (out: Outcome) {
 		fmt.tprintf("PALM_DAV_URL=%s", dav_url()),
 		"PALM_DAV_CACHE=dav", // relative to the state directory; see run_argv
 		fmt.tprintf("PALM_ASSISTANT_STATE=%s", dir),
+		fmt.tprintf("PALM_INDEX_DIR=%s/.local/share/palm/index", home_dir()),
 		fmt.tprintf("PALMY_NOTES_DIR=%s/Notes/%s", home_dir(), ident.handle),
 		fmt.tprintf("PALM_AUDIT=%s/audit.jsonl", dir),
 		fmt.tprintf("TMPDIR=%s/tmp", dir),
