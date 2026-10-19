@@ -1,20 +1,31 @@
-# The kernel: Linux LTS with everything Palmframe needs built in (virtio,
-# DRM, evdev, ext4), so there are no modules and no initramfs. Built by
-# distro/kernel/build.sh.
+# The kernel: Linux LTS built for real machines as well as QEMU. What is
+# needed to reach the root filesystem and a picture is built in (NVMe, AHCI,
+# USB storage, SD, virtio, ext4, vfat, simpledrm), so there is no initramfs;
+# the rest (GPUs, Wi-Fi, Ethernet, sound, laptop drivers) is modules in
+# /usr/lib/modules/<release>, loaded by palm-modules. Built by
+# distro/kernel/build.sh; distro/notes/kernel.md is the reference.
 #
-# /boot/vmlinuz is the system's copy; the firmware cannot read ext4, so
-# distro/image/build.sh also puts it on the EFI system partition, where
-# limine loads it from.
+# The kernel is installed twice. /boot/vmlinuz is the root's copy (the live
+# ISO and the installer take it from there). /boot/efi/vmlinuz is the one
+# limine boots: with the EFI system partition mounted at /boot/efi it lands
+# on that partition as /vmlinuz, which limine.conf names as boot():/vmlinuz.
+# palm has no hooks, so this second file is how `palm upgrade linux` reaches
+# the boot loader at all.
 pkgname  = linux
 pkgver   = 6.18.56
-pkgrel   = 0
-pkgdesc  = The Linux kernel, Palmframe configuration
+pkgrel   = 1
+pkgdesc  = The Linux kernel and its modules, Palmframe configuration
 license  = GPL-2.0-only
 url      = https://kernel.org
 category = System
 icon     = server
-details  = Linux 6.18 LTS, configured for Palmframe: virtio devices, DRM, evdev and ext4 are built in, so the system boots with no modules and no initramfs.
-details  = Upgrading it updates /boot/vmlinuz on the root filesystem; the copy limine boots from lives on the EFI partition and is refreshed when the image is rebuilt.
+details  = Linux 6.18 LTS, configured for Palmframe on real hardware and in QEMU: storage, ext4, vfat and the firmware framebuffer are built in, so the system boots with no initramfs; graphics (amdgpu, i915, xe, nouveau), Wi-Fi, Ethernet, sound and laptop drivers are modules, loaded at boot for the devices the machine has.
+details  = Upgrading it replaces /boot/efi/vmlinuz on the EFI system partition, which is what limine boots, so the new kernel runs after a restart. Most devices also need their firmware: install linux-firmware, or only the part for your hardware (linux-firmware-intel, linux-firmware-amdgpu, ...).
+provides = cmd:palm-modules
 
 file     = ${PALMFRAME_OUT}/bzImage -> /boot/vmlinuz mode 0644
+file     = ${PALMFRAME_OUT}/bzImage -> /boot/efi/vmlinuz mode 0644
 file     = ${PALMFRAME_OUT}/kernel.config -> /boot/config mode 0644
+tree     = ${PALMFRAME_OUT}/modules -> /usr/lib/modules
+file     = ${PALMFRAME_OUT}/bin/palm-modules -> /usr/bin/palm-modules mode 0755
+file     = ${PALMFRAME_ROOT}/distro/kernel/modules.service -> /etc/palm/services/modules mode 0644

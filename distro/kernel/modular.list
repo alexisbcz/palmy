@@ -1,0 +1,46 @@
+# Driver families every tristate option of which build.sh turns into a module
+# (=m), before palmframe.config is merged over them. Listing a directory is
+# shorter, and less likely to miss a chip, than naming each driver: these are
+# the parts of a laptop or desktop that differ from one machine to the next.
+# Options whose dependencies are not met (another architecture, a test
+# harness) simply drop out in olddefconfig. One directory per line, relative
+# to the kernel source; the Kconfig files beneath it are read recursively.
+
+# Ethernet: Intel e1000e/igb/igc/ixgbe, Realtek r8169, Aquantia, Atheros
+# alx/atl1c, Broadcom tg3/bnx2, Marvell sky2, and USB adapters.
+drivers/net/ethernet/intel
+drivers/net/ethernet/realtek
+drivers/net/ethernet/aquantia
+drivers/net/ethernet/atheros
+drivers/net/ethernet/broadcom
+drivers/net/ethernet/marvell
+drivers/net/usb
+
+# Wi-Fi: iwlwifi, ath9k/10k/11k/12k, mt76, rtw88/rtw89/rtl8xxxu, brcmfmac.
+drivers/net/wireless/intel
+drivers/net/wireless/ath
+drivers/net/wireless/mediatek
+drivers/net/wireless/realtek
+drivers/net/wireless/broadcom
+drivers/bluetooth
+
+# Input: every HID driver (multitouch, i2c-hid, Intel ISH, AMD SFH, vendor
+# quirks), and the touchpad's pin controllers.
+drivers/hid
+drivers/pinctrl/intel
+
+# Sound: HDA codecs, Sound Open Firmware and the Intel/AMD machine drivers
+# that sit on it, SoundWire, USB audio.
+sound/hda
+sound/soc/sof
+sound/soc/intel
+sound/soc/amd
+sound/usb
+drivers/soundwire
+
+# Laptops: vendor ACPI/WMI drivers (hotkeys, backlight, battery limits,
+# platform profiles), Intel and AMD thermal, Thunderbolt, USB-C.
+drivers/platform/x86
+drivers/thermal/intel
+drivers/thunderbolt
+drivers/usb/typec

@@ -27,9 +27,9 @@
 # assembled exactly the way a user's `palm add` would assemble it.
 #
 # The kernel and busybox take minutes and change rarely, so they are built
-# only when their output is missing; delete distro/out/bzImage or
-# distro/out/busybox to rebuild them. Odin binaries are rebuilt when their
-# sources change.
+# only when their output is missing (the kernel also when its config
+# changes); delete distro/out/kernel.release or distro/out/busybox to
+# rebuild them. Odin binaries are rebuilt when their sources change.
 
 ROOT   := $(abspath ..)
 DISTRO := $(ROOT)/distro
@@ -61,9 +61,12 @@ TOOLKIT := $(shell find $(ROOT)/palmy $(ROOT)/apps/kit $(ROOT)/shadcn -name '*.o
 srcs = $(shell find $(ROOT)/$(1) -name '*.odin' 2>/dev/null)
 
 # --- kernel and busybox: only when missing ------------------------------------
-$(OUT)/bzImage:
+# kernel.release is written last by build.sh, after bzImage, kernel.config and
+# modules/<release>/, so it stands for all four (distro/notes/kernel.md).
+KERNEL_CONF := $(DISTRO)/kernel/palmframe.config $(DISTRO)/kernel/modular.list $(DISTRO)/kernel/build.sh
+$(OUT)/kernel.release: $(KERNEL_CONF)
 	$(DISTRO)/kernel/build.sh
-$(OUT)/kernel.config: | $(OUT)/bzImage
+$(OUT)/bzImage $(OUT)/kernel.config: | $(OUT)/kernel.release
 $(OUT)/busybox:
 	$(DISTRO)/busybox/build.sh
 
@@ -89,6 +92,12 @@ $(BIN)/passwd: $(call srcs,distro/passwd) $(call srcs,distro/login/auth)
 	@mkdir -p $(BIN)
 	cd $(ROOT) && $(ODIN) build distro/passwd -o:speed -out:$@
 
+# Statically linked, like palm-init: it runs before services, and the kernel
+# runs it as its modprobe (CONFIG_MODPROBE_PATH).
+$(BIN)/palm-modules: $(call srcs,distro/kernel/palm-modules)
+	@mkdir -p $(BIN)
+	cd $(ROOT) && $(ODIN) build distro/kernel/palm-modules -o:speed -extra-linker-flags:-static -out:$@
+
 $(BIN)/palmd: $(call srcs,distro/palmd)
 	@mkdir -p $(BIN)
 	cd $(ROOT) && $(ODIN) build distro/palmd -o:speed -out:$@
@@ -100,7 +109,7 @@ $(BIN)/wm: $(call srcs,apps/wm) $(TOOLKIT)
 # The applications: every distro/out/bin/<name> a recipe names, built by
 # distro/apps/build.sh (which knows that palm-apps comes from apps/palm and
 # prose from apps/prose/cli).
-APP_BINS := $(filter-out palm palm-init palm-login doas passwd palmd wm palm-install installer, \
+APP_BINS := $(filter-out palm palm-init palm-login palm-modules doas passwd palmd wm palm-install installer, \
 	$(sort $(shell grep -ho 'PALMFRAME_OUT}/bin/[a-z0-9-]*' $(DISTRO)/recipes/*/PALMBUILD | sed 's|.*/||')))
 app_dir = $(if $(filter palm-apps,$(1)),palm,$(if $(filter prose,$(1)),prose,$(1)))
 app_src = $(if $(filter palm-apps,$(1)),palm,$(if $(filter prose,$(1)),prose/cli,$(1)))
@@ -124,7 +133,7 @@ $(BIN)/installer: $(call srcs,apps/installer) $(call srcs,distro/installer/core)
 	@mkdir -p $(BIN)
 	cd $(ROOT) && $(ODIN) build apps/installer -o:speed $(ICOLL) -out:$@
 
-binaries: $(BIN)/palm $(BIN)/palm-init $(BIN)/palm-login $(BIN)/doas $(BIN)/passwd $(BIN)/palmd $(BIN)/wm $(addprefix $(BIN)/,$(APP_BINS)) $(INSTALLER_BINS)
+binaries: $(BIN)/palm $(BIN)/palm-init $(BIN)/palm-login $(BIN)/palm-modules $(BIN)/doas $(BIN)/passwd $(BIN)/palmd $(BIN)/wm $(addprefix $(BIN)/,$(APP_BINS)) $(INSTALLER_BINS)
 
 # --- the signing key ----------------------------------------------------------
 # Made once per checkout and kept out of git (distro/build/ is ignored). The
@@ -142,7 +151,7 @@ recipes: $(OUT)/busybox
 # Every package is rebuilt on each run: palm build is reproducible (same
 # inputs, same bytes, same sha256 in the index) and takes seconds, and it is
 # the only way to notice a host file such as glibc changing underneath.
-packages: recipes binaries $(OUT)/bzImage $(OUT)/busybox $(KEYS)/palmframe.pub
+packages: recipes binaries $(OUT)/kernel.release $(OUT)/busybox $(KEYS)/palmframe.pub
 	@mkdir -p $(REPO)
 	rm -f $(REPO)/*.palm
 	@set -e; for r in $(DISTRO)/recipes/*/PALMBUILD; do \

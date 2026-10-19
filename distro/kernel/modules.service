@@ -1,0 +1,7 @@
+# Drivers for devices that appear after boot: a USB Wi-Fi stick, a dock, a
+# headset. palm-modules opens the kernel's uevent socket, walks /sys once
+# (anything palm-init's own coldplug missed), then loads a module for every
+# new device with a modalias. Installed by the linux package as
+# /etc/palm/services/modules.
+cmd     = /usr/bin/palm-modules watch
+restart = always

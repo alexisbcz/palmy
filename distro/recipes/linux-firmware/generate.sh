@@ -1,0 +1,191 @@
+#!/usr/bin/env bash
+# Write the firmware recipes from the build host's firmware packages.
+#
+#	distro/recipes/linux-firmware/generate.sh
+#
+# Firmware is the binary blobs drivers upload to their devices at probe time
+# (a GPU's display and power microcontrollers, a Wi-Fi card's whole MAC). The
+# kernel reads them itself from /usr/lib/firmware (zstd-compressed, as Arch
+# ships them: CONFIG_FW_LOADER_COMPRESS_ZSTD), so a package of files is all
+# it takes. Like glibc and tzdata the files come from the Arch build host,
+# and the split follows Arch's, because all of it is 470 MB and nobody needs
+# all of it:
+#
+#	linux-firmware-amdgpu     AMD Radeon graphics since GCN (amdgpu)
+#	linux-firmware-radeon     older AMD/ATI graphics (radeon)
+#	linux-firmware-intel      Intel graphics (i915/xe), Wi-Fi and Bluetooth
+#	                          (iwlwifi, btintel), audio DSP, Ethernet, VPU
+#	linux-firmware-nvidia     NVIDIA graphics (nouveau, GSP)
+#	linux-firmware-atheros    Qualcomm Atheros Wi-Fi/Bluetooth (ath9k-12k)
+#	linux-firmware-mediatek   MediaTek Wi-Fi/Bluetooth (mt76), SoCs
+#	linux-firmware-realtek    Realtek Ethernet, Wi-Fi and Bluetooth
+#	linux-firmware-broadcom   Broadcom Wi-Fi/Bluetooth/Ethernet
+#	linux-firmware-cirrus     Cirrus Logic laptop amplifiers
+#	linux-firmware-other      everything else in linux-firmware
+#	linux-firmware-whence     WHENCE, which says where every file came from
+#	                          and under which licence (every part needs it)
+#	sof-firmware              Sound Open Firmware: audio on recent Intel and
+#	                          AMD laptops
+#	wireless-regdb            the regulatory database cfg80211 reads
+#	linux-firmware            all of the above
+#
+# Each recipe gets a `tree` line for every directory whose files all belong
+# to it, and `file`/`symlink` lines for the rest, so the recipes stay short
+# enough to read. The output is committed, like generate.sh's; run this
+# again when the host's firmware is upgraded (generate.sh calls it).
+set -euo pipefail
+HERE="$(cd "$(dirname "$0")" && pwd)"
+RECIPES="$(dirname "$HERE")"
+FW=/usr/lib/firmware
+
+command -v pacman >/dev/null || { echo "linux-firmware: needs pacman (an Arch build host)" >&2; exit 1; }
+
+# package -> (palm name, one-line summary, icon)
+PARTS=(
+	"linux-firmware-amdgpu|Firmware for AMD Radeon graphics (amdgpu)"
+	"linux-firmware-radeon|Firmware for older AMD and ATI graphics (radeon)"
+	"linux-firmware-intel|Firmware for Intel graphics, Wi-Fi, Bluetooth, audio and Ethernet"
+	"linux-firmware-nvidia|Firmware for NVIDIA graphics (nouveau)"
+	"linux-firmware-atheros|Firmware for Qualcomm Atheros Wi-Fi and Bluetooth"
+	"linux-firmware-mediatek|Firmware for MediaTek Wi-Fi and Bluetooth"
+	"linux-firmware-realtek|Firmware for Realtek Ethernet, Wi-Fi and Bluetooth"
+	"linux-firmware-broadcom|Firmware for Broadcom Wi-Fi, Bluetooth and Ethernet"
+	"linux-firmware-cirrus|Firmware for Cirrus Logic audio amplifiers"
+	"linux-firmware-other|Firmware for other devices in linux-firmware"
+	"linux-firmware-whence|Where each firmware file comes from, and its licence"
+	"sof-firmware|Sound Open Firmware for Intel and AMD audio DSPs"
+	"wireless-regdb|The wireless regulatory database"
+)
+
+version_of() { # Arch's 20260810-2 -> 20260810; 2025.12.2-1 -> 2025.12.2
+	local v
+	v="$(pacman -Q "$1" | awk '{print $2}')"
+	v="${v%%-*}"
+	v="${v#*:}"
+	echo "$v"
+}
+
+WORK="$(mktemp -d)"
+trap 'rm -rf "$WORK"' EXIT
+
+# owners: "<path>\t<package>" for every non-directory any part owns.
+for part in "${PARTS[@]}"; do
+	pkg="${part%%|*}"
+	pacman -Qlq "$pkg" | grep -v '/$' | awk -v p="$pkg" '{print $0 "\t" p}'
+done | LC_ALL=C sort >"$WORK/owners"
+
+# Every non-directory on disk under the firmware root, with its owner (or
+# "-" if no part owns it), so a directory holding a stray file is never
+# claimed whole.
+find "$FW" ! -type d | LC_ALL=C sort >"$WORK/disk"
+# types: "<path>\t<f|l>\t<symlink target>" for every file a part owns.
+cut -f1 "$WORK/owners" | while read -r f; do
+	if [ -L "$f" ]; then printf '%s\tl\t%s\n' "$f" "$(readlink "$f")"; else printf '%s\tf\t\n' "$f"; fi
+done >"$WORK/types"
+LC_ALL=C join -t $'\t' -a 1 -e - -o 1.1,2.2 "$WORK/disk" "$WORK/owners" >"$WORK/disk-owners"
+
+# dir-owner: for every directory below the root, its one owner, or "*".
+awk -F'\t' -v root="$FW" '
+	{
+		path = $1
+		while (1) {
+			i = match(path, /\/[^\/]*$/)
+			if (i == 0) break
+			path = substr(path, 1, i - 1)
+			if (path == root || length(path) < length(root)) break
+			if (!(path in own)) own[path] = $2
+			else if (own[path] != $2) own[path] = "*"
+		}
+	}
+	END { for (d in own) print d "\t" own[d] }
+' "$WORK/disk-owners" | LC_ALL=C sort >"$WORK/dir-owner"
+
+emit() { # emit <name>: stdin -> distro/recipes/<name>/PALMBUILD, if changed
+	mkdir -p "$RECIPES/$1"
+	if ! cmp -s - "$RECIPES/$1/PALMBUILD" <"$WORK/recipe"; then
+		cp "$WORK/recipe" "$RECIPES/$1/PALMBUILD"
+		chmod 0644 "$RECIPES/$1/PALMBUILD"
+		echo "recipes: wrote $1"
+	fi
+}
+
+header() {
+	cat <<EOF
+# Generated by distro/recipes/linux-firmware/generate.sh from the build
+# host's $1 package -- do not edit; run the script again.
+EOF
+}
+
+for part in "${PARTS[@]}"; do
+	pkg="${part%%|*}"
+	desc="${part#*|}"
+	ver="$(version_of "$pkg")"
+	depend="linux-firmware-whence"
+	[ "$pkg" = linux-firmware-whence ] || [ "$pkg" = wireless-regdb ] || [ "$pkg" = sof-firmware ] && depend=""
+	license="LicenseRef-linux-firmware (see /usr/share/licenses/linux-firmware-whence/WHENCE)"
+	case "$pkg" in
+	sof-firmware) license="BSD-3-Clause AND LicenseRef-Intel-SOF" ;;
+	wireless-regdb) license="ISC" ;;
+	esac
+	{
+		header "$pkg"
+		echo "pkgname  = $pkg"
+		echo "pkgver   = $ver"
+		echo "pkgrel   = 0"
+		echo "pkgdesc  = $desc"
+		echo "license  = $license"
+		echo "url      = https://gitlab.com/kernel-firmware/linux-firmware"
+		echo "category = System"
+		echo "icon     = cpu"
+		[ -n "$depend" ] && echo "depend   = $depend"
+		echo
+		# For each file this part owns: the highest directory below the
+		# root owned wholly by this part becomes a tree, else the file
+		# itself (a symlink as a symlink, with its target unchanged).
+		awk -F'\t' -v p="$pkg" -v root="$FW" '
+			FILENAME == ARGV[1] { own[$1] = $2; next }
+			FILENAME == ARGV[2] { type[$1] = $2; target[$1] = $3; next }
+			$2 != p { next }
+			# Only the firmware and the licences: not udev rules, man pages
+			# or the CRDA helper that wireless-regdb also carries.
+			index($1, root "/") != 1 && index($1, "/usr/share/licenses/") != 1 { next }
+			{
+				f = $1; top = ""
+				if (index(f, root "/") == 1) {
+					d = f
+					while (match(d, /\/[^\/]*$/)) {
+						d = substr(d, 1, RSTART - 1)
+						if (d == root) break
+						if (own[d] == p) top = d
+					}
+				}
+				if (top != "") line = "tree     = " top " -> " top
+				else if (type[f] == "l") line = "symlink  = " f " -> " target[f]
+				else line = "file     = " f " -> " f " mode 0644"
+				if (!(line in seen)) { seen[line] = 1; print line }
+			}
+		' "$WORK/dir-owner" "$WORK/types" "$WORK/owners"
+	} >"$WORK/recipe"
+	emit "$pkg"
+done
+
+# The meta-package.
+{
+	cat <<EOF
+# Generated by distro/recipes/linux-firmware/generate.sh -- do not edit.
+#
+# Every firmware part. Installing this is the simple answer for a real
+# machine; the parts can be installed one by one instead.
+pkgname  = linux-firmware
+pkgver   = $(version_of linux-firmware)
+pkgrel   = 0
+pkgdesc  = Firmware for every device the kernel supports (all parts)
+license  = LicenseRef-linux-firmware
+url      = https://gitlab.com/kernel-firmware/linux-firmware
+category = System
+icon     = cpu
+details  = The files drivers upload to graphics cards, Wi-Fi and Bluetooth chips, audio DSPs and network cards when they start them. Without them most laptops have no Wi-Fi and modern GPUs fall back to a basic framebuffer. This package installs every part; a machine needs only the parts for its own hardware.
+EOF
+	for part in "${PARTS[@]}"; do echo "depend   = ${part%%|*}"; done
+} >"$WORK/recipe"
+emit linux-firmware
