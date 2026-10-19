@@ -16,6 +16,9 @@ distro/run-qemu.sh --iso --bios          # the same under SeaBIOS
 distro/run-qemu.sh --iso --disk D.qcow2  # another target disk
 distro/run-qemu.sh --disk distro/out/target.qcow2   # boot what was installed
 python3 -I distro/live/test-boot.py [--bios] [--serial-only] [--expect installer|term]
+python3 -I distro/live/test-install.py                  # GUI (French) and CLI installs, each disk booted
+python3 -I distro/live/test-install-more.py [--only ja|ar|two]   # Japanese on NVMe with the
+                                         # pointer, Arabic under SeaBIOS, two disks + questions
 LIVE_WITHOUT_INSTALLER=1 distro/live/build.sh       # test ISO without the front ends
 ```
 
@@ -36,11 +39,31 @@ disk it installed onto and survives into the `--disk` boot.
   (owned by palmframe-live); `/dev/console` and `/dev/null` are in the cpio.
 - The root is `palm --root … --initdb add palmframe-live` under fakeroot, cpio
   in the same session (owners and 0600 shadow preserved), zstd -19.
-- **Sizes (last build): ISO 102 MB; initramfs 84 MB compressed, ~133 MiB
-  unpacked in RAM; 40 packages.** After boot with the installer up, `free -m`
-  in a 2 GiB guest said 118 MiB used, ~1.7 GiB available. The compressed size
-  is dominated by the repository copy (62 MB of already-gzipped `.palm`), which
-  zstd cannot shrink.
+  palmframe-live does not depend on `palmframe`: the live root is
+  palmframe-base, linux (whose kernel goes on the ISO, not in the cpio),
+  busybox, glibc, palm-init, palm, palmy-wm, fonts, libxkbcommon,
+  xkeyboard-config, tzdata, palm-locale, term, palm-install, installer,
+  e2fsprogs, dosfstools and limine. The applications, the greeter and
+  palm-login only go onto installed disks.
+- **The medium's repository** is what an installation can ask for:
+  `palm --dry-run add palmframe fonts-cjk` (`LIVE_REPO_PACKAGES`) lists it,
+  build.sh copies those `.palm` files and signs a new index with the build's
+  key (`palm index --key`). 36 packages, 49 MB, instead of the build's 48.
+  `palm-install --package` can only name packages in it.
+- **Japanese on the live root** is `NotoSansCJKjp-Regular.otf`, a 100 KB
+  subset of Noto Sans CJK's Japanese face made by `live/subset-cjk.py`
+  (fontTools, from a virtualenv: the host has none) with every character of
+  `distro/locale/ja/*.msg`, kana, CJK punctuation and the full-width forms.
+  It is committed under `live/root/usr/share/fonts/palm-live/`, shipped by
+  palmframe-live with its OFL licence, found by palmy as a fallback by that
+  name, and counted as a CJK font by `core.list_languages`. build.sh checks
+  it with `subset-cjk.py --check` (fontconfig only) and refuses to build
+  when a Japanese catalogue has a character it lacks. An installed system
+  that speaks Japanese gets the full `fonts-cjk` from the repository.
+- **Sizes (2026-10-19): ISO 74 MB; initramfs 57 MB compressed, ~81 MiB
+  unpacked in RAM; 19 packages.** Before: ISO 102 MB, 84 MB, ~133 MiB, 40
+  packages. Most of what is left is the repository (linux 14 MB and
+  fonts-cjk 15 MB of it, already compressed).
 
 ## The live system's services
 
@@ -65,14 +88,14 @@ palm-init would let the package do it instead — a nice-to-have for
 - `getty-live`: `getty -n -l /usr/lib/palm-live/autologin -L 115200 ttyS0
   vt100`; the autologin script is `exec /bin/login -f root`, so it is a real
   login shell (reads `/etc/profile`, `/etc/profile.d/palm-live.sh` prints a
-  hint about palm-install).
+  hint: `palm-install` alone asks its questions, `--help` lists the options).
 - `/etc/palm/live` exists only on the live system (marker, `repo = …`).
 
 ## For install_core / palm-install / the GUI
 
 - **Repository on the medium**: `/usr/share/palm/repo/` flat — `PALMINDEX`,
-  `PALMINDEX.sig`, every `.palm` of the build's repository (all 45, not only
-  what palmframe needs). `palm --repo /usr/share/palm/repo` reads it (palm
+  `PALMINDEX.sig` and the `.palm` files of `palmframe`, its dependencies and
+  `fonts-cjk` (above). `palm --repo /usr/share/palm/repo` reads it (palm
   falls back to `<base>` when `<base>/x86_64/PALMINDEX` is absent); the key is
   palmframe-base's `/etc/palm/keys/palmframe.pub`. Checked in the guest:
   `palm --repo /usr/share/palm/repo --no-cache search tzdata` works offline.
@@ -82,9 +105,10 @@ palm-init would let the package do it instead — a nice-to-have for
   with an ISO 9660 signature — install_core's `has_iso9660` covers that.
 - **limine** is packaged (`/usr/share/limine/BOOTX64.EFI`,
   `limine-bios.sys`) and installed on the live system, which is where
-  `boot.odin`'s `limine_dir` fallback finds it. It is not in the default
-  `palmframe` set; add it to the target's packages if you want the target to
-  carry its own copy.
+  `boot.odin`'s `limine_dir` fallback finds it. Its tool, for `limine
+  bios-install`, is in the palm-install package as
+  `/usr/lib/palm-install/limine`, because the limine package ships only the
+  boot files. It is not in the default `palmframe` set.
 - **mkfs**: `mkfs.ext4` (mke2fs under that name; `/etc/mke2fs.conf` from the
   host) and `mkfs.fat` are real e2fsprogs/dosfstools binaries. busybox owns
   `mke2fs`, `mkfs.ext2`, `mkfs.vfat`, `mkdosfs`, `chattr`, `lsattr` as
@@ -97,10 +121,9 @@ palm-init would let the package do it instead — a nice-to-have for
 
 `fonts-cjk` = the host's `NotoSansCJK-Regular.ttc` (19 MB raw, a collection
 whose first face is Japanese; palmy loads `.ttc` and lists
-`NotoSansCJK-Regular` first in `FALLBACK_CANDIDATES`). No subset: the host has
-no fonttools or hb-subset. **It is installed on the live system, so the GUI
-should list 日本語 as available** — the installer's first screen in QEMU
-renders 日本語 and العربية correctly (`distro/build/live/shots/installer-first-screen.png`).
+`NotoSansCJK-Regular` first in `FALLBACK_CANDIDATES`). The live system has
+the 100 KB subset described above instead, so 日本語 is available there; a
+full Japanese installation ran in QEMU (README, *Installing*).
 
 It is **not** in the default `palmframe` meta-package: every palmy process
 loads its fallback faces, and 19 MB per process is a lot for a machine that

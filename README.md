@@ -18,7 +18,8 @@ written in Odin, built by `make distro` into a disk image that boots in QEMU to
 the greeter and the window manager. `make -C distro iso` builds a live ISO
 whose graphical installer, translated into five languages, Arabic right to
 left among them, puts the system on a disk of its own. In QEMU that disk then
-boots alone through its own UEFI entry, to a greeter in the chosen language.
+boots alone, through its own UEFI entry or through a BIOS, to a greeter in
+the chosen language.
 None of it has run on real hardware. What it lacks is listed in
 [`distro/README.md`](distro/README.md). Everything under
 *Where this is going* below is still a plan, not a shipped thing, and is

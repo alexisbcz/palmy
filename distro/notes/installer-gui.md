@@ -13,7 +13,7 @@ It is the greeter's visual language: same dark tokens (copied from
 ```
 installer [--demo] [--demo-fail] [--dry-run] [--lang CODE]
 installer --shots DIR      every page offscreen, en/fr/ar at 1280x800, en/ar at 1024x768 and 1920x1200
-installer --selftest       flow, validation, demo install on its thread, RTL, catalogue coverage (132 checks)
+installer --selftest       flow, validation, demo install on its thread, RTL, catalogue coverage (141 checks)
 python3 -I apps/installer/qemu-test.py [--lang-only]   the whole thing inside QEMU, ISO to installed disk
 ```
 
@@ -55,9 +55,12 @@ touches the system, `backend_core.odin` the only file importing install_core,
   preselects keyboard and zone (fr → fr + Europe/Paris, ar → ara +
   Africa/Cairo, ja → jp + Asia/Tokyo, …) until the user picks those by hand,
   and the followed layout is sent to the compositor too.
-- **Keyboard** — searchable layout list, variant list, test field. A change
-  settles for 250 ms, then `/etc/palm/keyboard` is written and the wm gets
-  SIGHUP.
+- **Keyboard** — searchable layout list (descriptions in the UI language,
+  sorted in it), variant list, test field. A change settles for 250 ms,
+  then `/etc/palm/keyboard` is written (`core.keyboard_settings`, the text
+  the new disk gets) and the wm gets SIGHUP. A layout with no Latin letters
+  (ara, ru, gr, ...) comes with US English first and Alt+Shift, and the
+  page says so: a user name is a-z.
 - **Time zone** — search over city / zone name / country, a card with the
   city, the date in the UI language (a `{weekday}, {day} {month} {year}`
   template per language), `Zone · abbreviation · UTC±hh:mm`, and the local
@@ -68,7 +71,8 @@ touches the system, `backend_core.odin` the only file importing install_core,
   exactly one disk is usable it is preselected. Next opens a dialog naming the
   path, model and size ("Erase /dev/vda?", "VirtIO disk, 8.0 GiB"); **Cancel
   holds the focus, so Enter alone never erases**; choosing another disk
-  withdraws the confirmation.
+  withdraws the confirmation. Under the disks, "Create a swap file of
+  N GiB" (on by default; half the memory in whole GiB, 1 to 4 GiB).
 - **Account** — full name (optional; `:`/`,` refused for GECOS), user name
   (follows the full name — "Élodie Martin" → `elodie` — until typed into),
   computer name (default `palmframe`), password twice with a weak/fair/strong
@@ -76,13 +80,17 @@ touches the system, `backend_core.odin` the only file importing install_core,
   fields). Problems appear under a field once it has been typed into, all of
   them when Next is pressed (and the keyboard goes to the first one).
 - **Summary** — the disk to be erased in a red box, then every choice with a
-  Change button back to its page; Install. If `core.validate` objects, its
-  sentences are shown here verbatim and nothing starts.
+  Change button back to its page, and the swap file; Install. If the core's
+  `validate_messages` objects, its problems are shown here, translated, and
+  nothing starts.
 - **Install** — current step name, whole-install percentage and bar, the
-  seven steps ticked off, the latest message, and "Show details" for the log
+  seven steps ticked off, the core's progress detail translated
+  (`Progress.detail`, `text_tr`), and "Show details" for the log
   (the core's own lines through `Options.on_log`, follows the end). On
   failure: the error, the log unfolded, "Back to summary" and "Restart".
-- **Done** — "Palmframe is installed", Restart now (`/sbin/reboot`).
+- **Done** — "Palmframe is installed", Restart now (`/sbin/reboot`). Laid
+  out from the top, so the pointer the compositor parks at the screen's
+  centre does not cover the heading.
 
 Keyboard: Tab / Shift+Tab move focus (palmy), Up/Down/PageUp/PageDown move the
 page's list selection, Enter is Next (or the focused button), Esc is Back
@@ -95,12 +103,13 @@ left empty (the core's default) except for Japanese, which adds `fonts-cjk`
 
 ### Right to left
 
-palmy shapes Arabic and orders bidi text, and aligns a paragraph to its own
-script's side, but its flex layout has no direction. The installer mirrors
-itself: rows are opened with `hrow` and closed with `hend`, which reverses the
-row's children (and swaps justify start/end) when `kit.i18n_is_rtl()`; text in
-columns is aligned to the UI direction (`txt`); chevrons swap. Tab order
-follows the mirrored order. Two bidi details, both in `i18n.odin`:
+The root gets palmy's `dir-rtl` when `kit.i18n_is_rtl()`: every row below
+it runs right to left, and Tab follows the tree's order, which is then the
+reading order. Every text node is `dir-auto` (`text`, `textf`, `txt` in
+`ui.odin`), so a paragraph keeps its own first strong character's
+direction: without it "/dev/vda" and "20.0 GiB" come out "dev/vda/" and
+"GiB 20.0". Text in columns is aligned to the UI direction (`txt`);
+chevrons swap; the log is `dir-ltr`. Two bidi details, both in `i18n.odin`:
 
 - a translation written in an RTL script gets a RIGHT-TO-LEFT MARK in front,
   so "GPT: قسم نظام EFI…" or "%s، %s…" is an RTL paragraph even though it
@@ -110,22 +119,33 @@ follows the mirrored order. Two bidi details, both in `i18n.odin`:
 
 ## Translations
 
-`distro/locale/{fr,de,es,ar,ja}/installer.msg`, 141 entries each, kit's
+`distro/locale/{fr,de,es,ar,ja}/installer.msg`, 196 entries each, kit's
 format with the same header keys as the greeter's catalogues (`language`,
 `name`, `english`, `direction = rtl` for Arabic, Arabic's six-form plural
 rule, `plural = 0` for Japanese). German and Spanish use the formal address.
 The selftest scans the source for `tr("`, `trf("` and `N("` literals and
 checks, per catalogue: it parses cleanly with `kit.i18n_parse`, names its
 language, has every msgid translated, keeps `%` verbs and `{placeholders}`,
-and has no stale entries.
+and has no stale entries. The msgids also include install_core's
+`MESSAGE_FORMAT` (validate problems, progress details, 53 of them), which
+`text_tr` translates with the message's arguments.
 
-Japanese is available on the live image (`fonts-cjk` is installed there;
-`core.list_languages` finds it), so 日本語 is offered; on a system without a
-CJK font the row says it is unavailable.
+Japanese is available on the live image (a subset of Noto Sans CJK JP is
+installed there, distro/notes/live.md; `core.list_languages` finds it),
+so 日本語 is offered; on a system without a CJK font the row says it is
+unavailable.
 
-Not translated, because they are data: keyboard layout descriptions
-(xkeyboard-config's English), region and country names (tzdata's
-iso3166.tab), disk models, the core's log lines and `validate` problems.
+Country names and keyboard layout descriptions come from two generated
+catalogues per language, `countries.msg` (keyed by the ISO 3166-1 code,
+from iso-codes, LGPL-2.1) and `keyboards.msg` (keyed by base.lst's English
+description, from xkeyboard-config's own translations), made by
+`distro/locale/import-data.py` and loaded beside `installer.msg`
+(`country_name`, `keyboard_name`). Coverage: fr 182 countries / 556 of 597
+layouts, de 153 / 537, es 166 / 534, ar 248 / 597, ja 249 / 265; the rest
+stays English (a country whose name is the same in both is not listed).
+Search matches the translation and the English. Region names
+(`Europe`, `America`) and city names stay as tzdata spells them, and disk
+models and the log are machine text.
 
 ## Where install_core differs from INSTALLER.md (followed, not changed)
 
@@ -134,35 +154,18 @@ iso3166.tab), disk models, the core's log lines and `validate` problems.
   weights).
 - `install_with(plan, Options, …)` and `Options.on_log` exist; the GUI uses
   them for the log view instead of logging progress messages.
-- `Zone.country` is the country *name* ("France"); the rows show
-  "France · Europe" and the search matches names.
+- `Zone.country` is the country *name* ("France"), `Zone.country_code` its
+  code, the translation's key; the rows show "France · Europe".
 - Arabic's code is `ar` (not `ar_EG`).
 - `list_zones` includes `UTC`.
 
 ## Requests for others
 
-- **palmy** (`palmy/layout.odin`, `measure`, ~line 235): a Text node's wrap
-  width is capped at the width that node id had *last frame*
-  (`wrap_w = min(wrap_w, hint)`). When the string at an id gets longer — a
-  language switch, one validation message replacing another, a status line —
-  a shrink-wrapped text in a row stays at the old width and breaks onto
-  several lines, and never recovers. Reproduced before the workaround below
-  with three runs in one process (`en_US`, then `fr_FR`, then `ar`): the
-  Arabic "passwords do not match" line laid out at 72 px over two lines
-  instead of 125 px on one; any two of the three alone were fine. The
-  installer works around it (the whole tree is keyed by language, and row
-  texts whose content changes are `flex-1` or `whitespace-nowrap`); other apps
-  with changing labels will hit it. Suggest: drop the hint when the node's
-  text differs from last frame's, or only use it when it is larger than the
-  intrinsic width.
-- **palmy**: a layout direction (or `flex-row-reverse`) would let the
-  installer's `hrow`/`hend` mirroring go away; the greeter does the same by
-  hand.
-- **install_core**: `validate` problems are English sentences with the values
-  baked in, so the GUI can only show them untranslated. A stable code per
-  problem (plus its arguments) would let them be translated. The GUI checks
-  the same rules itself first, in the user's language, so in practice the
-  core's sentences are only seen if the two disagree.
+The three earlier requests are done: palmy re-measures a text whose string
+grows (so the tree is no longer keyed by language), palmy has `dir-rtl`
+(so `hrow`/`hend` are gone), and install_core's problems carry codes. The
+greeter (`apps/greeter`) still mirrors its rows with `if rtl` branches and
+could take the same `dir-rtl` + `dir-auto` treatment.
 
 ## Verified
 

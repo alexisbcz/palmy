@@ -109,11 +109,14 @@ With `--iso` or `--disk`, OVMF's variable store is kept beside the disk as
 so the entry is still there when the disk boots without the ISO. Add `--bios`
 for SeaBIOS.
 
-The ISO is 102 MB. limine offers two entries, *Install Palmframe* and
-*Install Palmframe (serial console only)*. The whole system runs from RAM: an
-84 MB zstd initramfs, about 133 MiB unpacked, holding 40 packages and a copy
-of the entire signed repository in `/usr/share/palm/repo`. Installing
-therefore needs no network. palm-init starts the `installer` service, which
+The ISO is 74 MB. limine offers two entries, *Install Palmframe* and
+*Install Palmframe (serial console only)*. The whole system runs from RAM: a
+57 MB zstd initramfs, about 81 MiB unpacked, holding 19 packages (the base
+system, the kiosk wm, term, the installer and its tools, and a 100 KB
+Japanese subset of Noto Sans CJK) and, in `/usr/share/palm/repo`, a signed
+repository of the 36 packages an installation needs: `palmframe`, its
+dependencies and `fonts-cjk`. Installing therefore needs no network.
+palm-init starts the `installer` service, which
 runs `wm --drm --kiosk --exec installer` as root, and a root shell on the
 serial console. `palm-login` and `getty-ttyS0` are masked by files in
 `/etc/palm/services.off/`. Two kernel options change the session:
@@ -171,14 +174,18 @@ no going back.
 Outside a Palmframe system, or when not run as root, `installer` starts in
 demo mode, with a red *Demo* badge: the disks are invented and the "install"
 only waits. `installer --shots DIR` renders every page offscreen and
-`installer --selftest` runs its 132 checks. `notes/installer-gui.md` has the
+`installer --selftest` runs its 141 checks. `notes/installer-gui.md` has the
 rest.
 
 ### palm-install, the command line
 
 `palm-install` (`installer/cli`) drives the same `install_core` library as
-the GUI. On the live system it runs from the serial root shell. busybox sh
-has no `<(...)`, so the password goes on stdin:
+the GUI. On the live system it runs from the serial root shell. Run with no
+options on a terminal (or with `--interactive`), it asks each question in
+turn, with a default Enter accepts, checks each answer as it is given, shows
+the summary and installs once the disk's name is typed back. For a script,
+the options below; busybox sh has no `<(...)`, so the password goes on
+stdin:
 
 ```sh
 echo gracehopper | palm-install --disk /dev/vdb --language de_DE --keyboard de \
@@ -197,9 +204,11 @@ echo gracehopper | palm-install --disk /dev/vdb --language de_DE --keyboard de \
 | `--password-file <file\|->`, `--root-password-file <file\|->` | first line of the file, `-` for stdin; root defaults to the user's password |
 | `--package <name>` | repeatable; default `palmframe` |
 | `--repo <path\|url>` | default `file:///usr/share/palm/repo` |
+| `--swap <size>` | a swap file on the root, `2G` or `512M`; default none |
 | `--no-efi-entry` | do not write a UEFI `Boot####` variable |
+| `--no-bios-boot` | do not run `limine bios-install` |
 | `--answers <file>` | `key = value` lines with the option names; options win |
-| `--yes`, `--dry-run`, `--json`, `--verbose` | |
+| `--yes`, `--dry-run`, `--json`, `--verbose` | `--json` gives each problem's code and each progress line's |
 | `--list-disks`, `--list-layouts`, `--list-zones`, `--list-languages` | |
 
 A password is never accepted as a command-line argument, because any user
@@ -215,7 +224,8 @@ On a build host, `--disk-image <file> --target <dir> [--efivars <dir>]`
 partitions and formats a plain file, builds the system in a directory, and
 writes the boot entry into a stand-in directory. That path refuses anything
 under `/dev`, never mounts anything and never touches the host's efivars.
-`palm-install --selftest` (1515 checks) runs on that path.
+`palm-install --selftest` (1567 checks, `limine bios-install` on an image
+among them) runs on that path.
 
 ### Languages
 
@@ -226,17 +236,19 @@ under `/dev`, never mounts anything and never touches the host's efivars.
 | Deutsch | `de_DE` | |
 | Español | `es_ES` | |
 | العربية | `ar` | right to left |
-| 日本語 | `ja_JP` | needs a CJK font; the live system ships `fonts-cjk`, and choosing Japanese adds it to the installed packages |
+| 日本語 | `ja_JP` | needs a CJK font; the live system has a subset of one, and choosing Japanese adds `fonts-cjk` to the installed packages |
 
 The installer and the greeter are translated. The language chosen goes into
 `/etc/locale.conf`. palm-login passes it to the greeter and to every
-session, and palm-init passes it to services. French went through a full
-install in QEMU and German through a full CLI install. Arabic was checked on
-the installer's screens, not through a whole install. For Japanese, only its
-name in the language list has been seen rendered. Some text stays in
-English in every language: keyboard layout descriptions, country names in
-the time-zone list, the progress detail line under the step name
-(`Installing palm-login (11 of 33)`), and the wm bar's date.
+session, and palm-init passes it to services. French, Japanese and Arabic
+went through full GUI installs in QEMU, German through a full CLI install.
+The core's progress details and its refusals are translated too, and so are
+country names and keyboard layout descriptions, from iso-codes and
+xkeyboard-config (`distro/locale/import-data.py` makes `countries.msg` and
+`keyboards.msg`); what they leave untranslated stays English. A layout with
+no Latin letters, Arabic's among them, comes with US English first and
+Alt+Shift to switch, so that a user name can be typed. The wm bar's date
+stays English.
 
 To add a language:
 
@@ -272,9 +284,11 @@ before formatting:
 | --- | --- | --- |
 | 1, ESP | 512 MiB, starting at 1 MiB | FAT32, label `PALMEFI` |
 | 2, root | the rest of the disk | ext4, label `palmroot` |
+| 3, BIOS boot | the gap before 1 MiB (1007 KiB) | none: limine's BIOS stage 2 |
 
-There is no BIOS boot partition, so an installed disk boots only through
-UEFI.
+The bootloader step runs `limine bios-install <disk> 3`, which puts limine's
+stage 1 in the protective MBR, so an installed disk starts under UEFI and
+under a BIOS alike.
 
 The root is mounted at `/mnt/target` and the ESP at `/mnt/target/boot/efi`.
 Then `palm --root /mnt/target --initdb add palmframe` installs from the
@@ -292,7 +306,9 @@ neither is `/home/palm`. Then the configure step writes:
 - `/etc/palm/keyboard`, for example `layout = fr`. wm reads it at start.
 - `/etc/localtime`, a symlink to `../usr/share/zoneinfo/<zone>`, and
   `/etc/timezone`.
-- `/etc/fstab`, naming the root and the ESP by PARTUUID.
+- `/etc/fstab`, naming the root and the ESP by PARTUUID, and `/swapfile`
+  when one was asked for (the GUI offers one on the disk page, half the
+  memory, 1 to 4 GiB).
 - `/etc/palm/repositories`, rewritten only when the install came from an
   `http(s)://` repository. An install from the medium keeps the network
   repository that palmframe-base names.
@@ -301,7 +317,8 @@ On the ESP the bootloader step writes `EFI/BOOT/BOOTX64.EFI` (the
 removable-media path any UEFI firmware boots) and `EFI/palmframe/BOOTX64.EFI`
 (the copy the boot entry points at), both limine. It also writes
 `boot/limine/limine.conf`, with a normal entry and a single-user entry
-booting `root=PARTUUID=<root>`, and a copy of the kernel as `vmlinuz`. The
+booting `root=PARTUUID=<root>`, `boot/limine/limine-bios.sys` for the BIOS
+stages, and a copy of the kernel as `vmlinuz`. The
 log is `/var/log/palm-install.log` on the live system. On the installed
 system `palm verify` exits 0, listing the configured `/etc` files as
 "modified (config)".
@@ -309,23 +326,20 @@ system `palm verify` exits 0, listing the configured `/etc` files as
 ### The UEFI boot entry
 
 When `/sys/firmware/efi` exists, the core writes a `Boot####` variable named
-"Palmframe" through efivarfs, mounting it if needed and clearing the
-immutable flag first. The variable is an EFI_LOAD_OPTION whose device path is
+"Palmframe (<host name>)" ("Palmframe" for the default host name) through
+efivarfs, mounting it if needed and clearing the immutable flag first. The
+variable is an EFI_LOAD_OPTION whose device path is
 `HD(1,GPT,<ESP guid>,start,size)/\EFI\palmframe\BOOTX64.EFI`, the short form
-efibootmgr writes. The core reuses an existing "Palmframe" entry, or else
-takes the lowest free number, and puts it first in `BootOrder`.
+efibootmgr writes. The core reuses a Palmframe entry only when it points at
+this disk, at the new ESP or at a partition of the table the installation
+erased; otherwise it takes the lowest free number. Each disk in a machine
+therefore keeps its own entry. The entry goes first in `BootOrder`.
 `palm-install --no-efi-entry` skips this step. If the write fails, the
 install still succeeds, and the disk boots through `EFI/BOOT/BOOTX64.EFI`.
 
 In QEMU the installed disk, booted alone with the same variable store,
-showed `BdsDxe: loading Boot0009 "Palmframe"`. efivarfs then read
-`BootCurrent` 0009 and `BootOrder` 0009,0000,0001,…
-
-Because an existing entry is reused, a second install in the same machine
-moves "Palmframe" to the second disk. Under SeaBIOS the ISO boots and the
-installer runs, and palm-install finishes without an entry. The resulting
-disk does not boot under SeaBIOS, though, and neither front end warns about
-it.
+showed `BdsDxe: loading Boot0009 "Palmframe (analytical)"`. efivarfs then
+read `BootCurrent` 0009, first in `BootOrder`.
 
 ### What has been verified
 
@@ -363,15 +377,38 @@ them.
   vdc as the disk the live system runs from and skipped it, and
   `palm-install --disk /dev/vdc` was refused with exit 4. So were
   `--disk /dev/sr0` and `--user 'Ada!'`.
-- **SeaBIOS.** The ISO booted without `/sys/firmware/efi` and the installer
-  ran, in English. The disk installed this way did not boot under SeaBIOS,
-  as described above.
 - **Tests on the host.** `make -C distro test-installer` passed:
-  `palm-install --selftest` 1515/0 and `installer --selftest` 132/0.
+  `palm-install --selftest` 1515/0 and `installer --selftest` 132/0
+  (1567/0 and 141/0 on 2026-10-19).
   `make -C distro test-install` runs `live/test-install.py`, whose last full
   run ended with `test-install: all passed`.
 
-Only the keyboard was used in QEMU, never the pointer.
+Later, on 2026-10-19, `live/test-install.py` passed again on the new
+layout, and `live/test-install-more.py` added (screenshots
+`distro/out/shots/more-*.png`):
+
+- **Japanese, on NVMe, with the pointer.** Live ISO under OVMF, the target
+  an emulated NVMe disk. 日本語 was chosen and Next clicked with the pointer
+  (QMP absolute events through virtio-tablet) on two pages; the progress
+  detail and the Done page were Japanese; "Restart now" was clicked. The
+  install wrote `nvme0n1p1`..`p3`, ran `limine bios-install /dev/nvme0n1 3`
+  and `Boot000A "Palmframe (kyoto)"`, and added `fonts-cjk`. The NVMe disk
+  then booted alone under OVMF through that entry, to a Japanese greeter
+  with `LANG=ja_JP.UTF-8`, layout `jp`, JST and `/swapfile` in use; and
+  under SeaBIOS, through limine's BIOS stages, once the disk had a boot
+  index (QEMU's SeaBIOS does not try an NVMe disk without one).
+- **Arabic, under SeaBIOS.** The live ISO booted through the BIOS, the
+  installer ran right to left, the keyboard became `us,ara`, the account
+  (Layla Hassan, layla, cairo) was typed in Latin letters, and the install
+  wrote no UEFI entry but limine's BIOS stages. The disk booted under
+  SeaBIOS to `LANG=ar`, Cairo time and an Arabic greeter, and under OVMF
+  with a fresh variable store through `EFI/BOOT/BOOTX64.EFI`.
+- **Two disks in one machine.** `palm-install --disk /dev/vdb ... --swap 1G
+  --yes`, then palm-install's questions answered over the serial console
+  onto `/dev/vda` (French, a `?Paris` search, a 512 MiB swap file). The
+  firmware then held `Boot000A "Palmframe (cli-b)"` and `Boot000B
+  "Palmframe (cli-a)"`, and each disk booted alone through its own entry,
+  with its swap file.
 
 ![The installed system's greeter, in French: Paris time, host analytical, the account Ada Lovelace](docs/installed-greeter-fr.png)
 

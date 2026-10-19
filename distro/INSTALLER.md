@@ -19,7 +19,7 @@ is on the serial console. The installer has eight steps, shown in a rail:
 1. **Language.** The UI switches immediately. The choices are English,
    Français, Deutsch, Español, العربية (right to left) and 日本語. Japanese
    is offered only when a CJK font is installed; otherwise it is listed as
-   unavailable rather than drawn as tofu. The live system ships `fonts-cjk`,
+   unavailable rather than drawn as tofu. The live system ships a CJK font subset,
    so Japanese is offered there. Choosing a language also preselects a
    keyboard layout and a time zone until the person picks those.
 2. **Keyboard.** A layout and variant from xkeyboard-config's `base.lst`,
@@ -37,9 +37,8 @@ is on the serial console. The installer has eight steps, shown in a rail:
 7. **Done**, then **Restart**.
 
 *Built:* the rail counts Summary and Install as separate steps, so the GUI
-shows eight steps. An installed disk boots only under UEFI (see
-*Bootloader*); under BIOS the live system runs and installs, but nothing
-warns that the result will not boot under BIOS.
+shows eight steps. The disk step also offers a swap file. An installed
+disk boots under UEFI and under a BIOS (see *Bootloader*).
 
 ## The pieces
 
@@ -85,6 +84,7 @@ Plan :: struct {
 	repo:       string,   // default: the live medium's repository, file:///usr/share/palm/repo
 	packages:   []string, // default: {"palmframe"}
 	efi_boot_entry: bool, // write a UEFI Boot#### variable via efivarfs (default true when /sys/firmware/efi exists)
+	swap_bytes:     u64,  // built: a /swapfile of this size; 0 = none
 }
 validate :: proc(p: Plan) -> (ok: bool, problems: []string)     // user name rules, hostname rules, disk exists & is not the live medium, size >= 4 GiB
 Step :: enum { Partition, Format, Mount, Packages, Configure, Bootloader, Unmount, Done }
@@ -104,13 +104,22 @@ needs:
   installation runs per process at a time.
 - On failure `err` is `"<Step title>: <reason> (log: /var/log/palm-install.log)"`,
   and whatever the run mounted is unmounted again.
-- `validate` returns every problem as an English sentence, with the values
-  already filled in, so front ends cannot translate it. The GUI checks the
-  same rules first in the user's language. Besides the rules above, it
-  refuses read-only disks, disks with a mounted filesystem and disks it
-  cannot find.
-- `Zone.country` is the country's name (`France`), from `iso3166.tab`.
-  `list_zones` includes `UTC`.
+- `validate` returns every problem as an English sentence.
+  `validate_messages(p, o, disks) -> []Message` returns the same problems
+  as `Message`s: a `Msg` id (its lower-cased name is a stable code such as
+  `disk_live_medium`) and up to four string arguments.
+  `MESSAGE_FORMAT[id]` is the English format and the msgid a front end
+  translates; `message_text` fills it in English. `Progress.detail` is the
+  progress line as a `Message` (`Progress.message` stays its English text).
+  The GUI translates both. Besides the rules above, it refuses read-only
+  disks, disks with a mounted filesystem, disks it cannot find and a swap
+  file that would leave less than 4 GiB.
+- `keyboard_settings(k)` is the body of `/etc/palm/keyboard` for a choice.
+  A layout with no Latin letters (`keyboard_needs_latin`: ara, ru, gr, ...)
+  becomes `layout = us,<layout>`, `variant = ,<variant>`, `options =
+  grp:alt_shift_toggle`, so a user name can be typed.
+- `Zone.country` is the country's name (`France`), from `iso3166.tab`, and
+  `Zone.country_code` its code. `list_zones` includes `UTC`.
 - Language codes are `en_US`, `fr_FR`, `de_DE`, `es_ES`, `ar` and `ja_JP`.
   Any other catalogue directory under `locale_root` is offered by its code.
 - `Plan.packages` empty means `{"palmframe"}`. The GUI passes
@@ -135,9 +144,12 @@ What `install` does, in order:
    the rest of the disk). Then `BLKRRPART`, and a wait for the partition
    nodes.
    *Built:* the table has 128 entries, and GUIDs are version 4 from
-   getrandom. The first and last MiB are zeroed first. 4 KiB logical sectors
-   are honoured. Both copies of the table are read back and CRC-checked
-   before formatting. `BLKRRPART` is retried on EBUSY.
+   getrandom. Partition 3 is a BIOS boot partition
+   (21686148-6449-6E6F-744E-656564454649) in the gap from the first usable
+   LBA to 1 MiB. The old table is read first, to know which UEFI entry
+   pointed at this disk. The first and last MiB are zeroed first. 4 KiB
+   logical sectors are honoured. Both copies of the table are read back and
+   CRC-checked before formatting. `BLKRRPART` is retried on EBUSY.
 2. **Format.** `mkfs.fat -F 32 -n PALMEFI` and `mkfs.ext4 -F -L palmroot`.
    These come from dosfstools and e2fsprogs, shipped in the live image as
    packages. busybox keeps the `mke2fs` and `mkfs.vfat` names.
@@ -181,14 +193,21 @@ What `install` does, in order:
    - `BOOTX64.EFI` comes from the target's `/usr/share/limine` if present,
      and otherwise from the live system's.
    - The device path is the short form `HD(1,GPT,<esp guid>,start,size)/\EFI\palmframe\BOOTX64.EFI`.
-   - An existing "Palmframe" entry is reused; otherwise the lowest free
-     number is taken. The entry is then put first in `BootOrder`.
+   - The description is "Palmframe (<host name>)", or "Palmframe" for the
+     default host name. An existing entry is reused only when it is ours
+     and points at the new ESP or at a partition of the erased table;
+     otherwise the lowest free number is taken, so each disk keeps its own
+     entry. The entry is then put first in `BootOrder`.
    - palm-init does not mount efivarfs, so the core mounts it for the write
      and unmounts it afterwards.
    - A failed write is logged but does not fail the install, because the
      disk still boots through `EFI/BOOT/BOOTX64.EFI`.
-   - There is no BIOS boot partition and no `limine bios-install`, so an
-     installed disk boots only through UEFI.
+   - `limine-bios.sys` is copied to `boot/limine/` on the ESP and `limine
+     bios-install <disk> 3` puts limine's stage 1 into the MBR and stage 2
+     into the BIOS boot partition. The tool is `/usr/lib/palm-install/limine`
+     (palm-install's package) unless `limine` is in PATH. A failure is fatal
+     only when the machine booted through a BIOS.
+   - `Plan.swap_bytes` makes `/swapfile` (configure step) and its fstab line.
 7. **Unmount**, then sync.
 
 ## palm-install
@@ -196,8 +215,10 @@ What `install` does, in order:
 `palm-install --help` lists every option: `--disk`, `--language`,
 `--keyboard layout[:variant]`, `--timezone`, `--hostname`, `--user`,
 `--full-name`, `--password-file <file|->`, `--root-password-file`, `--repo`,
-`--package` (repeatable), `--no-efi-entry`, `--answers <file>`, `--yes`,
-`--dry-run`, `--json`, `--verbose`, and `--list-disks|layouts|zones|languages`.
+`--package` (repeatable), `--swap <size>`, `--no-efi-entry`,
+`--no-bios-boot`, `--answers <file>`, `--yes`, `--dry-run`, `--json`,
+`--verbose`, and `--list-disks|layouts|zones|languages`. *Built:* with no
+options on a terminal, or `--interactive`, it asks each question instead.
 
 Passwords are never accepted as command-line arguments, because
 `/proc/<pid>/cmdline` is world-readable. `password =` is allowed in an
@@ -288,11 +309,13 @@ is the translators' guide.
 
 - The root filesystem is assembled with `palm --root ... --initdb add
   palmframe-live` under fakeroot, from the same signed repository.
-  `palmframe-live` depends on `palmframe`, `palm-install`, `installer`,
-  `e2fsprogs`, `dosfstools`, `limine`, `tzdata`, `xkeyboard-config`,
-  `palm-locale` and `fonts-cjk`, 40 packages in all. The whole repository
-  (index, signature and every package) is copied flat to
-  `/usr/share/palm/repo`, so installing needs no network.
+  *Built:* `palmframe-live` depends on the base system, the kiosk wm,
+  `term`, `palm-install`, `installer`, `e2fsprogs`, `dosfstools`, `limine`,
+  `tzdata`, `xkeyboard-config` and `palm-locale`, 19 packages in all, and
+  carries a 100 KB Japanese subset of Noto Sans CJK instead of `fonts-cjk`.
+  The packages of `palmframe` and `fonts-cjk` with their dependencies (36)
+  are copied flat to `/usr/share/palm/repo` with a newly signed index, so
+  installing needs no network.
 - `palmframe-live` provides:
   - the `installer` service, running `/usr/lib/palm-live/installer-session`
     as root, which runs `wm --drm --kiosk --exec installer`. The kernel
@@ -311,7 +334,7 @@ is the translators' guide.
   bios-install` for hybrid USB boot. The limine menu has two entries,
   *Install Palmframe* and *Install Palmframe (serial console only)*.
 - The output is `distro/out/palmframe-live.iso`, built by `make -C distro iso`:
-  about 102 MB, with an 84 MB initramfs that unpacks to about 133 MiB.
+  about 74 MB, with a 57 MB initramfs that unpacks to about 81 MiB.
   `distro/run-qemu.sh --iso [--disk <target.qcow2>]` boots it with a target
   disk attached as virtio. Without `--disk`, it makes
   `distro/out/target.qcow2` (8 GiB) if the file is missing. OVMF's variable

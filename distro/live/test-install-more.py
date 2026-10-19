@@ -81,16 +81,23 @@ class Machine(ti.Machine):
             return False
         w, h, rgb = got
         x0, y0, x1, y1 = int(box[0] * w), int(box[1] * h), int(box[2] * w), int(box[3] * h)
+        # A button's fill is light and solid: rows with a run of at least
+        # 48 light pixels. White text (a heading) has no runs that long.
         xs, ys = [], []
-        for y in range(y0, y1, 2):
+        for y in range(y0, y1):
             row = y * w * 3
-            for x in range(x0, x1, 2):
+            run = 0
+            for x in range(x0, x1):
                 i = row + x * 3
                 if rgb[i] > 215 and rgb[i + 1] > 215 and rgb[i + 2] > 215:
-                    xs.append(x)
-                    ys.append(y)
-        if len(xs) < 100:
-            self.check(f"{step}: a primary button on screen", False, f"{len(xs)} light pixels in {box}")
+                    run += 1
+                    if run >= 48:
+                        xs.extend((x - run + 1, x))
+                        ys.append(y)
+                else:
+                    run = 0
+        if len(ys) < 50:
+            self.check(f"{step}: a primary button on screen", False, f"{len(ys)} light runs in {box}")
             return False
         cx, cy = (min(xs) + max(xs)) // 2, (min(ys) + max(ys)) // 2
         print(f"        pointer: click ({cx}, {cy}) on a {max(xs) - min(xs)}x{max(ys) - min(ys)} button", flush=True)
@@ -262,7 +269,10 @@ def scenario_ja():
     print("ja: the NVMe disk alone under OVMF", flush=True)
     boot_target("ja-uefi", "ja", ["--disk", spare], nv, "kyoto", "sakurasakura", "Palmframe (kyoto)", 13, "installed-greeter-ja", checks)
     print("ja: the NVMe disk alone under SeaBIOS", flush=True)
-    boot_target("ja-bios", "ja", ["--bios", "--disk", spare], nv, "kyoto", "sakurasakura",
+    # SeaBIOS tries an NVMe disk only when it has a boot index (what choosing
+    # it in the BIOS boot menu does); without one it never looks at it.
+    nv_first = nv[:-1] + [nv[-1] + ",bootindex=0"]
+    boot_target("ja-bios", "ja", ["--bios", "--disk", spare], nv_first, "kyoto", "sakurasakura",
                 checks=lambda t: t.check("booted without UEFI", t.run("test -d /sys/firmware/efi || echo nouefi")[0].strip() == "nouefi"))
 
 

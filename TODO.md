@@ -342,60 +342,38 @@ the areas' notes name.
 
 ## The installer
 
-- **An installed disk boots only through UEFI, and nobody is told.** The
-  layout has no BIOS boot partition and the core runs no `limine
-  bios-install`. Under SeaBIOS the live ISO boots, and `palm-install`
-  finishes with exit 0 ("no UEFI boot entry requested; the disk boots
-  through EFI/BOOT/BOOTX64.EFI") and asks for a restart. The disk then hangs
-  at `Booting from Hard Disk...`. Either add a BIOS boot partition and
-  `limine bios-install` to `distro/installer/core`, or have both front ends
-  say plainly, before erasing, that the result needs UEFI.
-- **Part of the interface stays English in every language.** The progress
-  detail line under the step name (`Installing palm-login (11 of 33)`) is the
-  core's English message. `validate`'s problems are English sentences with
-  the values baked in, and only a problem code with arguments would let the
-  GUI translate them (`distro/notes/installer-gui.md`). Country names in the
-  time-zone list (`Britain (UK)`) and keyboard layout descriptions are
-  tzdata's and xkeyboard-config's English. The wm bar's date (`Tue 13 Oct`)
-  and its empty-desktop hint are English because wm has no catalogue.
-- **The installer and greeter still mirror their rows by hand.** palmy now
-  has `flex-row-reverse`, `flex-col-reverse` and an inherited `dir-rtl` /
-  `dir-ltr` / `dir-auto` (README, *Styling*); `hrow`/`hend` and the greeter's
-  `if rtl` branches can become one `dir-rtl` on the page's root. The palmy
-  halves of the installer's other two workarounds are fixed: Tab into a
-  prefilled field now puts the caret at the end (`test-install.py`'s End
-  press is no longer needed), and a text whose string grows is re-measured
-  instead of wrapped at last frame's width (`tests/text_rewrap_test.odin`),
-  so the installer's per-language tree keying and `flex-1` /
-  `whitespace-nowrap` on changing texts are no longer required.
-- **A second install in the same machine moves the boot entry.** The core
-  reuses an existing "Palmframe" `Boot####`, so installing onto a second
-  disk points the one entry at the new disk, and the first disk boots only
-  through the firmware's fallback path. A per-disk description, or matching
-  on the ESP's GUID, would keep both.
-- **The live console's hint is wrong.** `/etc/profile.d/palm-live.sh`
-  (`distro/live/root`) offers `palm-install` to "install interactively".
-  palm-install has no interactive mode. Run with no options, it reports the
-  plan invalid (no user, no password, no disk) and exits 4.
-- **Not exercised:** a whole install in Arabic or Japanese (Arabic was
-  checked on the installer's screens; for Japanese only its name in the
-  language list has been seen rendered); the pointer (QEMU runs used keys
-  only); NVMe and MMC partition naming and 4 KiB-sector devices outside
+- **Encryption is designed, not built.** `distro/notes/installer-core.md`
+  (*Encryption*) has the design: a LUKS2 root, an initramfs on the ESP that
+  asks for the passphrase, a host-copied `cryptsetup` package and four
+  kernel options (`CONFIG_DM_CRYPT` and the ciphers), none of which exist
+  yet.
+- **The wm bar's date** (`Tue 13 Oct`) and its empty-desktop hint are
+  English in every language, because wm has no catalogue.
+- **The greeter still mirrors its rows by hand** (`apps/greeter`, `if rtl`
+  branches). The installer now uses one `dir-rtl` on its root and
+  `dir-auto` on its text nodes; the greeter could do the same.
+- **NVMe under a BIOS needs a boot index.** QEMU's SeaBIOS never tries an
+  NVMe disk unless it has one (what choosing it in a BIOS boot menu does);
+  with one, an installed NVMe disk boots through limine's BIOS stages. The
+  shipped kernel config also lacks `CONFIG_BLK_DEV_NVME`, so NVMe disks are
+  invisible to the live system and the installed one until it is set
+  (the QEMU run used a kernel with it).
+- **Some old BIOSes refuse a GPT disk whose protective MBR entry is not
+  marked active** (parted's `pmbr_boot`). The installer leaves it inactive,
+  as UEFI asks; no such BIOS was at hand.
+- **Not exercised:** MMC partition naming and 4 KiB-sector devices outside
   image files; real hardware, and a real USB stick.
 - **`apps/term` drops legacy keysyms.** Its `keysym_codepoint` covers only
   Latin-1 and `0x01xxxxxx` Unicode keysyms. With a Cyrillic, Greek, Arabic
   or Hebrew layout, or for the euro sign, wm delivers the keysym and term
   types nothing. The launcher shows the same keys correctly
   (`distro/notes/wm.md`).
-- **The live medium is large for what it needs.** `fonts-cjk` is the
-  unsubsetted 19 MB Noto CJK collection, because the host has no subsetting
-  tool. The ISO also carries all 46 packages (62 MB of the 84 MB initramfs),
-  not only what `palmframe` needs.
-- **Erase-the-whole-disk only:** no resize, dual boot, encryption or swap.
-  The contract chose this. It is listed here so that it is not mistaken for
-  finished.
-- **Cosmetic:** on the Done page the pointer, parked at the screen's centre,
-  covers part of the heading.
+- **The Japanese subset on the live medium is generated by hand.**
+  `distro/live/subset-cjk.py` needs fontTools, which the build host does not
+  have by default; `live/build.sh` refuses a subset missing a character of
+  `distro/locale/ja`, so a new Japanese string means running it again.
+- **Erase-the-whole-disk only:** no resize or dual boot. The contract chose
+  this. It is listed here so that it is not mistaken for finished.
 
 ## The system
 
