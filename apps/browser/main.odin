@@ -82,6 +82,20 @@ COMMANDS := []kit.Command {
 		run = cmd_bookmark_add,
 	},
 	{
+		verb = "bookmark-edit",
+		summary = "rename, re-address or move a bookmark; each change syncs on its own",
+		effect = .Mutate,
+		args = {{name = "id", kind = .String, help = "the bookmark's id (or a unique prefix), or its exact address", required = true}},
+		flags = {
+			{name = "title", kind = .String, help = "a new name"},
+			{name = "url", kind = .String, help = "a new address"},
+			{name = "folder", kind = .String, help = "move it here: id, title, 'toolbar' or 'other'"},
+		},
+		out = {{name = "id", kind = .String}, {name = "title", kind = .String}, {name = "url", kind = .String}, {name = "parent", kind = .String}},
+		examples = {"browser bookmark-edit 3f0c1a --title 'Odin language'", "browser bookmark-edit https://lwn.net --folder toolbar"},
+		run = cmd_bookmark_edit,
+	},
+	{
 		verb = "bookmark-remove",
 		summary = "delete a bookmark or folder (a tombstone, so the delete syncs)",
 		effect = .Destructive,
@@ -435,30 +449,75 @@ cmd_bookmark_add :: proc(c: ^kit.Call) -> int {
 	return kit.EXIT_OK
 }
 
+// resolve_bookmark finds a bookmark by id, unique id prefix (as the table
+// prints them) or exact address.
+@(private = "file")
+resolve_bookmark :: proc(c: ^kit.Call, b: ^Bookmarks, key: string) -> (id: string, code: int) {
+	if r := find(b, key); r != nil {
+		return r.id, kit.EXIT_OK
+	}
+	if r := bookmarked(b, key); r != nil {
+		return r.id, kit.EXIT_OK
+	}
+	for r in b.file.items {
+		if strings.has_prefix(r.id, key) && len(key) >= 6 && !r.deleted {
+			if id != "" {
+				return "", kit.cli_fail(c, kit.EXIT_USAGE, fmt.tprintf("%q matches more than one bookmark", key))
+			}
+			id = r.id
+		}
+	}
+	if id == "" || is_root(id) {
+		return "", kit.cli_fail(c, kit.EXIT_NOT_FOUND, fmt.tprintf("no bookmark %q", key))
+	}
+	return id, kit.EXIT_OK
+}
+
+@(private = "file")
+cmd_bookmark_edit :: proc(c: ^kit.Call) -> int {
+	prof, pok := cli_profile(c)
+	if !pok {return kit.EXIT_USAGE}
+	b := bookmarks_open(profile_path(&prof, "bookmarks.json"), prof.settings.device)
+	id, code := resolve_bookmark(c, &b, kit.cli_str(c, "id"))
+	if code != kit.EXIT_OK {
+		return code
+	}
+	r := find(&b, id)
+	if kit.cli_has(c, "title") || kit.cli_has(c, "url") {
+		title := kit.cli_has(c, "title") ? kit.cli_str(c, "title") : r.title
+		url := kit.cli_has(c, "url") ? kit.cli_str(c, "url") : r.url
+		bookmark_edit(&b, id, title, url)
+	}
+	if f := kit.cli_str(c, "folder"); f != "" {
+		folder := find_folder(&b, f)
+		if folder == "" {
+			return kit.cli_fail(c, kit.EXIT_NOT_FOUND, fmt.tprintf("no folder %q", f))
+		}
+		kids := children(&b, folder, context.temp_allocator)
+		after := len(kids) > 0 ? kids[len(kids) - 1].id : ""
+		if !bookmark_move(&b, id, folder, after) {
+			return kit.cli_fail(c, kit.EXIT_USAGE, "it cannot go there")
+		}
+	}
+	r = find(&b, id)
+	kit.jset_str(c.out, "id", r.id)
+	kit.jset_str(c.out, "title", r.title)
+	kit.jset_str(c.out, "url", r.url)
+	kit.jset_str(c.out, "parent", r.parent)
+	if !c.dry_run && !bookmarks_save(&b) {
+		return kit.cli_fail(c, kit.EXIT_FAILED, "could not write bookmarks.json")
+	}
+	return kit.EXIT_OK
+}
+
 @(private = "file")
 cmd_bookmark_remove :: proc(c: ^kit.Call) -> int {
 	prof, pok := cli_profile(c)
 	if !pok {return kit.EXIT_USAGE}
 	b := bookmarks_open(profile_path(&prof, "bookmarks.json"), prof.settings.device)
-	key := kit.cli_str(c, "id")
-	id := ""
-	if r := find(&b, key); r != nil {
-		id = r.id
-	} else if r := bookmarked(&b, key); r != nil {
-		id = r.id
-	} else {
-		// a unique prefix of an id, as the table shows them
-		for r in b.file.items {
-			if strings.has_prefix(r.id, key) && len(key) >= 6 && !r.deleted {
-				if id != "" {
-					return kit.cli_fail(c, kit.EXIT_USAGE, fmt.tprintf("%q matches more than one bookmark", key))
-				}
-				id = r.id
-			}
-		}
-	}
-	if id == "" || is_root(id) {
-		return kit.cli_fail(c, kit.EXIT_NOT_FOUND, fmt.tprintf("no bookmark %q", key))
+	id, code := resolve_bookmark(c, &b, kit.cli_str(c, "id"))
+	if code != kit.EXIT_OK {
+		return code
 	}
 	kit.jset_str(c.out, "id", id)
 	ok := bookmark_delete(&b, id)
