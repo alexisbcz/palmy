@@ -23,6 +23,7 @@ import "core:os"
 import "core:slice"
 import "core:strings"
 import "core:time"
+import "core:sys/linux"
 import p "palmy:."
 
 @(private = "file")
@@ -62,6 +63,14 @@ close_section :: proc() {
 		fmt.printfln("      %d checks", checks - sect_at)
 	}
 	sect_name = ""
+}
+
+// The same two, for the checks in selftest_sync.odin.
+check :: proc(cond: bool, format: string, args: ..any) {
+	ok(cond, format, ..args)
+}
+begin_section :: proc(name: string) {
+	section(name)
 }
 
 @(private = "file")
@@ -120,6 +129,8 @@ selftest :: proc() -> int {
 	t_tamper()
 	t_wrong_password()
 	t_rekey()
+	// The synced vault, the importers, health and autofill: selftest_sync.odin.
+	t_sync_all()
 	// Before t_ui, which registers the theme: the field has to be legible on
 	// its built-in fallback palette too.
 	t_text_area()
@@ -1612,25 +1623,39 @@ t_kdf_cost :: proc() {
 	crypto.rand_bytes(salt[:])
 	key: [KEY_LEN]u8
 
+	// Measured two ways. Wall time is what a person waits and is printed;
+	// the assertions use this thread's CPU time, which is the work Argon2id
+	// actually did. Under parallel load (a dozen agents building at once)
+	// wall time doubled and the old wall-clock assertions failed for a
+	// reason that had nothing to do with the vault (TODO.md); CPU time does
+	// not move with the machine's load, so the check now means what it says.
+	cpu_ms :: proc() -> f64 {
+		ts, _ := linux.clock_gettime(.THREAD_CPUTIME_ID)
+		return f64(ts.time_sec) * 1000 + f64(ts.time_nsec) / 1e6
+	}
 	best: f64 = 1e18
+	best_cpu: f64 = 1e18
 	for _ in 0 ..< 3 {
 		t0 := time.now()
+		c0 := cpu_ms()
 		ok(derive_key("a-generated-master-for-the-test-9f2c", salt[:], KDF_DEFAULT, key[:]), "the default derivation failed")
+		best_cpu = min(best_cpu, cpu_ms() - c0)
 		ms := time.duration_milliseconds(time.since(t0))
 		best = min(best, ms)
 	}
 	fmt.printfln(
-		"      Argon2id m=%d KiB (%d MiB), t=%d, p=%d: %.0f ms per derivation",
+		"      Argon2id m=%d KiB (%d MiB), t=%d, p=%d: %.0f ms per derivation (%.0f ms of CPU)",
 		KDF_DEFAULT.m,
 		KDF_DEFAULT.m / 1024,
 		KDF_DEFAULT.t,
 		KDF_DEFAULT.par,
 		best,
+		best_cpu,
 	)
 	// The point of a memory-hard KDF is the cost it imposes. Under 100 ms it
 	// is not imposing one; over 3 s nobody would use the app.
-	ok(best > 100, "the default derivation takes only %.0f ms, which is not a meaningful cost", best)
-	ok(best < 3000, "the default derivation takes %.0f ms, which is too slow to live with", best)
+	ok(best_cpu > 100, "the default derivation takes only %.0f ms of CPU, which is not a meaningful cost", best_cpu)
+	ok(best_cpu < 3000, "the default derivation takes %.0f ms of CPU, which is too slow to live with", best_cpu)
 
 	// A full unlock, end to end, at the real parameters.
 	path := fmt.tprintf("%s/cost.pvz", SCRATCH)
