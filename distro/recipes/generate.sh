@@ -14,7 +14,7 @@
 # output is committed anyway, so a reader sees exactly what each package
 # holds without running anything.
 #
-# Hand-written recipes (linux, palm-init, palm, palm-login, palmd, greeter,
+# Hand-written recipes (linux, palm-init, palm, palm-login, doas, passwd, palmd, greeter,
 # palmy-wm, palmframe-demo, and the installer's palm-install, installer and
 # palmframe-live) are left alone.
 #
@@ -132,8 +132,10 @@ EOF
 
 # --- busybox: the binary and one symlink per applet --------------------------
 # Applets that would shadow a Palmframe program are left out; today that is
-# busybox's PPP `chat`, which collides with the chat application's name.
-BB_SKIP=" init linuxrc chat "
+# busybox's PPP `chat`, which collides with the chat application's name, and
+# passwd, which distro/passwd replaces (busybox is not setuid, so its passwd
+# works only for root).
+BB_SKIP=" init linuxrc chat passwd "
 BB_VER="$( (set +o pipefail; "$BUSYBOX" 2>/dev/null | head -1 | sed -n "s/^BusyBox v\([0-9.]*\).*/\1/p") )"
 {
 	header " from \`busybox --list\`"
@@ -569,7 +571,7 @@ license  = MIT
 category = System
 icon     = monitor
 details  = Everything a Palmframe machine has after installation. Removing an application keeps it out; removing this package would remove the system.
-depend   = palmframe-base linux busybox glibc palm-init palm palm-login palmd
+depend   = palmframe-base linux busybox glibc palm-init palm palm-login palmd doas passwd
 depend   = palmy-wm greeter fonts libxkbcommon xkeyboard-config
 depend   = tzdata palm-locale
 depend   = $(grep -v '^#' "$DISTRO/apps/default.list" | grep -vx -e wm -e greeter -e '' | tr '\n' ' ' | sed 's/ $//')

@@ -245,7 +245,6 @@ symlink  = /usr/bin/ntpd -> busybox
 symlink  = /usr/bin/od -> busybox
 symlink  = /usr/bin/openvt -> busybox
 symlink  = /usr/bin/partprobe -> busybox
-symlink  = /usr/bin/passwd -> busybox
 symlink  = /usr/bin/paste -> busybox
 symlink  = /usr/bin/patch -> busybox
 symlink  = /usr/bin/pgrep -> busybox
