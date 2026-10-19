@@ -1,6 +1,7 @@
-# palm-login and the greeter — notes
+# palm-login, the greeter, doas and passwd — notes
 
-Owner: distro/login/, apps/greeter/, this file.
+Owner: distro/login/ (and distro/login/auth/), distro/doas/, distro/passwd/,
+distro/recipes/{palm-login,doas,passwd}/, apps/greeter/, this file.
 
 ## What exists
 
@@ -90,5 +91,83 @@ what the contract describes; verified in QEMU (Restart in the greeter ->
   the tty the session's controlling terminal, so ctrl-C on the console keyboard
   can never kill the session.
 - The clock on the greeter shows UTC: Palmframe has no timezone setting yet.
-- No utmp/wtmp, no lastlog, no account expiry (shadow fields beyond the hash
-  are ignored), no rate limit beyond a 1.5 s delay per failed attempt.
+- busybox's own `login` on ttyS0 ignores shadow aging; only palm-login,
+  doas and passwd honour it.
+
+## Privilege and authentication (doas, passwd, auth/)
+
+`distro/login/auth/` is one Odin package imported by palm-login
+(`import "auth"`) and by doas and passwd (`import "../login/auth"`):
+
+- `crypt.odin`, `accounts.odin` — moved from palm-login, plus the whole shadow
+  line (`Shadow`, all nine fields) and `parse_passwd_uid`.
+- `aging.odin` — shadow-utils' isexpired rules: account expiry, `lastchg = 0`,
+  max/inactive/warn, and `min` for passwd.
+- `ratelimit.odin` — failures counted per key; the first two cost the base
+  delay (1.5 s), then the wait doubles (3, 6, ... 60 s) and an attempt inside
+  it is refused unchecked; a success or 15 quiet minutes clear it.
+  CLOCK_BOOTTIME, so the wall clock cannot shorten it. palm-login keeps counts
+  in memory (per name, and per seat after 8); doas and passwd in
+  `/run/faillock/<uid>` (root 0700), flock'd, and written *before* the check so
+  parallel copies all count.
+- `shadow_write.odin` — `/etc/shadow+` written, fsynced and renamed over
+  `/etc/shadow`, `/etc/shadow-` kept as a hard link; under `/etc/.pwd.lock`
+  (fcntl, lckpwdf's) and `/etc/shadow+` itself (O_EXCL, busybox's lock; one
+  older than a minute is a crash's leftover and is removed). Every signal is
+  blocked during the write.
+- `utmp.odin` — glibc's 384-byte `struct utmp`, so busybox `who`/`users`/`w`
+  read `/run/utmp` and `last` reads `/var/log/wtmp`; lastlog is written too
+  (292-byte records at uid*292) though nothing on the system reads it yet.
+- `syslog.odin` — glibc syslog(3), facility authpriv; user-supplied strings
+  have control characters replaced so they cannot forge a line.
+- `harden.odin` — the setuid prologue (fds 0-2 reopened if closed,
+  RLIMIT_FSIZE lifted, RLIMIT_CORE 0, not dumpable, umask 022) and the no-echo
+  prompt on `/dev/tty` that restores the terminal on ctrl-C.
+- `quality.odin` — at least 6 characters, not the old one, not the name.
+
+palm-login now: backoff and syslog (`accounts.odin`), the expired-password
+conversation (`ipc.odin`: secret "New password:", secret "Retype...", an
+`error` auth_message for a refused one, `info` for "expires in N days"),
+utmp/wtmp/lastlog for user sessions on line `seat0` (`main.odin`), and a
+"reboot" record once per boot (marker `/run/palm-login.boot`).
+
+doas (`distro/doas`) follows OpenBSD's doas.conf(5) — permit/deny, nopass,
+nolog, persist, keepenv, setenv { }, `as`, `cmd`, `args`, last match wins —
+and the caller's own password. `doas -C file [cmd]` checks a policy with all
+privileges dropped. Commands come only from the safe PATH; a missing command
+is reported only to a caller some rule permits, so doas is not an oracle for
+root-only paths. persist keys are uid + tty + session id + the session
+leader's start time, in `/run/doas` (root 0700), five minutes.
+
+passwd (`distro/passwd`): see the comment at the top of `main.odin`. It
+makes its real uid root before writing, so the caller can no longer signal it.
+
+### Tests
+
+- `distro/login/build.sh --test`: palm-login `--selftest` (81 checks: the 64
+  before, plus aging — expired account, warning, the whole change-at-login
+  conversation and its shadow line — and the rate limit), the greeter's
+  selftest against it (18), `odin test distro/login/auth` (7 tests: aging,
+  shadow lines, names, quality, backoff, update_shadow on a temp file with
+  stale-lock and refusal cases, utmp/wtmp/lastlog records), `odin test
+  distro/doas` (4 tests: parser accepts/rejects, matching, environment).
+  Test code lives in `*_test.odin`, which only `odin test` compiles.
+- `distro/doas/e2e/run.sh`: the setuid binaries run for real in a user+mount
+  namespace with a fixture /etc, a listening syslog and a pty driver — 64
+  checks: grant, wrong password, non-wheel, backoff, environment, PATH
+  hijack, closed fds, unsafe/foreign/symlinked/broken doas.conf, persist and
+  -L, nopass cmd args, -n, no tty; passwd change/refusals/lock/unlock/expire,
+  shadow+ lock fresh and stale, file-size limits, then doas with the new and
+  expired passwords.
+- `distro/login/e2e/run.sh` now also checks busybox `who` inside the session,
+  `last` afterwards, the reboot record, lastlog and the logged failure (18).
+- `distro/doas/test-qemu.py`: the disk image in QEMU — see below for results.
+
+### Needs from other areas
+
+- `distro/Makefile`: rules for `$(BIN)/doas` and `$(BIN)/passwd`
+  (`odin build distro/doas` / `distro/passwd`, depending on their sources
+  and `distro/login/auth`), both left out of APP_BINS and added to
+  `binaries` and `check-libs`.
+- `distro/recipes/generate.sh`: `passwd` in BB_SKIP (busybox's applet would
+  claim /usr/bin/passwd), and `doas passwd` in palmframe's first depend line.

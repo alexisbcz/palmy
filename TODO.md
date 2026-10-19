@@ -405,10 +405,9 @@ the areas' notes name.
   image and installed disks both have the line); the linux package has to
   install there. palm has no hooks by design, so the package has to carry
   the file itself.
-- **The user cannot become root.** busybox is not setuid, so `su` and
-  `passwd` fail, and package management happens on the serial console as
-  root. Either a setuid busybox with `/etc/busybox.conf`, or a small Odin
-  `doas`.
+- **busybox's `su` still fails** for anyone but root (busybox is not setuid).
+  `doas` and `passwd` (distro/doas, distro/passwd) replace what mattered;
+  `su` could be dropped from the busybox package.
 - **glibc, libxkbcommon, xkeyboard-config, tzdata, e2fsprogs, dosfstools,
   limine and the CJK font are copied from the Arch build host**
   (`distro/recipes/generate.sh`). Where a version is recorded, it comes from
@@ -442,8 +441,8 @@ the areas' notes name.
   `p.clipboard_set(text)` / `p.clipboard_get()` first (both work on the
   default window and return false with none, off the loop thread, or when
   refused) and keep wl-clipboard as the fallback.
-- **palm-login** keeps no utmp, wtmp or lastlog and ignores shadow's aging
-  fields; the only brake on guessing is a 1.5 s delay per failure.
+- **busybox's serial `login`** ignores shadow's aging fields; palm-login,
+  doas and passwd honour them.
 - **A cosmetic fault** in the verification screenshots: the greeter's Shut
   Down button has no hover state. (`term`'s one-cell selection on a single
   click is fixed.)

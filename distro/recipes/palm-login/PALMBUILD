@@ -3,7 +3,7 @@
 # session. palmframe-base's /etc/palm/services/palm-login starts it.
 pkgname  = palm-login
 pkgver   = 0.1.0
-pkgrel   = 0
+pkgrel   = 1
 pkgdesc  = Palmframe's login manager (greetd protocol)
 license  = MIT
 category = System

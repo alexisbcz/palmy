@@ -412,7 +412,9 @@ sized from RAM at boot, so the image has no swap partition.
 | `kernel/` | the kernel config and build script | config, shell |
 | `busybox/` | the static busybox build | shell |
 | `init/` | palm-init, PID 1, statically linked | Odin |
-| `login/` | palm-login, the login daemon | Odin |
+| `login/` | palm-login, the login daemon; `login/auth/`, the crypt, shadow, rate-limit, utmp and syslog code doas and passwd share with it | Odin |
+| `doas/` | doas, setuid root: run a command as root after your own password | Odin |
+| `passwd/` | passwd, setuid root: change a password | Odin |
 | `palm/` | palm, the package manager | Odin |
 | `palmd/` | palmd, the root daemon that runs palm for group wheel | Odin |
 | `base/` | `/etc`, the users, the service files, and `layout` (what git cannot hold: symlinks, owners, modes) | text |
@@ -491,6 +493,18 @@ Speaks the greetd IPC protocol on `/run/palm-login.sock` (root:greeter 0660),
 so `apps/greeter` talks to it the same way it talks to greetd. It checks
 passwords against `/etc/shadow` with SHA-512 crypt written in Odin. Wrong
 passwords, locked accounts and unknown users get the same error, after a delay.
+From the third failure in a row for one name the wait before the next attempt
+is even looked at doubles, up to a minute; the seat as a whole starts waiting
+after eight. Every failure and grant goes to syslog (authpriv), so to
+`/var/log/messages`.
+
+Shadow's aging fields are honoured with shadow-utils' rules: an expired
+account is refused, a password about to expire is announced, and an expired
+one is changed in the greeter before the session starts (a second and third
+question in the greetd conversation, which the greeter already asks). Each
+session is written to `/run/utmp`, `/var/log/wtmp` and `/var/log/lastlog` on
+the line `seat0`, with a reboot record once per boot, so busybox's `who` and
+`last` show it beside the serial console's logins.
 
 It loops: the greeter session (`wm --drm --kiosk --exec greeter` as
 `greeter`), then the session the greeter asked for (`wm --drm` by default) as
@@ -502,6 +516,29 @@ One addition to greetd's protocol: `{"type":"power","action":"poweroff"|"reboot"
 The greeter runs unprivileged and busybox's `poweroff` works by signalling
 PID 1, which an ordinary user may not do, so palm-login runs it as root. It
 refuses while a user session is running. `notes/login.md` has the detail.
+
+### doas and passwd
+
+How palm becomes root. busybox is not setuid, so its `su` and `passwd` cannot
+work for anyone else; these two small Odin programs are, and share
+palm-login's crypt, shadow parser and rate limit (`login/auth/`).
+
+`doas` is OpenBSD's: `/etc/doas.conf` in its grammar, which by default reads
+`permit :wheel`, so palm types `doas palm add foo` and its own password.
+`persist`, `nopass`, `cmd`/`args`, `setenv` and `keepenv` work as on OpenBSD;
+`persist` remembers the terminal session for five minutes in `/run/doas`.
+It refuses a policy that is not root's or that anyone else may write, or that
+has any error in it; looks commands up only in `/usr/local/bin:/usr/bin:/bin`;
+keeps only `TERM`, `COLORTERM`, `LANG`, `LANGUAGE`, `LC_*`, `DISPLAY` and
+`WAYLAND_DISPLAY` of the caller's environment; and counts failures per user in
+`/run/faillock` with palm-login's backoff.
+
+`passwd` changes the caller's own password after the current one, or, for
+root, anyone's (`-l`, `-u`, `-e` lock, unlock and expire; `-S` shows the
+status). `/etc/shadow` is rewritten to `/etc/shadow+` and renamed over, under
+both `/etc/.pwd.lock` and busybox's `shadow+` lock, with the old file kept as
+`/etc/shadow-`. `notes/login.md` has the detail and what each was tested
+against.
 
 ### palm
 
@@ -697,10 +734,8 @@ on real hardware yet.
   when the image is built. `palm upgrade linux` updates `/boot/vmlinuz` on the
   root, not that copy: the FAT partition is mounted at `/boot/efi`, but the
   linux package does not install there, and palm has no hooks to copy it.
-- **No su or passwd for palm.** busybox is not setuid, so palm cannot become
-  root. Members of wheel install and remove packages through Software and
-  palmd; anything else (`palm verify`, `palm fix`, editing `/etc`) is done as
-  root on the serial console.
+- **No su.** palm becomes root with `doas`; busybox's `su` is still there and
+  still fails for anyone but root.
 - **glibc, libxkbcommon and xkeyboard-config come from the build host** (Arch),
   not from source.
 - **The window manager on bare metal** has no VT switching (Ctrl+Alt+Fn does
@@ -730,8 +765,8 @@ on real hardware yet.
   a pathological search); its TLS client checks no revocation; indexes do not
   expire (only an older one is refused); each package is still decompressed
   whole in memory to install. `notes/palm.md` has the list.
-- **palm-login** keeps no utmp, wtmp or lastlog, ignores shadow's aging fields,
-  and limits guessing only by a 1.5 s delay per failed attempt.
+- **busybox's serial `login`** ignores shadow's aging fields and has only its
+  own fixed delay; palm-login, doas and passwd honour both.
 - **Small visual faults** seen in the verification screenshots: a single left
   click in term leaves a one-cell selection, and the greeter's Shut Down
   button shows no hover state.
