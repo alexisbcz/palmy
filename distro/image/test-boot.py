@@ -321,7 +321,7 @@ def main():
         # --- palm on the installed system ---
         # The image points at the public repository; the test uses the one
         # this build just made, served from the host.
-        LOCAL_REPO = "http://10.0.2.2:8080/x86_64"
+        LOCAL_REPO = f"http://10.0.2.2:{args.port}/x86_64"
         out, st = m.run("palm list --installed", 30)
         print("  ....  palm list --installed:\n" + "\n".join("          " + l for l in out.strip().splitlines()))
         m.check("palm list --installed lists the 31 shipped packages",

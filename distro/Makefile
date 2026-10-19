@@ -11,7 +11,8 @@
 #                             screenshots in distro/out/shots/
 #   make -C distro serve      serve distro/out/repo on :8080 for the guest's
 #                             `palm update` (QEMU shows the host as 10.0.2.2)
-#   make -C distro check-libs every shipped binary links only what glibc ships
+#   make -C distro check-libs every shipped binary links only glibc and what its
+#                             recipe's dependencies provide
 #   make -C distro iso        distro/out/palmframe-live.iso, the live installer
 #                             (UEFI and BIOS, runs from RAM; distro/live)
 #   make -C distro run-iso    boot it in QEMU with a blank target disk
@@ -213,15 +214,11 @@ serve:
 	@echo "serving $(OUT)/repo on http://0.0.0.0:$(PORT) (the guest uses http://10.0.2.2:$(PORT)/x86_64)"
 	python3 -m http.server $(PORT) --directory $(OUT)/repo
 
-# Every dynamic binary a recipe ships must need nothing beyond what the glibc
-# and libxkbcommon packages carry.
+# Every dynamic binary a recipe ships may link only glibc and what the
+# packages its recipe depends on provide (so:<name>): libopus for call,
+# OpenSSL for mailcore and ocr, nothing else for the rest.
 check-libs: binaries
-	@bad=0; for b in $(BIN)/palm $(BIN)/palm-login $(BIN)/doas $(BIN)/passwd $(BIN)/palmd $(BIN)/wm $(addprefix $(BIN)/,$(APP_BINS)) $(INSTALLER_BINS); do \
-		for l in $$(ldd $$b | awk '/=>/ {print $$1} /^\t\// {print $$1}'); do \
-			case "$$l" in libc.so.6|libm.so.6|/lib64/ld-linux-x86-64.so.2) ;; \
-			*) echo "check-libs: $$b needs $$l"; bad=1 ;; esac; \
-		done; \
-	done; test $$bad = 0 && echo "check-libs: every binary links only glibc"
+	python3 -I $(DISTRO)/apps/check-libs.py
 
 clean:
 	rm -rf $(OUT)/repo $(OUT)/rootfs $(OUT)/palmframe.img $(OUT)/shots $(DISTRO)/build/image
