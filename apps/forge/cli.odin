@@ -105,12 +105,15 @@ fail :: proc(c: ^kit.Call, r: wire.Result, what: string) -> int {
 // open_client opens the client and applies the scope rule.
 open_client :: proc(c: ^kit.Call, need_auth := false) -> (cl: Client, code: int) {
 	err: string
-	cl, err = client_open()
+	cl, err = client_open(c.identity)
 	if err != "" {
-		return cl, kit.cli_fail(c, kit.EXIT_UNAVAILABLE, err)
+		// Credentials that were refused are a refusal (5); a server that
+		// could not be reached is unavailable (6).
+		code := kit.EXIT_UNAVAILABLE if strings.contains(err, "not reachable") else kit.EXIT_OUT_OF_SCOPE
+		return cl, kit.cli_fail(c, code, err)
 	}
 	if need_auth && cl.bearer == "" {
-		return cl, kit.cli_fail(c, kit.EXIT_OUT_OF_SCOPE, "sign in first (`forge login`), or set FORGE_TOKEN")
+		return cl, kit.cli_fail(c, kit.EXIT_OUT_OF_SCOPE, "sign in first (`accounts signin`), or set FORGE_TOKEN")
 	}
 	if cl.kind == "token" && c.identity != "" {
 		// The token's identity is the scope; a different one is refused here,
@@ -183,29 +186,6 @@ ISSUE_FIELDS := []kit.Field {
 
 @(private = "file")
 COMMANDS := []kit.Command {
-	{
-		verb = "login",
-		summary = "sign in with the Palmframe account (the password may come from FORGE_PASSWORD)",
-		effect = .Mutate,
-		flags = {
-			{name = "email", kind = .String, required = true},
-			{name = "password", kind = .String, help = "or FORGE_PASSWORD"},
-			{name = "signup", kind = .Bool, help = "create the account first"},
-			{name = "env", kind = .Path, help = "read API_URL and ANON_KEY from this file (`supabase status -o env`)"},
-			{name = "forge", kind = .String, help = "the forge server", def = DEFAULT_FORGE},
-		},
-		out = {{name = "email", kind = .String}, {name = "identities", kind = .Array, of = {{name = "handle", kind = .String}}}},
-		examples = {"forge login --email ada@palm.test --env stack.env"},
-		run = cmd_login,
-	},
-	{
-		verb = "logout",
-		summary = "forget the stored session",
-		effect = .Idempotent,
-		out = {{name = "removed", kind = .Bool}},
-		examples = {"forge logout"},
-		run = cmd_logout,
-	},
 	{
 		verb = "whoami",
 		summary = "how this command is signed in, and the identities it can act as",
@@ -538,67 +518,6 @@ surface :: proc() -> ^kit.Surface {
 // Account
 // ---------------------------------------------------------------------------
 
-cmd_login :: proc(c: ^kit.Call) -> int {
-	cl: Client
-	cl.path = session_path()
-	cl.forge = kit.cli_str(c, "forge")
-	cl.supa.url = DEFAULT_API
-	if p := kit.cli_str(c, "env"); p != "" {
-		data, err := os.read_entire_file(p, context.allocator)
-		if err != nil {
-			return kit.cli_failf(c, kit.EXIT_NOT_FOUND, "cannot read %s", p)
-		}
-		for line in strings.split_lines(string(data)) {
-			k, _, v := strings.partition(strings.trim_space(line), "=")
-			v = strings.trim(v, "\"'")
-			switch k {
-			case "API_URL":
-				cl.supa.url = v
-			case "ANON_KEY":
-				cl.supa.anon = v
-			}
-		}
-	}
-	if v := os.get_env("API_URL", context.allocator); v != "" {
-		cl.supa.url = v
-	}
-	if v := os.get_env("ANON_KEY", context.allocator); v != "" {
-		cl.supa.anon = v
-	}
-	if cl.supa.anon == "" {
-		return kit.cli_fail(c, kit.EXIT_USAGE, "no Supabase key: pass --env, or set ANON_KEY")
-	}
-	pw := kit.cli_str(c, "password")
-	if pw == "" {
-		pw = os.get_env("FORGE_PASSWORD", context.allocator)
-	}
-	if pw == "" {
-		return kit.cli_fail(c, kit.EXIT_USAGE, "give --password or FORGE_PASSWORD (this never prompts)")
-	}
-	if c.dry_run {
-		kit.jset_str(c.out, "email", kit.cli_str(c, "email"))
-		kit.jset(c.out, "identities", kit.jarr())
-		return 0
-	}
-	if err := client_login(&cl, kit.cli_str(c, "email"), pw, kit.cli_bool(c, "signup")); err != "" {
-		return kit.cli_fail(c, kit.EXIT_OUT_OF_SCOPE, err)
-	}
-	kit.jset_str(c.out, "email", cl.email)
-	kit.jset(c.out, "identities", pick_all(my_identities(&cl).value, "handle", "display_name", "kind", "color"))
-	kit.cli_note(c, "signed in; session stored in %s", cl.path)
-	return 0
-}
-
-cmd_logout :: proc(c: ^kit.Call) -> int {
-	path := session_path()
-	existed := os.exists(path)
-	if existed && !c.dry_run {
-		os.remove(path)
-	}
-	kit.jset_bool(c.out, "removed", existed)
-	return 0
-}
-
 cmd_whoami :: proc(c: ^kit.Call) -> int {
 	cl, code := open_client(c)
 	if code != 0 {
@@ -606,14 +525,14 @@ cmd_whoami :: proc(c: ^kit.Call) -> int {
 	}
 	kind := cl.kind if cl.kind != "" else "anonymous"
 	kit.jset_str(c.out, "kind", kind)
-	if cl.email != "" && cl.kind == "session" {
+	if cl.email != "" && cl.kind != "token" {
 		kit.jset_str(c.out, "email", cl.email)
 	}
 	if cl.kind == "token" {
 		kit.jset_str(c.out, "token_scope", cl.token_scope)
 	}
-	if c.identity != "" {
-		kit.jset_str(c.out, "scope", c.identity)
+	if cl.scope != "" {
+		kit.jset_str(c.out, "scope", cl.scope)
 	}
 	r := my_identities(&cl)
 	if !wire.ok(r) {

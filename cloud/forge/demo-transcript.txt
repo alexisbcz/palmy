@@ -1,0 +1,544 @@
+
+## 1. One account, two identities (apps/accounts, the shared cloudkit token store)
+
+### ok   sign up Ada; her first identity is the personal one
+$ bin/accounts signup ada6832@palm.test --name Ada\ Lovelace --handle ada6832 --password forge\ demo\ 6832 --json 
+{
+  "email": "ada6832@palm.test",
+  "user_id": "24bf01ec-504d-4a69-925e-70d3dd0b2c46",
+  "identity": {
+    "id": "bb7daf64-00fd-4e9c-a4a5-b782234ca311",
+    "handle": "ada6832",
+    "address": "ada6832@palm.test",
+    "display_name": "Ada Lovelace",
+    "kind": "personal",
+    "color": "indigo",
+    "archived": false
+  }
+}
+[exit 0]
+
+### ok   a work identity on the same account
+$ bin/accounts create northwind6832 --name Ada\ at\ Northwind --kind work --color sky --json 
+{
+  "id": "bb9f7089-3403-4f4d-b7be-de5bae1e3690",
+  "handle": "northwind6832",
+  "address": "northwind6832@palm.test",
+  "display_name": "Ada at Northwind",
+  "kind": "work",
+  "color": "sky",
+  "archived": false
+}
+[exit 0]
+
+### ok   scoped sessions for each, on this machine
+$ bin/accounts switch ada6832 --json 
+{
+  "current": "ada6832",
+  "store": "/tmp/claude-1000/-home-alex-Work-palmy/fa1b6400-3f10-4431-816d-e37e9d672367/scratchpad/forge-agent/store/scoped/ada6832.json"
+}
+[exit 0]
+
+### ok   
+$ bin/accounts switch northwind6832 --json 
+{
+  "current": "northwind6832",
+  "store": "/tmp/claude-1000/-home-alex-Work-palmy/fa1b6400-3f10-4431-816d-e37e9d672367/scratchpad/forge-agent/store/scoped/northwind6832.json"
+}
+[exit 0]
+
+### ok   the forge sees two identities from the unscoped session
+$ bin/forge whoami --json 
+{
+  "kind": "session",
+  "email": "ada6832@palm.test",
+  "identities": [
+    {
+      "handle": "ada6832",
+      "display_name": "Ada Lovelace",
+      "kind": "personal",
+      "color": "indigo"
+    },
+    {
+      "handle": "northwind6832",
+      "display_name": "Ada at Northwind",
+      "kind": "work",
+      "color": "sky"
+    }
+  ],
+  "forge": "http://127.0.0.1:58580"
+}
+[exit 0]
+
+## 2. A private repository, created as ada6832
+
+### ok   create it, scoped to ada6832, with a README commit made on the server
+$ env PALM_IDENTITY=ada6832 bin/forge repo create notes --description Field\ notes\ and\ the\ tools\ that\ sort\ them --readme --json 
+{
+  "repo": "ada6832/notes",
+  "id": "f29f6a04-597a-4312-9fad-6488f4374020",
+  "visibility": "private",
+  "clone_url": "http://127.0.0.1:58580/ada6832/notes.git",
+  "initial_commit": "b4a8640377c7cae2c0dbb420e326ae3a820f7c42"
+}
+[exit 0]
+
+### ok   a write token for ada6832, for git
+$ env PALM_IDENTITY=ada6832 bin/forge token create laptop --scope write --json 
+this is the only time the token is shown
+{
+  "identity": "ada6832",
+  "scope": "write",
+  "id": "6f337a7b-546e-4e2d-877e-04b71373abb3",
+  "token": "palmforge_••••",
+  "expires_at": null
+}
+[exit 0]
+
+### ok   a read-only token for ada6832
+$ env PALM_IDENTITY=ada6832 bin/forge token create reader --scope read --json 
+this is the only time the token is shown
+{
+  "identity": "ada6832",
+  "scope": "read",
+  "id": "e4187b07-e400-4443-8a49-92931c60082c",
+  "token": "palmforge_••••",
+  "expires_at": null
+}
+[exit 0]
+
+## 3. git push over smart HTTP with the token
+
+### ok   clone the server-made README commit
+$ git clone http://x:palmforge_••••@127.0.0.1:58580/ada6832/notes.git /tmp/forge-demo-work.NzqW2C/notes 
+Cloning into '/tmp/forge-demo-work.NzqW2C/notes'...
+[exit 0]
+
+### ok   commit
+$ git add -A 
+
+[exit 0]
+
+### ok   
+$ git commit -qm Sort\ notes\ by\ title 
+
+[exit 0]
+
+### ok   push main
+$ git push -q origin main 
+
+[exit 0]
+
+### ok   a feature branch
+$ git commit -qam Sort\ by\ length\,\ longest\ first 
+
+[exit 0]
+
+### ok   push it
+$ git push -q origin word-count 
+
+[exit 0]
+
+### ok   the push is in the database: branches, commits, activity
+$ bin/forge log ada6832/notes --json 
+{
+  "commits": [
+    {
+      "sha": "3500569d3867f329992aced0ffd0f7605aac1897",
+      "author": "Ada Lovelace",
+      "date": "2026-10-19T12:47:13+02:00",
+      "summary": "Sort notes by title"
+    },
+    {
+      "sha": "b4a8640377c7cae2c0dbb420e326ae3a820f7c42",
+      "author": "Ada Lovelace",
+      "date": "2026-10-19T12:47:12+02:00",
+      "summary": "Initial commit"
+    }
+  ]
+}
+[exit 0]
+
+### ok   
+$ bin/forge activity ada6832/notes --limit 5 
+events:
+  when                              actor    repo           kind          what
+  2026-10-19T10:47:13.285453+00:00  ada6832  ada6832/notes  push          pushed 1 commit to word-count
+  2026-10-19T10:47:13.196034+00:00  ada6832  ada6832/notes  push          pushed 1 commit to main
+  2026-10-19T10:47:13.001543+00:00  ada6832  ada6832/notes  push          pushed 1 commit to main
+  2026-10-19T10:47:12.958531+00:00  ada6832  ada6832/notes  repo.created  created the private repository
+[exit 0]
+
+## 4. An issue, a pull request, a review, a merge
+
+### ok   open an issue as ada6832
+$ env PALM_IDENTITY=ada6832 bin/forge issue create ada6832/notes Sorting\ ignores\ accents --body Émile\ sorts\ after\ Zoé. --json 
+{
+  "number": 1,
+  "repo": "ada6832/notes"
+}
+[exit 0]
+
+### ok   open a pull request from word-count
+$ env PALM_IDENTITY=ada6832 bin/forge pr create ada6832/notes Sort\ notes\ by\ length --head word-count --body Longest\ first\,\ so\ the\ notes\ worth\ editing\ surface. --json 
+{
+  "head": "word-count",
+  "base": "main",
+  "number": 2,
+  "head_sha": "15db25bcee2551493f42f0d052ca6b92cf3cbe33"
+}
+[exit 0]
+
+### ok   the pull request: mergeable, one commit ahead, can fast-forward
+$ bin/forge pr show ada6832/notes 2 --json 
+{
+  "number": 2,
+  "state": "open",
+  "title": "Sort notes by length",
+  "author": "ada6832",
+  "comments": 0,
+  "created_at": "2026-10-19T10:47:13.366223+00:00",
+  "head": "word-count",
+  "base": "main",
+  "ahead": 1,
+  "behind": 0,
+  "mergeable": true,
+  "fast_forward": true,
+  "conflicts": [],
+  "files": [
+    {
+      "path": "src/sort.odin",
+      "additions": 7,
+      "deletions": 0
+    }
+  ],
+  "reviews": [],
+  "conversation": []
+}
+[exit 0]
+
+### ok   the read token can read
+$ env FORGE_TOKEN=palmforge_•••• bin/forge repo show ada6832/notes --json 
+{
+  "repo": "ada6832/notes",
+  "visibility": "private",
+  "role": "read",
+  "default_branch": "main",
+  "open_issues": 1,
+  "open_pulls": 1,
+  "pushed_at": "2026-10-19T10:47:13.285453+00:00",
+  "description": "Field notes and the tools that sort them",
+  "owner_name": "Ada Lovelace",
+  "clone_url": "http://127.0.0.1:58580/ada6832/notes.git",
+  "branches": [
+    "main",
+    "word-count"
+  ]
+}
+[exit 0]
+
+### ok   but git refuses a push with it (HTTP 403)
+$ git -C /tmp/forge-demo-work.NzqW2C/notes push -q http://x:palmforge_••••@127.0.0.1:58580/ada6832/notes.git main:refs/heads/ro-test 
+fatal: unable to access 'http://127.0.0.1:58580/ada6832/notes.git/': The requested URL returned error: 403
+[exit 128]
+
+## 5. northwind6832, the other identity of the same person, sees none of it
+
+### ok   northwind6832 cannot see the repository (exit 3: not found)
+$ env PALM_IDENTITY=northwind6832 bin/forge repo show ada6832/notes --json 
+{
+  "error": "not found",
+  "code": 3,
+  "command": "forge repo-show",
+  "detail": "ada6832/notes: no such repository, or not visible to you"
+}
+[exit 3]
+
+### ok   nor list it
+$ env PALM_IDENTITY=northwind6832 bin/forge repo list --json 
+{
+  "repos": [],
+  "count": 0
+}
+[exit 0]
+
+### ok   a write token for northwind6832
+$ env PALM_IDENTITY=northwind6832 bin/forge token create desktop --scope write --json 
+this is the only time the token is shown
+{
+  "identity": "northwind6832",
+  "scope": "write",
+  "id": "fa2c5cb1-7fbc-4ed9-82cd-90c5bcbfd24e",
+  "token": "palmforge_••••",
+  "expires_at": null
+}
+[exit 0]
+
+### ok   git clone with northwind6832's token: the repository does not exist for it
+$ git clone -q http://x:palmforge_••••@127.0.0.1:58580/ada6832/notes.git /tmp/forge-demo-work.NzqW2C/b1 
+fatal: repository 'http://127.0.0.1:58580/ada6832/notes.git/' not found
+[exit 128]
+
+### ok   anonymous git clone: asked for credentials, gets none
+$ git clone -q http://127.0.0.1:58580/ada6832/notes.git /tmp/forge-demo-work.NzqW2C/anon1 
+fatal: could not read Username for 'http://127.0.0.1:58580': terminal prompts disabled
+[exit 128]
+
+### ok   northwind6832's token cannot pretend to be ada6832 (exit 5, before anything is sent)
+$ env FORGE_TOKEN=palmforge_•••• bin/forge issue list ada6832/notes --identity ada6832 --json 
+{
+  "error": "out of scope",
+  "code": 5,
+  "command": "forge issue-list",
+  "detail": "this token acts for \"northwind6832\"",
+  "identity": "northwind6832",
+  "requested": "ada6832"
+}
+[exit 5]
+
+## 6. A grant from ada6832 to northwind6832 gives exactly what it says
+
+### ok   grant northwind6832 write on ada6832/notes
+$ env PALM_IDENTITY=ada6832 bin/forge collab add ada6832/notes northwind6832 --role write --json 
+{
+  "role": "write",
+  "grant": "b9560c4c-a8c7-49f4-8346-38aa20b249b6",
+  "grantee": "northwind6832"
+}
+[exit 0]
+
+### ok   now northwind6832 sees it, with role write
+$ env PALM_IDENTITY=northwind6832 bin/forge repo show ada6832/notes --json 
+{
+  "repo": "ada6832/notes",
+  "visibility": "private",
+  "role": "write",
+  "default_branch": "main",
+  "open_issues": 1,
+  "open_pulls": 1,
+  "pushed_at": "2026-10-19T10:47:13.285453+00:00",
+  "description": "Field notes and the tools that sort them",
+  "owner_name": "Ada Lovelace",
+  "clone_url": "http://127.0.0.1:58580/ada6832/notes.git",
+  "branches": [
+    "main",
+    "word-count"
+  ]
+}
+[exit 0]
+
+### ok   and can clone it with its own token
+$ git clone -q http://x:palmforge_••••@127.0.0.1:58580/ada6832/notes.git /tmp/forge-demo-work.NzqW2C/b2 
+
+[exit 0]
+
+### ok   northwind6832 reviews the pull request, with a comment on a line
+$ env PALM_IDENTITY=northwind6832 bin/forge pr review ada6832/notes 2 --state approve --body by_length\ reads\ well\;\ consider\ a\ tie-break\ on\ title. --path src/sort.odin --line 21 --json 
+{
+  "state": "approved",
+  "review": "4350aceb-1c78-4e2b-b8e6-9adcc80fa54d"
+}
+[exit 0]
+
+### ok   northwind6832 comments on the issue
+$ env PALM_IDENTITY=northwind6832 bin/forge issue comment ada6832/notes 1 Seen\ at\ work\ too:\ a\ collation\ step\ before\ compare\ would\ fix\ it. --json 
+{
+  "id": "ea6f0b4b-964e-4692-a675-f894687a305b"
+}
+[exit 0]
+
+### ok   but a write grant does not let northwind6832 change settings (exit 5)
+$ env PALM_IDENTITY=northwind6832 bin/forge repo set ada6832/notes --visibility public --json 
+{
+  "error": "out of scope",
+  "code": 5,
+  "command": "forge repo-set",
+  "detail": "only the owning identity (or an admin grant) can change settings"
+}
+[exit 5]
+
+### ok   nor grant others
+$ env PALM_IDENTITY=northwind6832 bin/forge collab add ada6832/notes ada6832 --role admin --json 
+{
+  "error": "out of scope",
+  "code": 5,
+  "command": "forge collab-add",
+  "detail": "grant: new row violates row-level security policy for table \"forge_collaborators\""
+}
+[exit 5]
+
+## 7. Merge on the server
+
+### ok   merge with a merge commit
+$ env PALM_IDENTITY=ada6832 bin/forge pr merge ada6832/notes 2 --method merge-commit --json 
+{
+  "number": 2,
+  "method": "merge-commit",
+  "sha": "1b8bb153b92570857de17a2291dba3727fa94079",
+  "base": "main"
+}
+[exit 0]
+
+### ok   the pull request is merged; the issue is still open
+$ bin/forge pr list ada6832/notes --state all 
+pulls:
+  number  state   title                 author   comments  created_at                        head        base
+  2       merged  Sort notes by length  ada6832  1         2026-10-19T10:47:13.366223+00:00  word-count  main
+count: 1
+[exit 0]
+
+### ok   main now carries the merge
+$ bin/forge log ada6832/notes --limit 3 
+commits:
+  sha         author        date                       summary
+  1b8bb153b9  Ada Lovelace  2026-10-19T12:47:13+02:00  Merge pull request #2 from word-count
+  3500569d38  Ada Lovelace  2026-10-19T12:47:13+02:00  Sort notes by title
+  15db25bcee  Ada Lovelace  2026-10-19T12:47:13+02:00  Sort by length, longest first
+[exit 0]
+
+### ok   close the issue
+$ env PALM_IDENTITY=ada6832 bin/forge issue close ada6832/notes 1 --json 
+{
+  "number": 1,
+  "state": "closed"
+}
+[exit 0]
+
+## 8. Revoking the grant and the tokens
+
+### ok   revoke northwind6832's grant
+$ env PALM_IDENTITY=ada6832 bin/forge collab remove ada6832/notes northwind6832 --json 
+{
+  "revoked": true
+}
+[exit 0]
+
+### ok   northwind6832 sees nothing again
+$ env PALM_IDENTITY=northwind6832 bin/forge repo show ada6832/notes --json 
+{
+  "error": "not found",
+  "code": 3,
+  "command": "forge repo-show",
+  "detail": "ada6832/notes: no such repository, or not visible to you"
+}
+[exit 3]
+
+### ok   and its token no longer clones
+$ git clone -q http://x:palmforge_••••@127.0.0.1:58580/ada6832/notes.git /tmp/forge-demo-work.NzqW2C/b3 
+fatal: repository 'http://127.0.0.1:58580/ada6832/notes.git/' not found
+[exit 128]
+
+### ok   revoke the read token
+$ env PALM_IDENTITY=ada6832 bin/forge token revoke e4187b07-e400-4443-8a49-92931c60082c --yes --json 
+{
+  "revoked": "e4187b07-e400-4443-8a49-92931c60082c"
+}
+[exit 0]
+
+### ok   a revoked token is refused at once (exit 5)
+$ env FORGE_TOKEN=palmforge_•••• bin/forge repo list --json 
+{
+  "error": "out of scope",
+  "code": 5,
+  "command": "forge repo-list",
+  "detail": "the token was refused (wrong, revoked or expired)"
+}
+[exit 5]
+
+## 9. A public repository, readable by anyone
+
+### ok   create it
+$ env PALM_IDENTITY=ada6832 bin/forge repo create field-guide --visibility public --description The\ public\ half\ of\ the\ notes --readme --json 
+{
+  "repo": "ada6832/field-guide",
+  "id": "e5c15b59-8194-4dd1-a0c1-2a948bb7f515",
+  "visibility": "public",
+  "clone_url": "http://127.0.0.1:58580/ada6832/field-guide.git",
+  "initial_commit": "9edbf636fd4f7959162eb5c5ad4ad94a53ad5dea"
+}
+[exit 0]
+
+### ok   anonymous git clone, no credentials at all
+$ git clone -q http://127.0.0.1:58580/ada6832/field-guide.git /tmp/forge-demo-work.NzqW2C/public 
+
+[exit 0]
+
+### ok   
+$ cat /tmp/forge-demo-work.NzqW2C/public/README.md 
+# field-guide
+
+A repository on the Palmframe forge.
+[exit 0]
+
+### ok   anonymous push is refused
+$ git -C /tmp/forge-demo-work.NzqW2C/public push -q origin main 
+fatal: could not read Username for 'http://127.0.0.1:58580': terminal prompts disabled
+[exit 128]
+
+### ok   anonymous listing shows only public repositories
+$ env PALM_CLOUD_DIR=/tmp/forge-demo-work.NzqW2C/empty-store bin/forge repo list --json 
+{
+  "repos": [
+    {
+      "repo": "ada6832/field-guide",
+      "visibility": "public",
+      "role": "read",
+      "default_branch": "main",
+      "open_issues": 0,
+      "open_pulls": 0,
+      "pushed_at": "2026-10-19T10:47:14.014394+00:00"
+    }
+  ],
+  "count": 1
+}
+[exit 0]
+
+## 10. LFS: an object through the batch API into Storage
+
+### ok   batch upload: the forge hands back an upload action
+$ lfs -X POST -H Accept:\ application/vnd.git-lfs+json -H Content-Type:\ application/vnd.git-lfs+json -u x:palmforge_•••• --data \{\"operation\":\"upload\"\,\"transfers\":\[\"basic\"\]\,\"objects\":\[\{\"oid\":\"c400798b2877c48f5ab1fe6244df1df69c4e44f8a8a402d40da99983eeee26c7\"\,\"size\":200000\}\]\} http://127.0.0.1:58580/ada6832/notes.git/info/lfs/objects/batch 
+{"transfer":"basic","objects":[{"oid":"c400798b2877c48f5ab1fe6244df1df69c4e44f8a8a402d40da99983eeee26c7","size":200000,"authenticated":true,"actions":{"upload":{"href":"http://127.0.0.1:58580/ada6832/notes.git/info/lfs/objects/c400798b2877c48f5ab1fe6244df1df69c4e44f8a8a402d40da99983eeee26c7","header":{"Authorization":"Basic ••••"},"expires_in":600}}}],"hash_algo":"sha256"}
+HTTP 200
+[exit 0]
+
+### ok   PUT the object (verified against its oid, stored in Storage as ada6832)
+$ lfs -X PUT -u x:palmforge_•••• --data-binary @/tmp/forge-demo-work.NzqW2C/model.bin http://127.0.0.1:58580/ada6832/notes.git/info/lfs/objects/c400798b2877c48f5ab1fe6244df1df69c4e44f8a8a402d40da99983eeee26c7 
+
+HTTP 200
+[exit 0]
+
+### ok   GET it back, byte for byte
+$ bash -c curl\ -s\ -u\ \'x:palmforge_••••\'\ \'http://127.0.0.1:58580/ada6832/notes.git/info/lfs/objects/c400798b2877c48f5ab1fe6244df1df69c4e44f8a8a402d40da99983eeee26c7\'\ \|\ sha256sum\ \|\ cut\ -c1-64\ \|\ grep\ -qx\ \'c400798b2877c48f5ab1fe6244df1df69c4e44f8a8a402d40da99983eeee26c7\'\ \&\&\ echo\ identical 
+identical
+[exit 0]
+
+### ok   northwind6832's token is refused the private object (401/404)
+$ bash -c curl\ -s\ -o\ /dev/null\ -w\ \'%\{http_code\}\\n\'\ -u\ \'x:palmforge_••••\'\ \'http://127.0.0.1:58580/ada6832/notes.git/info/lfs/objects/c400798b2877c48f5ab1fe6244df1df69c4e44f8a8a402d40da99983eeee26c7\'\ \|\ grep\ -E\ \'\^\(401\|404\)\$\' 
+404
+[exit 0]
+
+## 11. The activity feed
+
+### ok   everything ada6832 did, newest first
+$ env PALM_IDENTITY=ada6832 bin/forge activity --limit 25 
+events:
+  when                              actor          repo                 kind                  what
+  2026-10-19T10:47:14.014394+00:00  ada6832        ada6832/field-guide  push                  pushed 1 commit to main
+  2026-10-19T10:47:13.972868+00:00  ada6832        ada6832/field-guide  repo.created          created the public repository
+  2026-10-19T10:47:13.894027+00:00  ada6832        ada6832/notes        collaborator.revoked  revoked a grant
+  2026-10-19T10:47:13.877269+00:00  ada6832        ada6832/notes        issue.closed          closed issue #1
+  2026-10-19T10:47:13.82479+00:00   ada6832        ada6832/notes        pull.merged           merged pull request #2 (merge-commit)
+  2026-10-19T10:47:13.817589+00:00  ada6832        ada6832/notes        push                  pushed 2 commits to main
+  2026-10-19T10:47:13.742768+00:00  northwind6832  ada6832/notes        comment.created       commented on #1
+  2026-10-19T10:47:13.722442+00:00  northwind6832  ada6832/notes        comment.created       commented on #2
+  2026-10-19T10:47:13.716141+00:00  northwind6832  ada6832/notes        review.approved       approved #2
+  2026-10-19T10:47:13.60873+00:00   ada6832        ada6832/notes        collaborator.added    granted write access
+  2026-10-19T10:47:13.366223+00:00  ada6832        ada6832/notes        pull.opened           opened pull request #2 Sort notes by length
+  2026-10-19T10:47:13.347118+00:00  ada6832        ada6832/notes        issue.opened          opened issue #1 Sorting ignores accents
+  2026-10-19T10:47:13.285453+00:00  ada6832        ada6832/notes        push                  pushed 1 commit to word-count
+  2026-10-19T10:47:13.196034+00:00  ada6832        ada6832/notes        push                  pushed 1 commit to main
+  2026-10-19T10:47:13.001543+00:00  ada6832        ada6832/notes        push                  pushed 1 commit to main
+  2026-10-19T10:47:12.958531+00:00  ada6832        ada6832/notes        repo.created          created the private repository
+[exit 0]
+
+53 passed, 0 failed

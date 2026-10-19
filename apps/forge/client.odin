@@ -1,145 +1,10 @@
-// The forge's core: every call the window and the command line make, in one
-// place, so the two front ends cannot drift. Rows go to PostgREST directly
-// with the caller's bearer token (row-level security decides); what needs the
-// repository on disk goes to the forge server's JSON API with the same token.
-//
-// Credentials, in order:
-//
-//	FORGE_TOKEN=palmforge_...   a personal access token, exchanged at the
-//	                            forge for a ten-minute session scoped to the
-//	                            token's identity. What an agent should use.
-//	the session file            `forge login` with an e-mail and password,
-//	                            refreshed as it nears expiry. The file is
-//	                            $FORGE_SESSION, or
-//	                            ~/.local/share/palm/forge/session.json (0600).
-//
-// Endpoints come from the session file, overridden by FORGE_URL, API_URL and
-// ANON_KEY.
 package main
 
 import "core:encoding/json"
 import "core:fmt"
-import "core:os"
 import "core:strings"
-import "core:time"
 import wire "forge:wire"
 
-DEFAULT_FORGE :: "http://127.0.0.1:58580"
-DEFAULT_API :: "http://127.0.0.1:58521"
-
-Client :: struct {
-	forge:    string,
-	supa:     wire.Supa,
-	bearer:   string, // what PostgREST, Storage and the forge see
-	kind:     string, // "session" | "token" | "" (anonymous)
-	email:    string,
-	refresh:  string,
-	expires:  int,
-	token:    string, // the personal access token, when that is how we came in
-	token_identity: string,
-	token_scope: string,
-	path:     string, // the session file
-}
-
-session_path :: proc() -> string {
-	if p := os.get_env("FORGE_SESSION", context.temp_allocator); p != "" {
-		return strings.clone(p)
-	}
-	home := os.get_env("HOME", context.temp_allocator)
-	return fmt.aprintf("%s/.local/share/palm/forge/session.json", home)
-}
-
-session_save :: proc(c: ^Client) -> bool {
-	dir := c.path[:strings.last_index_byte(c.path, '/')]
-	os.make_directory_all(dir)
-	body := fmt.tprintf(
-		`{{"forge":%s,"api":%s,"anon":%s,"email":%s,"access_token":%s,"refresh_token":%s,"expires_at":%d}}`,
-		wire.q(c.forge), wire.q(c.supa.url), wire.q(c.supa.anon), wire.q(c.email), wire.q(c.bearer), wire.q(c.refresh), c.expires)
-	return os.write_entire_file(c.path, transmute([]u8)body, os.Permissions{.Read_User, .Write_User}) == nil
-}
-
-// client_open builds a client from the session file and the environment.
-// An empty bearer means anonymous: public repositories only.
-client_open :: proc() -> (c: Client, err: string) {
-	c.path = session_path()
-	c.forge = DEFAULT_FORGE
-	c.supa.url = DEFAULT_API
-	if data, rerr := os.read_entire_file(c.path, context.allocator); rerr == nil {
-		if v, ok := wire.parse(data); ok {
-			c.forge = wire.str(v, "forge") if wire.str(v, "forge") != "" else c.forge
-			c.supa.url = wire.str(v, "api") if wire.str(v, "api") != "" else c.supa.url
-			c.supa.anon = wire.str(v, "anon")
-			c.email = wire.str(v, "email")
-			c.bearer = wire.str(v, "access_token")
-			c.refresh = wire.str(v, "refresh_token")
-			c.expires = wire.num(v, "expires_at")
-			if c.bearer != "" {
-				c.kind = "session"
-			}
-		}
-	}
-	if v := os.get_env("FORGE_URL", context.allocator); v != "" {
-		c.forge = v
-	}
-	if v := os.get_env("API_URL", context.allocator); v != "" {
-		c.supa.url = v
-	}
-	if v := os.get_env("ANON_KEY", context.allocator); v != "" {
-		c.supa.anon = v
-	}
-	if c.supa.anon == "" {
-		return c, "no Supabase key: run `forge login`, or set API_URL and ANON_KEY"
-	}
-	if tok := os.get_env("FORGE_TOKEN", context.allocator); tok != "" {
-		return c, client_use_token(&c, tok)
-	}
-	if c.kind == "session" && c.expires > 0 && i64(c.expires) - time.time_to_unix(time.now()) < 120 && c.refresh != "" {
-		s, rerr := wire.refresh(c.supa, c.refresh)
-		if rerr != "" {
-			return c, fmt.aprintf("the session has expired (%s); run `forge login` again", rerr)
-		}
-		c.bearer, c.refresh, c.expires = s.access_token, s.refresh_token, s.expires_at
-		session_save(&c)
-	}
-	return c, ""
-}
-
-// client_use_token exchanges a personal access token at the forge.
-client_use_token :: proc(c: ^Client, tok: string) -> string {
-	h := []wire.Header{{"Authorization", fmt.tprintf("Bearer %s", tok)}}
-	resp, err := wire.request("POST", fmt.tprintf("%s/api/token/exchange", c.forge), h, nil)
-	if err != "" {
-		return fmt.aprintf("the forge at %s is not reachable", c.forge)
-	}
-	if resp.status != 200 {
-		return "the token was refused (wrong, revoked or expired)"
-	}
-	v, _ := wire.parse(resp.body)
-	c.bearer = wire.str(v, "access_token")
-	c.token = tok
-	c.token_identity = wire.str(v, "identity_id")
-	c.token_scope = wire.str(v, "scope")
-	c.kind = "token"
-	return ""
-}
-
-client_login :: proc(c: ^Client, email, password: string, signup: bool) -> string {
-	s: wire.Session
-	err: string
-	if signup {
-		s, err = wire.sign_up(c.supa, email, password)
-	} else {
-		s, err = wire.sign_in(c.supa, email, password)
-	}
-	if err != "" {
-		return err
-	}
-	c.bearer, c.refresh, c.expires, c.email, c.kind = s.access_token, s.refresh_token, s.expires_at, email, "session"
-	if !session_save(c) {
-		return fmt.aprintf("signed in, but cannot write %s", c.path)
-	}
-	return ""
-}
 
 // ---------------------------------------------------------------------------
 // Rows (PostgREST)
@@ -148,25 +13,6 @@ client_login :: proc(c: ^Client, email, password: string, signup: bool) -> strin
 get_rows :: proc(c: ^Client, path: string) -> wire.Result {
 	return wire.rest(c.supa, c.bearer, "GET", path)
 }
-
-my_identities :: proc(c: ^Client) -> wire.Result {
-	if c.bearer == "" {
-		return {status = 200, value = json.Array{}}
-	}
-	return wire.rpc(c.supa, c.bearer, "forge_my_identities")
-}
-
-// identity_by_handle finds one of the caller's own identities.
-identity_by_handle :: proc(c: ^Client, handle: string) -> (json.Value, bool) {
-	r := my_identities(c)
-	for row in wire.arr(r.value) {
-		if wire.str(row, "handle") == handle {
-			return row, true
-		}
-	}
-	return nil, false
-}
-
 REPO_COLS :: "id,identity_id,owner_handle,owner_name,owner_color,name,description,visibility,default_branch,created_at,updated_at,pushed_at,archived_at,role,open_issues,open_pulls"
 
 list_repos :: proc(c: ^Client, owner := "", visibility := "") -> wire.Result {
@@ -206,6 +52,9 @@ acting_identity :: proc(c: ^Client, ref: Repo_Ref, scope: string) -> (id: string
 	if c.kind == "token" {
 		return c.token_identity, ""
 	}
+	if c.kind == "scoped" {
+		return c.ck.session.identity_id, ""
+	}
 	if scope != "" {
 		row, ok := identity_by_handle(c, scope)
 		if !ok {
@@ -223,7 +72,7 @@ acting_identity :: proc(c: ^Client, ref: Repo_Ref, scope: string) -> (id: string
 	if row, ok := wire.first(ids.value); ok {
 		return wire.str(row, "id"), ""
 	}
-	return "", "sign in first (`forge login`), or set FORGE_TOKEN"
+	return "", "sign in first (`accounts signin`), or set FORGE_TOKEN"
 }
 
 create_repo :: proc(c: ^Client, identity_id, name, visibility, description: string) -> wire.Result {
@@ -346,22 +195,11 @@ forge_call :: proc(c: ^Client, method, path: string, body := "") -> wire.Result 
 	if body != "" {
 		append(&hs, wire.Header{"Content-Type", "application/json"})
 	}
-	resp, err := wire.request(method, fmt.tprintf("%s%s", c.forge, path), hs[:], transmute([]u8)body)
-	r := wire.Result {
-		status = resp.status,
-		body   = resp.body,
-		err    = err,
-	}
-	if err != "" {
+	r := wire.request(method, fmt.tprintf("%s%s", c.forge, path), hs[:], transmute([]u8)body)
+	if r.status == 0 {
 		r.err = fmt.aprintf("the forge at %s is not reachable", c.forge)
-		return r
-	}
-	r.value, _ = wire.parse(resp.body)
-	if resp.status < 200 || resp.status >= 300 {
-		r.err = wire.str(r.value, "error")
-		if r.err == "" {
-			r.err = fmt.aprintf("HTTP %d", resp.status)
-		}
+	} else if msg := wire.str(r.value, "error"); !wire.ok(r) && msg != "" {
+		r.err = msg
 	}
 	return r
 }

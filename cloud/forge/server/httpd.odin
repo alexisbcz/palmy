@@ -246,6 +246,18 @@ status_text :: proc(status: int) -> string {
 	return "Status"
 }
 
+send_all :: proc(s: net.TCP_Socket, data: []u8) -> bool {
+	off := 0
+	for off < len(data) {
+		n, err := net.send_tcp(s, data[off:])
+		if err != nil || n <= 0 {
+			return false
+		}
+		off += n
+	}
+	return true
+}
+
 write_head :: proc(sock: net.TCP_Socket, status: int, content_type: string, length: int, extra: []wire.Header = nil) -> bool {
 	sb := strings.builder_make(context.temp_allocator)
 	reason := status_text(status)
@@ -260,13 +272,13 @@ write_head :: proc(sock: net.TCP_Socket, status: int, content_type: string, leng
 		fmt.sbprintf(&sb, "%s: %s\r\n", h.name, h.value)
 	}
 	strings.write_string(&sb, "\r\n")
-	return wire.send_all(sock, transmute([]u8)strings.to_string(sb))
+	return send_all(sock, transmute([]u8)strings.to_string(sb))
 }
 
 respond :: proc(req: ^Request, status: int, content_type: string, body: []u8, extra: []wire.Header = nil) {
 	write_head(req.sock, status, content_type, len(body), extra)
 	if req.method != "HEAD" && len(body) > 0 {
-		wire.send_all(req.sock, body)
+		send_all(req.sock, body)
 	}
 }
 

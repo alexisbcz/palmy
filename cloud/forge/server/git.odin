@@ -320,7 +320,7 @@ git_rpc :: proc(req: ^Request, handle, name, service: string) -> int {
 	for {
 		n, rerr := os.read(rd, buf[:])
 		if n > 0 && !client_gone {
-			if !wire.send_all(req.sock, buf[:n]) {
+			if !send_all(req.sock, buf[:n]) {
 				client_gone = true
 			}
 		}
@@ -349,7 +349,7 @@ commits_json :: proc(dir: string, cmd: Command) -> string {
 		append(&args, fmt.tprintf("^%s", cmd.old))
 	} else {
 		// A new ref: what no other ref already had.
-		append(&args, "--not", fmt.tprintf("--exclude=%s", cmd.ref), "--all")
+		append(&args, "--not", fmt.tprintf("--exclude=%s", cmd.ref), "--glob=refs/*") // not --all: that includes HEAD, which may already be this ref
 	}
 	r := git(dir, args[:])
 	return log_to_json(string(r.out))

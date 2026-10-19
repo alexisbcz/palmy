@@ -559,7 +559,9 @@ begin
 	if tg_op = 'INSERT' then
 		perform public.forge_emit(new.repo_id, new.author_identity_id, noun || '.opened',
 			jsonb_build_object('number', new.number, 'title', new.title));
-	elsif new.state <> old.state then
+	elsif new.state <> old.state
+	      -- a merge closes its pull request; pull.merged already says so
+	      and not exists (select 1 from public.forge_pulls p where p.issue_id = new.id and p.merged_at is not null) then
 		perform public.forge_emit(new.repo_id, public.forge_acting_identity(new.repo_id),
 			noun || case when new.state = 'closed' then '.closed' else '.reopened' end,
 			jsonb_build_object('number', new.number, 'title', new.title));

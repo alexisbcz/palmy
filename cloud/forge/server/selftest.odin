@@ -9,6 +9,7 @@ import "core:crypto/hash"
 import "core:crypto/hmac"
 import "core:encoding/base64"
 import "core:fmt"
+import "core:net"
 import "core:strings"
 import wire "forge:wire"
 
@@ -132,14 +133,39 @@ selftest :: proc() -> int {
 		check(wire.q("a\nb\x01") == `"a\nb\u0001"`, "string escaping")
 	}
 
-	// the HTTP client's response parser
+	// the request reader, over a real loopback socket: a chunked body (what
+	// git sends for a push over http.postBuffer) and a Content-Length one
 	{
-		resp, err := wire.parse_response(transmute([]u8)string("HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\nContent-Type: application/json\r\n\r\n4\r\n[1,2\r\n1\r\n]\r\n0\r\n\r\n"))
-		check(err == "" && resp.status == 200 && string(resp.body) == "[1,2]", "chunked response")
-		r2, e2 := wire.parse_response(transmute([]u8)string("HTTP/1.1 404 Not Found\r\nContent-Length: 2\r\n\r\n{}extra"))
-		check(e2 == "" && r2.status == 404 && string(r2.body) == "{}", "content-length response")
-		u, uok := wire.parse_url("http://localhost:58521/rest/v1/x?a=b")
-		check(uok && u.host == "127.0.0.1" && u.port == 58521 && u.path == "/rest/v1/x?a=b", "url parsing")
+		read_one :: proc(raw: string) -> (Request, int) {
+			ep, _ := net.parse_endpoint("127.0.0.1:0")
+			ls, lerr := net.listen_tcp(ep)
+			if lerr != nil {
+				return {}, -1
+			}
+			defer net.close(ls)
+			bound, _ := net.bound_endpoint(ls)
+			cs, derr := net.dial_tcp(bound)
+			if derr != nil {
+				return {}, -1
+			}
+			defer net.close(cs)
+			send_all(cs, transmute([]u8)raw)
+			net.shutdown(cs, .Send)
+			ss, _, aerr := net.accept_tcp(ls)
+			if aerr != nil {
+				return {}, -1
+			}
+			defer net.close(ss)
+			return read_request(ss)
+		}
+		req, st := read_one("POST /ada/notes.git/git-receive-pack?x=1 HTTP/1.1\r\nHost: h\r\nTransfer-Encoding: chunked\r\nContent-Type: application/x-git-receive-pack-request\r\n\r\n5\r\nhello\r\n6;ext=1\r\n world\r\n0\r\n\r\n")
+		check(st == 200 && string(req.body) == "hello world", "chunked request body")
+		check(req.path == "/ada/notes.git/git-receive-pack" && req.query == "x=1", "request target split")
+		check(wire.header_get(req.headers, "content-type") == "application/x-git-receive-pack-request", "headers read")
+		req2, st2 := read_one("GET /api/whoami HTTP/1.1\r\nContent-Length: 2\r\n\r\n{}extra")
+		check(st2 == 200 && string(req2.body) == "{}", "content-length request body")
+		_, st3 := read_one("NONSENSE\r\n\r\n")
+		check(st3 == 400, "a malformed request line is 400")
 	}
 
 	fmt.printfln("forge-server selftest: %d passed, %d failed", passed, failed)
