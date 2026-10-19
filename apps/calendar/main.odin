@@ -138,12 +138,8 @@ main :: proc() {
 		os.exit(code)
 	}
 
+	// PALM_THEME=dark, as apps/home reads it.
 	dark := os.get_env("PALM_THEME", context.temp_allocator) == "dark"
-	for a in args {
-		if a == "--dark" {
-			dark = true
-		}
-	}
 	app, err := kit.start(
 		{
 			title = "Calendar",

@@ -14,7 +14,7 @@ sidebar :: proc(ui: ^p.Ctx, c: ^Cal) {
 	p.col(ui, tfmt("w-[%d] shrink-0 h-full bg-sidebar border-r border-border overflow-hidden", SIDE_W))
 	defer p.end(ui)
 
-	p.row(ui, "w-full shrink-0 items-center gap-2 px-4 pt-4 pb-2")
+	p.row(ui, "w-full h-[40] shrink-0 items-center gap-2 px-4 pt-2")
 	p.text(ui, "Calendars", "text-[11] font-semibold tracking-wide text-muted-foreground uppercase whitespace-nowrap")
 	p.spacer(ui, "flex-1")
 	if c.pane == .Sources {

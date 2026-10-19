@@ -1,10 +1,14 @@
-// `calendar --shots <dir>`: render the interface offscreen and write PNGs.
+// `calendar --shots <dir>`: render the interface offscreen and write PNGs,
+// light and dark.
 //
-// No compositor and no window: the same `keys` and the same `frame` the window
-// runs, through palmy's offscreen renderer. The date is pinned and the events
-// are the invented fixtures from `seed_events`, written into a private store
-// under the output directory, so a capture is deterministic and nobody's real
-// calendar can reach a picture.
+// No compositor, no window, no account and no server: the same `keys` and
+// the same `frame` the window runs, through palmy's offscreen renderer, on
+// invented data. The cloud calendars are real local copies in a scratch
+// directory under the output (fixture.odin), read through the same cache
+// and parser a synced app uses — three identities overlaid in one grid:
+// Alice's personal calendar (indigo), her work identity (emerald) and a
+// calendar Bob shares with her read-only (amber). Nobody's real calendar can
+// reach a picture.
 package main
 
 import "core:fmt"
@@ -14,17 +18,17 @@ import kit "kit:."
 import p "palmy:."
 import sc "shadcn:."
 
-SHOT_W :: 1240
-SHOT_H :: 800
+SHOT_W :: 1440
+SHOT_H :: 820
 
 // A fixed Wednesday, so the grid, the week numbers and the "today" ring come
 // out the same on every run.
-SHOT_TODAY :: Date{2026, 3, 18}
+SHOT_TODAY :: Date{2026, 10, 21}
 SHOT_NOW_MIN :: 10*60 + 25
 
 // shot_fonts loads exactly what `kit.start` gives a window, into the
 // offscreen font table: a screenshot in a different face proves nothing.
-shot_fonts :: proc(off: ^p.Offscreen) {
+shot_fonts :: proc(off: ^p.Offscreen, dark: bool) {
 	for pair in ([?]struct {
 		file: string,
 		wt:   p.Font_Weight,
@@ -51,9 +55,56 @@ shot_fonts :: proc(off: ^p.Offscreen) {
 			break
 		}
 	}
-	sc.register_shadcn_theme(false)
+	theme(dark)
+}
+
+@(private = "file")
+theme :: proc(dark: bool) {
+	sc.register_shadcn_theme(dark)
 	p.set_text_gamma(1.8)
 	p.register_color("accent-blue", p.hex(ACCENT))
+}
+
+// shot_cloud lays down the three identities' calendars.
+@(private = "file")
+shot_cloud :: proc(cl: ^Cloud, dir: string) {
+	fixture_begin(cl, "Europe/Paris")
+	cl.signed = true
+	cl.online = true
+	cl.fixture = true
+	cl.email = "alice@example.test"
+	cl.status = "synced 08:24 UTC · 0 up, 17 down"
+	fixture_ident(cl, "alice", "Alice Martin", "personal", "indigo")
+	fixture_ident(cl, "alice-work", "Alice (Northwind)", "work", "emerald")
+	me := fixture_source(cl, dir, "alice", "default", "Personal", "#6366f1", "owner", "alice")
+	work := fixture_source(cl, dir, "alice-work", "default", "Northwind", "#10b981", "owner", "alice-work")
+	bob := fixture_source(cl, dir, "alice", "bob~default", "Bob's calendar", "#f59e0b", "read", "bob")
+
+	fixture_put(cl, me, "swim.ics", vevent("swim", "20261006T073000", "20261006T081500", "Swim",
+		"LOCATION:Piscine Pontoise\r\nRRULE:FREQ=WEEKLY;BYDAY=TU,TH\r\n"))
+	fixture_put(cl, me, "marta.ics", vevent("marta", "20261023T200000", "20261023T223000", "Dinner with Marta",
+		"LOCATION:Chez Louis\r\n"))
+	fixture_put(cl, me, "bday.ics", vevent("bday", "20261027", "20261028", "Marta's birthday", "RRULE:FREQ=YEARLY\r\n"))
+	fixture_put(cl, me, "games.ics", vevent("games", "20261030T190000", "20261030T230000", "Board game night",
+		"LOCATION:Bob's place\r\nORGANIZER;CN=Bob:mailto:bob@palm.test\r\nATTENDEE;PARTSTAT=ACCEPTED:mailto:bob@palm.test\r\nATTENDEE;PARTSTAT=NEEDS-ACTION;RSVP=TRUE:mailto:alice@palm.test\r\n"))
+
+	fixture_put(cl, work, "planning.ics", vevent("planning", "20261007T100000", "20261007T104500", "Weekly planning",
+		"LOCATION:Northwind, room 4\r\nRRULE:FREQ=WEEKLY;COUNT=12\r\nEXDATE;TZID=Europe/Paris:20261028T100000\r\n" +
+		"ORGANIZER;CN=Alice:mailto:alice-work@palm.test\r\nATTENDEE;PARTSTAT=ACCEPTED;ROLE=CHAIR:mailto:alice-work@palm.test\r\n" +
+		"ATTENDEE;PARTSTAT=ACCEPTED:mailto:bob@palm.test\r\nATTENDEE;PARTSTAT=TENTATIVE:mailto:dana@northwind.example\r\n" +
+		"ATTENDEE;PARTSTAT=NEEDS-ACTION:mailto:carol@example.com\r\n"))
+	fixture_put(cl, work, "standup.ics", vevent("standup", "20261005T093000", "20261005T094500", "Stand-up",
+		"RRULE:FREQ=WEEKLY;BYDAY=MO,FR\r\n"))
+	fixture_put(cl, work, "review.ics", vevent("review", "20261021T140000", "20261021T153000", "Quarterly review",
+		"LOCATION:Board room\r\n"))
+	fixture_put(cl, work, "vendor.ics", vevent("vendor", "20261022T160000", "20261022T170000", "Vendor demo",
+		"ORGANIZER:mailto:dana@northwind.example\r\nATTENDEE;PARTSTAT=NEEDS-ACTION;RSVP=TRUE:mailto:alice-work@palm.test\r\n"))
+	fixture_put(cl, work, "offsite.ics", vevent("offsite", "20261112", "20261114", "Team offsite"))
+
+	fixture_put(cl, bob, "climb.ics", vevent("climb", "20261005T183000", "20261005T203000", "Climbing",
+		"LOCATION:Arkose\r\nRRULE:FREQ=WEEKLY;BYDAY=MO\r\n"))
+	fixture_put(cl, bob, "away.ics", vevent("away", "20261015", "20261018", "Bob away"))
+	fixture_end(cl)
 }
 
 shots :: proc(dir: string) -> int {
@@ -61,63 +112,48 @@ shots :: proc(dir: string) -> int {
 		fmt.eprintfln("calendar --shots: cannot create %s", dir)
 		return 1
 	}
-	// A private store under the output directory. The real events file is
-	// never read and never written.
+	n := 0
+	for dark in ([2]bool{false, true}) {
+		n += shot_set(dir, dark)
+	}
+	fmt.printfln("calendar --shots: %d PNGs in %s", n, dir)
+	return 0
+}
+
+@(private = "file")
+shot_set :: proc(dir: string, dark: bool) -> int {
+	// Private stores under the output directory. The real events file and
+	// the real DAV cache are never read or written.
 	store := strings.clone(fmt.tprintf("%s/.store/palmy-calendar", dir))
-	defer delete(store)
+	cache := strings.clone(fmt.tprintf("%s/.store/dav", dir))
 	_ = os.make_directory_all(store, os.perm(0o700))
 
-	off := p.offscreen_create(
-		SHOT_W,
-		SHOT_H,
-		1,
-		"w-full h-full flex-col bg-background text-foreground overflow-hidden",
-	)
+	off := p.offscreen_create(SHOT_W, SHOT_H, 1, "w-full h-full flex-col bg-background text-foreground overflow-hidden")
 	defer p.offscreen_destroy(off)
-	shot_fonts(off)
+	shot_fonts(off, dark)
 
 	c := Cal{}
-	c.dir = strings.clone(store)
+	c.dir = store
 	c.tz = 0
 	c.today = SHOT_TODAY
 	c.now_min = SHOT_NOW_MIN
 	c.sel = c.today
 	c.year_sel = c.today.m
 	c.form.editing = -1
-	c.events = seed_events(c.dir, c.today)
-	// A couple more, so the month is not three days of entries in an empty
-	// grid. All invented.
-	more :: proc(c: ^Cal, d: Date, start, mins: int, title, place: string) {
-		append(
-			&c.events,
-			Event {
-				date = d,
-				start = start,
-				mins = mins,
-				title = strings.clone(title),
-				place = strings.clone(place),
-			},
-		)
-	}
-	more(&c, SHOT_TODAY, 16*60 + 30, 45, "Offscreen renderer walkthrough", "Room 2")
-	more(&c, date_add(SHOT_TODAY, -7), 10*60, 60, "Typography review", "Studio")
-	more(&c, date_add(SHOT_TODAY, -4), 8*60 + 15, 30, "Swim", "Piscine Pontoise")
-	more(&c, date_add(SHOT_TODAY, 2), 9*60, 30, "One-to-one", "Room 1")
-	more(&c, date_add(SHOT_TODAY, 2), 15*60, 120, "Font licensing call", "Jitsi")
-	more(&c, date_add(SHOT_TODAY, 5), -1, 0, "Library closes early", "")
-	more(&c, date_add(SHOT_TODAY, 6), 19*60, 150, "Concert: Ensemble Nord", "Salle Pleyel")
-	more(&c, date_add(SHOT_TODAY, 13), 11*60, 90, "Quarterly planning", "Studio")
-	more(&c, date_add(SHOT_TODAY, -11), 13*60, 60, "Lunch with Ines", "Le Comptoir")
-	events_sort(&c.events)
-	save(&c)
+	c.local = seed_events(c.dir, c.today)
+	shot_cloud(&c.cloud, cache)
+	c.cloud.sources[0].visible = false // the overlay is about the identities
+	register_source_colors(&c.cloud)
+	rebuild_view(&c)
 
+	suffix := dark ? "-dark" : ""
+	n := 0
 	step :: proc(off: ^p.Offscreen, c: ^Cal) {
 		ui := p.offscreen_begin(off)
 		keys(ui, c, nil)
 		frame(ui, c)
 		p.offscreen_end(off)
 	}
-
 	// Hover and hit testing run against the previous frame, so the settled
 	// picture is never the first one.
 	settle :: proc(off: ^p.Offscreen, c: ^Cal, n := 3) {
@@ -125,10 +161,8 @@ shots :: proc(dir: string) -> int {
 			step(off, c)
 		}
 	}
-
-	n := 0
-	shot :: proc(off: ^p.Offscreen, dir, name: string, n: ^int) {
-		path := fmt.tprintf("%s/%s", dir, name)
+	shot :: proc(off: ^p.Offscreen, dir, name, suffix: string, n: ^int) {
+		path := fmt.tprintf("%s/%s%s.png", dir, name, suffix)
 		if p.offscreen_write_png(off, path) {
 			n^ += 1
 			fmt.printfln("  %s", path)
@@ -136,34 +170,88 @@ shots :: proc(dir: string) -> int {
 			fmt.eprintfln("  could not write %s", path)
 		}
 	}
+	select :: proc(c: ^Cal, title: string) {
+		for idx, k in day_events(c, c.sel) {
+			if c.events[idx].title == title {
+				c.ev_sel = k
+			}
+		}
+	}
 
-	// The month grid with today's events in the day pane.
+	// 1. The month: three identities overlaid, today's planning meeting open
+	//    with its attendees and their answers.
+	c.pane = .Day
+	select(&c, "Weekly planning")
 	settle(off, &c)
-	shot(off, dir, "app-calendar.png", &n)
+	shot(off, dir, "calendar-month", suffix, &n)
 
-	// The year view, which counts the entries per month.
+	// 2. The sidebar in use: the device calendar hidden, Bob's read-only
+	//    share under the cursor.
+	c.pane = .Sources
+	c.src_sel = 3
+	c.sel = Date{2026, 10, 16}
+	c.ev_sel = 0
+	settle(off, &c)
+	shot(off, dir, "calendar-sidebar", suffix, &n)
+
+	// 3. A new event: a work calendar, repeating weekly, with invitations.
+	c.pane = .Grid
+	c.sel = Date{2026, 10, 22}
+	open_form(&c, -1)
+	c.form.src = target_source(&c.cloud, "alice-work")
+	c.form.recur = .Weekly
+	set :: proc(b: ^[dynamic]u8, s: string) {
+		clear(b)
+		append(b, ..transmute([]u8)s)
+	}
+	set(&c.form.bufs[.Title], "Design crit")
+	set(&c.form.bufs[.Time], "15:00")
+	set(&c.form.bufs[.Duration], "45")
+	set(&c.form.bufs[.Place], "Studio")
+	set(&c.form.bufs[.Attendees], "bob, dana@northwind.example")
+	c.form.field = .Attendees
+	settle(off, &c)
+	shot(off, dir, "calendar-new-event", suffix, &n)
+	c.mode = .Normal
+
+	// 4. Invitations across identities.
+	c.mode = .Invites
+	c.inv_sel = 0
+	settle(off, &c)
+	shot(off, dir, "calendar-invitations", suffix, &n)
+	c.mode = .Normal
+
+	// 5. The year, which counts every visible calendar's entries.
 	c.view = .Year
+	c.sel = SHOT_TODAY
 	settle(off, &c)
-	shot(off, dir, "02-calendar-year.png", &n)
+	shot(off, dir, "calendar-year", suffix, &n)
 	c.view = .Month
 
-	// The event form, filled in and ready to commit.
-	open_form(&c, -1)
-	clear(&c.form.bufs[.Title])
-	append(&c.form.bufs[.Title], ..transmute([]u8)string("Rehearsal, strings only"))
-	clear(&c.form.bufs[.Place])
-	append(&c.form.bufs[.Place], ..transmute([]u8)string("Conservatoire, studio 3"))
-	c.form.field = .Place
-	settle(off, &c)
-	shot(off, dir, "03-calendar-event.png", &n)
-	c.mode = .Normal
+	// 6. Signed out: the device calendar alone, and the sign-in sheet.
+	signed_out := Cal{}
+	signed_out.dir = store
+	signed_out.today = SHOT_TODAY
+	signed_out.now_min = SHOT_NOW_MIN
+	signed_out.sel = SHOT_TODAY
+	signed_out.year_sel = 10
+	signed_out.form.editing = -1
+	signed_out.local = c.local
+	append(&signed_out.cloud.sources, c.cloud.sources[0])
+	signed_out.cloud.sources[0].visible = true
+	register_source_colors(&signed_out.cloud)
+	rebuild_view(&signed_out)
+	signed_out.mode = .Sign_In
+	set(&signed_out.sign.email, "alice@example.test")
+	set(&signed_out.sign.pass, "correct horse")
+	signed_out.sign.field = 1
+	settle(off, &signed_out)
+	shot(off, dir, "calendar-sign-in", suffix, &n)
 
-	// The keyboard sheet.
+	// 7. The keyboard sheet.
 	c.mode = .Help
+	register_source_colors(&c.cloud)
 	settle(off, &c)
-	shot(off, dir, "04-calendar-keys.png", &n)
-	c.mode = .Normal
-
-	fmt.printfln("calendar --shots: %d PNGs in %s", n, dir)
-	return 0
+	shot(off, dir, "calendar-keys", suffix, &n)
+	return n
 }

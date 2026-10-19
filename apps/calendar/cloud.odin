@@ -181,7 +181,7 @@ add_source :: proc(cl: ^Cloud, rm: dc.Remote, ident: Ident_Info, was_hidden: map
 device_source :: proc(visible := true) -> Source {
 	return Source {
 		key = "local",
-		name = "On this device",
+		name = "Local calendar",
 		access = "owner",
 		color = ACCENT,
 		visible = visible,
@@ -192,11 +192,21 @@ device_source :: proc(visible := true) -> Source {
 
 register_source_colors :: proc(cl: ^Cloud) {
 	for &s, i in cl.sources {
-		name := fmt.tprintf("src%d", i)
-		p_register(name, s.color)
-		delete(s.color_name)
-		s.color_name = strings.clone(name)
+		p_register(src_color_name(i), s.color)
+		s.color_name = src_color_name(i)
 	}
+}
+
+// src_color_name is "src<i>", interned: sources are copied around and the
+// name must outlive any one copy.
+@(private = "file")
+g_src_names: [dynamic]string
+
+src_color_name :: proc(i: int) -> string {
+	for len(g_src_names) <= i {
+		append(&g_src_names, fmt.aprintf("src%d", len(g_src_names)))
+	}
+	return g_src_names[i]
 }
 
 find_source :: proc(cl: ^Cloud, key: string) -> int {

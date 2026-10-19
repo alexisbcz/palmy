@@ -662,7 +662,7 @@ status :: proc(ui: ^p.Ctx, c: ^Cal) {
 
 	p.text(
 		ui,
-		c.view == .Year ? "Year" : (c.pane == .Grid ? "Grid" : "Day"),
+		c.view == .Year ? "Year" : (c.pane == .Grid ? "Grid" : (c.pane == .Day ? "Day" : "Calendars")),
 		"text-[11.5] font-medium whitespace-nowrap shrink-0",
 	)
 	p.text(ui, "·", "text-[11.5] text-muted-foreground/50 shrink-0")
@@ -676,6 +676,10 @@ status :: proc(ui: ^p.Ctx, c: ^Cal) {
 		hint(ui, "PgUp PgDn", "month")
 		hint(ui, "Enter", "events")
 		hint(ui, "A", "new")
+	} else if c.pane == .Sources {
+		hint(ui, "Up Down", "calendar")
+		hint(ui, "Space", "show or hide")
+		hint(ui, "Esc", "grid")
 	} else {
 		hint(ui, "Up Down", "event")
 		hint(ui, "E", "edit")
@@ -729,7 +733,7 @@ sheet_close :: proc(ui: ^p.Ctx) {
 }
 
 scrim :: proc(ui: ^p.Ctx, c: ^Cal) {
-	s := p.div(ui, "absolute inset-0 z-40 bg-foreground/15")
+	s := p.div(ui, "absolute inset-0 z-40 bg-black/25")
 	if p.clickable(ui, s) {
 		c.mode = .Normal
 	}
@@ -939,7 +943,7 @@ help_sheet :: proc(ui: ^p.Ctx, c: ^Cal) {
 	p.text(ui, "Calendar, from the keyboard", "text-[15] font-semibold")
 	p.text(
 		ui,
-		"Events live in ~/.local/share/palmy-calendar/events.tsv.",
+		"This device: ~/.local/share/palmy-calendar. Palmframe calendars sync over CalDAV.",
 		"text-[12] text-muted-foreground",
 	)
 	p.end(ui)

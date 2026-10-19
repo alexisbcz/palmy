@@ -15,7 +15,7 @@ fixture_begin :: proc(cl: ^Cloud, zone: string) {
 	cl.zone, _ = ical.zone_for(zone)
 	clear(&cl.sources)
 	clear(&cl.idents)
-	append(&cl.sources, Source{key = "local", name = "On this device", access = "owner", color = ACCENT, visible = true, device = true, events_ok = true})
+	append(&cl.sources, Source{key = "local", name = "Local calendar", access = "owner", color = ACCENT, visible = true, device = true, events_ok = true})
 }
 
 fixture_ident :: proc(cl: ^Cloud, handle, name, kind, color: string) {
