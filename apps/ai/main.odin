@@ -131,6 +131,9 @@ main :: proc() {
 	if len(args) > 0 && args[0] == "agent" {
 		os.exit(agent_main(args[1:]))
 	}
+	if len(args) > 0 && args[0] == "agent-tool" {
+		os.exit(agent_tool_main(args[1:]))
+	}
 	if len(args) > 0 && args[0] == "sandbox-probe" {
 		os.exit(sandbox_probe_main(args[1:]))
 	}

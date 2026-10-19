@@ -171,6 +171,53 @@ agent_main :: proc(args: []string) -> int {
 	return 0
 }
 
+// agent_tool_main is `ai agent-tool --handle X --ports P --tools DIR -- <tool> args...`:
+// confine exactly as `ai agent` does, then run one tool binary from the tool
+// directory with the assistant's environment, and pass its output and exit
+// code through. It is how cloud/assistant/e2e.sh asks "what does the
+// assistant's process get if it tries this?" without a model in the loop.
+// The environment is the one `ai ask` builds (the caller sets it).
+agent_tool_main :: proc(args: []string) -> int {
+	handle, ports_s, tools := "", "", ""
+	rest: []string
+	for i := 0; i < len(args); i += 1 {
+		switch args[i] {
+		case "--handle": if i + 1 < len(args) {handle = args[i + 1]; i += 1}
+		case "--ports": if i + 1 < len(args) {ports_s = args[i + 1]; i += 1}
+		case "--tools": if i + 1 < len(args) {tools = args[i + 1]; i += 1}
+		case "--":
+			rest = args[i + 1:]
+			i = len(args)
+		}
+	}
+	if !ck.handle_ok(handle) || tools == "" || len(rest) == 0 {
+		fmt.eprintln("ai agent-tool --handle H --ports P --tools DIR -- <tool> [args]")
+		return 2
+	}
+	ports := make([dynamic]u16, context.temp_allocator)
+	for p in strings.split(ports_s, ",", context.temp_allocator) {
+		if n, ok := strconv.parse_int(strings.trim_space(p)); ok && n > 0 && n < 65536 {append(&ports, u16(n))}
+	}
+	home := os.get_env("HOME", context.temp_allocator)
+	pl := sb.places_for(home, handle, context.temp_allocator)
+	sb.ensure_places(pl)
+	if _, err := sb.enter(sb.policy_for(pl, {tools}, ports[:], context.temp_allocator)); err != "" {
+		fmt.eprintfln("ai agent-tool: %s", err)
+		return 3
+	}
+	argv := make([dynamic]string, context.temp_allocator)
+	append(&argv, fmt.tprintf("%s/%s", tools, rest[0]))
+	append(&argv, ..rest[1:])
+	state, out, errb, perr := os.process_exec({command = argv[:], env = en.tool_env(), working_dir = pl.state}, context.temp_allocator)
+	if perr != nil {
+		fmt.eprintfln("ai agent-tool: could not run %s (%v)", rest[0], perr)
+		return 126
+	}
+	os.write(os.stdout, out)
+	os.write(os.stderr, errb)
+	return state.exit_code
+}
+
 // sandbox_probe_main is `ai sandbox-probe`: confine to an identity exactly as
 // `ai agent` does, then try the standard probes and print what happened.
 // The self-test and cloud/assistant/e2e.sh use it to show the sandbox holds

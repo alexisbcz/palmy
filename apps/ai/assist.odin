@@ -697,6 +697,7 @@ assist :: proc(p: ^Person, ask: Ask) -> (out: Outcome) {
 	}
 	write_line(in_w, en.request_json(req, context.temp_allocator))
 
+	replay := replay_open()
 	rd := line_reader{f = out_r, buf = make([dynamic]u8)}
 	defer delete(rd.buf)
 	start := time.tick_now()
@@ -716,7 +717,9 @@ assist :: proc(p: ^Person, ask: Ask) -> (out: Outcome) {
 		if t == "model" {
 			call := en.parse_model_call(v, context.temp_allocator)
 			reply: en.Model_Reply
-			if settings.provider == "anthropic" && settings.opted_in_at != "" {
+			if replay != nil {
+				reply = replay_next(replay, call)
+			} else if settings.provider == "anthropic" && settings.opted_in_at != "" {
 				reply = anthropic_call(out.model, call)
 			} else {
 				reply = ollama_call(settings.model, call)
@@ -767,6 +770,49 @@ assist :: proc(p: ^Person, ask: Ask) -> (out: Outcome) {
 		}
 	}
 	return
+}
+
+// ---------------------------------------------------------------------------
+// Replay: a scripted model, for tests
+//
+// $PALM_ASSISTANT_REPLAY names a file of model replies, one JSON string per
+// line, used in order instead of any provider. It is how the end-to-end
+// test plays a model that has been fully taken over by an injected mail —
+// one that answers every step with whatever the attacker wants — and checks
+// what the runtime and the database let through. Off unless the variable is
+// set; nothing in the window sets it.
+// ---------------------------------------------------------------------------
+
+Replay :: struct {
+	lines: []string,
+	at:    int,
+}
+
+replay_open :: proc() -> ^Replay {
+	path := os.get_env("PALM_ASSISTANT_REPLAY", context.temp_allocator)
+	if path == "" {return nil}
+	data, err := os.read_entire_file_from_path(path, context.allocator)
+	if err != nil {return nil}
+	r := new(Replay)
+	lines := make([dynamic]string)
+	for l in strings.split_lines(string(data)) {
+		if strings.trim_space(l) != "" {append(&lines, l)}
+	}
+	r.lines = lines[:]
+	return r
+}
+
+replay_next :: proc(r: ^Replay, call: en.Model_Call) -> en.Model_Reply {
+	if r.at >= len(r.lines) {
+		return {text = call.purpose == "choose" ? `{"tool":"answer"}` : "(the script has ended)"}
+	}
+	line := r.lines[r.at]
+	r.at += 1
+	// Each line is a JSON string holding the reply, so replies can contain
+	// newlines and quotes.
+	v, ok := ck.parse(line, context.temp_allocator)
+	if s, sok := v.(json.String); ok && sok {return {text = strings.clone(s)}}
+	return {text = strings.clone(line)}
 }
 
 // trim_data keeps a tool event for the history without the bulk of its data.
