@@ -1,0 +1,9 @@
+[Desktop Entry]
+Type=Application
+Name=Welcome
+Comment=Set up your account, identities and what syncs
+Exec=welcome run
+Icon=rocket
+Terminal=false
+Categories=System;Settings;
+Keywords=setup;first run;account;identities;onboarding;

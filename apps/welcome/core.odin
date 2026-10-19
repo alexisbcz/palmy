@@ -34,25 +34,72 @@ import kit "kit:."
 // which is what the installer just showed, so install and first run read as
 // one continuous thing.
 theme_from_environment :: proc() -> bool {
-	switch os.get_env("PALM_THEME", context.temp_allocator) {
-	case "dark":
-		return true
-	case "light":
-		return false
+	for name in ([?]string{"PALMY_THEME", "PALM_THEME"}) {
+		switch os.get_env(name, context.temp_allocator) {
+		case "dark":
+			return true
+		case "light":
+			return false
+		}
 	}
+	// The last `theme =` line in wm.conf wins, as it does for the wm. With no
+	// explicit choice the welcome starts dark, like the installer before it.
+	dark, found := true, false
 	if text, ok := read_text(appearance_path()); ok {
 		for line in strings.split_lines(text, context.temp_allocator) {
-			l := strings.trim_space(line)
-			if strings.has_prefix(l, "theme") {
-				return strings.contains(l, "dark")
+			if val, is := theme_value(line); is {
+				dark, found = val == "dark", true
 			}
 		}
 	}
-	return true
+	_ = found
+	return dark
 }
 
+// theme_value is the value of a `theme = dark|light` line, comment removed.
+theme_value :: proc(line: string) -> (string, bool) {
+	l := strings.trim_space(line)
+	if !strings.has_prefix(l, "theme") {
+		return "", false
+	}
+	rest := strings.trim_space(l[len("theme"):])
+	if !strings.has_prefix(rest, "=") {
+		return "", false
+	}
+	val := strings.trim_space(rest[1:])
+	if i := strings.index_byte(val, '#'); i >= 0 {
+		val = strings.trim_space(val[:i])
+	}
+	val = strings.to_lower(val, context.temp_allocator)
+	return val, val == "dark" || val == "light"
+}
+
+// save_appearance sets the theme line in wm.conf, keeping every other line:
+// an existing theme line is replaced in place, otherwise one is appended.
 save_appearance :: proc(dark: bool) -> bool {
-	return write_text(appearance_path(), fmt.tprintf("# Written by welcome. Apps read PALM_THEME; this is where it comes from.\ntheme = %s\n", dark ? "dark" : "light"))
+	want := fmt.tprintf("theme = %s", dark ? "dark" : "light")
+	b := strings.builder_make(context.temp_allocator)
+	replaced := false
+	if text, ok := read_text(appearance_path()); ok {
+		lines := strings.split_lines(strings.trim_right(text, "\n"), context.temp_allocator)
+		for line in lines {
+			if _, is := theme_value(line); is {
+				if !replaced {
+					strings.write_string(&b, want)
+					strings.write_byte(&b, '\n')
+					replaced = true
+				}
+				continue
+			}
+			strings.write_string(&b, line)
+			strings.write_byte(&b, '\n')
+		}
+	}
+	if !replaced {
+		strings.write_string(&b, want)
+		strings.write_byte(&b, '\n')
+	}
+	return write_text(appearance_path(), strings.to_string(b))
 }
 
 save_language :: proc(code: string) -> bool {

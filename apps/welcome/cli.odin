@@ -163,7 +163,7 @@ it now.
 What it writes: the marker ($XDG_STATE_HOME/palm/welcome/done), the choices
 per identity ($XDG_CONFIG_HOME/palm/sync.conf, which
 /etc/palm/session.d/60-palm-drive reads), the appearance
-($XDG_CONFIG_HOME/palm/appearance) and, when changed, the language
+($XDG_CONFIG_HOME/palmy/wm.conf, its theme line) and, when changed, the language
 ($XDG_CONFIG_HOME/locale.conf). The account and its sessions are cloudkit's
 ($PALM_CLOUD_DIR). Each service is set up by its own command line, with
 PALM_IDENTITY set to one identity: palm-drive, vault, mailcore, calendar,

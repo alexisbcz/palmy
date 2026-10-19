@@ -420,11 +420,14 @@ brand_x :: proc(ctx: ^p.Ctx) -> f32 {
 	return -1
 }
 
-// theme_from_environment_file is theme_from_environment without PALM_THEME,
-// so the test reads the file it just wrote.
+// theme_from_environment_file is theme_from_environment without PALMY_THEME
+// or PALM_THEME, so the test reads the file it just wrote.
 theme_from_environment_file :: proc() -> bool {
 	old := strings.clone(os.get_env("PALM_THEME", context.temp_allocator))
+	oldy := strings.clone(os.get_env("PALMY_THEME", context.temp_allocator))
 	os.unset_env("PALM_THEME")
+	os.unset_env("PALMY_THEME")
 	defer if old != "" {os.set_env("PALM_THEME", old)}
+	defer if oldy != "" {os.set_env("PALMY_THEME", oldy)}
 	return theme_from_environment()
 }

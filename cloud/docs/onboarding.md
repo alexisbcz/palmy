@@ -70,7 +70,7 @@ later `welcome run`) picks up from it.
 | --- | --- |
 | `$XDG_STATE_HOME/palm/welcome/done` | the marker, `{"completed_at":…,"mode":"account"\|"local"}` |
 | `$XDG_CONFIG_HOME/palm/sync.conf` | `mode`, `url`, then one `[identity]` block per identity with `mail = on` … |
-| `$XDG_CONFIG_HOME/palm/appearance` | `theme = dark` |
+| `$XDG_CONFIG_HOME/palmy/wm.conf` | its `theme = dark` line, the one the window manager, Settings and every app read; other lines are kept |
 | `$XDG_CONFIG_HOME/locale.conf` | `LANG=fr_FR.UTF-8`, only if the language was changed |
 | cloudkit's `config.json` | the server, only if **Change** was used and the server answered `/auth/v1/health` |
 | `~/Documents/Palmframe Emergency Kit.{png,txt}` | 0600 |
@@ -161,10 +161,11 @@ are listed at the end.
   writes. mailcore needs `--identity` or scoped sessions for that. mailcore
   also signs in on GoTrue's own port (gateway port + 10 on cloud/dev, or
   `PALM_MAIL_AUTH_PORT`), not through the gateway.
-- **Language and appearance** are written to `~/.config/locale.conf` and
-  `~/.config/palm/appearance`, but palm-login reads only `/etc/locale.conf`,
-  and apps read `PALM_THEME` from the environment: palm-login (or wm) has to
-  read both files for the choice to reach every app at the next login.
+- **Language** is written to `~/.config/locale.conf`, but palm-login reads
+  only `/etc/locale.conf`, so the choice reaches other apps only once
+  palm-login reads the per-user file too. **Appearance** needs nothing more:
+  it is the `theme` line in `~/.config/palmy/wm.conf`, which the window
+  manager, Settings and `kit.start` already read.
 - **An account with no identity** can exist if the window is closed between
   Create account and Create identities; the next run resumes at Identities.
 - **Handle availability** is known only when the server refuses (no RPC to

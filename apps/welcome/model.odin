@@ -9,7 +9,7 @@ package main
 //	                                    flow is finished or dismissed
 //	$XDG_CONFIG_HOME/palm/sync.conf     per identity, what this computer keeps
 //	                                    in sync (the session.d hooks read it)
-//	$XDG_CONFIG_HOME/palm/appearance    theme = dark | light
+//	$XDG_CONFIG_HOME/palmy/wm.conf     theme = dark | light (the line the wm, Settings and kit read)
 //	$XDG_CONFIG_HOME/locale.conf        LANG=..., only when the language is
 //	                                    changed here (locale.conf(5) per user)
 //
@@ -251,8 +251,11 @@ sync_conf_path :: proc() -> string {
 	return fmt.tprintf("%s/palm/sync.conf", xdg("XDG_CONFIG_HOME", ".config"))
 }
 
+// appearance_path is the window manager's per-user config: its `theme`
+// line is what the shell, Settings and every app (kit.system_theme_dark)
+// read, so the welcome writes the same line rather than a file of its own.
 appearance_path :: proc() -> string {
-	return fmt.tprintf("%s/palm/appearance", xdg("XDG_CONFIG_HOME", ".config"))
+	return fmt.tprintf("%s/palmy/wm.conf", xdg("XDG_CONFIG_HOME", ".config"))
 }
 
 locale_conf_path :: proc() -> string {
