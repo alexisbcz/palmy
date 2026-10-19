@@ -45,6 +45,9 @@ Node :: struct {
 	rect:        Rect,
 	content:     [2]f32,
 	clip:        Rect,
+	// A text's width as measured against the space it was offered, before
+	// last frame's width was taken into account. See `measure`.
+	text_want:   f32,
 
 	interactive: bool,
 	scrollable:  bool,
@@ -75,6 +78,9 @@ Widget :: struct {
 	// which was meant, so the choice has to be carried alongside the offset.
 	// For text that cannot reorder both answers agree and this is inert.
 	affinity:  Caret_Affinity,
+	// Last frame's `Node.text_want`, which tells `measure` whether the
+	// text was squeezed narrower than it wanted.
+	text_want: f32,
 	drag:      [2]f32,
 	seen:      u64,
 }

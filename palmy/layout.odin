@@ -228,20 +228,39 @@ measure :: proc(ctx: ^Ctx, idx: int, avail: [2]f32) -> [2]f32 {
 
 	switch n.kind {
 	case .Text:
-		// Prefer the width this node actually had last frame: layouts are
-		// stable, so this makes wrapping converge immediately instead of
-		// lagging a frame behind grow and shrink.
 		wrap_w := inner.x
-		if w, found := ctx.widgets[n.id]; found && w.rect.w > 0 {
-			hint := w.rect.w - fr.x
-			wrap_w = wrap_w == INDEFINITE ? hint : min(wrap_w, hint)
-		}
 		if s.max_w.kind != .Auto {
 			if m := resolve_dim(ctx, s.max_w, avail.x, 0); m != INDEFINITE {
 				wrap_w = wrap_w == INDEFINITE ? m - fr.x : min(wrap_w, m - fr.x)
 			}
 		}
 		content = wrap_text(ctx, n, wrap_w)
+		n.text_want = content.x
+
+		// Prefer the width this node actually had last frame when it was
+		// *squeezed* last frame: `measure` is offered the parent's space,
+		// `arrange` hands out what is left beside the siblings, and a
+		// `flex-1` paragraph that measured one line against the offered
+		// width would reserve one line's height for the several it draws.
+		// Layouts are stable, so re-wrapping at last frame's width converges
+		// at once instead of lagging a frame behind grow and shrink.
+		//
+		// Only when squeezed. Last frame's width used to cap every text, and
+		// a shrink-to-fit label's width *is* its text: when the string at an
+		// id grew -- a language switch, one message replacing another -- the
+		// new string was wrapped to the old one's width, the box came out
+		// that narrow again, and it never recovered. "Squeezed" is last
+		// frame's arranged width falling short of what the text wanted at
+		// the width it was offered, which a label that simply got what it
+		// asked for never is. For a squeezed node the old cap is kept
+		// exactly, and for any other one the cap could not have changed the
+		// breaks of an unchanged string, so stable layouts are untouched.
+		if w, found := ctx.widgets[n.id]; found && w.rect.w > 0 && w.text_want > 0 {
+			hint := w.rect.w - fr.x
+			if hint + 0.5 < w.text_want && hint < content.x {
+				content = wrap_text(ctx, n, hint)
+			}
+		}
 
 	case .Custom:
 		content = {0, 0}
@@ -797,5 +816,6 @@ layout_tree :: proc(ctx: ^Ctx, viewport: Rect) {
 		w := widget_of(ctx, n.id)
 		w.rect = n.rect
 		w.clip = n.clip
+		w.text_want = n.text_want
 	}
 }
