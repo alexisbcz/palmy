@@ -295,6 +295,6 @@ post_error :: proc(c: ^Client, id: u32, code: u32, msg: string) {
 }
 
 logf :: proc(format: string, args: ..any) {
-	fmt.eprintf("palm-browser-gecko: ")
+	fmt.eprintf("gecko-host: ")
 	fmt.eprintfln(format, ..args)
 }

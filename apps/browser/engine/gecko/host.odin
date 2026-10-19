@@ -1,4 +1,5 @@
-// palm-browser-gecko: the Gecko engine host.
+// The Gecko engine host: `browser --gecko-host`, a separate process the
+// window starts the way it starts palm-browser-cef.
 //
 // There is no maintained way to embed Gecko in a desktop application:
 // GeckoView is Android-only, EmbedLite lives in Sailfish's fork, and XULRunner
@@ -30,7 +31,7 @@ import "core:os"
 import "core:strings"
 import "core:sys/linux"
 import "core:time"
-import pb "browser:pb"
+import pb "../../pb"
 
 View :: struct {
 	id:       int,
@@ -788,7 +789,7 @@ arg_value :: proc(name: string) -> string {
 	return ""
 }
 
-main :: proc() {
+host_main :: proc() {
 	sock := arg_value("--socket")
 	h.profile = arg_value("--profile")
 	h.downloads = arg_value("--downloads")
@@ -799,11 +800,11 @@ main :: proc() {
 	h.dark = -1
 	TRACE = os.get_env("PALM_GECKO_TRACE", context.temp_allocator) != ""
 	if len(os.args) > 1 && os.args[1] == "--version" {
-		fmt.println("palm-browser-gecko", h.ff_bin != "" ? firefox_version(h.ff_bin) : "")
+		fmt.println("browser --gecko-host", h.ff_bin != "" ? firefox_version(h.ff_bin) : "")
 		return
 	}
 	if sock == "" || h.profile == "" || h.ff_bin == "" {
-		fmt.eprintln("usage: palm-browser-gecko --socket PATH --profile DIR --firefox BIN [--downloads DIR]")
+		fmt.eprintln("usage: browser --gecko-host --socket PATH --profile DIR --firefox BIN [--downloads DIR]")
 		os.exit(2)
 	}
 	if h.downloads == "" {

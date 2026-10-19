@@ -18,6 +18,7 @@ import "core:fmt"
 import "core:os"
 import "core:strings"
 import kit "kit:."
+import gecko "engine/gecko"
 
 @(private = "file")
 COMMANDS := []kit.Command {
@@ -238,14 +239,21 @@ cookies, storage, history and bookmarks never cross between profiles.
 Profiles live under $XDG_DATA_HOME/palmframe/browser/<identity>/;
 $PALM_BROWSER_HOME moves them.
 
-Engines: palm-browser-cef (Chromium via CEF) and palm-browser-gecko (Firefox),
-found next to this binary, under /usr/lib/palm-browser, or through
-$PALM_BROWSER_CEF_HOST, $PALM_BROWSER_GECKO_HOST and $PALM_BROWSER_FIREFOX.
+Engines: Chromium through palm-browser-cef (the palm-browser-cef package, in
+/usr/lib/palm-browser/cef or $PALM_BROWSER_CEF_HOST), and Firefox, which this
+binary hosts itself (browser --gecko-host) around the firefox package's
+binary (/usr/lib/firefox/firefox or $PALM_BROWSER_FIREFOX).
 
 Window flags: browser [--identity NAME] [--new-window] [URL ...]`
 
 main :: proc() {
 	args := os.args[1:]
+	// The Firefox engine host is this same binary, started by the window
+	// with --gecko-host, the way Chromium re-executes itself as a renderer.
+	if len(args) > 0 && args[0] == "--gecko-host" {
+		gecko.host_main()
+		os.exit(0)
+	}
 	// The window's own flags come before kit sees the line: `--identity`
 	// alone, with no verb, opens a window rather than being a usage error.
 	if gui, opt := gui_line(args); gui {

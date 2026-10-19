@@ -10,7 +10,7 @@
 // There is one transport today, a host process. Both engines use it:
 //
 //   Chromium  palm-browser-cef     CEF off-screen rendering
-//   Firefox   palm-browser-gecko   Firefox in a private Wayland compositor,
+//   Firefox   browser --gecko-host Firefox in a private Wayland compositor,
 //                                  steered over WebDriver BiDi
 //
 // An in-process engine (a Servo or NetSurf binding, say) would implement the
@@ -153,14 +153,9 @@ engine_info :: proc(k: Engine_Kind) -> Engine_Info {
 		info.runtime = strings.clone(lib, context.temp_allocator)
 		info.available = true
 	case .Firefox:
-		info.host = first_existing(
-			{
-				os.get_env("PALM_BROWSER_GECKO_HOST", context.temp_allocator),
-				fmt.tprintf("%s/palm-browser-gecko", dir),
-				fmt.tprintf("%s/gecko/palm-browser-gecko", dir),
-				"/usr/lib/palm-browser/palm-browser-gecko",
-			},
-		)
+		// the host is this binary (`browser --gecko-host`); the override
+		// exists to run a separately built one while developing it
+		info.host = first_existing({os.get_env("PALM_BROWSER_GECKO_HOST", context.temp_allocator), own_binary()})
 		info.runtime = first_existing(
 			{
 				os.get_env("PALM_BROWSER_FIREFOX", context.temp_allocator),
@@ -169,10 +164,6 @@ engine_info :: proc(k: Engine_Kind) -> Engine_Info {
 				find_on_path("firefox"),
 			},
 		)
-		if info.host == "" {
-			info.detail = "palm-browser-gecko is not installed"
-			return info
-		}
 		if info.runtime == "" {
 			info.detail = "Firefox is not installed (palm add firefox)"
 			return info
@@ -222,6 +213,9 @@ engine_start :: proc(kind: Engine_Kind, prof: ^Profile, app: ^p.App, keymap := "
 	dl := downloads_dir(prof, context.temp_allocator)
 	args := make([dynamic]string, context.temp_allocator)
 	append(&args, e.host_path)
+	if kind == .Firefox && os.get_env("PALM_BROWSER_GECKO_HOST", context.temp_allocator) == "" {
+		append(&args, "--gecko-host")
+	}
 	append(&args, fmt.tprintf("--socket=%s", e.sock_path))
 	append(&args, fmt.tprintf("--profile=%s", engine_dir))
 	append(&args, fmt.tprintf("--downloads=%s", dl))

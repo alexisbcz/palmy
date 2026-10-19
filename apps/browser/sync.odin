@@ -20,7 +20,7 @@ import "core:encoding/json"
 import "core:fmt"
 import "core:strconv"
 import "core:strings"
-import ck "cloudkit:."
+import ck "../cloudkit"
 
 Sync_Result :: struct {
 	ok:      bool,

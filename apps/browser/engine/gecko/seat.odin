@@ -14,7 +14,7 @@ import "core:fmt"
 import "core:os"
 import "core:strings"
 import "core:sys/linux"
-import pb "browser:pb"
+import pb "../../pb"
 
 KEY_FIRST :: 9
 KEY_LAST :: 255

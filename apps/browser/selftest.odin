@@ -387,7 +387,7 @@ test_engine :: proc(t: ^T) {
 			continue
 		}
 		prof, _ := profile_open(fmt.tprintf("engine-%s", engine_name(k)))
-		out := fmt.tprintf("%s/%s.png", browser_home(context.temp_allocator), engine_name(k))
+		out := fmt.aprintf("%s/%s.png", browser_home(context.temp_allocator), engine_name(k))
 		page := "data:text/html,<title>palm selftest</title><body style='background:%23123456'><h1>hello</h1>"
 		res := shot(&prof, {out = out, url = page, width = 900, height = 600, wait = 0.3, engine = k, engine_set = true})
 		check(t, res.error == "" && res.frames > 0, "%s renders a real page (%v)", engine_name(k), res.error)

@@ -7,6 +7,7 @@ package browser
 
 import "core:encoding/json"
 import "core:fmt"
+import "core:strings"
 import "core:time"
 import kit "kit:."
 import p "palmy:."
@@ -127,7 +128,7 @@ shot :: proc(prof: ^Profile, opt: Shot_Options) -> (res: Shot_Result) {
 		}
 		res.frames = surface_of(s.engine, t.id).frames
 		if res.frames == 0 {
-			res.error = "the engine produced no frame within 45 s"
+			res.error = strings.clone("the engine produced no frame within 45 s")
 		}
 	} else {
 		navigate(s, t, url)
@@ -166,7 +167,7 @@ shot :: proc(prof: ^Profile, opt: Shot_Options) -> (res: Shot_Result) {
 		time.sleep(60 * time.Millisecond)
 	}
 	if !p.offscreen_write_png(off, opt.out) {
-		res.error = fmt.tprintf("could not write %s", opt.out)
+		res.error = fmt.aprintf("could not write %s", opt.out)
 	}
 	if s.engine != nil {
 		engine_stop(s.engine)

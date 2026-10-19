@@ -10,7 +10,7 @@
 package gecko
 
 import "core:sys/linux"
-import pb "browser:pb"
+import pb "../../pb"
 
 Global :: struct {
 	w, h:            int, // view size, logical
