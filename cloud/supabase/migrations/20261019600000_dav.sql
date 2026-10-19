@@ -38,7 +38,7 @@ create table public.dav_collections (
 	color           text not null default '#2563eb' check (color ~ '^#[0-9A-Fa-f]{6}([0-9A-Fa-f]{2})?$'),
 	sort_order      integer not null default 0,
 	-- Calendars only: which components it accepts (supported-calendar-component-set).
-	components      text[] not null default '{VEVENT,VTODO}',
+	components      text[] not null default '{VEVENT,VTODO,VJOURNAL}',
 	-- Calendars only: the IANA zone floating times and all-day events are read in.
 	timezone        text not null default 'UTC',
 	-- Opt-in: anyone may ask this calendar's busy times through dav_freebusy().

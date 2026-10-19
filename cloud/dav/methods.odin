@@ -338,11 +338,33 @@ read_set :: proc(prop: ^x.Element, out: ^Coll_Props) -> (unknown: []^x.Element) 
 	return rest_[:]
 }
 
+// normalise_color keeps #RRGGBB[AA] and maps the CSS colour names some
+// clients send; anything else is the default blue.
 normalise_color :: proc(s: string) -> string {
 	v := strings.trim_space(s)
-	if len(v) == 7 || len(v) == 9 {
-		if v[0] == '#' {
+	if (len(v) == 7 || len(v) == 9) && v[0] == '#' {
+		ok := true
+		for ch in transmute([]u8)v[1:] {
+			if !((ch >= '0' && ch <= '9') || (ch >= 'a' && ch <= 'f') || (ch >= 'A' && ch <= 'F')) {
+				ok = false
+			}
+		}
+		if ok {
 			return v
+		}
+	}
+	NAMES := [?][2]string {
+		{"black", "#000000"}, {"white", "#ffffff"}, {"red", "#ff0000"}, {"green", "#008000"},
+		{"blue", "#0000ff"}, {"yellow", "#ffff00"}, {"orange", "#ffa500"}, {"purple", "#800080"},
+		{"pink", "#ffc0cb"}, {"brown", "#a52a2a"}, {"gray", "#808080"}, {"grey", "#808080"},
+		{"cyan", "#00ffff"}, {"magenta", "#ff00ff"}, {"teal", "#008080"}, {"navy", "#000080"},
+		{"lime", "#00ff00"}, {"olive", "#808000"}, {"maroon", "#800000"}, {"silver", "#c0c0c0"},
+		{"indigo", "#4b0082"}, {"violet", "#ee82ee"}, {"gold", "#ffd700"},
+	}
+	low := strings.to_lower(v)
+	for n in NAMES {
+		if n[0] == low {
+			return n[1]
 		}
 	}
 	return "#2563eb"
