@@ -126,10 +126,15 @@ St :: struct {
 
 main :: proc() {
 	args := os.args[1:]
+	// The assistant's own process, started by `ai ask` or the window: not a
+	// verb for people, so not in the declared surface.
+	if len(args) > 0 && args[0] == "agent" {
+		os.exit(agent_main(args[1:]))
+	}
+	if len(args) > 0 && args[0] == "sandbox-probe" {
+		os.exit(sandbox_probe_main(args[1:]))
+	}
 	for a, i in args {
-		if a == "--selftest" || a == "-selftest" {
-			os.exit(run_selftest())
-		}
 		// `ai --shots <dir>` renders the window offscreen. See shot.odin: it
 		// opens no socket and reads no conversation of the user's.
 		if a == "--shots" || a == "-shots" {
@@ -139,14 +144,9 @@ main :: proc() {
 			}
 			os.exit(shots(args[i + 1]))
 		}
-		if a == "--help" || a == "-h" {
-			fmt.println("palmy ai — a local model client.")
-			fmt.println("  ai             open the window")
-			fmt.println("  ai --selftest  run the headless assertions")
-			fmt.println("  ai --shots <dir>  render the window to PNGs, no window and no socket")
-			fmt.printfln("  talks only to %s", OLLAMA_URL)
-			os.exit(0)
-		}
+	}
+	if code, handled := kit.cli(surface()); handled {
+		os.exit(code)
 	}
 
 	app, err := kit.start(
