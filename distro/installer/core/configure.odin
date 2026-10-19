@@ -282,10 +282,34 @@ write_locale :: proc(c: ^Ctx, root, language: string) -> string {
 write_keyboard :: proc(c: ^Ctx, root: string, kb: Keyboard) -> string {
 	_ = mkdir_p(join(root, "etc/palm"))
 	text := fmt.tprintf(
-		"# The keyboard layout, chosen at installation. The window manager reads\n# this at start and again when it changes; XKB_DEFAULT_LAYOUT and\n# XKB_DEFAULT_VARIANT override it.\nlayout = %s\nvariant = %s\noptions =\n",
-		kb.layout, kb.variant,
+		"# The keyboard layout, chosen at installation. The window manager reads\n# this at start and again when it changes; XKB_DEFAULT_LAYOUT and\n# XKB_DEFAULT_VARIANT override it.\n%s",
+		keyboard_settings(kb),
 	)
 	return write_file(c, join(root, "etc/palm/keyboard"), text, 0o644)
+}
+
+// A layout that cannot type Latin letters cannot type a user name either
+// (they are a-z), nor most passwords people choose, nor a shell command. So,
+// as Debian's installer does for Russian, such a layout gets US English
+// beside it, first, with Alt+Shift switching between the two: the person
+// logs in in Latin letters and switches to write in their own script.
+NON_LATIN_LAYOUTS := [?]string {
+	"af", "am", "ara", "bd", "bg", "bt", "by", "eg", "et", "ge", "gr", "il", "in", "iq", "ir",
+	"kg", "kh", "kz", "la", "lk", "ma", "mk", "mm", "mn", "mv", "np", "pk", "rs", "ru", "sy",
+	"th", "tj", "ua",
+}
+
+keyboard_needs_latin :: proc(layout: string) -> bool {
+	return slice.contains(NON_LATIN_LAYOUTS[:], layout)
+}
+
+// keyboard_settings is the body of /etc/palm/keyboard for a choice: the
+// `layout`, `variant` and `options` lines the window manager reads.
+keyboard_settings :: proc(kb: Keyboard) -> string {
+	if keyboard_needs_latin(kb.layout) {
+		return fmt.tprintf("layout = us,%s\nvariant = ,%s\noptions = grp:alt_shift_toggle\n", kb.layout, kb.variant)
+	}
+	return fmt.tprintf("layout = %s\nvariant = %s\noptions =\n", kb.layout, kb.variant)
 }
 
 @(private)

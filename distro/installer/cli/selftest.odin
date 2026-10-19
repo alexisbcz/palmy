@@ -364,6 +364,10 @@ test_crypt :: proc() {
 
 @(private = "file")
 test_layouts :: proc() {
+	// A layout with no Latin letters gets US English first, switched with Alt+Shift.
+	eq(core.keyboard_settings({layout = "ara"}), "layout = us,ara\nvariant = ,\noptions = grp:alt_shift_toggle\n", "ara comes with us")
+	eq(core.keyboard_settings({layout = "ru", variant = "phonetic"}), "layout = us,ru\nvariant = ,phonetic\noptions = grp:alt_shift_toggle\n", "a variant keeps its place")
+	eq(core.keyboard_settings({layout = "fr", variant = "azerty"}), "layout = fr\nvariant = azerty\noptions =\n", "a Latin layout stays alone")
 	if !os.exists("/usr/share/X11/xkb/rules/base.lst") {
 		fmt.println("  skip  layouts: no /usr/share/X11/xkb on this host")
 		return

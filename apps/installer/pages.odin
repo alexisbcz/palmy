@@ -226,6 +226,9 @@ page_keyboard :: proc(st: ^St, ui: ^p.Ctx) {
 		sc.input(ui, &st.kb_test, tr("Type here to test the layout"))
 		k := cur_keyboard(st)
 		txt(ui, trf("Active: %s", keyboard_name(k.description)), "text-xs text-muted-foreground")
+		if core_keyboard_needs_latin(k.layout) {
+			txt(ui, tr("This layout cannot type the Latin letters a user name needs, so English (US) comes with it: Alt+Shift switches between the two."), "text-xs text-muted-foreground")
+		}
 		if st.backend.demo && st.kb_said != "" {
 			txt(ui, st.kb_said, "text-xs font-mono text-muted-foreground")
 		}

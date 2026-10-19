@@ -447,6 +447,10 @@ msgstr "أزل وسيط التثبيت، ثم أعد تشغيل الحاسوب �
 msgid "Restart now"
 msgstr "أعد التشغيل الآن"
 
+# --- the keyboard page: a layout with no Latin letters -----------------------
+msgid "This layout cannot type the Latin letters a user name needs, so English (US) comes with it: Alt+Shift switches between the two."
+msgstr "لا يكتب هذا التخطيط الحروف اللاتينية التي يحتاجها اسم المستخدم، لذا يُضاف إليه تخطيط الإنجليزية (الولايات المتحدة): يبدّل Alt+Shift بينهما."
+
 # --- the swap file (disk page, summary) -----------------------------------------
 msgid "Create a swap file of %s"
 msgstr "إنشاء ملف تبديل بحجم %s"

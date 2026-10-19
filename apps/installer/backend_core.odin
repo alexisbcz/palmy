@@ -106,6 +106,18 @@ core_validate :: proc(p: Plan) -> (ok: bool, problems: []Text) {
 	return len(out) == 0, out
 }
 
+// core_keyboard_settings is /etc/palm/keyboard's body for a choice, the same
+// text the core writes on the new disk; core_keyboard_needs_latin says when
+// that adds US English beside a layout that cannot type a user name. Both
+// are pure: the demo uses them too.
+core_keyboard_settings :: proc(k: Keyboard) -> string {
+	return core.keyboard_settings({layout = k.layout, variant = k.variant})
+}
+
+core_keyboard_needs_latin :: proc(layout: string) -> bool {
+	return core.keyboard_needs_latin(layout)
+}
+
 // core_message_msgids is every msgid the core can hand the GUI, for the
 // selftest's catalogue check.
 core_message_msgids :: proc() -> []string {

@@ -1,8 +1,17 @@
-# The live installer system (distro/live): everything a Palmframe machine
-# has, plus the installer and the tools it formats with, plus the services
-# that turn the machine into an installer -- the graphical installer as root
-# in a kiosk wm, and a root shell on the serial port. Only
-# distro/live/build.sh installs it; it never goes onto an installed disk.
+# The live installer system (distro/live): what the installer's session
+# needs and nothing else -- the base system, the kiosk window manager, term
+# for debugging (palm.live.exec=term), the installer and the tools it
+# formats with -- plus the services that turn the machine into an installer:
+# the graphical installer as root in a kiosk wm, and a root shell on the
+# serial port. Only distro/live/build.sh installs it; it never goes onto an
+# installed disk.
+#
+# It does not depend on `palmframe`: the applications, the greeter and
+# palm-login are installed onto the new disk from the repository copy that
+# distro/live/build.sh puts in /usr/share/palm/repo, and running them on the
+# live system would only take RAM. Nor on fonts-cjk: its 19 MB collection is
+# replaced here by a 100 KB subset with the characters the installer shows
+# in Japanese (distro/live/subset-cjk.py makes it, build.sh checks it).
 #
 # The two base services this replaces (palm-login and getty-ttyS0) are
 # masked by /etc/palm/services.off/<name> (palm-init starts nothing named
@@ -12,11 +21,12 @@
 # /sbin/init is on a disk.
 pkgname  = palmframe-live
 pkgver   = 0.1.0
-pkgrel   = 0
+pkgrel   = 1
 pkgdesc  = The Palmframe live installer system (services and session)
-license  = MIT
-depend   = palmframe palm-install installer
-depend   = e2fsprogs dosfstools limine tzdata xkeyboard-config palm-locale fonts-cjk
+license  = MIT AND OFL-1.1
+depend   = palmframe-base linux busybox glibc palm-init palm
+depend   = palmy-wm fonts libxkbcommon xkeyboard-config tzdata palm-locale term
+depend   = palm-install installer e2fsprogs dosfstools limine
 
 tree     = ${PALMFRAME_ROOT}/distro/live/root/etc -> /etc
 tree     = ${PALMFRAME_ROOT}/distro/live/root/usr -> /usr

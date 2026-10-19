@@ -445,6 +445,10 @@ msgstr "Retirez le support d’installation, puis redémarrez l’ordinateur pou
 msgid "Restart now"
 msgstr "Redémarrer maintenant"
 
+# --- the keyboard page: a layout with no Latin letters -----------------------
+msgid "This layout cannot type the Latin letters a user name needs, so English (US) comes with it: Alt+Shift switches between the two."
+msgstr "Cette disposition ne peut pas taper les lettres latines qu'exige un nom d'utilisateur ; l'anglais (US) l'accompagne donc : Alt+Maj passe de l'une à l'autre."
+
 # --- the swap file (disk page, summary) -----------------------------------------
 msgid "Create a swap file of %s"
 msgstr "Créer un fichier d'échange de %s"

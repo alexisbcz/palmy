@@ -444,6 +444,10 @@ msgstr "Retire el medio de instalación y reinicie el equipo para empezar a usar
 msgid "Restart now"
 msgstr "Reiniciar ahora"
 
+# --- the keyboard page: a layout with no Latin letters -----------------------
+msgid "This layout cannot type the Latin letters a user name needs, so English (US) comes with it: Alt+Shift switches between the two."
+msgstr "Esta distribución no puede escribir las letras latinas que necesita un nombre de usuario, así que la acompaña el inglés (EE. UU.): Alt+Mayús cambia entre las dos."
+
 # --- the swap file (disk page, summary) -----------------------------------------
 msgid "Create a swap file of %s"
 msgstr "Crear un archivo de intercambio de %s"

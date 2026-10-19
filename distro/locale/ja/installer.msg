@@ -445,6 +445,10 @@ msgstr "インストールメディアを取り外してから、コンピュー
 msgid "Restart now"
 msgstr "今すぐ再起動"
 
+# --- the keyboard page: a layout with no Latin letters -----------------------
+msgid "This layout cannot type the Latin letters a user name needs, so English (US) comes with it: Alt+Shift switches between the two."
+msgstr "この配列では、ユーザー名に必要なラテン文字を入力できないため、英語（US）配列も追加されます。Alt+Shift で切り替えられます。"
+
 # --- the swap file (disk page, summary) -----------------------------------------
 msgid "Create a swap file of %s"
 msgstr "%s のスワップファイルを作成する"

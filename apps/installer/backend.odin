@@ -114,7 +114,7 @@ apply_keyboard :: proc(b: ^Backend, k: Keyboard) -> (said: string) {
 	if b.demo {
 		return fmt.aprintf("demo: would write /etc/palm/keyboard (layout = %s, variant = %s) and SIGHUP the wm", k.layout, k.variant)
 	}
-	body := fmt.tprintf("layout = %s\nvariant = %s\noptions =\n", k.layout, k.variant)
+	body := core_keyboard_settings(k)
 	if err := os.write_entire_file("/etc/palm/keyboard", transmute([]u8)body); err != nil {
 		return fmt.aprintf("could not write /etc/palm/keyboard: %v", err)
 	}

@@ -444,6 +444,10 @@ msgstr "Entfernen Sie das Installationsmedium und starten Sie den Rechner neu, u
 msgid "Restart now"
 msgstr "Jetzt neu starten"
 
+# --- the keyboard page: a layout with no Latin letters -----------------------
+msgid "This layout cannot type the Latin letters a user name needs, so English (US) comes with it: Alt+Shift switches between the two."
+msgstr "Mit dieser Belegung lassen sich die lateinischen Buchstaben eines Benutzernamens nicht tippen, deshalb kommt Englisch (US) hinzu: Alt+Umschalt wechselt zwischen beiden."
+
 # --- the swap file (disk page, summary) -----------------------------------------
 msgid "Create a swap file of %s"
 msgstr "Eine Auslagerungsdatei von %s anlegen"
