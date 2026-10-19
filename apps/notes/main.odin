@@ -248,7 +248,7 @@ open_sel :: proc(nt: ^Notes) {
 	flush(nt)
 	delete(nt.open_path)
 	nt.open_path = strings.clone(n.path)
-	buf_load(&nt.buf, n.path)
+	buf_load_text(&nt.buf, n.path, n.body)
 	nt.cur = {0, 0}
 	nt.anchor = {0, 0}
 	nt.has_sel = false

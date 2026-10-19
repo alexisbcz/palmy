@@ -395,18 +395,24 @@ buf_init_empty :: proc(b: ^Buffer) {
 }
 
 buf_load :: proc(b: ^Buffer, path: string) -> (ok: bool) {
-	buf_init_empty(b)
-	b.path = strings.clone(path)
-
 	data, rerr := os.read_entire_file_from_path(path, context.allocator)
 	if rerr != nil {
+		buf_init_empty(b)
+		b.path = strings.clone(path)
 		b.open_ok = false
 		return false
 	}
 	defer delete(data)
-	b.open_ok = true
+	buf_load_text(b, path, string(data))
+	return true
+}
 
-	text := string(data)
+// buf_load_text fills the buffer from text already in hand: a note's body,
+// with its front matter left out of what the editor shows.
+buf_load_text :: proc(b: ^Buffer, path: string, text: string) {
+	buf_init_empty(b)
+	b.path = strings.clone(path)
+	b.open_ok = true
 	b.encoding = utf8.valid_string(text) ? "UTF-8" : "Binary"
 	b.eol = strings.contains(text, "\r\n") ? .CRLF : .LF
 	b.final_nl = len(text) > 0 && text[len(text) - 1] == '\n'
@@ -439,7 +445,6 @@ buf_load :: proc(b: ^Buffer, path: string) -> (ok: bool) {
 		append(&b.lines, Line{})
 	}
 	b.save_mark = 0
-	return true
 }
 
 buf_save :: proc(b: ^Buffer, path: string) -> (ok: bool) {

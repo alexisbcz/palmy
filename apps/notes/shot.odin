@@ -59,7 +59,7 @@ shot_fixture :: proc(dir: string) -> string {
 	// The path is laid out so the header's `short_home` shortens it to
 	// `~/.local/share/palmy-notes` — the directory a real run would use,
 	// without the real home being involved.
-	store := strings.clone(fmt.tprintf("%s/.store/.local/share/%s", dir, DIR_NAME))
+	store := strings.clone(fmt.tprintf("%s/.store/.local/share/%s", dir, "palmy-notes"))
 	_ = os.make_directory_all(store, os.perm(0o700))
 
 	Fixture :: struct {

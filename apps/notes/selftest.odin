@@ -72,6 +72,7 @@ run_selftest :: proc() {
 	test_wrap()
 	test_prose()
 	test_cli()
+	run_selftest_sync()
 
 	if failures == 0 {
 		fmt.printfln("notes selftest: %d checks passed", checks)
