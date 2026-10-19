@@ -435,8 +435,17 @@ inbox_items :: proc(c: ^Ctx, ident: ^Ident) -> []Itip {
 }
 
 inbox_item :: proc(c: ^Ctx, ident: ^Ident, id: string) -> (Itip, bool) {
+	// The id comes from the URL and goes into a PostgREST query string:
+	// nothing but a UUID gets that far.
 	if len(id) != 36 {
 		return {}, false
+	}
+	for ch, i in transmute([]u8)id {
+		dash := i == 8 || i == 13 || i == 18 || i == 23
+		hex := (ch >= '0' && ch <= '9') || (ch >= 'a' && ch <= 'f')
+		if (dash && ch != '-') || (!dash && !hex) {
+			return {}, false
+		}
 	}
 	v, e := rest(c, "GET", fmt.tprintf("/dav_itip?recipient_identity=eq.%s&dismissed_at=is.null&id=eq.%s&select=%s", ident.id, id, ITIP_COLS))
 	if !db_ok(e) {
