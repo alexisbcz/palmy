@@ -282,6 +282,10 @@ other_identity_named :: proc(request: string, self: ck.Identity, all: []ck.Ident
 			// say nothing about which identity is meant.
 			shared := false
 			for o in own_words {if o == w {shared = true}}
+			// A name that is also a kind word ("Personal", "Work") is matched
+			// by the kind rule below, which wants it used as an identity ("my
+			// personal mail"), not as an adjective ("a personal note").
+			for kw in KIND_WORDS {if kw[1] == w {shared = true}}
 			if shared || len(w) < 4 {continue}
 			for t in toks {
 				if t == w || t == fmt.tprintf("%s's", w) {
@@ -296,8 +300,11 @@ other_identity_named :: proc(request: string, self: ck.Identity, all: []ck.Ident
 					if t != kw[1] {continue}
 					next := i + 1 < len(toks) ? toks[i + 1] : ""
 					prev := i > 0 ? toks[i - 1] : ""
+					// "my personal mail", "the work calendar": the kind used to
+					// name an identity's things. "a personal note" is not.
+					owner := prev == "my" || prev == "the" || prev == "our" || prev == "in" || prev == "from" || prev == "on"
 					for n in NOUNS_AFTER {
-						if next == n {return y, fmt.tprintf("it asks about the %s %s", kw[1], n), true}
+						if next == n && owner {return y, fmt.tprintf("it asks about the %s %s", kw[1], n), true}
 					}
 					if prev == "my" && (next == "" || next == "one" || next == "side") {
 						return y, fmt.tprintf("it asks about \"my %s\"", kw[1]), true

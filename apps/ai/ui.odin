@@ -2,41 +2,54 @@ package main
 
 // The frame.
 //
-// Three columns: the conversation list, the workspace, and the parameter
-// panel. Overlays (model picker, prompt library, model pull, the system
-// prompt, confirmations) are drawn inside the window as absolutely positioned
-// panels over a scrim, because palmy has no xdg_popup — that is a constraint
-// of the toolkit, not a shortcut.
+// Left: the identities, each in its colour, with what is waiting there, and
+// the selected identity's conversations. "All identities" sits at the top
+// and has no assistant: choosing it shows why, and the identities to pick.
+// Right: the selected identity's assistant — a header that says in its
+// colour whose assistant this is and what it can reach, and one of three
+// views: the conversation, the action log, the settings.
+//
+// What the assistant did is shown inline, in order: every tool it called
+// (with the arguments as the runtime ran them), what came back, anything it
+// was refused, what it drafted, and every proposal as a card that does
+// nothing until you press Confirm.
 
 import "core:fmt"
 import "core:strings"
-import kit "kit:."
 import p "palmy:."
 import sc "shadcn:."
 
-TOPBAR_H :: 52
-FOOTER_H :: 30
+// tone is an identity's colour as a class: `tone(v, "bg", 500)`.
+tone :: proc(v: ^Ident_View, prefix: string, shade: int) -> string {
+	c := v != nil && v.color != "" ? v.color : "zinc"
+	return fmt.tprintf("%s-%s-%d", prefix, c, shade)
+}
 
 build :: proc(ui: ^p.Ctx, st: ^St) {
-	pv := probe_view(&st.probe, context.temp_allocator)
-
-	sidebar(ui, st, pv)
-
+	sidebar(ui, st)
 	main_col := p.col(ui, "flex-1 min-w-0 h-full overflow-hidden")
 	st.main_id = p.node_id(ui, main_col)
-	topbar(ui, st, pv)
-	transcript(ui, st, pv)
-	stats_strip(ui, st, pv)
-	composer(ui, st)
+	v := cur_ident(st)
+	if !st.online && !st.fixture {
+		offline(ui, st)
+	} else if v == nil {
+		all_identities(ui, st)
+	} else {
+		topbar(ui, st, v)
+		switch st.view {
+		case .Chat:
+			transcript(ui, st, v)
+			composer(ui, st, v)
+		case .Log:
+			log_view(ui, st, v)
+		case .Settings:
+			settings_view(ui, st, v)
+		}
+	}
 	footer(ui, st)
 	p.end(ui)
-
-	if st.show_params {
-		params_panel(ui, st, pv)
-	}
-
-	if st.overlay != .None {
-		overlay(ui, st, pv)
+	if st.remote_ask {
+		remote_dialog(ui, st)
 	}
 }
 
@@ -44,883 +57,690 @@ build :: proc(ui: ^p.Ctx, st: ^St) {
 // Sidebar
 // ---------------------------------------------------------------------------
 
-sidebar :: proc(ui: ^p.Ctx, st: ^St, pv: Probe_View) {
+sidebar :: proc(ui: ^p.Ctx, st: ^St) {
 	p.col(ui, "h-full shrink-0 border-r border-border bg-sidebar overflow-hidden")
 	p.style(ui).w = p.px(SIDEBAR_W)
 	defer p.end(ui)
 
-	// Header.
-	p.row(ui, "w-full items-center gap-2 px-3 shrink-0 border-b border-border")
+	p.row(ui, "w-full items-center gap-2.5 px-4 shrink-0 border-b border-border")
 	p.style(ui).h = p.px(TOPBAR_H)
 	p.div(ui, "size-7 shrink-0 flex-row items-center justify-center rounded-lg bg-primary")
 	p.icon(ui, IC_SPARKLES, "size-4 text-primary-foreground")
 	p.end(ui)
 	p.col(ui, "flex-1 min-w-0")
-	p.text(ui, "palmy ai", "text-sm font-semibold whitespace-nowrap")
-	p.text(ui, "local models only", "text-[10.5] text-muted-foreground whitespace-nowrap")
+	p.text(ui, "Assistant", "text-sm font-semibold whitespace-nowrap")
+	p.text(ui, "one per identity", "text-[10.5] text-muted-foreground whitespace-nowrap")
 	p.end(ui)
 	p.end(ui)
 
-	// New conversation.
-	p.row(ui, "w-full shrink-0 px-2.5 pt-2.5 pb-1.5 items-center gap-2")
-	idx := p.div(
-		ui,
-		"flex-1 flex-row h-8 items-center gap-2 px-2.5 rounded-lg border border-border " +
-		"bg-background hover:bg-muted transition cursor-pointer",
-	)
-	if p.clickable(ui, idx) {
-		new_conversation(st)
+	p.col(ui, "w-full shrink-0 px-2 pt-3 pb-2 gap-0.5")
+	p.text(ui, "IDENTITIES", "px-2 pb-1 text-[10] font-semibold tracking-wide text-muted-foreground whitespace-nowrap")
+	ident_row(ui, st, -1)
+	for _, k in st.idents {
+		p.key(ui, fmt.tprintf("id%d", k))
+		ident_row(ui, st, k)
 	}
-	p.icon(ui, sc.ICON_PLUS, "size-3.5 shrink-0 text-muted-foreground")
-	p.text(ui, "New conversation", "text-xs font-medium whitespace-nowrap")
-	p.style(ui).shrink = 0
-	p.spacer(ui)
-	sc.kbd(ui, "^N")
-	p.end(ui)
 	p.end(ui)
 
-	// The list.
-	list := p.col(ui, "w-full flex-1 min-h-0 px-2 pb-2 gap-0.5 overflow-scroll")
-	for c, i in st.convs {
-		p.key(ui, c.id)
-		conv_row(ui, st, &st.convs[i], i, i == st.cur)
+	v := cur_ident(st)
+	if v != nil {
+		sc.separator(ui, .Horizontal)
+		p.row(ui, "w-full shrink-0 px-2.5 pt-2.5 pb-1.5 items-center gap-2")
+		idx := p.div(ui, "flex-1 flex-row h-8 items-center gap-2 px-2.5 rounded-lg border border-border bg-background hover:bg-muted transition cursor-pointer")
+		if p.clickable(ui, idx) {new_conversation(st)}
+		p.icon(ui, sc.ICON_PLUS, "size-3.5 shrink-0 text-muted-foreground")
+		p.text(ui, "New conversation", "text-xs font-medium whitespace-nowrap")
+		p.style(ui).shrink = 0
+		p.spacer(ui)
+		sc.kbd(ui, "^N")
+		p.end(ui)
+		p.end(ui)
+		p.col(ui, "w-full flex-1 min-h-0 px-2 pb-2 gap-0.5 overflow-scroll")
+		for c, k in st.convs {
+			p.key(ui, c.id)
+			sel := c.id == st.conv
+			row := p.row(ui, "w-full shrink-0 items-center gap-2 px-2 py-1.5 rounded-lg transition cursor-pointer")
+			p.apply(ui, sel ? "bg-sidebar-accent" : "hover:bg-muted", row)
+			if p.clickable(ui, row) && !st.sh.running {
+				open_conv(st, c.id)
+				st.view = .Chat
+			}
+			p.icon(ui, IC_MESSAGE_SQUARE, sel ? "size-3 shrink-0 text-foreground" : "size-3 shrink-0 text-muted-foreground")
+			p.text(ui, c.title, "flex-1 min-w-0 text-xs truncate whitespace-nowrap")
+			p.end(ui)
+			_ = k
+		}
+		if len(st.convs) == 0 {
+			p.text(ui, "No conversations yet", "text-xs text-muted-foreground p-2")
+		}
+		p.end(ui)
+	} else {
+		p.spacer(ui)
 	}
-	if len(st.convs) == 0 {
-		p.text(ui, "No conversations yet", "text-xs text-muted-foreground p-2")
-	}
-	p.end(ui)
-	_ = list
 
-	// Runtime status.
+	// What answers, and how it is held.
 	sc.separator(ui, .Horizontal)
 	p.col(ui, "w-full shrink-0 gap-1 px-3 py-2.5")
+	pv := probe_view(&st.probe, context.temp_allocator)
 	p.row(ui, "w-full items-center gap-2")
-	up := pv.err == ""
+	up := pv.err == "" || st.fixture
 	dot := p.div(ui, "size-2 shrink-0 rounded-full")
 	p.apply(ui, up ? "bg-emerald-500" : "bg-destructive", dot)
 	p.end(ui)
-	p.text(
-		ui,
-		up ? (pv.version != "" ? p.concat(ui, "ollama ", pv.version) : "ollama") : "ollama is down",
-		"text-[11] font-medium whitespace-nowrap",
-	)
-	p.style(ui).shrink = 0
-	p.spacer(ui)
-	if st.zone == .Chats {
-		sc.badge(ui, "focus", .Outline)
-	}
+	p.text(ui, up ? "local models: ollama" : "ollama is not running", "text-[11] font-medium whitespace-nowrap")
 	p.end(ui)
-	p.text(ui, "127.0.0.1:11434", "text-[10.5] font-mono text-muted-foreground whitespace-nowrap")
-	if len(pv.loaded) > 0 {
-		l := pv.loaded[0]
-		p.textf(
-			ui,
-			"text-[10.5] text-muted-foreground whitespace-nowrap",
-			"%s resident · %s",
-			human_bytes(l.size, context.temp_allocator),
-			l.vram > 0 ? "GPU" : "CPU",
-		)
-	} else {
-		p.text(
-			ui,
-			"no model resident",
-			"text-[10.5] text-muted-foreground whitespace-nowrap",
-		)
-	}
+	p.row(ui, "w-full items-center gap-1.5")
+	p.icon(ui, IC_SHIELD_CHECK, "size-3 shrink-0 text-muted-foreground")
+	p.text(ui, st.sandbox != "" ? st.sandbox : "sandboxed: Landlock · seccomp", "text-[10.5] text-muted-foreground whitespace-nowrap truncate")
+	p.end(ui)
 	p.end(ui)
 }
 
-conv_row :: proc(ui: ^p.Ctx, st: ^St, c: ^Conversation, i: int, sel: bool) {
-	idx := p.col(ui, "w-full shrink-0 gap-0 px-2 py-1.5 rounded-lg transition cursor-pointer")
-	p.apply(ui, sel ? "bg-sidebar-accent" : "hover:bg-muted", idx)
-	if p.clickable(ui, idx) {
-		pick_conv(st, i)
+ident_row :: proc(ui: ^p.Ctx, st: ^St, k: int) {
+	sel := st.sel == k
+	row := p.row(ui, "w-full shrink-0 items-center gap-2.5 px-2 py-1.5 rounded-lg transition cursor-pointer")
+	p.apply(ui, sel ? "bg-sidebar-accent" : "hover:bg-muted", row)
+	if p.clickable(ui, row) {
+		select_identity(st, k)
 	}
 	defer p.end(ui)
-
-	p.row(ui, "w-full items-center gap-1.5")
-	p.icon(
-		ui,
-		IC_MESSAGE_SQUARE,
-		sel ? "size-3 shrink-0 text-foreground" : "size-3 shrink-0 text-muted-foreground",
-	)
-	p.text(ui, c.title, "flex-1 min-w-0 text-xs truncate whitespace-nowrap")
+	if k < 0 {
+		p.div(ui, "size-6 shrink-0 flex-row items-center justify-center rounded-md border border-dashed border-border")
+		p.icon(ui, IC_USERS, "size-3.5 text-muted-foreground")
+		p.end(ui)
+		p.col(ui, "flex-1 min-w-0")
+		p.text(ui, "All identities", "text-xs font-medium whitespace-nowrap")
+		p.text(ui, "no assistant here", "text-[10.5] text-muted-foreground whitespace-nowrap")
+		p.end(ui)
+		sc.kbd(ui, "^0")
+		return
+	}
+	v := &st.idents[k]
+	sw := p.div(ui, "size-6 shrink-0 flex-row items-center justify-center rounded-md")
+	p.apply(ui, tone(v, "bg", 500), sw)
+	p.text(ui, strings.to_upper(v.name[:min(1, len(v.name))], context.temp_allocator), "text-[11] font-semibold text-white")
 	p.end(ui)
-	p.row(ui, "w-full items-center gap-1.5 pl-[18]")
-	p.textf(
-		ui,
-		"text-[10] text-muted-foreground whitespace-nowrap",
-		"%d messages",
-		len(c.msgs),
-	)
-	p.style(ui).shrink = 0
-	if c.model != "" {
-		p.text(ui, "·", "text-[10] text-muted-foreground")
-		p.text(ui, c.model, "text-[10] text-muted-foreground whitespace-nowrap truncate")
+	p.col(ui, "flex-1 min-w-0")
+	p.text(ui, v.name, "text-xs font-medium whitespace-nowrap truncate")
+	sub := !v.enabled ? "assistant off" : (v.provider == "anthropic" ? fmt.tprintf("remote · %s", v.remote_model) : fmt.tprintf("local · %s", v.model))
+	p.text(ui, sub, "text-[10.5] text-muted-foreground whitespace-nowrap truncate")
+	p.end(ui)
+	if v.pending > 0 {
+		b := p.div(ui, "shrink-0 h-5 min-w-5 px-1.5 flex-row items-center justify-center rounded-full")
+		p.apply(ui, tone(v, "bg", 500), b)
+		p.textf(ui, "text-[10.5] font-semibold text-white whitespace-nowrap", "%d", v.pending)
+		p.end(ui)
+	} else {
+		sc.kbd(ui, fmt.tprintf("^%d", k + 1))
+	}
+}
+
+// ---------------------------------------------------------------------------
+// All identities: no assistant, and why
+// ---------------------------------------------------------------------------
+
+all_identities :: proc(ui: ^p.Ctx, st: ^St) {
+	p.col(ui, "w-full flex-1 min-h-0 items-center justify-center px-8 overflow-scroll")
+	defer p.end(ui)
+	box := p.col(ui, "items-center gap-4 text-center")
+	p.style(ui, box).max_w = p.px(520)
+	p.div(ui, "size-12 flex-row items-center justify-center rounded-2xl bg-muted")
+	p.icon(ui, IC_USERS, "size-6 text-muted-foreground")
+	p.end(ui)
+	p.text(ui, "The assistant works inside one identity", "text-lg font-semibold whitespace-nowrap")
+	t := p.text(ui, "Choose one to ask it. There is no assistant that reads across your identities: answering across them would be exactly the reach the separation exists to prevent. Each identity's assistant holds a session scoped to it alone, and the database refuses it everything else.", "text-sm text-muted-foreground text-center")
+	p.style(ui, t).max_w = p.px(500)
+	p.row(ui, "flex-wrap justify-center gap-2 pt-2")
+	for _, k in st.idents {
+		v := &st.idents[k]
+		p.key(ui, fmt.tprintf("pick%d", k))
+		b := p.row(ui, "items-center gap-2 h-9 pl-2 pr-3 rounded-lg border border-border bg-background hover:bg-muted transition cursor-pointer")
+		if p.clickable(ui, b) {select_identity(st, k)}
+		d := p.div(ui, "size-3 rounded-full")
+		p.apply(ui, tone(v, "bg", 500), d)
+		p.end(ui)
+		p.textf(ui, "text-sm font-medium whitespace-nowrap", "Ask the %s assistant", v.name)
+		sc.kbd(ui, fmt.tprintf("^%d", k + 1))
+		p.end(ui)
 	}
 	p.end(ui)
+	p.end(ui)
+}
+
+offline :: proc(ui: ^p.Ctx, st: ^St) {
+	p.col(ui, "w-full flex-1 min-h-0 items-center justify-center gap-3 px-8")
+	defer p.end(ui)
+	p.icon(ui, IC_LOCK, "size-6 text-muted-foreground")
+	p.text(ui, "Not signed in", "text-lg font-semibold whitespace-nowrap")
+	t := p.text(ui, st.offline, "text-sm text-muted-foreground text-center")
+	p.style(ui, t).max_w = p.px(520)
+	p.text(ui, "Sign in with Accounts; then each identity's assistant can be turned on here.", "text-sm text-muted-foreground whitespace-nowrap")
 }
 
 // ---------------------------------------------------------------------------
 // Top bar
 // ---------------------------------------------------------------------------
 
-topbar :: proc(ui: ^p.Ctx, st: ^St, pv: Probe_View) {
-	p.row(ui, "w-full shrink-0 items-center gap-2.5 px-4 border-b border-border")
+topbar :: proc(ui: ^p.Ctx, st: ^St, v: ^Ident_View) {
+	bar := p.row(ui, "w-full shrink-0 items-center gap-3 px-5 border-b border-border")
 	p.style(ui).h = p.px(TOPBAR_H)
 	defer p.end(ui)
-
-	mi, have := find_model(pv, st.model)
-
-	// The model chip is the app's claim about what is answering, so it carries
-	// the real numbers from /api/tags rather than a friendly name.
-	idx := p.row(
-		ui,
-		"shrink-0 items-center gap-2 h-8 pl-2 pr-2.5 rounded-lg border border-border " +
-		"bg-background hover:bg-muted transition cursor-pointer",
-	)
-	if p.clickable(ui, idx) {
-		open_overlay(st, .Models)
-	}
-	p.icon(ui, IC_CPU, "size-3.5 shrink-0 text-muted-foreground")
-	p.text(ui, st.model, "text-xs font-medium whitespace-nowrap")
-	p.style(ui).shrink = 0
-	if have {
-		p.text(ui, "·", "text-xs text-muted-foreground")
-		p.text(
-			ui,
-			mi.params == "" ? "?" : mi.params,
-			"text-xs text-muted-foreground whitespace-nowrap",
-		)
-		p.style(ui).shrink = 0
-		p.text(ui, "·", "text-xs text-muted-foreground")
-		p.text(
-			ui,
-			human_bytes(mi.size, context.temp_allocator),
-			"text-xs text-muted-foreground whitespace-nowrap",
-		)
-		p.style(ui).shrink = 0
-	} else if pv.got && pv.err == "" {
-		sc.badge(ui, "not installed", .Destructive)
-	}
-	p.icon(ui, IC_CHEVRONS_UP_DOWN, "size-3 shrink-0 text-muted-foreground")
+	_ = bar
+	// The identity band: whose assistant, in its colour, and its reach in
+	// one sentence.
+	band := p.div(ui, "w-1 h-8 rounded-full shrink-0")
+	p.apply(ui, tone(v, "bg", 500), band)
 	p.end(ui)
-
-	if have && mi.quant != "" {
-		sc.badge(ui, mi.quant, .Outline)
-	}
-
-	// Thinking and reasoning: both visible, both a key away, because a user
-	// whose first reply is empty will think the program is broken.
-	toggle_chip(ui, "Thinking", st.pr.think, IC_BRAIN, "^T")
-	if p.clickable(ui) {
-		st.pr.think = !st.pr.think
-		settings_save(st.model, st.pr, st.show_think)
-	}
-	toggle_chip(ui, "Show reasoning", st.show_think, sc.ICON_INFO, "^R")
-	if p.clickable(ui) {
-		st.show_think = !st.show_think
-		settings_save(st.model, st.pr, st.show_think)
-	}
-
+	p.col(ui, "min-w-0 shrink-0")
+	p.textf(ui, "text-sm font-semibold whitespace-nowrap", "The %s assistant", v.name)
+	p.textf(ui, "text-[11] text-muted-foreground whitespace-nowrap", "Sees %s only · %s", v.name, v.address != "" ? v.address : fmt.tprintf("%s@palm.test", v.handle))
+	p.end(ui)
 	p.spacer(ui)
-
-	if len(pv.loaded) > 0 {
-		l := pv.loaded[0]
-		stat_chip(
-			ui,
-			IC_HARD_DRIVE,
-			"resident",
-			fmt.tprintf("%s", human_bytes(l.size, context.temp_allocator)),
-		)
-		if l.ctx > 0 {
-			stat_chip(ui, IC_LIST_TREE, "ctx", fmt.tprintf("%d", l.ctx))
-		}
-	}
-
-	pidx := p.row(
-		ui,
-		"shrink-0 items-center gap-1.5 h-8 px-2.5 rounded-lg border transition cursor-pointer",
-	)
-	p.apply(
-		ui,
-		st.show_params ? "border-border bg-muted" : "border-border bg-background hover:bg-muted",
-		pidx,
-	)
-	if p.clickable(ui, pidx) {
-		st.show_params = !st.show_params
-	}
-	p.icon(ui, sc.ICON_SETTINGS, "size-3.5 shrink-0 text-muted-foreground")
-	p.text(ui, "Parameters", "text-xs font-medium whitespace-nowrap")
-	p.style(ui).shrink = 0
+	// The model chip: what answers, and whether it leaves the machine.
+	chip := p.row(ui, "shrink-0 items-center gap-1.5 h-7 px-2.5 rounded-lg border")
+	remote := v.provider == "anthropic"
+	p.apply(ui, remote ? "border-amber-500/50 bg-amber-500/10" : "border-border bg-background", chip)
+	p.icon(ui, remote ? IC_GLOBE : IC_CPU, remote ? "size-3.5 shrink-0 text-amber-600" : "size-3.5 shrink-0 text-muted-foreground")
+	p.text(ui, remote ? v.remote_model : v.model, "text-xs font-medium whitespace-nowrap")
+	p.text(ui, remote ? "· remote, opted in" : "· on this machine", "text-xs text-muted-foreground whitespace-nowrap")
 	p.end(ui)
+	tab(ui, st, .Chat, "Conversation", IC_MESSAGE_SQUARE, "")
+	tab(ui, st, .Log, "Action log", IC_SCROLL_TEXT, v.pending > 0 ? fmt.tprintf("%d", v.pending) : "")
+	tab(ui, st, .Settings, "Settings", sc.ICON_SETTINGS, "")
 }
 
-toggle_chip :: proc(ui: ^p.Ctx, label: string, on: bool, ic: p.Icon, key: string) -> int {
-	idx := p.row(
-		ui,
-		"shrink-0 items-center gap-1.5 h-8 px-2 rounded-lg border transition cursor-pointer",
-	)
-	p.apply(
-		ui,
-		on \
-		? "border-primary/40 bg-primary/15 text-foreground" \
-		: "border-border bg-background text-muted-foreground hover:bg-muted",
-		idx,
-	)
-	defer p.end(ui)
+tab :: proc(ui: ^p.Ctx, st: ^St, view: View, label: string, ic: p.Icon, badge: string) {
+	on := st.view == view
+	t := p.row(ui, "shrink-0 items-center gap-1.5 h-8 px-2.5 rounded-lg transition cursor-pointer")
+	p.apply(ui, on ? "bg-muted text-foreground" : "text-muted-foreground hover:bg-muted", t)
+	if p.clickable(ui, t) {
+		st.view = view
+		if view == .Log {load_log(st)}
+	}
 	p.icon(ui, ic, "size-3.5 shrink-0")
 	p.text(ui, label, "text-xs font-medium whitespace-nowrap")
-	p.style(ui).shrink = 0
-	sc.switch_(ui, on, .SM)
-	return idx
-}
-
-stat_chip :: proc(ui: ^p.Ctx, ic: p.Icon, label, value: string) {
-	p.row(ui, "shrink-0 items-center gap-1.5 h-8 px-2.5 rounded-lg bg-muted")
-	defer p.end(ui)
-	p.icon(ui, ic, "size-3 shrink-0 text-muted-foreground")
-	p.text(ui, label, "text-[11] text-muted-foreground whitespace-nowrap")
-	p.style(ui).shrink = 0
-	p.text(ui, value, "text-[11] font-medium font-mono whitespace-nowrap")
-	p.style(ui).shrink = 0
-}
-
-find_model :: proc(pv: Probe_View, name: string) -> (Model_Info, bool) {
-	for m in pv.models {
-		if m.name == name {
-			return m, true
-		}
+	if badge != "" {
+		sc.badge(ui, badge, .Default)
 	}
-	return {}, false
+	p.end(ui)
 }
 
 // ---------------------------------------------------------------------------
 // Transcript
 // ---------------------------------------------------------------------------
 
-transcript :: proc(ui: ^p.Ctx, st: ^St, pv: Probe_View) {
-	tr := p.col(ui, "w-full flex-1 min-h-0 px-5 py-4 gap-5 overflow-scroll")
+transcript :: proc(ui: ^p.Ctx, st: ^St, v: ^Ident_View) {
+	tr := p.col(ui, "w-full flex-1 min-h-0 px-6 py-5 gap-3 overflow-scroll")
 	st.tr_id = p.node_id(ui, tr)
 	defer p.end(ui)
+	width := p.size(ui).x - SIDEBAR_W - 48
+	maxw := min(f32(860), max(f32(360), width))
 
-	c := cur_conv(st)
-
-	if pv.err != "" {
-		runtime_down(ui, pv)
+	if len(st.items) == 0 {
+		empty_chat(ui, st, v)
 	}
-
-	if c == nil || len(c.msgs) == 0 {
-		if pv.err == "" {
-			empty_state(ui, st, pv)
-		}
-	} else {
-		width := p.size(ui).x - SIDEBAR_W - (st.show_params ? PARAMS_W : 0) - 40
-		bubble_max := max(320, width * 0.78)
-		for i in 0 ..< len(c.msgs) {
-			p.key(ui, fmt.tprintf("m%d", i))
-			live := st.streaming && i == len(c.msgs) - 1
-			message_block(ui, st, &c.msgs[i], i, live, bubble_max)
-		}
+	for _, k in st.items {
+		p.key(ui, fmt.tprintf("it%d", k))
+		item_view(ui, st, v, &st.items[k], k, maxw)
 	}
-
-	// The sentinel the pin scrolls to. `scroll_into_view` needs a target that
-	// was laid out, which is why it is a real element rather than a number.
+	if st.sh.running {
+		p.row(ui, "shrink-0 items-center gap-2 rounded-xl bg-muted px-3 py-2")
+		p.icon(ui, sc.ICON_LOADER_CIRCLE, "size-3.5 shrink-0 text-muted-foreground", f32(mono()) * 0.8)
+		p.textf(ui, "text-xs text-muted-foreground whitespace-nowrap", "working inside %s · %.0f s", v.name, mono() - st.started_at)
+		p.end(ui)
+		ui.animating = true
+	}
 	endm := p.div(ui, "w-full shrink-0")
 	p.style(ui).h = p.px(1)
 	st.end_id = p.node_id(ui, endm)
 	p.end(ui)
-
 	if st.pinned {
 		p.scroll_into_view(ui, st.tr_id, st.end_id, 4)
 	}
 }
 
-runtime_down :: proc(ui: ^p.Ctx, pv: Probe_View) {
-	p.col(
-		ui,
-		"w-full shrink-0 gap-2 p-4 rounded-xl border border-destructive/40 bg-destructive/10",
-	)
-	defer p.end(ui)
-	p.row(ui, "items-center gap-2")
-	p.icon(ui, IC_WIFI_OFF, "size-4 shrink-0 text-destructive")
-	p.text(ui, "The ollama runtime is not answering", "text-sm font-semibold text-destructive")
-	p.end(ui)
-	p.text(ui, pv.err, "text-xs text-muted-foreground")
-	p.text(ui, "Start it in a terminal, then this banner clears itself:", "text-xs")
-	p.div(ui, "w-full rounded-lg bg-muted px-2.5 py-2 border border-border")
-	p.text(ui, START_HINT, "font-mono text-[12.5] whitespace-nowrap")
-	p.end(ui)
-	p.text(
-		ui,
-		"It is deliberately a user process on this machine, not a system service.",
-		"text-[11] text-muted-foreground",
-	)
-}
-
-empty_state :: proc(ui: ^p.Ctx, st: ^St, pv: Probe_View) {
-	p.col(ui, "w-full flex-1 items-center justify-center gap-3 py-10")
-	defer p.end(ui)
-
-	p.div(ui, "size-12 flex-row items-center justify-center rounded-2xl bg-muted ring-1 ring-border")
-	p.icon(ui, IC_SPARKLES, "size-5 text-muted-foreground")
-	p.end(ui)
-	p.text(ui, "Everything here runs on this machine", "text-sm font-semibold")
-	mi, have := find_model(pv, st.model)
-	if have {
-		p.textf(
-			ui,
-			"text-xs text-muted-foreground",
-			"%s — %s parameters, %s on disk. A model this small is quick and often wrong; check what it tells you.",
-			mi.name,
-			mi.params,
-			human_bytes(mi.size, context.temp_allocator),
-		)
-	} else {
-		p.text(
-			ui,
-			"Pick a model with Ctrl+M, or pull one with Ctrl+O.",
-			"text-xs text-muted-foreground",
-		)
-	}
-	p.row(ui, "items-center gap-4 pt-2")
-	hint(ui, "^P", "prompt library")
-	hint(ui, "^T", "thinking")
-	hint(ui, "^,", "parameters")
-	hint(ui, "F1", "all keys")
-	p.end(ui)
-}
-
-message_block :: proc(ui: ^p.Ctx, st: ^St, m: ^Message, i: int, live: bool, maxw: f32) {
-	user := m.role == .User
-
-	p.col(ui, "w-full min-w-0 gap-1.5")
-	p.style(ui).items = user ? .End : .Start
-	defer p.end(ui)
-
-	text := live ? st.live.content : m.text
-	think := live ? st.live.think : m.think
-
-	// Caption: who said this, and — for a reply — what it cost.
-	p.row(ui, "shrink-0 items-center gap-2 px-1")
-	if user {
-		p.text(ui, "You", "text-[11] font-medium text-muted-foreground whitespace-nowrap")
-		p.style(ui).shrink = 0
-		p.icon(ui, sc.ICON_USER, "size-3 shrink-0 text-muted-foreground")
-	} else {
-		p.icon(ui, IC_CPU, "size-3 shrink-0 text-muted-foreground")
-		p.text(
-			ui,
-			m.model == "" ? "assistant" : m.model,
-			"text-[11] font-medium text-muted-foreground whitespace-nowrap",
-		)
-		p.style(ui).shrink = 0
-		if live {
-			s := st.live
-			p.text(ui, "·", "text-[11] text-muted-foreground")
-			if s.ttft > 0 {
-				p.textf(
-					ui,
-					"text-[11] font-mono text-muted-foreground whitespace-nowrap",
-					"%.0f ms to first token",
-					s.ttft * 1000,
-				)
-				p.style(ui).shrink = 0
-			} else {
-				p.text(
-					ui,
-					"waiting for the first token…",
-					"text-[11] text-muted-foreground whitespace-nowrap",
-				)
-				p.style(ui).shrink = 0
-			}
-		} else if m.out_n > 0 {
-			p.text(ui, "·", "text-[11] text-muted-foreground")
-			p.textf(
-				ui,
-				"text-[11] font-mono text-muted-foreground whitespace-nowrap",
-				"%d tok · %.1f tok/s · %.0f ms ttft",
-				m.out_n,
-				m.tps,
-				m.ttft * 1000,
-			)
-			p.style(ui).shrink = 0
-		}
-		if m.halted {
-			sc.badge(ui, "stopped", .Outline)
-		}
-		if live && st.live.reason == "length" {
-			sc.badge(ui, "hit the reply limit", .Destructive)
-		}
-	}
-	p.end(ui)
-
-	// Reasoning, above the answer, collapsed by default once there is an
-	// answer to read.
-	if !user && think != "" && st.show_think {
-		// Expanded while there is nothing else to read: a bubble that is
-		// empty because the budget went into the reasoning should still show
-		// the reasoning.
-		reasoning_block(ui, st, i, think, text == "", min(maxw, 820))
-	}
-
-	if text == "" {
-		if live && think == "" {
-			thinking_dots(ui, st)
-		} else if !live && think == "" {
-			// A reply that was never recorded — an older conversation saved
-			// while the runtime was down. Say so rather than drawing a gap.
-			p.row(ui, "shrink-0 items-center gap-1.5 rounded-xl border border-dashed border-border px-3 py-1.5")
-			p.icon(ui, sc.ICON_CIRCLE_ALERT, "size-3 shrink-0 text-muted-foreground")
-			p.text(
-				ui,
-				"no reply was recorded",
-				"text-[11.5] text-muted-foreground whitespace-nowrap",
-			)
-			p.style(ui).shrink = 0
-			p.end(ui)
-		}
-		return
-	}
-
-	// The bubble. shadcn's `bubble_content` pins its text run to one line, so
-	// the class vocabulary is reused and the body is composed here.
-	b := p.col(ui, sc.BUBBLE_CONTENT_BASE)
-	p.apply(ui, sc.bubble_content_class(user ? .Secondary : .Muted), b)
-	p.apply(ui, "min-w-0", b)
-	p.style(ui, b).max_w = p.px(maxw)
-	p.style(ui, b).self = user ? .End : .Start
-	if user {
-		p.text(ui, text, "text-sm")
-		p.style(ui).max_w = p.px(maxw - 26)
-	} else {
-		md_render(ui, text, maxw - 26, 14)
-	}
-	p.end(ui)
-
-	if live && text != "" {
-		// A caret at the end of the stream, so it is obvious the reply is
-		// still arriving.
-		p.row(ui, "shrink-0 items-center gap-1.5 px-1")
-		p.div(ui, "w-1.5 h-3.5 rounded-sm bg-primary")
-		p.end(ui)
-		p.text(ui, "generating", "text-[10.5] text-muted-foreground whitespace-nowrap")
-		p.style(ui).shrink = 0
+empty_chat :: proc(ui: ^p.Ctx, st: ^St, v: ^Ident_View) {
+	box := p.col(ui, "w-full items-start gap-3 pt-6")
+	p.style(ui, box).max_w = p.px(640)
+	p.textf(ui, "text-lg font-semibold whitespace-nowrap", "Ask the %s assistant", v.name)
+	t := p.textf(ui, "text-sm text-muted-foreground", "It can read %s's mail, files, calendar and notes, and write drafts there. Anything that leaves %s — sending, sharing, inviting — comes back to you as a card to confirm. It cannot see your other identities at all.", v.name, v.name)
+	p.style(ui, t).max_w = p.px(620)
+	if !v.enabled {
+		p.row(ui, "items-center gap-2 rounded-lg border border-border px-3 py-2")
+		p.icon(ui, sc.ICON_INFO, "size-3.5 shrink-0 text-muted-foreground")
+		p.textf(ui, "text-xs whitespace-nowrap", "The %s assistant is off. Turn it on in Settings (F4).", v.name)
 		p.end(ui)
 	}
+	p.col(ui, "gap-1.5 pt-2")
+	for s in ([?]string{"Summarise my unread mail.", "Find the signed Halden invoice in my files and draft a reply to Noor attaching it.", "Noor asked for a roadmap review. Schedule it in my calendar as she proposed."}) {
+		b := p.row(ui, "items-center gap-2 h-8 px-3 rounded-lg border border-border bg-background hover:bg-muted transition cursor-pointer")
+		if p.clickable(ui, b) {
+			clear(&st.input)
+			append(&st.input, ..transmute([]u8)s)
+			st.caret = len(st.input)
+		}
+		p.icon(ui, sc.ICON_ARROW_RIGHT, "size-3 shrink-0 text-muted-foreground")
+		p.text(ui, s, "text-xs whitespace-nowrap")
+		p.end(ui)
+	}
+	p.end(ui)
+	p.end(ui) // box
+}
 
-	// Per-message actions.
-	if !user && !live {
-		p.row(ui, "shrink-0 items-center gap-1 px-1")
-		if msg_action(ui, sc.ICON_COPY, "Copy") {
-			if kit.clipboard_set(m.text) {
-				toast(st, "Reply copied")
-			} else {
-				toast(st, "wl-copy is not installed, so there is no clipboard")
-			}
-		}
-		if msg_action(ui, IC_REFRESH_CW, "Regenerate") {
-			regenerate(st)
-		}
-		if msg_action(ui, IC_PENCIL, "Edit the question") {
-			edit_last(st)
-		}
-		if m.in_n > 0 {
-			p.textf(
-				ui,
-				"text-[10] font-mono text-muted-foreground whitespace-nowrap pl-1",
-				"%d prompt tokens in",
-				m.in_n,
-			)
-			p.style(ui).shrink = 0
-		}
+tool_icon :: proc(tool: string) -> p.Icon {
+	switch {
+	case strings.has_prefix(tool, "mail_draft"), strings.has_prefix(tool, "mail_send"):
+		return IC_MAIL_PLUS
+	case strings.has_prefix(tool, "mail"):
+		return sc.ICON_MAIL
+	case strings.has_prefix(tool, "drive"):
+		return sc.ICON_FOLDER
+	case strings.has_prefix(tool, "calendar_add"):
+		return IC_CALENDAR_PLUS
+	case strings.has_prefix(tool, "calendar"):
+		return sc.ICON_CALENDAR
+	case strings.has_prefix(tool, "notes"):
+		return IC_NOTEBOOK_PEN
+	case strings.has_prefix(tool, "chat"):
+		return IC_MESSAGE_CIRCLE
+	case strings.has_prefix(tool, "index"):
+		return sc.ICON_SEARCH
+	}
+	return IC_WRENCH
+}
+
+item_view :: proc(ui: ^p.Ctx, st: ^St, v: ^Ident_View, it: ^Item, k: int, maxw: f32) {
+	switch it.kind {
+	case .User:
+		row := p.col(ui, "w-full shrink-0 items-end gap-1 pt-2")
+		_ = row
+		b := p.col(ui, sc.BUBBLE_CONTENT_BASE)
+		p.apply(ui, sc.bubble_content_class(.Secondary), b)
+		p.style(ui, b).max_w = p.px(maxw * 0.8)
+		t := p.text(ui, it.text, "text-sm")
+		p.style(ui, t).max_w = p.px(maxw * 0.8 - 26)
+		p.end(ui)
+		p.end(ui)
+	case .Step, .Draft:
+		step_view(ui, st, it, maxw)
+	case .Refused:
+		r := p.row(ui, "shrink-0 items-start gap-2 rounded-lg border border-amber-500/40 bg-amber-500/10 px-3 py-2")
+		p.style(ui, r).max_w = p.px(maxw)
+		p.icon(ui, IC_BAN, "size-3.5 shrink-0 text-amber-600 mt-[1]")
+		t := p.textf(ui, "text-xs", "Not done — %s: %s", it.tool, it.text)
+		p.style(ui, t).max_w = p.px(maxw - 40)
+		p.end(ui)
+	case .Proposal:
+		proposal_view(ui, st, v, it, maxw)
+	case .Answer:
+		b := p.col(ui, sc.BUBBLE_CONTENT_BASE)
+		p.apply(ui, sc.bubble_content_class(.Muted), b)
+		// shrink-0: in an overflowing column flexbox shrinks whatever may shrink,
+		// and a bubble that may shrink is a bubble that disappears.
+		p.apply(ui, "min-w-0 shrink-0", b)
+		// An explicit width: a shrink-to-fit bubble measures its text against the
+		// width it had last frame, and the two can chase each other to nothing.
+		p.style(ui, b).w = p.px(maxw)
+		md_render(ui, it.text, maxw - 26, 14)
+		p.end(ui)
+	case .Notice:
+		r := p.row(ui, "shrink-0 items-start gap-2.5 rounded-xl border px-3.5 py-3")
+		p.apply(ui, tone(v, "border", 500), r)
+		p.style(ui, r).max_w = p.px(maxw)
+		p.icon(ui, IC_SHIELD_ALERT, "size-4 shrink-0 mt-[1]")
+		t := p.text(ui, it.text, "text-sm")
+		p.style(ui, t).max_w = p.px(maxw - 50)
+		p.end(ui)
+	case .Error:
+		r := p.row(ui, "shrink-0 items-start gap-2 rounded-lg border border-destructive/40 bg-destructive/10 px-3 py-2")
+		p.style(ui, r).max_w = p.px(maxw)
+		p.icon(ui, sc.ICON_CIRCLE_ALERT, "size-3.5 shrink-0 text-destructive mt-[1]")
+		t := p.text(ui, it.text, "text-xs")
+		p.style(ui, t).max_w = p.px(maxw - 40)
 		p.end(ui)
 	}
 }
 
-msg_action :: proc(ui: ^p.Ctx, ic: p.Icon, label: string) -> bool {
-	idx := p.row(
-		ui,
-		"shrink-0 items-center gap-1 h-6 px-1.5 rounded-md border border-transparent " +
-		"hover:bg-muted hover:border-border transition cursor-pointer",
-	)
-	hit := p.clickable(ui, idx)
-	defer p.end(ui)
-	p.icon(ui, ic, "size-3 shrink-0 text-muted-foreground")
-	p.text(ui, label, "text-[10.5] text-muted-foreground whitespace-nowrap")
-	p.style(ui).shrink = 0
-	return hit
-}
-
-reasoning_block :: proc(ui: ^p.Ctx, st: ^St, i: int, think: string, force_open: bool, maxw: f32) {
-	open := st.think_open[i] || force_open
-
-	// An explicit width, not `max-w`: palmy sizes a shrink-to-fit box from its
-	// text child, and the text child measures against the width the box had
-	// last frame, so the two chase each other down to nothing.
-	box := p.col(
-		ui,
-		"shrink-0 min-w-0 gap-1.5 rounded-lg border border-dashed border-border bg-muted/40 px-2.5 py-2",
-	)
+step_view :: proc(ui: ^p.Ctx, st: ^St, it: ^Item, maxw: f32) {
+	box := p.col(ui, "shrink-0 rounded-lg border border-border bg-background overflow-hidden")
 	p.style(ui, box).w = p.px(maxw)
 	defer p.end(ui)
-
-	head := p.row(ui, "w-full items-center gap-1.5 cursor-pointer")
-	if p.clickable(ui, head) {
-		st.think_open[i] = !st.think_open[i]
+	head := p.row(ui, "w-full items-center gap-2 px-3 py-1.5 cursor-pointer hover:bg-muted/60")
+	if p.clickable(ui, head) {it.open = !it.open}
+	p.icon(ui, tool_icon(it.tool), "size-3.5 shrink-0 text-muted-foreground")
+	p.text(ui, it.tool, "text-xs font-mono font-medium whitespace-nowrap")
+	p.text(ui, it.text, "flex-1 min-w-0 text-xs font-mono text-muted-foreground whitespace-nowrap truncate")
+	if it.class == "draft" {
+		sc.badge(ui, "draft · not sent", .Secondary)
 	}
-	p.icon(ui, IC_BRAIN, "size-3 shrink-0 text-muted-foreground")
-	p.text(ui, "Reasoning", "text-[11] font-medium text-muted-foreground whitespace-nowrap")
-	p.style(ui).shrink = 0
-	p.textf(
-		ui,
-		"text-[10] font-mono text-muted-foreground whitespace-nowrap",
-		"%d chars",
-		len(think),
-	)
-	p.style(ui).shrink = 0
-	p.spacer(ui)
-	if !force_open {
-		sc.kbd(ui, "^B")
+	if it.untrusted && it.done && it.ok {
+		sc.badge(ui, "untrusted content", .Outline)
 	}
-	p.icon(
-		ui,
-		open ? sc.ICON_CHEVRON_UP : sc.ICON_CHEVRON_DOWN,
-		"size-3 shrink-0 text-muted-foreground",
-	)
-	p.end(ui)
-
-	if !open {
-		// One line of it, so a collapsed block still says something.
-		first := think
-		if nl := strings.index_byte(first, '\n'); nl > 0 {
-			first = first[:nl]
-		}
-		if len(first) > 110 {
-			cut := 110
-			for cut > 0 && first[cut] & 0xc0 == 0x80 {
-				cut -= 1
-			}
-			first = first[:cut]
-		}
-		p.text(
-			ui,
-			p.concat(ui, first, "…"),
-			"text-[11.5] text-muted-foreground/80 whitespace-nowrap truncate w-full",
-		)
-		return
-	}
-	p.col(ui, "w-full min-w-0 pt-0.5")
-	p.text(ui, think, "text-[12] leading-[18] text-muted-foreground")
-	p.style(ui).max_w = p.px(maxw - 22)
-	p.end(ui)
-}
-
-thinking_dots :: proc(ui: ^p.Ctx, st: ^St) {
-	p.row(ui, "shrink-0 items-center gap-2 rounded-xl bg-muted px-3 py-2")
-	defer p.end(ui)
-	p.icon(ui, sc.ICON_LOADER_CIRCLE, "size-3.5 shrink-0 text-muted-foreground", f32(mono()) * 0.8)
-	label := st.pr.think ? "reasoning before answering…" : "the model is loading / prefilling…"
-	p.text(ui, label, "text-xs text-muted-foreground whitespace-nowrap")
-	p.style(ui).shrink = 0
-	ui.animating = true
-}
-
-// ---------------------------------------------------------------------------
-// Live stats
-// ---------------------------------------------------------------------------
-
-stats_strip :: proc(ui: ^p.Ctx, st: ^St, pv: Probe_View) {
-	if !st.streaming && !st.pulling && st.live.eval_n == 0 {
-		return
-	}
-
-	p.row(ui, "w-full shrink-0 items-center gap-3 px-4 border-t border-border bg-muted/30")
-	p.style(ui).h = p.px(34)
-	defer p.end(ui)
-
-	if st.pulling {
-		s := st.pull_live
-		p.icon(ui, sc.ICON_DOWNLOAD, "size-3.5 shrink-0 text-muted-foreground")
-		p.textf(ui, "text-xs whitespace-nowrap", "pulling %s", s.model)
-		p.style(ui).shrink = 0
-		p.text(ui, s.status, "text-xs text-muted-foreground whitespace-nowrap truncate")
-		if s.total > 0 {
-			frac := f32(f64(s.completed) / f64(s.total))
-			p.div(ui, "h-1 flex-1 min-w-[80] rounded-full bg-muted overflow-hidden")
-			p.div(ui, "h-full rounded-full bg-primary")
-			p.style(ui).w = p.pct(clamp(frac, 0, 1) * 100)
-			p.end(ui)
-			p.end(ui)
-			p.textf(ui, "text-xs font-mono whitespace-nowrap", "%.0f%%", frac * 100)
-			p.style(ui).shrink = 0
-		}
-		return
-	}
-
-	s := st.live
-	// While the reply is arriving the rate is measured from the chunks that
-	// have landed; when it is over, ollama's own eval_count/eval_duration
-	// replace the estimate.
-	live_rate: f32 = 0
-	gen := s.elapsed - s.ttft
-	if st.streaming && gen > 0.05 && s.tokens > 1 {
-		live_rate = f32(f64(s.tokens) / gen)
-	}
-	final_rate: f32 = 0
-	if s.eval_ns > 0 {
-		final_rate = f32(f64(s.eval_n) / (f64(s.eval_ns) / 1e9))
-	}
-
-	if st.streaming {
-		p.icon(ui, IC_ZAP, "size-3.5 shrink-0 text-emerald-500")
-		p.text(ui, "streaming", "text-xs font-medium whitespace-nowrap")
-		p.style(ui).shrink = 0
+	if !it.done {
+		p.icon(ui, sc.ICON_LOADER_CIRCLE, "size-3.5 shrink-0 text-muted-foreground", f32(mono()) * 0.8)
+	} else if it.ok {
+		p.icon(ui, sc.ICON_CIRCLE_CHECK, "size-3.5 shrink-0 text-emerald-600")
 	} else {
-		p.icon(ui, sc.ICON_CIRCLE_CHECK, "size-3.5 shrink-0 text-muted-foreground")
-		p.text(ui, "done", "text-xs font-medium text-muted-foreground whitespace-nowrap")
-		p.style(ui).shrink = 0
+		p.icon(ui, sc.ICON_CIRCLE_ALERT, "size-3.5 shrink-0 text-destructive")
 	}
-
-	num(ui, "tok/s", fmt.tprintf("%.1f", final_rate > 0 ? final_rate : live_rate))
-	num(
-		ui,
-		"first token",
-		s.ttft > 0 ? fmt.tprintf("%.0f ms", s.ttft * 1000) : "—",
-	)
-	num(ui, "out", fmt.tprintf("%d", s.eval_n > 0 ? s.eval_n : s.tokens))
-	num(ui, "in", s.prompt_n > 0 ? fmt.tprintf("%d", s.prompt_n) : "—")
-	num(ui, "elapsed", fmt.tprintf("%.1f s", s.elapsed))
-	if s.load_ns > 0 {
-		num(ui, "load", fmt.tprintf("%.0f ms", f64(s.load_ns) / 1e6))
+	p.icon(ui, it.open ? sc.ICON_CHEVRON_UP : sc.ICON_CHEVRON_DOWN, "size-3 shrink-0 text-muted-foreground")
+	p.end(ui)
+	if it.done && it.result != "" {
+		r := p.row(ui, "w-full items-center gap-2 px-3 pb-1.5")
+		_ = r
+		p.text(ui, "→", "text-xs text-muted-foreground")
+		p.text(ui, it.result, "flex-1 min-w-0 text-xs truncate whitespace-nowrap")
+		p.end(ui)
 	}
-	if len(pv.loaded) > 0 {
-		num(ui, "resident", human_bytes(pv.loaded[0].size, context.temp_allocator))
-	}
-
-	p.spacer(ui)
-	if st.streaming {
-		idx := p.row(
-			ui,
-			"shrink-0 items-center gap-1.5 h-7 px-2.5 rounded-lg border border-destructive/40 " +
-			"bg-destructive/10 hover:bg-destructive/20 transition cursor-pointer",
-		)
-		if p.clickable(ui, idx) {
-			stop_generation(st)
-		}
-		p.icon(ui, IC_SQUARE, "size-3 shrink-0 text-destructive")
-		p.text(ui, "Stop", "text-xs font-medium text-destructive whitespace-nowrap")
-		p.style(ui).shrink = 0
-		sc.kbd(ui, "Esc")
+	if it.open && it.data != "" {
+		d := p.col(ui, "w-full border-t border-border bg-muted/40 px-3 py-2")
+		_ = d
+		shown := it.data
+		if len(shown) > 2400 {shown = fmt.tprintf("%s…", shown[:2400])}
+		t := p.text(ui, shown, "text-[11] font-mono leading-[16] text-muted-foreground")
+		p.style(ui, t).max_w = p.px(maxw - 26)
 		p.end(ui)
 	}
 }
 
-num :: proc(ui: ^p.Ctx, label, value: string) {
-	p.row(ui, "shrink-0 items-baseline gap-1")
+proposal_view :: proc(ui: ^p.Ctx, st: ^St, v: ^Ident_View, it: ^Item, maxw: f32) {
+	card := p.col(ui, "shrink-0 rounded-xl border-2 bg-background overflow-hidden")
+	p.apply(ui, tone(v, "border", 500), card)
+	p.style(ui, card).w = p.px(maxw)
 	defer p.end(ui)
-	p.text(ui, value, "text-xs font-mono font-medium whitespace-nowrap")
-	p.style(ui).shrink = 0
-	p.text(ui, label, "text-[10.5] text-muted-foreground whitespace-nowrap")
-	p.style(ui).shrink = 0
+	head := p.row(ui, "w-full items-center gap-2 px-3.5 py-2")
+	p.apply(ui, tone(v, "bg", 500), head)
+	p.icon(ui, IC_HAND, "size-3.5 shrink-0 text-white")
+	p.textf(ui, "text-xs font-semibold text-white whitespace-nowrap", "Waiting for you · as %s", v.name)
+	p.spacer(ui)
+	p.text(ui, it.tool, "text-[11] font-mono text-white/80 whitespace-nowrap")
+	p.end(ui)
+	body := p.col(ui, "w-full gap-2 px-3.5 py-3")
+	_ = body
+	t := p.text(ui, it.text, "text-sm font-medium")
+	p.style(ui, t).max_w = p.px(maxw - 30)
+	for w in it.warnings {
+		r := p.row(ui, "w-full items-start gap-2")
+		_ = r
+		warn := w.level == "warn"
+		p.icon(ui, warn ? sc.ICON_TRIANGLE_ALERT : sc.ICON_INFO, warn ? "size-3.5 shrink-0 text-amber-600 mt-[1]" : "size-3.5 shrink-0 text-muted-foreground mt-[1]")
+		wt := p.text(ui, w.text, warn ? "text-xs" : "text-xs text-muted-foreground")
+		p.style(ui, wt).max_w = p.px(maxw - 60)
+		p.end(ui)
+	}
+	p.end(ui)
+	foot := p.row(ui, "w-full items-center gap-2 px-3.5 py-2.5 border-t border-border bg-muted/30")
+	_ = foot
+	switch it.status {
+	case "proposed":
+		if btn(ui, "Decline", .Outline, .SM) {
+			decide_action(st, it.action_id, false)
+		}
+		yes := p.row(ui, "shrink-0 items-center gap-1.5 h-8 px-3 rounded-md cursor-pointer transition")
+		p.apply(ui, tone(v, "bg", 600), yes)
+		p.apply(ui, fmt.tprintf("hover:%s", tone(v, "bg", 700)), yes)
+		if p.clickable(ui, yes) {
+			decide_action(st, it.action_id, true)
+		}
+		p.icon(ui, sc.ICON_CHECK, "size-3.5 shrink-0 text-white")
+		p.textf(ui, "text-xs font-semibold text-white whitespace-nowrap", "Confirm as %s", v.name)
+		p.end(ui)
+		p.spacer(ui)
+		p.text(ui, "Nothing happens until you confirm. F6", "text-[11] text-muted-foreground whitespace-nowrap")
+	case "executed":
+		p.icon(ui, sc.ICON_CIRCLE_CHECK, "size-3.5 shrink-0 text-emerald-600")
+		p.text(ui, "Done, by you", "text-xs font-medium whitespace-nowrap")
+	case "declined":
+		p.icon(ui, sc.ICON_X, "size-3.5 shrink-0 text-muted-foreground")
+		p.text(ui, "Declined · nothing was done", "text-xs text-muted-foreground whitespace-nowrap")
+	case:
+		p.icon(ui, sc.ICON_CIRCLE_ALERT, "size-3.5 shrink-0 text-destructive")
+		p.textf(ui, "text-xs whitespace-nowrap", "%s", it.status)
+	}
+	p.end(ui)
 }
 
 // ---------------------------------------------------------------------------
 // Composer
 // ---------------------------------------------------------------------------
 
-COMPOSER_LINES :: 6
-
-composer :: proc(ui: ^p.Ctx, st: ^St) {
-	focused := st.zone == .Composer && st.overlay == .None
-
-	p.col(ui, "w-full shrink-0 px-4 pt-3 pb-2 gap-2 border-t border-border")
+composer :: proc(ui: ^p.Ctx, st: ^St, v: ^Ident_View) {
+	p.col(ui, "w-full shrink-0 px-6 pt-3 pb-3 gap-2 border-t border-border")
 	defer p.end(ui)
-
 	box := p.row(ui, "w-full items-end gap-2 rounded-xl border bg-background px-3 py-2.5 transition")
 	st.composer_id = p.node_id(ui, box)
-	p.apply(ui, focused ? "border-ring ring-3 ring-ring/40" : "border-input", box)
-	if p.clickable(ui, box) {
-		st.zone = .Composer
-	}
+	p.apply(ui, fmt.tprintf("%s ring-3 %s/25", tone(v, "border", 500), tone(v, "ring", 500)), box)
 	{
-		// The editor. palmy's text_field is one line, so the wrapping, the
-		// caret and the vertical scroll are this app's own; `text_width` and
-		// `text_index_at` are the two measurements that make it possible.
 		p.col(ui, "flex-1 min-w-0 gap-0 overflow-hidden")
 		defer p.end(ui)
-
-		avail := p.size(ui).x - SIDEBAR_W - (st.show_params ? PARAMS_W : 0) - 140
-		size: f32 = 14
-		text := composer_text(st)
-		vis := wrap_visual(ui, text, size, max(120, avail))
-
-		// Keep the caret's line on screen.
-		cl := caret_line(vis, st.caret)
-		first := 0
-		if cl >= COMPOSER_LINES {
-			first = cl - COMPOSER_LINES + 1
-		}
-		last := min(first + COMPOSER_LINES, len(vis))
-
-		if len(text) == 0 {
+		text := string(st.input[:])
+		if text == "" {
 			p.row(ui, "w-full items-center")
 			p.style(ui).h = p.px(20)
-			p.text(
-				ui,
-				"Ask the model something. Enter sends, Shift+Enter makes a new line.",
-				"text-sm text-muted-foreground whitespace-nowrap",
-			)
-			p.style(ui).shrink = 0
-			if focused {
-				// A solid caret, not a blinking one. A blink has to mark the
-				// window animating on every frame, and palmy then redraws a
-				// 1920x1080 software-rasterised window at the display rate
-				// forever — about half a core, for a window that is doing
-				// nothing. An idle palmy window should cost nothing, so the
-				// caret does not move.
-				car := p.div(ui, "absolute w-[1.5] rounded-full bg-foreground")
-				cs := p.style(ui, car)
-				cs.inset[p.LEFT] = p.px(0)
-				cs.inset[p.TOP] = p.px(2)
-				cs.h = p.px(16)
-				p.end(ui)
-			}
+			p.textf(ui, "text-sm text-muted-foreground whitespace-nowrap", "Ask the %s assistant. Enter sends.", v.name)
+			car := p.div(ui, "absolute w-[1.5] rounded-full bg-foreground")
+			cs := p.style(ui, car)
+			cs.inset[p.LEFT] = p.px(0)
+			cs.inset[p.TOP] = p.px(2)
+			cs.h = p.px(16)
 			p.end(ui)
-		}
-		for li in first ..< (len(text) == 0 ? 0 : last) {
-			p.key(ui, fmt.tprintf("cl%d", li))
-			seg := vis[li]
-			p.row(ui, "w-full items-center")
-			p.style(ui).h = p.px(20)
-			p.text(ui, expand_tabs(text[seg.start:seg.end]), "text-sm whitespace-nowrap")
-			p.style(ui).shrink = 0
-			if focused && st.caret >= seg.start && st.caret <= seg.end {
-				// Placed by measuring the prefix, the same measurement that
-				// would hit-test a click.
-				cx := p.text_width(ui.fonts, text[seg.start:st.caret], size, .Sans, .Regular)
-				car := p.div(ui, "absolute w-[1.5] rounded-full bg-foreground")
-				cs := p.style(ui, car)
-				cs.inset[p.LEFT] = p.px(cx)
-				cs.inset[p.TOP] = p.px(2)
-				cs.h = p.px(16)
-				p.end(ui)
-			}
 			p.end(ui)
-		}
-		if len(vis) > COMPOSER_LINES {
-			p.textf(
-				ui,
-				"text-[10] text-muted-foreground whitespace-nowrap",
-				"%d of %d lines",
-				last,
-				len(vis),
-			)
-			p.style(ui).shrink = 0
+		} else {
+			t := p.text(ui, text, "text-sm")
+			p.style(ui, t).max_w = p.px(p.size(ui).x - SIDEBAR_W - 180)
 		}
 	}
-
-	// Send / Stop.
-	if st.streaming {
-		idx := p.row(
-			ui,
-			"shrink-0 items-center gap-1.5 h-8 px-3 rounded-lg bg-destructive/15 " +
-			"border border-destructive/40 hover:bg-destructive/25 transition cursor-pointer",
-		)
-		if p.clickable(ui, idx) {
-			stop_generation(st)
-		}
+	if st.sh.running {
+		idx := p.row(ui, "shrink-0 items-center gap-1.5 h-8 px-3 rounded-lg bg-destructive/15 border border-destructive/40 hover:bg-destructive/25 transition cursor-pointer")
+		if p.clickable(ui, idx) {stop(st)}
 		p.icon(ui, IC_SQUARE, "size-3.5 shrink-0 text-destructive")
 		p.text(ui, "Stop", "text-xs font-medium text-destructive whitespace-nowrap")
-		p.style(ui).shrink = 0
 		p.end(ui)
 	} else {
-		empty := strings.trim_space(composer_text(st)) == ""
+		empty := strings.trim_space(string(st.input[:])) == ""
 		idx := p.row(ui, "shrink-0 items-center gap-1.5 h-8 px-3 rounded-lg transition cursor-pointer")
-		p.apply(
-			ui,
-			empty ? "bg-muted text-muted-foreground" : "bg-primary text-primary-foreground",
-			idx,
-		)
-		if p.clickable(ui, idx) && !empty {
-			send(st)
-		}
+		p.apply(ui, empty ? "bg-muted text-muted-foreground" : fmt.tprintf("%s text-white", tone(v, "bg", 600)), idx)
+		if p.clickable(ui, idx) && !empty {send(st)}
 		p.icon(ui, sc.ICON_SEND, "size-3.5 shrink-0")
-		p.text(ui, "Send", "text-xs font-medium whitespace-nowrap")
-		p.style(ui).shrink = 0
+		p.text(ui, "Ask", "text-xs font-medium whitespace-nowrap")
 		p.end(ui)
 	}
-	p.end(ui) // box
+	p.end(ui)
+	p.row(ui, "w-full items-center gap-1.5 px-1")
+	p.icon(ui, IC_SHIELD_CHECK, "size-3 shrink-0 text-muted-foreground")
+	p.textf(ui, "text-[11] text-muted-foreground whitespace-nowrap truncate", "Reads and drafts inside %s. Sending, sharing and inviting wait for you. Mail and files it reads are treated as data, never as instructions.", v.name)
+	p.end(ui)
 }
 
-Seg :: struct {
-	start, end: int,
+// ---------------------------------------------------------------------------
+// The action log
+// ---------------------------------------------------------------------------
+
+status_class :: proc(s: string) -> string {
+	switch s {
+	case "proposed":
+		return "bg-amber-500/15 text-amber-700"
+	case "executed", "done":
+		return "bg-emerald-500/15 text-emerald-700"
+	case "declined", "expired":
+		return "bg-muted text-muted-foreground"
+	}
+	return "bg-destructive/15 text-destructive"
 }
 
-// wrap_visual breaks the composer's text into the lines it will be drawn on:
-// hard breaks at '\n', soft breaks at the last space that fits.
-wrap_visual :: proc(ui: ^p.Ctx, text: string, size, maxw: f32) -> []Seg {
-	out := make([dynamic]Seg, context.temp_allocator)
-	line_start := 0
-	for i := 0; i <= len(text); i += 1 {
-		hard := i == len(text) || text[i] == '\n'
-		if !hard {
-			continue
-		}
-		// One logical line: [line_start, i)
-		s := line_start
-		for s <= i {
-			// How much of text[s:i] fits?
-			if p.text_width(ui.fonts, text[s:i], size, .Sans, .Regular) <= maxw {
-				append(&out, Seg{s, i})
-				break
-			}
-			// Binary search the longest prefix that fits, then back up to a
-			// space so words stay whole.
-			lo, hi := s, i
-			for lo < hi {
-				mid := (lo + hi + 1) / 2
-				for mid > s && mid < i && text[mid] & 0xc0 == 0x80 {
-					mid -= 1
-				}
-				if p.text_width(ui.fonts, text[s:mid], size, .Sans, .Regular) <= maxw {
-					if lo == mid {
-						break
-					}
-					lo = mid
-				} else {
-					hi = mid - 1
-				}
-			}
-			cut := max(lo, s + 1)
-			sp := -1
-			for j := cut - 1; j > s; j -= 1 {
-				if text[j] == ' ' {
-					sp = j
-					break
-				}
-			}
-			if sp > s {
-				cut = sp + 1
-			}
-			append(&out, Seg{s, cut})
-			s = cut
-		}
-		line_start = i + 1
+log_view :: proc(ui: ^p.Ctx, st: ^St, v: ^Ident_View) {
+	p.col(ui, "w-full flex-1 min-h-0 px-6 py-5 gap-3 overflow-scroll")
+	defer p.end(ui)
+	p.textf(ui, "text-sm font-semibold whitespace-nowrap", "Everything the %s assistant did", v.name)
+	t := p.text(ui, "Every read, every draft, every refusal and every proposal, newest first. The database records which assistant session wrote each row; only you can move a proposal on, and a row's arguments cannot be changed once written.", "text-xs text-muted-foreground")
+	p.style(ui, t).max_w = p.px(760)
+	tbl := p.col(ui, "w-full rounded-lg border border-border overflow-hidden")
+	_ = tbl
+	hdr := p.row(ui, "w-full items-center gap-3 px-3 py-2 bg-muted/50 border-b border-border")
+	_ = hdr
+	cols := [?]struct {
+		label: string,
+		w:     f32,
+	}{{"When", 70}, {"Status", 82}, {"Class", 64}, {"Tool", 130}}
+	for c in cols {
+		x := p.text(ui, c.label, "text-[11] font-semibold text-muted-foreground whitespace-nowrap")
+		p.style(ui, x).w = p.px(c.w)
 	}
-	if len(out) == 0 {
-		append(&out, Seg{0, 0})
+	p.text(ui, "What", "flex-1 text-[11] font-semibold text-muted-foreground whitespace-nowrap")
+	p.end(ui)
+	if len(st.log) == 0 {
+		p.text(ui, "Nothing yet.", "text-xs text-muted-foreground p-3")
 	}
-	return out[:]
+	for _, k in st.log {
+		r := &st.log[k]
+		p.key(ui, r.id)
+		row := p.row(ui, "w-full items-start gap-3 px-3 py-2 border-b border-border")
+		_ = row
+		when_ := r.created
+		if len(when_) >= 16 {when_ = when_[11:16]}
+		w1 := p.text(ui, when_, "text-[11] font-mono text-muted-foreground whitespace-nowrap")
+		p.style(ui, w1).w = p.px(70)
+		sb := p.row(ui, "shrink-0 items-center")
+		p.style(ui, sb).w = p.px(82)
+		pill := p.div(ui, "h-5 px-1.5 flex-row items-center rounded-md")
+		p.apply(ui, status_class(r.status), pill)
+		p.text(ui, r.status, "text-[10.5] font-medium whitespace-nowrap")
+		p.end(ui)
+		p.end(ui)
+		w3 := p.text(ui, r.class, "text-[11] text-muted-foreground whitespace-nowrap")
+		p.style(ui, w3).w = p.px(64)
+		w4 := p.row(ui, "shrink-0 items-center gap-1.5")
+		p.style(ui, w4).w = p.px(130)
+		p.icon(ui, tool_icon(r.tool), "size-3 shrink-0 text-muted-foreground")
+		p.text(ui, r.tool, "text-[11] font-mono whitespace-nowrap truncate")
+		p.end(ui)
+		p.col(ui, "flex-1 min-w-0 gap-1")
+		s := p.text(ui, r.summary, "text-xs")
+		p.style(ui, s).max_w = p.px(p.size(ui).x - SIDEBAR_W - 460)
+		if r.tainted && r.class == "confirm" {
+			p.row(ui, "items-center gap-1")
+			p.icon(ui, IC_EYE_OFF, "size-3 shrink-0 text-amber-600")
+			p.text(ui, "proposed after reading content from outside you", "text-[10.5] text-amber-700 whitespace-nowrap")
+			p.end(ui)
+		}
+		for w in r.warnings {
+			if w.level != "warn" {continue}
+			wt := p.textf(ui, "text-[10.5] text-amber-700", "! %s", w.text)
+			p.style(ui, wt).max_w = p.px(p.size(ui).x - SIDEBAR_W - 460)
+		}
+		if r.status == "proposed" {
+			p.row(ui, "items-center gap-2 pt-1")
+			if btn(ui, "Decline", .Outline, .SM) {decide_action(st, r.id, false)}
+			if btn(ui, "Confirm", .Default, .SM) {decide_action(st, r.id, true)}
+			p.end(ui)
+		}
+		p.end(ui)
+		p.end(ui)
+	}
+	p.end(ui)
 }
 
-caret_line :: proc(vis: []Seg, caret: int) -> int {
-	for s, i in vis {
-		if caret >= s.start && caret <= s.end {
-			return i
-		}
+// ---------------------------------------------------------------------------
+// Settings
+// ---------------------------------------------------------------------------
+
+settings_view :: proc(ui: ^p.Ctx, st: ^St, v: ^Ident_View) {
+	p.col(ui, "w-full flex-1 min-h-0 px-6 py-5 gap-4 overflow-scroll")
+	defer p.end(ui)
+	section := proc(ui: ^p.Ctx, title, sub: string) {
+		p.col(ui, "w-full gap-0.5 pt-1")
+		p.text(ui, title, "text-sm font-semibold whitespace-nowrap")
+		t := p.text(ui, sub, "text-xs text-muted-foreground")
+		p.style(ui, t).max_w = p.px(720)
+		p.end(ui)
 	}
-	return max(0, len(vis) - 1)
+	section(ui, fmt.tprintf("The %s assistant", v.name), "Off by default for every identity. Turning it off changes nothing else: search, Today and every app work as before.")
+	r := p.row(ui, "items-center gap-3 rounded-lg border border-border px-3 py-2.5 cursor-pointer")
+	if p.clickable(ui, r) {set_enabled(st, !v.enabled)}
+	sc.switch_(ui, v.enabled, .Default)
+	p.text(ui, v.enabled ? "On" : "Off", "text-sm font-medium whitespace-nowrap")
+	p.end(ui)
+
+	section(ui, "Model on this machine", "The default. The model runs here, through ollama on 127.0.0.1, and nothing it reads leaves the machine. Small models are often wrong; every proposal still waits for you.")
+	pv := probe_view(&st.probe, context.temp_allocator)
+	models := make([dynamic]string, context.temp_allocator)
+	for m in pv.models {append(&models, m.name)}
+	if len(models) == 0 {append(&models, v.model)}
+	p.row(ui, "flex-wrap items-center gap-2")
+	for m in models {
+		on := m == v.model && v.provider != "anthropic"
+		b := p.row(ui, "items-center gap-2 h-8 px-3 rounded-lg border transition cursor-pointer")
+		p.apply(ui, on ? fmt.tprintf("%s bg-muted", tone(v, "border", 500)) : "border-border hover:bg-muted", b)
+		if p.clickable(ui, b) {
+			set_model(st, m)
+			if v.provider == "anthropic" {set_remote(st, false)}
+		}
+		p.icon(ui, IC_CPU, "size-3.5 shrink-0 text-muted-foreground")
+		p.text(ui, m, "text-xs font-medium whitespace-nowrap")
+		if on {p.icon(ui, sc.ICON_CHECK, "size-3.5 shrink-0")}
+		p.end(ui)
+	}
+	p.end(ui)
+
+	section(ui, "A remote model (optional)", fmt.tprintf("Anthropic's Claude (%s), for %s only, and only if you opt in here. A remote model can read whatever the assistant shows it, which is %s's mail and files; that is the trade. The API key stays in your session's environment and never enters the assistant's sandbox.", REMOTE_MODEL_DEFAULT, v.name, v.name))
+	if v.provider == "anthropic" {
+		p.row(ui, "items-center gap-3 rounded-lg border border-amber-500/50 bg-amber-500/10 px-3 py-2.5")
+		p.icon(ui, IC_GLOBE, "size-4 shrink-0 text-amber-600")
+		p.textf(ui, "text-xs whitespace-nowrap", "On for %s since %s · %s", v.name, v.opted_in_at, v.remote_model)
+		p.spacer(ui)
+		if btn(ui, "Back to the local model", .Outline, .SM) {set_remote(st, false)}
+		p.end(ui)
+	} else {
+		p.row(ui, "items-center")
+		if btn(ui, fmt.tprintf("Use a remote model for %s…", v.name), .Outline, .Default) {st.remote_ask = true}
+		p.end(ui)
+	}
+
+	section(ui, "What it can do", "Generated from each application's --schema and narrowed by policy. Reads run freely; drafts stay in the identity; everything else is a proposal.")
+	rows := [?][3]string {
+		{"Reads", "mail · files · calendar · notes · contacts · chats · issues · search", "runs, logged"},
+		{"Drafts", "a mail draft · a new note", "runs, stays in the identity, logged"},
+		{"Proposals", "send · share · link · invite · post · comment · delete", "waits for you; done by your session"},
+		{"Never", "the vault · other identities · account settings · its own settings", "not offered, and refused by the database"},
+	}
+	p.col(ui, "w-full rounded-lg border border-border overflow-hidden")
+	for rw, k in rows {
+		p.key(ui, fmt.tprintf("cap%d", k))
+		row := p.row(ui, "w-full items-center gap-3 px-3 py-2 border-b border-border")
+		_ = row
+		a := p.text(ui, rw[0], "text-xs font-semibold whitespace-nowrap")
+		p.style(ui, a).w = p.px(80)
+		p.text(ui, rw[1], "flex-1 min-w-0 text-xs truncate whitespace-nowrap")
+		p.text(ui, rw[2], "text-[11] text-muted-foreground whitespace-nowrap")
+		p.end(ui)
+	}
+	p.end(ui)
+}
+
+remote_dialog :: proc(ui: ^p.Ctx, st: ^St) {
+	v := cur_ident(st)
+	if v == nil {return}
+	scrim := p.div(ui, "absolute w-full h-full flex-row items-center justify-center bg-black/50")
+	s := p.style(ui, scrim)
+	s.inset[p.LEFT] = p.px(0)
+	s.inset[p.TOP] = p.px(0)
+	box := p.col(ui, "gap-3 rounded-xl border border-border bg-background p-5 shadow-lg")
+	p.style(ui, box).w = p.px(480)
+	p.row(ui, "items-center gap-2")
+	p.icon(ui, IC_GLOBE, "size-4 text-amber-600")
+	p.textf(ui, "text-sm font-semibold whitespace-nowrap", "Use Claude for %s?", v.name)
+	p.end(ui)
+	t := p.textf(ui, "text-xs text-muted-foreground", "From now on, what the %s assistant reads — mail, files, events — is sent to Anthropic's API to be answered. Your other identities are not affected. You can switch back at any time. The assistant cannot make this choice for itself: the database refuses its session any change to its settings.", v.name)
+	p.style(ui, t).max_w = p.px(440)
+	p.row(ui, "w-full items-center justify-end gap-2 pt-1")
+	if btn(ui, "Cancel", .Outline, .SM) {st.remote_ask = false}
+	if btn(ui, fmt.tprintf("Opt %s in", v.name), .Default, .SM) {
+		set_remote(st, true)
+		st.remote_ask = false
+	}
+	p.end(ui)
+	p.end(ui)
+	p.end(ui)
 }
 
 // ---------------------------------------------------------------------------
@@ -932,616 +752,34 @@ footer :: proc(ui: ^p.Ctx, st: ^St) {
 	st.footer_id = p.node_id(ui, f)
 	p.style(ui).h = p.px(FOOTER_H)
 	defer p.end(ui)
-
 	if st.toast != "" {
 		p.icon(ui, sc.ICON_INFO, "size-3 shrink-0 text-muted-foreground")
 		p.text(ui, st.toast, "flex-1 text-[11] text-muted-foreground truncate whitespace-nowrap")
 		return
 	}
-
-	hint(ui, "Enter", "send")
-	hint(ui, "Shift-Enter", "newline")
+	hint(ui, "Enter", "ask")
 	hint(ui, "Esc", "stop")
-	hint(ui, "^M", "model")
-	hint(ui, "^T", "thinking")
-	hint(ui, "^G", "regenerate")
-	hint(ui, "^,", "parameters")
+	hint(ui, "^0–9", "identity")
+	hint(ui, "^L", "action log")
+	hint(ui, "^,", "settings")
+	hint(ui, "F6", "confirm")
 	p.spacer(ui)
-	hint(ui, "F1", "all keys")
-	if !st.pinned {
-		p.text(ui, "scroll-locked", "text-[10.5] text-muted-foreground whitespace-nowrap")
-		p.style(ui).shrink = 0
-		sc.kbd(ui, "^End")
-	}
+	p.text(ui, "no assistant reads across identities", "text-[10.5] text-muted-foreground whitespace-nowrap")
 }
 
 hint :: proc(ui: ^p.Ctx, key, label: string) {
 	p.row(ui, "shrink-0 items-center gap-1")
-	defer p.end(ui)
 	sc.kbd(ui, key)
 	p.text(ui, label, "text-[10.5] text-muted-foreground whitespace-nowrap")
+	p.end(ui)
+}
+
+// btn is shadcn's button that says whether it was pressed.
+btn :: proc(ui: ^p.Ctx, label: string, v := sc.Variant.Default, s := sc.Size.Default) -> bool {
+	sc.button_open(ui, v, s, {})
+	hit := p.clickable(ui)
+	p.text(ui, label, "whitespace-nowrap")
 	p.style(ui).shrink = 0
-}
-
-// ---------------------------------------------------------------------------
-// Parameters
-// ---------------------------------------------------------------------------
-
-params_panel :: proc(ui: ^p.Ctx, st: ^St, pv: Probe_View) {
-	focused := st.zone == .Params && st.overlay == .None
-
-	p.col(ui, "h-full shrink-0 border-l border-border bg-sidebar overflow-hidden")
-	p.style(ui).w = p.px(PARAMS_W)
-	defer p.end(ui)
-
-	p.row(ui, "w-full shrink-0 items-center gap-2 px-3.5 border-b border-border")
-	p.style(ui).h = p.px(TOPBAR_H)
-	p.icon(ui, IC_GAUGE, "size-4 shrink-0 text-muted-foreground")
-	p.text(ui, "Parameters", "text-sm font-semibold whitespace-nowrap")
-	p.spacer(ui)
-	if focused {
-		sc.badge(ui, "←→ adjusts", .Outline)
-	} else {
-		sc.kbd(ui, "Tab")
-	}
-	p.end(ui)
-
-	p.col(ui, "w-full flex-1 min-h-0 px-3.5 py-3 gap-4 overflow-scroll")
-	defer p.end(ui)
-
-	param_slider(
-		ui,
-		st,
-		.Temperature,
-		"Temperature",
-		fmt.tprintf("%.2f", st.pr.temperature),
-		st.pr.temperature / 2,
-		"0 is deterministic; past 1.2 this model starts to wander.",
-		focused,
-	)
-	param_slider(
-		ui,
-		st,
-		.Top_P,
-		"top_p",
-		fmt.tprintf("%.2f", st.pr.top_p),
-		st.pr.top_p,
-		"Nucleus sampling: the share of probability mass kept.",
-		focused,
-	)
-	param_slider(
-		ui,
-		st,
-		.Num_Predict,
-		"num_predict",
-		fmt.tprintf("%d", st.pr.num_predict),
-		f32(st.pr.num_predict) / 2048,
-		"The hard ceiling on reply length, in tokens.",
-		focused,
-	)
-
-	sc.separator(ui, .Horizontal)
-
-	param_switch(
-		ui,
-		st,
-		.Think,
-		"Thinking",
-		st.pr.think,
-		"qwen3 reasons first unless think is false. With it on, the answer arrives after the reasoning — and a short reply limit may be spent entirely inside it.",
-		focused,
-	)
-	param_switch(
-		ui,
-		st,
-		.Reasoning,
-		"Show reasoning",
-		st.show_think,
-		"Render message.thinking in a collapsed block above the answer.",
-		focused,
-	)
-
-	sc.separator(ui, .Horizontal)
-
-	// System prompt.
-	p.col(ui, "w-full gap-1.5")
-	p.row(ui, "w-full items-center gap-2")
-	p.text(ui, "System prompt", "text-xs font-medium whitespace-nowrap")
-	p.spacer(ui)
-	sc.kbd(ui, "^S")
-	p.end(ui)
-	idx := p.col(
-		ui,
-		"w-full min-h-[64] rounded-lg border border-input bg-background px-2.5 py-2 cursor-pointer hover:bg-muted transition",
-	)
-	if p.clickable(ui, idx) {
-		open_overlay(st, .System)
-	}
-	if strings.trim_space(st.pr.system) == "" {
-		p.text(ui, "none — the model gets no instructions", "text-[11.5] text-muted-foreground")
-	} else {
-		p.text(ui, st.pr.system, "text-[11.5] leading-[17]")
-	}
-	p.end(ui)
-	p.end(ui)
-
-	sc.separator(ui, .Horizontal)
-
-	// What the machine is doing.
-	p.col(ui, "w-full gap-1.5")
-	p.text(ui, "Runtime", "text-xs font-medium whitespace-nowrap")
-	kv(ui, "endpoint", "127.0.0.1:11434")
-	kv(ui, "version", pv.version == "" ? "unknown" : pv.version)
-	kv(ui, "models installed", fmt.tprintf("%d", len(pv.models)))
-	if len(pv.loaded) > 0 {
-		l := pv.loaded[0]
-		kv(ui, "loaded", l.name)
-		kv(ui, "footprint", human_bytes(l.size, context.temp_allocator))
-		kv(ui, "in VRAM", l.vram > 0 ? human_bytes(l.vram, context.temp_allocator) : "0 (CPU)")
-		kv(ui, "context", fmt.tprintf("%d", l.ctx))
-	} else {
-		kv(ui, "loaded", "nothing resident")
-	}
-	if mi, have := find_model(pv, st.model); have {
-		kv(ui, "parameters", mi.params)
-		kv(ui, "quantisation", mi.quant)
-		kv(ui, "max context", fmt.tprintf("%d", mi.ctx_len))
-	}
-	p.end(ui)
-
-	p.col(ui, "w-full gap-1 pt-1")
-	p.text(
-		ui,
-		"Nothing in this window leaves the machine.",
-		"text-[10.5] text-muted-foreground",
-	)
-	p.text(
-		ui,
-		"Every request goes to the loopback address; there is no other endpoint in the binary.",
-		"text-[10.5] text-muted-foreground",
-	)
-	p.end(ui)
-}
-
-kv :: proc(ui: ^p.Ctx, k, v: string) {
-	p.row(ui, "w-full items-baseline gap-2")
-	defer p.end(ui)
-	p.text(ui, k, "text-[11] text-muted-foreground whitespace-nowrap")
-	p.style(ui).shrink = 0
-	p.spacer(ui)
-	p.text(ui, v, "text-[11] font-mono whitespace-nowrap truncate")
-	p.style(ui).shrink = 0
-}
-
-param_slider :: proc(
-	ui: ^p.Ctx,
-	st: ^St,
-	row: Param_Row,
-	label, value: string,
-	frac: f32,
-	note: string,
-	zone_focus: bool,
-) {
-	sel := zone_focus && st.param_sel == row
-	box := p.col(ui, "w-full gap-2 rounded-lg px-2 py-2 transition")
-	p.apply(ui, sel ? "bg-accent ring-1 ring-ring/40" : "", box)
-	if p.clickable(ui, box) {
-		st.zone = .Params
-		st.param_sel = row
-	}
-	defer p.end(ui)
-
-	p.row(ui, "w-full items-center gap-2")
-	p.text(ui, label, "text-xs font-medium whitespace-nowrap")
-	p.style(ui).shrink = 0
-	p.spacer(ui)
-	p.text(ui, value, "text-xs font-mono whitespace-nowrap")
-	p.style(ui).shrink = 0
-	p.end(ui)
-
-	vals := [1]f32{clamp(frac, 0, 1)}
-	sc.slider(ui, vals[:], false, {focus = sel})
-
-	p.text(ui, note, "text-[10.5] leading-[15] text-muted-foreground")
-}
-
-param_switch :: proc(
-	ui: ^p.Ctx,
-	st: ^St,
-	row: Param_Row,
-	label: string,
-	on: bool,
-	note: string,
-	zone_focus: bool,
-) {
-	sel := zone_focus && st.param_sel == row
-	box := p.col(ui, "w-full gap-1.5 rounded-lg px-2 py-2 transition")
-	p.apply(ui, sel ? "bg-accent ring-1 ring-ring/40" : "", box)
-	if p.clickable(ui, box) {
-		st.zone = .Params
-		st.param_sel = row
-		switch row {
-		case .Think:
-			st.pr.think = !st.pr.think
-		case .Reasoning:
-			st.show_think = !st.show_think
-		case .Temperature, .Top_P, .Num_Predict:
-		}
-		settings_save(st.model, st.pr, st.show_think)
-	}
-	defer p.end(ui)
-
-	p.row(ui, "w-full items-center gap-2")
-	p.text(ui, label, "text-xs font-medium whitespace-nowrap")
-	p.style(ui).shrink = 0
-	p.spacer(ui)
-	sc.switch_(ui, on, .Default, {focus = sel})
-	p.end(ui)
-	p.text(ui, note, "text-[10.5] leading-[15] text-muted-foreground")
-}
-
-// ---------------------------------------------------------------------------
-// Overlays
-// ---------------------------------------------------------------------------
-
-overlay :: proc(ui: ^p.Ctx, st: ^St, pv: Probe_View) {
-	size := p.size(ui)
-
-	scrim := p.div(ui, "absolute inset-0 bg-background/70 z-40")
-	if p.clickable(ui, scrim) {
-		st.overlay = .None
-	}
-	p.end(ui)
-
-	w: f32 = 560
-	switch st.overlay {
-	case .Models:
-		w = 620
-	case .Prompts:
-		w = 620
-	case .Help:
-		w = 660
-	case .Pull, .Confirm_Delete, .System, .None:
-		w = 540
-	}
-
-	panel := p.col(
-		ui,
-		"absolute flex-col rounded-xl border border-border bg-popover text-popover-foreground shadow-2xl z-50 overflow-hidden",
-	)
-	ps := p.style(ui, panel)
-	ps.position = .Absolute
-	ps.inset[p.LEFT] = p.px((size.x - w) / 2)
-	ps.inset[p.TOP] = p.px(70)
-	ps.w = p.px(w)
-	ps.max_h = p.px(size.y - 150)
-	defer p.end(ui)
-
-	switch st.overlay {
-	case .None:
-	case .Models:
-		models_overlay(ui, st, pv)
-	case .Prompts:
-		prompts_overlay(ui, st)
-	case .Pull:
-		pull_overlay(ui, st)
-	case .Confirm_Delete:
-		confirm_overlay(ui, st)
-	case .System:
-		system_overlay(ui, st)
-	case .Help:
-		help_overlay(ui, st)
-	}
-}
-
-overlay_head :: proc(ui: ^p.Ctx, ic: p.Icon, title, note: string) {
-	p.row(ui, "w-full shrink-0 items-center gap-2.5 px-4 py-3 border-b border-border")
-	defer p.end(ui)
-	p.div(ui, "size-7 shrink-0 flex-row items-center justify-center rounded-lg bg-muted")
-	p.icon(ui, ic, "size-3.5 text-muted-foreground")
-	p.end(ui)
-	p.col(ui, "flex-1 min-w-0")
-	p.text(ui, title, "text-sm font-semibold whitespace-nowrap")
-	if note != "" {
-		p.text(ui, note, "text-[11] text-muted-foreground")
-	}
-	p.end(ui)
-	sc.kbd(ui, "Esc")
-}
-
-models_overlay :: proc(ui: ^p.Ctx, st: ^St, pv: Probe_View) {
-	overlay_head(
-		ui,
-		IC_CPU,
-		"Installed models",
-		"straight from /api/tags — real size, real parameter count",
-	)
-
-	p.col(ui, "w-full min-h-0 p-1.5 gap-0.5 overflow-scroll")
-	defer p.end(ui)
-
-	if len(pv.models) == 0 {
-		p.col(ui, "w-full items-center gap-2 py-8")
-		p.icon(ui, sc.ICON_INBOX, "size-5 text-muted-foreground")
-		p.text(
-			ui,
-			pv.err != "" ? "the runtime is not answering" : "no models installed",
-			"text-sm font-medium",
-		)
-		p.text(ui, "Press Enter to pull one.", "text-xs text-muted-foreground")
-		p.end(ui)
-		return
-	}
-
-	for m, i in pv.models {
-		p.key(ui, m.name)
-		sel := i == st.ov_sel
-		idx := p.row(ui, "w-full shrink-0 items-center gap-2.5 px-2.5 py-2 rounded-lg transition cursor-pointer")
-		p.apply(ui, sel ? "bg-accent" : "hover:bg-muted", idx)
-		if p.clickable(ui, idx) {
-			delete(st.model)
-			st.model = strings.clone(m.name)
-			settings_save(st.model, st.pr, st.show_think)
-			st.overlay = .None
-		}
-		if p.is_hovered(ui, idx) && st.moved {
-			st.ov_sel = i
-		}
-		p.icon(
-			ui,
-			m.name == st.model ? sc.ICON_CIRCLE_CHECK : IC_CPU,
-			m.name == st.model ? "size-4 shrink-0 text-foreground" : "size-4 shrink-0 text-muted-foreground",
-		)
-		p.col(ui, "flex-1 min-w-0 gap-0.5")
-		p.row(ui, "items-center gap-2")
-		p.text(ui, m.name, "text-sm font-medium whitespace-nowrap")
-		p.style(ui).shrink = 0
-		if m.thinking {
-			sc.badge(ui, "thinking", .Secondary)
-		}
-		if m.quant != "" {
-			sc.badge(ui, m.quant, .Outline)
-		}
-		p.end(ui)
-		p.textf(
-			ui,
-			"text-[11] text-muted-foreground whitespace-nowrap",
-			"%s parameters · %s on disk · %s · context %d",
-			m.params == "" ? "?" : m.params,
-			human_bytes(m.size, context.temp_allocator),
-			m.family,
-			m.ctx_len,
-		)
-		p.end(ui)
-		if resident_of(pv, m.name) > 0 {
-			sc.badge(ui, "resident", .Default)
-		}
-		p.end(ui)
-	}
-
-	p.row(ui, "w-full shrink-0 items-center gap-3 px-2 pt-2")
-	hint(ui, "Up/Down", "choose")
-	hint(ui, "Enter", "use it")
-	hint(ui, "^O", "pull another")
-	p.end(ui)
-}
-
-resident_of :: proc(pv: Probe_View, name: string) -> i64 {
-	for l in pv.loaded {
-		if l.name == name {
-			return l.size
-		}
-	}
-	return 0
-}
-
-prompts_overlay :: proc(ui: ^p.Ctx, st: ^St) {
-	overlay_head(ui, IC_LIBRARY, "Prompt library", "saved on this machine, in prompts.txt")
-
-	p.col(ui, "w-full min-h-0 p-1.5 gap-0.5 overflow-scroll")
-	defer p.end(ui)
-
-	for pr, i in st.prompts {
-		p.key(ui, fmt.tprintf("p%d", i))
-		sel := i == st.ov_sel
-		idx := p.col(ui, "w-full shrink-0 gap-0.5 px-2.5 py-2 rounded-lg transition cursor-pointer")
-		p.apply(ui, sel ? "bg-accent" : "hover:bg-muted", idx)
-		if p.clickable(ui, idx) {
-			clear(&st.input)
-			append(&st.input, ..transmute([]u8)pr.body)
-			st.caret = len(st.input)
-			st.overlay = .None
-			st.zone = .Composer
-		}
-		if p.is_hovered(ui, idx) && st.moved {
-			st.ov_sel = i
-		}
-		p.row(ui, "w-full items-center gap-2")
-		p.icon(ui, IC_BOOKMARK, "size-3 shrink-0 text-muted-foreground")
-		p.text(ui, pr.name, "text-sm font-medium whitespace-nowrap")
-		p.style(ui).shrink = 0
-		p.end(ui)
-		one := pr.body
-		if nl := strings.index_byte(one, '\n'); nl > 0 {
-			one = one[:nl]
-		}
-		p.text(ui, one, "text-[11] text-muted-foreground whitespace-nowrap truncate w-full")
-		p.end(ui)
-	}
-	if len(st.prompts) == 0 {
-		p.text(ui, "The library is empty.", "text-xs text-muted-foreground p-3")
-	}
-
-	p.row(ui, "w-full shrink-0 items-center gap-3 px-2 pt-2")
-	hint(ui, "Enter", "load into the composer")
-	hint(ui, "^A", "save the composer as a prompt")
-	hint(ui, "^Del", "remove")
-	p.end(ui)
-}
-
-pull_overlay :: proc(ui: ^p.Ctx, st: ^St) {
-	overlay_head(ui, sc.ICON_DOWNLOAD, "Pull a model", "streams progress from /api/pull")
-
-	p.col(ui, "w-full p-4 gap-3")
-	defer p.end(ui)
-
-	p.text(ui, "Model name", "text-xs font-medium")
-	p.row(ui, "w-full h-9 items-center gap-2 px-2.5 rounded-lg border border-ring ring-3 ring-ring/40 bg-background")
-	name := string(st.pull_name[:])
-	if name == "" {
-		p.text(ui, "qwen3:1.7b", "text-sm text-muted-foreground whitespace-nowrap")
-	} else {
-		p.text(ui, name, "text-sm whitespace-nowrap")
-	}
-	p.style(ui).shrink = 0
-	if !st.pulling {
-		cx := p.text_width(ui.fonts, name, 14, .Sans, .Regular)
-		car := p.div(ui, "absolute w-[1.5] rounded-full bg-foreground")
-		cs := p.style(ui, car)
-		cs.inset[p.LEFT] = p.px(10 + cx)
-		cs.inset[p.TOP] = p.px(10)
-		cs.h = p.px(16)
-		p.end(ui)
-	}
-	p.spacer(ui)
-	if st.pulling {
-		p.icon(ui, sc.ICON_LOADER_CIRCLE, "size-4 shrink-0 text-muted-foreground", f32(mono()))
-	} else {
-		sc.kbd(ui, "Enter")
-	}
-	p.end(ui)
-
-	s := st.pull_live
-	if st.pulling || s.status != "" {
-		p.col(ui, "w-full gap-1.5 rounded-lg border border-border bg-muted/40 p-3")
-		p.row(ui, "w-full items-center gap-2")
-		p.text(ui, s.status == "" ? "starting…" : s.status, "text-xs whitespace-nowrap truncate")
-		p.spacer(ui)
-		if s.total > 0 {
-			p.textf(
-				ui,
-				"text-xs font-mono whitespace-nowrap",
-				"%s / %s",
-				human_bytes(s.completed, context.temp_allocator),
-				human_bytes(s.total, context.temp_allocator),
-			)
-			p.style(ui).shrink = 0
-		}
-		p.end(ui)
-		if s.total > 0 {
-			sc.progress_track(ui, clamp(f32(f64(s.completed) / f64(s.total)) * 100, 0, 100))
-		}
-		if s.err != "" {
-			p.text(ui, s.err, "text-[11] text-destructive")
-		}
-		p.end(ui)
-	}
-
-	p.text(
-		ui,
-		"The download comes from the ollama registry through the local daemon; this window never opens a socket of its own except to 127.0.0.1.",
-		"text-[10.5] text-muted-foreground",
-	)
-}
-
-confirm_overlay :: proc(ui: ^p.Ctx, st: ^St) {
-	c := cur_conv(st)
-	overlay_head(ui, sc.ICON_TRASH, "Delete this conversation?", "the file is removed from disk")
-	p.col(ui, "w-full p-4 gap-3")
-	defer p.end(ui)
-	p.text(
-		ui,
-		c == nil ? "" : c.title,
-		"text-sm font-medium",
-	)
-	if c != nil {
-		p.textf(
-			ui,
-			"text-xs text-muted-foreground",
-			"%d messages · %s",
-			len(c.msgs),
-			conv_path(c.id, context.temp_allocator),
-		)
-	}
-	p.row(ui, "w-full items-center gap-3 pt-1")
-	hint(ui, "Enter", "delete")
-	hint(ui, "Esc", "keep it")
-	p.end(ui)
-}
-
-system_overlay :: proc(ui: ^p.Ctx, st: ^St) {
-	overlay_head(
-		ui,
-		sc.ICON_FILE_TEXT,
-		"System prompt",
-		"sent as the first message of every request",
-	)
-	p.col(ui, "w-full p-4 gap-3")
-	defer p.end(ui)
-
-	p.col(
-		ui,
-		"w-full min-h-[120] rounded-lg border border-ring ring-3 ring-ring/40 bg-background px-3 py-2.5",
-	)
-	text := string(st.sys_buf[:])
-	if text == "" {
-		p.text(
-			ui,
-			"e.g. You are terse. Answer in at most three sentences and never apologise.",
-			"text-sm text-muted-foreground",
-		)
-	} else {
-		p.text(ui, text, "text-sm leading-[20]")
-	}
-	p.end(ui)
-
-	p.row(ui, "w-full items-center gap-3")
-	hint(ui, "Enter", "save")
-	hint(ui, "Shift-Enter", "newline")
-	hint(ui, "^U", "clear")
-	p.spacer(ui)
-	p.textf(ui, "text-[10.5] font-mono text-muted-foreground whitespace-nowrap", "%d chars", len(text))
-	p.style(ui).shrink = 0
-	p.end(ui)
-}
-
-help_overlay :: proc(ui: ^p.Ctx, st: ^St) {
-	overlay_head(ui, sc.ICON_TERMINAL, "Keys", "the whole application is keyboard-driven")
-	p.col(ui, "w-full min-h-0 p-4 gap-1.5 overflow-scroll")
-	defer p.end(ui)
-
-	rows := [?][2]string {
-		{"Enter", "send the composer"},
-		{"Shift+Enter", "a newline in the composer"},
-		{"Esc", "stop the generation, or close a panel"},
-		{"Tab", "move between the composer, the chat list and the parameters"},
-		{"Ctrl+N  /  F2", "new conversation"},
-		{"Ctrl+J / Ctrl+K", "next / previous conversation"},
-		{"Ctrl+D", "delete this conversation"},
-		{"Ctrl+M", "model picker"},
-		{"Ctrl+O", "pull a model"},
-		{"Ctrl+Shift+O", "attach a file to the message"},
-		{"Ctrl+T  /  F3", "thinking on or off"},
-		{"Ctrl+R  /  F4", "show or hide reasoning"},
-		{"Ctrl+B", "collapse the newest reasoning block"},
-		{"Ctrl+G", "regenerate the last reply"},
-		{"Ctrl+E", "edit the last question and resend"},
-		{"Ctrl+Y", "copy the last reply"},
-		{"Ctrl+P", "prompt library"},
-		{"Ctrl+S", "system prompt"},
-		{"Ctrl+,  /  F5", "parameter panel"},
-		{"PageUp / PageDown", "scroll the transcript"},
-		{"Ctrl+End", "follow the bottom again"},
-		{"Ctrl+Q", "quit"},
-	}
-	for r in rows {
-		p.row(ui, "w-full shrink-0 items-center gap-3")
-		p.div(ui, "shrink-0 flex-row justify-end")
-		p.style(ui).w = p.px(178)
-		sc.kbd(ui, r[0])
-		p.end(ui)
-		p.text(ui, r[1], "flex-1 text-xs text-muted-foreground")
-		p.end(ui)
-	}
-	_ = st
+	sc.button_end(ui)
+	return hit
 }
