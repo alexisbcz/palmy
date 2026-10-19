@@ -164,7 +164,7 @@
             "url": "/distro/cloud-contract",
             "title": "The cloud contract",
             "nav": "Cloud contract",
-            "description": "The interfaces the account, mail and drive pieces of the cloud part are being built against: layout, ownership and what each piece must agree on."
+            "description": "The interfaces every cloud piece is built against — accounts, mail, drive, calendar and contacts, chat and calls, forge, office, browser, vault: layout, ownership, migration ranges and the one access rule."
           },
           {
             "slug": "wm-interaction-model",
@@ -172,6 +172,88 @@
             "title": "The window manager's interaction model",
             "nav": "wm interaction model",
             "description": "The spec for how the window manager should feel under the hands, starting from an audit of what it did when the spec was written."
+          }
+        ]
+      },
+      {
+        "title": "Cloud",
+        "pages": [
+          {
+            "slug": "cloud-product",
+            "url": "/distro/cloud-product",
+            "title": "Product principles",
+            "nav": "Product principles",
+            "description": "One account, several identities: the principles, the information architecture and what Palmframe will not do."
+          },
+          {
+            "slug": "cloud-research",
+            "url": "/distro/cloud-research",
+            "title": "Research: the suites we are up against",
+            "nav": "Research: the suites we are up against",
+            "description": "What people hate and love in Google Workspace, Microsoft 365, iCloud and Proton, with sources."
+          },
+          {
+            "slug": "cloud-roadmap",
+            "url": "/distro/cloud-roadmap",
+            "title": "Cloud roadmap",
+            "nav": "Cloud roadmap",
+            "description": "Milestones from a prototype to something a person can switch to, and the risks."
+          },
+          {
+            "slug": "cloud-shell",
+            "url": "/distro/cloud-shell",
+            "title": "Identity in the shell",
+            "nav": "Identity in the shell",
+            "description": "How identity appears in the window manager, the greeter and every app: a proposal."
+          },
+          {
+            "slug": "cloud-accounts",
+            "url": "/distro/cloud-accounts",
+            "title": "Accounts",
+            "nav": "Accounts",
+            "description": "Identities, devices, scoped sessions on Supabase, and the plan for recovery, passkeys and hosting."
+          },
+          {
+            "slug": "cloud-mail",
+            "url": "/distro/cloud-mail",
+            "title": "Mail",
+            "nav": "Mail",
+            "description": "palm-maild: SMTP and JMAP over the identity schema, local delivery only, and the Resend plan."
+          },
+          {
+            "slug": "cloud-drive",
+            "url": "/distro/cloud-drive",
+            "title": "Drive",
+            "nav": "Drive",
+            "description": "Per-identity storage, palm-drive sync, conflicts, shares and links."
+          },
+          {
+            "slug": "cloud-calendar-contacts",
+            "url": "/distro/cloud-calendar-contacts",
+            "title": "Calendar and contacts",
+            "nav": "Calendar and contacts",
+            "description": "palm-davd: CalDAV and CardDAV per identity, scheduling, and client compatibility."
+          },
+          {
+            "slug": "cloud-chat-calls",
+            "url": "/distro/cloud-chat-calls",
+            "title": "Chat and calls",
+            "nav": "Chat and calls",
+            "description": "Spaces, channels and threads; the call SFU with per-frame encryption; measurements and open decisions."
+          },
+          {
+            "slug": "cloud-forge",
+            "url": "/distro/cloud-forge",
+            "title": "Forge",
+            "nav": "Forge",
+            "description": "A git forge on the account: smart HTTP, tokens, repos, issues and pull requests."
+          },
+          {
+            "slug": "cloud-browser",
+            "url": "/distro/cloud-browser",
+            "title": "Browser",
+            "nav": "Browser",
+            "description": "Palmframe's own browser chrome over Chromium or Firefox, chosen per identity, with bookmark sync."
           }
         ]
       },

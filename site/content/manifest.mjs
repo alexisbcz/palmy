@@ -210,12 +210,12 @@ export const COLLECTIONS = {
             title: "The cloud contract",
             nav: "Cloud contract",
             description:
-              "The interfaces the account, mail and drive pieces of the cloud part are being built against: layout, ownership and what each piece must agree on.",
+              "The interfaces every cloud piece is built against — accounts, mail, drive, calendar and contacts, chat and calls, forge, office, browser, vault: layout, ownership, migration ranges and the one access rule.",
             source: { file: "cloud/CONTRACT.md" },
             note: {
               type: "info",
               title: "A contract for work in progress",
-              body: "The pieces this file describes are being built against it now. None of them is part of the distribution yet; the idea behind them is on [The cloud part](/palmframe/cloud).",
+              body: "These pieces run against a local Supabase stack (`cloud/dev`) and are not part of the distribution image yet; the idea behind them is on [The cloud part](/palmframe/cloud).",
             },
           },
           {
@@ -230,6 +230,99 @@ export const COLLECTIONS = {
               title: "A spec, with an audit dated to when it was written",
               body: "Section 1 describes the window manager before the rework this spec asked for. The current key bindings and gestures are on [The window manager](/distro/window-manager), read from the source.",
             },
+          },
+        ],
+      },
+      {
+        title: "Cloud",
+        pages: [
+          {
+            slug: "cloud-product",
+            title: "Product principles",
+            nav: "Product principles",
+            description:
+              "One account, several identities: the principles, the information architecture and what Palmframe will not do.",
+            source: { file: "cloud/docs/product.md" },
+          },
+          {
+            slug: "cloud-research",
+            title: "Research: the suites we are up against",
+            nav: "Research: the suites we are up against",
+            description:
+              "What people hate and love in Google Workspace, Microsoft 365, iCloud and Proton, with sources.",
+            source: { file: "cloud/docs/research.md" },
+          },
+          {
+            slug: "cloud-roadmap",
+            title: "Cloud roadmap",
+            nav: "Cloud roadmap",
+            description:
+              "Milestones from a prototype to something a person can switch to, and the risks.",
+            source: { file: "cloud/docs/roadmap.md" },
+          },
+          {
+            slug: "cloud-shell",
+            title: "Identity in the shell",
+            nav: "Identity in the shell",
+            description:
+              "How identity appears in the window manager, the greeter and every app: a proposal.",
+            source: { file: "cloud/docs/shell.md" },
+          },
+          {
+            slug: "cloud-accounts",
+            title: "Accounts",
+            nav: "Accounts",
+            description:
+              "Identities, devices, scoped sessions on Supabase, and the plan for recovery, passkeys and hosting.",
+            source: { file: "cloud/docs/accounts.md" },
+          },
+          {
+            slug: "cloud-mail",
+            title: "Mail",
+            nav: "Mail",
+            description:
+              "palm-maild: SMTP and JMAP over the identity schema, local delivery only, and the Resend plan.",
+            source: { file: "cloud/docs/mail.md" },
+          },
+          {
+            slug: "cloud-drive",
+            title: "Drive",
+            nav: "Drive",
+            description:
+              "Per-identity storage, palm-drive sync, conflicts, shares and links.",
+            source: { file: "cloud/docs/drive.md" },
+          },
+          {
+            slug: "cloud-calendar-contacts",
+            title: "Calendar and contacts",
+            nav: "Calendar and contacts",
+            description:
+              "palm-davd: CalDAV and CardDAV per identity, scheduling, and client compatibility.",
+            source: { file: "cloud/docs/calendar-contacts.md" },
+          },
+          {
+            slug: "cloud-chat-calls",
+            title: "Chat and calls",
+            nav: "Chat and calls",
+            description:
+              "Spaces, channels and threads; the call SFU with per-frame encryption; measurements and open decisions.",
+            source: { file: "cloud/docs/chat-calls.md" },
+          },
+          {
+            slug: "cloud-forge",
+            title: "Forge",
+            nav: "Forge",
+            description:
+              "A git forge on the account: smart HTTP, tokens, repos, issues and pull requests.",
+            source: { file: "cloud/docs/forge.md" },
+          },
+          {
+            slug: "cloud-browser",
+            title: "Browser",
+            nav: "Browser",
+            description:
+              "Palmframe's own browser chrome over Chromium or Firefox, chosen per identity, with bookmark sync.",
+            source: { file: "cloud/docs/browser.md" },
           },
         ],
       },
