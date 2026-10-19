@@ -1,0 +1,166 @@
+
+== stack, server and apps
+[dave2e] seed applied
+[dave2e] 7 new migration(s) applied
+API URL      http://127.0.0.1:59560
+
+== two people sign up; Maya has a personal and a work identity
+maya
+maya-work
+noah
+$ as maya calendar list
+calendars:
+  key                identity   name            color    access  owner      events
+  local                         Local calendar  #2563eb  owner              0
+  maya/default       maya       Calendar        #6366f1  owner   maya       0
+  maya-work/default  maya-work  Calendar        #10b981  owner   maya-work  0
+count:     3
+
+== 1. events from the Palmframe calendar app
+$ as maya calendar add Dentist --date 2026-10-22 --time 08:30 --minutes 30 --calendar maya/default
+calendar: maya/default
+uid:      18dfe9b4277a10f4-14d087@palmframe
+name:     18dfe9b4277a10f4-14d087@palmframe.ics
+synced:   yes
+stand-up uid: 18dfe9b4292ff21c-14d08d@palmframe
+$ as maya calendar delete 18dfe9b4292ff21c-14d08d@palmframe --occurrence 2026-10-21 --yes
+uid:      18dfe9b4292ff21c-14d08d@palmframe
+calendar: maya-work/default
+
+== app passwords for the third-party client
+three app passwords, one identity each (shown once, not printed here)
+
+== 2. python-caldav adds an event and moves one stand-up
+$ py maya <app-password> add default BEGIN:VCALENDAR
+VERSION:2.0
+PRODID:-//e2e//EN
+BEGIN:VEVENT
+UID:ceramics@e2e
+DTSTAMP:20261019T080000Z
+DTSTART;TZID=Europe/Paris:20261023T183000
+DTEND;TZID=Europe/Paris:20261023T203000
+SUMMARY:Ceramics class
+END:VEVENT
+END:VCALENDAR
+stored
+$ py maya-work <app-password> override default 18dfe9b4292ff21c-14d08d@palmframe 20261023T073000Z 20261023T090000Z 20261023T091500Z
+override stored
+-- what python-caldav sees in maya-work, week of 19 October (expanded):
+$ py maya-work <app-password> events default 20261019 20261026
+Fri 23 09:00Z  Stand-up (moved by python-caldav)
+Mon 19 07:30Z  Stand-up
+ok    python-caldav sees the stand-up without Wednesday (EXDATE from the app)
+-- what the app sees after sync:
+$ as maya calendar events --from 2026-10-19 --to 2026-10-26
+events:
+  date:      2026-10-19
+  start:     09:30
+  minutes:   15
+  title:     Stand-up
+  place:     
+  calendar:  maya-work/default
+  uid:       18dfe9b4292ff21c-14d08d@palmframe
+  recurring: yes
+  cancelled: no
+
+  date:      2026-10-22
+  start:     08:30
+  minutes:   30
+  title:     Dentist
+  place:     
+  calendar:  maya/default
+  uid:       18dfe9b4277a10f4-14d087@palmframe
+  recurring: no
+  cancelled: no
+
+  date:      2026-10-23
+  start:     11:00
+  minutes:   15
+  title:     Stand-up (moved by python-caldav)
+  place:     
+  calendar:  maya-work/default
+  uid:       18dfe9b4292ff21c-14d08d@palmframe
+  recurring: yes
+  cancelled: no
+
+  date:      2026-10-23
+  start:     18:30
+  minutes:   120
+  title:     Ceramics class
+  place:     
+  calendar:  maya/default
+  uid:       ceramics@e2e
+  recurring: no
+  cancelled: no
+count:  4
+ok    the app sees the event python-caldav made
+ok    the app sees the moved stand-up
+ok    python-caldav sees the event the app made
+
+== 3. Maya invites Noah from her work identity; Noah accepts
+$ as noah calendar invitations
+invitations:
+  uid                                title            identity  organizer            start                 calendar
+  18dfe9b49033e68d-14d1ab@palmframe  Project kickoff  noah      maya-work@palm.test  2026-10-27T13:00:00Z  noah/default
+count:       1
+$ as noah calendar accept 18dfe9b49033e68d-14d1ab@palmframe
+uid:      18dfe9b49033e68d-14d1ab@palmframe
+partstat: ACCEPTED
+{"title":"Project kickoff","attendees":[{"address":"maya-work@palm.test","partstat":"ORGANIZER"},{"address":"noah@palm.test","partstat":"ACCEPTED"}]}
+ok    Maya's copy says Noah ACCEPTED
+
+== 4. a read-only share from Maya to Noah
+$ as maya calendar share --calendar maya/default --with noah@palm.test --access read
+calendar: maya/default
+with:     noah@palm.test
+access:   read
+$ as noah calendar list
+calendars:
+  key                identity  name             color    access  owner  events
+  local                        Local calendar   #2563eb  owner          0
+  noah/default       noah      Calendar         #f59e0b  owner   noah   1
+  noah/maya~default  noah      Calendar (maya)  #6366f1  read    maya   2
+count:     3
+ok    Noah reads Maya's personal calendar
+calendar: failed — noah/maya~default is shared with you read-only
+ok    Noah cannot write into it (exit 7)
+ok    and the server says 403 too
+
+== 5. isolation
+ok    Maya's work app password lists only maya-work
+ok    and gets 404 for Maya's personal calendar
+ok    the app refuses another person's identity (exit 5 = out of scope)
+
+== 6. contacts: the app, vdirsyncer, khard, and back
+contacts add "Ingrid Solberg" ... --book maya/default  ->  uid 9ee36ba8-4c1a-4e74-89a3-cee017ec5d10
+$ khard -c vdir/khard.conf list
+Address book: default
+Index    Name              Phone                    Email                             Uid   
+1        Ingrid Solberg    cell: +47 22 00 00 00    internet: ingrid@fjord.example    9     
+ok    khard sees the contact made in the app
+Syncing contacts/default
+Syncing calendars/default
+Copying (updating) item 9ee36ba8-4c1a-4e74-89a3-cee017ec5d10 to contacts_remote/default
+$ as maya contacts show 9ee36ba8-4c1a-4e74-89a3-cee017ec5d10
+uid:      9ee36ba8-4c1a-4e74-89a3-cee017ec5d10
+name:     Ingrid Solberg
+identity: maya
+book:     maya/default
+groups:
+  (none)
+vcard:    BEGIN:VCARD
+VERSION:4.0
+PRODID:-//Palmframe//Contacts//EN
+UID:9ee36ba8-4c1a-4e74-89a3-cee017ec5d10
+FN:Ingrid Solberg
+N:Solberg;Ingrid;;;
+ORG:Fjord Labs
+TITLE:Head of research
+EMAIL:ingrid@fjord.example
+TEL;TYPE=cell;VALUE=uri:tel:+47 22 00 00 00
+END:VCARD
+
+ok    the app sees the edit made on khard's side
+
+== done
+all steps passed
