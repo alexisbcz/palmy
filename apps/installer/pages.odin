@@ -166,7 +166,7 @@ page_keyboard :: proc(st: ^St, ui: ^p.Ctx) {
 				pick_layout(st, li, now)
 			}
 			p.col(ui, "flex-1 min-w-0")
-			txt(ui, k.description, "text-sm whitespace-nowrap truncate")
+			txt(ui, keyboard_name(k.description), "text-sm whitespace-nowrap truncate")
 			p.end(ui)
 			p.text(ui, k.layout, "text-xs font-mono text-muted-foreground")
 			hend(ui, row)
@@ -212,7 +212,7 @@ page_keyboard :: proc(st: ^St, ui: ^p.Ctx) {
 				pick_variant(st, k.variant, now)
 			}
 			p.col(ui, "flex-1 min-w-0")
-			txt(ui, k.description, "text-sm whitespace-nowrap truncate")
+			txt(ui, keyboard_name(k.description), "text-sm whitespace-nowrap truncate")
 			p.end(ui)
 			p.text(ui, k.variant, "text-xs font-mono text-muted-foreground")
 			hend(ui, row)
@@ -225,7 +225,7 @@ page_keyboard :: proc(st: ^St, ui: ^p.Ctx) {
 		txt(ui, tr("Try your keyboard"), "text-sm font-medium text-foreground")
 		sc.input(ui, &st.kb_test, tr("Type here to test the layout"))
 		k := cur_keyboard(st)
-		txt(ui, trf("Active: %s", k.description), "text-xs text-muted-foreground")
+		txt(ui, trf("Active: %s", keyboard_name(k.description)), "text-xs text-muted-foreground")
 		if st.backend.demo && st.kb_said != "" {
 			txt(ui, st.kb_said, "text-xs font-mono text-muted-foreground")
 		}
@@ -323,7 +323,8 @@ page_timezone :: proc(st: ^St, ui: ^p.Ctx) {
 		p.end(ui)
 		place := zz.region
 		if zz.country != "" {
-			place = zz.region == "" ? zz.country : fmt.tprintf("%s · %s", zz.country, zz.region)
+			country := country_name(zz.country_code, zz.country)
+			place = zz.region == "" ? country : fmt.tprintf("%s · %s", country, zz.region)
 		}
 		p.text(ui, place, "text-xs text-muted-foreground whitespace-nowrap")
 		hend(ui, row)
@@ -562,7 +563,7 @@ page_summary :: proc(st: ^St, ui: ^p.Ctx) {
 		a := account_of(st)
 		lang := cur_language(st)
 		summary_row(st, ui, .Language, II_LANGUAGES, tr("Language"), lang.native_name, "")
-		summary_row(st, ui, .Keyboard, II_KEYBOARD, tr("Keyboard"), k.description, k.variant == "" ? k.layout : fmt.tprintf("%s (%s)", k.layout, k.variant))
+		summary_row(st, ui, .Keyboard, II_KEYBOARD, tr("Keyboard"), keyboard_name(k.description), k.variant == "" ? k.layout : fmt.tprintf("%s (%s)", k.layout, k.variant))
 		summary_row(st, ui, .Timezone, II_CLOCK, tr("Time zone"), z.city, z.name)
 		summary_row(st, ui, .Disk, II_HARD_DRIVE, tr("Disk"), d.path, tr("GPT: 512 MiB EFI system partition, ext4 root on the rest"))
 		summary_row(st, ui, .Disk, II_MEMORY_STICK, tr("Swap"), st.swap ? trf("A swap file of %s", size_label(st.swap_bytes)) : tr("None"), "")
@@ -749,7 +750,11 @@ page_install :: proc(st: ^St, ui: ^p.Ctx) {
 // ---------------------------------------------------------------------------
 
 page_done :: proc(st: ^St, ui: ^p.Ctx) {
-	p.col(ui, "w-full flex-1 items-center justify-center gap-6")
+	// From the top rather than centred: the compositor parks the pointer at
+	// the centre of the screen, where a centred heading would sit under it.
+	// This block ends about 360 px down, above the centre of any screen the
+	// installer supports (768 px high and up).
+	p.col(ui, "w-full flex-1 items-center justify-start pt-24 gap-6")
 	defer p.end(ui)
 	p.div(ui, "size-20 rounded-full bg-emerald-950 border border-emerald-700 items-center justify-center")
 	p.icon(ui, II_CIRCLE_CHECK, "size-10 text-emerald-400")

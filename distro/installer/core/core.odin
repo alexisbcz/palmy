@@ -58,6 +58,7 @@ Zone :: struct {
 	region:  string, // Europe
 	city:    string, // Paris
 	country: string, // France
+	country_code: string, // FR, the ISO 3166-1 code (the first, where a zone has several)
 }
 
 Language :: struct {

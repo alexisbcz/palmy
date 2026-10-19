@@ -48,6 +48,7 @@ selftest :: proc() -> int {
 	test_demo_install()
 	test_rtl()
 	test_catalogues()
+	test_data_catalogues()
 	fmt.println(strings.repeat("-", 72, context.temp_allocator))
 	fmt.printfln("%d checks, %d failed", checks, failures)
 	return failures == 0 ? 0 : 1
@@ -622,4 +623,33 @@ test_catalogues :: proc() {
 		}
 		check(fmt.tprintf("catalogue %s: no stale entries", lang), stale == 0, fmt.tprintf("%d stale", stale))
 	}
+}
+
+// The data catalogues (countries.msg, keyboards.msg): country names and
+// layout descriptions follow the interface's language, and English stays
+// English.
+@(private = "file")
+test_data_catalogues :: proc() {
+	set_language("fr_FR")
+	check("data: a country in French", country_name("DE", "Germany") == "Allemagne", country_name("DE", "Germany"))
+	check("data: a layout in French", keyboard_name("German") == "Allemand", keyboard_name("German"))
+	check("data: no translation keeps tzdata's name", country_name("", "Britain (UK)") == "Britain (UK)")
+	st := demo_state()
+	for l, i in st.languages {
+		if l.code == "fr_FR" {pick_language(st, i)}
+	}
+	sorted := true
+	for li in 1 ..< len(st.layouts) {
+		a := strings.to_lower(keyboard_name(st.keyboards[st.layouts[li - 1]].description))
+		b := strings.to_lower(keyboard_name(st.keyboards[st.layouts[li]].description))
+		if a > b {sorted = false}
+	}
+	first := keyboard_name(st.keyboards[st.layouts[0]].description)
+	check("data: the layout list is sorted in French", sorted && first != "Arabic", first)
+	check("data: the French layout stays chosen", cur_keyboard(st).layout == "fr", cur_keyboard(st).layout)
+	set_language("ja_JP")
+	check("data: a country in Japanese", country_name("JP", "Japan") == "日本", country_name("JP", "Japan"))
+	set_language("en_US")
+	check("data: English is tzdata's", country_name("GB", "Britain (UK)") == "Britain (UK)")
+	check("data: and base.lst's", keyboard_name("German") == "German")
 }

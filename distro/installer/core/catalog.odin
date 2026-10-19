@@ -113,7 +113,9 @@ list_zones :: proc(zoneinfo := "/usr/share/zoneinfo") -> []Zone {
 		if i := strings.index_byte(code, ','); i >= 0 {
 			code = code[:i]
 		}
-		append(&out, make_zone(name, countries[code] or_else code))
+		z := make_zone(name, countries[code] or_else code)
+		z.country_code = strings.clone(code)
+		append(&out, z)
 	}
 	// The one zone nobody lives in but many want.
 	if !seen["UTC"] {

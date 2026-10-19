@@ -111,6 +111,7 @@ has_rtl_letters :: proc(s: string) -> bool {
 i18n_start :: proc(lang := "") {
 	find_checkout_catalogues()
 	kit.i18n_init(DOMAIN, lang)
+	load_data_catalogues()
 }
 
 // set_language switches the whole interface: the next frame is drawn from the
@@ -118,6 +119,70 @@ i18n_start :: proc(lang := "") {
 set_language :: proc(code: string) {
 	find_checkout_catalogues()
 	kit.i18n_init(DOMAIN, code)
+	load_data_catalogues()
+}
+
+// ---------------------------------------------------------------------------
+// Data: country names and keyboard layout descriptions
+// ---------------------------------------------------------------------------
+
+// The time zone list names countries and the keyboard list describes
+// layouts in the words tzdata and xkeyboard-config use, which are English.
+// Their translations come from iso-codes and from xkeyboard-config itself,
+// imported into two more catalogues per language by
+// distro/locale/import-data.py: countries.msg (keyed by the ISO 3166-1
+// code) and keyboards.msg (keyed by base.lst's English description). They
+// are separate from installer.msg because they are data, generated rather
+// than written, and nothing checks them against the source. Whatever has no
+// translation stays English.
+@(private = "file")
+Data_Catalogues :: struct {
+	lang:      string,
+	countries: kit.Catalog,
+	keyboards: kit.Catalog,
+	have_c:    bool,
+	have_k:    bool,
+}
+
+@(private = "file")
+data: Data_Catalogues
+
+load_data_catalogues :: proc() {
+	lang := kit.i18n_language()
+	if lang == data.lang {
+		return
+	}
+	if data.have_c {kit.i18n_catalog_destroy(&data.countries)}
+	if data.have_k {kit.i18n_catalog_destroy(&data.keyboards)}
+	delete(data.lang)
+	data = {lang = strings.clone(lang)}
+	if lang == "en" {
+		return
+	}
+	root := kit.i18n_root()
+	data.countries, data.have_c = kit.i18n_load_file(fmt.tprintf("%s/%s/countries.msg", root, lang), lang)
+	data.keyboards, data.have_k = kit.i18n_load_file(fmt.tprintf("%s/%s/keyboards.msg", root, lang), lang)
+}
+
+// country_name is the country `code` names in the interface's language, or
+// `english` (tzdata's name) when there is no translation.
+country_name :: proc(code, english: string) -> string {
+	if data.have_c && code != "" {
+		if t, ok := kit.i18n_lookup(&data.countries, code); ok {
+			return mark(t)
+		}
+	}
+	return english
+}
+
+// keyboard_name is a layout's description in the interface's language.
+keyboard_name :: proc(description: string) -> string {
+	if data.have_k {
+		if t, ok := kit.i18n_lookup(&data.keyboards, description); ok {
+			return mark(t)
+		}
+	}
+	return description
 }
 
 is_rtl :: proc() -> bool {

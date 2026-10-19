@@ -45,7 +45,7 @@ core_zones :: proc() -> []Zone {
 	zs := core.list_zones()
 	out := make([]Zone, len(zs))
 	for z, i in zs {
-		out[i] = Zone{name = z.name, region = z.region, city = z.city, country = z.country}
+		out[i] = Zone{name = z.name, region = z.region, city = z.city, country = z.country, country_code = z.country_code}
 	}
 	return out
 }

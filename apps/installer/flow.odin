@@ -13,6 +13,7 @@ package main
 // with no window at all.
 
 import "core:os"
+import "core:slice"
 import "core:strings"
 import "core:time"
 import "core:time/datetime"
@@ -229,6 +230,7 @@ pick_language :: proc(st: ^St, i: int) {
 	l := cur_language(st)
 	if l.available {
 		set_language(l.code)
+		sort_layouts(st)
 	}
 	for d in LANGUAGE_DEFAULTS {
 		if !strings.has_prefix(l.code, d.prefix) {
@@ -553,6 +555,35 @@ matches :: proc(query: string, hay: ..string) -> bool {
 	return true
 }
 
+// sort_layouts orders the layout list by its description in the interface's
+// language, as base.lst orders it in English, keeping the selection.
+@(private = "file")
+sorting: ^St
+
+sort_layouts :: proc(st: ^St) {
+	if len(st.layouts) == 0 {
+		return
+	}
+	cur := st.layouts[clamp(st.layout_i, 0, len(st.layouts) - 1)]
+	sorting = st
+	slice.stable_sort_by(st.layouts[:], proc(a, b: int) -> bool {
+		return keyboard_sort_key(keyboard_name(sorting.keyboards[a].description)) < keyboard_sort_key(keyboard_name(sorting.keyboards[b].description))
+	})
+	sorting = nil
+	for idx, li in st.layouts {
+		if idx == cur {
+			st.layout_i = li
+		}
+	}
+}
+
+// keyboard_sort_key drops the marks and case that would sort "Économie"
+// after "Z": lower case, and the RIGHT-TO-LEFT MARK off.
+@(private = "file")
+keyboard_sort_key :: proc(s: string) -> string {
+	return strings.to_lower(strings.trim_prefix(s, RLM), context.temp_allocator)
+}
+
 // filtered_layouts / filtered_zones are the visible rows, as indexes into
 // `layouts` and `zones`.
 filtered_layouts :: proc(st: ^St, allocator := context.temp_allocator) -> []int {
@@ -560,7 +591,7 @@ filtered_layouts :: proc(st: ^St, allocator := context.temp_allocator) -> []int 
 	q := string(st.kb_search[:])
 	for idx, li in st.layouts {
 		k := st.keyboards[idx]
-		if matches(q, k.description, k.layout) {
+		if matches(q, keyboard_name(k.description), k.description, k.layout) {
 			append(&out, li)
 		}
 	}
@@ -571,7 +602,7 @@ filtered_zones :: proc(st: ^St, allocator := context.temp_allocator) -> []int {
 	out := make([dynamic]int, allocator)
 	q := string(st.zone_search[:])
 	for z, i in st.zones {
-		if matches(q, z.name, z.city, z.country) {
+		if matches(q, z.name, z.city, country_name(z.country_code, z.country), z.country) {
 			append(&out, i)
 		}
 	}

@@ -32,6 +32,7 @@ Zone :: struct {
 	region:  string, // Europe
 	city:    string, // Paris
 	country: string, // France (the core reads the name from iso3166.tab)
+	country_code: string, // FR: the key of countries.msg, which translates the name
 }
 
 Language :: struct {
