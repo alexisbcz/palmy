@@ -2,16 +2,18 @@ package main
 
 // palmy vault -- a password manager.
 //
-// The shape of it: a locked screen until the master password derives a key, a
-// list you can search, a detail pane you can edit, a generator, and TOTP codes
-// that count down. The crypto is in seal.odin, the file format in model.odin
-// and store.odin, and the only thing this file is responsible for is never
-// letting the key or a plaintext live longer than it has to.
+// Two vaults behind one window. On a device that is not enrolled in a
+// Palmframe account it is what it always was: one encrypted file, no network
+// code reachable from the window, no sync. On an enrolled device it is the
+// account vault: every identity's vaults, end-to-end encrypted, synced item by
+// item, shared deliberately between identities (cloud/docs/vault.md). Both go
+// through book.odin, the engine the command line uses too.
 //
-// There is no network code in this program. Not a socket, not a DNS lookup, no
-// breach check, no sync, no telemetry. The UI says so, on the lock screen,
-// because a password manager that merely does not mention the network is
-// asking to be trusted rather than checked.
+// The crypto is in seal.odin (the file) and keys.odin (the account); the
+// records in model.odin; sync in cloud.odin and sync.odin. This file is
+// responsible for never letting the key or a plaintext live longer than it
+// has to, and for the three timers that must fire without anyone touching
+// the keyboard: the idle lock, the clipboard clear, and the TOTP countdown.
 
 import "core:fmt"
 import "core:os"
@@ -21,13 +23,14 @@ import "core:time"
 import kit "kit:."
 import p "palmy:."
 
-WIN_W :: 1180
-WIN_H :: 760
+WIN_W :: 1280
+WIN_H :: 800
 
 // Defaults, both overridable on the command line so the recorded demo can show
 // them firing inside a short take.
 IDLE_LOCK_DEFAULT :: 300.0 // seconds of no input before the key is dropped
 CLIP_CLEAR_DEFAULT :: 20.0 // seconds a copied secret stays on the clipboard
+SYNC_EVERY :: 60.0 // seconds between background syncs while unlocked
 
 Screen :: enum u8 {
 	Unlock, // a vault exists; ask for the master password
@@ -55,23 +58,57 @@ FIELD_LABEL := [Field]string {
 	.Notes    = "Notes",
 }
 
+// The labelled fields each kind of item offers in the editor, beyond the
+// common ones. A `*` marks a secret: masked, wiped, never in search.
+KIND_FIELDS := [Item_Kind][]string {
+	.Login    = {},
+	.Passkey  = {},
+	.Card     = {"Cardholder", "Number*", "Expiry", "Security code*", "PIN*"},
+	.Note     = {},
+	.Document = {"Document", "Number*", "Full name", "Issued by", "Expires"},
+	.Totp     = {},
+}
+
 Busy :: enum u8 {
 	None,
 	Unlocking,
 	Creating,
 	Rekeying,
+	Syncing,
 }
 
 Pick_Use :: enum u8 {
 	None,
 	Open_Vault,
+	Import,
+}
+
+// What the sidebar has selected, which decides what the list shows.
+Nav_Kind :: enum u8 {
+	All,
+	Favorites,
+	Kind,
+	Tag,
+	Source, // one vault (account mode), or "Shared with me"
+	Health,
+}
+
+Nav :: struct {
+	kind:  Nav_Kind,
+	ikind: Item_Kind,
+	src:   int,
+}
+
+Kv_Buf :: struct {
+	label:  string,
+	buf:    [dynamic]u8,
+	secret: bool,
 }
 
 St :: struct {
-	path:       string,
+	using bk:   Book,
 	screen:     Screen,
-	sess:       Session,
-	v:          Vault,
+	dark:       bool,
 
 	// Lock screen
 	pw:         [dynamic]u8,
@@ -88,6 +125,7 @@ St :: struct {
 	query:      [dynamic]u8,
 	query_id:   u64,
 	tag:        string,
+	nav:        Nav,
 	sel:        int,
 	rows:       [dynamic]int,
 
@@ -95,6 +133,9 @@ St :: struct {
 	editing:    bool,
 	ed_new:     bool,
 	ed:         [Field][dynamic]u8,
+	ed_kind:    Item_Kind,
+	ed_kv:      [dynamic]Kv_Buf,
+	ed_target:  int, // the source a new item goes into (account mode)
 	ed_first:   u64,
 	reveal:     bool,
 	history:    bool,
@@ -110,6 +151,34 @@ St :: struct {
 	mp_again:   [dynamic]u8,
 	mp_err:     string,
 	mp_id:      u64,
+
+	// Sharing (account mode)
+	share_open: bool,
+	share_with: [dynamic]u8,
+	share_role: string,
+	share_err:  string,
+	share_id:   u64,
+
+	// Health
+	health:     Health,
+	health_ok:  bool,
+	breach_on:  bool, // the person allowed the breach check (off by default)
+	breach_msg: string,
+
+	// Import
+	imp:        Import_Result,
+	imp_open:   bool,
+	imp_path:   string,
+	imp_target: int,
+
+	// Autofill
+	af:         Af_Server,
+	af_on:      bool,
+
+	// Sync
+	sync_msg:   string,
+	sync_at:    f64,
+	sync_pend:  int,
 
 	// Clipboard
 	clip_label: string,
@@ -137,10 +206,22 @@ St :: struct {
 
 g: St
 
+is_gui_flag :: proc(a: string) -> bool {
+	for pfx in ([?]string{"--idle=", "--clip=", "--vault=", "--shot", "--make-demo-vault=", "--local", "--theme=", "--no-autofill"}) {
+		if strings.has_prefix(a, pfx) {
+			return true
+		}
+	}
+	return false
+}
+
 main :: proc() {
 	idle := f64(IDLE_LOCK_DEFAULT)
 	clip := f64(CLIP_CLEAR_DEFAULT)
 	path := ""
+	force_local := false
+	autofill := true
+	dark := os.get_env("PALM_THEME", context.temp_allocator) == "dark"
 
 	// The command line first (cli.odin). The window's own flags (--idle=,
 	// --shot, ...) are not verbs, so they skip straight past it.
@@ -164,6 +245,15 @@ main :: proc() {
 			}
 		case strings.has_prefix(a, "--vault="):
 			path = strings.clone(a[8:])
+			force_local = true
+		case a == "--local":
+			force_local = true
+		case a == "--no-autofill":
+			autofill = false
+		case a == "--theme=dark":
+			dark = true
+		case a == "--theme=light":
+			dark = false
 		case strings.has_prefix(a, "--shot"):
 			dir := "/tmp/palmy-vault-shots"
 			if strings.has_prefix(a, "--shot=") {
@@ -177,44 +267,34 @@ main :: proc() {
 			// the first-run samples, so there is nothing real anywhere near a
 			// frame of that recording.
 			os.exit(make_demo_vault(a[18:]) ? 0 : 1)
-		case a == "--help" || a == "-h":
-			fmt.println("palmy vault -- an encrypted password manager")
-			fmt.println("  --selftest        run the headless checks, including the published vectors")
-			fmt.println("  --idle=<seconds>  idle time before the vault locks itself (default 300)")
-			fmt.println("  --clip=<seconds>  how long a copied secret stays on the clipboard (default 20)")
-			fmt.println("  --vault=<path>    use this vault file instead of the default")
-			fmt.println("  --make-demo-vault=<path>")
-			fmt.println("                    write the demo fixture (sample entries, public TOTP seed)")
-			os.exit(0)
 		}
 	}
 
 	if !ensure_dir() {
-		fmt.eprintfln("vault: could not create %s", data_dir())
+		dir, why := data_dir_explained()
+		fmt.eprintfln("vault: could not create %s (chosen by %s)", dir, why)
 		os.exit(1)
 	}
 	if path == "" {
 		path = strings.clone(default_vault_path(context.temp_allocator))
 	}
 
-	g = St {
-		path       = path,
-		screen     = os.exists(path) ? .Unlock : .Create,
-		pw         = make([dynamic]u8),
-		pw2        = make([dynamic]u8),
-		query      = make([dynamic]u8),
-		rows       = make([dynamic]int),
-		mp_new     = make([dynamic]u8),
-		mp_again   = make([dynamic]u8),
-		gen        = GEN_DEFAULT,
-		idle_limit = idle,
-		clip_limit = clip,
-		focus_pw   = true,
-		have_clip  = clip_available(),
+	g = st_new(path)
+	g.idle_limit = idle
+	g.clip_limit = clip
+	g.dark = dark
+	if !force_local {
+		g.acct = acct_open()
+		if !acct_set_up(g.acct) {
+			acct_close(g.acct)
+			g.acct = nil
+		}
 	}
-	for f in Field {
-		g.ed[f] = make([dynamic]u8)
-	}
+	g.mode = book_mode_for(force_local, g.acct)
+	g.scope = os.get_env("PALM_IDENTITY", context.allocator)
+	g.screen = book_exists(&g.bk) ? .Unlock : .Create
+	g.have_clip = true
+	g.af_on = autofill
 
 	app, err := kit.start(
 		{
@@ -222,10 +302,11 @@ main :: proc() {
 			app_id = "palmy",
 			width = WIN_W,
 			height = WIN_H,
-			min_width = 880,
-			min_height = 520,
+			min_width = 960,
+			min_height = 560,
 			root_class = "w-full h-full flex-col bg-background text-foreground overflow-hidden",
 		},
+		dark,
 	)
 	if err != "" {
 		fmt.eprintfln("vault: %s", err)
@@ -233,7 +314,8 @@ main :: proc() {
 	}
 	defer p.destroy(app)
 
-	register_theme()
+	register_theme(dark)
+	g.have_clip = clip_available()
 
 	for ui in p.frames(app) {
 		free_all(context.temp_allocator)
@@ -246,13 +328,27 @@ main :: proc() {
 	shutdown(&g)
 }
 
-is_gui_flag :: proc(a: string) -> bool {
-	for p in ([?]string{"--idle=", "--clip=", "--vault=", "--shot", "--make-demo-vault=", "--local", "--theme="}) {
-		if strings.has_prefix(a, p) {
-			return true
-		}
+st_new :: proc(path: string) -> St {
+	st := St {
+		bk         = Book{path = path},
+		pw         = make([dynamic]u8),
+		pw2        = make([dynamic]u8),
+		query      = make([dynamic]u8),
+		rows       = make([dynamic]int),
+		mp_new     = make([dynamic]u8),
+		mp_again   = make([dynamic]u8),
+		share_with = make([dynamic]u8),
+		ed_kv      = make([dynamic]Kv_Buf),
+		gen        = GEN_DEFAULT,
+		idle_limit = IDLE_LOCK_DEFAULT,
+		clip_limit = CLIP_CLEAR_DEFAULT,
+		focus_pw   = true,
+		share_role = "read",
 	}
-	return false
+	for f in Field {
+		st.ed[f] = make([dynamic]u8)
+	}
+	return st
 }
 
 // frame is the whole per-frame body, factored out so the headless self-test
@@ -268,6 +364,7 @@ frame :: proc(ui: ^p.Ctx, app: ^p.App, st: ^St) {
 	}
 
 	tick_timers(ui, st)
+	autofill_tick(ui, st)
 	keys(ui, app, st)
 	build(ui, st)
 
@@ -285,6 +382,12 @@ frame :: proc(ui: ^p.Ctx, app: ^p.App, st: ^St) {
 	// from outside, so the loop has to keep running.
 	if st.screen == .Open || st.busy != .None || st.clip_until > 0 {
 		ui.animating = true
+	}
+	// The autofill socket is read every frame; while it is listening, keep
+	// the loop ticking at a gentle rate even when locked, so "unlock to fill"
+	// reaches the person.
+	if st.af.running && st.screen != .Open && app != nil {
+		p.wake_after(ui, 250 * time.Millisecond)
 	}
 	// An automatic lock is the one state change nobody is watching for, so
 	// hold the frame loop open for a moment afterwards. Otherwise the window
@@ -308,12 +411,18 @@ tick_timers :: proc(ui: ^p.Ctx, st: ^St) {
 	case .Unlocking:
 		st.busy = .None
 		do_unlock(st)
+		if st.screen == .Open && st.mode == .Account {
+			st.busy = .Syncing
+		}
 	case .Creating:
 		st.busy = .None
 		do_create(st)
 	case .Rekeying:
 		st.busy = .None
 		do_rekey(st)
+	case .Syncing:
+		st.busy = .None
+		do_sync(st, ui)
 	}
 
 	if st.clip_until > 0 && ui.now >= st.clip_until {
@@ -322,6 +431,10 @@ tick_timers :: proc(ui: ^p.Ctx, st: ^St) {
 
 	if st.screen == .Open && st.idle_limit > 0 && ui.now - st.last_input >= st.idle_limit {
 		lock(st, fmt.tprintf("Locked after %.0f seconds idle", st.idle_limit), ui.now)
+	}
+
+	if st.screen == .Open && st.mode == .Account && st.busy == .None && st.sync_at > 0 && ui.now - st.sync_at > SYNC_EVERY && !g_test {
+		st.busy = .Syncing
 	}
 }
 
@@ -359,7 +472,7 @@ wipe_buf :: proc(b: ^[dynamic]u8) {
 do_unlock :: proc(st: ^St) {
 	pw := string(st.pw[:])
 	t0 := time.now()
-	v, sess, err := store_load(st.path, pw)
+	err := book_unlock(&st.bk, pw)
 	ms := time.duration_milliseconds(time.since(t0))
 	wipe_buf(&st.pw)
 	if err != "" {
@@ -367,15 +480,20 @@ do_unlock :: proc(st: ^St) {
 		return
 	}
 	st.derive_ms = ms
-	st.v = v
-	st.sess = sess
-	vault_sort(&st.v)
 	st.screen = .Open
 	st.sel = 0
+	st.nav = {}
+	st.ed_target = book_default_target(&st.bk)
 	set_err(st, "")
 	if st.lock_note != "" {
 		delete(st.lock_note)
 		st.lock_note = ""
+	}
+	st.health_ok = false
+	if st.af_on && !st.af.running && !g_test {
+		if aerr := af_start(&st.af); aerr != "" {
+			fmt.eprintfln("vault: autofill socket: %s", aerr)
+		}
 	}
 }
 
@@ -399,6 +517,7 @@ do_create :: proc(st: ^St) {
 		set_err(st, err)
 		return
 	}
+	st.mode = .Local
 	st.derive_ms = ms
 	st.sess = sess
 	st.v = Vault {
@@ -407,6 +526,49 @@ do_create :: proc(st: ^St) {
 	st.screen = .Open
 	set_err(st, "")
 	seed_examples(st)
+}
+
+do_sync :: proc(st: ^St, ui: ^p.Ctx) {
+	if st.mode != .Account || st.screen != .Open {
+		return
+	}
+	keep := ""
+	if e := current(st); e != nil {
+		keep = strings.clone(e.id, context.temp_allocator)
+	}
+	rep, err := book_sync(&st.bk)
+	if st.sync_msg != "" {
+		delete(st.sync_msg)
+	}
+	switch {
+	case err != "":
+		st.sync_msg = fmt.aprintf("offline · %d waiting", len(st.acct.cache.pending))
+	case rep.merged > 0:
+		st.sync_msg = fmt.aprintf("synced %s · merged %d", clock_text(now_unix()), rep.merged)
+	case:
+		st.sync_msg = fmt.aprintf("synced %s", clock_text(now_unix()))
+	}
+	st.sync_at = ui != nil ? ui.now : 1
+	st.health_ok = false
+	refilter(st)
+	select_id(st, keep)
+}
+
+clock_text :: proc(t: i64) -> string {
+	h, m, _ := time.clock_from_time(time.unix(t, 0))
+	return fmt.tprintf("%02d:%02d", h, m)
+}
+
+select_id :: proc(st: ^St, id: string) {
+	if id == "" {
+		return
+	}
+	for r, i in st.rows {
+		if st.v.entries[r].id == id {
+			st.sel = i
+			return
+		}
+	}
 }
 
 // lock drops the key and every decrypted string. Everything the vault held is
@@ -424,14 +586,24 @@ lock :: proc(st: ^St, reason: string, ui_now: f64 = 0) {
 		wipe_string(st.gen_pw)
 		st.gen_pw = ""
 	}
-	vault_free(&st.v)
-	session_zero(&st.sess)
+	// A prompt waiting for an answer is answered "no".
+	if st.af.prompt.kind != .None {
+		af_decide(&st.af, &st.bk, .Deny)
+	}
+	book_lock(&st.bk)
+	health_free(&st.health)
+	st.health_ok = false
+	if st.imp_open {
+		import_result_free(&st.imp)
+		st.imp_open = false
+	}
 	wipe_buf(&st.pw)
 	wipe_buf(&st.pw2)
 	wipe_buf(&st.mp_new)
 	wipe_buf(&st.mp_again)
 	st.mp_open = false
 	st.gen_open = false
+	st.share_open = false
 	st.confirm_del = false
 	st.history = false
 	st.reveal = false
@@ -448,7 +620,7 @@ lock :: proc(st: ^St, reason: string, ui_now: f64 = 0) {
 	st.lock_note = strings.clone(reason)
 	st.lock_at = ui_now
 	st.focus_pw = true
-	st.screen = os.exists(st.path) ? .Unlock : .Create
+	st.screen = book_exists(&st.bk) ? .Unlock : .Create
 	set_err(st, "")
 }
 
@@ -457,27 +629,37 @@ shutdown :: proc(st: ^St) {
 		wipe_buf(&st.ed[f])
 		delete(st.ed[f])
 	}
+	kv_bufs_clear(st)
+	delete(st.ed_kv)
 	delete(st.pw)
 	delete(st.pw2)
 	delete(st.mp_new)
 	delete(st.mp_again)
+	delete(st.share_with)
 	delete(st.query)
 	delete(st.rows)
+	if st.af.running || st.af.pairs_path != "" {
+		af_stop(&st.af)
+	}
 	kit.pick_destroy(&st.pick)
+	if st.acct != nil {
+		acct_close(st.acct)
+		st.acct = nil
+	}
 }
 
 // ---------------------------------------------------------------------------
 // Saving
 // ---------------------------------------------------------------------------
 
-save :: proc(st: ^St, ui: ^p.Ctx) {
+save_entry :: proc(st: ^St, ui: ^p.Ctx, idx: int) {
 	if st.screen != .Open {
 		return
 	}
-	if err := store_save(st.path, &st.v, &st.sess); err != "" {
+	if err := book_commit(&st.bk, idx); err != "" {
 		note(st, ui, err)
-		return
 	}
+	st.health_ok = false
 }
 
 do_rekey :: proc(st: ^St) {
@@ -489,6 +671,18 @@ do_rekey :: proc(st: ^St) {
 	}
 	if !secret_eq(new1, new2) {
 		st.mp_err = "The two new passwords do not match"
+		return
+	}
+	if st.mode == .Account {
+		err := acct_change_password(st.acct, new1)
+		wipe_buf(&st.mp_new)
+		wipe_buf(&st.mp_again)
+		if err != "" {
+			st.mp_err = err
+			return
+		}
+		st.mp_open = false
+		st.mp_err = ""
 		return
 	}
 	fresh, err := store_rekey(st.path, &st.v, &st.sess, new1)
@@ -515,11 +709,11 @@ copy_secret :: proc(st: ^St, ui: ^p.Ctx, label: string, value: string) {
 		return
 	}
 	if !st.have_clip {
-		note(st, ui, "wl-clipboard is not installed, so nothing was copied")
+		note(st, ui, "There is no clipboard to copy to")
 		return
 	}
 	if !clip_put(value) {
-		note(st, ui, "wl-copy could not be started")
+		note(st, ui, "The clipboard refused the copy")
 		return
 	}
 	if st.clip_value != "" {
@@ -562,21 +756,45 @@ clear_clipboard :: proc(st: ^St, msg: string) {
 // Rows and selection
 // ---------------------------------------------------------------------------
 
+entry_in_nav :: proc(st: ^St, e: ^Entry) -> bool {
+	switch st.nav.kind {
+	case .All:
+	case .Favorites:
+		return e.favorite
+	case .Kind:
+		return e.kind == st.nav.ikind
+	case .Tag:
+		for t in e.tags {
+			if t == st.tag {
+				return true
+			}
+		}
+		return false
+	case .Source:
+		return e.src == st.nav.src
+	case .Health:
+		if !st.health_ok {
+			return true
+		}
+		for f in st.health.findings {
+			if &st.v.entries[f.entry] == e {
+				return true
+			}
+		}
+		return false
+	}
+	return true
+}
+
 refilter :: proc(st: ^St) {
 	clear(&st.rows)
+	if st.nav.kind == .Health && !st.health_ok {
+		health_refresh(st)
+	}
 	q := strings.to_lower(strings.trim_space(string(st.query[:])), context.temp_allocator)
 	for &e, i in st.v.entries {
-		if st.tag != "" {
-			hit := false
-			for t in e.tags {
-				if t == st.tag {
-					hit = true
-					break
-				}
-			}
-			if !hit {
-				continue
-			}
+		if !entry_in_nav(st, &e) {
+			continue
 		}
 		if !entry_matches(&e, q) {
 			continue
@@ -586,11 +804,24 @@ refilter :: proc(st: ^St) {
 	st.sel = clamp(st.sel, 0, max(0, len(st.rows) - 1))
 }
 
+health_refresh :: proc(st: ^St) {
+	health_free(&st.health)
+	st.health = health_check(&st.v)
+	st.health_ok = true
+}
+
 current :: proc(st: ^St) -> ^Entry {
 	if st.sel < 0 || st.sel >= len(st.rows) {
 		return nil
 	}
 	return &st.v.entries[st.rows[st.sel]]
+}
+
+current_index :: proc(st: ^St) -> int {
+	if st.sel < 0 || st.sel >= len(st.rows) {
+		return -1
+	}
+	return st.rows[st.sel]
 }
 
 move_sel :: proc(st: ^St, d: int) {
@@ -604,11 +835,58 @@ move_sel :: proc(st: ^St, d: int) {
 // Editing
 // ---------------------------------------------------------------------------
 
-begin_edit :: proc(st: ^St, fresh: bool) {
+kv_bufs_clear :: proc(st: ^St) {
+	for &k in st.ed_kv {
+		wipe_buf(&k.buf)
+		delete(k.buf)
+		delete(k.label)
+	}
+	clear(&st.ed_kv)
+}
+
+// kv_bufs_for lays out the kind's template fields, then any other fields the
+// entry already carries, so editing never drops a field the template lacks.
+kv_bufs_for :: proc(st: ^St, kind: Item_Kind, e: ^Entry) {
+	kv_bufs_clear(st)
+	for t in KIND_FIELDS[kind] {
+		secret := strings.has_suffix(t, "*")
+		label := strings.trim_suffix(t, "*")
+		b := Kv_Buf{label = strings.clone(label), buf = make([dynamic]u8), secret = secret}
+		if e != nil {
+			append(&b.buf, ..transmute([]u8)field_get(e, label))
+		}
+		append(&st.ed_kv, b)
+	}
+	if e == nil {
+		return
+	}
+	for f in e.fields {
+		have := false
+		for k in st.ed_kv {
+			if k.label == f.label {
+				have = true
+			}
+		}
+		if !have {
+			b := Kv_Buf{label = strings.clone(f.label), buf = make([dynamic]u8), secret = f.secret}
+			append(&b.buf, ..transmute([]u8)f.value)
+			append(&st.ed_kv, b)
+		}
+	}
+}
+
+begin_edit :: proc(st: ^St, fresh: bool, kind := Item_Kind.Login) {
 	cancel_edit(st)
 	st.editing = true
 	st.ed_new = fresh
 	if fresh {
+		st.ed_kind = kind
+		kv_bufs_for(st, kind, nil)
+		if st.nav.kind == .Source && st.mode == .Account {
+			if s := st.nav.src; s >= 0 && s < len(st.acct.sources) && (st.acct.sources[s].role != "read") {
+				st.ed_target = s
+			}
+		}
 		return
 	}
 	e := current(st)
@@ -616,6 +894,11 @@ begin_edit :: proc(st: ^St, fresh: bool) {
 		st.editing = false
 		return
 	}
+	if !book_writable(&st.bk, e) {
+		st.editing = false
+		return
+	}
+	st.ed_kind = e.kind
 	set_buf(&st.ed[.Title], e.title)
 	set_buf(&st.ed[.Username], e.username)
 	set_buf(&st.ed[.Password], e.password)
@@ -623,6 +906,7 @@ begin_edit :: proc(st: ^St, fresh: bool) {
 	set_buf(&st.ed[.Tags], entry_tag_text(e, context.temp_allocator))
 	set_buf(&st.ed[.Totp], e.totp)
 	set_buf(&st.ed[.Notes], e.notes)
+	kv_bufs_for(st, e.kind, e)
 }
 
 set_buf :: proc(b: ^[dynamic]u8, s: string) {
@@ -636,12 +920,13 @@ cancel_edit :: proc(st: ^St) {
 	for f in Field {
 		wipe_buf(&st.ed[f])
 	}
+	kv_bufs_clear(st)
 }
 
 commit_edit :: proc(st: ^St, ui: ^p.Ctx) {
 	title := strings.trim_space(string(st.ed[.Title][:]))
 	if title == "" {
-		note(st, ui, "An entry needs a title")
+		note(st, ui, "An item needs a title")
 		return
 	}
 	totp := strings.trim_space(string(st.ed[.Totp][:]))
@@ -650,29 +935,19 @@ commit_edit :: proc(st: ^St, ui: ^p.Ctx) {
 		return
 	}
 
-	idx := -1
+	e: ^Entry
+	fresh: Entry
 	if st.ed_new {
-		append(&st.v.entries, entry_new(title))
-		idx = len(st.v.entries) - 1
+		fresh = entry_new(title)
+		e = &fresh
 	} else {
-		e := current(st)
+		e = current(st)
 		if e == nil {
 			cancel_edit(st)
 			return
 		}
-		for &c, i in st.v.entries {
-			if &c == e {
-				idx = i
-				break
-			}
-		}
 	}
-	if idx < 0 {
-		cancel_edit(st)
-		return
-	}
-
-	e := &st.v.entries[idx]
+	e.kind = st.ed_kind
 	replace_string(&e.title, title)
 	replace_string(&e.username, strings.trim_space(string(st.ed[.Username][:])))
 	replace_string(&e.url, strings.trim_space(string(st.ed[.Url][:])))
@@ -680,21 +955,35 @@ commit_edit :: proc(st: ^St, ui: ^p.Ctx) {
 	entry_set_tags(e, string(st.ed[.Tags][:]))
 	replace_secret(&e.totp, totp)
 	entry_set_password(e, string(st.ed[.Password][:]))
-	e.modified = now_unix()
-
-	keep := e.created
-	vault_sort(&st.v)
-	cancel_edit(st)
-	save(st, ui)
-	refilter(st)
-	// Keep the entry you just edited selected, wherever the sort put it.
-	for r, i in st.rows {
-		if st.v.entries[r].created == keep && st.v.entries[r].title == title {
-			st.sel = i
-			break
+	for k in st.ed_kv {
+		v := strings.trim_space(string(k.buf[:]))
+		if v == "" && field_get(e, k.label) == "" {
+			continue
 		}
+		field_set(e, k.label, v, k.secret)
 	}
-	note(st, ui, "Saved")
+	e.modified = now_unix()
+	id := strings.clone(e.id, context.temp_allocator)
+
+	err := ""
+	if st.ed_new {
+		_, err = book_add(&st.bk, fresh, st.ed_target)
+	} else {
+		err = book_commit(&st.bk, current_index(st))
+	}
+	cancel_edit(st)
+	if err != "" {
+		note(st, ui, err)
+		return
+	}
+	vault_sort(&st.v)
+	st.health_ok = false
+	refilter(st)
+	select_id(st, id)
+	note(st, ui, st.mode == .Account ? "Saved · encrypted on this device" : "Saved")
+	if st.mode == .Account {
+		st.busy = .Syncing
+	}
 }
 
 replace_string :: proc(dst: ^string, s: string) {
@@ -708,17 +997,135 @@ replace_secret :: proc(dst: ^string, s: string) {
 }
 
 delete_current :: proc(st: ^St, ui: ^p.Ctx) {
-	e := current(st)
-	if e == nil {
+	idx := current_index(st)
+	if idx < 0 {
 		return
 	}
-	idx := st.rows[st.sel]
-	entry_free(&st.v.entries[idx])
-	ordered_remove(&st.v.entries, idx)
 	st.confirm_del = false
-	save(st, ui)
+	if !book_writable(&st.bk, &st.v.entries[idx]) {
+		note(st, ui, "This item is shared with you read-only")
+		return
+	}
+	if err := book_remove(&st.bk, idx); err != "" {
+		note(st, ui, err)
+		return
+	}
+	st.health_ok = false
 	refilter(st)
-	note(st, ui, "Entry deleted")
+	note(st, ui, "Item deleted")
+	if st.mode == .Account {
+		st.busy = .Syncing
+	}
+}
+
+toggle_favorite :: proc(st: ^St, ui: ^p.Ctx) {
+	idx := current_index(st)
+	if idx < 0 || !book_writable(&st.bk, &st.v.entries[idx]) {
+		return
+	}
+	st.v.entries[idx].favorite = !st.v.entries[idx].favorite
+	save_entry(st, ui, idx)
+}
+
+// ---------------------------------------------------------------------------
+// Sharing
+// ---------------------------------------------------------------------------
+
+do_share :: proc(st: ^St, ui: ^p.Ctx) {
+	e := current(st)
+	who := strings.trim_space(string(st.share_with[:]))
+	if e == nil || who == "" || st.mode != .Account {
+		return
+	}
+	id := strings.clone(e.id, context.temp_allocator)
+	err := acct_share_item(st.acct, id, who)
+	if err != "" {
+		st.share_err = strings.clone(err)
+		return
+	}
+	st.share_open = false
+	wipe_buf(&st.share_with)
+	book_rebuild(&st.bk)
+	refilter(st)
+	select_id(st, id)
+	note(st, ui, fmt.tprintf("Shared with %s, read-only", who))
+}
+
+do_revoke :: proc(st: ^St, ui: ^p.Ctx, share_id: string) {
+	keep := ""
+	if e := current(st); e != nil {
+		keep = strings.clone(e.id, context.temp_allocator)
+	}
+	n, err := acct_revoke(st.acct, share_id)
+	if err != "" {
+		note(st, ui, err)
+		return
+	}
+	book_rebuild(&st.bk)
+	st.health_ok = false
+	refilter(st)
+	select_id(st, keep)
+	note(st, ui, fmt.tprintf("Revoked; %d item(s) re-encrypted under a new key", n))
+}
+
+// ---------------------------------------------------------------------------
+// Import
+// ---------------------------------------------------------------------------
+
+begin_import :: proc(st: ^St, path: string) {
+	if st.imp_open {
+		import_result_free(&st.imp)
+	}
+	st.imp = import_path(path, "auto", "")
+	if st.imp_path != "" {
+		delete(st.imp_path)
+	}
+	st.imp_path = strings.clone(path)
+	st.imp_open = true
+	st.imp_target = book_default_target(&st.bk)
+}
+
+finish_import :: proc(st: ^St, ui: ^p.Ctx) {
+	n := 0
+	for len(st.imp.entries) > 0 {
+		e := pop_front(&st.imp.entries)
+		if _, err := book_add(&st.bk, e, st.imp_target); err != "" {
+			note(st, ui, err)
+			break
+		}
+		n += 1
+	}
+	import_result_free(&st.imp)
+	st.imp_open = false
+	vault_sort(&st.v)
+	st.health_ok = false
+	refilter(st)
+	note(st, ui, fmt.tprintf("Imported %d items", n))
+	if st.mode == .Account {
+		st.busy = .Syncing
+	}
+}
+
+// ---------------------------------------------------------------------------
+// Autofill: the socket is served from the frame loop
+// ---------------------------------------------------------------------------
+
+autofill_tick :: proc(ui: ^p.Ctx, st: ^St) {
+	if !st.af.running {
+		return
+	}
+	af_service(&st.af, 0)
+	for len(st.af.queue) > 0 && st.af.prompt.kind == .None {
+		r := pop_front(&st.af.queue)
+		resp := af_handle(&st.af, &st.bk, r)
+		delete(r.line)
+		if resp != "" {
+			af_send(&st.af, r.conn, resp)
+		}
+	}
+	if st.af.prompt.kind != .None {
+		ui.animating = true
+	}
 }
 
 // ---------------------------------------------------------------------------
@@ -768,8 +1175,16 @@ keys :: proc(ui: ^p.Ctx, app: ^p.App, st: ^St) {
 		if p.key_pressed(ui, p.KEY_RETURN) || p.key_pressed(ui, p.KEY_KP_ENTER) {
 			begin_lock_action(st)
 		}
-		if p.shortcut(ui, 'o', {.Ctrl}) {
+		if p.shortcut(ui, 'o', {.Ctrl}) && st.mode == .Local {
 			begin_pick(st, .Open_Vault)
+		}
+		return
+	}
+
+	// An autofill request waiting for an answer comes before anything else.
+	if st.af.prompt.kind != .None {
+		if p.key_pressed(ui, p.KEY_ESCAPE) {
+			af_decide(&st.af, &st.bk, .Deny)
 		}
 		return
 	}
@@ -791,6 +1206,23 @@ keys :: proc(ui: ^p.Ctx, app: ^p.App, st: ^St) {
 			st.mp_err = ""
 		} else if p.key_pressed(ui, p.KEY_RETURN) || p.key_pressed(ui, p.KEY_KP_ENTER) {
 			st.busy = .Rekeying
+		}
+		return
+	}
+	if st.share_open {
+		if p.key_pressed(ui, p.KEY_ESCAPE) {
+			st.share_open = false
+		} else if p.key_pressed(ui, p.KEY_RETURN) {
+			do_share(st, ui)
+		}
+		return
+	}
+	if st.imp_open {
+		if p.key_pressed(ui, p.KEY_ESCAPE) {
+			import_result_free(&st.imp)
+			st.imp_open = false
+		} else if p.key_pressed(ui, p.KEY_RETURN) && st.imp.err == "" {
+			finish_import(st, ui)
 		}
 		return
 	}
@@ -887,8 +1319,16 @@ keys :: proc(ui: ^p.Ctx, app: ^p.App, st: ^St) {
 		p.set_focus(ui, 0)
 		return
 	}
-	if p.shortcut(ui, 'o', {.Ctrl}) {
+	if p.shortcut(ui, 'o', {.Ctrl}) && st.mode == .Local {
 		begin_pick(st, .Open_Vault)
+		return
+	}
+	if p.shortcut(ui, 'i', {.Ctrl}) {
+		begin_pick(st, .Import)
+		return
+	}
+	if p.shortcut(ui, 'y', {.Ctrl}) && st.mode == .Account {
+		st.busy = .Syncing
 		return
 	}
 	if p.shortcut(ui, 'r', {.Ctrl}) {
@@ -916,7 +1356,7 @@ keys :: proc(ui: ^p.Ctx, app: ^p.App, st: ^St) {
 			if code, ok := totp_code(e.totp, now_unix(), e.totp_period, int(e.totp_digits), e.totp_algo); ok {
 				copy_secret(st, ui, fmt.tprintf("TOTP code for %s", e.title), code)
 			} else {
-				note(st, ui, "That entry has no TOTP secret")
+				note(st, ui, "That item has no TOTP secret")
 			}
 			return
 		}
@@ -930,9 +1370,8 @@ keys :: proc(ui: ^p.Ctx, app: ^p.App, st: ^St) {
 		if len(st.query) > 0 {
 			clear(&st.query)
 			refilter(st)
-		} else if st.tag != "" {
-			delete(st.tag)
-			st.tag = ""
+		} else if st.nav.kind != .All {
+			st.nav = {}
 			refilter(st)
 		}
 		return
@@ -964,13 +1403,22 @@ begin_lock_action :: proc(st: ^St) {
 }
 
 // ---------------------------------------------------------------------------
-// Picking a different vault
+// Picking a file: a different local vault, or an export to import
 // ---------------------------------------------------------------------------
 
 VAULT_FILTERS := [?]kit.Pick_Filter{{"palmy vaults", {VAULT_EXT}}, kit.PICK_ALL}
+IMPORT_FILTERS := [?]kit.Pick_Filter {
+	{"password exports", {"json", "csv", "1pux", "kdbx", VAULT_EXT}},
+	kit.PICK_ALL,
+}
 
 begin_pick :: proc(st: ^St, use: Pick_Use) {
 	st.pick_use = use
+	if use == .Import {
+		home := os.get_env("HOME", context.temp_allocator)
+		kit.pick_begin(&st.pick, .Open_File, {title = "Import passwords", dir = home, filters = IMPORT_FILTERS[:], confirm = "Import"})
+		return
+	}
 	kit.pick_begin(
 		&st.pick,
 		.Open_File,
@@ -998,7 +1446,14 @@ pick_overlay :: proc(ui: ^p.Ctx, st: ^St) {
 	defer kit.pick_result_free(res)
 	use := st.pick_use
 	st.pick_use = .None
-	if !res.ok || use != .Open_Vault {
+	if !res.ok {
+		return
+	}
+	if use == .Import {
+		begin_import(st, res.path)
+		return
+	}
+	if use != .Open_Vault {
 		return
 	}
 	if !vault_looks_like_one(res.path) {
@@ -1041,9 +1496,7 @@ make_demo_vault :: proc(path: string) -> bool {
 	}
 	defer session_zero(&sess)
 	st := St {
-		path = path,
-		sess = sess,
-		v    = Vault{entries = make([dynamic]Entry)},
+		bk = Book{path = path, sess = sess, v = Vault{entries = make([dynamic]Entry)}},
 	}
 	defer vault_free(&st.v)
 	seed_examples(&st)
@@ -1072,3 +1525,4 @@ seed_examples :: proc(st: ^St) {
 	vault_sort(&st.v)
 	store_save(st.path, &st.v, &st.sess)
 }
+

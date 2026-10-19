@@ -1278,23 +1278,12 @@ t_ui :: proc() {
 	defer p.offscreen_destroy(off)
 	register_theme()
 
-	st := St {
-		path       = strings.clone(path),
-		screen     = .Unlock,
-		pw         = make([dynamic]u8),
-		pw2        = make([dynamic]u8),
-		query      = make([dynamic]u8),
-		rows       = make([dynamic]int),
-		mp_new     = make([dynamic]u8),
-		mp_again   = make([dynamic]u8),
-		gen        = GEN_DEFAULT,
-		idle_limit = 4,
-		clip_limit = 2,
-		have_clip  = true,
-	}
-	for f in Field {
-		st.ed[f] = make([dynamic]u8)
-	}
+	st := st_new(strings.clone(path))
+	st.screen = .Unlock
+	st.idle_limit = 4
+	st.clip_limit = 2
+	st.have_clip = true
+	st.focus_pw = false
 	defer shutdown(&st)
 
 	drive(off, &st)

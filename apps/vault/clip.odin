@@ -1,25 +1,31 @@
 package main
 
 // The clipboard, which for a password manager is the most dangerous thing it
-// does. Two rules:
+// does. Three rules:
 //
-//  1. The secret goes through a pipe, never through argv. `wl-copy -- <secret>`
-//     puts the password in /proc/<pid>/cmdline, where every process running as
-//     this user can read it for as long as wl-copy lives -- which is until
-//     something else takes the selection.
+//  1. It goes through palmy's own clipboard client (palmy/clipboard.odin:
+//     wl_data_device on Wayland, the ICCCM selection on X11), so a secret
+//     never passes through another process at all. The selection is served
+//     from this process's memory for as long as the window lives and nobody
+//     else takes it; when the window closes, the selection goes with it.
+//     wl-copy is only the fallback when there is no window to serve from (a
+//     command-line path), and then the secret goes through a pipe, never
+//     argv, where every process could read it in /proc/<pid>/cmdline.
 //
-//  2. It clears itself. A copy arms a timer; when it expires, the selection is
-//     cleared, but only if it is still *ours* -- compared in constant time
+//  2. It clears itself. A copy arms a timer; when it expires the selection is
+//     cleared -- but only if it is still *ours*, compared in constant time
 //     against what was put there. If you have copied something else in the
 //     meantime, that is yours and this app leaves it alone.
 //
-// palmy is a Wayland client and does not implement wl_data_device, so all of
-// this is wl-clipboard, exactly as `kit` documents. The one thing not taken
-// from kit is `clipboard_set`, because it passes the text as an argument.
+//  3. It never reads anyone else's clipboard for its own sake. The one read
+//     is that ownership check, which palmy answers from memory while we hold
+//     the selection; apps/term refuses OSC 52 reads for the same reason this
+//     is careful -- whatever was copied last is somebody's secret.
 
 import "core:crypto"
 import "core:os"
 import kit "kit:."
+import p "palmy:."
 
 // g_test redirects every clipboard operation into a variable, so the self-test
 // can assert on copying and clearing without reaching the real selection. A
@@ -31,17 +37,25 @@ clip_available :: proc() -> bool {
 	if g_test {
 		return true
 	}
-	return kit.has_tool("wl-copy") && kit.has_tool("wl-paste")
+	return p.clipboard_available() || (kit.has_tool("wl-copy") && kit.has_tool("wl-paste"))
 }
 
-// clip_put hands the text to wl-copy on stdin.
+// clip_put offers the text as the clipboard selection.
 clip_put :: proc(text: string) -> bool {
 	if g_test {
 		delete(g_test_clip)
 		g_test_clip = clone_secret(text)
 		return true
 	}
+	if p.clipboard_set(text) {
+		return true
+	}
+	return wl_copy_put(text)
+}
 
+// wl_copy_put hands the text to wl-copy on stdin.
+@(private = "file")
+wl_copy_put :: proc(text: string) -> bool {
 	r, w, perr := os.pipe()
 	if perr != nil {
 		return false
@@ -75,6 +89,9 @@ clip_clear :: proc() -> bool {
 		g_test_clip = ""
 		return true
 	}
+	if p.clipboard_set("") {
+		return true
+	}
 	child, err := os.process_start({command = {"wl-copy", "--clear"}})
 	if err != nil {
 		return false
@@ -90,11 +107,18 @@ clip_is :: proc(text: string) -> bool {
 	if g_test {
 		return secret_eq(g_test_clip, text)
 	}
-	cur, ok := kit.clipboard_get(context.temp_allocator)
+	cur, ok := p.clipboard_get(context.temp_allocator)
+	if !ok {
+		cur, ok = kit.clipboard_get(context.temp_allocator)
+	}
 	if !ok {
 		return false
 	}
-	return secret_eq(cur, text)
+	same := secret_eq(cur, text)
+	if len(cur) > 0 {
+		crypto.zero_explicit(raw_data(transmute([]u8)cur), len(cur))
+	}
+	return same
 }
 
 secret_eq :: proc(a, b: string) -> bool {

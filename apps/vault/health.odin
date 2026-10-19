@@ -50,7 +50,7 @@ HEALTH_ISSUE := [Health_Issue]string {
 Finding :: struct {
 	entry:  int,
 	issue:  Health_Issue,
-	detail: string, // temp-allocated
+	detail: string, // owned by the Health; the window keeps it across frames
 }
 
 Health :: struct {
@@ -64,8 +64,16 @@ Health :: struct {
 }
 
 health_free :: proc(h: ^Health) {
+	for f in h.findings {
+		delete(f.detail)
+	}
 	delete(h.findings)
 	h^ = {}
+}
+
+@(private = "file")
+add_finding :: proc(h: ^Health, entry: int, issue: Health_Issue, detail: string) {
+	append(&h.findings, Finding{entry, issue, strings.clone(detail)})
 }
 
 // A handful of the most common passwords from published breach corpora. The
@@ -130,15 +138,15 @@ health_check :: proc(v: ^Vault) -> (h: Health) {
 			continue
 		}
 		if weak, why := is_weak(e.password); weak {
-			append(&h.findings, Finding{i, .Weak, why})
+			add_finding(&h, i, .Weak, why)
 			h.weak += 1
 		}
 		if e.flags & ENTRY_EXPOSED != 0 {
-			append(&h.findings, Finding{i, .Exposed, "someone whose access was revoked could read it: change it at the site"})
+			add_finding(&h, i, .Exposed, "someone whose access was revoked could read it: change it at the site")
 			h.exposed += 1
 		}
 		if e.modified > 0 && now - e.modified > 2 * 365 * 86400 {
-			append(&h.findings, Finding{i, .Old, fmt.tprintf("unchanged since %s", when_text(e.modified)[:10])})
+			add_finding(&h, i, .Old, fmt.tprintf("unchanged since %s", when_text(e.modified)[:10]))
 			h.old += 1
 		}
 		key := e.password
@@ -158,7 +166,7 @@ health_check :: proc(v: ^Vault) -> (h: Health) {
 					append(&others, v.entries[j].title)
 				}
 			}
-			append(&h.findings, Finding{i, .Reused, fmt.tprintf("also used by %s", strings.join(others[:], ", ", context.temp_allocator))})
+			add_finding(&h, i, .Reused, fmt.tprintf("also used by %s", strings.join(others[:], ", ", context.temp_allocator)))
 			h.reused += 1
 		}
 	}
@@ -223,7 +231,7 @@ health_breach :: proc(h: ^Health, v: ^Vault, fetch: Hibp_Fetch) -> string {
 			done[full] = count
 		}
 		if count > 0 {
-			append(&h.findings, Finding{i, .Breached, fmt.tprintf("seen %d times in breaches", count)})
+			add_finding(h, i, .Breached, fmt.tprintf("seen %d times in breaches", count))
 			h.breached += 1
 		}
 	}
