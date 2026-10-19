@@ -1,0 +1,3 @@
+"url","username","password","httpRealm","formActionOrigin","guid","timeCreated","timeLastUsed","timePasswordChanged"
+"https://news.example.com","fixture-reader","firefox-fixture-pass-1",,"https://news.example.com","{8c1f0a52-0000-4000-8000-000000000001}","1700000000000","1700000500000","1700000000000"
+"chrome://FirefoxAccounts","x","firefox-internal-skip",,,"{8c1f0a52-0000-4000-8000-000000000002}","1700000000000","1700000000000","1700000000000"

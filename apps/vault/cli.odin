@@ -193,6 +193,25 @@ COMMANDS := []kit.Command {
 		run = cmd_add,
 	},
 	{
+		verb = "edit",
+		summary = "change fields of an item; the old password goes into its history",
+		effect = .Mutate,
+		args = {{name = "item", kind = .String, required = true}},
+		flags = {PW, LOCAL, VAULTF, OFFLINE,
+			{name = "title", kind = .String},
+			{name = "username", kind = .String},
+			{name = "url", kind = .String},
+			{name = "tags", kind = .String},
+			{name = "notes-file", kind = .Path, help = "a file holding the new notes"},
+			{name = "secret-file", kind = .Path, help = "a file holding the new password"},
+			{name = "generate", kind = .Bool, help = "generate a new password"},
+			{name = "totp-file", kind = .Path, help = "a file holding a TOTP secret or otpauth:// URI"},
+		},
+		out = {{name = "item", kind = .Object, of = ITEM_FIELDS}, {name = "pending", kind = .Int, help = "edits waiting to sync"}},
+		examples = {"vault edit github --username alice@work --offline"},
+		run = cmd_edit,
+	},
+	{
 		verb = "rm",
 		summary = "delete an item (a tombstone that reaches every device)",
 		effect = .Destructive,
@@ -865,6 +884,85 @@ cmd_add :: proc(c: ^kit.Call) -> int {
 		}
 	}
 	kit.jset(c.out, "item", item_json(&b, &b.v.entries[idx]))
+	return kit.EXIT_OK
+}
+
+cmd_edit :: proc(c: ^kit.Call) -> int {
+	b: Book
+	defer close_book(&b)
+	if code := open_book(c, &b); code != kit.EXIT_OK {
+		return code
+	}
+	idx, code := find_item(c, &b, kit.cli_str(c, "item"))
+	if code != kit.EXIT_OK {
+		return code
+	}
+	e := &b.v.entries[idx]
+	if !book_writable(&b, e) {
+		return kit.cli_fail(c, kit.EXIT_OUT_OF_SCOPE, "that item is shared with you read-only")
+	}
+	if kit.cli_has(c, "title") {
+		replace_string(&e.title, kit.cli_str(c, "title"))
+	}
+	if kit.cli_has(c, "username") {
+		replace_string(&e.username, kit.cli_str(c, "username"))
+	}
+	if kit.cli_has(c, "url") {
+		replace_string(&e.url, kit.cli_str(c, "url"))
+	}
+	if kit.cli_has(c, "tags") {
+		entry_set_tags(e, kit.cli_str(c, "tags"))
+	}
+	if f := kit.cli_str(c, "notes-file"); f != "" {
+		s, ok := read_secret_file(f)
+		if !ok {
+			return kit.cli_failf(c, kit.EXIT_NOT_FOUND, "cannot read %s", f)
+		}
+		replace_secret(&e.notes, s)
+	}
+	if f := kit.cli_str(c, "totp-file"); f != "" {
+		s, ok := read_secret_file(f)
+		if !ok {
+			return kit.cli_failf(c, kit.EXIT_NOT_FOUND, "cannot read %s", f)
+		}
+		if !set_totp_from(e, s) {
+			return kit.cli_fail(c, kit.EXIT_USAGE, "that is not a TOTP secret or otpauth:// URI")
+		}
+	}
+	if f := kit.cli_str(c, "secret-file"); f != "" {
+		s, ok := read_secret_file(f)
+		if !ok {
+			return kit.cli_failf(c, kit.EXIT_NOT_FOUND, "cannot read %s", f)
+		}
+		entry_set_password(e, s)
+	} else if kit.cli_bool(c, "generate") {
+		pw, _ := gen_password(GEN_DEFAULT, context.temp_allocator)
+		entry_set_password(e, pw)
+	}
+	e.modified = now_unix()
+	if c.dry_run {
+		kit.jset(c.out, "item", item_json(&b, e))
+		kit.jset_int(c.out, "pending", 0)
+		return kit.EXIT_OK
+	}
+	id := strings.clone(e.id, context.temp_allocator)
+	if err := book_commit(&b, idx); err != "" {
+		return kit.cli_fail(c, kit.EXIT_FAILED, err)
+	}
+	if b.mode == .Account && !kit.cli_bool(c, "offline") {
+		rep, serr := book_sync(&b)
+		if serr != "" {
+			kit.cli_note(c, "vault: saved on this device; not yet synced (%s)", serr)
+		} else if rep.merged > 0 {
+			kit.cli_note(c, "vault: someone else had changed this item too; the two were merged (%d field(s) both changed)", rep.conflicted)
+		}
+	}
+	for &x in b.v.entries {
+		if x.id == id {
+			kit.jset(c.out, "item", item_json(&b, &x))
+		}
+	}
+	kit.jset_int(c.out, "pending", b.acct != nil ? len(b.acct.cache.pending) : 0)
 	return kit.EXIT_OK
 }
 

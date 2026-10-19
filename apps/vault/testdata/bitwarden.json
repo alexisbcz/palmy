@@ -1,0 +1,125 @@
+{
+  "encrypted": false,
+  "folders": [
+    { "id": "f1a1d0e0-0000-4000-8000-000000000001", "name": "Work" }
+  ],
+  "items": [
+    {
+      "id": "b0000000-0000-4000-8000-000000000001",
+      "organizationId": null,
+      "folderId": "f1a1d0e0-0000-4000-8000-000000000001",
+      "type": 1,
+      "reprompt": 0,
+      "name": "Example Forge",
+      "notes": "Fixture item. Not a real account.",
+      "favorite": true,
+      "fields": [
+        { "name": "Recovery email", "value": "fixture@example.org", "type": 0, "linkedId": null },
+        { "name": "PIN", "value": "bw-fixture-pin-4711", "type": 1, "linkedId": null }
+      ],
+      "login": {
+        "uris": [
+          { "match": null, "uri": "https://forge.example.net/login" },
+          { "match": null, "uri": "https://git.example.net" }
+        ],
+        "username": "fixture-dev",
+        "password": "bw-fixture-pass-Ab12!",
+        "totp": "otpauth://totp/Forge:fixture?secret=GEZDGNBVGY3TQOJQGEZDGNBVGY3TQOJQ&digits=8&period=30&algorithm=SHA256",
+        "fido2Credentials": []
+      },
+      "passwordHistory": [
+        { "lastUsedDate": "2025-01-02T03:04:05.000Z", "password": "bw-fixture-old-pass-1" }
+      ],
+      "revisionDate": "2026-03-01T12:00:00.000Z",
+      "creationDate": "2024-06-01T09:30:00.000Z",
+      "deletedDate": null
+    },
+    {
+      "id": "b0000000-0000-4000-8000-000000000002",
+      "organizationId": null,
+      "folderId": null,
+      "type": 1,
+      "name": "Example Passkey Site",
+      "notes": null,
+      "favorite": false,
+      "login": {
+        "uris": [ { "match": null, "uri": "https://passkeys.example.com" } ],
+        "username": "fixture-user",
+        "password": null,
+        "totp": null,
+        "fido2Credentials": [
+          {
+            "credentialId": "q8Z7cFkNfixtureCredId",
+            "keyType": "public-key",
+            "keyAlgorithm": "ECDSA",
+            "keyCurve": "P-256",
+            "keyValue": "MIGHAgEAMBMGByqGSM49AgEGCCqGSM49AwEHBG0wawIBAQQgFIXTUREfixturekeynotreal",
+            "rpId": "passkeys.example.com",
+            "userHandle": "dXNlci1oYW5kbGUtZml4dHVyZQ",
+            "userName": "fixture-user",
+            "counter": "7",
+            "rpName": "Example Passkeys",
+            "userDisplayName": "Fixture User",
+            "discoverable": "true",
+            "creationDate": "2025-09-09T09:09:09.000Z"
+          }
+        ]
+      },
+      "revisionDate": "2025-09-09T09:09:09.000Z",
+      "creationDate": "2025-09-09T09:09:09.000Z",
+      "deletedDate": null
+    },
+    {
+      "id": "b0000000-0000-4000-8000-000000000003",
+      "type": 3,
+      "name": "Example Card",
+      "notes": "",
+      "favorite": false,
+      "card": {
+        "cardholderName": "Fixture Person",
+        "brand": "Visa",
+        "number": "4111111111111111",
+        "expMonth": "12",
+        "expYear": "2030",
+        "code": "123"
+      },
+      "revisionDate": "2025-01-01T00:00:00.000Z",
+      "creationDate": "2025-01-01T00:00:00.000Z",
+      "deletedDate": null
+    },
+    {
+      "id": "b0000000-0000-4000-8000-000000000004",
+      "type": 2,
+      "name": "Example Note",
+      "notes": "Wi-Fi at the fixture office: bw-fixture-wifi-pass",
+      "favorite": false,
+      "secureNote": { "type": 0 },
+      "revisionDate": "2025-01-01T00:00:00.000Z",
+      "creationDate": "2025-01-01T00:00:00.000Z",
+      "deletedDate": null
+    },
+    {
+      "id": "b0000000-0000-4000-8000-000000000005",
+      "type": 4,
+      "name": "Example Passport",
+      "notes": null,
+      "favorite": false,
+      "identity": {
+        "title": "Mx", "firstName": "Fixture", "lastName": "Person",
+        "passportNumber": "X0000000", "country": "FR", "email": "fixture@example.org"
+      },
+      "revisionDate": "2025-01-01T00:00:00.000Z",
+      "creationDate": "2025-01-01T00:00:00.000Z",
+      "deletedDate": null
+    },
+    {
+      "id": "b0000000-0000-4000-8000-000000000006",
+      "type": 1,
+      "name": "Trashed Login",
+      "login": { "uris": [], "username": "x", "password": "bw-fixture-trashed" },
+      "revisionDate": "2025-01-01T00:00:00.000Z",
+      "creationDate": "2025-01-01T00:00:00.000Z",
+      "deletedDate": "2025-02-01T00:00:00.000Z"
+    }
+  ]
+}

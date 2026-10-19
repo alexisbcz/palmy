@@ -1,0 +1,4 @@
+folder,favorite,type,name,notes,fields,reprompt,login_uri,login_username,login_password,login_totp
+Work,1,login,Example Wiki,"A note, with a comma","Team: blue
+Floor: 3",0,https://wiki.example.org,fixture-wiki,bwcsv-fixture-pass-1,JBSWY3DPEHPK3PXP
+,,note,Example Csv Note,"just text",,0,,,,

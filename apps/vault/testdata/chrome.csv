@@ -1,0 +1,4 @@
+name,url,username,password,note
+shop.example.com,https://shop.example.com/login,fixture-shopper,chrome-fixture-pass-1,
+"Example ""Quoted"" Site",https://quoted.example.com/,fixture,"chrome,fixture,pass,2","multi
+line note"
