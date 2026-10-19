@@ -157,6 +157,9 @@ selftest :: proc() -> int {
 		check(decide(qc, true, &t, NOON, TZ).delivery == .Digest, "do not disturb holds reminders too")
 		alarm := note("work", .Time, .Critical, app = "calendar", category = "alarm")
 		check(decide(def, true, &alarm, NOON, TZ).delivery == .Digest, "an alarm does not break DND by default")
+		prompt := note("work", .Person, .Critical, app = "vault", category = "x-palm.prompt")
+		check(decide(def, true, &prompt, NOON, TZ).delivery == .Toast && !is_call(&prompt), "a prompt the person just caused is shown even in DND, and is not a call")
+		check(decide(q, false, &prompt, at(18, 30), TZ).delivery == .Toast, "…and through quiet hours")
 		pa, _ := parse("alarms break through")
 		check(decide(pa, true, &alarm, NOON, TZ).delivery == .Toast, "…unless the policy says so")
 

@@ -54,7 +54,7 @@ trap cleanup EXIT
 pass=0
 fail=0
 ok() { pass=$((pass + 1)); printf '  ok    %s\n' "$1"; }
-bad() { fail=$((fail + 1)); printf '  FAIL  %s\n' "$1"; [ -n "${2:-}" ] && printf '        %s\n' "$2"; }
+bad() { fail=$((fail + 1)); printf '  FAIL  %s\n' "$1"; [ -n "${2:-}" ] && printf '        %s\n' "$2"; return 0; }
 expect() { # expect "<what>" <command...>: passes when the command succeeds
 	local what="$1"; shift
 	if out="$("$@" 2>&1)"; then ok "$what"; else bad "$what" "$out"; fi
@@ -172,6 +172,28 @@ sleep 1.3
 dg="$(N list --identity camille --json | jq_ '[x["title"] for x in d["notifications"] if x.get("is_digest")]')"
 echo "$dg" | grep -q "while quiet" && ok "DND off: what it held goes out as a digest" || bad "dnd digest" "$dg"
 
+echo "== a palmy app through apps/kit/notify.odin (apps/notify/demo)"
+DEMO="$R/notify-demo"
+if (cd "$ROOT" && odin build apps/notify/demo -collection:palmy=palmy -collection:kit=apps/kit \
+	-collection:shadcn=shadcn -out:"$DEMO") >"$R/demo-build.log" 2>&1; then
+	out="$(PALM_IDENTITY=camille.roux "$DEMO" mail)"
+	echo "$out" | grep -q "ok=true" && echo "$out" | grep -q "delivery=toast" && ok "kit.notify from inside Northwind: $out" || bad "demo mail" "$out"
+	k="$(N list --json | jq_ "[x['identity'] for x in d['notifications'] if x['key']=='mail:<q4-roadmap@northwind.coop>']")"
+	[ "$k" = '["camille.roux"]' ] && ok "its identity came from the process, not from the code" || bad "demo identity" "$k"
+	PALM_IDENTITY=camille.roux "$DEMO" call >"$R/demo-call.txt" 2>&1 &
+	DP=$!
+	PIDS+=($DP)
+	for _ in $(seq 1 30); do grep -q "delivery=" "$R/demo-call.txt" && break; sleep 0.1; done
+	cid="$(N list --json | jq_ "[x['id'] for x in d['notifications'] if x['key']=='call:7f3a'][0]")"
+	N invoke "$cid" answer >/dev/null
+	for _ in $(seq 1 30); do kill -0 $DP 2>/dev/null || break; sleep 0.1; done
+	grep -q "call: answer pressed" "$R/demo-call.txt" && ok "Answer reached the app listening for it (notify_listen)" || bad "demo call" "$(cat "$R/demo-call.txt")"
+	out="$("$DEMO" withdraw)"
+	[ "$out" = "withdraw: true" ] && ok "notify_withdraw" || bad "demo withdraw" "$out"
+else
+	bad "the demo did not build" "$(tail -3 "$R/demo-build.log")"
+fi
+
 echo "== the freedesktop door"
 if [ -n "${DBUS_SESSION_BUS_ADDRESS:-}" ] && command -v gdbus >/dev/null; then
 	info="$(gdbus call --session --dest org.freedesktop.Notifications --object-path /org/freedesktop/Notifications --method org.freedesktop.Notifications.GetServerInformation 2>&1)"
@@ -243,6 +265,44 @@ CONF
 	grep -q "toast surface started" "$R/daemon.log" && ok "the daemon started the toast surface" || bad "toast surface" "$(tail -3 "$R/daemon.log")"
 	n="$(N list --showing --json | jq_ 'd["count"]')"
 	[ "$n" -ge 3 ] && ok "$n on screen" || bad "showing" "$n"
+
+	if command -v wtype >/dev/null; then
+		# The keyboard: `notify focus` is what the wm binding runs.
+		f="$(N focus --json | jq_ 'd["focused"]')"
+		[ "$f" = toasts ] && ok "notify focus: the toasts take the keyboard" || bad "focus" "$f"
+		sleep 1.0
+		# One wtype for the whole sequence: each wtype brings its own virtual
+		# keyboard and keymap, and a key sent while the client re-binds is
+		# lost (apps/tools/headless-record.sh measured one in five).
+		wtype -s 500 -k Down -s 1500 -k Delete &
+		WT=$!
+		sleep 1.3
+		grim "${SHOTS:-$R/shots}/live-keyboard.png" 2>/dev/null && ok "screenshot: live-keyboard.png"
+		wait $WT
+		sleep 0.6
+		left="$(N list --json | jq_ "[x['title'] for x in d['notifications'] if x['read'] and not x['showing']]")"
+		echo "$left" | grep -q "Priya Shah\|Your download" && ok "Down, Delete: the second toast is dismissed from the keyboard ($left)" || bad "keyboard dismiss" "$left"
+		wtype -k Escape
+		sleep 0.5
+	fi
+
+	# The center, as a panel down the right edge.
+	N center >"$R/center.log" 2>&1 &
+	CP=$!
+	PIDS+=($CP)
+	sleep 1.5
+	grim "${SHOTS:-$R/shots}/live-center.png" 2>/dev/null && ok "screenshot: live-center.png"
+	kill -0 $CP 2>/dev/null && ok "the center is up (layer shell, exclusive keyboard)" || bad "center" "$(cat "$R/center.log")"
+	if command -v wtype >/dev/null; then
+		# A virtual keyboard's first key can land before the client has
+		# bound it; one retry, the same as a person pressing it again.
+		for try in 1 2; do
+			wtype -s 300 -k Escape
+			for _ in $(seq 1 20); do kill -0 $CP 2>/dev/null || break; sleep 0.1; done
+			kill -0 $CP 2>/dev/null || break
+		done
+		if kill -0 $CP 2>/dev/null; then bad "Escape did not close the center"; else ok "Escape closes the center"; fi
+	fi
 fi
 
 if [ "$UI" = 1 ] && [ "$BROWSER" = 1 ] && command -v chromium >/dev/null && [ -n "${WAYLAND_DISPLAY:-}" ] && [ -n "${DBUS_SESSION_BUS_ADDRESS:-}" ]; then

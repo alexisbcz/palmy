@@ -274,6 +274,12 @@ decide :: proc(p: Policy, global_dnd: bool, n: ^Note, now, tz_offset: i64) -> De
 	if mode == .Muted {
 		return dec(.Center, false, fmt.tprintf("%s is muted for %s", app_label(n.app), who))
 	}
+	// A prompt is the answer to something the person did seconds ago --
+	// "approve this browser?" after pairing it. Holding it for a digest
+	// would only make them wait for their own request.
+	if n.category == "x-palm.prompt" {
+		return dec(.Toast, false, "You asked for this")
+	}
 
 	switch hold_of(p, global_dnd, now, tz_offset) {
 	case .Dnd:

@@ -170,7 +170,7 @@ source_name :: proc(s: Source) -> string {
 // is_call and is_alarm are the two kinds that may break through a quiet
 // identity or do-not-disturb, and only when its policy says so.
 is_call :: proc(n: ^Note) -> bool {
-	return strings.has_prefix(n.category, "call.incoming") || (n.class == .Person && n.urgency == .Critical)
+	return strings.has_prefix(n.category, "call.incoming") || (n.class == .Person && n.urgency == .Critical && n.category == "")
 }
 
 is_alarm :: proc(n: ^Note) -> bool {

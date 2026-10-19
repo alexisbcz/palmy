@@ -373,7 +373,12 @@ fdo_notify :: proc(d: ^Daemon, m: ^dbus.Dbus_Msg) -> u32 {
 	if n.title == "" {
 		n.title = app_label(n.app)
 	}
+	// Chromium puts the origin on the first line and a blank line after it;
+	// one line break is enough between the two.
 	n.body = strip_markup(body)
+	for strings.contains(n.body, "\n\n") {
+		n.body, _ = strings.replace_all(n.body, "\n\n", "\n", context.temp_allocator)
+	}
 	n.urgency = .Normal
 	if v, ok := dbus.dbus_dict_get(hints, "urgency"); ok {
 		switch v.num {
