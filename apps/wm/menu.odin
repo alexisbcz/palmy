@@ -250,7 +250,8 @@ menu_open_desktop :: proc(s: ^Server, x, y: int) {
 	if _, ok := cfg_which("launcher"); ok {
 		menu_add(it, "Launcher", .Spawn_Launcher, menu_spawn_key(s, "launcher"))
 	}
-	if _, ok := cfg_which("software"); ok {
+	// The Software app is installed as `store` (apps/store).
+	if _, ok := cfg_which("store"); ok {
 		menu_add(it, "Software", .Spawn_Software)
 	}
 	menu_add_sep(it)
@@ -338,7 +339,7 @@ menu_do :: proc(s: ^Server, it: Menu_Item) {
 	case .Spawn_Launcher:
 		spawn(s, {"launcher"})
 	case .Spawn_Software:
-		spawn(s, {"software"})
+		spawn(s, {"store"})
 	case .Spawn_Settings:
 		spawn(s, {"settings"})
 	case .Layout:

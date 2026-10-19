@@ -1,0 +1,8 @@
+[Desktop Entry]
+Type=Application
+Name=Emoji
+Comment=Find and copy an emoji
+Exec=emoji
+Icon=sparkles
+Terminal=false
+Categories=Utility;

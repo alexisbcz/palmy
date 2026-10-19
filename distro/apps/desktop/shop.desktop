@@ -1,0 +1,8 @@
+[Desktop Entry]
+Type=Application
+Name=Shop
+Comment=Shop demo
+Exec=shop
+Icon=tag
+Terminal=false
+Categories=Network;

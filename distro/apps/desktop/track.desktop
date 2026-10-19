@@ -1,0 +1,8 @@
+[Desktop Entry]
+Type=Application
+Name=Track
+Comment=Issue tracker
+Exec=track
+Icon=flag
+Terminal=false
+Categories=Development;ProjectManagement;
