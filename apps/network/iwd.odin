@@ -409,7 +409,10 @@ kernel_devices :: proc(st: Iwd_State) -> [dynamic]Dev {
 
 	for n in names {
 		base := fmt.tprintf("/sys/class/net/%s", n)
-		kind := "ethernet"
+		// The ARPHRD_* type in /sys says what the link is: 1 Ethernet, 772
+		// loopback, 776 an IPv6-in-IPv4 tunnel (sit), 803 a radiotap monitor
+		// (mac80211_hwsim's hwsim0), 65534 a tun device.
+		kind := "other"
 		switch {
 		case n == "lo":
 			kind = "loopback"
@@ -417,8 +420,17 @@ kernel_devices :: proc(st: Iwd_State) -> [dynamic]Dev {
 			kind = "wifi"
 		case os.exists(fmt.tprintf("%s/bridge", base)):
 			kind = "bridge"
-		case read_sys(fmt.tprintf("%s/type", base)) == "65534":
-			kind = "tun"
+		case:
+			switch read_sys(fmt.tprintf("%s/type", base)) {
+			case "1":
+				kind = "ethernet"
+			case "776":
+				kind = "tunnel"
+			case "803":
+				kind = "monitor"
+			case "65534":
+				kind = "tun"
+			}
 		}
 		oper := read_sys(fmt.tprintf("%s/operstate", base))
 		d := Dev {
@@ -544,7 +556,7 @@ iwd_wifi :: proc(s: ^Store, rescan: bool) {
 		}
 		if scanned > 0 {
 			deadline := time.tick_now()
-			for time.tick_since(deadline) < 10 * time.Second {
+			for time.tick_since(deadline) < 6 * time.Second {
 				time.sleep(500 * time.Millisecond)
 				busy := false
 				for wd in st.devices {
