@@ -146,6 +146,7 @@ WINDOW_NOTES :: `With no command, term opens a window.
   --scrollback N            lines of history to keep (default 10000)
   --font-size N             point size of the grid font (default 14)
   --tabs                    always show the tab strip, even with one tab
+  --working-directory DIR   start the first tab in DIR (default: the current one)
 
 In the window: ctrl+shift+t new tab, ctrl+shift+w close, ctrl+tab next,
 ctrl+shift+tab previous, ctrl+shift+left/right move, alt+1..9 jump,

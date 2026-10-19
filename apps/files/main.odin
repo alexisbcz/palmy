@@ -603,6 +603,38 @@ open_menu :: proc(st: ^State) {
 	}
 }
 
+// open_terminal starts a terminal in `dir`: the user's $TERMINAL when it is
+// set, else Palmframe's own `term`, else foot. $TERMINAL is a command, not a
+// known program, so it gets no flags of its own; it is started from a shell
+// that has already changed into the folder, which every terminal honours.
+// `term` and foot are both told with `--working-directory`.
+open_terminal :: proc(dir: string) -> bool {
+	if os.get_env("TERMINAL", context.temp_allocator) != "" {
+		return kit.launch({"sh", "-c", `cd -- "$1" && exec $TERMINAL`, "sh", dir})
+	}
+	for bin in ([?]string{"term", "foot"}) {
+		if on_path(bin) {
+			return kit.launch({bin, "--working-directory", dir})
+		}
+	}
+	return false
+}
+
+// on_path reports whether an executable of that name is on $PATH, without
+// starting a process to ask.
+on_path :: proc(bin: string) -> bool {
+	path := os.get_env("PATH", context.temp_allocator)
+	if path == "" {
+		path = "/usr/local/bin:/usr/bin:/bin"
+	}
+	for dir in strings.split(path, ":", context.temp_allocator) {
+		if dir != "" && os.exists(fmt.tprintf("%s/%s", dir, bin)) {
+			return true
+		}
+	}
+	return false
+}
+
 do_menu :: proc(st: ^State, a: Menu_Action) {
 	e, has := selected(st)
 	switch a {
@@ -612,8 +644,11 @@ do_menu :: proc(st: ^State, a: Menu_Action) {
 	case .Open_Terminal:
 		if has {
 			dir := e.is_dir ? e.path : st.cwd
-			kit.launch({"foot", "--working-directory", dir})
-			note(st, "Opened a terminal here")
+			if open_terminal(dir) {
+				note(st, "Opened a terminal here")
+			} else {
+				note(st, "No terminal emulator is installed")
+			}
 		}
 	case .Copy_Path:
 		if has {

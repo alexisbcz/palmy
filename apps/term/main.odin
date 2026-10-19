@@ -27,6 +27,7 @@ Options :: struct {
 	cols, rows: int,
 	argv:       []string,
 	json:       bool,
+	cwd:        string, // --working-directory; empty is this process's own
 }
 
 main :: proc() {
@@ -101,11 +102,19 @@ window_options :: proc(args: []string) -> (opt: Options, always_tabs: bool, err:
 		case "--font-size":
 			i += 1
 			if i < len(args) {opt.font_size = f32(atoi(args[i], 14))}
+		case "--working-directory", "-D":
+			// foot's spelling, so a caller that knows foot's works here too.
+			i += 1
+			if i < len(args) {opt.cwd = args[i]}
+		case:
+			if strings.has_prefix(a, "--working-directory=") {
+				opt.cwd = a[len("--working-directory="):]
+				break
+			}
+			return opt, always_tabs, fmt.tprintf("unknown option %q", a)
 		case "-e", "--exec", "--":
 			opt.argv = args[i + 1:]
 			i = len(args)
-		case:
-			return opt, always_tabs, fmt.tprintf("unknown option %q", a)
 		}
 		i += 1
 	}
@@ -155,6 +164,19 @@ run_window :: proc(opt: Options, always_tabs: bool) {
 		shell = default_shell()
 	}
 	session_init(&ta.sess, opt.cols, opt.rows, opt.scrollback, opt.term, shell)
+	// The first tab starts where it was asked to, or where this process was
+	// started -- a file manager's "Open in Terminal" either passes
+	// --working-directory or starts us in the folder. $HOME is only the
+	// fallback, as it is for a tab opened before the shell reports one.
+	start := opt.cwd
+	if start == "" {
+		if wd, werr := os.get_working_directory(context.temp_allocator); werr == nil {
+			start = wd
+		}
+	}
+	if start != "" && os.is_dir(start) {
+		ta.sess.last_cwd = strings.clone(start)
+	}
 	if _, e := tab_open(&ta.sess); e != "" {
 		fmt.eprintfln("term: %s", e)
 		os.exit(1)

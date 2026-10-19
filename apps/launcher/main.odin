@@ -730,6 +730,18 @@ toggle_pin :: proc(st: ^St, ui: ^p.Ctx, e: ^Entry) {
 // ---------------------------------------------------------------------------
 
 which :: proc(bin: string) -> string {
+	if strings.contains_rune(bin, '/') {
+		return os.exists(bin) ? strings.clone(bin, context.allocator) : ""
+	}
+	for dir in strings.split(os.get_env("PATH", context.temp_allocator), ":", context.temp_allocator) {
+		if dir == "" {
+			continue
+		}
+		path := fmt.tprintf("%s/%s", dir, bin)
+		if os.exists(path) {
+			return strings.clone(path, context.allocator)
+		}
+	}
 	for dir in ([?]string{"/usr/bin", "/usr/local/bin", "/bin"}) {
 		path := fmt.tprintf("%s/%s", dir, bin)
 		if os.exists(path) {
@@ -745,17 +757,40 @@ which :: proc(bin: string) -> string {
 	return ""
 }
 
+// find_terminals lists the terminal emulators installed, the preferred one
+// first, since that is the one Ctrl+Enter and Terminal=true entries use: the
+// user's $TERMINAL when it is set, then Palmframe's own `term`, then foot,
+// then the rest.
 find_terminals :: proc() -> []Term {
 	cands := [?]Term {
-		{bin = "ghostty", name = "Ghostty", a1 = "-e"},
+		{bin = "term", name = "Terminal", a1 = "-e"},
 		{bin = "foot", name = "Foot"},
+		{bin = "ghostty", name = "Ghostty", a1 = "-e"},
 		{bin = "alacritty", name = "Alacritty", a1 = "-e"},
 		{bin = "kitty", name = "Kitty"},
 		{bin = "wezterm", name = "WezTerm", a1 = "start", a2 = "--"},
 		{bin = "xterm", name = "xterm", a1 = "-e"},
 	}
 	out := make([dynamic]Term)
+	// $TERMINAL is a command name, sometimes a path. When it is one of the
+	// known emulators it keeps that one's arguments; anything else is
+	// assumed to take `-e`, the convention nearly every terminal follows.
+	if env := strings.trim_space(os.get_env("TERMINAL", context.temp_allocator)); env != "" {
+		if which(env) != "" {
+			base := env[strings.last_index_byte(env, '/') + 1:]
+			mine := Term{bin = strings.clone(env), name = strings.clone(base), a1 = "-e"}
+			for c in cands {
+				if c.bin == base {
+					mine.name, mine.a1, mine.a2 = c.name, c.a1, c.a2
+				}
+			}
+			append(&out, mine)
+		}
+	}
 	for c in cands {
+		if len(out) > 0 && out[0].name == c.name {
+			continue
+		}
 		if which(c.bin) != "" {
 			append(&out, c)
 		}
