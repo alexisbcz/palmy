@@ -8,13 +8,15 @@ sound card whose output QEMU writes to a WAV file, so "sound came out" is
 checked on the host. The repository is served on --port (not 8080, which
 other checkouts may be serving) and the guest is pointed at it.
 
-    services   dbus-daemon, iwd, bluetoothd run; iwd and (if the kernel has
-               Bluetooth) BlueZ are on the system bus
+    services   dbus-daemon (as dbus), iwd, bluetoothd run; iwd and BlueZ are
+               on the system bus; /var/log/messages is root's alone
     tools      ffmpeg encodes H.264/AAC/Opus and probes; bsdtar round-trips;
                openssl verifies a real TLS server with the shipped CA bundle
-    session    palm logs in; PipeWire is started as the session hook would;
-               wpctl and pactl see the HDA sink; pw-play writes audio the
-               host captures
+    wifi       mac80211_hwsim's two radios: iwd runs an access point on one
+               and joins it from the other
+    session    palm logs in; palm-login starts PipeWire from
+               /etc/palm/session.d; wpctl and pactl see the HDA sink;
+               pw-play writes audio the host captures; logging out ends it
     apps       palm add every runtime application over http; each one's
                --selftest where it has one; screenshots of the GUI ones
                in distro/out/shots/runtime-*.png
@@ -127,13 +129,20 @@ def main():
                               r"dbus-daemon[\s\S]*iwd", 30)
         m.check("dbus-daemon and iwd run (palm-init services)", ok, out)
         print("  ....  " + out.strip().replace("\n", "\n        "))
+        m.check("dbus-daemon runs as dbus", re.search(r"^\s*dbus\s+dbus-daemon", out, re.M) is not None, out)
+        out, _ = m.run("logger -p authpriv.info test-runtime; sleep 1; stat -c '%a %U' /var/log/messages")
+        m.check("/var/log/messages is 0600 root", out.strip() == "600 root", out)
         out, _ = m.run("for s in dbus iwd bluetooth; do echo \"== $s\"; tail -25 /var/log/$s.log; done")
         print("  ....  service logs:\n        " + out.strip().replace("\n", "\n        "))
         out, st = m.run("dbus-send --system --print-reply --dest=org.freedesktop.DBus "
                         "/org/freedesktop/DBus org.freedesktop.DBus.ListNames")
         m.check("iwd owns net.connman.iwd on the system bus", "net.connman.iwd" in out, out)
-        report["bluez on bus"] = "org.bluez" in out
-        print(f"  ....  org.bluez on the bus: {'org.bluez' in out}")
+        # bluetoothd starts once the kernel has loaded bluetooth for its
+        # socket, and palm-init may have retried it after dbus came up.
+        ok, out = tb.wait_for(m, "dbus-send --system --print-reply --dest=org.freedesktop.DBus "
+                              "/org/freedesktop/DBus org.freedesktop.DBus.ListNames", r"org\.bluez", 40)
+        m.check("bluetoothd owns org.bluez on the system bus", ok, out)
+        report["bluez on bus"] = ok
         out, st = m.run("timeout 10 iwctl device list 2>&1 | sed 's/\\x1b\\[[0-9;]*m//g' | head -8", 20)
         m.check("iwctl talks to iwd", st == 0 and "Devices" in out, out)
         print("  ....  iwctl device list:\n        " + out.strip().replace("\n", "\n        "))
@@ -187,10 +196,12 @@ def main():
         out, _ = m.run(as_palm("id; echo HOME=$HOME"))
         print("  ....  as palm: " + out.strip().replace("\n", " | "))
 
-        # Wi-Fi end to end, when the kernel has mac80211_hwsim (two radios):
-        # iwd runs an access point on one and joins it from the other,
-        # including its own DHCP on both sides.
-        out, _ = m.run("ls /sys/class/net")
+        # Wi-Fi end to end over mac80211_hwsim (a module nothing loads by
+        # itself; two radios): iwd runs an access point on one and joins it
+        # from the other, including its own DHCP on both sides.
+        m.run("modprobe mac80211_hwsim")
+        ok, out = tb.wait_for(m, "ls /sys/class/net", r"wlan1", 20)
+        m.check("mac80211_hwsim loads (two radios)", ok, out)
         if "wlan1" in out:
             iw = lambda c: m.run("timeout 20 iwctl " + c + " 2>&1 | sed 's/\\x1b\\[[0-9;]*m//g'", 30)[0]
             print("  ....  iwctl device list:\n        " + iw("device list").strip().replace("\n", "\n        "))
@@ -210,11 +221,13 @@ def main():
             print("  ....  wlan0: " + out.strip().replace("\n", " | ") + "\n        " + st_out.strip().replace("\n", "\n        "))
             report["wifi"] = ok
 
-        # What /etc/palm/session.d/50-pipewire does once palm-login runs it.
-        m.run(as_palm("/etc/palm/session.d/50-pipewire >/tmp/pipewire.log 2>&1 &"))
+        # palm-login ran /etc/palm/session.d/50-pipewire as palm when the
+        # session started; nothing here starts it.
         ok, out = tb.wait_for(m, "ps -o user,args | grep -E '[p]ipewire|[w]ireplumber' || true",
                               r"wireplumber[\s\S]*pipewire-pulse|pipewire-pulse[\s\S]*wireplumber", 20)
-        m.check("pipewire starts wireplumber and pipewire-pulse", ok, out + m.run("cat /tmp/pipewire.log")[0])
+        m.check("palm-login's session hook started pipewire, wireplumber, pipewire-pulse as palm",
+                ok and re.search(r"^\s*palm\s+pipewire\s*$", out, re.M) is not None,
+                out + m.run("grep -E 'hook|pipewire' /var/log/palm-login.log /var/log/session-palm.log | tail")[0])
         time.sleep(3)
         out, st = m.run(as_palm("wpctl status 2>&1 | head -40"), 20)
         m.check("wpctl sees an ALSA sink", st == 0 and re.search(r"Sinks:\s*\n[^\n]*\d+\. ", out) is not None, out)
@@ -267,6 +280,12 @@ def main():
                 print(f"  ....  hda-out.wav peak after Space in audio: {wav_peak(wav, start)}")
             m.run(f"pkill -x {app}; true")
             time.sleep(1)
+
+        # Logging out (SUPER+SHIFT+E) ends the session, and the session
+        # hooks with it.
+        m.key("meta_l", "shift", "e")
+        ok, out = tb.wait_for(m, "ps -o user,args | grep -E '^ *palm ' || true", r"\A\s*\Z", 20)
+        m.check("logging out ends the session's PipeWire too (no process of palm's left)", ok, out)
 
         m.send("poweroff")
         m.expect(r"palm-init: powering off", 20)

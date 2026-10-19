@@ -84,7 +84,9 @@ if [ -n "$disk" ]; then
 	drive=(-drive "file=$disk,if=virtio,format=$fmt")
 else
 	[ -f "$IMG" ] || { echo "run-qemu: $IMG is missing (make -C distro)" >&2; exit 1; }
-	drive=(-drive "file=$IMG,if=virtio,format=raw")
+	# bootindex: with a fresh variable store OVMF otherwise tries PXE and
+	# HTTP boot over IPv4 and IPv6 first, which takes over a minute.
+	drive=(-drive "file=$IMG,if=none,id=img,format=raw" -device "virtio-blk-pci,drive=img,bootindex=0")
 fi
 cdrom=()
 # On q35 -cdrom is an AHCI (SATA) CD drive, /dev/sr0 in the guest.
