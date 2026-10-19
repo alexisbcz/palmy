@@ -126,6 +126,23 @@ for the greeter session.
 Greeter power actions run `/sbin/poweroff` / `/sbin/reboot` (busybox, which
 signal PID 1 as above).
 
+The running session talks to palm-login on a second socket,
+`/run/palm-login.session.sock` (same framing), named to the session in
+`PALM_SESSION_SOCK`. It is the session user's (0600) while their session
+runs and root's otherwise, and every request is checked with SO_PEERCRED:
+the peer must have the uid palm-login started the session as and be the
+session leader or one of its descendants. Two requests only:
+
+- `unlock{password}` — the wm's lock screen; palm-login checks the password
+  (rate limited on `/run/faillock/<uid>`, shared with doas and passwd).
+- `power{action: "poweroff"|"reboot", dry_run?, password?}` — refused while
+  the session's VT is not in front; while someone else is logged in (a live
+  utmp login on another line) it needs the password of a member of `wheel`;
+  otherwise no password. On success palm-login ends the session as for any
+  logout, then runs `/sbin/poweroff` / `/sbin/reboot`.
+
+The policy and its reasons are in `distro/notes/login.md`.
+
 ## The window manager on bare metal
 
 `apps/wm` gains, without losing the nested mode it has today:

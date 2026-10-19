@@ -49,6 +49,122 @@ on a connection of its own, and palm-login (root) runs `/sbin/poweroff` or
 what the contract describes; verified in QEMU (Restart in the greeter ->
 `palm-init: rebooting`).
 
+## The session socket: Lock, Restart and Shut down from the session
+
+The greeter's socket is the way *into* a session and belongs to the greeter
+group. A running session needs palm-login for two things it cannot do as
+the user: check the user's password for the lock screen (the wm must never
+read /etc/shadow) and power the machine off. So palm-login listens on a
+second socket, `/run/palm-login.session.sock` (`session_ipc.odin`), same
+greetd framing, and tells the session where it is in `PALM_SESSION_SOCK`.
+It answers two requests and nothing else:
+
+    unlock{password}                       success | error{auth_error|error}
+    power{action, dry_run?, password?}     success | error{auth_required|auth_error|error}
+
+### Policy, and why
+
+What a logind desktop does for the one local seat, written down without
+polkit:
+
+| who asks | unlock | power |
+| --- | --- | --- |
+| a process of the running session, its VT in front, nobody else logged in | password checked | **allowed, no password** |
+| ...nobody else logged in, but the VT switched away | password checked | refused ("not the one on screen") |
+| ...someone else logged in (root on ttyS0, say) | password checked | `auth_required`: the password of a member of `wheel` overrides |
+| ...same, but the user is not in wheel | password checked | refused |
+| the session's user, from outside the session (a serial login, anything not below the session leader) | refused | refused |
+| another user, the greeter, root | cannot connect (socket is the user's, 0600); refused anyway | same |
+| anyone, while no user session runs, or while one is ending | refused | refused |
+
+- **Who is "the session".** The socket file is chown'd to the session's
+  user (0600) when palm-login starts the session and back to root when it
+  ends, so nobody else can even connect. Then each request is checked again
+  with SO_PEERCRED: the peer's uid must be the uid palm-login itself started
+  the session as, and the peer's pid must be the session leader palm-login
+  forked or a descendant of it (walked through /proc/<pid>/stat). That is
+  logind's "process of the session" (its cgroup) without cgroups. A process
+  that got reparented to init is out — it is no longer reliably the
+  session's. Root is not special: root can run poweroff itself.
+- **No password for power, alone at the seat.** logind's default for the
+  active local session (`org.freedesktop.login1.power-off`: yes for active
+  sessions), and what every desktop does: the person at the keyboard can
+  pull the plug anyway.
+- **Active means on screen.** The session's VT (tty1) must be the active one
+  (`/sys/class/tty/tty0/active`), as logind's `active`; a session that was
+  switched away from is not the person at the keyboard.
+- **Others logged in.** logind's `power-off-multiple-sessions` needs an
+  admin's authentication; here: a live USER_PROCESS in utmp on a line other
+  than seat0 (dead pids do not count — a crashed login leaves its record) and
+  the request must carry the password of a member of `wheel` (the group
+  doas.conf permits by default). Shutting down under someone else's shell is
+  not for the person at the seat to decide alone. Remote sessions: Palmframe
+  ships no sshd; one added later writes utmp and is counted the same way.
+- **Unlock is rate limited** with the shared `auth/` package, on the same
+  `/run/faillock/<uid>` tally as doas and passwd (counted *before* the check,
+  so parallel attempts all count), and a wrong answer is held 1.5 s like the
+  greeter's. A malicious process inside the session could use unlock as a
+  password oracle — exactly as it could use doas — and it gets the same
+  budget, shared. Expired or inactive accounts (shadow aging) do not unlock;
+  a password that merely has to be changed does (that happens at the next
+  login).
+- **Power ends the session first.** palm-login replies, records
+  `power_after`, and waits for the session to exit (the wm leaves by itself
+  once its windows are closed); after 10 s it sends SIGTERM, 3 s later
+  SIGKILL. `session_ended` then does the usual teardown — utmp/wtmp logout,
+  the tty back to root, the session's process group SIGHUP+SIGTERM, the
+  socket back to root — and only then runs `/sbin/poweroff` or
+  `/sbin/reboot`. No greeter is started in between (it would, after a
+  minute, if the power program failed).
+
+The greeter's own `power` request is unchanged and still refused while a
+user session runs.
+
+### The wm's side
+
+`apps/wm/login.odin` (the client, non-blocking: the socket is in the main
+loop's poll set), `apps/wm/locker.odin` (the lock screen) and
+`apps/wm/power.odin` (the confirmation). The start menu's power button
+offers Lock, Log out…, Restart…, Shut down… when `PALM_SESSION_SOCK` is set,
+and the old "Restart or shut down from the login screen" otherwise. Restart
+and Shut down ask palm-login with `dry_run` as the dialog opens, so a
+refusal shows before anything is closed; then a 10 s countdown (Enter now,
+Esc cancels), every window gets `xdg_toplevel.close`, the wm waits up to
+8 s, names the windows that did not close ("may be asking whether to save")
+and offers Cancel or "anyway"; then the real request, and the wm exits.
+
+The lock: Super+L (the default `movefocus right` on Super+L gave way, see
+below), Lock in the power menu, `lock_after` in wm.conf (default 10m; a
+client idle inhibitor holds it off), and before a suspend (there is no
+suspend yet; the intent locks). While locked the compositor draws only the
+lock and returns before the desktop, so nothing of the windows is drawn, and
+`set_kbd_focus`/`set_ptr_focus` refuse every surface that is not a lock
+surface, so no client sees a key. VT switches work while locked and come
+back to the lock (it is compositor state). A client locker
+(ext_session_lock_v1) still works; if it dies, this prompt unlocks the
+abandoned lock. On bare metal Ctrl+Alt+Q no longer works while locked (it
+would end the locked person's session); nested it still does.
+
+### Tests
+
+- `palm-login --selftest` 83 -> 107: the session socket in --test mode with
+  a pretend session (`--session-user/--session-uid/--session-leader`,
+  `--vt-active`, `--utmp`): unlock right/wrong/late/empty, the rate limit,
+  power dry run, refusal off-screen, others logged in (auth_required, wrong
+  and right wheel password, then logged out), greetd requests refused on
+  the session socket and unlock refused on the greeter's, another uid, a
+  process outside the session (a reparented grandchild, and a leader that
+  is not an ancestor), no session at all, socket mode 0600.
+- `odin test distro/login/auth` 7 -> 8: `utmp_logins` (seat0 skipped, dead
+  pids and logged-out lines dropped).
+- `distro/login/e2e/run.sh` 22 -> 33: the real daemon, autologin palm runs
+  `session-client.py`: PALM_SESSION_SOCK, palm's 0600; wrong unlock refused
+  after 1.5 s and `/run/faillock/1000` written; right unlock; dry run; palm
+  from outside the session (setpriv) refused; uid 900 cannot connect;
+  reboot accepted, the socket refuses once ending; the session closed, then
+  `/sbin/reboot` ran as root, no greeter in between.
+- `apps/wm/lock-qemu.py` on the image: see the wm notes in UX.md.
+
 ## Extra knobs (for images and tests)
 
 - `palm-login --hash PASSWORD [--salt S] [--rounds N]` prints a `$6$` hash —

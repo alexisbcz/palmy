@@ -749,9 +749,9 @@ from the button: search first, then pinned apps, then recent ones.
   the client's pid (SO_PEERCRED → /proc/pid/exe → Exec).
 - **Footer:** the current identity (cloud/docs/shell.md — the handle `accounts
   switch` last chose, its name and colour from identities.json; the local user
-  otherwise), which opens Accounts; Settings; and power: Log out on bare
-  metal, with restart and shut down left to the login screen until the
-  session has a privileged path to them (nested, all are logged intents).
+  otherwise), which opens Accounts; Settings; and power: Lock, Log out…,
+  Restart…, Shut down… in a session palm-login started (P1-14); without
+  palm-login, Log out on bare metal and logged intents nested.
 - **Keys:** arrows move by geometry (Up/Down to the nearest item in the row
   above or below), Tab steps, PgUp/PgDn scroll, Menu opens the context menu,
   Escape clears the query, then leaves All apps, then closes. A chord with
@@ -788,6 +788,40 @@ For readers, the wm publishes its outputs and keyboard to
 bar and title bars light, the wallpaper pale. `settings set
 mouse.natural_scroll on`, wheel down over a terminal — it scrolls the other
 way.
+
+### P1-14. Lock, Restart and Shut down
+
+The power menu's Restart… and Shut down… open a dialog the compositor draws
+(power.odin): what will happen, a ten-second countdown, Cancel and the
+action now (focused; Enter takes it, Esc cancels, Tab moves). palm-login is
+asked with a dry run as it opens, so a refusal is on screen before anything
+closes: someone else logged in asks for an administrator's password ("Shut
+down anyway?"), a session switched away is refused in palm-login's words.
+Then every window gets `xdg_toplevel.close` and a small card says "Closing
+apps, then shutting down…" with Cancel, the windows still usable (one may be
+asking to save); after 8 s the ones still open are named, with Cancel or
+"Shut down anyway". Then palm-login ends the session (its usual teardown)
+and powers off. Log out… is the same dialog without palm-login.
+
+The lock (locker.odin) is the compositor's own: Super+L, Lock in the power
+menu, `lock_after` without input (wm.conf, default 10m, `off` never; an idle
+inhibitor holds it), and before a suspend. The greeter's look — the big
+clock, the date, a card with the person (their monogram ringed in the
+identity's colour when there is one), a field of bullets — in the dark or
+light theme. Enter unlocks, Esc clears, Ctrl+U too; "Checking…" while
+palm-login holds a wrong answer, then its words ("The password was not
+accepted.", "Too many failed attempts. Try again in 12 seconds."); a Caps
+Lock pill in the field. The password goes to palm-login over the session
+socket; the wm never checks it. While locked nothing but the lock is drawn
+and no client can have the keyboard or the pointer; a VT switch comes back
+to it.
+
+Super+L was `movefocus right`; it is Lock now, as on every other desktop,
+and H/J/K keep focus left, down, up (`bind = $mod, L, movefocus right` in
+wm.conf brings it back, and `bind = $mod SHIFT, X, lock` moves Lock).
+
+**Test:** `apps/wm/lock-qemu.py` on the built image; `wm --selftest`
+(locker_test.odin); `wm --shots` 20–29.
 
 ### P1-11. Window rules, extended
 
