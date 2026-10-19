@@ -1,0 +1,306 @@
+{
+  "distro": {
+    "base": "/distro",
+    "title": "Distribution",
+    "groups": [
+      {
+        "title": "Getting started",
+        "pages": [
+          {
+            "slug": "overview",
+            "url": "/distro/overview",
+            "title": "Palmframe, the distribution",
+            "nav": "Overview",
+            "description": "What the distribution is, what it is modelled on, and where it stands: it boots in QEMU to a desktop and installs onto a disk, and has never run on real hardware."
+          },
+          {
+            "slug": "quick-start",
+            "url": "/distro/quick-start",
+            "title": "Quick start",
+            "nav": "Quick start",
+            "description": "Build the toolkit, build the disk image, boot it in QEMU, then build the live ISO and install from it. Every command, in order."
+          },
+          {
+            "slug": "build-and-run",
+            "url": "/distro/build-and-run",
+            "title": "Building and running",
+            "nav": "Building and running",
+            "description": "make targets, distro/run-qemu.sh options, and the accounts on the disk image."
+          }
+        ]
+      },
+      {
+        "title": "Using it",
+        "pages": [
+          {
+            "slug": "window-manager",
+            "url": "/distro/window-manager",
+            "title": "The window manager",
+            "nav": "The window manager",
+            "description": "wm, palmy's Wayland compositor: what it does on bare metal, every default key binding and mouse gesture, and the wm.conf format. The tables are read from apps/wm."
+          },
+          {
+            "slug": "installing",
+            "url": "/distro/installing",
+            "title": "Installing",
+            "nav": "Installing",
+            "description": "The live ISO, the eight-step graphical installer, palm-install on the command line, the languages, what an install writes and the UEFI boot entry."
+          },
+          {
+            "slug": "software",
+            "url": "/distro/software",
+            "title": "Software and palmd",
+            "nav": "Software and palmd",
+            "description": "The graphical face of palm, and the small root daemon that lets members of wheel install and remove packages."
+          },
+          {
+            "slug": "applications",
+            "url": "/distro/applications",
+            "title": "Applications on Palmframe",
+            "nav": "Applications",
+            "description": "Every palmy application, whether it builds, whether it works on the bare system, what it needs at runtime, and which are installed by default. Read from distro/apps/apps.tsv."
+          }
+        ]
+      },
+      {
+        "title": "Architecture",
+        "pages": [
+          {
+            "slug": "architecture",
+            "url": "/distro/architecture",
+            "title": "Architecture",
+            "nav": "Architecture",
+            "description": "The boot chain from firmware to the desktop, and the directories each piece lives in."
+          },
+          {
+            "slug": "palm-init",
+            "url": "/distro/palm-init",
+            "title": "palm-init",
+            "nav": "palm-init",
+            "description": "PID 1: mounts, device permissions, services as key = value files, restarts with backoff, and shutdown."
+          },
+          {
+            "slug": "palm-login",
+            "url": "/distro/palm-login",
+            "title": "palm-login",
+            "nav": "palm-login",
+            "description": "The login daemon: greetd's IPC protocol, SHA-512 crypt in Odin, the greeter and session loop, and power actions."
+          },
+          {
+            "slug": "palm",
+            "url": "/distro/palm",
+            "title": "palm, the package manager",
+            "nav": "palm",
+            "description": "Modelled on Alpine's apk: a world file, signed indexes, declarative recipes, reproducible builds. Commands, formats and the repository."
+          },
+          {
+            "slug": "packages",
+            "url": "/distro/packages",
+            "title": "Package list",
+            "nav": "Package list",
+            "description": "Every package in the repository, its version, what it depends on, and whether the palmframe meta-package installs it. Read from distro/recipes."
+          },
+          {
+            "slug": "contract",
+            "url": "/distro/contract",
+            "title": "The contract",
+            "nav": "The contract",
+            "description": "The interfaces every piece of the distribution was built against: filesystem layout, PID 1, users, the session, palm, build outputs and QEMU."
+          },
+          {
+            "slug": "installer-reference",
+            "url": "/distro/installer-reference",
+            "title": "Installer reference",
+            "nav": "Installer reference",
+            "description": "The install_core API, palm-install, the configuration files an installed system honours, the i18n library and the live image."
+          }
+        ]
+      },
+      {
+        "title": "Status",
+        "pages": [
+          {
+            "slug": "verified",
+            "url": "/distro/verified",
+            "title": "What has been verified",
+            "nav": "What has been verified",
+            "description": "What was run inside QEMU and observed, step by step, with the screenshots it produced."
+          },
+          {
+            "slug": "missing",
+            "url": "/distro/missing",
+            "title": "What is missing",
+            "nav": "What is missing",
+            "description": "The system boots, logs in and installs packages. It is not something to run on real hardware yet. This is the list of why."
+          },
+          {
+            "slug": "roadmap",
+            "url": "/distro/roadmap",
+            "title": "Roadmap",
+            "nav": "Roadmap",
+            "description": "TODO.md: what is not done, in the order it is worth doing, with a prompt for each."
+          }
+        ]
+      },
+      {
+        "title": "Design documents",
+        "pages": [
+          {
+            "slug": "command-surface",
+            "url": "/distro/command-surface",
+            "title": "The palm command surface",
+            "nav": "Command surface",
+            "description": "One CLI through which an agent can operate every part of Palmframe: the convention every application's command line follows."
+          },
+          {
+            "slug": "package-design",
+            "url": "/distro/package-design",
+            "title": "Packages, the earlier design",
+            "nav": "Packages (earlier design)",
+            "description": "A design for a declarative layer over pacman, written before the distribution existed."
+          },
+          {
+            "slug": "wm-interaction-model",
+            "url": "/distro/wm-interaction-model",
+            "title": "The window manager's interaction model",
+            "nav": "wm interaction model",
+            "description": "The spec for how the window manager should feel under the hands, starting from an audit of what it did when the spec was written."
+          }
+        ]
+      },
+      {
+        "title": "Engineering notes",
+        "pages": [
+          {
+            "slug": "notes-integrate",
+            "url": "/distro/notes-integrate",
+            "title": "Integration",
+            "nav": "Integration",
+            "description": "From the pieces to a bootable Palmframe: build order, packages, what was verified and the known gaps."
+          },
+          {
+            "slug": "notes-init",
+            "url": "/distro/notes-init",
+            "title": "palm-init notes",
+            "nav": "palm-init notes",
+            "description": "palm-init and palmframe-base: what the other pieces need to know."
+          },
+          {
+            "slug": "notes-login",
+            "url": "/distro/notes-login",
+            "title": "palm-login and greeter notes",
+            "nav": "palm-login and greeter notes",
+            "description": "palm-login and the greeter: power actions, knobs for images and tests, and open points."
+          },
+          {
+            "slug": "notes-palm",
+            "url": "/distro/notes-palm",
+            "title": "palm notes",
+            "nav": "palm notes",
+            "description": "The palm side: the CLI as built, format decisions the contract left open, and what was verified."
+          },
+          {
+            "slug": "notes-store",
+            "url": "/distro/notes-store",
+            "title": "Software and palmd notes",
+            "nav": "Software and palmd notes",
+            "description": "Decisions behind Software and palmd, and the verification run."
+          },
+          {
+            "slug": "notes-wm",
+            "url": "/distro/notes-wm",
+            "title": "wm on bare metal",
+            "nav": "wm on bare metal",
+            "description": "What palm-login gets from wm --drm, keyboard layouts and local time, and the known gaps."
+          },
+          {
+            "slug": "notes-apps",
+            "url": "/distro/notes-apps",
+            "title": "Applications notes",
+            "nav": "Applications notes",
+            "description": "What the applications need at runtime on Palmframe, and what changed in palmy for it."
+          },
+          {
+            "slug": "notes-live",
+            "url": "/distro/notes-live",
+            "title": "Live image notes",
+            "nav": "Live image notes",
+            "description": "The live installer image, its services and packages, and how it was verified."
+          },
+          {
+            "slug": "notes-installer-core",
+            "url": "/distro/notes-installer-core",
+            "title": "install_core notes",
+            "nav": "install_core notes",
+            "description": "The install core and palm-install: the API as built, decisions, requests and gaps."
+          },
+          {
+            "slug": "notes-installer-gui",
+            "url": "/distro/notes-installer-gui",
+            "title": "Graphical installer notes",
+            "nav": "Graphical installer notes",
+            "description": "apps/installer: modes, pages, right to left, translations, and where it differs from INSTALLER.md."
+          },
+          {
+            "slug": "notes-i18n",
+            "url": "/distro/notes-i18n",
+            "title": "Translations notes",
+            "nav": "Translations notes",
+            "description": "Translations, locale and time zone across the session stack."
+          }
+        ]
+      },
+      {
+        "title": "Contributing",
+        "pages": [
+          {
+            "slug": "contributing",
+            "url": "/distro/contributing",
+            "title": "Contributing",
+            "nav": "Contributing",
+            "description": "How the repository is laid out, how work is split, how to test a change, and how this site is built from the repository's Markdown."
+          },
+          {
+            "slug": "writing-apps",
+            "url": "/distro/writing-apps",
+            "title": "Writing an application",
+            "nav": "Writing an application",
+            "description": "apps/APPS.md: building, the kit, interaction, images, text editing, recording a demo, and the rules for apps that touch the system."
+          }
+        ]
+      }
+    ]
+  },
+  "reference": {
+    "base": "/reference",
+    "title": "Reference",
+    "groups": [
+      {
+        "title": "Generated reference",
+        "pages": [
+          {
+            "slug": "classes",
+            "url": "/reference/classes",
+            "title": "Class reference",
+            "nav": "Class reference",
+            "description": "Every Tailwind utility palmy understands, the variants, the value scales, and the utilities it accepts without effect. Read from palmy/class.odin."
+          },
+          {
+            "slug": "palmy-api",
+            "url": "/reference/palmy-api",
+            "title": "palmy API",
+            "nav": "palmy API",
+            "description": "Every exported procedure and type in the palmy package, with its doc comment, grouped by file. Read from palmy/*.odin."
+          },
+          {
+            "slug": "shadcn-api",
+            "url": "/reference/shadcn-api",
+            "title": "Widget package API",
+            "nav": "Widget package API",
+            "description": "Every exported procedure and type in the shadcn package, the Odin translations of the shadcn/ui components. Read from shadcn/*.odin."
+          }
+        ]
+      }
+    ]
+  }
+}

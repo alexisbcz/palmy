@@ -1,16 +1,14 @@
 import type { Route } from "./+types/palmframe.slug";
+import { seo } from "~/lib/seo";
 import { Shell } from "~/components/shell";
 import { DocArticle } from "~/components/doc-page";
 import { tocOf } from "~/lib/doc";
 import { PALMFRAME_DOCS } from "~/content/docs-palmframe";
 import { palmframeSidebar } from "~/lib/nav";
 
-export function meta({ loaderData: data }: Route.MetaArgs) {
+export function meta({ loaderData: data, location }: Route.MetaArgs) {
   if (!data) return [{ title: "Not found — Palmframe" }];
-  return [
-    { title: `${data.title} — Palmframe` },
-    { name: "description", content: data.description },
-  ];
+  return seo({ title: data.title, description: data.description, path: location.pathname });
 }
 
 export function loader({ params }: Route.LoaderArgs) {
