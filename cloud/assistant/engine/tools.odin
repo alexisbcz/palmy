@@ -59,6 +59,10 @@ Rule :: struct {
 }
 
 POLICY := [?]Rule {
+	// The local search index (apps/home's `index`, cloud/docs/search.md):
+	// one identity's mail, files, events, notes and chats, offline.
+	{"index", "search", .Read},
+	{"index", "status", .Read},
 	{"mail", "unread", .Read},
 	{"mail", "search", .Read},
 	{"mail", "read", .Read},

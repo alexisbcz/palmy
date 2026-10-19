@@ -57,6 +57,7 @@ Agent :: struct {
 	answer:    string,
 	refusals:  int,
 	draft_to:  map[string]string, // draft id -> its recipients, as written
+	draft_body: map[string]string, // draft id -> its text, for the link check
 	parts:     []Part,
 	part:      int, // the part being worked on
 }
@@ -70,6 +71,7 @@ Menu :: struct {
 }
 
 MENU := [?]Menu {
+	{"index_search", "search everything in this identity: mail, files, events, notes"},
 	{"mail_unread", "list my unread mail"},
 	{"mail_search", "find mail by words in it"},
 	{"mail_read", "open one mail and read all of it"},
@@ -100,6 +102,7 @@ Arg_Set :: struct {
 
 @(private)
 ARGS := [?]Arg_Set {
+	{"index_search", {"query"}},
 	{"mail_search", {"query"}},
 	{"mail_read", {"id"}},
 	{"mail_draft", {"to", "subject", "body", "reply-to", "attach"}},
@@ -671,6 +674,18 @@ fill :: proc(a: ^Agent, t: ^Tool) -> (args: map[string]string, why: string) {
 						break
 					}
 				}
+				// "mail 2" for "mail 2: Noor Haddad — …": the short name of a
+				// choice is as good as the whole label, and still a choice.
+				if !found {
+					for c in s.labels {
+						colon := strings.index_byte(c.label, ':')
+						if colon > 0 && c.label[:colon] == val {
+							val = c.key
+							found = true
+							break
+						}
+					}
+				}
 				if !found {return args, fmt.tprintf("%s: %q is not one of the choices", s.name, val)}
 			}
 		}
@@ -999,6 +1014,7 @@ remember :: proc(a: ^Agent, t: ^Tool, args: map[string]string, r: Run) -> (text,
 		lbl := fmt.tprintf("draft to %s: %s", short(ck.get_str(v, "to"), 40), short(ck.get_str(v, "subject"), 50))
 		add_candidate(&a.seen.drafts, {key = id, label = lbl, origin = .Typed, source = "this conversation"})
 		a.draft_to[strings.clone(id)] = strings.clone(ck.get_str(v, "to"))
+		a.draft_body[strings.clone(id)] = strings.clone(args["body"])
 		brief = fmt.tprintf("wrote a %s (in Drafts; not sent)", lbl)
 		return "", brief
 	case "notes_new":
@@ -1043,7 +1059,7 @@ STOPWORDS := [?]string {
 
 search_param :: proc(tool: string) -> string {
 	switch tool {
-	case "mail_search", "drive_find", "notes_search":
+	case "mail_search", "drive_find", "notes_search", "index_search":
 		return "query"
 	case "contacts_list":
 		return "search"
@@ -1184,6 +1200,7 @@ propose :: proc(a: ^Agent, t: ^Tool, args: map[string]string, shown: string) {
 		// The recipients are the draft's: this run wrote it, so the runtime
 		// knows them, and it checks them rather than trusting the label.
 		for e in emails(a.draft_to[args["id"]]) {append(&addrs, e)}
+		body = a.draft_body[args["id"]]
 	case "calendar_add":
 		summary = fmt.tprintf("Add “%s” on %s at %s (%s min)%s", args["title"], args["date"], args["time"], args["minutes"] != "" ? args["minutes"] : "60",
 			args["attendee"] != "" ? fmt.tprintf(", inviting %s", args["attendee"]) : "")
@@ -1328,6 +1345,7 @@ agent_init :: proc(a: ^Agent, io: ^IO, req: Request, reg: ^Registry, db: ^ck.Cli
 	a.obs = make([dynamic]Observation)
 	a.proposals = make([dynamic]Proposal)
 	a.draft_to = make(map[string]string)
+	a.draft_body = make(map[string]string)
 	a.parts = split_parts(req.request)
 	note_typed(&a.seen, req.request)
 	for t in req.history {
