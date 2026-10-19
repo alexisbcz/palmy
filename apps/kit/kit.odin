@@ -138,15 +138,17 @@ BAD_CLASS :: "text-destructive"
 // ---------------------------------------------------------------------------
 // Clipboard
 //
-// palmy is a client and does not implement wl_data_device, so the clipboard
-// goes through wl-clipboard. Every app needs it and none of them should have to
-// discover this separately.
+// palmy owns the selection itself (palmy/clipboard.odin: wl_data_device, the
+// primary selection, ICCCM selections), so that is tried first. wl-clipboard
+// stays as the fallback for when palmy has no window, is called off the frame
+// loop's thread, or the display server refuses. Every app needs this and none
+// of them should have to discover it separately.
 // ---------------------------------------------------------------------------
 
-// clipboard_set copies text to the Wayland selection. Returns false when
-// wl-copy is not installed.
+// clipboard_set copies text to the clipboard. Returns false when palmy could
+// not and wl-copy is not installed.
 //
-// This must not capture wl-copy's output. wl-copy daemonises -- it keeps
+// The wl-copy fallback must not capture wl-copy's output. wl-copy daemonises -- it keeps
 // running to serve the selection until some other program takes it -- and the
 // daemon inherits whatever stdio it was given. process_exec creates pipes and
 // reads them to EOF, so the EOF never arrives and the call blocks until the
@@ -159,6 +161,9 @@ BAD_CLASS :: "text-destructive"
 // the daemon's lifetime, and reaps the child (process_wait does that) rather than leaving
 // a zombie per copy.
 clipboard_set :: proc(text: string) -> bool {
+	if p.clipboard_set(text) {
+		return true
+	}
 	if why := cli_guard_check({"wl-copy"}); why != "" {
 		cli_guard_refuse({"wl-copy"}, why)
 		return false
@@ -173,6 +178,9 @@ clipboard_set :: proc(text: string) -> bool {
 
 // clipboard_get reads the current selection.
 clipboard_get :: proc(allocator := context.allocator) -> (text: string, ok: bool) {
+	if text, ok = p.clipboard_get(allocator); ok {
+		return
+	}
 	return run({"wl-paste", "--no-newline"}, allocator)
 }
 
