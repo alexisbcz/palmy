@@ -721,7 +721,7 @@ surface_request :: proc(c: ^Client, id: u32, s: ^Surface, op: u16, r: ^Reader) {
 // surface_commit copies the attached buffer out (so the client can reuse it
 // at once), applies the pending state and schedules a composite.
 surface_commit :: proc(c: ^Client, s: ^Surface) {
-	if os.get_env("PALM_GECKO_TRACE", context.temp_allocator) != "" {
+	if TRACE && s.pend_attached && s.role == .Toplevel {
 		pid: u32 = s.parent != nil ? s.parent.id : 0
 		bw, bh := 0, 0
 		if s.pend_buffer != nil {bw, bh = s.pend_buffer.w, s.pend_buffer.h}

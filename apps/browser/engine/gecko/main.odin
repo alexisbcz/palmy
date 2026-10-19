@@ -51,6 +51,7 @@ Pending_Kind :: enum {
 	Preload,
 	Get_Tree,
 	Create,
+	Has_Focus,
 	Other,
 }
 
@@ -85,6 +86,7 @@ Host :: struct {
 }
 
 h: Host
+TRACE: bool
 
 now_ms :: proc() -> i64 {
 	return time.time_to_unix_nano(time.now()) / 1_000_000
@@ -141,6 +143,15 @@ user_pref("app.update.checkInstallTime", false);
 user_pref("browser.translations.automaticallyPopup", false);
 user_pref("extensions.pocket.enabled", false);
 user_pref("signon.rememberSignons", false);
+// the address bar is hidden in kiosk mode; it must never pop up suggestions
+user_pref("browser.urlbar.suggest.searches", false);
+user_pref("browser.urlbar.suggest.history", false);
+user_pref("browser.urlbar.suggest.bookmark", false);
+user_pref("browser.urlbar.suggest.openpage", false);
+user_pref("browser.urlbar.suggest.topsites", false);
+user_pref("browser.urlbar.suggest.engines", false);
+user_pref("browser.urlbar.maxRichResults", 0);
+user_pref("browser.search.suggest.enabled", false);
 // Firefox's first-run Terms of Use modal would sit over the first page with
 // no way to reach it from the chrome's keyboard flow; Mozilla's own switch
 // for managed and automated installs turns it off. The settings page links
@@ -193,7 +204,7 @@ start_firefox :: proc() -> bool {
 		dir,
 		"--remote-debugging-port",
 		fmt.tprintf("%d", h.port),
-		"about:blank",
+		"data:text/html,<title></title>",
 	}
 	p, err := os.process_start({command = args, env = env[:], stdout = os.stderr, stderr = os.stderr})
 	if err != nil {
@@ -210,6 +221,9 @@ bidi :: proc(method: string, params: string, kind := Pending_Kind.Other, view :=
 	h.next_cmd += 1
 	id := h.next_cmd
 	h.pending[id] = {kind, view}
+	if TRACE {
+		logf("bidi %d %s %s", id, method, len(params) > 200 ? params[:200] : params)
+	}
 	msg := strings.concatenate({`{"id":`, fmt.tprintf("%d", id), `,"method":`, jq(method), `,"params":`, params, "}"}, context.temp_allocator)
 	ws_send(&h.ws, msg)
 	return id
@@ -358,13 +372,23 @@ on_bidi :: proc(text: string) {
 			return
 		}
 		delete_key(&h.pending, id)
+		if typ == "error" || TRACE {
+			logf("BiDi %s %d: %s %s", typ, id, jstr(v, "error"), jstr(v, "message"))
+		}
 		if typ == "error" {
-			logf("BiDi error: %s: %s", jstr(v, "error"), jstr(v, "message"))
 			if p.kind == .Session_New {
 				return
 			}
 		}
 		#partial switch p.kind {
+		case .Has_Focus:
+			if typ == "success" && jstr(v, "result", "type") == "success" {
+				if !jbool(v, "result", "result", "value") && g.focused && p.view == g.view && g_client != nil {
+					if TRACE {logf("the page has no focus: F6")}
+					key_event(g_client, .Down, 0, 0xffc3, 0)
+					key_event(g_client, .Up, 0, 0xffc3, 0)
+				}
+			}
 		case .Session_New:
 			bidi("session.subscribe", `{"events":["browsingContext","script.message"]}`, .Subscribe)
 			bidi("script.addPreloadScript", J(`{"functionDeclaration":%s,"arguments":[{"type":"channel","value":{"channel":"palm"}}]}`, jq(PRELOAD)), .Preload)
@@ -430,6 +454,11 @@ on_bidi :: proc(text: string) {
 		}
 	case "browsingContext.load":
 		if view != nil {
+			if view.id == g.view && g.focused {
+				// Firefox leaves focus in its (hidden) address bar after a
+				// programmatic navigation; give it to the page
+				focus_content(view)
+			}
 			view.loading = false
 			send_load(view)
 			send_ev(pb.ev_progress(view.id, 1))
@@ -535,6 +564,9 @@ on_request :: proc(raw: []u8) {
 	}
 	v := h.views[q.view] or_else nil
 	c := g_client
+	if TRACE && q.op != .Mouse && q.op != .Frame_Ack {
+		logf("request %v view %d", q.op, q.view)
+	}
 	#partial switch q.op {
 	case .Theme:
 		h.dark = q.flag ? 1 : 0
@@ -615,6 +647,11 @@ on_request :: proc(raw: []u8) {
 	case .Focus:
 		g.focused = q.flag
 		keyboard_focus_update(c)
+		if q.flag {
+			if fv := h.views[g.view] or_else nil; fv != nil {
+				focus_content(fv)
+			}
+		}
 	case .Mouse:
 		if c == nil {return}
 		switch q.mouse {
@@ -686,6 +723,19 @@ client_gone :: proc(c: ^Client) {
 	}
 }
 
+// focus_content moves Firefox's keyboard focus from its chrome (the hidden
+// address bar, in kiosk mode) to the page.
+focus_content :: proc(v: ^View) {
+	if v == nil || v.ctx == "" {
+		return
+	}
+	bidi("browsingContext.activate", J(`{"context":%s}`, jq(v.ctx)))
+	// Ask the page whether it has focus. If the hidden address bar has it,
+	// F6 -- Firefox's own "move focus between the toolbar and the page" key
+	// -- hands it over; the answer arrives in on_bidi as .Has_Focus.
+	bidi("script.evaluate", J(`{"expression":"document.hasFocus()","target":{"context":%s},"awaitPromise":false}`, jq(v.ctx)), .Has_Focus, v.id)
+}
+
 resize_view :: proc(w, h_: int, scale: f32) {
 	g.w = max(w, 1)
 	g.h = max(h_, 1)
@@ -747,6 +797,7 @@ main :: proc() {
 		h.ff_bin = os.get_env("PALM_BROWSER_FIREFOX", context.allocator)
 	}
 	h.dark = -1
+	TRACE = os.get_env("PALM_GECKO_TRACE", context.temp_allocator) != ""
 	if len(os.args) > 1 && os.args[1] == "--version" {
 		fmt.println("palm-browser-gecko", h.ff_bin != "" ? firefox_version(h.ff_bin) : "")
 		return

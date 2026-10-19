@@ -405,6 +405,11 @@ navigate :: proc(s: ^State, t: ^Tab, url: string) {
 		if t.has_view && t.zoom != 1 {
 			engine_zoom(s.engine, t.id, t.zoom)
 		}
+		// a view starts visible in CEF and hidden in the Gecko host, which
+		// shows one tab at a time; say which explicitly
+		if t.has_view {
+			engine_show(s.engine, t.id, t == active_tab(s))
+		}
 	} else {
 		engine_show(s.engine, t.id, true)
 		engine_navigate(s.engine, t.id, url)
