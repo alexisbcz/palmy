@@ -275,6 +275,27 @@
             "title": "Notes",
             "nav": "Notes",
             "description": "Markdown notes per identity in ~/Notes, merged offline and co-edited live on the collab server, with share, carry and cross-identity links."
+          },
+          {
+            "slug": "cloud-search",
+            "url": "/distro/cloud-search",
+            "title": "Search",
+            "nav": "Search",
+            "description": "A local index per identity, written in Odin and benchmarked against SQLite FTS5: sources, ranking, the query language and the CLI the assistant uses."
+          },
+          {
+            "slug": "cloud-notifications",
+            "url": "/distro/cloud-notifications",
+            "title": "Notifications",
+            "nav": "Notifications",
+            "description": "palm-notifyd: one notification service, identity-aware, with quiet rules written as sentences, digests, and an adoption guide per app."
+          },
+          {
+            "slug": "cloud-onboarding",
+            "url": "/distro/cloud-onboarding",
+            "title": "Onboarding",
+            "nav": "Onboarding",
+            "description": "The first-run welcome: an account or this computer only, identities, what each identity syncs, the vault's Emergency Kit."
           }
         ]
       },

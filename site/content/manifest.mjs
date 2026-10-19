@@ -348,6 +348,30 @@ export const COLLECTIONS = {
               "Markdown notes per identity in ~/Notes, merged offline and co-edited live on the collab server, with share, carry and cross-identity links.",
             source: { file: "cloud/docs/notes.md" },
           },
+          {
+            slug: "cloud-search",
+            title: "Search",
+            nav: "Search",
+            description:
+              "A local index per identity, written in Odin and benchmarked against SQLite FTS5: sources, ranking, the query language and the CLI the assistant uses.",
+            source: { file: "cloud/docs/search.md" },
+          },
+          {
+            slug: "cloud-notifications",
+            title: "Notifications",
+            nav: "Notifications",
+            description:
+              "palm-notifyd: one notification service, identity-aware, with quiet rules written as sentences, digests, and an adoption guide per app.",
+            source: { file: "cloud/docs/notifications.md" },
+          },
+          {
+            slug: "cloud-onboarding",
+            title: "Onboarding",
+            nav: "Onboarding",
+            description:
+              "The first-run welcome: an account or this computer only, identities, what each identity syncs, the vault's Emergency Kit.",
+            source: { file: "cloud/docs/onboarding.md" },
+          },
         ],
       },
       {
