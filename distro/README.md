@@ -542,9 +542,15 @@ followed by the files with their modes and owners. `PALMINDEX` is a text file
 with one stanza per package, including the sha256 of its `.palm`, and
 `PALMINDEX.sig` is its detached ed25519 signature. Packages are trusted
 because the index lists their sha256; the index is trusted because of the
-signature. That is why plain `http://` is enough, as it is for apk. palm writes
-its own tar, gzip encoder and HTTP client; sha256 and ed25519 come from
-`core:crypto`.
+signature, and carries the time it was made, so palm refuses an index older
+than one it has already seen. Plain `http://` would therefore be safe, as it
+is for apk; palm also speaks `https://` with its own TLS 1.3 client
+(`palm/tls.odin`, on `core:crypto`, checking servers against the Mozilla
+roots the palm package ships), which keeps what a machine downloads private.
+palm writes its own tar, gzip encoder, HTTP client (keep-alive, resumable,
+four downloads at once, streamed to disk) and TLS client; sha256, ed25519,
+X25519 and X.509 come from `core:crypto`. Packages may declare `conflicts` and
+`replaces`, and the resolver backtracks across alternatives.
 
 **Recipes.** A `PALMBUILD` is a declaration, not a script: package fields,
 then `file`, `tree`, `dir` and `symlink` lines mapping build-machine paths to
@@ -558,10 +564,17 @@ the applications). `make` runs it on every build and its output is committed.
 **The repository.** The build makes a signing key once per checkout in
 `distro/build/keys/` (git-ignored), and its public half is installed in
 `/etc/palm/keys/`, so a built machine trusts exactly the repository it was
-built from. `/etc/palm/repositories` names `http://10.0.2.2:8080/x86_64`,
-which is the build host as QEMU's user network shows it, so
-`make -C distro serve` on the host is the guest's repository. The repository
-has 48 packages. The `palmframe` meta-package installs 35 of them, and the
+built from. The palm package adds `palmframe-release.pub`, the key of the
+public repository, and `/etc/palm/repositories` names it:
+`https://palmframe-packages.vercel.app/x86_64`, with
+`https://github.com/alexisbcz/palmframe-packages/releases/download/x86_64` as
+its mirror on the same line. `distro/repo-publish/publish.sh` signs and
+publishes both from a build; `notes/palm.md` says how a security fix travels
+from a recipe to a machine (palmd refreshes the indexes every six hours). To
+test against the checkout's own repository instead, run
+`make -C distro serve` on the host and give the guest
+`--repo http://10.0.2.2:8080/x86_64` (the host as QEMU's user network shows
+it). The repository has 48 packages. The `palmframe` meta-package installs 35 of them, and the
 disk image adds `palmframe-demo`, the demo user's home. `shop`, `track`,
 `pickdemo`, `emoji` and `fonts-emoji` are in the repository but not
 installed, so `palm add` has something to fetch. The rest serve the live
@@ -711,11 +724,10 @@ on real hardware yet.
   `CONFIG_ZRAM` yet, so it says so at boot and runs without swap. Disk swap in
   `/etc/fstab` works. Growing the root on first boot handles only a GPT disk
   whose last partition is an ext4 `/`.
-- **palm** has a greedy resolver with repair, not a SAT solver, and no
-  `conflicts` or `replaces` fields; no https, keep-alive or parallel
-  downloads; and holds each transaction's packages in memory. `list` and `info`
-  print a connection warning when no repository is reachable, although both
-  are local queries.
+- **palm**'s resolver backtracks but is not a SAT solver (a step budget stops
+  a pathological search); its TLS client checks no revocation; indexes do not
+  expire (only an older one is refused); each package is still decompressed
+  whole in memory to install. `notes/palm.md` has the list.
 - **palm-login** keeps no utmp, wtmp or lastlog, ignores shadow's aging fields,
   and limits guessing only by a 1.5 s delay per failed attempt.
 - **Small visual faults** seen in the verification screenshots: a single left

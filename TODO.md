@@ -390,10 +390,17 @@ the areas' notes name.
   SUPER+SHIFT+E, the autologin and single-user limine entries, and the
   windowed `distro/run-qemu.sh` (all testing was headless). Restart and
   logout passed in the login agent's own initramfs boot.
-- **`palm list` and `palm info` warn when no repository answers**
-  (`cannot connect to 10.0.2.2:8080`), although both are local queries.
-  Every installed system shows this, because its repository is the build
-  host's.
+- **The public repository is published by hand** from one machine
+  (`distro/repo-publish/publish.sh`, the release key in
+  `~/.config/palmframe/keys/`). No CI publishes it, the key has no backup or
+  rotation plan beyond "ship a new .pub, then re-sign", and the published
+  palmframe-base is rebuilt at publish time with the release key standing in
+  for the checkout's build key. `distro/image/test-boot.py` still expects
+  `palm update` to reach `http://10.0.2.2`; the image now points at
+  `https://palmframe-packages.vercel.app/x86_64` (`distro/notes/palm.md`).
+- **palm**: no revocation checking in its TLS client, indexes do not expire,
+  and each package is decompressed whole in memory to install
+  (`distro/notes/palm.md`, *Not done*).
 - **No clipboard.** palmy copies through `wl-copy`, which is not shipped.
 - **`files` and `launcher` still offer `foot`** as the terminal
   (`apps/files/main.odin`, `apps/launcher/main.odin`).

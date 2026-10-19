@@ -718,6 +718,9 @@ cmd_info :: proc(o: ^Opts) -> Err {
 			p = avail[name]
 		}
 		if p == nil {
+			if n := uncached_repos(o); n > 0 {
+				return fail(EXIT_NOT_FOUND, "%s: no such package in the cached indexes (%d repositories have none yet; `palm update` fetches them)", name, n)
+			}
 			return fail(EXIT_NOT_FOUND, "%s: no such package", name)
 		}
 		files := p.files
@@ -939,7 +942,7 @@ cmd_verify :: proc(o: ^Opts) -> Err {
 			fmt.printf("%s: %s: %s\n", p.pkg, p.path, p.what)
 		}
 		if hard == 0 {
-			say("OK: %d packages verified", len(db.pkgs))
+			say("OK: %d packages verified", len(o.args) > 0 ? len(o.args) : len(db.pkgs))
 		}
 	}
 	if hard > 0 {

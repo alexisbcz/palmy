@@ -32,7 +32,7 @@ therefore found at `/lib64/ld-linux-x86-64.so.2`.
 
 | path | what |
 | --- | --- |
-| `/etc/palm/repositories` | one repository per line: an `http://` URL or an absolute path |
+| `/etc/palm/repositories` | one repository per line: an `https://` or `http://` URL or an absolute path; further URLs on a line are mirrors of it |
 | `/etc/palm/keys/*.pub` | trusted ed25519 public keys (raw 32 bytes, hex encoded, one line) |
 | `/etc/palm/world` | the packages the user asked for, one per line (apk's world) |
 | `/etc/palm/services/<name>` | service definitions for palm-init |

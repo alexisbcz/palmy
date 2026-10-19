@@ -7,8 +7,12 @@ Owner of this file: the agent that built `distro/palm/`.
 ```
 mkdir -p distro/out/bin
 odin build distro/palm -o:speed -out:distro/out/bin/palm
-distro/out/bin/palm --selftest        # from the repo root; ~500 assertions, < 1 s
+distro/out/bin/palm --selftest        # from the repo root; 623 assertions, ~2 s
 ```
+
+The selftest needs `python3` (3.14: its http.server takes `-p HTTP/1.1` and
+`--tls-cert`) and `openssl` for the http and https sections; without openssl
+the https section is skipped and says so.
 
 Pure Odin; `ldd` shows libc, libm and the loader only. No collections needed
 (it imports nothing from palmy/kit/shadcn), so the CONTRACT's standard build
@@ -21,11 +25,13 @@ palm add <pkg>...         install, record in world. <pkg> is a name, a constrain
                           (foo>=1.2, foo=1.2, foo~1.2, foo<2) or a path to a .palm
                           (a local file needs --allow-untrusted)
 palm del <pkg>...         drop from world; removes it and every orphan
-palm update               fetch (http) and verify every repository index
-palm upgrade              resolve the world preferring newest versions
-palm search <text>...     case-insensitive, names and descriptions; exit 3 if nothing
-palm info <pkg>...        details (installed record, else newest available)
-palm info -L <pkg>        file list (reads the .palm if not installed)
+palm update               fetch (https/http) and verify every repository index;
+                          prints each index's date and how many packages can be upgraded
+palm upgrade [-U]         resolve the world preferring newest versions (-U: update first)
+palm search <text>...     case-insensitive, names and descriptions; exit 3 if nothing (offline)
+palm info <pkg>...        details (installed record, else newest available) (offline)
+palm info -L <pkg>        file list (reads the .palm if not installed; downloads it
+                          only if it is neither installed nor cached)
 palm info --who-owns <path>
 palm list [--installed|--upgradable|--available]     default: everything, marked
 palm verify [<pkg>...]    sha256/type/mode/link target of every recorded file; exit 1 on problems
@@ -47,6 +53,9 @@ global (anywhere on the line, --flag=value also accepted):
                       errors as {"ok":false,"code":N,"error":"..."}
   --yes               skip the removal confirmation
   --dry-run           print the plan, change nothing
+  -U, --update-cache  add/upgrade/fix: refresh the indexes first
+environment: PALM_HTTP_TRACE=1 (print every request and status),
+  PALM_CA_FILE=<pem> (trust exactly these CAs), SOURCE_DATE_EPOCH (palm index date)
 short aliases: -X (repo), -s (dry-run), -y, -L, -W (who-owns), -I -u -a (list filters)
 ```
 
@@ -161,18 +170,144 @@ fakeroot -s <state> -- sh -c '
 
 ## Not done / known limits
 
-- No `palm` progress bars, no parallel downloads, no HTTP keep-alive, no
-  proxies, no https (by design: the signature is the trust).
-- The resolver is greedy with a pin-and-restart repair, not a SAT solver; it
-  handles "upgrade X because Y needs a newer X" but not every possible
-  combination of alternatives among multiple providers.
-- No `conflicts`/`replaces` fields; moving a file between packages needs both
-  packages upgraded in the same transaction (supported: the old owner leaving
-  is excluded from the conflict check).
-- Packages are held in memory while installing (compressed for all, one
-  decompressed at a time).
-- Not exercised inside the real Palmframe image (that image is the
-  integrator's); exercised in a minimal initramfs under QEMU as above.
+(Rewritten 2026-10-19; the 0.1 list -- no https, keep-alive, parallel
+downloads, conflicts/replaces, a greedy resolver, packages in memory -- is
+resolved below.)
+
+- No progress bars for a person (JSON progress events exist), no proxies, no
+  HTTP/2. TLS has no revocation checking (CRL/OCSP), no client certificates,
+  no resumption, nothing before TLS 1.3, and refuses a HelloRetryRequest
+  (X25519 and P-256 shares are both sent, so none has been seen).
+- The resolver is a backtracking search with a step budget (200 000), not a
+  SAT solver with clause learning: a pathological repository gives up with a
+  message rather than searching forever.
+- A package is fetched to disk, but still decompressed whole into memory to
+  install (one at a time); the largest, fonts-cjk, is 15 MB compressed.
+- `palm info -L` of a package neither installed nor cached downloads it: the
+  file list is only in the package (Software uses this). Every other query
+  is offline.
+- Indexes do not expire: the rollback check stops an *older* index, but a
+  mirror that keeps serving the newest index it ever had is visible only
+  through the date `palm update` prints.
+- `distro/recipes/palm/ca-certificates.crt` is a copy of the build host's
+  Mozilla bundle (121 roots, October 2026). Refresh with
+  `cp -L /etc/ssl/certs/ca-certificates.crt distro/recipes/palm/` and a
+  pkgrel bump; a `ca-certificates` package of its own would be better.
+
+## https, mirrors and the public repository (2026-10-19)
+
+**TLS.** `tls.odin` is a TLS 1.3 client on core:crypto: X25519 or P-256,
+TLS_AES_128_GCM_SHA256, TLS_CHACHA20_POLY1305_SHA256, TLS_AES_256_GCM_SHA384;
+the server chain checked by core:crypto/x509 (hostname or IP SAN, serverAuth,
+validity) against the first CA bundle found: `$PALM_CA_FILE`,
+`/etc/ssl/certs/ca-certificates.crt`, `/etc/ssl/cert.pem`,
+`/usr/share/palm/ca-certificates.crt` (shipped by the palm package);
+CertificateVerify for ECDSA P-256/P-384, RSA-PSS and Ed25519; KeyUpdate and
+NewSessionTicket handled. Weighed: dlopen of the system OpenSSL (Palmframe
+has none, and palm must work in an empty --root), BearSSL as a package (a C
+library under the package manager that installs it), or our own client.
+core:crypto already had every primitive and a strict X.509 validator, so
+the protocol was ~800 lines and no new dependency. The index signature stays
+the trust; TLS adds privacy and leaves only the mirror itself able to replay
+an old index (which the freshness check below stops).
+
+**HTTP.** One keep-alive pool per thread; redirects across hosts but never
+https -> http; Range resume of `<file>.part`; bodies streamed to disk with
+sha256 computed on the way; a package gets its name only once its sha256
+matches the signed index (a mismatch on a resumed file retries once from
+zero).
+
+**Downloads.** A transaction fetches to `/var/cache/palm/<repo>/` four at a
+time (`FETCH_WORKERS`), then stages, checks and installs one at a time,
+re-checking each file's sha256 as it is read. `--no-cache`, or a cache the
+user cannot write, downloads to `$TMPDIR/palm-<pid>/` and removes it after.
+
+**Mirrors.** More URLs on a repository line are mirrors of it, tried in
+order for the index; packages come from the mirror that served the index,
+then the others. The cache key is the first URL.
+
+**Freshness.** `palm index` writes `# generated = <unix seconds>` in the
+signed header (`SOURCE_DATE_EPOCH` > 0 overrides; `make` exports 0, meaning
+now). `palm update` refuses an index older than the one already verified for
+that repository, trying the next mirror.
+
+**Offline queries.** `list`, `info`, `search` read only cached and local
+indexes and open no connection (the selftest counts connections); a
+repository never fetched is silently absent.
+
+**conflicts and replaces** (PALMBUILD.md) and the resolver: depth-first with
+backtracking, candidates by name then by provides, refusing a candidate that
+clashes with something chosen; the deepest failure is the error
+(`no version of libz satisfies libz>=2 (wanted by app2)`, `conflict: world
+wants rival, but rival-1-r0 conflicts with newtool-2.0-r0 (required by
+world)`). `replaces` has pacman's meaning: `palm upgrade` installs the
+replacement and renames the world entry.
+
+**upgrade.** Prints the plan, a total (`upgrade 3, install 1, remove 1;
+download 2.1 MiB, disk +340 KiB`) and the result (`OK: upgraded 3, ...`), or
+`nothing to upgrade`. It reads cached indexes like apk and notes when they
+are over a day old; `-U` refreshes first.
+
+**The public repository.** `https://palmframe-packages.vercel.app/x86_64`
+(Vercel static, project `palmframe-packages`), mirrored at
+`https://github.com/alexisbcz/palmframe-packages/releases/download/x86_64`
+(release assets of a public repository); both on the one line in
+`distro/base/root/etc/palm/repositories`. Signed with
+`palmframe-release.pub` (`distro/recipes/palm/`, installed into
+`/etc/palm/keys/` by the palm package); the secret lives at
+`~/.config/palmframe/keys/palmframe-release.sec` on the publishing machine,
+never in a checkout. `distro/repo-publish/publish.sh` stages under
+`~/.cache/palmframe/publish` (outside any git repository: `vercel link`
+inside one connects the project to it, and Vercel then deploys the source
+tree on every push -- this happened once and was undone), rebuilds
+palmframe-base with the release key as its `palmframe.pub`, signs a fresh
+index, checks it with palm in a root trusting only the release key, deploys,
+uploads packages before the index, deletes stale assets after, and checks
+each public URL with palm. Limits: Vercel takes up to 100 MB per file from
+the CLI (largest package 15 MB, repository 63 MB); GitHub assets 2 GiB.
+
+## How a security update reaches a system
+
+1. Fix the source or recipe, bump `pkgrel` (or `pkgver`).
+2. `make -C distro repo`, then `distro/repo-publish/publish.sh`: a new index
+   dated now, signed with the release key; Vercel switches atomically, the
+   GitHub mirror follows.
+3. On every system palmd runs `palm update` two minutes after boot and every
+   six hours, so the cached index is at most six hours old and Software's
+   Updates page (`palm list --upgradable --json`, offline) shows the fix.
+4. A person applies it: Update all in Software (palmd, wheel) or
+   `palm upgrade -U` as root. Nothing installs unasked.
+5. A mirror or network serving the previous index to hold the fix back is
+   refused; a mirror that stops updating shows its date in `palm update`.
+
+## setuid files
+
+palm installs setuid/setgid/sticky bits as recorded: chown, then chmod (chown
+clears setuid), through libc so fakeroot records both for the image. A recipe
+says `file = <src> -> /usr/bin/doas mode 4755` (or `mode = /usr/bin/doas
+4755`); the owner defaults to root:root. `palm verify` compares all twelve
+mode bits, so a lost setuid bit is a problem `palm fix` repairs. Verified as
+real root in the QEMU image (a 4755 package came out `4755 root:root`) and in
+the selftest as a user.
+
+## Verified 2026-10-19
+
+- `palm --selftest`: 623 assertions, 0 failures (was 523). `palmd
+  --selftest`: 117, 0 failures (adds the scheduled refresh).
+- TLS from the host to example.com, vercel.com, google.com, cloudflare.com,
+  api.github.com and Alpine's CDN; TLS 1.2-only servers (badssl.com) refused
+  with alert 40.
+- `publish.sh` run twice: deployed to Vercel and GitHub, both checked with
+  palm. A fresh root trusting only the release key: `palm add track
+  fonts-emoji` from Vercel (6 packages, 15 MiB, 2.3 s); with
+  `https://nonexistent.invalid/palm` before the GitHub mirror on the line, it
+  fell through and installed.
+- QEMU, a fresh `make -C distro image` from this worktree, serial root shell:
+  `palm list`/`info` said nothing about the network; `palm update` ->
+  `https://palmframe-packages.vercel.app/x86_64: 48 packages, signed by
+  palmframe-release.pub`; `palm add --yes track` in 0.76 s; `palm verify` OK
+  over 37 packages; `palm upgrade --dry-run`: nothing to upgrade; the setuid
+  package as above.
 
 ## Changed by the installer integration (2026-10-13)
 

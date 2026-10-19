@@ -520,6 +520,19 @@ remove_temp_downloads :: proc(fetched: []Fetched) {
 	}
 }
 
+// uncached_repos counts the remote repositories with no cached index: what
+// a query cannot see until `palm update`.
+uncached_repos :: proc(o: ^Opts) -> int {
+	n := 0
+	for line in repo_lines(o) {
+		if len(line) == 0 || !is_remote_url(line[0]) {continue}
+		if !os.exists(rooted(o.root, fmt.tprintf("/var/cache/palm/%s/PALMINDEX", cache_slug(line[0])), context.temp_allocator)) {
+			n += 1
+		}
+	}
+	return n
+}
+
 // FETCH_WORKERS is how many packages download at once. Four connections is
 // what a CDN treats as one polite client, and enough to hide the latency of
 // many small packages behind one large one.
