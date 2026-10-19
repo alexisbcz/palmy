@@ -1,0 +1,13 @@
+#!/bin/sh
+# palm-notifyd: the session's notification service (apps/notify).
+#
+# It serves the native socket at $XDG_RUNTIME_DIR/palm/notify.sock straight
+# away, and takes org.freedesktop.Notifications as soon as the session bus
+# (45-dbus-session) answers -- it keeps looking, so the order the two start
+# in does not matter. It starts the toast surface itself the first time
+# something has to be shown, on the window manager's socket.
+#
+# A second copy finds the first answering and exits, so this is safe to run
+# twice. palm-login ends it with the session (SIGHUP), and it saves first.
+command -v notify >/dev/null 2>&1 || exit 0
+exec notify daemon

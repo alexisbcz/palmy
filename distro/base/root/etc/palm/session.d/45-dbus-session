@@ -1,0 +1,25 @@
+#!/bin/sh
+# The session bus, once per graphical session, as the user.
+#
+# Palmframe runs no session bus otherwise (distro/notes/runtime.md: the
+# system bus is for iwd and BlueZ). One is needed for the programs Palmframe
+# did not write: libnotify, Firefox and Chromium send their notifications to
+# org.freedesktop.Notifications on it, which palm-notifyd serves
+# (60-notify). It listens at $XDG_RUNTIME_DIR/bus, the per-user address
+# libdbus and GLib both fall back to when DBUS_SESSION_BUS_ADDRESS is unset,
+# so the session's programs find it without anyone exporting anything.
+#
+# palm-login runs every executable here in name order, in the background,
+# with the session's environment, and ends them with the session
+# (distro/notes/login.md).
+[ -n "${XDG_RUNTIME_DIR:-}" ] || exit 0
+command -v dbus-daemon >/dev/null 2>&1 || exit 0
+BUS="$XDG_RUNTIME_DIR/bus"
+if [ -S "$BUS" ]; then
+	# A bus that answers is this session's already. A socket nobody answers
+	# on is left over from a session that was killed: take its place.
+	dbus-send --bus="unix:path=$BUS" --dest=org.freedesktop.DBus --type=method_call \
+		/org/freedesktop/DBus org.freedesktop.DBus.Peer.Ping >/dev/null 2>&1 && exit 0
+	rm -f "$BUS"
+fi
+exec dbus-daemon --session --address="unix:path=$BUS" --nofork --nopidfile
