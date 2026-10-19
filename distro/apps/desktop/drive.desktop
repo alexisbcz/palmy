@@ -1,0 +1,9 @@
+[Desktop Entry]
+Type=Application
+Name=Drive
+Comment=Your files in the Palmframe cloud, per identity
+Exec=drive
+Icon=hard-drive
+Terminal=false
+Categories=Network;FileManager;Utility;
+Keywords=files;cloud;sync;share;

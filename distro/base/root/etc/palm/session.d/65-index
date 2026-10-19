@@ -1,0 +1,5 @@
+#!/bin/sh
+# palm-indexd: the per-identity search index behind Home and the assistant
+# (apps/index, cloud/docs/search.md). One per session; quiet without it.
+command -v index >/dev/null 2>&1 || exit 0
+exec index daemon

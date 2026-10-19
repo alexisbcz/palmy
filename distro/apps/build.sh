@@ -46,8 +46,9 @@ binary_name() {
 
 # Programs that live in a subdirectory of an application rather than at its
 # top: the prose engine the docs app runs as a subprocess, and the chat relay
-# the chat app connects to. Named as <dir under apps/>=<binary>.
-EXTRAS="prose/cli=prose chat/server=chat-server"
+# the chat app connects to, and the drive sync daemon, which lives with the
+# drive service under cloud/. Named as <dir under apps/>=<binary>.
+EXTRAS="prose/cli=prose chat/server=chat-server ../cloud/drive/palm-drive=palm-drive"
 source_extra_name() {
 	for e in $EXTRAS; do
 		[ "${e%%=*}" = "$1" ] && echo "${e#*=}"

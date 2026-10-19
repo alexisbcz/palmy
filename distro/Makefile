@@ -116,8 +116,8 @@ $(BIN)/wm: $(call srcs,apps/wm) $(TOOLKIT)
 # prose from apps/prose/cli).
 APP_BINS := $(filter-out palm palm-init palm-login palm-modules doas passwd palmd wm palm-install installer, \
 	$(sort $(shell grep -ho 'PALMFRAME_OUT}/bin/[a-z0-9-]*' $(DISTRO)/recipes/*/PALMBUILD | sed 's|.*/||')))
-app_dir = $(if $(filter palm-apps,$(1)),palm,$(if $(filter prose,$(1)),prose,$(1)))
-app_src = $(if $(filter palm-apps,$(1)),palm,$(if $(filter prose,$(1)),prose/cli,$(1)))
+app_dir = $(if $(filter palm-apps,$(1)),palm,$(if $(filter prose,$(1)),prose,$(if $(filter palm-drive,$(1)),../cloud/drive,$(1))))
+app_src = $(if $(filter palm-apps,$(1)),palm,$(if $(filter prose,$(1)),prose/cli,$(if $(filter palm-drive,$(1)),../cloud/drive/palm-drive,$(1))))
 
 define app_rule
 $(BIN)/$(1): $(call srcs,apps/$(call app_dir,$(1))) $(TOOLKIT)

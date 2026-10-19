@@ -297,7 +297,7 @@ declare -A DESC=(
 	[prose]="The prose engine behind docs (command line)"
 	[store]="Find, install and update software"
 	[network]="Network interfaces and Wi-Fi"
-	[settings]="System settings" [accounts]="Your Palmframe account and its identities" [welcome]="First-run setup"
+	[settings]="System settings" [accounts]="Your Palmframe account and its identities" [welcome]="First-run setup" [notify]="Notifications" [index]="Search index" [drive]="Drive" [palm-drive]="Drive sync"
 	[contacts]="Address book" [chat]="Messages" [forge]="Code hosting: repositories, reviews, issues"
 	[home]="Today across your identities (prototype)" [power]="Battery and power"
 	[colorpick]="Colour picker"
@@ -306,7 +306,7 @@ declare -A DESC=(
 # is drawn with there, and the paragraph on its page.
 declare -A CATEGORY=(
 	[term]=System [launcher]=System [sysmon]=System [store]=System [network]=System
-	[settings]=System [accounts]=System [welcome]=System [power]=System
+	[settings]=System [accounts]=System [welcome]=System [notify]=System [index]=System [drive]=Internet [palm-drive]=System [power]=System
 	[files]=Accessories [calc]=Accessories [maps]=Accessories [emoji]=Accessories
 	[colorpick]=Accessories
 	[editor]=Development [track]=Development [pickdemo]=Development [forge]=Development
@@ -323,7 +323,7 @@ declare -A ICON=(
 	[notes]=notebook-pen [docs]=file-text [sheets]=file-spreadsheet [slides]=presentation
 	[calendar]=calendar [reader]=book-open [money]=credit-card [prose]=type
 	[image]=image [photoshop]=palette [torrent]=download [shop]=tag
-	[settings]=settings [welcome]=rocket [accounts]=circle-user [contacts]=contact [chat]=message-circle
+	[settings]=settings [welcome]=rocket [notify]=bell [index]=search [drive]=hard-drive [palm-drive]=refresh-cw [accounts]=circle-user [contacts]=contact [chat]=message-circle
 	[forge]=git-branch [home]=house [power]=battery [colorpick]=pipette
 )
 declare -A DETAILS=(
@@ -353,6 +353,10 @@ declare -A DETAILS=(
 	[network]="Every interface with its addresses, gateway and DNS, and the Wi-Fi networks in range with their signal, read from iwd and the kernel. It scans and can turn a radio on; it never drops a connection."
 	[settings]="Appearance (dark or light, the accent, the wallpaper), keyboard layout and repeat, mouse and touchpad, sound, the time zone, your password, and what the displays, network, updates and hardware are. Every change is applied by the window manager within a second; settings get and set do the same from a terminal."
 	[accounts]="Sign in to Palmframe, see the identities your account holds, switch the current one and the sessions this machine keeps for each."
+	[notify]="One place for every notification, per identity: toasts, the notification center, quiet hours and digests written as sentences, and the standard desktop notification service so browsers and notify-send work too. palm-notifyd starts with each session."
+	[index]="The local search index behind Home and the assistant: one index per identity over mail, files, notes, events, contacts and browser history, kept current by palm-indexd, which starts with each session."
+	[drive]="Your files in the Palmframe cloud, per identity: browse, share, make links and see what is synced. Works with palm-drive, which keeps ~/Drive/<identity> in sync."
+	[palm-drive]="Keeps ~/Drive/<identity> in sync with the Palmframe cloud for each identity you chose to sync, both ways, offline-safe. Started with each session for those identities."
 	[welcome]="The first-run setup: language and look, a Palmframe account or this computer only, identities, what each identity syncs, the password vault and its Emergency Kit. Opens once at first login; welcome run starts it again."
 	[contacts]="People and how to reach them, kept per identity and synced with your Palmframe account."
 	[chat]="Conversations, with the identity you write as always shown. Talks to a chat server: Palmframe's, or one on your network."

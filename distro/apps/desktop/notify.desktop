@@ -1,0 +1,9 @@
+[Desktop Entry]
+Type=Application
+Name=Notifications
+Comment=Notification center and quiet hours per identity
+Exec=notify center
+Icon=bell
+Terminal=false
+Categories=System;Utility;
+Keywords=notifications;quiet;do not disturb;digest;
