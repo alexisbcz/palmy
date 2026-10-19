@@ -98,6 +98,7 @@ Focus :: enum u8 {
 	Find,
 	Field, // a field on an internal page
 	Dialog,
+	Bar, // the "Save this login?" bar
 }
 
 Overlay :: enum u8 {
@@ -221,6 +222,7 @@ State :: struct {
 
 	quit:         bool,
 	headless:     bool,
+	af:           Autofill,
 }
 
 g_state: ^State
@@ -643,6 +645,7 @@ undo_delete :: proc(s: ^State) {
 // ---------------------------------------------------------------------------
 
 pump_engine :: proc(s: ^State) {
+	af_pump(s)
 	if s.engine == nil || !s.engine.ok {
 		return
 	}
@@ -692,6 +695,7 @@ handle_event :: proc(s: ^State, ev: ^pb.Event) {
 			if s.focus != .Omnibox && t == active_tab(s) {
 				edit_set(&s.omni, t.url)
 			}
+			af_url(s, t)
 		}
 	case .Load:
 		if t != nil {
@@ -809,6 +813,8 @@ handle_event :: proc(s: ^State, ev: ^pb.Event) {
 		}
 	case .Log:
 		fmt.eprintln("engine:", ev.str)
+	case .Field_Focus, .Fill_Result, .Form_Submit:
+		af_event(s, ev)
 	}
 }
 
@@ -982,6 +988,7 @@ state_shutdown :: proc(s: ^State) {
 	if s.prof.settings.restore_session {
 		save_session(s)
 	}
+	af_shutdown(s)
 	engine_stop(s.engine)
 }
 

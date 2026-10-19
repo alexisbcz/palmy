@@ -14,6 +14,7 @@ import p "palmy:."
 import sc "shadcn:."
 
 overlays :: proc(ui: ^p.Ctx, s: ^State) {
+	af_dropdown(ui, s)
 	if s.focus == .Omnibox && s.omni_open && len(s.suggestions) > 0 {
 		suggestions(ui, s)
 	}
@@ -374,6 +375,7 @@ app_menu :: proc(ui: ^p.Ctx, s: ^State) {
 		if icon_button(ui, ICON_ZOOM_IN, true, false, "size-7 border border-border") {zoom_step(s, 1)}
 		p.end(ui)
 		if menu_item(ui, s, ICON_SEARCH, "Find in page", "Ctrl F") {close_overlay(s);open_find(s)}
+		if menu_item(ui, s, ICON_KEY, "Fill login", "", s.af.worker != nil && pb.origin_of(t.url) != "") {close_overlay(s);af_fill_from_omnibox(s)}
 		menu_sep(ui)
 	}
 	if menu_item(ui, s, ICON_SETTINGS, "Settings", "Ctrl ,") {close_overlay(s);open_internal(s, .Settings)}

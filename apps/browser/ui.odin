@@ -350,6 +350,9 @@ omnibox :: proc(ui: ^p.Ctx, s: ^State, t: ^Tab) {
 		p.end(ui)
 		if p.clickable(ui, z) {set_zoom(s, 1)}
 	}
+	if !focused {
+		af_key_button(ui, s, t)
+	}
 	if t != nil && t.page == .Web && t.url != "" && !focused {
 		marked := bookmarked(&s.bookmarks, t.url) != nil
 		star := p.div(ui, "size-7 rounded-full items-center justify-center shrink-0 hover:bg-background cursor-pointer")
@@ -452,6 +455,7 @@ content :: proc(ui: ^p.Ctx, s: ^State) {
 		error_page(ui, s, t)
 		return
 	}
+	af_bar(ui, s)
 	page := p.pixels(ui, "w-full flex-1", t, draw_page)
 	st := p.style(ui, page)
 	st.cursor = page_cursor(t.cursor)

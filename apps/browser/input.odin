@@ -63,6 +63,8 @@ handle_input :: proc(ui: ^p.Ctx, s: ^State) {
 	}
 
 	switch s.focus {
+	case .Bar:
+		bar_keys(ui, s)
 	case .Omnibox:
 		omnibox_keys(ui, s)
 	case .Find:
@@ -434,6 +436,19 @@ page_keys :: proc(ui: ^p.Ctx, s: ^State, t: ^Tab) {
 	if !t.has_view || s.engine == nil {
 		return
 	}
+	// the autofill dropdown takes Down, Up, Enter and Escape while it is up
+	if len(ui.input.keys) > 0 {
+		kept := af_keys(s, ui.input.keys[:])
+		if len(kept) != len(ui.input.keys) {
+			keep := make([dynamic]p.Key_Event, context.temp_allocator)
+			append(&keep, ..kept)
+			clear(&ui.input.keys)
+			append(&ui.input.keys, ..keep[:])
+		}
+		if len(ui.input.keys) > 0 {
+			af_input(s)
+		}
+	}
 	text := p.typed_text(ui)
 	runes := make([dynamic]rune, context.temp_allocator)
 	for r in text {
@@ -492,6 +507,9 @@ page_pointer :: proc(ui: ^p.Ctx, s: ^State, t: ^Tab) {
 	m := in_.mouse
 	inside := m.x >= r.x && m.y >= r.y && m.x < r.x + r.w && m.y < r.y + r.h && in_.over_surface
 	blocked := s.overlay != .None || s.dialog.active
+	if d := s.af.drop_rect; s.af.open && d.w > 0 && m.x >= d.x && m.y >= d.y && m.x < d.x + d.w && m.y < d.y + d.h {
+		blocked = true
+	}
 	if s.focus == .Omnibox && s.omni_open {
 		d := p.rect_of(ui, s.drop_id)
 		if m.x >= d.x && m.y >= d.y && m.x < d.x + d.w && m.y < d.y + d.h {
@@ -536,6 +554,7 @@ page_pointer :: proc(ui: ^p.Ctx, s: ^State, t: ^Tab) {
 				if s.focus != .Page {
 					set_focus(s, .Page)
 				}
+				af_input(s)
 				engine_mouse(s.engine, t.id, .Down, pb.Button(bi), clicks, mods, x, y)
 				s.capture = true
 			}

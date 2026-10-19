@@ -145,6 +145,7 @@ gui_main :: proc(opt: Gui_Options) -> int {
 
 	s.engine = engine_start(s.engine_kind, &s.prof, app, p.host_keymap(app))
 	engine_theme(s.engine, s.dark)
+	af_init(s)
 
 	// tabs: the command line's URLs, else the session, else a new tab
 	if len(opt.urls) > 0 {

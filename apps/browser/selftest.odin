@@ -7,6 +7,7 @@ package browser
 import "core:fmt"
 import "core:os"
 import "core:strings"
+import "core:sys/linux"
 import pb "pb"
 import p "palmy:."
 
@@ -28,7 +29,7 @@ check :: proc(t: ^T, cond: bool, what: string, args: ..any) {
 
 selftest :: proc() -> int {
 	t: T
-	home := fmt.tprintf("/tmp/palm-browser-selftest-%d", os.get_pid())
+	home := fmt.aprintf("/tmp/palm-browser-selftest-%d", os.get_pid()) // outlives the offscreen frames' temp resets
 	os.set_env("PALM_BROWSER_HOME", home)
 	defer os.remove_all(home)
 
@@ -40,6 +41,7 @@ selftest :: proc() -> int {
 	test_input(&t)
 	test_import_export(&t)
 	test_chrome(&t)
+	test_autofill(&t, home)
 	if os.get_env("PALM_BROWSER_SELFTEST_ENGINE", context.temp_allocator) != "0" {
 		test_engine(&t)
 	}
@@ -404,4 +406,214 @@ test_engine :: proc(t: ^T) {
 			}
 		}
 	}
+}
+
+// Autofill without an engine or a vault: the new messages, origins, the
+// pairing code and file, the identity handle, and the controller -- the
+// dropdown, its keys, the fill it queues, and save-or-update after a submit.
+// autofill-test.sh runs the same with both engines and a real vault.
+@(private = "file")
+test_autofill :: proc(t: ^T, home: string) {
+	// the messages
+	m := pb.req_fill(3, "https://bank.example", "alice", "s3cret pass", "123456")
+	q, ok := pb.decode_request(pb.msg_bytes(&m))
+	check(t, ok && q.op == .Fill && q.view == 3 && q.str == "https://bank.example" && q.str2 == "alice" && q.str3 == "s3cret pass" && q.str4 == "123456", "fill round-trips: %v", q)
+	check(t, len(m.b) == cap(m.b), "a fill message is built without reallocating (no stray copy of the password)")
+	delete(m.b)
+	m = pb.ev_field_focus(4, .Password, 10, 20.5, 300, 36, "https://bank.example")
+	e, eok := pb.decode_event(pb.msg_bytes(&m))
+	check(t, eok && e.op == .Field_Focus && e.field == .Password && e.x == 10 && e.y == 20.5 && e.fw == 300 && e.fh == 36 && e.str == "https://bank.example", "field focus round-trips")
+	delete(m.b)
+	m = pb.ev_form_submit(4, "https://bank.example", "alice", "new-pass", "old-pass")
+	raw := make([]u8, len(pb.msg_bytes(&m)))
+	copy(raw, pb.msg_bytes(&m))
+	delete(m.b)
+	e, eok = pb.decode_event(raw)
+	check(t, eok && e.op == .Form_Submit && e.username == "alice" && e.password == "new-pass" && e.old_password == "old-pass", "form submit round-trips")
+	// (event_free zeroes a submit's buffer before freeing it: see pb.event_free)
+	pb.event_free(&e)
+	m = pb.ev_fill_result(4, .Form_Action)
+	e, eok = pb.decode_event(pb.msg_bytes(&m))
+	check(t, eok && e.op == .Fill_Result && e.fill == .Form_Action, "fill result round-trips")
+	delete(m.b)
+	m = pb.ev_form_submit(4, "https://bank.example", "alice", "new-pass", "old-pass")
+	_, eok = pb.decode_event(pb.msg_bytes(&m)[:30])
+	check(t, !eok, "a truncated submit is refused")
+	delete(m.b)
+
+	// origins, as location.origin spells them (and the CEF host's twin)
+	origins := [?][2]string {
+		{"https://Bank.Example/login?x=1", "https://bank.example"},
+		{"https://bank.example:443/", "https://bank.example"},
+		{"https://bank.example:8443/a#b", "https://bank.example:8443"},
+		{"http://bank.example:80/", "http://bank.example"},
+		{"HTTP://bank.example", "http://bank.example"},
+		{"https://user:pw@bank.example/", ""},
+		{"file:///etc/passwd", ""},
+		{"data:text/html,<form>", ""},
+		{"javascript:alert(1)", ""},
+		{"about:blank", ""},
+		{"https://", ""},
+	}
+	for c in origins {
+		check(t, pb.origin_of(c[0]) == c[1], "origin of %q is %q, not %q", c[0], c[1], pb.origin_of(c[0]))
+	}
+
+	// the pairing code, against the vault's definition (vector from Python's
+	// hashlib for the key 00 01 .. 1f)
+	key: [32]u8
+	for i in 0 ..< 32 {key[i] = u8(i)}
+	check(t, af_pair_code(key[:], context.temp_allocator) == "894 258", "the pairing code matches the vault's")
+	pr := Af_Pairing{pair_id = "11111111-2222-3333-4444-555555555555", key = key}
+	path := fmt.tprintf("%s/vault-pair.json", home)
+	os.make_directory_all(home)
+	check(t, af_pair_save(path, pr), "the pairing is written")
+	back, bok := af_pair_load(path)
+	check(t, bok && back.pair_id == pr.pair_id && back.key == key, "the pairing reads back")
+	st: linux.Stat
+	if linux.stat(strings.clone_to_cstring(path, context.temp_allocator), &st) == .NONE {
+		check(t, transmute(u32)st.mode & 0o077 == 0, "the pairing file is 0600 (%o)", transmute(u32)st.mode & 0o777)
+	}
+
+	// the identity handle: from identities.json when it names the profile
+	cfg := fmt.tprintf("%s/config", home)
+	os.make_directory_all(fmt.tprintf("%s/palmframe", cfg))
+	_ = os.write_entire_file(fmt.tprintf("%s/palmframe/identities.json", cfg), transmute([]u8)string(`[{"handle": "alice-w", "name": "work", "color": "#d97706"}, {"handle": "alice"}]`))
+	saved := strings.clone(os.get_env("XDG_CONFIG_HOME", context.temp_allocator), context.temp_allocator)
+	os.set_env("XDG_CONFIG_HOME", cfg)
+	check(t, identity_handle("work", context.temp_allocator) == "alice-w", "a profile named for an identity uses its handle")
+	check(t, identity_handle("alice", context.temp_allocator) == "alice", "a profile named by its handle keeps it")
+	check(t, identity_handle("personal", context.temp_allocator) == "personal", "an unknown profile is its own handle")
+	os.set_env("XDG_CONFIG_HOME", saved)
+
+	// the controller, with a worker that is never started: jobs queue up
+	prof, _ := profile_open("af-selftest")
+	profile_ensure(&prof)
+	s := new(State)
+	g_state = s
+	state_init(s, prof)
+	s.headless = true
+	w := new(Af_Worker)
+	s.af.worker = w
+	s.af.identity = strings.clone("alice")
+	s.af.sel = -1
+	tab := new_tab(s, "https://bank.example/login")
+	tab.url = strings.clone("https://bank.example/login")
+	tab.has_view = true
+	focus := proc(s: ^State, view: int, kind: pb.Field_Kind, origin: string) {
+		m := pb.ev_field_focus(view, kind, 40, 120, 280, 36, origin)
+		raw := make([]u8, len(pb.msg_bytes(&m)))
+		copy(raw, pb.msg_bytes(&m))
+		delete(m.b)
+		ev, _ := pb.decode_event(raw)
+		handle_event(s, &ev)
+		pb.event_free(&ev)
+	}
+	jobs := proc(w: ^Af_Worker) -> int {return len(w.jobs)}
+	focus(s, tab.id, .Username, "https://bank.example")
+	check(t, !s.af.open && s.af.armed, "a field the page focused by itself arms the dropdown, it does not open it")
+	check(t, jobs(w) == 1 && w.jobs[0].kind == .Query && w.jobs[0].origin == "https://bank.example" && w.jobs[0].identity == "alice", "focus asks the vault for this origin and identity")
+	af_input(s)
+	focus(s, tab.id, .Password, "https://bank.example")
+	check(t, s.af.open, "a field the person focused opens the dropdown")
+	// the vault's answer
+	s.af.vault = .Unlocked
+	delete(s.af.cand_origin)
+	s.af.cand_origin = strings.clone("https://bank.example")
+	append(&s.af.candidates, Af_Candidate{id = strings.clone("id-1"), title = strings.clone("Bank"), username = strings.clone("alice"), exact = true})
+	append(&s.af.candidates, Af_Candidate{id = strings.clone("id-2"), title = strings.clone("Bank (joint)"), username = strings.clone("alice+bob"), exact = true})
+	rows := af_rows(s)
+	check(t, len(rows) == 3 && rows[0].action == .Fill && rows[2].action == .Open_Vault, "two logins and Open Passwords")
+	kept := af_keys(s, {{sym = p.KEY_DOWN}, {sym = p.KEY_DOWN}, {sym = 'x'}})
+	check(t, s.af.sel == 1 && len(kept) == 1 && kept[0].sym == 'x', "Down moves the selection; other keys go to the page")
+	n := jobs(w)
+	af_keys(s, {{sym = p.KEY_RETURN}})
+	check(t, jobs(w) == n + 1 && w.jobs[n].kind == .Fill && w.jobs[n].id == "id-2" && w.jobs[n].origin == "https://bank.example", "Enter asks the vault to fill the selected login, for this origin")
+	check(t, s.af.busy, "the dropdown waits for the vault")
+	s.af.busy = false
+	kept = af_keys(s, {{sym = p.KEY_ESCAPE}})
+	check(t, !s.af.open && len(kept) == 0, "Escape closes the dropdown and stays with the chrome")
+	kept = af_keys(s, {{sym = p.KEY_RETURN}})
+	check(t, len(kept) == 1, "with the dropdown closed, Enter goes to the page")
+	// a field report from another origin than the dropdown's must not reuse
+	// its candidates
+	focus(s, tab.id, .Username, "https://bank.example.evil.example")
+	any_fill := false
+	for r in af_rows(s) {if r.action == .Fill {any_fill = true}}
+	check(t, !any_fill, "candidates of one origin are never offered on another")
+	// the URL moving closes the dropdown
+	s.af.open = true
+	ue := pb.Event{op = .Url, view = tab.id, str = "https://elsewhere.example/"}
+	handle_event(s, &ue)
+	check(t, !s.af.open, "navigating closes the dropdown")
+	// locked, unpaired, absent
+	s.af.vault = .Locked
+	rows = af_rows(s)
+	check(t, len(rows) == 1 && rows[0].action == .Unlock, "locked: only \"Locked — unlock\"")
+	s.af.vault = .Unpaired
+	rows = af_rows(s)
+	check(t, len(rows) == 1 && rows[0].action == .Pair, "unpaired: only \"Connect to Passwords\"")
+	s.af.vault = .Not_Running
+	rows = af_rows(s)
+	check(t, len(rows) == 1 && rows[0].action == .Open_Vault, "no vault: only \"Open Passwords\"")
+
+	// submits: the filled password is recognised without being kept
+	s.af.vault = .Unlocked
+	append(&s.af.filled, Af_Filled{view = tab.id, item = strings.clone("id-1"), origin = strings.clone("https://bank.example"), mac = af_mac(s, "filled-pass")})
+	submit := proc(s: ^State, view: int, user, pass, old: string) {
+		m := pb.ev_form_submit(view, "https://bank.example", user, pass, old)
+		raw := make([]u8, len(pb.msg_bytes(&m)))
+		copy(raw, pb.msg_bytes(&m))
+		delete(m.b)
+		ev, _ := pb.decode_event(raw)
+		handle_event(s, &ev)
+		pb.event_free(&ev)
+	}
+	n = jobs(w)
+	submit(s, tab.id, "alice", "filled-pass", "")
+	check(t, !s.af.bar.active && jobs(w) == n, "submitting the password just filled offers nothing")
+	submit(s, tab.id, "", "brand-new-pass", "filled-pass")
+	check(t, s.af.bar.active && s.af.bar.item == "id-1" && jobs(w) == n + 1 && w.jobs[n].kind == .Query, "a change-password form names the login that was filled")
+	res := Af_Result{kind = .Query, seq = s.af.bar.seq, state = .Unlocked}
+	append(&res.candidates, Af_Candidate{id = strings.clone("id-1"), title = strings.clone("Bank"), username = strings.clone("alice"), exact = true})
+	bar_decide(s, &res)
+	check(t, s.af.bar.update && s.af.bar.username == "alice" && !s.af.bar.waiting, "... and the bar offers to update it")
+	bar_accept(s)
+	last := w.jobs[len(w.jobs) - 1]
+	check(t, last.kind == .Save && last.id == "id-1" && last.password == "brand-new-pass" && last.identity == "alice", "accepting sends the update to the vault")
+	check(t, !strings.contains(string(transmute([]u8)s.af.bar.password), "brand"), "the bar wiped its copy of the password")
+	bar_close(s)
+	submit(s, tab.id, "carol", "carol-pass", "")
+	res2 := Af_Result{kind = .Query, seq = s.af.bar.seq, state = .Unlocked}
+	append(&res2.candidates, Af_Candidate{id = strings.clone("id-1"), title = strings.clone("Bank"), username = strings.clone("alice"), exact = true})
+	bar_decide(s, &res2)
+	check(t, s.af.bar.active && !s.af.bar.update, "a username the vault lacks: save, not update")
+	bar_close(s)
+	candidates_free(&res.candidates)
+	candidates_free(&res2.candidates)
+
+	// the dropdown and the bar draw
+	off := p.offscreen_create(1100, 700, 1, "w-full h-full flex-col bg-background text-foreground overflow-hidden")
+	defer p.offscreen_destroy(off)
+	shot_fonts(off, false)
+	submit(s, tab.id, "dave", "dave-pass", "")
+	s.af.bar.waiting = false
+	s.af.bar.seq = 0
+	s.af.open = true
+	delete(s.af.origin)
+	s.af.origin = strings.clone("https://bank.example")
+	s.af.view = tab.id
+	tab.page = .Web
+	s.page_rect = {0, 90, 1100, 600}
+	for _ in 0 ..< 3 {
+		ui := p.offscreen_begin(off)
+		frame(ui, s)
+		p.offscreen_end(off)
+	}
+	check(t, s.af.drop_rect.w >= 300, "the dropdown is laid out (%v)", s.af.drop_rect)
+	bar_close(s)
+	for &j in w.jobs {job_free(&j)}
+	delete(w.jobs)
+	s.af.worker = nil
+	free(w)
 }

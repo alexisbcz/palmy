@@ -210,6 +210,23 @@ COMMANDS := []kit.Command {
 		examples = {"browser shot shot.png https://example.com", "browser shot dark.png palm://newtab --theme dark"},
 		run = cmd_shot,
 	},
+	{
+		verb = "autofill-run",
+		summary = "drive the window offscreen through autofill steps against the real vault socket (tests, screenshots)",
+		effect = .Mutate,
+		flags = {
+			{name = "url", kind = .String, help = "the page to open first"},
+			{name = "steps", kind = .String, help = "steps separated by ';' (see apps/browser/afrun.odin)"},
+			{name = "steps-file", kind = .Path, help = "steps, one per line"},
+			{name = "engine", kind = .Enum, values = {"chromium", "firefox"}, help = "override the profile's engine"},
+			{name = "theme", kind = .Enum, values = {"light", "dark"}, def = "light"},
+			{name = "width", kind = .Int, def = "1100"},
+			{name = "height", kind = .Int, def = "720"},
+		},
+		out = {{name = "failed", kind = .Int}},
+		examples = {"browser autofill-run --url https://bank.localhost:8443/login --steps 'wait-focus; key Down; key Return; wait-fill ok'"},
+		run = cmd_autofill_run,
+	},
 }
 
 @(private = "file")
