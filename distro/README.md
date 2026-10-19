@@ -709,8 +709,10 @@ on real hardware yet.
   only ever run one monitor, and repaints the whole screen on the CPU every
   frame. Clients see keys as press and release pairs, so none can see a key
   held down. `notes/wm.md`.
-- **No clipboard.** palmy copies through `wl-copy`, which Palmframe does not
-  ship.
+- **The clipboard is partly native.** palmy speaks `wl_data_device` and the
+  primary selection itself, so palmy's text fields, `term`, `files` and the
+  launcher copy and paste on the bare system; applications that go through
+  `kit.clipboard_set` still run `wl-copy`, which Palmframe does not ship.
 - **Applications.** 22 of the 47 programs work on the bare system, 9 partly,
   16 not at all: those need ffmpeg, PipeWire, NetworkManager, BlueZ, ollama,
   pacman or OpenSSL (`apps/apps.tsv`). `files` and the launcher still offer

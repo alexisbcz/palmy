@@ -284,7 +284,7 @@ apply when the element is in that state.
 
 | group | supported |
 | --- | --- |
-| layout | `flex-row` `flex-col` `flex-wrap` `items-*` `justify-*` `self-*` `gap-*` `gap-x-*` `gap-y-*` `hidden` `relative` `absolute` `inset-0` `top/right/bottom/left-*` `z-*` |
+| layout | `flex-row` `flex-col` `flex-row-reverse` `flex-col-reverse` `dir-ltr` `dir-rtl` `dir-auto` `flex-wrap` `items-*` `justify-*` `self-*` `gap-*` `gap-x-*` `gap-y-*` `hidden` `relative` `absolute` `inset-0` `top/right/bottom/left-*` `z-*` |
 | sizing | `w-*` `h-*` `size-*` `w-full` `h-full` `w-screen` `w-1/2` `min-w-*` `max-w-*` `min-h-*` `max-h-*` `basis-*` `flex-1` `flex-auto` `flex-none` `grow` `grow-0` `shrink` `shrink-0` |
 | spacing | `p-*` `px-*` `py-*` `pt/pr/pb/pl-*`, the same for `m-*`, `mx-auto` |
 | color | `bg-*` `text-*` `border-*`, `bg-gradient-to-b` with `from-*`/`to-*`, opacity suffixes like `bg-white/10`, arbitrary values like `bg-[#1e293b]` |
@@ -293,6 +293,15 @@ apply when the element is in that state.
 | effects | `shadow` `shadow-sm` … `shadow-2xl` `opacity-*` `transition` `duration-*` |
 | overflow | `overflow-hidden` `overflow-scroll` |
 | cursor | `cursor-pointer` `cursor-text` `cursor-crosshair` `cursor-grab` … |
+
+`dir-rtl` is CSS's `direction: rtl`, inherited: a row's children run right to
+left, a column's `items-start` sits at the right, and every paragraph below it
+takes a right-to-left base direction, so `text-start` aligns right. `dir-ltr`
+forces the opposite and `dir-auto` (the default) lets each paragraph decide.
+`flex-row-reverse` and `flex-col-reverse` reverse one box; inside `dir-rtl` a
+`flex-row-reverse` runs left to right again. Mirroring reflects each child's
+box, so physical margins move with it: `ml-2` in a mirrored row is the gap on
+the child's right, as a logical `ms-2` would be.
 
 Spacing follows Tailwind's scale (`p-4` is 16px, `p-0.5` is 2px, `p-px` is 1px)
 and anything in brackets is exact pixels (`w-[260]`).
@@ -431,8 +440,11 @@ Honest limitations, not a roadmap:
   a 4K window is CPU work and will show it.
 - One window per process. No popups, menus or tooltips — `xdg_popup` is not
   implemented, so anything overlaying is drawn inside the window.
-- No clipboard, drag and drop, or input methods. No preedit, so CJK input will
-  not work.
+- The clipboard is native — `wl_data_device` and the primary selection on
+  Wayland, ICCCM selections on X11 (`palmy.clipboard_set`/`clipboard_get`,
+  `primary_set`/`primary_get`) — but text only, served only while the window
+  is open, and without X11's INCR for selections over one request (~256 KiB).
+  No drag and drop or input methods. No preedit, so CJK input will not work.
 - Text is laid out left to right with simple word wrapping. No bidi and no
   complex shaping: missing glyphs come from a fallback chain, but there is no
   GSUB, so Arabic and Indic scripts are unjoined and emoji ZWJ sequences render

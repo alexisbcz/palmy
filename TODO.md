@@ -175,9 +175,9 @@ value 100 the rect is 264..280 while the track ends at 264 — painted pixels
 | no window size accessor outside a frame | `reader` | reads `app.win.width`/`height` directly. `offscreen_size` exists for the offscreen half; this is the `app.odin` half |
 | `push_styled` does not resolve `text-current` | `call` | it applies the caller's class *after* `push_node`, so `palmy.button(ui, "Save", "border-current")` leaves the sentinel and draws nothing. Everything from `div`/`row`/`col`/`apply`/`text`/`icon`/`image` is already right. One line: capture `style.fg` before `apply_classes`, then `resolve_current` |
 | `Key_Event` carries no unshifted codepoint | `term` | the VT key encoder needs it to tell `Ctrl+Shift+2` from `Ctrl+@`; libghostty and the Kitty protocol both take both. `apps/term/keymap.odin` recovers it from a US-layout reverse table, exact on US and UK and wrong for one chord elsewhere. Fill it from `xkb_state_key_get_one_sym` with the shift level forced to 0 |
-| no text direction on `Style` | `palmy` itself | `text_area` measures a paragraph at its own base direction but each row is drawn as its own node, and `wrap_text` resolves direction from that node's string with no override. A wrapped mixed-direction paragraph can be drawn at a direction it was not measured at. Needs `dir-ltr`/`dir-rtl`/`dir-auto` in `class.odin` reaching `layout.odin` |
-| `kit.clipboard_set`/`get` fork a process | `term` | calling them inside the frame while a reader thread wants the same mutex is a once-a-month deadlock. A note on the two procedures saying they fork would have saved finding it by reasoning |
-| no `wl_data_device` client | `clipboard` | `wl-paste --watch` hands over the content but not the advertised types, so the type list comes from a second call and a fast handover can have the verdict — **including the sensitivity gate** — describing one selection and the bytes another. A real window for a password to be recorded. `apps/wm` now implements this protocol as a *server*; this is the client half |
+| ~~no text direction on `Style`~~ | `palmy` itself | **done**: `Style.text_dir`, from `dir-ltr`/`dir-rtl`/`dir-auto`, reaches `wrap_text`, and `text_area` draws each row at its paragraph's direction |
+| `kit.clipboard_set`/`get` fork a process | `term` | calling them inside the frame while a reader thread wants the same mutex is a once-a-month deadlock. `term` now goes through `palmy.clipboard_*`, which does not fork; kit's should too (see *The system*) and say they fork in the fallback |
+| `wl_data_device` client: text only | `clipboard` | **the client exists now** (`palmy/clipboard.odin`), but its API is text: set, get. The `clipboard` app needs a selection-changed notification carrying the offer's type list and a read of one type from that same offer, which is what removes the two-call race — **including the sensitivity gate** — between `wl-paste --watch` and `--list-types`. The offer and its types are already tracked per selection; exposing them is the remaining work |
 | `text-slate-100` on `bg-indigo-500` is 4.08:1 | tests | under WCAG AA for body text. A toolkit design decision, not something a test should silently enforce |
 | no `xdg_popup` | several | menus and tooltips are drawn in-window; a real constraint, not a bug |
 | ZWJ emoji sequences not composed | typography | needs GSUB; a skin-tone modifier renders as a swatch after the base emoji |
@@ -326,19 +326,16 @@ the areas' notes name.
   time-zone list (`Britain (UK)`) and keyboard layout descriptions are
   tzdata's and xkeyboard-config's English. The wm bar's date (`Tue 13 Oct`)
   and its empty-desktop hint are English because wm has no catalogue.
-- **palmy: Tab into a prefilled field puts the caret at 0.** Tabbing into
-  *Computer name* (`palmframe`) and typing `analytical` gives
-  `analyticalpalmframe`. `distro/live/test-install.py` presses End first, but
-  a person would not know to. palmy should put the caret at the end, or
-  select all, when a field gains focus from the keyboard.
-- **palmy: a text's wrap width is capped at last frame's width**
-  (`palmy/layout.odin`, `measure`, about line 235). When the string at an id
-  gets longer, as on a language switch, a shrink-wrapped label breaks onto
-  several lines and never recovers. The installer works around it. The
-  reproduction is in `distro/notes/installer-gui.md`.
-- **palmy has no layout direction.** The installer (`hrow`/`hend`) and the
-  greeter mirror their rows by hand for Arabic. A `flex-row-reverse` or a
-  direction would remove both copies.
+- **The installer and greeter still mirror their rows by hand.** palmy now
+  has `flex-row-reverse`, `flex-col-reverse` and an inherited `dir-rtl` /
+  `dir-ltr` / `dir-auto` (README, *Styling*); `hrow`/`hend` and the greeter's
+  `if rtl` branches can become one `dir-rtl` on the page's root. The palmy
+  halves of the installer's other two workarounds are fixed: Tab into a
+  prefilled field now puts the caret at the end (`test-install.py`'s End
+  press is no longer needed), and a text whose string grows is re-measured
+  instead of wrapped at last frame's width (`tests/text_rewrap_test.odin`),
+  so the installer's per-language tree keying and `flex-1` /
+  `whitespace-nowrap` on changing texts are no longer required.
 - **A second install in the same machine moves the boot entry.** The core
   reuses an existing "Palmframe" `Boot####`, so installing onto a second
   disk points the one entry at the new disk, and the first disk boots only
@@ -395,25 +392,29 @@ the areas' notes name.
   `~/.config/palmframe/keys/`). No CI publishes it, the key has no backup or
   rotation plan beyond "ship a new .pub, then re-sign", and the published
   palmframe-base is rebuilt at publish time with the release key standing in
-  for the checkout's build key. `distro/image/test-boot.py` still expects
-  `palm update` to reach `http://10.0.2.2`; the image now points at
+  for the checkout's build key. The image points at
   `https://palmframe-packages.vercel.app/x86_64` (`distro/notes/palm.md`).
 - **palm**: no revocation checking in its TLS client, indexes do not expire,
   and each package is decompressed whole in memory to install
   (`distro/notes/palm.md`, *Not done*).
-- **No clipboard.** palmy copies through `wl-copy`, which is not shipped.
-- **`files` and `launcher` still offer `foot`** as the terminal
-  (`apps/files/main.odin`, `apps/launcher/main.odin`).
 - **zram needs the kernel.** palm-init sets up zram swap from
   `/etc/palm/zram` (verified with a kernel built with `CONFIG_ZRAM=y`,
   `CONFIG_ZSMALLOC=y`, `CONFIG_CRYPTO_ZSTD=y`, `CONFIG_ZRAM_BACKEND_ZSTD=y`),
   but `distro/kernel/palmframe.config` does not enable them, so the shipped
   system has no swap.
+- **Most applications still copy through `kit.clipboard_set`**, which runs
+  `wl-copy`, not shipped. palmy has a native clipboard now
+  (`palmy/clipboard.odin`: `wl_data_device`, the primary selection, ICCCM
+  selections); `term`, `files`, `launcher` and palmy's own text widgets use
+  it. `apps/kit`'s `clipboard_set`/`clipboard_get` should try
+  `p.clipboard_set(text)` / `p.clipboard_get()` first (both work on the
+  default window and return false with none, off the loop thread, or when
+  refused) and keep wl-clipboard as the fallback.
 - **palm-login** keeps no utmp, wtmp or lastlog and ignores shadow's aging
   fields; the only brake on guessing is a 1.5 s delay per failure.
-- **Two cosmetic faults** in the verification screenshots: a single click in
-  `term` leaves a one-cell selection, and the greeter's Shut Down button has no
-  hover state.
+- **A cosmetic fault** in the verification screenshots: the greeter's Shut
+  Down button has no hover state. (`term`'s one-cell selection on a single
+  click is fixed.)
 
 ---
 
