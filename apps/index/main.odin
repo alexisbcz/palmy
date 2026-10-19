@@ -458,7 +458,7 @@ cmd_status :: proc(c: ^kit.Call) -> int {
 		for x in ids {
 			ix, ok := ic.index_open(paths.index, x.handle)
 			if ok {
-				fmt.printfln("%-14s %7d items  %6.1f MB  %d segment(s)", x.handle, ix.ndocs, f64(ic.index_bytes(ix)) / 1e6, len(ix.segs))
+				fmt.printfln("%-14s %s items, %s, %d segment(s)", x.handle, fmt.tprint(ix.ndocs), size_words(ic.index_bytes(ix)), len(ix.segs))
 				ic.index_close(ix)
 			}
 		}
@@ -568,4 +568,14 @@ json_tree :: proc(data: []u8) -> (^kit.Json, bool) {
 		return kit.jnull()
 	}
 	return conv(v), true
+}
+
+size_words :: proc(n: i64) -> string {
+	switch {
+	case n >= 1_000_000:
+		return fmt.tprintf("%.1f MB", f64(n) / 1e6)
+	case n >= 1000:
+		return fmt.tprintf("%.0f kB", f64(n) / 1e3)
+	}
+	return fmt.tprintf("%d bytes", n)
 }

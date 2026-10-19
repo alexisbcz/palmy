@@ -286,7 +286,11 @@ run_job :: proc(d: ^Daemon, j: Job) {
 	}
 	t0 := time.tick_now()
 	g_scan_writer = w
-	st := scan(w, x^, d.paths, j.source, d.mail[x.handle], scan_yield)
+	mine := make([dynamic]string, context.temp_allocator)
+	for y in d.ids {
+		append(&mine, strings.to_lower(y.address, context.temp_allocator))
+	}
+	st := scan(w, x^, d.paths, j.source, d.mail[x.handle], scan_yield, mine[:])
 	g_scan_writer = nil
 	ic.writer_flush(w)
 	for dir in st.dirs {

@@ -9,6 +9,7 @@
 package indexfeed
 
 import "core:fmt"
+import "core:os"
 import "core:strings"
 import ic "../core"
 
@@ -28,8 +29,15 @@ open_command :: proc(r: ic.Result, id: Ident, p: Paths, allocator := context.tem
 	}
 	switch r.kind {
 	case .Mail:
-		if id.mail_dir != "" {
-			return {cmd(env, "mail", fmt.aprintf("--maildir=%s", id.mail_dir)), false}
+		dir := id.mail_dir
+		if dir == "" && id.address != "" && !strings.contains(id.address, "/") {
+			d := fmt.aprintf("%s/%s", p.mail, id.address)
+			if os.is_dir(d) {
+				dir = d
+			}
+		}
+		if dir != "" {
+			return {cmd(env, "mail", fmt.aprintf("--maildir=%s", dir)), false}
 		}
 		return {cmd(env, "mail"), false}
 	case .Event:

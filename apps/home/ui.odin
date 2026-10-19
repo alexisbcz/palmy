@@ -488,6 +488,9 @@ tasks :: proc(ui: ^p.Ctx, h: ^Home) {
 		}
 	}
 	section_head(ui, tr("Tasks"), tfmt("%d", n))
+	if n == 0 {
+		p.text(ui, tr("Nothing due, and no open tasks."), "px-3 py-2 text-[13] text-muted-foreground")
+	}
 	for it, i in s.items {
 		if it.kind != .Task || it.day > 0 || !visible(h, it) {
 			continue
@@ -596,7 +599,8 @@ recent :: proc(ui: ^p.Ctx, h: ^Home) {
 		p.text(ui, it.title, "text-[13.5] font-medium truncate")
 		who := it.who == "You" ? tr("you") : it.who
 		if who == "" {
-			p.text(ui, tfmt("%s · %s · %s", ago(s, it), it.app, it.detail), "text-[12] text-muted-foreground truncate")
+			where_ := it.detail == it.app || it.detail == "" ? "" : tfmt(" · %s", it.detail)
+			p.text(ui, tfmt("%s · %s%s", ago(s, it), it.app, where_), "text-[12] text-muted-foreground truncate")
 		} else {
 			p.text(ui, tfmt("%s · %s, edited by %s", ago(s, it), it.app, who), "text-[12] text-muted-foreground truncate")
 		}

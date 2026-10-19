@@ -114,6 +114,8 @@ parse_date :: proc(v: string, now: i64) -> (i64, bool) {
 		return today, true
 	case "yesterday":
 		return today - day, true
+	case "tomorrow":
+		return today + day, true
 	case "now":
 		return now, true
 	}

@@ -75,6 +75,7 @@ Ctx :: struct {
 	kept:  map[string]bool, // unchanged multi-document files: their instances stay
 	st:    ^Scan_Stats,
 	mail:  ^Mail_Cache, // per identity, kept across scans by the daemon
+	mine:  []string, // every address of this person: mail between their own identities waits on nobody
 	yield: proc(), // called between files: the daemon's chance to breathe
 }
 
@@ -117,7 +118,7 @@ sweep :: proc(c: ^Ctx, k: Source_Kind) {
 	}
 }
 
-scan :: proc(w: ^ic.Writer, id: Ident, p: Paths, k: Source_Kind, mc: ^Mail_Cache = nil, yield: proc() = nil) -> Scan_Stats {
+scan :: proc(w: ^ic.Writer, id: Ident, p: Paths, k: Source_Kind, mc: ^Mail_Cache = nil, yield: proc() = nil, mine: []string = nil) -> Scan_Stats {
 	st: Scan_Stats
 	st.dirs = make([dynamic]string)
 	c := Ctx {
@@ -129,6 +130,7 @@ scan :: proc(w: ^ic.Writer, id: Ident, p: Paths, k: Source_Kind, mc: ^Mail_Cache
 		kept  = make(map[string]bool, allocator = context.temp_allocator),
 		st    = &st,
 		mail  = mc,
+		mine  = mine,
 		yield = yield,
 	}
 	ok := true
@@ -166,6 +168,7 @@ Mail_Facts :: struct {
 	message_id: string,
 	replies_to: [dynamic]string, // In-Reply-To and References ids
 	from_me:    bool,
+	from_self:  bool, // from another of this person's identities
 	to_me:      bool,
 	machine:    bool,
 	time:       i64,
@@ -346,7 +349,13 @@ scan_mail :: proc(c: ^Ctx) -> bool {
 		head := read_head(f.path, 16 * 1024)
 		m := parse_headers_only(string(head))
 		secs, _ := strconv.parse_i64(strings.split(f.name, ".", context.temp_allocator)[0])
-		mc.facts[strings.clone(f.unique)] = facts_of(m, self, f.folder, secs)
+		fa := facts_of(m, self, f.folder, secs)
+		for a in c.mine {
+			if a != "" && m.from_addr == a {
+				fa.from_self = true
+			}
+		}
+		mc.facts[strings.clone(f.unique)] = fa
 		if c.yield != nil {
 			c.yield()
 		}
@@ -373,7 +382,7 @@ scan_mail :: proc(c: ^Ctx) -> bool {
 	// Pass 2: index what changed.
 	for f in files {
 		fa := mc.facts[f.unique]
-		waiting := !fa.from_me && fa.to_me && !fa.machine && f.folder == "" && fa.message_id != "" &&
+		waiting := !fa.from_me && !fa.from_self && fa.to_me && !fa.machine && f.folder == "" && fa.message_id != "" &&
 			fa.message_id not_in answered && c.now - fa.time < WAITING_DAYS * 86400
 		id := f.unique
 		if sid, ok := sids[f.unique]; ok {

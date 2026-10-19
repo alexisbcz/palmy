@@ -45,7 +45,8 @@ shots_device :: proc(dir: string, dark: bool) -> int {
 	home_init(&h, dark, .Device)
 	theme := dark ? "dark" : "light"
 	n := 0
-	q := os.get_env("PALM_HOME_SHOT_QUERY", context.temp_allocator)
+	// Heap, not temp: every rendered frame frees the temp allocator.
+	q := os.get_env("PALM_HOME_SHOT_QUERY", context.allocator)
 	if q == "" {
 		q = "roadmap"
 	}

@@ -20,6 +20,7 @@ package main
 
 import "core:fmt"
 import "core:os"
+import "core:slice"
 import "core:strings"
 import "core:time"
 import ical "../../cloud/dav/ical"
@@ -368,6 +369,18 @@ device_today :: proc(s: ^Store) {
 			append(&s.items, it)
 		}
 	}
+	// One timeline across identities: events and tasks soonest first,
+	// mail and files newest first. The sections filter this order.
+	slice.stable_sort_by(s.items[:], proc(a, b: Item) -> bool {
+		if a.kind != b.kind {
+			return a.kind < b.kind
+		}
+		#partial switch a.kind {
+		case .Event, .Task:
+			return a.time < b.time
+		}
+		return a.time > b.time
+	})
 	device.n_base = len(s.items)
 
 	// What the index says about itself, for the sync line.
