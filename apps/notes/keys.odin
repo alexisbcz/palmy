@@ -5,6 +5,7 @@ package main
 import "core:strings"
 import kit "kit:."
 import p "palmy:."
+import ck "../cloudkit"
 
 // palmy names F1..F5 and F11; the rest are perfectly ordinary keysyms that
 // libxkbcommon hands over, so they are named here rather than in the toolkit.
@@ -61,6 +62,16 @@ field_edit :: proc(ui: ^p.Ctx, buf: ^[dynamic]u8, swallow: bool) -> bool {
 	return changed
 }
 
+// digit_pressed returns 1..9 for a plain digit key, or 0.
+digit_pressed :: proc(ui: ^p.Ctx) -> int {
+	for d in 1 ..= 9 {
+		if plain(ui, u32('0' + d)) {
+			return d
+		}
+	}
+	return 0
+}
+
 keys :: proc(ui: ^p.Ctx, nt: ^Notes, app: ^p.App) {
 	// The file dialog owns the keyboard while it is up; it reads its own input
 	// in `pick_overlay`, during the draw pass.
@@ -89,11 +100,24 @@ keys :: proc(ui: ^p.Ctx, nt: ^Notes, app: ^p.App) {
 			return
 		}
 		if plain(ui, p.KEY_RETURN) {
-			apply_rename(nt)
+			apply_rename(ui, nt)
 			nt.mode = .Normal
 			return
 		}
 		field_edit(ui, &nt.rename, swallow)
+		return
+
+	case .Move:
+		if plain(ui, p.KEY_ESCAPE) {
+			nt.mode = .Normal
+			return
+		}
+		if plain(ui, p.KEY_RETURN) {
+			nt.mode = .Normal
+			apply_move(nt)
+			return
+		}
+		field_edit(ui, &nt.move_to, swallow)
 		return
 
 	case .Confirm_Delete:
@@ -109,6 +133,56 @@ keys :: proc(ui: ^p.Ctx, nt: ^Notes, app: ^p.App) {
 				destroy_selected(nt)
 			}
 			nt.mode = .Normal
+		}
+		return
+
+	case .Share:
+		share_keys(ui, nt, swallow)
+		return
+
+	case .Carry:
+		if plain(ui, p.KEY_ESCAPE) {
+			nt.mode = .Normal
+			return
+		}
+		if d := digit_pressed(ui); d > 0 {
+			k := 0
+			for _, i in nt.ids {
+				if i == nt.open_ident {continue}
+				k += 1
+				if k == d {nt.carry_to = i}
+			}
+		}
+		if plain(ui, p.KEY_LEFT) || plain(ui, p.KEY_RIGHT) || plain(ui, p.KEY_TAB) {
+			step := plain(ui, p.KEY_LEFT) ? len(nt.ids) - 1 : 1
+			for _ in 0 ..< len(nt.ids) {
+				nt.carry_to = (nt.carry_to + step) % len(nt.ids)
+				if nt.carry_to != nt.open_ident {break}
+			}
+		}
+		if plain(ui, p.KEY_RETURN) {
+			do_carry(nt)
+		}
+		return
+
+	case .Choose_Identity:
+		if plain(ui, p.KEY_ESCAPE) {
+			nt.mode = .Normal
+			return
+		}
+		if d := digit_pressed(ui); d > 0 && d <= len(nt.ids) {
+			nt.choose_sel = d - 1
+		}
+		if n := times(ui, p.KEY_DOWN); n > 0 {
+			nt.choose_sel = min(nt.choose_sel + n, len(nt.ids) - 1)
+		}
+		if n := times(ui, p.KEY_UP); n > 0 {
+			nt.choose_sel = max(nt.choose_sel - n, 0)
+		}
+		// Enter does nothing until an identity is chosen (product.md P3).
+		if plain(ui, p.KEY_RETURN) && nt.choose_sel >= 0 {
+			nt.mode = .Normal
+			create_in(nt, nt.choose_sel)
 		}
 		return
 
@@ -163,6 +237,7 @@ keys :: proc(ui: ^p.Ctx, nt: ^Notes, app: ^p.App) {
 		if field_edit(ui, &nt.query, swallow) {
 			nt.sel = 0
 			refilter(nt)
+			open_sel(nt)
 		}
 		if n := times(ui, p.KEY_DOWN); n > 0 {
 			nt.sel = min(nt.sel + n, max(0, len(nt.vis) - 1))
@@ -177,6 +252,10 @@ keys :: proc(ui: ^p.Ctx, nt: ^Notes, app: ^p.App) {
 			nt.mode = .Normal
 			nt.pane = .Editor
 		}
+		if p.shortcut(ui, '0', {.Ctrl}) {
+			set_view(nt, View{ident = -1, section = .All})
+			build_side(nt)
+		}
 		return
 
 	case .Normal:
@@ -189,7 +268,7 @@ keys :: proc(ui: ^p.Ctx, nt: ^Notes, app: ^p.App) {
 		return
 	}
 	if plain(ui, p.KEY_F2) {
-		if _, ok := selected(nt); ok {
+		if _, ok := open_note(nt); ok && !read_only(nt) {
 			clear(&nt.rename)
 			append(&nt.rename, ..transmute([]u8)title_of(buf_line(&nt.buf, 0), context.temp_allocator))
 			nt.mode = .Rename
@@ -202,14 +281,68 @@ keys :: proc(ui: ^p.Ctx, nt: ^Notes, app: ^p.App) {
 		note(nt, nt.preview ? "Reading" : "Writing")
 		return
 	}
-	if plain(ui, p.KEY_F4) {
+	if plain(ui, p.KEY_F4) || p.shortcut(ui, 'n', {.Ctrl}) {
 		create(nt)
 		return
 	}
-	if plain(ui, p.KEY_F5) {
+	if plain(ui, p.KEY_F5) || p.shortcut(ui, 'r', {.Ctrl}) {
 		flush(nt)
 		reload(nt)
-		note(nt, tfmt("%d notes", len(nt.all)))
+		sync_start(nt)
+		note(nt, sync_bound(nt) ? "Syncing" : tfmt("%d notes on this device", len(nt.all)))
+		return
+	}
+	// Ctrl+0 is every identity; Ctrl+1..9 is one.
+	if p.shortcut(ui, '0', {.Ctrl}) && len(nt.ids) > 1 {
+		flush(nt)
+		set_view(nt, View{ident = -1, section = .All})
+		build_side(nt)
+		set_view(nt, View{ident = -1, section = .All})
+		open_sel(nt)
+		return
+	}
+	for d in 1 ..= 9 {
+		if p.shortcut(ui, u32('0' + d), {.Ctrl}) && d <= len(nt.ids) {
+			flush(nt)
+			set_view(nt, View{ident = d - 1, section = .All})
+			build_side(nt)
+			set_view(nt, View{ident = d - 1, section = .All})
+			open_sel(nt)
+			return
+		}
+	}
+	if p.shortcut(ui, '\\', {.Ctrl}) {
+		toggle_sidebar(nt)
+		return
+	}
+	ca := p.Modifiers{.Ctrl, .Alt}
+	if p.shortcut(ui, 'k', ca) {
+		open_share(nt)
+		return
+	}
+	if p.shortcut(ui, 'c', {.Ctrl, .Shift}) || p.shortcut(ui, 'C', {.Ctrl, .Shift}) {
+		open_carry(nt)
+		return
+	}
+	if p.shortcut(ui, 'b', ca) {
+		nt.backlinks = !nt.backlinks
+		return
+	}
+	if p.shortcut(ui, 'o', ca) {
+		live_toggle_offline(nt)
+		return
+	}
+	if p.shortcut(ui, 'p', ca) {
+		toggle_pin(nt)
+		return
+	}
+	if p.shortcut(ui, 'm', ca) {
+		if n, ok := open_note(nt); ok && !n.shared {
+			clear(&nt.move_to)
+			append(&nt.move_to, ..transmute([]u8)n.notebook)
+			nt.mode = .Move
+			nt.swallow = true
+		}
 		return
 	}
 	// ---- The writing coach ----------------------------------------------
@@ -258,28 +391,92 @@ keys :: proc(ui: ^p.Ctx, nt: ^Notes, app: ^p.App) {
 		flush(nt)
 		note(nt, "Saved")
 	}
-	if p.shortcut(ui, 'f', {.Ctrl}) {
+	if p.shortcut(ui, 'f', {.Ctrl}) || (plain(ui, '/') && nt.pane != .Editor) {
 		nt.mode = .Search
 		nt.pane = .List
 		nt.swallow = true
 		return
 	}
 	if plain(ui, p.KEY_TAB) {
-		nt.pane = nt.pane == .List ? .Editor : .List
+		switch nt.pane {
+		case .Sidebar:
+			nt.pane = .List
+			nt.drawer = false
+		case .List:
+			if nt.open_path != "" {nt.pane = .Editor}
+		case .Editor:
+			nt.pane = .List
+		}
 		nt.swallow = true
 		return
 	}
 	if p.shortcut(ui, p.KEY_TAB, {.Shift}) {
-		nt.pane = nt.pane == .List ? .Editor : .List
+		switch nt.pane {
+		case .Editor:
+			nt.pane = .List
+		case .List:
+			if nt.layout == .Three && nt.hide_sidebar {
+				nt.hide_sidebar = false
+			} else if nt.layout != .Three {
+				nt.drawer = true
+			}
+			nt.pane = .Sidebar
+		case .Sidebar:
+			nt.pane = .List
+			nt.drawer = false
+		}
 		nt.swallow = true
 		return
 	}
 
-	if nt.pane == .List {
+	switch nt.pane {
+	case .Sidebar:
+		sidebar_keys(ui, nt)
+	case .List:
 		list_keys(ui, nt)
+	case .Editor:
+		editor_keys(ui, nt, swallow)
+	}
+}
+
+sidebar_keys :: proc(ui: ^p.Ctx, nt: ^Notes) {
+	if len(nt.side) == 0 {
 		return
 	}
-	editor_keys(ui, nt, swallow)
+	moved := false
+	if n := times(ui, p.KEY_DOWN); n > 0 {
+		nt.side_sel = min(nt.side_sel + n, len(nt.side) - 1)
+		moved = true
+	}
+	if n := times(ui, p.KEY_UP); n > 0 {
+		nt.side_sel = max(nt.side_sel - n, 0)
+		moved = true
+	}
+	if moved || plain(ui, p.KEY_RETURN) || plain(ui, p.KEY_RIGHT) {
+		it := nt.side[nt.side_sel]
+		v := it.view
+		v.name = strings.clone(it.view.name, context.temp_allocator)
+		label := strings.clone(it.label, context.temp_allocator)
+		flush(nt)
+		set_view(nt, v)
+		build_side(nt)
+		set_view(nt, v)
+		// Keep the highlight on the same row after the sidebar was rebuilt.
+		for x, i in nt.side {
+			if x.view.ident == v.ident && x.view.section == v.section && x.view.name == v.name && x.label == label {
+				nt.side_sel = i
+			}
+		}
+		open_sel(nt)
+		if plain(ui, p.KEY_RETURN) || plain(ui, p.KEY_RIGHT) {
+			nt.pane = .List
+			nt.drawer = false
+		}
+	}
+	if plain(ui, p.KEY_ESCAPE) {
+		nt.pane = .List
+		nt.drawer = false
+	}
 }
 
 list_keys :: proc(ui: ^p.Ctx, nt: ^Notes) {
@@ -299,14 +496,40 @@ list_keys :: proc(ui: ^p.Ctx, nt: ^Notes) {
 		nt.sel = max(0, len(nt.vis) - 1)
 		open_sel(nt)
 	}
-	if plain(ui, p.KEY_RETURN) || plain(ui, p.KEY_RIGHT) {
-		open_sel(nt)
-		nt.pane = .Editor
+	if plain(ui, p.KEY_LEFT) {
+		nt.pane = .Sidebar
+		if nt.layout == .Three {
+			nt.hide_sidebar = false
+		} else {
+			nt.drawer = true
+		}
+		return
 	}
-	if plain(ui, p.KEY_DELETE) {
+	if plain(ui, p.KEY_RETURN) || plain(ui, p.KEY_RIGHT) {
+		if nt.view.section == .Trash && plain(ui, p.KEY_RETURN) {
+			trash_selected(nt)
+			return
+		}
+		open_sel(nt)
+		if nt.open_path != "" {
+			nt.pane = .Editor
+		}
+	}
+	if p.shortcut(ui, p.KEY_DELETE, {.Shift}) {
 		if _, ok := selected(nt); ok {
 			nt.mode = .Confirm_Delete
 			nt.sel_confirm = false
+		}
+		return
+	}
+	if plain(ui, p.KEY_DELETE) {
+		if nt.view.section == .Trash {
+			if _, ok := selected(nt); ok {
+				nt.mode = .Confirm_Delete
+				nt.sel_confirm = false
+			}
+		} else {
+			trash_selected(nt)
 		}
 	}
 	if plain(ui, '/') {
@@ -317,7 +540,7 @@ list_keys :: proc(ui: ^p.Ctx, nt: ^Notes) {
 		create(nt)
 	}
 	if plain(ui, 'r') {
-		if _, ok := selected(nt); ok {
+		if _, ok := open_note(nt); ok && !read_only(nt) {
 			clear(&nt.rename)
 			append(&nt.rename, ..transmute([]u8)title_of(buf_line(&nt.buf, 0), context.temp_allocator))
 			nt.mode = .Rename
@@ -334,9 +557,150 @@ list_keys :: proc(ui: ^p.Ctx, nt: ^Notes) {
 }
 
 // ---------------------------------------------------------------------------
-// The editor pane
+// Share and carry
 // ---------------------------------------------------------------------------
 
+open_share :: proc(nt: ^Notes) {
+	n, ok := open_note(nt)
+	if !ok {
+		return
+	}
+	if n.shared {
+		note(nt, tfmt("Shared with you by %s: only its owner can share it", n.meta.shared_from))
+		return
+	}
+	if !ident_bound(nt.ids[n.ident]) {
+		note(nt, tfmt("%s is not synced to an account on this device, so it cannot share", nt.ids[n.ident].name))
+		return
+	}
+	flush(nt)
+	clear(&nt.share_handle)
+	nt.share_edit = false
+	delete(nt.share_msg)
+	nt.share_msg = ""
+	nt.mode = .Share
+	nt.swallow = true
+	load_people(nt)
+}
+
+load_people :: proc(nt: ^Notes) {
+	for pe in nt.people {
+		delete(pe.handle)
+		delete(pe.name)
+		delete(pe.color)
+		delete(pe.access)
+	}
+	clear(&nt.people)
+	if !live_account(nt) {
+		delete(nt.share_msg)
+		nt.share_msg = strings.clone("The account is not reachable: sharing needs the network.")
+		return
+	}
+	v, e := ck.rpc(nt.live.acct.c, "notes_people", tfmt(`{{"p_note":"%s"}}`, nt.open_id), context.temp_allocator)
+	if !ck.ok(e) {
+		return
+	}
+	for row in ck.array(v) {
+		append(&nt.people, Person {
+			handle = strings.clone(ck.get_str(row, "handle")),
+			name = strings.clone(ck.get_str(row, "display_name")),
+			color = strings.clone(ck.get_str(row, "color")),
+			access = strings.clone(ck.get_str(row, "access")),
+		})
+	}
+	nt.share_sel = clamp(nt.share_sel, 0, max(0, len(nt.people) - 1))
+}
+
+share_keys :: proc(ui: ^p.Ctx, nt: ^Notes, swallow: bool) {
+	if plain(ui, p.KEY_ESCAPE) {
+		nt.mode = .Normal
+		return
+	}
+	if plain(ui, p.KEY_TAB) {
+		nt.share_edit = !nt.share_edit
+		return
+	}
+	if n := times(ui, p.KEY_DOWN); n > 0 {
+		nt.share_sel = min(nt.share_sel + n, max(0, len(nt.people) - 1))
+	}
+	if n := times(ui, p.KEY_UP); n > 0 {
+		nt.share_sel = max(nt.share_sel - n, 0)
+	}
+	if plain(ui, p.KEY_DELETE) && nt.share_sel < len(nt.people) && nt.people[nt.share_sel].access != "owner" {
+		who := strings.clone(nt.people[nt.share_sel].handle, context.temp_allocator)
+		if live_account(nt) {
+			_, e := ck.rpc(nt.live.acct.c, "notes_unshare", tfmt(`{{"p_note":"%s","p_handle":"%s"}}`, nt.open_id, who), context.temp_allocator)
+			delete(nt.share_msg)
+			nt.share_msg = ck.ok(e) ? strings.clone(tfmt("Revoked. %s's devices drop their copy at their next sync.", who)) : strings.clone(tfmt("Could not revoke: %s", e.message))
+			load_people(nt)
+		}
+		return
+	}
+	field_edit(ui, &nt.share_handle, swallow)
+	if plain(ui, p.KEY_RETURN) {
+		who := strings.trim_space(string(nt.share_handle[:]))
+		if who == "" {
+			return
+		}
+		access := nt.share_edit ? "edit" : "read"
+		if !live_account(nt) {
+			return
+		}
+		_, e := ck.rpc(nt.live.acct.c, "notes_share", tfmt(`{{"p_note":"%s","p_handle":"%s","p_access":"%s"}}`, nt.open_id, who, access), context.temp_allocator)
+		delete(nt.share_msg)
+		if ck.ok(e) {
+			nt.share_msg = strings.clone(tfmt("Shared with %s to %s.", who, access))
+			clear(&nt.share_handle)
+		} else {
+			nt.share_msg = strings.clone(tfmt("Could not share: %s", e.message))
+		}
+		load_people(nt)
+	}
+}
+
+open_carry :: proc(nt: ^Notes) {
+	n, ok := open_note(nt)
+	if !ok || len(nt.ids) < 2 {
+		return
+	}
+	if n.shared {
+		note(nt, "A note shared with you is its owner's to carry")
+		return
+	}
+	flush(nt)
+	nt.carry_to = -1
+	for _, i in nt.ids {
+		if i != n.ident {
+			nt.carry_to = i
+			break
+		}
+	}
+	nt.mode = .Carry
+	nt.swallow = true
+}
+
+do_carry :: proc(nt: ^Notes) {
+	n, ok := open_note(nt)
+	if !ok || nt.carry_to < 0 || nt.carry_to == n.ident {
+		return
+	}
+	b := Book{ids = nt.ids, notes = nt.all}
+	copy_path, _, _, recorded, err := carry_note(&b, n^, nt.carry_to, "")
+	nt.mode = .Normal
+	if copy_path == "" {
+		note(nt, tfmt("Could not carry: %s", err))
+		return
+	}
+	to := strings.clone(nt.ids[nt.carry_to].name, context.temp_allocator)
+	from := strings.clone(nt.ids[n.ident].name, context.temp_allocator)
+	reload(nt)
+	_ = from
+	note(nt, recorded ? tfmt("Carried to %s · logged in both identities", to) : tfmt("Carried to %s · logged at the next sync", to))
+}
+
+// ---------------------------------------------------------------------------
+// The editor pane
+// ---------------------------------------------------------------------------
 ed_sel :: proc(nt: ^Notes) -> (lo, hi: Pos, ok: bool) {
 	if !nt.has_sel || pos_eq(nt.anchor, nt.cur) {
 		return nt.cur, nt.cur, false
@@ -363,7 +727,7 @@ ed_begin_sel :: proc(nt: ^Notes, shift: bool) {
 
 ed_delete_sel :: proc(ui: ^p.Ctx, nt: ^Notes) -> bool {
 	lo, hi, ok := ed_sel(nt)
-	if !ok {
+	if !ok || read_only(nt) {
 		return false
 	}
 	nt.cur = buf_apply(&nt.buf, lo, hi, "", nt.cur, .No)
@@ -373,6 +737,10 @@ ed_delete_sel :: proc(ui: ^p.Ctx, nt: ^Notes) -> bool {
 }
 
 ed_insert :: proc(ui: ^p.Ctx, nt: ^Notes, text: string, co := Coalesce.No) {
+	if read_only(nt) {
+		note(nt, tfmt("Shared with you by %s to read", nt.open_owner))
+		return
+	}
 	lo, hi, ok := ed_sel(nt)
 	if ok {
 		nt.cur = buf_apply(&nt.buf, lo, hi, text, nt.cur, .No)
@@ -389,31 +757,143 @@ ed_visible :: proc(ui: ^p.Ctx, nt: ^Notes) {
 	if r < nt.top {
 		nt.top = r
 	}
-	if r >= nt.top + nt.rows {
-		nt.top = r - nt.rows + 1
+	// Rows differ in height (a heading is taller), so "fits" is measured.
+	for nt.top < r && row_y(&nt.wrap, nt.top, r) + nt.wrap.rows[r].h > nt.view_h {
+		nt.top += 1
 	}
 	nt.top = clamp(nt.top, 0, max(0, len(nt.wrap.rows) - 1))
+	nt.rows = rows_fitting(&nt.wrap, nt.top, nt.view_h)
+}
+
+// wrap_selection puts `mark` on both sides of the selection (or of the word
+// under the caret), or takes it off again: Ctrl+B and Ctrl+I.
+wrap_selection :: proc(ui: ^p.Ctx, nt: ^Notes, mark: string) {
+	if read_only(nt) {
+		return
+	}
+	lo, hi, ok := ed_sel(nt)
+	if !ok || lo.line != hi.line {
+		ed_insert(ui, nt, tfmt("%s%s", mark, mark))
+		nt.cur.col -= len(mark)
+		return
+	}
+	src := buf_line(&nt.buf, lo.line)
+	m := len(mark)
+	if lo.col >= m && hi.col + m <= len(src) && src[lo.col - m:lo.col] == mark && src[hi.col:hi.col + m] == mark {
+		inner := strings.clone(src[lo.col:hi.col], context.temp_allocator)
+		nt.cur = buf_apply(&nt.buf, {lo.line, lo.col - m}, {hi.line, hi.col + m}, inner, nt.cur, .No)
+		nt.anchor = {lo.line, lo.col - m}
+		nt.cur = {lo.line, lo.col - m + len(inner)}
+	} else {
+		inner := strings.clone(src[lo.col:hi.col], context.temp_allocator)
+		buf_apply(&nt.buf, lo, hi, tfmt("%s%s%s", mark, inner, mark), nt.cur, .No)
+		nt.anchor = {lo.line, lo.col + m}
+		nt.cur = {lo.line, lo.col + m + len(inner)}
+	}
+	nt.has_sel = true
+	touch(ui, nt)
+}
+
+// link_at is the [[link]] under the caret, if there is one.
+link_at :: proc(nt: ^Notes) -> (Link, bool) {
+	off := doc_offset(nt, nt.cur)
+	for l in links_in(buffer_text(nt)) {
+		if off >= l.from && off <= l.to {
+			return l, true
+		}
+	}
+	return {}, false
+}
+
+// follow_link opens the note a [[link]] names. Inside this identity that is
+// the note; for a link out to another of your identities it is the note in
+// *that* identity's view, with a line saying so (P1) — never its content
+// drawn here. With nothing of that name it offers to create it here.
+follow_link :: proc(ui: ^p.Ctx, nt: ^Notes) {
+	l, ok := link_at(nt)
+	if !ok {
+		return
+	}
+	flush(nt)
+	own := nt.ids[nt.open_ident].handle
+	kind, at := link_resolve(nt.all[:], nt.open_ident, own, l)
+	switch kind {
+	case .Resolved:
+		goto_note(nt, at)
+	case .Elsewhere:
+		ti := ident_find(nt.ids[:], l.handle)
+		if ti < 0 {
+			note(nt, tfmt("%s is not one of the identities on this device", l.handle))
+			return
+		}
+		k2, at2 := link_resolve(nt.all[:], ti, nt.ids[ti].handle, Link{target = l.target})
+		if k2 != .Resolved {
+			note(nt, tfmt("No note called \"%s\" in %s", l.target, nt.ids[ti].name))
+			return
+		}
+		goto_note(nt, at2)
+		note(nt, tfmt("Opened in %s: a link across identities. Nothing was copied.", nt.ids[ti].name))
+	case .Unresolved:
+		ti := nt.open_ident
+		path, made := store_create_in(nt.ids[ti].root, "", tfmt("# %s\n\n", l.target))
+		if made {
+			reload(nt)
+			for n, i in nt.all {
+				if n.path == path {
+					goto_note(nt, i)
+				}
+			}
+			delete(path)
+			note(nt, tfmt("Created \"%s\" in %s", l.target, nt.ids[ti].name))
+		}
+	}
 }
 
 editor_keys :: proc(ui: ^p.Ctx, nt: ^Notes, swallow: bool) {
 	wrap_rebuild(&nt.wrap, ui, &nt.buf, nt.body_w, nt.rev)
 
 	if plain(ui, p.KEY_ESCAPE) {
+		flush(nt)
 		nt.pane = .List
 		return
 	}
 	if w := p.wheel(ui).y; w != 0 {
 		nt.top = clamp(nt.top - int(w * 3), 0, max(0, len(nt.wrap.rows) - 1))
 	}
+	if p.shortcut(ui, p.KEY_RETURN, {.Ctrl}) && !read_only(nt) {
+		toggle_task_at(nt, nt.cur.line)
+		touch(ui, nt)
+		return
+	}
+	if p.shortcut(ui, p.KEY_RETURN, {.Alt}) {
+		follow_link(ui, nt)
+		return
+	}
+	if p.shortcut(ui, 'b', {.Ctrl}) {
+		wrap_selection(ui, nt, "**")
+		return
+	}
+	if p.shortcut(ui, 'i', {.Ctrl}) {
+		wrap_selection(ui, nt, "*")
+		return
+	}
 
-	if p.shortcut(ui, 'z', {.Ctrl}) {
+	// In a synced note undo is the CRDT's: your last change, never a
+	// collaborator's.
+	if p.shortcut(ui, 'z', {.Ctrl}) && nt.live.s != nil {
+		live_undo(ui, nt, false)
+		touch_saved(ui, nt)
+	} else if p.shortcut(ui, 'z', {.Ctrl}) {
 		if cur, ok := buf_undo(&nt.buf); ok {
 			nt.cur = cur
 			ed_clear_sel(nt)
 			touch(ui, nt)
 		}
 	}
-	if p.shortcut(ui, 'y', {.Ctrl}) || p.shortcut(ui, 'z', {.Ctrl, .Shift}) {
+	if (p.shortcut(ui, 'y', {.Ctrl}) || p.shortcut(ui, 'z', {.Ctrl, .Shift})) && nt.live.s != nil {
+		live_undo(ui, nt, true)
+		touch_saved(ui, nt)
+	} else if p.shortcut(ui, 'y', {.Ctrl}) || p.shortcut(ui, 'z', {.Ctrl, .Shift}) {
 		if cur, ok := buf_redo(&nt.buf); ok {
 			nt.cur = cur
 			ed_clear_sel(nt)
@@ -435,7 +915,7 @@ editor_keys :: proc(ui: ^p.Ctx, nt: ^Notes, swallow: bool) {
 		if kit.clipboard_set(text) {
 			note(nt, tfmt("Copied %d bytes", len(text)))
 		}
-		if p.shortcut(ui, 'x', {.Ctrl}) {
+		if p.shortcut(ui, 'x', {.Ctrl}) && !read_only(nt) {
 			nt.cur = buf_apply(&nt.buf, lo, hi, "", nt.cur, .No)
 			ed_clear_sel(nt)
 			touch(ui, nt)
@@ -523,6 +1003,12 @@ editor_keys :: proc(ui: ^p.Ctx, nt: ^Notes, swallow: bool) {
 
 	// ---- Editing --------------------------------------------------------
 	edited := false
+	if read_only(nt) {
+		if len(p.typed_text(ui)) > 0 || times(ui, p.KEY_BACKSPACE) + times(ui, p.KEY_DELETE) + times(ui, p.KEY_RETURN) > 0 {
+			note(nt, tfmt("Shared with you by %s to read", nt.open_owner))
+		}
+		return
+	}
 	for _ in 0 ..< times(ui, p.KEY_BACKSPACE) {
 		if ed_delete_sel(ui, nt) {
 			edited = true
@@ -577,6 +1063,9 @@ editor_keys :: proc(ui: ^p.Ctx, nt: ^Notes, swallow: bool) {
 		if len(keep) > 0 {
 			ed_insert(ui, nt, string(keep[:]), .Type)
 			edited = true
+			if keep[len(keep) - 1] == ' ' {
+				live_word_break(nt)
+			}
 		}
 	}
 	if edited {
@@ -585,4 +1074,14 @@ editor_keys :: proc(ui: ^p.Ctx, nt: ^Notes, swallow: bool) {
 		nt.goal_x = caret_x(&nt.wrap, ui, &nt.buf, nt.cur)
 		ed_visible(ui, nt)
 	}
+}
+
+// touch_saved marks the note as changed after an undo that went through the
+// CRDT, without feeding the change back into it.
+touch_saved :: proc(ui: ^p.Ctx, nt: ^Notes) {
+	nt.pending = true
+	nt.dirty_since = f64(p.elapsed(ui))
+	nt.rev += 1
+	ed_clear_sel(nt)
+	prose_touch(ui, nt, nt.cur.line)
 }

@@ -607,7 +607,7 @@ conf_path :: proc(nt: ^Notes) -> string {
 }
 
 prose_note_key :: proc(nt: ^Notes) -> string {
-	return base_of(nt.open_path)
+	return base_name(nt.open_path)
 }
 
 prose_conf_load :: proc(nt: ^Notes) {

@@ -1,0 +1,53 @@
+# Camille's laptop. Driven from the keyboard only.
+wait 2.5
+# Every identity at once: the band shows all their colours, every row labelled.
+chord ctrl+0
+wait 2.5
+# Search runs over every note on this device, each result labelled.
+key slash
+wait 0.6
+type lisbon
+wait 2.4
+key Return
+wait 1.8
+# A new task under the list; Return continues it.
+key Down
+key Down
+key Down
+key Down
+key Down
+key Down
+key Down
+key End
+wait 0.6
+key Return
+type renew the passport
+wait 1.2
+chord ctrl+Return
+wait 2.0
+# Who has this note: shared with Bob, to edit.
+chord ctrl+alt+k
+wait 3.2
+key Escape
+wait 1.0
+# Bob joins and types into the same note, live, from his own identity.
+wait 13.0
+# Work: carry the packing list into personal, recorded on both sides.
+key Escape
+wait 0.4
+key Escape
+wait 0.6
+chord ctrl+2
+wait 2.0
+key Down
+wait 1.5
+chord ctrl+shift+c
+wait 3.0
+key Return
+wait 3.5
+chord ctrl+1
+wait 3.0
+key F1
+wait 3.0
+key Escape
+wait 1.0

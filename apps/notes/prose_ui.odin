@@ -71,7 +71,6 @@ prose_marks_for_row :: proc(ui: ^p.Ctx, nt: ^Notes, r: Vis, line_off: int) {
 	if !nt.pr.on || len(nt.pr.alerts) == 0 {
 		return
 	}
-	src := buf_line(&nt.buf, r.line)
 	row_from := line_off + r.from
 	row_to := line_off + r.to
 
@@ -94,15 +93,15 @@ prose_marks_for_row :: proc(ui: ^p.Ctx, nt: ^Notes, r: Vis, line_off: int) {
 		if hi <= lo {
 			continue
 		}
-		x0 := text_w(ui, src[r.from:lo])
-		x1 := text_w(ui, src[r.from:hi])
+		x0 := row_x(&nt.wrap, ui, &nt.buf, r, lo)
+		x1 := row_x(&nt.wrap, ui, &nt.buf, r, hi)
 		on := i == nt.pr.mark
-		mark_band(ui, x0, max(4, x1 - x0), a.sev, on, a.kind == .Occurrence)
+		mark_band(ui, x0, max(4, x1 - x0), a.sev, on, a.kind == .Occurrence, r.h)
 	}
 }
 
 @(private = "file")
-mark_band :: proc(ui: ^p.Ctx, x, w: f32, sev: prose.Severity, selected: bool, faint := false) {
+mark_band :: proc(ui: ^p.Ctx, x, w: f32, sev: prose.Severity, selected: bool, faint := false, h: f32 = BODY_LH) {
 	col := sev_color(sev)
 	if selected {
 		// The selected mark gets a wash as well as the rule, because a panel
@@ -112,14 +111,14 @@ mark_band :: proc(ui: ^p.Ctx, x, w: f32, sev: prose.Severity, selected: bool, fa
 		bs.inset[p.LEFT] = p.px(x - 1)
 		bs.inset[p.TOP] = p.px(1)
 		bs.w = p.px(w + 2)
-		bs.h = p.px(BODY_LH - 2)
+		bs.h = p.px(h - 2)
 		bs.no_hit = true
 		p.end(ui)
 	}
 	line := p.div(ui, tfmt("absolute rounded-full bg-%s%s", col, faint && !selected ? "/45" : ""))
 	ls := p.style(ui, line)
 	ls.inset[p.LEFT] = p.px(x)
-	ls.inset[p.TOP] = p.px(BODY_LH - (faint ? 3 : 5))
+	ls.inset[p.TOP] = p.px(h - (faint ? 3 : 5))
 	ls.w = p.px(w)
 	ls.h = p.px(selected ? 2.5 : (faint ? 1.5 : 2))
 	ls.no_hit = true

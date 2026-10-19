@@ -1,0 +1,7 @@
+wait 1.0
+at a table at Prado for Saturday
+line - [ ] Bob: the Gulbenkian is free on Sundays
+wait 6.0
+at Pastéis at Manteigaria, not the queue at Belém.
+line Bob: and the 28 tram before nine, or it is full.
+wait 4.0
