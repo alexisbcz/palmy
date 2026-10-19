@@ -102,6 +102,7 @@ persist_set :: proc(key: string) {
 	if e != .NONE {
 		return
 	}
+	linux.fchown(fd, 0, 0)
 	s := fmt.tprintf("%d\n", auth.now_ms())
 	linux.write(fd, transmute([]u8)s)
 	linux.close(fd)

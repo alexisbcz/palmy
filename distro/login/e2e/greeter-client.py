@@ -22,5 +22,6 @@ ask({"type": "post_auth_message_response", "response": "nope"})
 ask({"type": "create_session", "username": "palm"})
 ask({"type": "post_auth_message_response", "response": "palm"})
 ask({"type": "start_session", "cmd": ["/bin/sh", "-c",
-    "{ id; pwd; env | sort; ls -ld $XDG_RUNTIME_DIR; } > /run/test/user-session.txt; echo to-the-log; sleep 1"],
+    "{ id; pwd; env | sort; ls -ld $XDG_RUNTIME_DIR; } > /run/test/user-session.txt; "
+    "/run/test/busybox who > /run/test/who.txt 2>&1; echo to-the-log; sleep 1"],
     "env": ["XDG_SESSION_TYPE=wayland", "FROM_GREETER=yes"]})

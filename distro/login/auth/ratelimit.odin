@@ -112,6 +112,9 @@ faillock_open :: proc(uid: u32, dir := FAILLOCK_DIR) -> (fl: Faillock, err: stri
 		return {}, fmt.tprintf("%s/%d: %v", dir, uid, oe)
 	}
 	st: linux.Stat
+	if linux.fstat(fd, &st) == .NONE && st.uid == 0 && st.gid != 0 {
+		linux.fchown(fd, 0, 0)
+	}
 	if linux.fstat(fd, &st) != .NONE || !linux.S_ISREG(st.mode) || st.uid != 0 {
 		linux.close(fd)
 		return {}, fmt.tprintf("%s/%d is not a root-owned file", dir, uid)
@@ -158,7 +161,10 @@ faillock_close :: proc(fl: ^Faillock) {
 // never used: it would let them plant or remove the files kept there.
 ensure_private_dir :: proc(dir: string) -> string {
 	cdir := strings.clone_to_cstring(dir, context.temp_allocator)
-	linux.mkdir(cdir, {.IRUSR, .IWUSR, .IXUSR})
+	// Made by a setuid program, it would get the caller's gid: give it root's.
+	if linux.mkdir(cdir, {.IRUSR, .IWUSR, .IXUSR}) == .NONE {
+		linux.chown(cdir, 0, 0)
+	}
 	st: linux.Stat
 	if e := linux.lstat(cdir, &st); e != .NONE {
 		return fmt.tprintf("%s: %v", dir, e)

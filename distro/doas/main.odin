@@ -156,10 +156,9 @@ main :: proc() {
 		argv = []string{sh}
 	}
 
+	// Looked up now, reported only once a rule permits it: "not found" for
+	// a caller with no rights would tell them which root-only paths exist.
 	cmd_path, found := resolve(argv[0])
-	if !found {
-		die("%s: command not found", auth.clean(argv[0]))
-	}
 
 	conf_text, cerr := read_conf(CONF_PATH)
 	if cerr != "" {
@@ -179,6 +178,9 @@ main :: proc() {
 	if !matched || rule.action != .Permit {
 		auth.logf(.Notice, "command not permitted for %s as %s: %s", me.name, target.name, cmdline)
 		die("Operation not permitted")
+	}
+	if !found {
+		die("%s: command not found", auth.clean(argv[0]))
 	}
 
 	if !rule.nopass {

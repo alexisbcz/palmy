@@ -47,6 +47,7 @@ lock_pwd :: proc(dir: string, wait := 15 * time.Second) -> (l: Pwd_Lock, err: st
 	if e != .NONE {
 		return {}, fmt.tprintf("%s: %v", path, e)
 	}
+	linux.fchown(fd, 0, 0)
 	fl := linux.FLock{type = .WRLCK, whence = .SET}
 	start := time.tick_now()
 	for {

@@ -37,6 +37,9 @@ chmod 777 /run/test
 chown 900:900 /run/test/greeter-home
 chown 1000:1000 /run/test/palm-home
 install -m 644 "$HERE/greeter-client.py" "$HERE/stuck-greeter.py" /run/test/
+# busybox's who and last read the records palm-login writes, exactly as on
+# the installed system.
+install -m 755 "$ROOT/distro/out/busybox" /run/test/busybox
 printf '#!/bin/sh\nid > /run/test/powered; echo "$0 $*" >> /run/test/powered\n' >/run/test/fake-reboot
 chmod 755 /run/test/fake-reboot
 mount --bind /run/test/fake-reboot "$(readlink -f /sbin/reboot)"
@@ -54,7 +57,7 @@ expect() { # expect <description> <command...>
 }
 
 echo "=== 1. login, user session, back to the greeter, Restart"
-daemon 9 PALM_GREETER_CMD="/usr/bin/python3 /run/test/greeter-client.py"
+daemon 9 PALM_GREETER_CMD="/usr/bin/python3 /run/test/greeter-client.py" | tee /run/test/daemon1.log
 echo "--- what the greeter saw"; cat /run/test/greeter-runs.txt
 echo "--- what the user session saw"; cat /run/test/user-session.txt
 ls -ln /run/user /var/log
@@ -68,6 +71,14 @@ expect "XDG_RUNTIME_DIR is 0700, the user's"    sh -c 'ls -ldn /run/user/1000 | 
 expect "session output is in its log"           grep -q to-the-log /var/log/session-palm.log
 expect "Restart ran /sbin/reboot as root"       grep -q "uid=0" /run/test/powered
 expect "the socket is removed on stop"          sh -c '! test -e /run/palm-login.sock'
+echo "--- busybox who, from inside the session"; cat /run/test/who.txt
+echo "--- busybox last, afterwards"; /run/test/busybox last | tee /run/test/last.txt
+expect "who (utmp) lists palm on seat0 during the session" grep -q "^palm  *seat0" /run/test/who.txt
+expect "last (wtmp) lists palm's session on seat0"  grep -q "^palm  *seat0" /run/test/last.txt
+expect "last (wtmp) has this boot's reboot record"  grep -q "^reboot  *system boot" /run/test/last.txt
+expect "utmp's seat0 slot is free again after logout" sh -c '! /run/test/busybox who | grep -q seat0'
+expect "lastlog has palm's login (uid 1000's record)" sh -c 'test "$(od -An -tu4 -j $((1000 * 292)) -N4 /var/log/lastlog)" -gt 0'
+expect "the wrong password was logged with its count" grep -q 'authentication failure for "palm" (1 in a row' /run/test/daemon1.log
 
 echo "=== 2. palm.autologin"
 daemon 3 PALM_AUTOLOGIN=palm PALM_DEFAULT_SESSION=/run/test/autosession.sh PALM_GREETER_CMD="/bin/sleep 30"
