@@ -163,7 +163,24 @@ would end the locked person's session); nested it still does.
   from outside the session (setpriv) refused; uid 900 cannot connect;
   reboot accepted, the socket refuses once ending; the session closed, then
   `/sbin/reboot` ran as root, no greeter in between.
-- `apps/wm/lock-qemu.py` on the image: see the wm notes in UX.md.
+- `wm --selftest` 327 -> 387 (locker_test.odin: lock_after parsing, no lock
+  without palm-login, focus refused while locked, the field, wrong/late/
+  rate-limited/unreachable answers, an abandoned client lock, idle and its
+  inhibitor, the power dialog's dry run, countdown, password override,
+  refusal, cancel, lock cancelling a dialog); `wm --shots` 20–29 are the
+  lock and the dialog, dark and light.
+- `apps/wm/lock-qemu.py` on the built image, three boots of one disk, 29
+  checks, all passing: the socket handed to the session; Super+L locks with
+  nothing of the desktop drawn; text typed while locked never reaches the
+  focused terminal; a wrong password refused after palm-login's hold, the
+  failures in palm-login's log; the right one unlocks; Ctrl+Alt+F2 and back
+  lands on the lock; `lock_after = 12s` locks; Restart left to its countdown
+  reboots (QEMU exits), and the next boot's logs show the terminal asked to
+  close, the session ended and closed, then /sbin/reboot, in that order;
+  with root on ttyS0, Shut down asks for palm's password, refuses a wrong
+  one, takes the right one and powers off, and the next boot's log shows it.
+  `apps/wm/shell-qemu.py` 43/43 and `distro/image/test-boot.py` 27/27 on
+  the same image.
 
 ## Extra knobs (for images and tests)
 
@@ -227,6 +244,14 @@ would end the locked person's session); nested it still does.
   session's process group, is ended with it; a non-executable is skipped).
 
 ## Open points / for other areas
+
+- The session socket has no CLI client yet: `palm power reboot|lock`
+  (docs/PALM-CLI.md) would be one more client of it, and is refused from a
+  terminal only if that terminal is not below the session leader.
+- No suspend path exists; the `suspend` intent locks the screen and stops
+  there.
+- The lock screen shows no per-identity counts (cloud/docs/shell.md): there
+  is no notification store to count yet.
 
 - Sessions get `/dev/null` as stdin. palm-login lends `/dev/tty1` to wm
   (above) but deliberately does not make it the session's controlling
