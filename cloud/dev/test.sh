@@ -7,6 +7,12 @@
 # is run in its own psql session and is expected to wrap itself in
 # begin ... rollback, so tests leave nothing behind. Exit status is 0 only if
 # every plan ran to completion with no failures.
+#
+# A test's fixture users are created by email. A stack that already holds a
+# real user with one of those addresses (a demo's alice@example.test) would
+# make the insert collide, so right after the test's first `begin;` the
+# runner deletes any existing user with an address the file mentions. That
+# happens inside the test's transaction, so its rollback restores them.
 set -euo pipefail
 source "$(dirname -- "${BASH_SOURCE[0]}")/env.sh" "$@"
 
@@ -36,11 +42,30 @@ if [ ${#files[@]} -eq 0 ]; then
 	exit 3
 fi
 
+# with_fixture_cleanup prints the test with the cleanup after its first begin;.
+with_fixture_cleanup() {
+	local emails
+	emails=$(grep -oE "'[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[a-z]+'" "$1" | sort -u | paste -sd, -)
+	if [ -z "$emails" ]; then
+		cat "$1"
+		return
+	fi
+	awk -v emails="$emails" '
+		!done && tolower($0) ~ /^[[:space:]]*begin[[:space:]]*;[[:space:]]*$/ {
+			print
+			print "delete from auth.users where email in (" emails ");"
+			done = 1
+			next
+		}
+		{ print }
+	' "$1"
+}
+
 total=0 failed=0 bad_files=()
 for f in "${files[@]}"; do
 	b=$(basename "$f")
 	set +e
-	out=$(palm_psql -tA -P footer=off < "$f" 2>&1)
+	out=$(with_fixture_cleanup "$f" | palm_psql -tA -P footer=off 2>&1)
 	status=$?
 	set -e
 	pass=$(grep -cE '^ok ' <<<"$out" || true)
