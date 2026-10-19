@@ -107,7 +107,7 @@ mkdir -p "$ROOTFS" "$ISOROOT/boot/limine" "$ISOROOT/EFI/BOOT" "$LIVE_REPO"
 # --- 3, first half: the medium's repository ------------------------------------
 # shellcheck disable=SC2086
 "$PALM" --root "$WORK/closure" --initdb --repo "$REPO" --keys-dir "$KEYS" --dry-run --yes add $LIVE_REPO_PACKAGES |
-	awk '$1 == "install" { print $2 "-" $3 ".palm" }' >"$WORK/repo.list"
+	awk '/^  install / { print $2 "-" $3 ".palm" }' >"$WORK/repo.list"
 rm -rf "$WORK/closure"
 [ -s "$WORK/repo.list" ] || { echo "live: palm planned nothing for $LIVE_REPO_PACKAGES" >&2; exit 1; }
 while read -r f; do
