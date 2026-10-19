@@ -239,8 +239,13 @@ slider :: proc(ctx: ^Ctx, value: ^f32, low, high: f32, class: string = "") -> bo
 
 	track := rect_of(ctx, id)
 	changed := false
-	if ctx.active == id && track.w > 1 {
-		t := clamp((ctx.input.mouse.x - track.x) / track.w, 0, 1)
+	// The knob's centre travels between half a knob in from either end, so
+	// the knob stays on the track at both extremes, and the pointer maps
+	// onto that same span.
+	KNOB :: f32(16)
+	span := max(track.w - KNOB, 0)
+	if ctx.active == id && span > 1 {
+		t := clamp((ctx.input.mouse.x - track.x - KNOB / 2) / span, 0, 1)
 		nv := low + (high - low) * t
 		if nv != value^ {
 			value^ = nv
@@ -260,15 +265,22 @@ slider :: proc(ctx: ^Ctx, value: ^f32, low, high: f32, class: string = "") -> bo
 	}
 	frac := high > low ? clamp((value^ - low) / (high - low), 0, 1) : 0
 
-	// Track, filled portion, knob.
+	// Track, filled portion, knob. All three are placed with `inset`, in
+	// pixels from last frame's width: an absolutely positioned child ignores
+	// margins, which is how the knob used to be offset by a `margin-left:
+	// -8` that never applied and walked off the end of its track. Each is
+	// centred vertically in the control.
+	h := track.h > 0 ? track.h : 20
+	knob_x := frac * span
 	t := push_styled(ctx, .Box, "absolute h-1.5 rounded-full bg-slate-700", "")
 	ctx.nodes[t].style.inset[LEFT] = px(0)
 	ctx.nodes[t].style.inset[RIGHT] = px(0)
-	ctx.nodes[t].style.self = .Center
+	ctx.nodes[t].style.inset[TOP] = px((h - 6) / 2)
 
 	f := push_styled(ctx, .Box, "absolute h-1.5 rounded-full bg-indigo-500", "")
 	ctx.nodes[f].style.inset[LEFT] = px(0)
-	ctx.nodes[f].style.w = pct(frac * 100)
+	ctx.nodes[f].style.inset[TOP] = px((h - 6) / 2)
+	ctx.nodes[f].style.w = px(knob_x + KNOB / 2)
 
 	k := push_styled(
 		ctx,
@@ -276,8 +288,8 @@ slider :: proc(ctx: ^Ctx, value: ^f32, low, high: f32, class: string = "") -> bo
 		"absolute size-4 rounded-full bg-white shadow-sm border border-slate-300",
 		"",
 	)
-	ctx.nodes[k].style.inset[LEFT] = pct(frac * 100)
-	ctx.nodes[k].style.margin[LEFT] = -8
+	ctx.nodes[k].style.inset[LEFT] = px(knob_x)
+	ctx.nodes[k].style.inset[TOP] = px((h - KNOB) / 2)
 
 	end(ctx)
 	return changed
