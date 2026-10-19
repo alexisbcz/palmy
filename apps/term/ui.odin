@@ -78,6 +78,12 @@ note :: proc(a: ^Term_App, s: string) {
 // ---------------------------------------------------------------------------
 
 wait_for_work :: proc(a: ^Term_App, timeout_ms: int) {
+	// A held key repeats on palmy's clock, not on any descriptor, so the
+	// wait ends when the next repeat is due.
+	timeout_ms := timeout_ms
+	if r := p.key_repeat_timeout(a.app); r >= 0 && (timeout_ms < 0 || r < timeout_ms) {
+		timeout_ms = r
+	}
 	pfds := [2]linux.Poll_Fd {
 		{fd = a.pump.wake_r, events = {.IN}},
 		{fd = a.app.win.conn.fd, events = {.IN}},
@@ -429,11 +435,13 @@ handle_mouse :: proc(a: ^Term_App, ui: ^p.Ctx, show_tabs: bool, scale: f32) {
 	if wheel.y != 0 && in_grid {
 		if vt.mouse_wants(&t.term) && t.term.view_offset == 0 {
 			buf: [32]u8
-			n := int(abs(wheel.y) / p.SCROLL_NOTCH)
+			// p.wheel is in notches already. Wayland's axis is positive
+			// downwards (towards the end of the text), as palmy keeps it.
+			n := int(abs(wheel.y))
 			n = clamp(n, 1, 5)
 			for _ in 0 ..< n {
 				ev := vt.Mouse_Event {
-					button = wheel.y > 0 ? .Wheel_Up : .Wheel_Down,
+					button = wheel.y < 0 ? .Wheel_Up : .Wheel_Down,
 					action = .Press,
 					col    = col,
 					row    = row,
@@ -447,7 +455,8 @@ handle_mouse :: proc(a: ^Term_App, ui: ^p.Ctx, show_tabs: bool, scale: f32) {
 			s := vt.screen(&t.term)
 			maxoff := max(0, vt.screen_total_rows(s) - t.term.rows)
 			step := 3
-			if wheel.y > 0 {
+			// Up (negative) goes back into the scrollback.
+			if wheel.y < 0 {
 				t.term.view_offset = min(t.term.view_offset + step, maxoff)
 			} else {
 				t.term.view_offset = max(t.term.view_offset - step, 0)

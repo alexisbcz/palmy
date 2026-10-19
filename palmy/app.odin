@@ -330,6 +330,10 @@ wait_for_frame :: proc(app: ^App) -> bool {
 		}
 
 		frame_watchdog(w)
+		// A repeat that came due while the app was busy elsewhere (term
+		// blocks on its own descriptors between frames) is delivered now,
+		// not only after palmy's own wait below.
+		pump_key_repeat(app)
 
 		want := app.first ||
 			app.direct ||
@@ -373,6 +377,19 @@ wait_for_frame :: proc(app: ^App) -> bool {
 		}
 		pump_key_repeat(app)
 	}
+}
+
+// key_repeat_timeout is how long an app that blocks on descriptors of its
+// own between frames may sleep before a held key's next repeat is due, in
+// milliseconds; -1 when no key is held. Such an app must wake by then, or
+// held keys repeat only as often as something else wakes it.
+key_repeat_timeout :: proc(app: ^App) -> int {
+	w := &app.win
+	if w.repeat_key == 0 || w.repeat_rate <= 0 {
+		return -1
+	}
+	ms := time.duration_milliseconds(time.diff(time.now(), w.repeat_at))
+	return clamp(int(ms + 0.999), 0, 1000)
 }
 
 @(private)
@@ -472,8 +489,9 @@ finish_frame :: proc(app: ^App) {
 		return
 	}
 	end_ui(ctx, &app.canvas)
-	present(w, b)
-	app.frames_shown += 1
+	if present(w, b) {
+		app.frames_shown += 1
+	}
 
 	clear_edges(&w.input)
 	restore_late(w)
@@ -492,8 +510,9 @@ present_direct :: proc(app: ^App) {
 	if b == nil {
 		return
 	}
-	present(w, b)
-	app.frames_shown += 1
+	if present(w, b) {
+		app.frames_shown += 1
+	}
 	clear_edges(&w.input)
 	restore_late(w)
 	app.first = false

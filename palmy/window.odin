@@ -146,6 +146,9 @@ Window :: struct {
 	frame_ready:       bool,
 	last_present:      time.Time,
 
+	// What changed since the last frame sent (damage.odin). Wayland only.
+	damage:            Damage_State,
+
 	// Set whenever an event arrives that should produce a new frame. Frame
 	// callbacks deliberately do not set it, so an idle window stays idle.
 	input_dirty:       bool,
@@ -268,6 +271,7 @@ window_close :: proc(w: ^Window) {
 		x_close(w)
 	}
 	keymap_destroy(&w.keymap)
+	damage_destroy(&w.damage)
 	clip_destroy(w)
 	wake_close(w)
 	conn_close(&w.conn)
@@ -334,16 +338,25 @@ apply_pending :: proc(w: ^Window) -> (resized: bool, err: string) {
 	return true, ""
 }
 
-// present pushes a finished buffer to the server.
+// present pushes a finished buffer to the server, with the rectangles that
+// changed since the last one as its damage. On Wayland a frame identical to
+// the last one is not sent at all, unless a configure is waiting for its
+// commit; present then returns false and the buffer stays free.
 @(private)
-present :: proc(w: ^Window, b: ^Shm_Buffer) {
+present :: proc(w: ^Window, b: ^Shm_Buffer) -> bool {
 	switch w.backend {
 	case .Wayland:
-		wl_present(w, b)
+		if !frame_damage(&w.damage, b.px, b.w, b.h) && !w.need_configure_ack {
+			w.damage.skipped += 1
+			w.damage.hold_until = time.time_add(time.now(), SKIP_HOLD_MS * time.Millisecond)
+			return false
+		}
+		wl_present(w, b, w.damage.rects[:])
 	case .X11:
 		x_present(w, b)
 	}
 	w.last_present = time.now()
+	return true
 }
 
 // frame_watchdog unsticks a frame that will never be acknowledged. On Wayland
@@ -377,7 +390,13 @@ FRAME_INTERVAL_MS :: 16
 @(private)
 frame_hold_ms :: proc(w: ^Window) -> int {
 	if w.backend != .X11 {
-		return 0
+		// A frame callback paces Wayland, except after a frame that was
+		// not sent because nothing changed (present): then nothing would.
+		left := time.diff(time.now(), w.damage.hold_until)
+		if left <= 0 {
+			return 0
+		}
+		return max(int(time.duration_milliseconds(left)), 1)
 	}
 	elapsed := int(time.duration_milliseconds(time.since(w.last_present)))
 	if elapsed >= FRAME_INTERVAL_MS {

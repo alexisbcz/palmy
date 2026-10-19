@@ -767,7 +767,7 @@ wl_alloc_buffers :: proc(w: ^Window) -> (err: string) {
 // wl_present pushes a finished buffer to the compositor and asks for the next
 // frame callback so that drawing stays paced to the display.
 @(private)
-wl_present :: proc(w: ^Window, b: ^Shm_Buffer) {
+wl_present :: proc(w: ^Window, b: ^Shm_Buffer, damage: []Damage_Rect) {
 	c := &w.conn
 
 	if w.need_configure_ack {
@@ -793,7 +793,9 @@ wl_present :: proc(w: ^Window, b: ^Shm_Buffer) {
 	w.frame_pending = true
 
 	request(c, w.wl.surface, WL_SURFACE_ATTACH, Obj(b.id), i32(0), i32(0))
-	request(c, w.wl.surface, WL_SURFACE_DAMAGE_BUFFER, i32(0), i32(0), i32(b.w), i32(b.h))
+	for r in damage {
+		request(c, w.wl.surface, WL_SURFACE_DAMAGE_BUFFER, i32(r.x), i32(r.y), i32(r.w), i32(r.h))
+	}
 	request(c, w.wl.surface, WL_SURFACE_COMMIT)
 	conn_flush(c)
 
