@@ -225,6 +225,10 @@ main :: proc() {
 	defer p.destroy(app)
 
 	for ui in p.frames(app) {
+		// At the top, not the bottom: the previous frame was painted when
+		// p.frames came back, and its p.pixels callbacks read user data
+		// that lives in this allocator.
+		free_all(context.temp_allocator)
 		page_ensure(m, m.page)
 		keys(ui, m)
 		build(ui, m)
@@ -239,7 +243,6 @@ main :: proc() {
 		if m.page == .Datetime {
 			p.wake_at(ui, time.time_add(time.now(), time.Second))
 		}
-		free_all(context.temp_allocator)
 	}
 }
 
