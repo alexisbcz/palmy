@@ -174,6 +174,11 @@ req_lock_mgr :: proc(s: ^Server, c: ^Client, o: Object, id: u32, op: u16, r: ^Re
 // screen stops being drawn in the same frame, because `lock_active` is already
 // true by the time `draw` runs.
 lock_blank :: proc(s: ^Server) {
+	// A drag in flight would otherwise go on delivering motion, and its drop,
+	// to whatever window is under the pointer.
+	if dnd_active() {
+		dnd_cancel(s, "the session locked")
+	}
 	set_ptr_focus(s, nil, 0, 0)
 	set_kbd_focus(s, nil)
 	s.drag = .None

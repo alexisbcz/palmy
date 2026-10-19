@@ -1723,6 +1723,9 @@ wltouch_down :: proc(s: ^Server, surf: ^Surface, tid: i32, lx, ly: f32) {
 	if surf == nil || surf.client.dead {
 		return
 	}
+	if lock_active() && surf.role != .Lock {
+		return // locked: no client but the locker is touched
+	}
 	serial := next_serial(s)
 	t := now_ms()
 	for id, o in surf.client.objs {
