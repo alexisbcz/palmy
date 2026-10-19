@@ -1230,6 +1230,12 @@ md_parse_image :: proc(s: string) -> (Paragraph, bool) {
 	}
 	alt := t[2:close]
 	path := t[close + 2:len(t) - 1]
+	// A relative path is relative to the Markdown file, not to wherever the
+	// program was started: README.md's docs/components.png opened from
+	// another directory must still find the picture.
+	if md_base_dir != "" && !strings.has_prefix(path, "/") && !strings.has_prefix(path, "~/") {
+		path = strings.concatenate({md_base_dir, "/", path}, context.temp_allocator)
+	}
 	if im, got := image_load(expand_home(path, context.temp_allocator)); got {
 		im2 := im
 		im2.alt = strings.clone(alt == "" ? base_name(path) : alt)
@@ -1252,11 +1258,19 @@ export_markdown :: proc(d: ^Doc, path: string) -> bool {
 	return os.write_entire_file(path, transmute([]u8)text) == nil
 }
 
+// md_base_dir is the directory of the Markdown file being imported, for
+// md_parse_image; empty when parsing text that came from no file.
+@(private = "file")
+md_base_dir: string
+
 import_markdown :: proc(path: string) -> (d: Doc, ok: bool) {
 	data, read_err := os.read_entire_file(path, context.temp_allocator)
 	if read_err != nil {
 		return {}, false
 	}
+	slash := strings.last_index_byte(path, '/')
+	md_base_dir = slash > 0 ? path[:slash] : (slash == 0 ? "/" : "")
+	defer md_base_dir = ""
 	return doc_from_markdown(string(data)), true
 }
 
