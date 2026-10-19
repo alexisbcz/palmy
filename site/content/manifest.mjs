@@ -372,6 +372,14 @@ export const COLLECTIONS = {
               "The first-run welcome: an account or this computer only, identities, what each identity syncs, the vault's Emergency Kit.",
             source: { file: "cloud/docs/onboarding.md" },
           },
+          {
+            slug: "cloud-assistant",
+            title: "The assistant",
+            nav: "Assistant",
+            description:
+              "One assistant per identity, sandboxed to it: tools from each app's schema, confirmation for anything that leaves the identity, the threat model, and measured model accuracy.",
+            source: { file: "cloud/docs/assistant.md" },
+          },
         ],
       },
       {
