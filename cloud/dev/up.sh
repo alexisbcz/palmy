@@ -87,6 +87,12 @@ for f in "$PALM_SUPABASE_DIR"/migrations/*.sql; do
 	applied=$((applied + 1))
 done
 
+# The development seed (cloud/supabase/seed.sql), after every migration.
+if [ -f "$PALM_SUPABASE_DIR/seed.sql" ]; then
+	palm_psql -1 -f - <"$PALM_SUPABASE_DIR/seed.sql" >/dev/null
+	log "seed applied"
+fi
+
 palm_psql -c "notify pgrst, 'reload schema'; notify pgrst, 'reload config';" >/dev/null
 
 log "$applied new migration(s) applied"
