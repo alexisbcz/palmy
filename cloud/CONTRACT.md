@@ -14,6 +14,7 @@ cloud/
   mail/                the mail server (owned by mail)
   drive/               the drive service and sync daemon (owned by drive)
   forge/               the git forge server (owned by forge)
+  dav/                 the CalDAV/CardDAV server (owned by calendar & contacts)
   docs/                product and design notes (owned by product)
 apps/accounts/         sign-in, identities, switcher (owned by accounts)
 apps/cloudkit/         Odin client for Supabase: auth, PostgREST, Storage (owned by accounts)
@@ -21,6 +22,8 @@ apps/drive/            the drive app (owned by drive)
 apps/home/             the unified hub prototype (owned by product)
 apps/browser/          the browser, bookmarks synced per identity (owned by browser)
 apps/forge/            the forge client (owned by forge)
+apps/calendar/         calendar, synced per identity (owned by calendar & contacts)
+apps/contacts/         contacts (owned by calendar & contacts)
 ```
 
 Migration file names are `<timestamp>_<name>.sql`. The ranges are:
@@ -33,6 +36,7 @@ Migration file names are `<timestamp>_<name>.sql`. The ranges are:
 | drive    | `20261019300000`–`20261019399999` | `drive_`    |
 | browser  | `20261019400000`–`20261019499999` | `browser_`  |
 | forge    | `20261019500000`–`20261019599999` | `forge_`    |
+| dav      | `20261019600000`–`20261019699999` | `dav_`      |
 
 ## Identities
 
