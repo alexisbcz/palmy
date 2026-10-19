@@ -425,6 +425,15 @@ cursor_draw :: proc(s: ^Server, cv: ^p.Canvas, x, y: int) {
 	}
 }
 
+// cursor_mark_shown records that a client's cursor surface is the pointer's
+// image this frame, so its commits are cursor changes, not window damage.
+cursor_mark_shown :: proc(s: ^Server) {
+	shape, cc := cursor_effective(s)
+	if shape == .Client && cc != nil && cc.surf != nil {
+		cc.surf.cursor_seq = bare_out.seq
+	}
+}
+
 // cursor_nested tells the host which of palmy's named cursors is nearest
 // what is under the pointer, when running as a window on a host.
 cursor_nested :: proc(s: ^Server, app: ^p.App) {

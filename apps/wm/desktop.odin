@@ -135,9 +135,19 @@ draw :: proc(s: ^Server, app: ^p.App, cv: ^p.Canvas) {
 	anim_app = app
 	clear(&bar_hits)
 
-	p.reset_clip(cv)
+	wm_reset_clip(cv)
 	build_desktop(s, cv.w, cv.h)
-	copy(cv.px[:cv.w * cv.h], s.bg)
+	if bare_out.clipping {
+		// Only the damaged rectangle: the rest of the scene is already right.
+		c := cv.clip
+		x0, y0 := max(int(c.x), 0), max(int(c.y), 0)
+		x1, y1 := min(int(c.x + c.w), cv.w), min(int(c.y + c.h), cv.h)
+		for y in y0 ..< y1 {
+			copy(cv.px[y * cv.w + x0:y * cv.w + x1], s.bg[y * cv.w + x0:y * cv.w + x1])
+		}
+	} else {
+		copy(cv.px[:cv.w * cv.h], s.bg)
+	}
 
 	layer_arrange(s)
 	if lock_active() {
@@ -151,7 +161,7 @@ draw :: proc(s: ^Server, app: ^p.App, cv: ^p.Canvas) {
 			continue
 		}
 		idx := ws_active_of_output(s, oi)
-		p.reset_clip(cv)
+		wm_reset_clip(cv)
 		p.push_clip(cv, {f32(o.x), f32(o.y), f32(o.w), f32(o.h)})
 
 		draw_bar(s, app, cv, oi, idx)
@@ -181,7 +191,7 @@ draw :: proc(s: ^Server, app: ^p.App, cv: ^p.Canvas) {
 		draw_debug_hud(s, app, cv, o)
 		p.pop_clip(cv)
 	}
-	p.reset_clip(cv)
+	wm_reset_clip(cv)
 	layer_draw(s, cv, true)
 
 	switcher_draw(s, app, cv)

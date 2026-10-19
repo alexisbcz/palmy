@@ -72,6 +72,7 @@ Kbd_Wire :: struct {
 	dep, lat, lock, grp: u32, // the modifier state last announced
 	presses:   int, // counters for the self-test and the log
 	releases:  int,
+	took:      bool, // the compositor acted on a key since the last frame
 }
 
 kbd_wire: Kbd_Wire
@@ -149,6 +150,7 @@ handle_keys_bare :: proc(s: ^Server, app: ^p.App) {
 			// the compositor owns the key: a held binding or an arrow key in
 			// an open overlay.
 			if w.swallowed[code] && !lock_active() {
+				w.took = true
 				if !overlays_key(s, app, k, ke.code) {
 					wm_shortcut(s, app, k, ke.code)
 				}
@@ -180,6 +182,7 @@ handle_keys_bare :: proc(s: ^Server, app: ^p.App) {
 		}
 		if taken {
 			w.swallowed[code] = true
+			w.took = true
 		} else {
 			w.sent[code] = true
 			key_send(s, ke.code, ke.time, true)

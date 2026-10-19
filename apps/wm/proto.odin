@@ -116,6 +116,13 @@ Surface :: struct {
 	client:       ^Client,
 	id:           u32,
 
+	// Where draw() last put this surface, in layout pixels (x, y, w, h), and
+	// in which draw (bare_out.draws); and the frame it was last the pointer's
+	// image in. bare.odin turns a commit into screen damage with these.
+	shown:        [4]int,
+	shown_draw:   u64,
+	cursor_seq:   u64,
+
 	// Double-buffered state, applied on commit.
 	p_buffer:     ^Buffer,
 	p_buffer_set: bool,
@@ -323,6 +330,22 @@ handle_request :: proc(s: ^Server, c: ^Client, id: u32, op: u16, r: ^Reader) {
 	if !ok {
 		post_error(c, id, 0, fmt.tprintf("request %d on unknown object %d", op, id))
 		return
+	}
+	// Damage: requests that cannot change what the compositor draws need
+	// no repaint of their own (a surface's commit adds its own damage,
+	// bare.odin). Anything else may move, map, retitle or restack something.
+	#partial switch o.kind {
+	case .Display, .Registry, .Callback, .Compositor, .Shm, .Pool, .Buffer, .Region, .Seat, .Keyboard,
+	     .Output, .Data_Mgr, .Data_Source, .Data_Offer, .Prim, .Xdg_Output_Mgr, .Xdg_Output,
+	     .Frac_Mgr, .Frac_Scale, .Relp_Mgr, .Relp, .Idle_Mgr, .Idle_Inhibitor, .Positioner, .Wm_Base:
+	case .Pointer, .Cursor_Shape_Mgr, .Cursor_Shape_Dev:
+		bare_out.cursor_dirty = true
+	case .Surface:
+		if op == 0 {
+			damage_all() // destroy
+		}
+	case:
+		damage_all()
 	}
 
 	switch o.kind {
@@ -891,6 +914,7 @@ surface_commit :: proc(s: ^Server, surf: ^Surface) {
 	clear(&surf.p_frames)
 
 	surface_apply_damage(surf)
+	damage_commit(s, surf)
 
 	switch surf.role {
 	case .Xdg:
@@ -907,7 +931,9 @@ surface_commit :: proc(s: ^Server, surf: ^Surface) {
 		}
 	case .None, .Sub:
 	}
-	s.dirty = true
+	if !session.bare {
+		s.dirty = true
+	}
 }
 
 // ---------------------------------------------------------------------------

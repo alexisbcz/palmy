@@ -344,7 +344,7 @@ cheat_draw :: proc(s: ^Server, app: ^p.App, cv: ^p.Canvas) {
 	ph := min(TOP + used_h + 20, max_h)
 	panel := p.Rect{f32(o.x) + (f32(o.w) - pw) / 2, f32(o.y + ws_bar_h(s)) + (f32(o.h - ws_bar_h(s)) - ph) / 2, pw, ph}
 	cheat.panel = panel
-	p.reset_clip(cv)
+	wm_reset_clip(cv)
 	p.fill_rect(cv, {f32(o.x), f32(o.y), f32(o.w), f32(o.h)}, p.hexa(0x00000055))
 	p.drop_shadow(cv, panel, {14, 14, 14, 14}, 40, 0, {0, 14}, p.hexa(0x000000aa))
 	p.fill_round_rect(cv, panel, {14, 14, 14, 14}, p.hex(0x0f0f12))

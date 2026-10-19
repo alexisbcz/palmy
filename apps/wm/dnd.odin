@@ -67,7 +67,7 @@ DND_FINISH_FRAMES :: 600
 //		return
 //	}
 //
-// At the very end of draw, after its closing `p.reset_clip(cv)`, so the icon
+// At the very end of draw, after its closing `wm_reset_clip(cv)`, so the icon
 // is above every window including the one being dragged over:
 //
 //	dnd_draw(s, cv)
@@ -590,6 +590,6 @@ dnd_draw :: proc(s: ^Server, cv: ^p.Canvas) {
 	if icon == nil || icon.img == nil {
 		return
 	}
-	p.reset_clip(cv)
+	wm_reset_clip(cv)
 	blit_surface(cv, icon, dnd.x, dnd.y)
 }

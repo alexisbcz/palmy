@@ -261,19 +261,342 @@ bare_mono_ms :: proc() -> u32 {
 // The loop
 // ---------------------------------------------------------------------------
 
+// ---------------------------------------------------------------------------
+// Damage
+//
+// draw() paints the whole desktop. On bare metal it now paints only the part
+// that changed, and only that part is written to the scanout buffer:
+//
+//   - The scene lives in ordinary memory (`bare_out.scene`, the whole layout,
+//     without the cursor). Drawing reads what it blends over; reading a dumb
+//     buffer, which on real hardware is write-combined video memory, is the
+//     slowest thing a CPU compositor can do, so it is never read.
+//   - Each frame's damage is one rectangle in layout space. Everything that
+//     can change the picture either adds a rectangle (a client commit over
+//     where that surface was last drawn, the pointer over a client) or asks
+//     for everything (damage_all: anything the compositor itself draws
+//     differently — a binding, a click, a title, an animation, a timer). When
+//     unsure, everything; and everything at least once a second, so nothing
+//     time-driven (the clock, a toast) can go stale.
+//   - draw() runs with every clip it sets intersected with the damage
+//     (wm_reset_clip), so pixels outside it are neither computed nor written.
+//   - The cursor is not in the scene. It is laid over the scene just before
+//     the copy and taken off again afterwards, so moving it over a client
+//     costs two small rectangles and no draw() at all.
+//   - Each head has three buffers, so the one being drawn into last saw a
+//     frame two or three frames ago. A short history of damage rectangles
+//     tells how much of it to bring up to date (the "buffer age" scheme).
+//   - The no-flip path passes the rectangle to DIRTYFB, so a virtual GPU
+//     copies only it to the host.
+// ---------------------------------------------------------------------------
+
+DMG_HISTORY :: 8
+
 Bare_Out :: struct {
-	composite:     []u32, // the whole layout, when there is more than one head
+	scene:         []u32, // the whole layout, without the cursor
 	cw, ch:        int,
 	last_frame_ns: i64,
 	heads:         int,
 	full:          bool, // the next frame repaints everything
+	dmg:           [4]int, // the damage so far (x, y, w, h); w == 0: none
+	seq:           u64, // frames composed
+	draws:         u64, // draw() calls (a cursor-only frame has none)
+	hist:          [DMG_HISTORY][4]int, // hist[seq % N]: what frame seq changed
+	cursor:        [4]int, // where the cursor was laid over the last frame
+	cursor_dirty:  bool, // its image changed (a client cursor commit, a shape)
+	last_full_ns:  i64,
+	// The clip draw() works inside this frame; wm_reset_clip resets to it.
+	base_clip:     p.Rect,
+	clipping:      bool,
+	// For the stats line (PALMY_WM_DRM_DEBUG): per period.
+	st_frames:     int,
+	st_full:       int,
+	st_draw_px:    u64,
+	st_copy_px:    u64,
+	st_draw_ns:    i64,
+	st_at:         i64,
+	st_cpu_ns:     i64,
+	st_commits:    int, // client commits that became damage, and their area
+	st_commit_px:  u64,
+	st_cursor:     int, // frames that only moved the cursor
 }
 
 bare_out: Bare_Out
 
 // damage_all asks for the next frame to repaint every pixel.
-damage_all :: proc() {
+damage_all :: proc(loc := #caller_location) {
 	bare_out.full = true
+	if bare_debug {
+		// Which call sites ask for full repaints, for the stats line.
+		key := fmt.tprintf("%s:%d", loc.file_path[strings.last_index_byte(loc.file_path, '/') + 1:], loc.line)
+		if key not_in bare_why {
+			key = strings.clone(key)
+		}
+		bare_why[key] += 1
+	}
+}
+
+bare_why: map[string]int
+
+// damage_add adds a rectangle, in layout pixels, to the next frame's damage.
+damage_add :: proc(r: [4]int) {
+	if r[2] <= 0 || r[3] <= 0 {
+		return
+	}
+	bare_out.dmg = rect4_union(bare_out.dmg, r)
+}
+
+rect4_union :: proc(a, b: [4]int) -> [4]int {
+	if a[2] <= 0 || a[3] <= 0 {
+		return b
+	}
+	if b[2] <= 0 || b[3] <= 0 {
+		return a
+	}
+	x0 := min(a[0], b[0])
+	y0 := min(a[1], b[1])
+	x1 := max(a[0] + a[2], b[0] + b[2])
+	y1 := max(a[1] + a[3], b[1] + b[3])
+	return {x0, y0, x1 - x0, y1 - y0}
+}
+
+rect4_clip :: proc(a: [4]int, w, h: int) -> [4]int {
+	x0 := clamp(a[0], 0, w)
+	y0 := clamp(a[1], 0, h)
+	x1 := clamp(a[0] + a[2], 0, w)
+	y1 := clamp(a[1] + a[3], 0, h)
+	if x1 <= x0 || y1 <= y0 {
+		return {}
+	}
+	return {x0, y0, x1 - x0, y1 - y0}
+}
+
+// wm_reset_clip is p.reset_clip for the compositor's own drawing: back to the
+// whole canvas, or to this frame's damage when only that is being repainted.
+wm_reset_clip :: proc(cv: ^p.Canvas) {
+	p.reset_clip(cv)
+	if bare_out.clipping {
+		cv.clip = p.rect_intersect(cv.clip, bare_out.base_clip)
+	}
+}
+
+// damage_commit is a client's commit, seen from the screen: the part of the
+// surface that changed, where the surface was drawn last frame. A surface
+// that was not on screen last frame (just mapped, or hidden), or whose size
+// changed, can move other things, so that is everything.
+damage_commit :: proc(s: ^Server, surf: ^Surface) {
+	if !session.bare {
+		return
+	}
+	if surf.cursor_seq != 0 && surf.cursor_seq == bare_out.seq {
+		// The pointer's own image: it is laid over every frame anyway.
+		bare_out.cursor_dirty = true
+		return
+	}
+	w := surf.iw / max(surf.scale, 1)
+	h := surf.ih / max(surf.scale, 1)
+	// Drawn somewhere other than its place (a thumbnail, a scaled
+	// animation), or not drawn last time, or a new size: everything.
+	if ov.open || sw.open || anim_busy() || dnd_active() ||
+	   surf.shown_draw == 0 || surf.shown_draw != bare_out.draws || w != surf.shown[2] || h != surf.shown[3] {
+		damage_all()
+		return
+	}
+	if r, any := surface_damage_bbox(surf); any {
+		damage_add({surf.shown[0] + r[0], surf.shown[1] + r[1], r[2], r[3]})
+		bare_out.st_commits += 1
+		bare_out.st_commit_px += u64(r[2] * r[3])
+	}
+}
+
+// cursor_rect is where the cursor will be drawn at x, y: its image's box.
+cursor_rect :: proc(s: ^Server, x, y: int) -> [4]int {
+	shape, cc := cursor_effective(s)
+	switch shape {
+	case .Hidden:
+		return {}
+	case .Client:
+		if cc != nil && cc.surf != nil && cc.surf.img != nil {
+			// The surface and its subsurfaces: give it room.
+			sc := max(cc.surf.scale, 1)
+			return {x - cc.hot.x - 2, y - cc.hot.y - 2, cc.surf.iw / sc + 4, cc.surf.ih / sc + 4}
+		}
+	case .Default, .Move, .Grab, .Grabbing, .N, .S, .E, .W, .NE, .NW, .SE, .SW, .EW, .NS, .NESW, .NWSE, .Text, .Pointer, .Not_Allowed, .Wait, .Crosshair:
+	}
+	return {x - CURSOR_SIZE, y - CURSOR_SIZE, CURSOR_SIZE * 2, CURSOR_SIZE * 2}
+}
+
+// bare_frame draws one frame on every head that can take one. Returns true
+// when at least one head was presented, or when there was nothing to show
+// (so the caller sends frame callbacks either way).
+bare_frame :: proc(s: ^Server, app: ^p.App) -> bool {
+	heads := drm_heads()
+	ready := 0
+	for h in heads {
+		if drm_head_ready(h) {
+			ready += 1
+		}
+	}
+	if ready == 0 {
+		return false
+	}
+	o := &bare_out
+	W, H := s.out_w, s.out_h
+	if o.cw != W || o.ch != H || len(o.scene) != W * H {
+		delete(o.scene)
+		o.scene = make([]u32, W * H)
+		o.cw, o.ch = W, H
+		o.full = true
+	}
+	now := bare_mono_ns()
+	if now - o.last_full_ns >= 1_000_000_000 || bare_no_damage {
+		o.full = true
+	}
+	cx, cy := int(ev_pointer[0]), int(ev_pointer[1])
+	cur := rect4_clip(cursor_rect(s, cx, cy), W, H)
+
+	dmg := o.full ? [4]int{0, 0, W, H} : rect4_clip(o.dmg, W, H)
+	moved := cur != o.cursor || o.cursor_dirty
+	if dmg[2] == 0 && !moved {
+		// Nothing on screen changed: no draw, no copy, no flip.
+		o.dmg = {}
+		return true
+	}
+
+	o.seq += 1
+	comp := p.canvas_from(o.scene, W, H)
+	defer p.canvas_destroy(&comp)
+	if dmg[2] == 0 {
+		o.st_cursor += 1
+	}
+	if dmg[2] > 0 {
+		t0 := bare_mono_ns()
+		o.clipping = !o.full
+		o.base_clip = {f32(dmg[0]), f32(dmg[1]), f32(dmg[2]), f32(dmg[3])}
+		wm_reset_clip(&comp)
+		o.draws += 1
+		draw(s, app, &comp)
+		o.clipping = false
+		o.st_draw_ns += bare_mono_ns() - t0
+		o.st_draw_px += u64(dmg[2] * dmg[3])
+		if o.full {
+			o.st_full += 1
+			o.last_full_ns = now
+		}
+	}
+	// What this frame changed on screen, the cursor's old and new boxes
+	// included, for this head and for the buffers that see it later.
+	changed := dmg
+	if moved || dmg[2] > 0 {
+		changed = rect4_union(changed, rect4_union(o.cursor, cur))
+	}
+	o.hist[o.seq % DMG_HISTORY] = o.full ? [4]int{0, 0, W, H} : changed
+	o.full = false
+	o.dmg = {}
+	o.cursor = cur
+	o.cursor_dirty = false
+
+	// Lay the cursor over the scene, keeping what it covers.
+	under: [dynamic]u32
+	under.allocator = context.temp_allocator
+	if cur[2] > 0 {
+		resize(&under, cur[2] * cur[3])
+		for y in 0 ..< cur[3] {
+			copy(under[y * cur[2]:][:cur[2]], o.scene[(cur[1] + y) * W + cur[0]:][:cur[2]])
+		}
+		comp.clip = {0, 0, f32(W), f32(H)}
+		cursor_draw(s, &comp, cx, cy)
+		cursor_mark_shown(s)
+	}
+
+	shown := false
+	for h in heads {
+		if !drm_head_ready(h) {
+			continue
+		}
+		fb := drm_back_fb(h)
+		if fb == nil {
+			continue
+		}
+		// Everything since this buffer last saw a frame.
+		region: [4]int
+		age := o.seq - fb.seq
+		if fb.seq == 0 || age >= DMG_HISTORY {
+			region = {h.x, h.y, fb.w, fb.h}
+		} else {
+			for k := fb.seq + 1; k <= o.seq; k += 1 {
+				region = rect4_union(region, o.hist[k % DMG_HISTORY])
+			}
+		}
+		// Into head coordinates, clipped to the head and to the layout.
+		region = rect4_clip(region, W, H)
+		local := rect4_clip({region[0] - h.x, region[1] - h.y, region[2], region[3]}, min(fb.w, W - h.x), min(fb.h, H - h.y))
+		if local[2] > 0 {
+			for y in 0 ..< local[3] {
+				sy := h.y + local[1] + y
+				copy(fb.px[(local[1] + y) * fb.stride_px + local[0]:][:local[2]], o.scene[sy * W + h.x + local[0]:][:local[2]])
+			}
+			o.st_copy_px += u64(local[2] * local[3])
+		}
+		fb.seq = o.seq
+		if local[2] == 0 {
+			// This head shows nothing that changed. Its buffer is current
+			// as of this frame; no flip needed.
+			continue
+		}
+		if drm_present_clip(h, local, false) {
+			shown = true
+		}
+	}
+	o.st_frames += 1
+
+	if cur[2] > 0 {
+		for y in 0 ..< cur[3] {
+			copy(o.scene[(cur[1] + y) * W + cur[0]:][:cur[2]], under[y * cur[2]:][:cur[2]])
+		}
+	}
+	return true
+}
+
+// bare_stats prints, every few seconds with PALMY_WM_DRM_DEBUG, what the
+// compositor cost: CPU time, frames, how many of them were full repaints, and
+// the pixels drawn and copied. This is how the damage tracking is measured.
+bare_stats :: proc() {
+	o := &bare_out
+	now := bare_mono_ns()
+	if o.st_at == 0 {
+		o.st_at = now
+		o.st_cpu_ns = bare_cpu_ns()
+		return
+	}
+	if now - o.st_at < 5_000_000_000 {
+		return
+	}
+	cpu := bare_cpu_ns()
+	wall := f64(now - o.st_at) / 1e9
+	fmt.printfln(
+		"wm: stats: %.1fs cpu %.1f%% frames %d (full %d, cursor-only %d) draw %.1f ms, %d kpx drawn, %d kpx copied, %d dirtyfb, %d commits %d kpx",
+		wall, f64(cpu - o.st_cpu_ns) / 1e7 / wall, o.st_frames, o.st_full, o.st_cursor,
+		f64(o.st_draw_ns) / 1e6, o.st_draw_px / 1000, o.st_copy_px / 1000, drm_state.dirty_calls,
+		o.st_commits, o.st_commit_px / 1000,
+	)
+	o.st_commits, o.st_commit_px, o.st_cursor = 0, 0, 0
+	if len(bare_why) > 0 {
+		b := strings.builder_make(context.temp_allocator)
+		for k, v in bare_why {
+			fmt.sbprintf(&b, " %s=%d", k, v)
+		}
+		fmt.printfln("wm: stats: full repaints asked by%s", strings.to_string(b))
+		clear(&bare_why)
+	}
+	o.st_at, o.st_cpu_ns = now, cpu
+	o.st_frames, o.st_full, o.st_draw_ns, o.st_draw_px, o.st_copy_px = 0, 0, 0, 0, 0
+	drm_state.dirty_calls = 0
+}
+
+bare_cpu_ns :: proc() -> i64 {
+	ts, _ := linux.clock_gettime(.PROCESS_CPUTIME_ID)
+	return i64(ts.time_sec) * 1_000_000_000 + i64(ts.time_nsec)
 }
 
 bare_mono_ns :: proc() -> i64 {
@@ -323,70 +646,43 @@ bare_layout :: proc(s: ^Server, app: ^p.App) -> (changed: bool) {
 	return
 }
 
-// bare_frame draws one frame on every head that can take one. Returns true
-// when at least one head was presented.
-bare_frame :: proc(s: ^Server, app: ^p.App) -> bool {
-	heads := drm_heads()
-	ready := 0
-	for h in heads {
-		if drm_head_ready(h) {
-			ready += 1
-		}
-	}
-	if ready == 0 {
-		return false
-	}
-	cx, cy := int(ev_pointer[0]), int(ev_pointer[1])
+bare_debug: bool
+// PALMY_WM_DAMAGE=off repaints and copies everything every frame, which is
+// what wm did before damage tracking; it is there to measure the difference.
+bare_no_damage: bool
 
-	single := len(heads) == 1 && heads[0].x == 0 && heads[0].y == 0
-	if single {
-		h := heads[0]
-		cv := drm_begin_frame(h)
-		if cv == nil {
-			return false
-		}
-		draw(s, app, cv)
-		cursor_draw(s, cv, cx, cy)
-		return drm_present(h)
-	}
-
-	// Several heads: composite the whole layout once, then copy each head's
-	// rectangle into its own buffer. draw() thinks in one coordinate space and
-	// stays that way.
-	if bare_out.cw != s.out_w || bare_out.ch != s.out_h {
-		delete(bare_out.composite)
-		bare_out.composite = make([]u32, s.out_w * s.out_h)
-		bare_out.cw, bare_out.ch = s.out_w, s.out_h
-	}
-	comp := p.canvas_from(bare_out.composite, bare_out.cw, bare_out.ch)
-	defer p.canvas_destroy(&comp)
-	draw(s, app, &comp)
-	cursor_draw(s, &comp, cx, cy)
-	shown := false
-	for h in heads {
-		if !drm_head_ready(h) {
-			continue
-		}
-		cv := drm_begin_frame(h)
-		if cv == nil {
-			continue
-		}
-		for y in 0 ..< cv.h {
-			sy := h.y + y
-			if sy >= comp.h {
-				break
-			}
-			n := min(cv.w, comp.w - h.x)
-			if n <= 0 {
-				break
-			}
-			copy(cv.px[y * cv.w:][:n], comp.px[sy * comp.w + h.x:][:n])
-		}
-		if drm_present(h) {
-			shown = true
+// bare_pointer is handle_pointer plus the damage question. The pointer moving
+// over a client's content, with nothing of the compositor's open, changes
+// only the cursor and what the client then commits; anything else (a click,
+// a hover over a frame button or the bar, a drag, an overlay) may change
+// what the compositor draws, so it repaints.
+bare_pointer :: proc(s: ^Server, app: ^p.App) {
+	in_ := &app.win.input
+	@(static) last_mouse: [2]f32
+	moved := in_.mouse != last_mouse
+	last_mouse = in_.mouse
+	buttons := false
+	for b in p.Mouse_Button {
+		if in_.pressed[b] || in_.released[b] {
+			buttons = true
 		}
 	}
-	return shown
+	scrolled := in_.scroll != {}
+	before := s.ptr_surf
+	hover_t, hover_btn, drag, dirty, focus := s.hover_t, s.hover_btn, s.drag, s.dirty, s.kbd_surf
+	handle_pointer(s, app, 1)
+	if !moved && !buttons && !scrolled {
+		return
+	}
+	quiet := !buttons && before != nil && s.ptr_surf == before && s.drag == .None && drag == .None &&
+		s.hover_t == hover_t && s.hover_btn == hover_btn && s.kbd_surf == focus &&
+		!menu.open && !sw.open && !ov.open && !cheat.open && !dnd_active() && !anim_busy()
+	if quiet {
+		// handle_pointer marks every motion dirty; this one is not.
+		s.dirty = dirty
+	} else {
+		damage_all()
+	}
 }
 
 // bare_main runs the compositor on the hardware until the session ends.
@@ -396,6 +692,8 @@ bare_main :: proc(display, conf: string) -> int {
 		return 2
 	}
 	session.bare = true
+	bare_debug = os.get_env("PALMY_WM_DRM_DEBUG", context.temp_allocator) != ""
+	bare_no_damage = os.get_env("PALMY_WM_DAMAGE", context.temp_allocator) == "off"
 	session_install_signals()
 
 	// The seat. logind when it is there, the device nodes when it is not.
@@ -537,6 +835,7 @@ bare_main :: proc(display, conf: string) -> int {
 		// idle means do not wait at all; one waiting on a flip waits for the
 		// event, but never longer than the stall detector needs.
 		timeout := i32(1000)
+		timer_wake := true // the timeout, if it expires, is a timer (not pacing)
 		awaiting := false
 		for hd in drm_heads() {
 			if hd.awaiting_flip {
@@ -545,14 +844,16 @@ bare_main :: proc(display, conf: string) -> int {
 		}
 		if want_frame {
 			timeout = awaiting ? 100 : i32(max(bare_pace_wait_ms(), 0))
+			timer_wake = false
 		}
 		if vt_inactive() {
 			// Switched away: nothing to draw until the kernel says we are back.
 			want_frame = false
 			timeout = 1000
 		}
-		if rt := ev_next_timeout(bare_mono_ms()); rt >= 0 {
-			timeout = min(timeout, i32(rt))
+		if rt := ev_next_timeout(bare_mono_ms()); rt >= 0 && i32(rt) < timeout {
+			timeout = i32(rt)
+			timer_wake = false // key repeat: the compositor's own, not drawn
 		}
 		// Something on screen changes by itself soon (a tooltip, a snap
 		// preview, a toast running out): wake for it rather than a second
@@ -560,9 +861,11 @@ bare_main :: proc(display, conf: string) -> int {
 		if anim_busy() && !vt_inactive() {
 			want_frame = true
 			timeout = awaiting ? 100 : i32(max(bare_pace_wait_ms(), 0))
+			timer_wake = false
 		}
-		if wm := wake_ms(); wm >= 0 {
-			timeout = min(timeout, i32(wm))
+		if wm := wake_ms(); wm >= 0 && i32(wm) <= timeout {
+			timeout = i32(wm)
+			timer_wake = true
 			if wm == 0 {
 				want_frame = true
 			}
@@ -576,6 +879,11 @@ bare_main :: proc(display, conf: string) -> int {
 		activity := n == 0 && timeout > 0
 		if anim_busy() {
 			activity = true
+			damage_all()
+		}
+		if n == 0 && timeout > 0 && timer_wake {
+			// A timer: the clock, a tooltip, a toast running out.
+			damage_all()
 		}
 		for f, i in pfds {
 			if f.revents != {} && (i < drm_lo || i >= drm_hi) {
@@ -610,6 +918,7 @@ bare_main :: proc(display, conf: string) -> int {
 		drm_dispatch()
 		if bare_layout(s, app) {
 			want_frame = true
+			damage_all()
 		}
 		if via_logind {
 			seat_pump()
@@ -624,7 +933,12 @@ bare_main :: proc(display, conf: string) -> int {
 		}
 		ev_apply_to_input(&app.win.input)
 		handle_keys(s, app)
-		handle_pointer(s, app, 1)
+		if kbd_wire.took {
+			// The compositor acted on a key: anything may have changed.
+			kbd_wire.took = false
+			damage_all()
+		}
+		bare_pointer(s, app)
 
 		if now := wall_now(); now - s.cfg_check_at > 1.0 {
 			s.cfg_check_at = now
@@ -634,10 +948,19 @@ bare_main :: proc(display, conf: string) -> int {
 			want_frame = true
 		}
 		ws_tick(s)
+		// Every place that changes what the compositor draws says so with
+		// s.dirty; on bare metal that is a full repaint. Commits and the
+		// pointer over a client have already added their own, smaller damage.
+		if s.dirty {
+			s.dirty = false
+			damage_all()
+		}
+		if bare_debug {
+			bare_stats()
+		}
 
-		// Anything that woke us may have changed what is on screen — a
-		// commit, a motion, a title — and draw() repaints everything anyway,
-		// so there is no finer question to ask. The flip paces how many go out.
+		// The flip paces how many frames go out; bare_frame decides how
+		// much of each is drawn.
 		if want_frame && !vt_inactive() && bare_pace_wait_ms() <= 0 && bare_frame(s, app) {
 			bare_out.last_frame_ns = bare_mono_ns()
 			want_frame = false

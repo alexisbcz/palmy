@@ -332,6 +332,9 @@ Drm_Fb :: struct {
 	// anon is true for a buffer faked with an anonymous mmap instead of a
 	// dumb buffer. The swap-chain tests use these; nothing scans them out.
 	anon:      bool,
+	// seq is the compositor frame whose pixels this buffer last received
+	// (bare.odin's damage history); 0 means never, so repaint it whole.
+	seq:       u64,
 }
 
 // Drm_Head is one output: a connector, the CRTC driving it, the mode, where it
@@ -378,6 +381,8 @@ Drm_Head :: struct {
 	saved_crtc:    Drm_Mode_Crtc,
 	saved_valid:   bool,
 
+	clip:          [4]int, // what the frame being presented changed (DIRTYFB)
+
 	refresh_ns:    i64, // from the mode's timings
 	last_flip_ns:  i64,
 	flip_sent_ns:  i64, // when the outstanding PAGE_FLIP went to the kernel
@@ -422,6 +427,8 @@ Drm_State :: struct {
 	seat:      Drm_Seat,
 	hotplug:   bool, // a re-probe is pending
 	verbose:   bool,
+	dirty_calls: u64, // DIRTYFB ioctls, and the pixels their clips covered
+	dirty_px:    u64,
 }
 
 // The package already keeps backend state in a package-level global (`server`
@@ -1721,13 +1728,43 @@ drm_head_free_buffer :: proc(h: ^Drm_Head) -> bool {
 // The seam for atomic is drm_modeset and this procedure: both already take a
 // head and nothing else, so adding Drm_Commit_Mode later changes two bodies.
 drm_present :: proc(h: ^Drm_Head) -> bool {
+	return drm_present_clip(h, {}, true)
+}
+
+// drm_back_fb is drm_begin_frame for a caller that writes the buffer itself,
+// rows of fb.stride_px pixels, rather than through the head's canvas: the
+// damage-tracked path in bare.odin, which copies only what changed. nil when
+// the head cannot take a frame.
+drm_back_fb :: proc(h: ^Drm_Head) -> ^Drm_Fb {
+	if h == nil || !h.connected || !h.have_mode || drm_state.paused {
+		return nil
+	}
+	if h.fbs[0].px == nil {
+		if e := drm_head_alloc_fbs(h); e != "" {
+			drm_log("%s: %s", h.name, e)
+			return nil
+		}
+	}
+	if !drm_head_free_buffer(h) {
+		return nil
+	}
+	return &h.fbs[h.back]
+}
+
+// drm_present_clip presents the back buffer. `clip` (x, y, w, h in the
+// head's pixels; all zero for the whole buffer) is the region that changed:
+// it becomes the DIRTYFB clip on the no-flip path, so a virtual GPU copies
+// only that to its host. `from_canvas` says the pixels are in the head's
+// canvas (drm_begin_frame), which must still be blitted when it is a shadow.
+drm_present_clip :: proc(h: ^Drm_Head, clip: [4]int, from_canvas: bool) -> bool {
 	if h == nil || !h.have_mode || h.fbs[0].px == nil {
 		return false
 	}
 	fb := &h.fbs[h.back]
+	h.clip = clip
 
 	// Padded pitch: copy the packed shadow into the buffer a row at a time.
-	if fb.stride_px != fb.w {
+	if from_canvas && fb.stride_px != fb.w {
 		src := h.shadow
 		for y in 0 ..< fb.h {
 			copy(fb.px[y * fb.stride_px:][:fb.w], src[y * fb.w:][:fb.w])
@@ -1812,7 +1849,7 @@ drm_present_noflip :: proc(h: ^Drm_Head) -> bool {
 		}
 		return false
 	}
-	drm_dirty(h.card, fb.fb_id)
+	drm_dirty(h.card, fb.fb_id, h.clip)
 	h.front = h.back
 	h.queued = -1
 	h.frames += 1
@@ -1823,11 +1860,23 @@ drm_present_noflip :: proc(h: ^Drm_Head) -> bool {
 // drm_dirty flushes a whole framebuffer. ENOSYS means the driver scans out of
 // the buffer directly and needs no flush, which is the common case on real
 // hardware; nothing else is worth reporting more than once.
-drm_dirty :: proc(card: ^Drm_Card, fb_id: u32) {
+drm_dirty :: proc(card: ^Drm_Card, fb_id: u32, clip: [4]int = {}) {
 	cmd := Drm_Mode_Fb_Dirty_Cmd {
 		fb_id = fb_id,
 	}
+	// struct drm_clip_rect: x1, y1, x2, y2 as u16. One rectangle: the damage
+	// bounding box. The kernel copies only that much to the host.
+	r: [4]u16
+	if clip[2] > 0 && clip[3] > 0 {
+		r = {u16(clip[0]), u16(clip[1]), u16(clip[0] + clip[2]), u16(clip[1] + clip[3])}
+		cmd.num_clips = 1
+		cmd.clips_ptr = u64(uintptr(&r))
+	}
 	drm_ioctl(card.fd, DRM_IOCTL_MODE_DIRTYFB, &cmd)
+	drm_state.dirty_calls += 1
+	if cmd.num_clips > 0 {
+		drm_state.dirty_px += u64(clip[2] * clip[3])
+	}
 }
 
 // drm_modeset programs the mode. Gated: this is the call that would take over

@@ -555,7 +555,7 @@ draw_menu :: proc(s: ^Server, app: ^p.App, cv: ^p.Canvas) {
 	if !menu.open {
 		return
 	}
-	p.reset_clip(cv)
+	wm_reset_clip(cv)
 	draw_menu_list(app, cv, menu.items[:], menu.x, menu.y, menu.w, menu.hover, menu.sub_open)
 	if menu.sub_open >= 0 && menu.sub_open < len(menu.items) {
 		draw_menu_list(app, cv, menu.items[menu.sub_open].sub[:], menu.sub_x, menu.sub_y, menu.sub_w, menu.sub_hover, -1)

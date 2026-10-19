@@ -80,7 +80,7 @@ lock_covered :: proc() -> bool {
 
 lock_draw :: proc(s: ^Server, app: ^p.App, cv: ^p.Canvas) {
 	lock_purge(s)
-	p.reset_clip(cv)
+	wm_reset_clip(cv)
 	p.fill_rect(cv, {0, 0, f32(cv.w), f32(cv.h)}, p.hex(0x05050a))
 
 	drew := false
@@ -348,7 +348,9 @@ lock_commit :: proc(s: ^Server, ls: ^Lock_Surface) {
 		lock_refocus(s)
 	}
 	lock_maybe_locked(s)
-	s.dirty = true
+	if !session.bare || ls.mapped != was {
+		s.dirty = true
+	}
 }
 
 // lock_maybe_locked sends `locked` once every output is covered. Until then

@@ -525,6 +525,7 @@ layer_commit :: proc(s: ^Server, ls: ^Layer_Surface) {
 
 	has := ls.surf != nil && ls.surf.img != nil && ls.surf.iw > 0
 	was := ls.mapped
+	geom := [4]int{ls.x, ls.y, ls.cw, ls.ch}
 
 	if !ls.configured {
 		layer_arrange(s)
@@ -537,7 +538,12 @@ layer_commit :: proc(s: ^Server, ls: ^Layer_Surface) {
 		log_line("layer surface %q %s at %d,%d %dx%d", ls.ns, ls.mapped ? "mapped" : "unmapped", ls.x, ls.y, ls.cw, ls.ch)
 		layer_refocus(s)
 	}
-	s.dirty = true
+	// A commit that only changed the pixels is the surface's own damage
+	// (damage_commit); one that moved, resized or (un)mapped it is a layout
+	// change.
+	if !session.bare || ls.mapped != was || geom != ([4]int{ls.x, ls.y, ls.cw, ls.ch}) {
+		s.dirty = true
+	}
 }
 
 // layer_reflow re-fits the windows after the work area moved, so a bar

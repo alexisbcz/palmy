@@ -1474,6 +1474,9 @@ spawn :: proc(s: ^Server, argv_in: []string) -> (pid: linux.Pid, ok: bool) {
 
 // blit_surface copies a client's pixels into the output, then its subsurfaces.
 blit_surface :: proc(cv: ^p.Canvas, surf: ^Surface, ox, oy: int) {
+	sc := max(surf.scale, 1)
+	surf.shown = {ox, oy, surf.iw / sc, surf.ih / sc}
+	surf.shown_draw = bare_out.draws
 	if surf.img != nil {
 		blit(cv, surf.img, surf.iw, surf.ih, max(surf.scale, 1), ox, oy, surf.opaque)
 	}

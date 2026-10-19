@@ -23,6 +23,8 @@
 #   burst:<n>:<ms>:<prefix>   n screendumps <ms> apart, <prefix>-NN.png
 #   qmp:<command>[:<json>]    any QMP command, e.g.
 #                             qmp:device_add:{"driver":"usb-kbd","id":"k2"}
+#   wiggle:<s>[:x,y,r]        circle the pointer for s seconds at 60 Hz
+#                             (default around 640,400, radius 150)
 #   dev:<id>                  send the following input events to the device
 #                             with this QOM id (dev: alone: QEMU's choice)
 #
@@ -210,6 +212,18 @@ def main():
             name, _, js = rest.partition(":")
             r = q.cmd(name, **(json.loads(js) if js else {}))
             print(f"qmp {name}: {json.dumps(r)[:200]}", flush=True)
+        elif kind == "wiggle":
+            parts = rest.split(":")
+            secs = float(parts[0])
+            cx, cy, rad = 640, 400, 150
+            if len(parts) > 1:
+                cx, cy, rad = (int(v) for v in parts[1].split(","))
+            t0 = time.time()
+            import math
+            while time.time() - t0 < secs:
+                a = (time.time() - t0) * 2.0
+                q.events(abs_ev(size, int(cx + rad * math.cos(a)), int(cy + rad * math.sin(a))))
+                time.sleep(1 / 60)
         elif kind == "dev":
             q.device = rest
         elif kind == "until":

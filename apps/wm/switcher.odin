@@ -224,7 +224,7 @@ switcher_draw :: proc(s: ^Server, app: ^p.App, cv: ^p.Canvas) {
 	ph := f32(rows) * cell_h + 24
 	px := f32(o.x) + (f32(o.w) - pw) / 2
 	py := f32(o.y) + (f32(o.h) - ph) / 2
-	p.reset_clip(cv)
+	wm_reset_clip(cv)
 	panel := p.Rect{px, py, pw, ph}
 	p.drop_shadow(cv, panel, {14, 14, 14, 14}, 40, 0, {0, 14}, p.hexa(0x000000aa))
 	p.fill_round_rect(cv, panel, {14, 14, 14, 14}, p.hexa(0x0f0f12f2))
