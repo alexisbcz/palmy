@@ -13,7 +13,7 @@
 begin;
 create extension if not exists pgtap with schema extensions;
 set search_path = public, extensions;
-select plan(46);
+select plan(50);
 
 insert into public.mail_domains (domain, is_default) values ('palm.test', true) on conflict do nothing;
 
@@ -61,6 +61,14 @@ insert into public.dav_collections (id, identity_id, kind, slug) values
 insert into public.dav_objects (identity_id, collection_id, name, uid, component, body, etag, summary) values
 	('aaaaaaaa-0000-4000-8000-00000000000a', 'c0000000-0000-4000-8000-00000000000a', 'gp.ics', 'gp@test', 'VEVENT', 'BEGIN:VCALENDAR', 'e1', 'GP appointment PERSONAL-CANARY'),
 	('aaaaaaaa-0000-4000-8000-00000000000b', 'c0000000-0000-4000-8000-00000000000b', 'rr.ics', 'rr@test', 'VEVENT', 'BEGIN:VCALENDAR', 'e2', 'Roadmap review');
+
+-- Notes (the notes area's cloud tables): a note is a collab document.
+insert into public.collab_documents (id, identity_id, kind, title) values
+	('d0c00000-0000-4000-8000-00000000000a', 'aaaaaaaa-0000-4000-8000-00000000000a', 'doc', 'Diary PERSONAL-CANARY'),
+	('d0c00000-0000-4000-8000-00000000000b', 'aaaaaaaa-0000-4000-8000-00000000000b', 'doc', 'Q4 roadmap');
+insert into public.notes (id, identity_id, title) values
+	('d0c00000-0000-4000-8000-00000000000a', 'aaaaaaaa-0000-4000-8000-00000000000a', 'Diary PERSONAL-CANARY'),
+	('d0c00000-0000-4000-8000-00000000000b', 'aaaaaaaa-0000-4000-8000-00000000000b', 'Q4 roadmap');
 
 -- The assistant's own history, in both identities.
 insert into public.assistant_settings (identity_id, enabled) values
@@ -112,6 +120,14 @@ select is((select count(*)::int from dav_objects where summary like '%PERSONAL-C
 	'Personal''s events, searched for: nothing');
 select is((select count(*)::int from dav_collections where identity_id = 'aaaaaaaa-0000-4000-8000-00000000000a'), 0,
 	'Personal''s calendars: nothing');
+select is((select count(*)::int from notes), 1, 'notes: the assistant sees Northwind''s one note');
+select is((select count(*)::int from notes where title like '%PERSONAL-CANARY%'), 0, 'notes: Personal''s diary, searched for by title: nothing');
+select is((select count(*)::int from collab_documents where id = 'd0c00000-0000-4000-8000-00000000000a'), 0,
+	'notes: Personal''s note document, asked for by id: nothing');
+select throws_ok($$ insert into note_carries (carry_id, identity_id, direction, note_id, peer_identity, peer_handle, peer_name, peer_note, content_hash)
+	values (gen_random_uuid(), 'aaaaaaaa-0000-4000-8000-00000000000b', 'out', 'd0c00000-0000-4000-8000-00000000000b',
+	        'aaaaaaaa-0000-4000-8000-00000000000a', 'as-alice', 'Alice', gen_random_uuid(), repeat('0', 64)) $$,
+	'42501', null, 'notes: the assistant cannot carry a Northwind note into Personal');
 select is((select count(*)::int from assistant_conversations where id = 'cc000000-0000-4000-8000-00000000000a'), 0,
 	'the Personal assistant''s conversation, asked for by id: nothing');
 select is((select count(*)::int from assistant_messages where content like '%PERSONAL-CANARY%'), 0,

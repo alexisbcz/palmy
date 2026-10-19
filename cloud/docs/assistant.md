@@ -14,13 +14,13 @@ not its.**
 
 | piece | where | checked by |
 | --- | --- | --- |
-| schema: settings, conversations, messages, the action log; the rule that refuses outbound acts to an assistant session | `cloud/supabase/migrations/20261020100000_assistant.sql` | pgTAP `assistant_isolation.sql` (46), `assistant_outbound.sql` (45); every other area's 585 still pass |
-| the sandbox (Landlock + seccomp) and its probes | `cloud/assistant/sandbox/` | `palm-sandbox-check`, `ai sandbox-check`: 27/27 |
+| schema: settings, conversations, messages, the action log; the rule that refuses outbound acts to an assistant session | `cloud/supabase/migrations/20261020100000_assistant.sql` | pgTAP `assistant_isolation.sql` (50), `assistant_outbound.sql` (45); every other area's 725 still pass |
+| the sandbox (Landlock + seccomp) and its probes | `cloud/assistant/sandbox/` | `palm-sandbox-check`, `ai sandbox-check`: 30/30 |
 | the untrusted-content rules (hidden text, fencing) | `cloud/assistant/untrusted/` | `palm-mail --selftest` (26), e2e section E |
 | `palm-mail`, the mail tool on the CLI convention | `cloud/assistant/mail/` | `palm-mail --selftest`, e2e |
 | the engine: tool registry from `--schema`, policy, provenance, the loop | `cloud/assistant/engine/` | `ai --selftest` (engine section), e2e |
-| `ai`: the window, `ai ask … --json`, `ai confirm`, the sandboxed `ai agent` | `apps/ai/` | `ai --selftest`: 239 |
-| end to end on a real stack, with two identities and an attacker | `cloud/assistant/e2e.sh` | 52/52, plus model numbers |
+| `ai`: the window, `ai ask … --json`, `ai confirm`, the sandboxed `ai agent` | `apps/ai/` | `ai --selftest`: 242 (181 before) |
+| end to end on a real stack, with two identities and an attacker | `cloud/assistant/e2e.sh` | 57/57, plus model numbers |
 | seed, fixtures, demo | `cloud/assistant/dev/`, `cloud/assistant/fixtures/` | |
 
 ```sh
@@ -86,6 +86,7 @@ session, triggers refuse (42501, hint `assistant_outbound`):
 | `rtc_messages`, `rtc_invites` | posting to chat, inviting |
 | `collab_grants`, `collab_links` | sharing documents |
 | `forge_comments`, `forge_collaborators` | writing on the forge |
+| `note_carries` | carrying a note to another identity |
 
 and on its own tables: an assistant may insert actions only as `done`,
 `refused`, `failed` or `proposed`; may not update any action (so it cannot
@@ -98,7 +99,7 @@ database fills in which assistant device wrote each row.
 
 *These triggers sit on other areas' tables.* They read nothing of those
 tables and change nothing for any other kind of session; every area's own
-pgTAP still passes with them (585 assertions). Owners: please keep them
+pgTAP still passes with them (725 assertions). Owners: please keep them
 when you change those tables, and add the trigger to any new table whose
 insert means something leaves the identity.
 
@@ -108,7 +109,7 @@ reads its request, irreversibly, inherited by every tool it runs:
 | layer | what it allows |
 | --- | --- |
 | `no_new_privs`, not dumpable | no setuid way out; no other process of the user can ptrace it or read its memory (and token) |
-| Landlock, files (ABI 10 here) | read-write: `~/Drive/<X>`, `~/Notes/<X>`, `~/Mail/<X>`, `~/.local/share/palm/assistant/<X>`. Read: the C library, loader cache, zoneinfo, `/etc/hosts`… Execute: the tool directory and the program loader only. Nothing else of `$HOME` — not the other identity's folders, not the person's unscoped session, not `scoped/<Y>.json`, not `~/.ssh` |
+| Landlock, files (ABI 10 here) | read-write: `~/Drive/<X>`, `~/Notes/<X>`, `~/Mail/<X>`, `~/.local/share/palm/assistant/<X>`. Read: the identity's search index `~/.local/share/palm/index/<X>`, the C library, loader cache, zoneinfo, `/etc/hosts`… Execute: the tool directory and the program loader only. Nothing else of `$HOME` — not the other identity's folders, not the person's unscoped session, not `scoped/<Y>.json`, not `~/.ssh` |
 | Landlock, network (ABI ≥ 4) | TCP connect to the gateway's port and the DAV server's port; no bind |
 | Landlock, scopes (ABI ≥ 6) | no abstract Unix sockets or signals outside the sandbox |
 | seccomp | no Unix sockets at all (Landlock does not govern `connect()` to a pathname socket — the session D-Bus would otherwise be one `systemd-run` away), no UDP/raw sockets (Landlock is TCP only; this closes DNS and datagrams out), no io_uring, ptrace, process_vm_*, bpf, perf, keyring, user namespaces, mount, `clone3`, `TIOCSTI` |
@@ -116,13 +117,14 @@ reads its request, irreversibly, inherited by every tool it runs:
 `enter` fails closed: if Landlock is older than ABI 4, or any rule fails,
 the child reports the error and exits; the window shows it.
 
-The 27 probes, run from inside on every `ai --selftest` and e2e (a
+The 30 probes, run from inside on every `ai --selftest` and e2e (a
 throwaway home with two identities, real listeners on a granted and an
 ungranted port, the real tool directory):
 
 ```
-ok  reads its own identity's Drive folder / notes; writes its state; runs a tool; connects to its port
-ok  refused (EACCES): the other identity's Drive (read, list, write), notes, assistant state;
+ok  reads its own identity's Drive folder / notes / search index; writes its state; runs a tool; connects to its port
+ok  refused (EACCES): the other identity's Drive (read, list, write), notes, assistant state, search index;
+    writing its own search index (the daemon's);
     the person's session.json; scoped/camille.json; ~/.ssh/id_ed25519; listing or writing $HOME;
     /etc/passwd; /proc/<parent>/environ; exec /usr/bin/sh, /usr/bin/curl;
     a loopback port it was not given; 1.1.1.1:443
@@ -142,8 +144,7 @@ is how `calendar sync` first returned "pulled 2" and then showed no events.
 
 At start the child runs `<bin> --schema` for every binary in the tool
 directory (today: palm-mail, drive, calendar, contacts, notes, chat, forge;
-`index` when the search area's binary is installed there) and offers what
-`POLICY` in `engine/tools.odin` allows — 43 tools. Each has a class:
+`index`) and offers what `POLICY` in `engine/tools.odin` allows — 45 tools. Each has a class:
 
 | class | runs | examples |
 | --- | --- | --- |
@@ -259,10 +260,10 @@ And against the model being steered — injected or just wrong:
 
 ## Isolation: the assertions that run
 
-**pgTAP** (`cloud/dev/test.sh … assistant_`, 91 assertions): the Northwind
+**pgTAP** (`cloud/dev/test.sh … assistant_`, 95 assertions): the Northwind
 assistant's session sees one identity; zero of Personal's mail (by id, by
 content, raw bytes, mailboxes, counts), files (by id, name, usage),
-events, calendars, devices, conversations, messages, actions; cannot write
+events, calendars, notes, devices, conversations, messages, actions; cannot write
 any of them, mint a session, create an identity, archive one, turn its
 device into an ordinary one, or read the vault. The outbound file: drafts
 yes, Inbox planting no, send/share/link/trash/delete/invite/post/share-doc
@@ -270,12 +271,16 @@ no; proposals yes, self-confirmation no, rewriting arguments no (not even
 by the person), skipping confirmation no; settings readable, not writable;
 the person's session does all of it.
 
-**End to end** (`cloud/assistant/e2e.sh`, 52 assertions, all passing): the
+**End to end** (`cloud/assistant/e2e.sh`, 57 assertions, all passing): the
 same questions asked through the tools by the confined process with its
 own session — Personal's message id → exit 3; searches → 0; Personal's
 tax return → exit 3 and no file; the calendar shows Northwind's two events
 and not the GP appointment; the notes tool pointed at `~/Notes/camille`
-lists nothing; `PALM_IDENTITY=camille` with the Northwind session → exit 5.
+lists nothing; `PALM_IDENTITY=camille` with the Northwind session → exit 5;
+the search index (built by the person's machine for both identities, and
+holding the canary in Personal's) — the assistant searches Northwind's,
+finds nothing of Personal's diary, and `index search --identity camille`
+exits 5 with nothing returned.
 Then five questions about Personal asked of the Northwind assistant with
 the real model: the canary (`PERSONAL-CANARY-7731`, planted in Personal's
 mail, files, notes and calendar) appears in no answer, step, stored
@@ -356,10 +361,15 @@ test; it has not been exercised against the real API from this machine.
 - **palm** (dispatcher): mark drive, calendar, contacts, chat, forge on the
   convention; route `palm mail` to the mail CLI once it exists; add
   `palm ai` → `ai`.
-- **search** (parallel): `index search --identity X --json` is in the policy
-  as a read tool (`index_search`) and the isolation test will call it with
-  another identity expecting exit 5 once the binary is in the tool
-  directory. It must create nothing by absolute path inside the sandbox.
+- **search**: `index search` is a read tool (`index_search`), the
+  identity's index directory is readable (only) in the sandbox, and the e2e
+  asserts the scoped refusal. Found while wiring it: `PALM_IDENTITY=
+  camille.roux index rebuild --identity camille.roux` says "names no
+  identity on this device" while the same for `camille`, and the unscoped
+  rebuild, work. Also measured: with `index_search` anywhere on the menu,
+  qwen3:0.6b picked the wrong first tool for the draft and meeting requests
+  (10/10 and 7/10 down to 0/10), so it is offered only to request parts
+  that name no application. A larger model would not need that.
 - **accounts**: `mint_scoped_session` and `devices.kind` carry the whole
   assistant rule; keep `kind` immutable and unchangeable by scoped
   sessions. Consider an `expires_in` cap for `kind = 'assistant'`.

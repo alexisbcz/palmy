@@ -311,6 +311,8 @@ create trigger assistant_guard before insert on public.forge_comments
 	for each row execute function public.assistant_outbound_guard('comment on the forge');
 create trigger assistant_guard before insert on public.forge_collaborators
 	for each row execute function public.assistant_outbound_guard('add a collaborator');
+create trigger assistant_guard before insert on public.note_carries
+	for each row execute function public.assistant_outbound_guard('carry a note to another identity');
 
 -- Deleting is the person's too: mail, files, events.
 create trigger assistant_guard_delete before delete on public.mail_messages
