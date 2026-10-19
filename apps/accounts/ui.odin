@@ -333,9 +333,32 @@ auth_screen :: proc(st: ^St, ui: ^p.Ctx) {
 		url := st.c != nil ? st.c.url_text : ck.DEFAULT_URL
 		p.text(ui, url, "text-xs text-muted-foreground font-mono")
 		p.end(ui)
+
+		// New on this computer: the welcome app does the rest of the setup
+		// (identities, what syncs, the vault) in one pass.
+		if has_welcome() && !st.fixture {
+			p.row(ui, "items-center gap-1 justify-center")
+			p.text(ui, kit.tr("New here?"), "text-xs text-muted-foreground")
+			if btn(ui, kit.tr("Set up this computer step by step"), .Link, .SM) {
+				kit.launch({"welcome", "run"})
+			}
+			p.end(ui)
+		}
 	}
 	p.end(ui)
 	p.end(ui)
+}
+
+// has_welcome asks once whether the welcome app is installed: the answer
+// does not change while the window is open, and asking runs a process.
+@(private = "file")
+g_has_welcome := -1
+
+has_welcome :: proc() -> bool {
+	if g_has_welcome < 0 {
+		g_has_welcome = kit.has_tool("welcome") ? 1 : 0
+	}
+	return g_has_welcome == 1
 }
 
 submit_auth :: proc(st: ^St) {

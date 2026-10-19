@@ -38,6 +38,20 @@ COMMANDS := []kit.Command {
 		run = cmd_status,
 	},
 	{
+		verb = "server",
+		summary = "which Palmframe server this machine uses, or change it (checked before it is kept)",
+		effect = .Idempotent,
+		args = {{name = "url", kind = .String, help = "the server to use from now on, e.g. https://cloud.example.org"}},
+		out = {
+			{name = "url", kind = .String},
+			{name = "source", kind = .String, help = "argument, environment, config, or default"},
+			{name = "reachable", kind = .Bool},
+			{name = "config", kind = .String, help = "the file a new server is written to"},
+		},
+		examples = {"accounts server --json", "accounts server http://127.0.0.1:54321 --json"},
+		run = cmd_server,
+	},
+	{
 		verb = "signup",
 		summary = "create the account, and its first identity with it",
 		effect = .Mutate,
@@ -476,6 +490,58 @@ cmd_status :: proc(c: ^kit.Call) -> int {
 		} else {
 			fmt.println("not signed in")
 		}
+	}
+	return kit.EXIT_OK
+}
+
+// cmd_server reports or sets the server. Setting it is what the welcome
+// app's "Change" does too: the address must answer /auth/v1/health before
+// it is written to the token store's config.json, which every app reads
+// (cloudkit.open) unless $PALM_CLOUD_URL says otherwise.
+cmd_server :: proc(c: ^kit.Call) -> int {
+	want := kit.cli_str(c, "url")
+	cl, e := ck.open(url = want, app = "accounts")
+	if !ck.ok(e) {
+		return fail(c, e)
+	}
+	source := "default"
+	switch {
+	case want != "":
+		source = "argument"
+	case os.get_env("PALM_CLOUD_URL", context.temp_allocator) != "":
+		source = "environment"
+	case os.exists(fmt.tprintf("%s/config.json", cl.dir)):
+		source = "config"
+	}
+	_, he := ck.call(cl, "GET", "/auth/v1/health", "", auth = false, allocator = context.temp_allocator)
+	reachable := ck.ok(he)
+	config := fmt.tprintf("%s/config.json", cl.dir)
+	kit.jset_str(c.out, "url", cl.url_text)
+	kit.jset_str(c.out, "source", source)
+	kit.jset_bool(c.out, "reachable", reachable)
+	kit.jset_str(c.out, "config", config)
+	if want == "" {
+		if !c.json {
+			fmt.printfln("%s (%s)%s", cl.url_text, source, reachable ? "" : ", not answering")
+		}
+		return kit.EXIT_OK
+	}
+	if !reachable {
+		code := kit.cli_failf(c, kit.EXIT_UNAVAILABLE, "%s does not answer /auth/v1/health; nothing was changed", cl.url_text)
+		kit.cli_err_field(c, "url", cl.url_text)
+		return code
+	}
+	if c.dry_run {
+		return kit.EXIT_OK
+	}
+	os.make_directory_all(cl.dir, os.perm(0o700))
+	text := fmt.tprintf("{{\"url\":%s,\"anon_key\":%s}}\n", ck.quote(cl.url_text), ck.quote(cl.anon_key))
+	if os.write_entire_file(config, transmute([]u8)text) != nil {
+		return kit.cli_failf(c, kit.EXIT_FAILED, "cannot write %s", config)
+	}
+	os.chmod(config, {.Read_User, .Write_User})
+	if !c.json {
+		fmt.printfln("now using %s", cl.url_text)
 	}
 	return kit.EXIT_OK
 }

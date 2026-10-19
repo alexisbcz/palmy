@@ -208,3 +208,10 @@ msgstr "Créer la session limitée"
 
 msgid "Close"
 msgstr "Fermer"
+
+# --- the welcome app, from the sign-in screen ------------------------------------
+msgid "New here?"
+msgstr "Nouveau ici ?"
+
+msgid "Set up this computer step by step"
+msgstr "Configurer cet ordinateur pas à pas"
