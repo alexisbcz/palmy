@@ -93,6 +93,11 @@ create table public.rtc_messages (
 	channel_id    uuid not null references public.rtc_channels (id) on delete cascade,
 	space_id      uuid not null references public.rtc_spaces (id) on delete cascade,
 	identity_id   uuid not null references public.identities (id),   -- the author
+	-- The author as the channel saw them when they wrote it, so a message
+	-- keeps its name after its author leaves the space.
+	author_handle text not null default '',
+	author_name   text not null default '',
+	author_color  text not null default '',
 	seq           bigint not null,
 	rev           bigint not null,
 	thread_root   bigint references public.rtc_messages (id),
@@ -115,6 +120,7 @@ create table public.rtc_reactions (
 	message_id  bigint not null references public.rtc_messages (id) on delete cascade,
 	channel_id  uuid not null references public.rtc_channels (id) on delete cascade,
 	identity_id uuid not null references public.identities (id),
+	handle      text not null default '',
 	key         text not null check (key in ('thumbsup', 'heart', 'party', 'rocket', 'fire', 'grin', 'eyes', 'check')),
 	created_at  timestamptz not null default now(),
 	primary key (message_id, identity_id, key)
@@ -285,7 +291,8 @@ language sql volatile set search_path = ''
 as $$
 	select pg_notify('rtc', (jsonb_build_object(
 		'k', kind, 'ch', channel, 'id', msg, 'rev', rev,
-		'origin', coalesce(current_setting('rtc.origin', true), '')
+		'origin', coalesce(current_setting('rtc.origin', true), ''),
+		'tag', coalesce(current_setting('rtc.tag', true), '')
 	) || extra)::text)
 $$;
 
@@ -420,6 +427,8 @@ begin
 		select 1 from public.rtc_messages m where m.id = new.reply_to and m.channel_id = new.channel_id) then
 		new.reply_to := null;
 	end if;
+	select m.handle, m.display_name, m.color into new.author_handle, new.author_name, new.author_color
+	from public.rtc_members m where m.space_id = new.space_id and m.identity_id = new.identity_id;
 	new.seq := public.rtc_next_seq(new.channel_id);
 	new.rev := new.seq;
 	new.id := nextval('public.rtc_message_id');
@@ -436,14 +445,16 @@ create function public.rtc_message_inserted() returns trigger
 language plpgsql security definer set search_path = ''
 as $$
 begin
-	-- Reply count first, so the root's new rev is above the reply's: a
-	-- client syncing from any point sees the reply before the count.
+	-- The message is announced before its root's reply count changes, and
+	-- the root's new rev is above the reply's. So whether a client is live
+	-- (notifications arrive in this order) or syncing (changes come back in
+	-- rev order), it never sees a count before the reply it counts.
+	perform public.rtc_notify('msg', new.channel_id, new.id, new.rev);
 	if new.thread_root is not null then
 		update public.rtc_messages
 		set replies = replies + 1, last_reply_at = new.created_at
 		where id = new.thread_root;
 	end if;
-	perform public.rtc_notify('msg', new.channel_id, new.id, new.rev);
 	return null;
 end
 $$;
@@ -491,12 +502,14 @@ begin
 	if new.deleted_at is not null and old.deleted_at is null then
 		delete from public.rtc_reactions where message_id = new.id;
 	end if;
-	perform public.rtc_notify(
-		case when new.deleted_at is not null and old.deleted_at is null then 'del'
-		     when new.replies <> old.replies then 'replies'
-		     when new.body is distinct from old.body then 'edit'
-		     else 'rev' end,
-		new.channel_id, new.id, new.rev);
+	-- A rev-only update is a reaction, which announces itself with its delta.
+	if new.deleted_at is not null and old.deleted_at is null then
+		perform public.rtc_notify('del', new.channel_id, new.id, new.rev);
+	elsif new.replies <> old.replies then
+		perform public.rtc_notify('replies', new.channel_id, new.id, new.rev);
+	elsif new.body is distinct from old.body then
+		perform public.rtc_notify('edit', new.channel_id, new.id, new.rev);
+	end if;
 	return null;
 end
 $$;
@@ -512,6 +525,9 @@ begin
 	if new.channel_id is null then
 		raise exception 'no such message' using errcode = 'P0002';
 	end if;
+	select mm.handle into new.handle from public.rtc_members mm
+	join public.rtc_channels c on c.space_id = mm.space_id
+	where c.id = new.channel_id and mm.identity_id = new.identity_id;
 	new.created_at := now();
 	return new;
 end
@@ -527,6 +543,11 @@ declare r record;
 begin
 	if tg_op = 'DELETE' then r := old; else r := new; end if;
 	update public.rtc_messages set rev = rev where id = r.message_id and deleted_at is null;
+	if found then
+		perform public.rtc_notify('react', r.channel_id, r.message_id,
+			(select m.rev from public.rtc_messages m where m.id = r.message_id),
+			jsonb_build_object('key', r.key, 'nick', r.handle, 'on', tg_op <> 'DELETE'));
+	end if;
 	return null;
 end
 $$;
