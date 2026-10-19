@@ -45,15 +45,38 @@ therefore found at `/lib64/ld-linux-x86-64.so.2`.
 ## palm-init (PID 1)
 
 - Mounts `/proc`, `/sys`, `/dev` (devtmpfs), `/dev/pts`, `/dev/shm`, `/run`,
-  `/tmp`; remounts `/` read-write; sets the hostname from `/etc/hostname`;
-  brings up `lo`, and `eth0` with DHCP via `udhcpc` when present.
+  `/tmp`; checks `/` (`fsck.<type> -p`, when `/` is read-only and its fstab
+  pass is not 0) and remounts it with its `/etc/fstab` options (read-write
+  unless they say `ro`); mounts the rest of `/etc/fstab` and turns on its swap
+  lines (`mount -a` and `swapon -a`, devices by path, `UUID=`, `LABEL=`,
+  `PARTUUID=`, `PARTLABEL=`); sets up zram swap from `/etc/palm/zram`; writes
+  `/etc/machine-id` when it is missing; sets the hostname from
+  `/etc/hostname`; brings up `lo`, and `eth0` with DHCP via `udhcpc` when
+  present.
+- **Early hooks** (the interface for loading kernel modules and anything
+  else that must happen before devices are looked at): every executable in
+  `/usr/lib/palm-init/early.d/` (packages) and `/etc/palm/early.d/` (the
+  administrator; a name here replaces the packaged one, and a non-executable
+  file of that name disables it) runs once per boot, in name order, to
+  completion (30 s limit), as root with stdout/stderr on the console and
+  `PALM_INIT_STAGE=early`. They run after the pseudo-filesystems are mounted
+  and `/` is read-write, and before the device-permission walk, the other
+  fstab mounts, swap, the network and every service, also in `palm.single`.
+  On hotplug, a uevent's `MODALIAS` is passed to `modprobe -b -q` when
+  `/proc/modules` exists and `modprobe` is in PATH.
+- `/etc/palm/grow-root`: while it exists, palm-init grows `/`'s GPT
+  partition to its disk's end and the ext4 on it online, then deletes it.
+  The disk image ships it; installed disks do not need it.
 - Device permissions, at boot (walk) and on hotplug (netlink uevents):
   `/dev/dri/*` root:video 0660, `/dev/input/event*` root:input 0660,
   `/dev/snd/*` root:audio 0660, `/dev/tty[0-9]*` root:tty 0620.
 - Signals follow the busybox convention so busybox's `reboot`, `poweroff` and
   `halt` work unchanged: **SIGTERM → reboot, SIGUSR2 → poweroff,
-  SIGUSR1 → halt, SIGINT (ctrl-alt-del) → reboot.** Shutdown is: stop services
-  (SIGTERM, wait 3 s, SIGKILL), sync, remount `/` read-only, `reboot(2)`.
+  SIGUSR1 → halt, SIGINT (ctrl-alt-del) → reboot, SIGHUP → re-read
+  `/etc/palm/services` (start new, restart changed, stop removed or masked).**
+  Shutdown is: stop services (SIGTERM, wait 3 s, SIGKILL), sync, swapoff,
+  unmount every real filesystem (read-only if busy), remount `/` read-only,
+  `reboot(2)`.
 - Reaps every orphan.
 - Service file format (`/etc/palm/services/<name>`), one `key = value` per line,
   `#` comments:

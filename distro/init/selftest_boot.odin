@@ -76,6 +76,13 @@ selftest_reload :: proc() {
 	a, ok = action_of(steps, "network")
 	check("reload: a network file replaces the built-in", ok && a == .Change, fmt.tprint(a))
 
+	leaving := svc("leaving", "cmd = /bin/sleep 1000\n")
+	leaving.state = .Stopping
+	leaving.removing = true
+	steps = plan_reload({leaving}, {{name = "leaving", def = svc("leaving", "cmd = /bin/sleep 1000\n")}})
+	a, ok = action_of(steps, "leaving")
+	check("reload: a file restored while its service stops brings it back", ok && a == .Change, fmt.tprint(a))
+
 	b := svc("x", "cmd = /bin/x\nenv = A=1\nenv = B=2\n")
 	c := svc("x", "cmd = /bin/x\nenv = B=2\nenv = A=1\n")
 	check("reload: env order is part of the definition", !same_definition(b, c))

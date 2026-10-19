@@ -318,10 +318,6 @@ the areas' notes name.
   at `Booting from Hard Disk...`. Either add a BIOS boot partition and
   `limine bios-install` to `distro/installer/core`, or have both front ends
   say plainly, before erasing, that the result needs UEFI.
-- **The ESP is in `/etc/fstab` but not mounted.** palm-init runs no
-  `mount -a`, so on an installed system `df /boot/efi` shows the root. This
-  is the same gap as the image's kernel copy below: `palm upgrade linux`
-  updates `/boot/vmlinuz`, not the `vmlinuz` limine boots from the ESP.
 - **Part of the interface stays English in every language.** The progress
   detail line under the step name (`Installing palm-login (11 of 33)`) is the
   core's English message. `validate`'s problems are English sentences with
@@ -376,10 +372,10 @@ the areas' notes name.
 
 - **The kernel limine boots is a copy** made at image or install time on the
   FAT partition. `palm upgrade linux` updates `/boot/vmlinuz` on the root and
-  not that copy. Mount the ESP at `/boot/efi` (installed disks have the fstab
-  line; the image does not, and palm-init has no `mount -a`) and have the
-  linux package install there. palm has no hooks by design, so the package
-  has to carry the file itself.
+  not that copy. palm-init now mounts the ESP at `/boot/efi` from fstab (the
+  image and installed disks both have the line); the linux package has to
+  install there. palm has no hooks by design, so the package has to carry
+  the file itself.
 - **The user cannot become root.** busybox is not setuid, so `su` and
   `passwd` fail, and package management happens on the serial console as
   root. Either a setuid busybox with `/etc/busybox.conf`, or a small Odin
@@ -401,11 +397,11 @@ the areas' notes name.
 - **No clipboard.** palmy copies through `wl-copy`, which is not shipped.
 - **`files` and `launcher` still offer `foot`** as the terminal
   (`apps/files/main.odin`, `apps/launcher/main.odin`).
-- **The disk image is fixed-size.** It has no swap, and its root filesystem
-  is the installed size plus 1 GiB, with no resize on first boot. Installed
-  disks fill the whole disk.
-- **palm-init's SIGHUP only adds.** Removed services keep running and changed
-  ones are not restarted.
+- **zram needs the kernel.** palm-init sets up zram swap from
+  `/etc/palm/zram` (verified with a kernel built with `CONFIG_ZRAM=y`,
+  `CONFIG_ZSMALLOC=y`, `CONFIG_CRYPTO_ZSTD=y`, `CONFIG_ZRAM_BACKEND_ZSTD=y`),
+  but `distro/kernel/palmframe.config` does not enable them, so the shipped
+  system has no swap.
 - **palm-login** keeps no utmp, wtmp or lastlog and ignores shadow's aging
   fields; the only brake on guessing is a 1.5 s delay per failure.
 - **Two cosmetic faults** in the verification screenshots: a single click in

@@ -3,13 +3,16 @@
     python3 -I distro/image/test-boot.py            (make -C distro test runs it)
 
 The image is copied first (sparse) so the test never changes the one that
-ships. QEMU is started through distro/run-qemu.sh -- OVMF, limine, the kernel
-from the ESP, the ext4 root on /dev/vda2 -- so what is tested is what a user
-boots. The screen is read with QMP screendumps (PNG for people, PPM parsed
+ships, and enlarged (--grow, 6G by default) the way a person copies it onto
+a bigger disk. QEMU is started through distro/run-qemu.sh -- OVMF, limine,
+the kernel from the ESP, the ext4 root on /dev/vda2 -- so what is tested is
+what a user boots. The screen is read with QMP screendumps (PNG for people, PPM parsed
 here, since the build host has no PIL); keys are typed with QMP
 input-send-event; the serial console runs busybox getty, and a root shell
 there reads the process table and logs and drives palm.
 
+    first boot: / and the ESP fsck'd, the root grown to the disk, the
+      ESP on /boot/efi, the time zone, a machine id, zram (or why not)
     the greeter is on screen, as user greeter          -> shots/01-greeter.png
     palm / palm logs in, wm --drm runs as palm         -> shots/02-desktop.png
     SUPER+Return opens term and it runs a command      -> shots/03-term.png
@@ -194,6 +197,12 @@ def serve(directory, port):
     return httpd
 
 
+def parse_size(s):
+    """6G, 512M, 1048576 -> bytes."""
+    units = {"K": 1 << 10, "M": 1 << 20, "G": 1 << 30, "T": 1 << 40}
+    return int(s[:-1]) * units[s[-1].upper()] if s[-1].upper() in units else int(s)
+
+
 def wait_for(m, command, pattern, tries=40):
     out = ""
     for _ in range(tries):
@@ -211,11 +220,17 @@ def main():
     ap.add_argument("--work", default=os.path.join(DISTRO, "build", "integrate"))
     ap.add_argument("--port", type=int, default=8080)
     ap.add_argument("--add", default="shop", help="a package outside the default set to install over http")
+    ap.add_argument("--grow", default="6G", help="enlarge the copy to this size first ('' to boot it as built)")
     args = ap.parse_args()
     os.makedirs(args.shots, exist_ok=True)
     os.makedirs(args.work, exist_ok=True)
     img = os.path.join(args.work, "test.img")
     subprocess.run(["cp", "--sparse=always", args.image, img], check=True)
+    if args.grow:
+        # What a person does with the image: copy it onto a bigger disk.
+        before = os.path.getsize(img)
+        os.truncate(img, max(before, parse_size(args.grow)))
+        print(f"  ....  {img} enlarged from {before >> 20} MiB to {os.path.getsize(img) >> 20} MiB")
     httpd = serve(os.path.join(DISTRO, "out", "repo"), args.port)
     shot = lambda name: os.path.join(args.shots, name)
 
@@ -240,6 +255,31 @@ def main():
         out, _ = m.run("cat /proc/cmdline; readlink /proc/1/exe; grep ' / ' /proc/mounts")
         m.check("root is /dev/vda2 ext4 rw, PID 1 is palm-init",
                 "root=/dev/vda2" in out and re.search(r" / ext4 rw", out) is not None and "palm-init" in out, out)
+
+        # --- first boot: fsck, the root grown to the disk, the ESP, swap ---
+        boot = m.buf
+        m.check("/ checked by e2fsck before it was made writable", "palm-init: checking / (/dev/vda2)" in boot, boot[-3000:])
+        m.check("the ESP checked by fsck.fat", "palm-init: checking /boot/efi (/dev/vda1)" in boot, boot[-3000:])
+        if args.grow:
+            m.check("grow-root grew the root partition", re.search(r"palm-init: grow-root: vda2 now ends at \d+ MiB", boot) is not None, boot[-3000:])
+            m.check("grow-root grew ext4 online", re.search(r"palm-init: grow-root: / grown from \d+ MiB to \d+ MiB", boot) is not None, boot[-3000:])
+        out, _ = m.run("df -m / /boot/efi; grep -E ' /boot/efi ' /proc/mounts; cat /proc/swaps; ls /etc/palm/grow-root 2>&1; "
+                       "readlink /etc/localtime; cat /etc/timezone; date +%Z; cat /etc/machine-id")
+        print("  ....  first boot:\n" + "\n".join("          " + l for l in out.strip().splitlines()))
+        df = re.search(r"^/dev/\S+\s+(\d+)\s+\d+\s+\d+\s+\d+%\s+/$", out, re.M)
+        if args.grow:
+            # The disk less the ESP and alignment, less ext4's own inode
+            # tables and journal (a few per cent).
+            want = ((parse_size(args.grow) >> 20) - 130) * 95 // 100
+            m.check(f"df: / fills the {args.grow} disk", df is not None and int(df.group(1)) >= want, f"want >= {want} MiB\n" + out)
+            m.check("/etc/palm/grow-root is gone", "No such file" in out, out)
+        m.check("/boot/efi is the ESP (vfat)", re.search(r"^/dev/vda1 /boot/efi vfat rw,", out, re.M) is not None, out)
+        m.check("/etc/localtime and /etc/timezone agree", re.search(r"zoneinfo/(\S+)\n\1\n", out) is not None, out)
+        m.check("a machine id was made", re.search(r"^[0-9a-f]{32}$", out, re.M) is not None, out)
+        if "/dev/zram0" in out:
+            m.check("zram swap is on", re.search(r"^/dev/zram0\s+partition", out, re.M) is not None, out)
+        else:
+            m.check("no zram in this kernel: palm-init says so", "palm-init: zram: this kernel has no zram" in boot, boot[-3000:])
 
         # --- the greeter ---
         ok, out = wait_for(m, "ps -o user,args | grep -E '[g]reeter|[w]m ' || true", r"^\s*greeter\s+(/usr/bin/)?greeter")

@@ -381,7 +381,7 @@ Only the keyboard was used in QEMU, never the pointer.
 OVMF (UEFI)                      or SeaBIOS with --bios
 └─ limine 12.8                   partition 1, FAT: BOOTX64.EFI, limine.conf, a copy of the kernel
    └─ Linux 6.18.56              everything built in, no modules, no initramfs
-      └─ /sbin/init = palm-init  root=/dev/vda2 rw (ext4, partition 2)
+      └─ /sbin/init = palm-init  root=/dev/vda2 ro (ext4, partition 2), fsck'd, then rw
          ├─ network              udhcpc on eth0, a built-in one-shot service
          ├─ getty-ttyS0          busybox getty + login on the serial port
          ├─ syslog               busybox syslogd -> /var/log/messages
@@ -395,6 +395,15 @@ limine's menu has three entries: the normal boot, one that adds
 no services. The disk also carries a 1 MiB BIOS boot partition, physically
 first but numbered 3 so the root stays `/dev/vda2`, which is what lets the
 same image boot under legacy BIOS.
+
+The image is built small (the installed size plus 1 GiB) and fills whatever
+disk it lands on: copy it onto a bigger disk, or `truncate -s 32G` /
+`qemu-img resize` the file, and on its first boot palm-init grows the root
+partition and filesystem to the disk's end. Its `/etc/fstab` names the root
+and the ESP (mounted at `/boot/efi`) by label; e2fsprogs and dosfstools are
+installed so both are checked at boot. The time zone is UTC unless the image
+is built with `TIMEZONE=Europe/Paris` (or `TIMEZONE=host`). Swap is zram,
+sized from RAM at boot, so the image has no swap partition.
 
 ## The pieces
 
@@ -422,12 +431,26 @@ The window manager's bare-metal backend is in `apps/wm` (`bare.odin`,
 
 ### palm-init
 
-PID 1. It remounts `/` read-write, mounts `/proc`, `/sys`, `/dev`, `/dev/pts`,
-`/dev/shm`, `/run` and `/tmp`, sets the hostname, brings `lo` up, and runs
-`udhcpc` on `eth0` as a built-in one-shot service called `network`. Device
-groups and modes (`/dev/dri/*` video, `/dev/input/event*` input, `/dev/snd/*`
-audio, ttys tty) are set by walking `/dev` at boot and again from netlink
-uevents on hotplug. It reaps orphans.
+PID 1. It mounts `/proc`, `/sys`, `/dev`, `/dev/pts`, `/dev/shm`, `/run` and
+`/tmp`; checks `/` with `fsck.<type> -p` while the kernel still has it
+read-only and remounts it as its `/etc/fstab` line says; mounts every other
+fstab line (by path, `UUID=`, `LABEL=`, `PARTUUID=` or `PARTLABEL=`, each
+checked first when its pass is not 0) and turns on its swap lines; sets up
+swap in compressed memory (zram) from `/etc/palm/zram`; writes
+`/etc/machine-id` on the first boot; sets the hostname, brings `lo` up, and
+runs `udhcpc` on `eth0` as a built-in one-shot service called `network`.
+Device groups and modes (`/dev/dri/*` video, `/dev/input/event*` input,
+`/dev/snd/*` audio, ttys tty) are set by walking `/dev` at boot and again from
+netlink uevents on hotplug. It reaps orphans.
+
+Before the device walk, the fstab mounts and any service, it runs the
+executables in `/usr/lib/palm-init/early.d/` and `/etc/palm/early.d/` in name
+order (a name in `/etc` replaces or, when not executable, disables the
+packaged one). That is where a kernel with modules loads them. While
+`/etc/palm/grow-root` exists, it grows the root's GPT partition to the end of
+its disk and the ext4 on it online, then deletes the file: the disk image
+ships with it, so a copy of the image on a bigger disk fills it on the first
+boot.
 
 Services are files in `/etc/palm/services/`, one `key = value` per line:
 
@@ -446,13 +469,16 @@ keeps retrying, so installing its package later makes it start. A file
 named `/etc/palm/services.off/<name>` masks a service, which is how the live
 system turns off palm-login without touching palmframe-base. Services get
 `LANG` and the other locale keys from `/etc/locale.conf`. `kill -HUP 1`
-starts services newly added to the directory; it does not stop removed ones or
-restart changed ones.
+re-reads the directory: new services start, services whose definition changed
+are stopped (SIGTERM, SIGKILL after 3 s) and started with the new one, and
+removed or masked ones are stopped. A file that no longer parses leaves its
+service running as it was.
 
 Signals follow busybox's convention so busybox's `reboot`, `poweroff` and
 `halt` work unchanged: SIGTERM and SIGINT (ctrl-alt-del) reboot, SIGUSR2 powers
 off, SIGUSR1 halts. Shutdown sends SIGTERM to every service, waits 3 s, sends
-SIGKILL, syncs, remounts `/` read-only and calls `reboot(2)`.
+SIGKILL, syncs, turns swap off, unmounts the filesystems (remounting busy ones
+read-only), remounts `/` read-only and calls `reboot(2)`.
 
 It is statically linked so it does not depend on the loader to start, and
 because a static glibc has no NSS it reads `/etc/passwd` and `/etc/group`
@@ -656,8 +682,8 @@ on real hardware yet.
   devices, and virtio-gpu, bochs and simpledrm for the display.
 - **The kernel limine boots is a copy.** It is copied into the FAT partition
   when the image is built. `palm upgrade linux` updates `/boot/vmlinuz` on the
-  root, not that copy: the FAT partition is not mounted, and palm has no hooks
-  to copy it.
+  root, not that copy: the FAT partition is mounted at `/boot/efi`, but the
+  linux package does not install there, and palm has no hooks to copy it.
 - **No su or passwd for palm.** busybox is not setuid, so palm cannot become
   root. Members of wheel install and remove packages through Software and
   palmd; anything else (`palm verify`, `palm fix`, editing `/etc`) is done as
@@ -677,15 +703,14 @@ on real hardware yet.
   pacman or OpenSSL (`apps/apps.tsv`). `files` and the launcher still offer
   `foot` as the terminal. The `chat` app is not packaged, and busybox's `chat`
   applet is left out because the names clash.
-- **The time zone is UTC on the disk image.** The greeter and the wm bar
-  show local time from `/etc/localtime`, which only the installer sets.
 - **The installer** has the gaps listed in the root `TODO.md` under
   *Distribution*. The main ones: an installed disk boots only through UEFI,
-  the ESP is not mounted after boot, and part of the interface stays in
-  English.
-- **The system is fixed-size.** No swap, no `/etc/fstab` entry for the FAT
-  partition, and the root filesystem is the installed size plus 1 GiB, with no
-  resize on first boot.
+  and part of the interface stays in English.
+- **No swap until the kernel has zram.** palm-init sets up zram swap from
+  `/etc/palm/zram`, but `kernel/palmframe.config` does not enable
+  `CONFIG_ZRAM` yet, so it says so at boot and runs without swap. Disk swap in
+  `/etc/fstab` works. Growing the root on first boot handles only a GPT disk
+  whose last partition is an ext4 `/`.
 - **palm** has a greedy resolver with repair, not a SAT solver, and no
   `conflicts` or `replaces` fields; no https, keep-alive or parallel
   downloads; and holds each transaction's packages in memory. `list` and `info`
@@ -693,8 +718,6 @@ on real hardware yet.
   are local queries.
 - **palm-login** keeps no utmp, wtmp or lastlog, ignores shadow's aging fields,
   and limits guessing only by a 1.5 s delay per failed attempt.
-- **palm-init** reloads only by adding: `kill -HUP 1` does not stop removed
-  services or restart changed ones.
 - **Small visual faults** seen in the verification screenshots: a single left
   click in term leaves a one-cell selection, and the greeter's Shut Down
   button shows no hover state.

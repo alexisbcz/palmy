@@ -295,7 +295,9 @@ plan_reload :: proc(current: []^Service, files: []Service_File, allocator := con
 			append(&steps, Reload_Step{name = s.name, action = .Stop})
 		case file.err != "":
 			append(&steps, Reload_Step{name = s.name, action = .Broken, err = file.err})
-		case s.builtin || !same_definition(s, file.def):
+		case s.builtin || s.removing || !same_definition(s, file.def):
+			// (removing: still stopping after an earlier removal, and its
+			// file is back — it is started again rather than forgotten.)
 			append(&steps, Reload_Step{name = s.name, action = .Change, def = file.def})
 		case:
 			append(&steps, Reload_Step{name = s.name, action = .Keep})
