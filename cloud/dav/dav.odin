@@ -561,6 +561,12 @@ write_prop :: proc(c: ^Ctx, w: ^x.Writer, r: ^Res, n: Prop_Name) -> bool {
 				x.leaf(w, x.NS_PALM, "access", r.coll.access)
 				return true
 			}
+		case "collection-id":
+			// The row id, which a share (dav_grants) refers to.
+			if r.kind == .Calendar || r.kind == .Book {
+				x.leaf(w, x.NS_PALM, "collection-id", r.coll.id)
+				return true
+			}
 		case "public-freebusy":
 			if r.kind == .Calendar {
 				x.leaf(w, x.NS_PALM, "public-freebusy", r.coll.public_freebusy ? "true" : "false")

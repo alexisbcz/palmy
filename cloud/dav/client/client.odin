@@ -19,6 +19,7 @@ import "core:fmt"
 import "core:os"
 import "core:strings"
 import ck "../../../apps/cloudkit"
+import ical "../ical"
 import x "../xml"
 
 DEFAULT_DAV_URL :: "http://127.0.0.1:59580"
@@ -141,13 +142,14 @@ Remote :: struct {
 	sync_token:   string,
 	ctag:         string,
 	access:       string, // owner | read | read-write
+	id:           string, // the collection row id (palm:collection-id), for shares
 	owner:        string, // the owning identity's handle
 	components:   []string,
 }
 
 PROPFIND_COLLECTIONS :: `<?xml version="1.0" encoding="utf-8"?>
 <d:propfind xmlns:d="DAV:" xmlns:c="urn:ietf:params:xml:ns:caldav" xmlns:cs="http://calendarserver.org/ns/" xmlns:a="http://apple.com/ns/ical/" xmlns:p="https://palmframe.dev/ns/dav">
-<d:prop><d:resourcetype/><d:displayname/><a:calendar-color/><d:sync-token/><cs:getctag/><p:access/><p:owner/><c:supported-calendar-component-set/></d:prop>
+<d:prop><d:resourcetype/><d:displayname/><a:calendar-color/><d:sync-token/><cs:getctag/><p:access/><p:owner/><p:collection-id/><c:supported-calendar-component-set/></d:prop>
 </d:propfind>`
 
 // discover lists the calendars (kind "calendar") or address books
@@ -189,6 +191,7 @@ discover :: proc(a: ^Account, handle, kind: string) -> (out: []Remote, err: Erro
 			ctag         = strings.clone(text_of(x.find(prop, x.NS_CS, "getctag"))),
 			access       = strings.clone(text_of(x.find(prop, x.NS_PALM, "access"))),
 			owner        = strings.clone(text_of(x.find(prop, x.NS_PALM, "owner"))),
+			id           = strings.clone(text_of(x.find(prop, x.NS_PALM, "collection-id"))),
 		}
 		trimmed := strings.trim_right(href, "/")
 		rm.seg = strings.clone(trimmed[strings.last_index_byte(trimmed, '/') + 1:])
@@ -336,6 +339,7 @@ get :: proc(a: ^Account, href: string) -> (data, etag: string, err: Error) {
 Invitation :: struct {
 	href: string,
 	data: string,
+	uid:  string, // the event the message is about
 }
 
 // inbox lists an identity's scheduling messages. Listing it also makes the
@@ -360,9 +364,23 @@ inbox :: proc(a: ^Account, handle: string) -> (out: []Invitation, err: Error) {
 		if data == nil {
 			continue
 		}
-		append(&list, Invitation{strings.clone(text_of(x.find(resp, x.NS_DAV, "href"))), strings.clone(data.text)})
+		append(&list, Invitation{href = strings.clone(text_of(x.find(resp, x.NS_DAV, "href"))), data = strings.clone(data.text), uid = uid_of(data.text)})
 	}
 	return list[:], {}
+}
+
+// uid_of reads the first component's UID from an iCalendar text.
+uid_of :: proc(text: string) -> string {
+	roots, _, ok := ical.parse(text)
+	if !ok || len(roots) == 0 {
+		return ""
+	}
+	for ch in roots[0].children {
+		if u := ical.text(ch, "UID"); u != "" {
+			return strings.clone(u)
+		}
+	}
+	return ""
 }
 
 dismiss :: proc(a: ^Account, href: string) -> Error {
