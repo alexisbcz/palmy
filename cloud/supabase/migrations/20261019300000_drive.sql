@@ -780,3 +780,47 @@ grant execute on function public.drive_touch(uuid) to authenticated;
 grant execute on function public.drive_usage(uuid) to authenticated;
 grant execute on function public.drive_share(uuid, text, text, timestamptz) to authenticated;
 grant execute on function public.drive_link_mint(uuid, interval, text) to authenticated;
+
+-- The two share listings name the identity on the other side. identities is
+-- readable only by its owner, so a plain embed would come back empty when the
+-- share crosses people; these say the handle and display name, which the
+-- sharer typed and the grantee is being told about anyway, and nothing else.
+create function public.drive_shares_of(p_item uuid)
+returns table (id uuid, item_id uuid, grantee_identity uuid, grantee_handle text,
+               grantee_name text, role text, created_at timestamptz, expires_at timestamptz)
+language sql stable security definer
+set search_path = ''
+as $$
+	select s.id, s.item_id, s.grantee_identity, g.handle, g.display_name, s.role,
+	       s.created_at, s.expires_at
+	from public.drive_shares s
+	join public.identities g on g.id = s.grantee_identity
+	where s.item_id = p_item and s.revoked_at is null
+	  and public.can_access_identity(s.identity_id)
+	order by s.created_at
+$$;
+
+create function public.drive_shared_with(p_identity uuid)
+returns table (share_id uuid, role text, shared_at timestamptz, expires_at timestamptz,
+               owner_identity uuid, owner_handle text, owner_name text,
+               item_id uuid, name text, kind text, size bigint, mime text,
+               modified_at timestamptz)
+language sql stable security definer
+set search_path = ''
+as $$
+	select s.id, s.role, s.created_at, s.expires_at, o.id, o.handle, o.display_name,
+	       i.id, i.name, i.kind, i.size, i.mime, i.modified_at
+	from public.drive_shares s
+	join public.identities o on o.id = s.identity_id
+	join public.drive_items i on i.id = s.item_id
+	where s.grantee_identity = p_identity and s.revoked_at is null
+	  and (s.expires_at is null or s.expires_at > now())
+	  and i.trashed_at is null
+	  and public.can_access_identity(p_identity)
+	order by s.created_at desc
+$$;
+
+revoke execute on function public.drive_shares_of(uuid) from public, anon;
+revoke execute on function public.drive_shared_with(uuid) from public, anon;
+grant execute on function public.drive_shares_of(uuid) to authenticated;
+grant execute on function public.drive_shared_with(uuid) to authenticated;
