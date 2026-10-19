@@ -68,10 +68,6 @@ KERNEL_CMDLINE_TAIL :: "rw console=tty0 console=ttyS0,115200 quiet loglevel=3"
 // as the bootloader step copies it. One place to change when the linux
 // package starts carrying the ESP's kernel itself.
 ESP_KERNEL :: "vmlinuz"
-// limine's host tool on the live system when it is not in PATH: the
-// palm-install package carries a copy there (the limine package ships only
-// the boot files).
-LIMINE_TOOL_PRIVATE :: "/usr/lib/palm-install/limine"
 
 @(private)
 step_bootloader :: proc(c: ^Ctx) -> string {
@@ -173,11 +169,8 @@ install_bios_boot :: proc(c: ^Ctx) -> string {
 	if tool == "" {
 		tool = find_program("limine")
 	}
-	if tool == "" && os.is_file(LIMINE_TOOL_PRIVATE) {
-		tool = LIMINE_TOOL_PRIVATE
-	}
 	if tool == "" {
-		return fmt.tprintf("limine's tool was found neither in PATH nor at %s", LIMINE_TOOL_PRIVATE)
+		return "limine's tool (limine, from the limine package) is not in PATH"
 	}
 	// Everything is on disk before the boot code points at it.
 	linux.sync()

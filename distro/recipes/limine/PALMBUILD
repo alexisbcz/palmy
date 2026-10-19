@@ -2,15 +2,19 @@
 # change the source and run `make -C distro recipes`.
 #
 # The installer copies BOOTX64.EFI onto the EFI system partition it creates
-# (EFI/BOOT and EFI/palmframe); the BIOS stages ride along for a later
-# legacy-boot install. The same files distro/image/build.sh and
-# distro/live/build.sh take from the host.
+# (EFI/BOOT and EFI/palmframe), and "limine bios-install" (the tool, which
+# links only glibc) puts the BIOS stages into a disk's MBR and its BIOS boot
+# partition, reading limine-bios.sys from the same build. The same files
+# distro/image/build.sh and distro/live/build.sh take from the host.
 pkgname  = limine
 pkgver   = 12.8.0
 pkgrel   = 0
-pkgdesc  = The Limine boot loader's x86_64 boot files (from the build host)
+pkgdesc  = The Limine boot loader's x86_64 boot files and its tool (from the build host)
 license  = BSD-2-Clause
 url      = https://limine-bootloader.org
+depend   = glibc
+provides = cmd:limine
 
+file     = /usr/bin/limine -> /usr/bin/limine mode 0755
 file     = /usr/share/limine/BOOTX64.EFI -> /usr/share/limine/BOOTX64.EFI mode 0644
 file     = /usr/share/limine/limine-bios.sys -> /usr/share/limine/limine-bios.sys mode 0644

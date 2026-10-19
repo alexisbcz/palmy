@@ -17,7 +17,7 @@
 # the host package that owns it, as a package of the same name holding just
 # the libraries asked for -- so the closure is complete by construction, and
 # no two packages ever claim the same file. Libraries another recipe already
-# ships (glibc's, e2fsprogs' libblkid) are depended on, not copied.
+# ships (glibc's, libxkbcommon's) are depended on, not copied.
 #
 # Hand-written files a package adds (service definitions, configuration,
 # small wrappers) live in runtime/files/<package>/ under their target path.
@@ -68,6 +68,10 @@ host_pkg openssl "openssl" . '/etc/ssl/misc/|\.dist$|/c_rehash$|/engines-3/(capi
 # made from.
 host_pkg ca-certificates "ca-certificates-mozilla" '^$'
 host_pkg wl-clipboard "wl-clipboard"
+# util-linux's libraries: libblkid and libuuid for e2fsprogs (whose recipe,
+# outside this block, depends on this package instead of copying them), and
+# whatever else a runtime package links (libmount, libsmartcols, pulled in).
+host_pkg util-linux-libs "util-linux-libs" '^/usr/lib/lib(blkid|uuid)\.so|/licenses/'
 # ollama, for ai and chatbot. Optional: 66 MB without a model, and not in
 # palmframe-runtime. CPU backends only (the host has no GPU ones installed).
 host_pkg ollama "ollama"
@@ -357,8 +361,6 @@ for app in $(printf '%s\n' "${!RT_APP_DEPS[@]}" | LC_ALL=C sort); do
 	desktop=""
 	if [ -f "$DISTRO/apps/desktop/$app.desktop" ]; then
 		desktop="\${PALMFRAME_ROOT}/distro/apps/desktop/$app.desktop"
-	elif [ -f "$RT/desktop/$app.desktop" ]; then
-		desktop="\${PALMFRAME_ROOT}/distro/recipes/runtime/desktop/$app.desktop"
 	fi
 	{
 		header " $RT_MARK"

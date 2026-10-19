@@ -13,4 +13,4 @@ depend   = glibc fonts libxkbcommon wl-clipboard
 provides = cmd:clipboard
 
 file     = ${PALMFRAME_OUT}/bin/clipboard -> /usr/bin/clipboard mode 0755
-file     = ${PALMFRAME_ROOT}/distro/recipes/runtime/desktop/clipboard.desktop -> /usr/share/applications/clipboard.desktop mode 0644
+file     = ${PALMFRAME_ROOT}/distro/apps/desktop/clipboard.desktop -> /usr/share/applications/clipboard.desktop mode 0644

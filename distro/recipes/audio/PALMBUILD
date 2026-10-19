@@ -13,4 +13,4 @@ depend   = glibc fonts libxkbcommon ffmpeg pipewire
 provides = cmd:audio
 
 file     = ${PALMFRAME_OUT}/bin/audio -> /usr/bin/audio mode 0755
-file     = ${PALMFRAME_ROOT}/distro/recipes/runtime/desktop/audio.desktop -> /usr/share/applications/audio.desktop mode 0644
+file     = ${PALMFRAME_ROOT}/distro/apps/desktop/audio.desktop -> /usr/share/applications/audio.desktop mode 0644

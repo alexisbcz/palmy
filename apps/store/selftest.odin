@@ -75,6 +75,11 @@ test_decode :: proc() {
 	if len(old) == 1 {
 		check(old[0].category == "" && old[0].icon == "" && old[0].csize == 0, "missing fields are empty, not errors")
 	}
+	// Every icon a recipe in distro/recipes names is drawn, not the package
+	// fallback (the runtime packages and their applications brought these).
+	for n in ([]string{"archive", "audio-lines", "bluetooth", "bot", "clapperboard", "clipboard", "cpu", "key-round", "layers", "mail", "network", "phone", "scan-text", "sliders-horizontal", "volume-2", "wifi"}) {
+		check(icon_named(n).name == n, "Software draws the icon %q", n)
+	}
 	_, bad := parse_package_list(`{"ok":false,"code":6,"error":"x"}`)
 	check(!bad, "an error object is not a package list")
 	check(palm_failure({out = `{"ok":false,"code":3,"error":"nosuch: no such package"}`, code = 3, ok = true}) == "nosuch: no such package", "palm's error is taken verbatim")

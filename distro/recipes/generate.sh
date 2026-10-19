@@ -220,6 +220,12 @@ EOF
 } | emit libxkbcommon
 
 # --- xkeyboard-config ---------------------------------------------------------
+# Its licence is its own (Arch: LicenseRef-xkeyboard-config, the COPYING
+# file of MIT/X11-style notices), which palm-locale carries too: its
+# keyboards.msg is made from xkeyboard-config's translations.
+XKB_LICENSE="$(LC_ALL=C pacman -Qi xkeyboard-config 2>/dev/null | sed -n 's/^Licenses *: *//p' | sed -E 's/ {2,}/ AND /g')"
+XKB_LICENSE="${XKB_LICENSE:-LicenseRef-xkeyboard-config}"
+XKB_COPYING=/usr/share/licenses/xkeyboard-config/COPYING
 {
 	header " from the build host's xkeyboard-config"
 	cat <<EOF
@@ -231,7 +237,7 @@ pkgname  = xkeyboard-config
 pkgver   = $(host_version xkeyboard-config 2.0)
 pkgrel   = 0
 pkgdesc  = X keyboard configuration data (from the build host)
-license  = MIT
+license  = $XKB_LICENSE
 url      = https://www.freedesktop.org/wiki/Software/XKeyboardConfig
 category = System
 icon     = keyboard
@@ -239,6 +245,9 @@ details  = The rules, keycodes and layouts the window manager compiles its keyma
 
 tree     = /usr/share/X11/xkb -> /usr/share/X11/xkb
 EOF
+	if [ -f "$XKB_COPYING" ]; then
+		echo "file     = $XKB_COPYING -> /usr/share/licenses/xkeyboard-config/COPYING mode 0644"
+	fi
 } | emit xkeyboard-config
 
 # --- fonts and fonts-emoji: distro/apps/fonts.list ---------------------------
@@ -352,6 +361,7 @@ for app in $apps; do
 	term) deps="$deps busybox" ;; # the shell it runs
 	docs) deps="$deps prose" ;;   # runs prose as a subprocess
 	store) deps="$deps palm palmd" ;; # reads with palm, changes through palmd
+	emoji) deps="$deps wl-clipboard" ;; # copies the chosen emoji with wl-copy
 	esac
 	{
 		header " for distro/apps/default.list and EXTRA_APPS"
@@ -415,7 +425,8 @@ EOF
 # --- e2fsprogs and dosfstools: what the installer formats with --------------
 # Host binaries, like glibc. Their shared libraries are whatever `ldd` says
 # beyond glibc (libext2fs, libe2p, libcom_err, and util-linux's libblkid and
-# libuuid), each shipped as the real file plus its soname link, so the
+# libuuid, which come from util-linux-libs instead: see E2_SHARED), each
+# shipped as the real file plus its soname link, so the
 # package is complete exactly the way `check-libs` means for our own
 # binaries. Names busybox already owns as applets (mke2fs, mkfs.ext2,
 # mkfs.vfat, mkdosfs, chattr, lsattr) are left to busybox: palm refuses two
@@ -423,7 +434,8 @@ EOF
 # which busybox does not have.
 host_libs() { # host_libs <binary>...: one "<soname> <real path>" per non-glibc library
 	ldd "$@" 2>/dev/null | awk '$1 !~ /^\// && /=> \// {print $1, $3}' |
-		{ grep -v -E '^(libc\.so\.6|libm\.so\.6|ld-linux-x86-64\.so\.2) ' || true; } | sort -u
+		{ grep -v -E '^(libc\.so\.6|libm\.so\.6|ld-linux-x86-64\.so\.2) ' || true; } |
+		{ grep -v -E "^(${HOST_LIBS_SKIP:-^$}) " || true; } | sort -u
 }
 lib_lines() { # lib_lines <binary>...: file + soname symlink lines for host_libs
 	host_libs "$@" | while read -r soname path; do
@@ -437,6 +449,11 @@ lib_lines() { # lib_lines <binary>...: file + soname symlink lines for host_libs
 lib_provides() { host_libs "$@" | awk '{printf " so:%s", $1}'; }
 
 E2_BINS="/usr/bin/mke2fs /usr/bin/e2fsck /usr/bin/tune2fs /usr/bin/resize2fs /usr/bin/dumpe2fs"
+# libblkid and libuuid are util-linux's, and util-linux-libs (written by the
+# runtime block below, from the host's util-linux-libs) ships them for glib
+# too; e2fsprogs depends on it rather than carrying a second copy, so a
+# system that needs libblkid does not get mkfs with it.
+E2_SHARED='libblkid\.so\.1|libuuid\.so\.1'
 # shellcheck disable=SC2086
 {
 	header " from the build host's e2fsprogs"
@@ -451,8 +468,8 @@ pkgrel   = 0
 pkgdesc  = ext2/3/4 filesystem utilities (from the build host)
 license  = GPL-2.0-or-later AND LGPL-2.0-or-later AND BSD-3-Clause
 url      = https://e2fsprogs.sourceforge.net
-depend   = glibc
-provides = cmd:mkfs.ext4 cmd:e2fsck$(lib_provides $E2_BINS)
+depend   = glibc util-linux-libs
+provides = cmd:mkfs.ext4 cmd:e2fsck$(HOST_LIBS_SKIP="$E2_SHARED" lib_provides $E2_BINS)
 
 file     = /usr/bin/mke2fs -> /usr/bin/mkfs.ext4 mode 0755
 symlink  = /usr/bin/mkfs.ext3 -> mkfs.ext4
@@ -466,7 +483,7 @@ file     = /usr/bin/resize2fs -> /usr/bin/resize2fs mode 0755
 file     = /usr/bin/dumpe2fs -> /usr/bin/dumpe2fs mode 0755
 file     = /etc/mke2fs.conf -> /etc/mke2fs.conf mode 0644
 EOF
-	lib_lines $E2_BINS
+	HOST_LIBS_SKIP="$E2_SHARED" lib_lines $E2_BINS
 } | emit e2fsprogs
 
 FAT_BINS="/usr/bin/mkfs.fat /usr/bin/fsck.fat /usr/bin/fatlabel"
@@ -498,16 +515,20 @@ EOF
 	cat <<EOF
 #
 # The installer copies BOOTX64.EFI onto the EFI system partition it creates
-# (EFI/BOOT and EFI/palmframe); the BIOS stages ride along for a later
-# legacy-boot install. The same files distro/image/build.sh and
-# distro/live/build.sh take from the host.
+# (EFI/BOOT and EFI/palmframe), and "limine bios-install" (the tool, which
+# links only glibc) puts the BIOS stages into a disk's MBR and its BIOS boot
+# partition, reading limine-bios.sys from the same build. The same files
+# distro/image/build.sh and distro/live/build.sh take from the host.
 pkgname  = limine
 pkgver   = $(host_version limine 12.8)
 pkgrel   = 0
-pkgdesc  = The Limine boot loader's x86_64 boot files (from the build host)
+pkgdesc  = The Limine boot loader's x86_64 boot files and its tool (from the build host)
 license  = BSD-2-Clause
 url      = https://limine-bootloader.org
+depend   = glibc
+provides = cmd:limine
 
+file     = /usr/bin/limine -> /usr/bin/limine mode 0755
 file     = /usr/share/limine/BOOTX64.EFI -> /usr/share/limine/BOOTX64.EFI mode 0644
 file     = /usr/share/limine/limine-bios.sys -> /usr/share/limine/limine-bios.sys mode 0644
 EOF
@@ -551,15 +572,21 @@ fi
 	header " from distro/locale"
 	cat <<EOF
 #
-# Message catalogues read by kit.i18n (apps/kit/i18n.odin).
+# Message catalogues read by kit.i18n (apps/kit/i18n.odin). Ours are MIT;
+# countries.msg is made from iso-codes (LGPL-2.1-only) and keyboards.msg
+# from xkeyboard-config's translations (its own licence, whose COPYING
+# ships here too), by distro/locale/import-data.py.
 pkgname  = palm-locale
 pkgver   = $OWN_VER
 pkgrel   = 0
 pkgdesc  = Translations for the Palmframe installer and applications
-license  = MIT
+license  = MIT AND LGPL-2.1-only AND $XKB_LICENSE
 
 dir      = /usr/share/palm/locale
 EOF
+	if [ -f "$XKB_COPYING" ]; then
+		echo "file     = $XKB_COPYING -> /usr/share/licenses/palm-locale/xkeyboard-config-COPYING mode 0644"
+	fi
 	if [ -d "$DISTRO/locale" ]; then
 		(cd "$DISTRO/locale" && find . -name '*.msg' -type f | LC_ALL=C sort) | while read -r f; do
 			f="${f#./}"

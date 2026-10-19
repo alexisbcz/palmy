@@ -133,7 +133,7 @@ Options :: struct {
 	keys_dir:   string, // trusted repository keys passed to palm
 	limine_dir: string, // where BOOTX64.EFI and limine-bios.sys are found if the target has none
 	// limine's host tool, which writes the BIOS boot code (`limine
-	// bios-install`); "" = `limine` from PATH, else LIMINE_TOOL_PRIVATE.
+	// bios-install`); "" = `limine` from PATH (the limine package's).
 	limine_tool: string,
 	// Skip `limine bios-install`. The BIOS boot partition is still made, so
 	// it can be run later.

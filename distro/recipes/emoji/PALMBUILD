@@ -10,7 +10,7 @@ license  = MIT
 category = Accessories
 icon     = sparkles
 details  = Browse and search every emoji by name. Pair it with fonts-emoji for colour.
-depend   = glibc fonts libxkbcommon
+depend   = glibc fonts libxkbcommon wl-clipboard
 provides = cmd:emoji
 
 file     = ${PALMFRAME_OUT}/bin/emoji -> /usr/bin/emoji mode 0755
