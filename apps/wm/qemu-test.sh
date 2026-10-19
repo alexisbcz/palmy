@@ -39,6 +39,8 @@
 #                                        the display device(s) instead of
 #                                        -device virtio-vga ("-vga std" is
 #                                        bochs-drm)
+#   apps/wm/qemu-test.sh --linger N      keep the guest up N s after wm exits
+#                                        (to look at the console it left)
 #   apps/wm/qemu-test.sh --env "K=V ..."  more environment for wm
 #   apps/wm/qemu-test.sh --noflip        PALMY_WM_DRM_NOFLIP=1: present with
 #                                        SETCRTC + DIRTYFB, never page flip
@@ -82,6 +84,7 @@ vt=""
 gpu="-device virtio-vga"
 qemu_args=""
 extra_env=""
+linger=0
 while [ $# -gt 0 ]; do
 	case "$1" in
 	--out) OUT=$(mkdir -p "$2" && cd "$2" && pwd); shift ;;
@@ -97,6 +100,7 @@ while [ $# -gt 0 ]; do
 	--qemu-args) qemu_args=$2; shift ;;
 	--env) extra_env="$extra_env $2"; shift ;;
 	--noflip) extra_env="$extra_env PALMY_WM_DRM_NOFLIP=1" ;;
+	--linger) linger=$2; shift ;;
 	--root) as_user=0 ;;
 	--kiosk) kiosk=1 ;;
 	--no-xkb) xkb=0 ;;
@@ -281,6 +285,7 @@ else
 	wait \$WM
 fi
 echo "init: wm exited with status \$?"
+[ $linger -gt 0 ] && sleep $linger
 sync
 poweroff -f
 EOF
