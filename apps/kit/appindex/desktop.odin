@@ -28,7 +28,7 @@ Category :: enum u8 {
 	System,
 	Utility,
 	Game,
-	Demo, // X-Palmframe-Demo=true: a showcase, not a tool; listed last and marked
+	Demo, // X-Palmy-Demo=true: a showcase, not a tool; listed last and marked
 }
 
 // CAT_LABEL is the short name, for chips.
@@ -81,7 +81,7 @@ Entry :: struct {
 	mime:     string, // the raw MimeType= value
 	path:     string, // absolute path of the .desktop file
 	terminal: bool,
-	demo:     bool, // X-Palmframe-Demo=true
+	demo:     bool, // X-Palmy-Demo=true
 	takes_file: bool, // Exec has %f/%F/%u/%U: it opens a document it is given
 	cat:      Category,
 	actions:  []Dsk_Action,
@@ -303,7 +303,7 @@ parse_desktop_text :: proc(
 			e.mime = v
 		case "Terminal":
 			e.terminal = v == "true"
-		case "X-Palmframe-Demo":
+		case "X-Palmy-Demo":
 			e.demo = v == "true"
 		case "NoDisplay":
 			if v == "true" {

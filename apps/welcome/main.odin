@@ -1,4 +1,4 @@
-// welcome — Palmframe's first run: the steps between the installer's last
+// welcome — Palmy's first run: the steps between the installer's last
 // page and an ordinary desktop.
 //
 //	welcome                    open the window (as `welcome run`)
@@ -12,7 +12,7 @@
 // The steps, each skippable except the first and the last:
 //
 //	 1 Welcome     the language and the appearance, confirmed or changed
-//	 2 Account     with a Palmframe account, or only on this computer
+//	 2 Account     with a Palmy account, or only on this computer
 //	 3 Sign in     create the account, or sign in; the server is a setting
 //	 4 Identities  the first identities: names, handles, kinds, colours
 //	 5 Sync        per identity: mail, drive, calendar & contacts, notes,
@@ -23,7 +23,7 @@
 //	 9 Tour        the start menu, the identity switcher, the keys
 //	10 Done
 //
-// Steps 3 to 7 exist only with an account. Using Palmframe on this computer
+// Steps 3 to 7 exist only with an account. Using Palmy on this computer
 // alone is a first-class choice, not a lesser one: every app works without
 // the cloud, and the account can be added later by running this again.
 //
@@ -66,7 +66,7 @@ run_window :: proc(opts: Options, lang := "", theme := "") -> int {
 
 	app, err := kit.start(
 		{
-			title = "Welcome to Palmframe",
+			title = "Welcome to Palmy",
 			app_id = "palm-welcome",
 			width = 1200,
 			height = 780,

@@ -284,12 +284,12 @@ instead and has the exact replacement written in a comment at its caret site.
 `apps/wm` runs on bare metal now, inside QEMU. `wm --drm` (`apps/wm/bare.odin`)
 drives KMS dumb buffers with page flip, reads `/dev/input/event*` directly,
 compiles its own keymap without libxkbcommon, and opens the devices itself when
-there is no logind, which is how Palmframe runs it. It also gained `--exec`
+there is no logind, which is how Palmy runs it. It also gained `--exec`
 and `--kiosk`, which the login screen uses. The nested mode is unchanged.
 
 ## W1 — boot it: done, in QEMU only
 
-The Palmframe image boots to `wm --drm` as user palm, and the verification run
+The Palmy image boots to `wm --drm` as user palm, and the verification run
 in `distro/README.md` drove it over QMP: SUPER+Return opens `term`, typed
 commands run, two windows tile, and an absolute pointer click moves focus
 (`distro/out/shots/verify-r1-0[2-6]-*.png`). `wm --drm-probe` inside the guest
@@ -300,7 +300,7 @@ passes 173 of 173. What W1 asked for and did not happen:
   exercised by forcing it (`PALMY_WM_DRM_NOFLIP=1`, `qemu-test.sh --noflip`)
   on both; a VT is exercised with `qemu-test.sh --vt 1`.
 - **The logind path has never executed.** `seat_take_control` and
-  `seat_bind_backends` are wired, but Palmframe has no logind and the host was
+  `seat_bind_backends` are wired, but Palmy has no logind and the host was
   off limits, so no `TakeDevice` has returned a real descriptor and no
   `PauseDevice` has arrived.
 - **Two heads, in QEMU only** (two GPUs; see multi-head under W2).
@@ -315,7 +315,7 @@ passes 173 of 173. What W1 asked for and did not happen:
   zero-dependency rule without regret.
 - **Output hotplug is unproven.** Two heads run (virtio-vga + virtio-gpu-pci
   in QEMU): one output per head, its own bar and workspace. Plugging and
-  unplugging a monitor was not exercised: the Palmframe kernel has no PCI
+  unplugging a monitor was not exercised: the Palmy kernel has no PCI
   hotplug and QEMU's virtio-gpu enables extra outputs only from a UI.
 - **Damage tracking is one rectangle per frame** in wm. palmy clients now
   send real damage (the rows that changed, up to 16 rectangles, and no
@@ -337,7 +337,7 @@ passes 173 of 173. What W1 asked for and did not happen:
 
 # Distribution
 
-`distro/` builds Palmframe into a disk image (`make distro`) that boots in
+`distro/` builds Palmy into a disk image (`make distro`) that boots in
 QEMU from UEFI firmware through limine, palm-init and palm-login to the
 greeter and the window manager, and installs and removes packages with palm
 from a signed repository. `make -C distro iso` builds a live ISO whose
@@ -408,11 +408,11 @@ the areas' notes name.
   `distro/recipes/runtime/test-runtime.py`.
 - **The public repository is published by hand** from one machine
   (`distro/repo-publish/publish.sh`, the release key in
-  `~/.config/palmframe/keys/`). No CI publishes it, the key has no backup or
+  `~/.config/palmy/keys/`). No CI publishes it, the key has no backup or
   rotation plan beyond "ship a new .pub, then re-sign", and the published
-  palmframe-base is rebuilt at publish time with the release key standing in
+  palmy-base is rebuilt at publish time with the release key standing in
   for the checkout's build key. The image points at
-  `https://palmframe-packages.vercel.app/x86_64` (`distro/notes/palm.md`).
+  `https://palmy-packages.vercel.app/x86_64` (`distro/notes/palm.md`).
 - **palm**: no revocation checking in its TLS client, indexes do not expire,
   and each package is decompressed whole in memory to install
   (`distro/notes/palm.md`, *Not done*).
@@ -623,7 +623,7 @@ and relayed cases, which is where it differs from server-side AI.
 **A browser.** There is none, and it is the largest missing application on any
 desktop. Worth naming because the README's thesis is an assistant that is part
 of the system rather than a browser tab — and right now there is no way to reach
-the web from inside Palmframe at all. Whether that is a gap or the point is the
+the web from inside Palmy at all. Whether that is a gap or the point is the
 question to answer before anyone starts.
 
 ---
@@ -650,7 +650,7 @@ So nobody spends an afternoon rediscovering these.
   `capabilities: 1`; the client still receives no `wl_pointer.enter`. Demos are
   keyboard-driven, which every application supports. The cost shows up as real
   gaps: no drag-and-drop has ever completed. The one place a pointer has reached
-  `apps/term` is the Palmframe image under QEMU, where a virtio-tablet click
+  `apps/term` is the Palmy image under QEMU, where a virtio-tablet click
   through `wm --drm` focused it and left a one-cell selection.
 - **`apps/network` cannot change network state** and must stay that way.
 - **`apps/power` executes nothing** and must stay that way.

@@ -3,7 +3,7 @@ package main
 // palmy vault -- a password manager.
 //
 // Two vaults behind one window. On a device that is not enrolled in a
-// Palmframe account it is what it always was: one encrypted file, no network
+// Palmy account it is what it always was: one encrypted file, no network
 // code reachable from the window, no sync. On an enrolled device it is the
 // account vault: every identity's vaults, end-to-end encrypted, synced item by
 // item, shared deliberately between identities (cloud/docs/vault.md). Both go

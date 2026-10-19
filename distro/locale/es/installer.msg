@@ -1,4 +1,4 @@
-# Palmframe installer (apps/installer) — Spanish (Spain), formal (usted).
+# Palmy installer (apps/installer) — Spanish (Spain), formal (usted).
 # Format: distro/locale/README.md. Installed as
 # /usr/share/palm/locale/es/installer.msg.
 #
@@ -56,8 +56,8 @@ msgid "Step %d of %d"
 msgstr "Paso %d de %d"
 
 # --- page headings -------------------------------------------------------------
-msgid "Welcome to Palmframe"
-msgstr "Bienvenido a Palmframe"
+msgid "Welcome to Palmy"
+msgstr "Bienvenido a Palmy"
 
 msgid "Choose the language for the installer and for the new system."
 msgstr "Elija el idioma del instalador y del nuevo sistema."
@@ -74,8 +74,8 @@ msgstr "Elija la ciudad más cercana. El reloj muestra la hora allí."
 msgid "Installation disk"
 msgstr "Disco de instalación"
 
-msgid "Choose the disk to install Palmframe on."
-msgstr "Elija el disco en el que instalar Palmframe."
+msgid "Choose the disk to install Palmy on."
+msgstr "Elija el disco en el que instalar Palmy."
 
 msgid "Your account"
 msgstr "Su cuenta"
@@ -89,8 +89,8 @@ msgstr "Listo para instalar"
 msgid "Check your choices. Nothing has been changed yet."
 msgstr "Revise sus elecciones. Todavía no se ha modificado nada."
 
-msgid "Installing Palmframe"
-msgstr "Instalando Palmframe"
+msgid "Installing Palmy"
+msgstr "Instalando Palmy"
 
 msgid "This takes a few minutes. Every step is in the log."
 msgstr "Esto tarda unos minutos. Cada paso queda en el registro."
@@ -234,8 +234,8 @@ msgstr "%d MiB"
 msgid "The whole disk will be used"
 msgstr "Se usará el disco entero"
 
-msgid "Palmframe erases the disk you choose and creates a 512 MiB EFI system partition, a small BIOS boot partition so that older computers can start it too, and an ext4 root file system on the rest. Sharing a disk with another system is not supported."
-msgstr "Palmframe borra el disco que elija y crea una partición del sistema EFI de 512 MiB, una pequeña partición de arranque BIOS para que también los ordenadores más antiguos puedan iniciarlo, y un sistema de archivos raíz ext4 en el resto. No se admite compartir un disco con otro sistema."
+msgid "Palmy erases the disk you choose and creates a 512 MiB EFI system partition, a small BIOS boot partition so that older computers can start it too, and an ext4 root file system on the rest. Sharing a disk with another system is not supported."
+msgstr "Palmy borra el disco que elija y crea una partición del sistema EFI de 512 MiB, una pequeña partición de arranque BIOS para que también los ordenadores más antiguos puedan iniciarlo, y un sistema de archivos raíz ext4 en el resto. No se admite compartir un disco con otro sistema."
 
 msgid "No disks were found. Attach a disk and restart the installer."
 msgstr "No se encontró ningún disco. Conecte uno y reinicie el instalador."
@@ -264,8 +264,8 @@ msgstr "El sistema en vivo se ejecuta desde este disco"
 msgid "This disk is read-only"
 msgstr "Este disco es de solo lectura"
 
-msgid "Too small: Palmframe needs at least 4 GiB"
-msgstr "Demasiado pequeño: Palmframe necesita al menos 4 GiB"
+msgid "Too small: Palmy needs at least 4 GiB"
+msgstr "Demasiado pequeño: Palmy necesita al menos 4 GiB"
 
 # --- 4. disk — the erase confirmation ------------------------------------------
 msgid "Erase %s?"
@@ -435,8 +435,8 @@ msgid "Restart"
 msgstr "Reiniciar"
 
 # --- 8. done -------------------------------------------------------------------
-msgid "Palmframe is installed"
-msgstr "Palmframe está instalado"
+msgid "Palmy is installed"
+msgstr "Palmy está instalado"
 
 msgid "Remove the installation medium, then restart the computer to start your new system."
 msgstr "Retire el medio de instalación y reinicie el equipo para empezar a usar su nuevo sistema."

@@ -5,12 +5,12 @@ import type { DocPage } from "~/lib/doc";
 
 const BUILD = `# Odin resolves \`palmy:.\` through a collection, so the toolkit can live
 # anywhere. Point these at your checkout.
-PALMFRAME=/path/to/palmframe
+PALMY=/path/to/palmy
 
-odin build "$PALMFRAME/apps/notes" \\
-  -collection:palmy="$PALMFRAME/palmy" \\
-  -collection:shadcn="$PALMFRAME/shadcn" \\
-  -collection:kit="$PALMFRAME/apps/kit" \\
+odin build "$PALMY/apps/notes" \\
+  -collection:palmy="$PALMY/palmy" \\
+  -collection:shadcn="$PALMY/shadcn" \\
+  -collection:kit="$PALMY/apps/kit" \\
   -o:speed -out:notes.bin`;
 
 export const PALMY_DOCS: DocPage[] = [
@@ -61,7 +61,7 @@ libc.so.6`}
             />
             <p>
               There is no libwayland, no GTK or Qt, no GPU driver and no font
-              library. The toolkit came first because the rest of Palmframe is
+              library. The toolkit came first because the rest of Palmy is
               not worth attempting on a stack you cannot see the bottom of.
             </p>
           </>
@@ -1718,9 +1718,9 @@ PALMY_BACKEND=wayland  ->  Wayland, likewise`}
               parser, text shaping, the glyph cache, the widget set — is
               ordinary arithmetic over a pixel buffer and has no idea what a
               compositor is. That is why{" "}
-              <Link to="/palmframe/beyond-linux">adding a third backend</Link> is
+              <Link to="/vision/beyond-linux">adding a third backend</Link> is
               adding a file rather than restructuring, and it is the part of the
-              Palmframe plan that has already been paid for.
+              Palmy plan that has already been paid for.
             </p>
           </>
         ),
@@ -1992,7 +1992,7 @@ key Return`}
           <ul>
             <li>
               <strong>Linux only.</strong> No macOS, no Windows. The{" "}
-              <Link to="/palmframe/beyond-linux">plan</Link> for that is a plan.
+              <Link to="/vision/beyond-linux">plan</Link> for that is a plan.
             </li>
             <li>
               <strong>The X11 backend needs a little-endian,

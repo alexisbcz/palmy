@@ -287,7 +287,7 @@ verb=$1
 shift
 case "$verb" in
 update)
-	echo '{"repositories":[{"url":"http://10.0.2.2:8091/x86_64","packages":38,"signed_by":"palmframe.pub"}]}'
+	echo '{"repositories":[{"url":"http://10.0.2.2:8091/x86_64","packages":38,"signed_by":"palmy.pub"}]}'
 	exit 0 ;;
 esac
 dry=no

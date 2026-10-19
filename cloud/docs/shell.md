@@ -40,7 +40,7 @@ default identity.
 Today (`apps/wm/taskbar.odin`):
 
 ```
-[◆ Palmframe] [1 2 3 … 9] [layout]  [▣ Terminal] [▣ gallery] …  [kbd] [clock]
+[◆ Palmy] [1 2 3 … 9] [layout]  [▣ Terminal] [▣ gallery] …  [kbd] [clock]
 ```
 
 Proposed:
@@ -121,7 +121,7 @@ is enough.
 
 ## 2. The greeter and the lock screen
 
-The greeter signs in the **person** (the Palmframe account), not an identity.
+The greeter signs in the **person** (the Palmy account), not an identity.
 Proposed changes to `apps/greeter`:
 
 ```

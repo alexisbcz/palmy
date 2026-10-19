@@ -92,7 +92,7 @@ END:VCALENDAR
 cal.save_event(ONEOFF)
 
 token = cal.objects_by_sync_token(load_objects=False).sync_token
-check(token and "palmframe.dev/ns/sync/" in str(token), f"initial sync token {str(token)[-40:]}")
+check(token and "palmy.dev/ns/sync/" in str(token), f"initial sync token {str(token)[-40:]}")
 
 # The week of 19 October: Mon 19, (Wed 21 excluded), Fri 23 moved.
 found = cal.search(start=dt.datetime(2026, 10, 19, tzinfo=dt.timezone.utc),

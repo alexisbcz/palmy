@@ -13,5 +13,5 @@ details  = A word processor for writing documents, with styles, and a prose chec
 depend   = glibc fonts libxkbcommon prose
 provides = cmd:docs
 
-file     = ${PALMFRAME_OUT}/bin/docs -> /usr/bin/docs mode 0755
-file     = ${PALMFRAME_ROOT}/distro/apps/desktop/docs.desktop -> /usr/share/applications/docs.desktop mode 0644
+file     = ${PALMY_OUT}/bin/docs -> /usr/bin/docs mode 0755
+file     = ${PALMY_ROOT}/distro/apps/desktop/docs.desktop -> /usr/share/applications/docs.desktop mode 0644

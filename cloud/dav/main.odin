@@ -1,4 +1,4 @@
-// palm-davd — CalDAV and CardDAV for Palmframe identities.
+// palm-davd — CalDAV and CardDAV for Palmy identities.
 //
 //	palm-davd serve            listen and serve (the default)
 //	palm-davd mint USER IDENTITY
@@ -24,7 +24,7 @@
 //	/dav/calendars/<handle>/inbox/  outbox/       scheduling (RFC 6638)
 //	/dav/addressbooks/<handle>/<slug>/            an address book
 //
-// Auth: "Authorization: Bearer <GoTrue access token>" (the Palmframe apps),
+// Auth: "Authorization: Bearer <GoTrue access token>" (the Palmy apps),
 // or Basic with an identity handle and one of its app passwords (stock
 // clients). An app password acts for exactly one identity.
 //
@@ -69,7 +69,7 @@ load_config :: proc() {
 	cfg.log = env("PALM_DAV_LOG", "") == "1"
 }
 
-USAGE :: `palm-davd — CalDAV and CardDAV for Palmframe identities
+USAGE :: `palm-davd — CalDAV and CardDAV for Palmy identities
 
   palm-davd serve               listen on 127.0.0.1:$PALM_DAV_PORT (59580)
   palm-davd mint USER IDENTITY  print a 1-hour token scoped to IDENTITY

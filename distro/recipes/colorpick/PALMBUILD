@@ -13,5 +13,5 @@ details  = Keep a palette of colours and copy them in any format. Picking from t
 depend   = glibc fonts libxkbcommon
 provides = cmd:colorpick
 
-file     = ${PALMFRAME_OUT}/bin/colorpick -> /usr/bin/colorpick mode 0755
-file     = ${PALMFRAME_ROOT}/distro/apps/desktop/colorpick.desktop -> /usr/share/applications/colorpick.desktop mode 0644
+file     = ${PALMY_OUT}/bin/colorpick -> /usr/bin/colorpick mode 0755
+file     = ${PALMY_ROOT}/distro/apps/desktop/colorpick.desktop -> /usr/share/applications/colorpick.desktop mode 0644

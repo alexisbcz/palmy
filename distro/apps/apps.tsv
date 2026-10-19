@@ -10,7 +10,7 @@ captions	captions	yes	ffmpeg, ffprobe, ffplay, whisper-cli	no	ffmpeg/ffprobe now
 chat	chat	yes	chat-server on 127.0.0.1:8787; date	partial	works against the bundled chat-server (apps/chat/server, built as chat-server); without it shows reconnecting
 chat/server	chat-server	yes	none	yes	the local relay chat talks to; a plain TCP server, no UI
 chatbot	chatbot	yes	ollama; chat-server	no	ollama is packaged now; the bot also needs chat-server, which is not packaged
-clipboard	clipboard	yes	wl-copy, wl-paste (wl-clipboard), sh	yes	wl-clipboard host-copied, in palmframe-runtime. QEMU (distro/recipes/runtime/test-runtime.py): wl-copy | wl-paste round-trips through the wm; the app recorded the copied entry; clipboard --selftest 117/0
+clipboard	clipboard	yes	wl-copy, wl-paste (wl-clipboard), sh	yes	wl-clipboard host-copied, in palmy-runtime. QEMU (distro/recipes/runtime/test-runtime.py): wl-copy | wl-paste round-trips through the wm; the app recorded the copied entry; clipboard --selftest 117/0
 colorpick	colorpick	yes	grim, hyprctl, wl-copy	partial	copying works now (wl-copy shipped); picking from the screen still needs grim+hyprctl
 docs	docs	yes	optional: vale (prose checks)	yes	word processor works with no deps; the prose-style panel shells out to vale
 editor	editor	yes	none	yes	verified: typing with built-in US layout and with libxkbcommon. Redraws continuously while a caret is shown (thousands of commits/4 s against an unthrottled compositor)
@@ -24,13 +24,13 @@ mailcore	mailcore	yes	links libssl.so.3, libcrypto.so.3, libz, libbrotli*, libzs
 maps	maps	yes	none	yes	offline by design: no network code, renders a generated city
 mixer	mixer	yes	wpctl, pactl (packages wireplumber, pipewire-pulse), sh	yes	PipeWire + WirePlumber + pipewire-pulse. QEMU (distro/recipes/runtime/test-runtime.py): mixer --selftest 188/0; the app shows 'HDA Intel Analog Stereo' output and input from pactl/wpctl
 money	money	yes	none	yes	local ledger
-network	network	yes	iwd on the system bus (kit:dbus); ip, /sys/class/net, /proc/net/route	yes	in the default set. QEMU: network --status as palm lists eth0 (Wired, 10.0.2.15/24, gw 10.0.2.2) and, after mac80211_hwsim and an iwd access point, wlan0 connected to PalmframeTest (WPA2/WPA3, 100%, ch 6) and its known network; the window shows the same. Read-only by design: scan and radio-on only; radio-off and connect are logged intents (TODO.md)
+network	network	yes	iwd on the system bus (kit:dbus); ip, /sys/class/net, /proc/net/route	yes	in the default set. QEMU: network --status as palm lists eth0 (Wired, 10.0.2.15/24, gw 10.0.2.2) and, after mac80211_hwsim and an iwd access point, wlan0 connected to PalmyTest (WPA2/WPA3, 100%, ch 6) and its known network; the window shows the same. Read-only by design: scan and radio-on only; radio-off and connect are logged intents (TODO.md)
 notes	notes	yes	none	yes	verified. First-run welcome note fails when ~/.local is missing (store.odin uses make_directory, not make_directory_all); create ~/.local/share in the skeleton home
 ocr	ocr	yes	links libssl.so.3 et al; Mistral API over HTTPS; pdftoppm/pdfinfo/pdftotext	partial	starts (OpenSSL shipped). Needs a Mistral API key and poppler (pdftoppm/pdfinfo/pdftotext, not shipped). ocr --selftest 129/149: the failures are the conversion path, writing under /root in the harness
 palm	palm-apps	yes	sh	partial	the application command dispatcher (palm schema / palm notes ...). Renamed: /usr/bin/palm is the package manager
 photoshop	photoshop	yes	none	yes	raster editor, no external tools
 pickdemo	pickdemo	yes	none	yes	demo of the kit file picker; not for the default install
-pkg	pkg	yes	pacman, yay, snapper, sudo, limine	no	Arch-specific declarative layer over pacman; meaningless on Palmframe (palm replaces it)
+pkg	pkg	yes	pacman, yay, snapper, sudo, limine	no	Arch-specific declarative layer over pacman; meaningless on Palmy (palm replaces it)
 power	power	yes	upower, loginctl, systemctl (all optional)	partial	reads /sys/class/power_supply directly; session actions are stubbed in the app
 prose/cli	prose	yes	optional: espeak-ng, vale styles	partial	the prose engine CLI; core checks need nothing
 reader	reader	yes	pdftoppm/pdftotext/pdftohtml (poppler), ddjvu/djvused/djvutxt	partial	EPUB/text read natively; PDF and DjVu need poppler/djvulibre
@@ -48,9 +48,9 @@ video	video	yes	ffmpeg, ffprobe, pw-cat	yes	ffmpeg (from source) + pw-cat. QEMU 
 videoedit	videoedit	yes	ffmpeg, ffprobe, pw-cat; media from ~/Videos ($PALMY_VIDEOEDIT_MEDIA)	partial	runs; in QEMU videoedit --selftest's one failure is the 'subtitles' filter (ffmpeg is built without libass); 362/0 on the build host. Export uses libx264 (built in). Media, export and project default to ~/Videos (no /home/alex paths any more)
 wm	wm	yes	libxkbcommon.so.0 (its own keymap), /dev/dri, /dev/input	yes	the session; bare-metal backend owned and verified by the wm agent, not here
 settings	settings	yes	wm.conf and ~/.config/palmy/keyboard (the wm applies them); optional: wpctl, palm, ip, iwctl, term + passwd	yes	QEMU (.scratch shell run): opened from the start menu and from the desktop menu; settings set appearance.theme light turned the bar light within a second; settings --selftest 49/0
-accounts	accounts	yes	a Palmframe cloud (Supabase) to sign in to	partial	starts and shows the sign-in screen in QEMU; signing in needs the cloud
-contacts	contacts	yes	a Palmframe cloud for sync	partial	starts in QEMU; empty until signed in
+accounts	accounts	yes	a Palmy cloud (Supabase) to sign in to	partial	starts and shows the sign-in screen in QEMU; signing in needs the cloud
+contacts	contacts	yes	a Palmy cloud for sync	partial	starts in QEMU; empty until signed in
 browser	browser	yes	an engine package: palm-browser-cef or firefox	partial	the chrome starts in QEMU; pages need an engine, which says so in the window
 forge	forge	yes	a forge server (cloud/forge)	partial	starts in QEMU and says 'Not connected' without a server; packaged (EXTRA_APPS), not installed by default
-home	home	yes	none (invented fixtures)	partial	a prototype on sample data; packaged as a demo (X-Palmframe-Demo)
+home	home	yes	none (invented fixtures)	partial	a prototype on sample data; packaged as a demo (X-Palmy-Demo)
 drive	drive	yes (-collection:drive=cloud/drive)	a drive configuration (cloud/drive/dev/seed.sh)	no	exits 6 without a configuration, so it is not packaged

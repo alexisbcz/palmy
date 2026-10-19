@@ -1,6 +1,6 @@
 package main
 
-// palm-maild — the Palmframe mail server.
+// palm-maild — the Palmy mail server.
 //
 //	palm-maild serve                 SMTP (MX), SMTP submission and JMAP
 //	palm-maild mint --sub UUID [--identity UUID] [--role authenticated|service_role] [--ttl S]

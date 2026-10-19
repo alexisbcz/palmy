@@ -1,10 +1,10 @@
-// Palmframe: one account, several identities, each its own mailbox.
+// Palmy: one account, several identities, each its own mailbox.
 //
 // This binary still opens no socket. Signing in and syncing are done by
 // `mailcore palm login` and `mailcore palm sync`, run as child processes, and
 // what they leave behind is what this file reads:
 //
-//	<data>/palmframe.conf     the identities the session can reach
+//	<data>/palmy.conf     the identities the session can reach
 //	<data>/<address>/         one Maildir per identity
 //
 // Each identity becomes an account here, marked `palm`, carrying its kind
@@ -24,7 +24,7 @@
 //   question — it is exactly the cross-identity view the rest of the design
 //   avoids — and the toggle makes it something to try rather than a default.
 //
-// The Outbox of a Palmframe identity holds mail the server would not deliver:
+// The Outbox of a Palmy identity holds mail the server would not deliver:
 // anything addressed outside the local domain. It is shown with a banner that
 // says so, because "queued" and "will never be sent" are different things.
 package main
@@ -48,11 +48,11 @@ palm_color :: proc(c: string) -> string {
 }
 
 palm_conf_path :: proc(dir: string, allocator := context.allocator) -> string {
-	return fmt.aprintf("%s/palmframe.conf", dir, allocator = allocator)
+	return fmt.aprintf("%s/palmy.conf", dir, allocator = allocator)
 }
 
-// load_palmframe appends one account per identity in palmframe.conf.
-load_palmframe :: proc(st: ^State) {
+// load_palmy appends one account per identity in palmy.conf.
+load_palmy :: proc(st: ^State) {
 	raw, ok := read_file(palm_conf_path(st.data_dir, context.temp_allocator), context.temp_allocator)
 	if !ok {
 		return
@@ -210,7 +210,7 @@ unified_set :: proc(st: ^State, set: ^[dynamic]int) {
 	}
 }
 
-// palm_outbox: the selected folder is a Palmframe identity's Outbox.
+// palm_outbox: the selected folder is a Palmy identity's Outbox.
 palm_outbox :: proc(st: ^State) -> bool {
 	if st.unified || st.searching || st.folder_sel < 0 || st.folder_sel >= len(st.folders) {
 		return false
@@ -287,7 +287,7 @@ palm_sync :: proc(st: ^State) -> bool {
 	if first := palm_nth(st, 0); first >= 0 {
 		set_identity_view(st, first)
 	}
-	note(st, tfmt("Synced %d identit%s from Palmframe", palm_identities(st), palm_identities(st) == 1 ? "y" : "ies"))
+	note(st, tfmt("Synced %d identit%s from Palmy", palm_identities(st), palm_identities(st) == 1 ? "y" : "ies"))
 	return true
 }
 
@@ -308,7 +308,7 @@ palm_signin :: proc(st: ^State) {
 	// The password reaches mailcore through a 0600 file that is removed as
 	// soon as it has been read, never through argv, which any process on the
 	// machine can list.
-	dir := tfmt("%s/.palmframe", st.data_dir)
+	dir := tfmt("%s/.palmy", st.data_dir)
 	os.make_directory_all(dir)
 	pw := tfmt("%s/.pw-%d", dir, os.get_pid())
 	f, err := os.open(pw, {.Write, .Create, .Trunc}, {.Read_User, .Write_User})
@@ -475,7 +475,7 @@ identity_strip :: proc(ui: ^p.Ctx, st: ^State) {
 	defer p.end(ui)
 	p.row(ui, "items-center gap-1.5 px-1 pb-0.5")
 	p.icon(ui, ICON_USERS, "size-3 shrink-0 text-muted-foreground")
-	p.text(ui, st.palm_email != "" ? st.palm_email : "Palmframe", "flex-1 min-w-0 truncate text-[10.5] font-medium text-muted-foreground")
+	p.text(ui, st.palm_email != "" ? st.palm_email : "Palmy", "flex-1 min-w-0 truncate text-[10.5] font-medium text-muted-foreground")
 	sc.kbd(ui, "P")
 	p.end(ui)
 
@@ -561,7 +561,7 @@ unified_row :: proc(ui: ^p.Ctx, st: ^State, cursor: bool, srow: int) {
 }
 
 // palm_account_header replaces the protocol badge with the identity's kind
-// and colour for a Palmframe identity.
+// and colour for a Palmy identity.
 palm_account_header :: proc(ui: ^p.Ctx, st: ^State, ai: int, cursor: bool, srow: int) {
 	a := st.accounts[ai]
 	c := palm_color(a.color)
@@ -593,7 +593,7 @@ palm_account_header :: proc(ui: ^p.Ctx, st: ^State, ai: int, cursor: bool, srow:
 	p.end(ui)
 }
 
-// outbox_banner says what a Palmframe Outbox is: not a queue.
+// outbox_banner says what a Palmy Outbox is: not a queue.
 outbox_banner :: proc(ui: ^p.Ctx, st: ^State) {
 	p.row(ui, "shrink-0 w-full items-start gap-2 px-3 py-2 bg-amber-50 border-b border-amber-200")
 	defer p.end(ui)
@@ -626,7 +626,7 @@ signin_sheet :: proc(ui: ^p.Ctx, st: ^State) {
 	p.icon(ui, ICON_USERS, "size-4 text-white")
 	p.end(ui)
 	p.col(ui, "flex-1 min-w-0 gap-0")
-	p.text(ui, palm_identities(st) > 0 ? "Palmframe account" : "Sign in to Palmframe", "text-[14] font-semibold text-foreground")
+	p.text(ui, palm_identities(st) > 0 ? "Palmy account" : "Sign in to Palmy", "text-[14] font-semibold text-foreground")
 	p.text(ui, "One account, several identities, each its own mailbox.", "text-[11] text-muted-foreground")
 	p.end(ui)
 	p.end(ui)

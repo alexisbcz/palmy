@@ -12,5 +12,5 @@ icon     = bot
 depend   = glibc fonts libxkbcommon ollama
 provides = cmd:ai
 
-file     = ${PALMFRAME_OUT}/bin/ai -> /usr/bin/ai mode 0755
-file     = ${PALMFRAME_ROOT}/distro/apps/desktop/ai.desktop -> /usr/share/applications/ai.desktop mode 0644
+file     = ${PALMY_OUT}/bin/ai -> /usr/bin/ai mode 0755
+file     = ${PALMY_ROOT}/distro/apps/desktop/ai.desktop -> /usr/share/applications/ai.desktop mode 0644

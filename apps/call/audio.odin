@@ -202,7 +202,7 @@ null_audio := false
 // voice removed from its microphone. `--echo-cancel` makes the real-device
 // path target those nodes by their default names. It changes nothing for the
 // synthetic sources, which have no acoustic path to cancel, and nothing at
-// all unless the module is loaded — Palmframe's PipeWire config is where that
+// all unless the module is loaded — Palmy's PipeWire config is where that
 // belongs (see apps/call/PROTOCOL.md, "Echo cancellation").
 aec_nodes := false
 AEC_SOURCE :: "echo-cancel-source"

@@ -360,7 +360,7 @@ rail :: proc(st: ^St, ui: ^p.Ctx) {
 		p.icon(ui, WI_PACKAGE, "size-5 text-primary-foreground")
 		p.end(ui)
 		p.col(ui, "gap-0")
-		txt(ui, "Palmframe", "text-base font-semibold text-foreground")
+		txt(ui, "Palmy", "text-base font-semibold text-foreground")
 		txt(ui, tr("First steps"), "text-xs text-muted-foreground")
 		p.end(ui)
 	}

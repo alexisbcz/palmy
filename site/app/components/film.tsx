@@ -23,9 +23,9 @@ import { cn } from "~/lib/utils";
  * it beyond a poster frame.
  */
 
-const WEBM = "/film/palmframe.webm";
-const MP4 = "/film/palmframe.mp4";
-const POSTER = "/film/palmframe-poster.jpg";
+const WEBM = "/film/palmy.webm";
+const MP4 = "/film/palmy.mp4";
+const POSTER = "/film/palmy-poster.jpg";
 const VTT = "/film/film.vtt";
 
 /**

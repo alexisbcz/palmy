@@ -1,7 +1,7 @@
 [Desktop Entry]
 Type=Application
 Name=Drive
-Comment=Your files in the Palmframe cloud, per identity
+Comment=Your files in the Palmy cloud, per identity
 Exec=drive
 Icon=hard-drive
 Terminal=false

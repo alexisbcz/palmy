@@ -814,7 +814,7 @@ form_dialog :: proc(ui: ^p.Ctx, c: ^Cal) {
 			v := string(c.form.bufs[f][:])
 			hint := FIELD_HINTS[f]
 			if !editable {
-				hint = "for calendars in your Palmframe account"
+				hint = "for calendars in your Palmy account"
 			}
 			p.text(
 				ui,
@@ -920,7 +920,7 @@ HELP_ROWS := [?][2]string {
 	{"Y", "switch the month and year views"},
 	{"Tab", "move between the grid, the day and the calendars"},
 	{"Space", "show or hide the calendar under the cursor"},
-	{"R  or  F6", "sync with your Palmframe account"},
+	{"R  or  F6", "sync with your Palmy account"},
 	{"I", "sign in"},
 	{"V", "invitations: A accept, D decline, T maybe"},
 	{"Enter", "open the day, or edit the event"},
@@ -943,7 +943,7 @@ help_sheet :: proc(ui: ^p.Ctx, c: ^Cal) {
 	p.text(ui, "Calendar, from the keyboard", "text-[15] font-semibold")
 	p.text(
 		ui,
-		"This device: ~/.local/share/palmy-calendar. Palmframe calendars sync over CalDAV.",
+		"This device: ~/.local/share/palmy-calendar. Palmy calendars sync over CalDAV.",
 		"text-[12] text-muted-foreground",
 	)
 	p.end(ui)

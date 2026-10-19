@@ -1,7 +1,7 @@
 // network — the network panel for palmy: iwd, or NetworkManager.
 //
 // Interfaces on the left, the selected interface's addressing and the live
-// Wi-Fi scan on the right. On Palmframe every number comes from iwd over the
+// Wi-Fi scan on the right. On Palmy every number comes from iwd over the
 // system bus and from the kernel (iwd.odin); where iwd is not running and
 // nmcli is, from `nmcli -t` (nm.odin, which also has the worker thread both
 // share). `network --status` prints what the backend reads and exits.

@@ -334,7 +334,7 @@ parse_args :: proc() -> Args {
 			fmt.println("  --port N         server port on 127.0.0.1 (default 8787)")
 			fmt.println("  --light          light theme")
 			fmt.println("  --fullscreen     open fullscreen (handy for screenshots)")
-			fmt.println("  --cloud          the Palmframe cloud (palm-rtc) as an account identity")
+			fmt.println("  --cloud          the Palmy cloud (palm-rtc) as an account identity")
 			fmt.println("  --identity H     with --cloud: the identity to speak as (else PALM_IDENTITY)")
 			fmt.println("  --rtc-port N     with --cloud: the gateway's port on 127.0.0.1 (default 8790)")
 			fmt.println("  --call-bin PATH  the call app to launch for calls (default: call)")

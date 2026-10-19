@@ -409,11 +409,11 @@ selftest :: proc() -> int {
 	return t.failed == 0 ? 0 : 1
 }
 
-// brand_x is where the rail's "Palmframe" sits: left of centre in a
+// brand_x is where the rail's "Palmy" sits: left of centre in a
 // left-to-right interface, right of it in a right-to-left one.
 brand_x :: proc(ctx: ^p.Ctx) -> f32 {
 	for n in ctx.nodes {
-		if n.text == "Palmframe" {
+		if n.text == "Palmy" {
 			return n.rect.x
 		}
 	}

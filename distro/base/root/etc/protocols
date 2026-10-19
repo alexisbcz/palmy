@@ -1,5 +1,5 @@
 # Internet protocols, for getprotobyname(3). The short list: what programs
-# on Palmframe ask for by name. The full table is IANA's.
+# on Palmy ask for by name. The full table is IANA's.
 ip	0	IP		# internet protocol, pseudo protocol number
 icmp	1	ICMP		# internet control message protocol
 igmp	2	IGMP		# internet group management protocol

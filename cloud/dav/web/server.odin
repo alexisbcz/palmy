@@ -295,7 +295,7 @@ one_request :: proc(s: ^Server, sock: net.TCP_Socket, peer: string, carry: ^[dyn
 	if !has_len && res.status != 204 && res.status != 304 && res.status >= 200 {
 		fmt.sbprintf(&sb, "Content-Length: %d\r\n", len(res.body))
 	}
-	fmt.sbprintf(&sb, "Server: palmframe-dav\r\n")
+	fmt.sbprintf(&sb, "Server: palmy-dav\r\n")
 	if !keep {
 		strings.write_string(&sb, "Connection: close\r\n")
 	}

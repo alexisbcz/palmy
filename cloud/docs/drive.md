@@ -157,7 +157,7 @@ palm-drive status        # what a pass would do, changing nothing; offline: what
 palm-drive identities    # which drives this device mirrors, and where
 ```
 
-Configuration comes from the Palmframe account through `apps/cloudkit`: the
+Configuration comes from the Palmy account through `apps/cloudkit`: the
 identities from the person's session, and for each a session scoped to it
 (this machine's `scoped/<handle>.json`, minted with `mint_scoped_session` the
 first time, refreshed before use). With `PALM_IDENTITY` set, only that

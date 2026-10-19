@@ -34,7 +34,7 @@ export const COLLECTIONS = {
         pages: [
           {
             slug: "overview",
-            title: "Palmframe, the distribution",
+            title: "Palmy, the distribution",
             nav: "Overview",
             description:
               "What the distribution is, what it is modelled on, and where it stands: it boots in QEMU to a desktop and installs onto a disk, and has never run on real hardware.",
@@ -84,7 +84,7 @@ export const COLLECTIONS = {
           },
           {
             slug: "applications",
-            title: "Applications on Palmframe",
+            title: "Applications on Palmy",
             nav: "Applications",
             description:
               "Every palmy application, whether it builds, whether it works on the bare system, what it needs at runtime, and which are installed by default. Read from distro/apps/apps.tsv.",
@@ -130,7 +130,7 @@ export const COLLECTIONS = {
             slug: "packages",
             title: "Package list",
             description:
-              "Every package in the repository, its version, what it depends on, and whether the palmframe meta-package installs it. Read from distro/recipes.",
+              "Every package in the repository, its version, what it depends on, and whether the palmy meta-package installs it. Read from distro/recipes.",
             source: { page: "packages.md" },
             generated: ["distro/recipes"],
           },
@@ -184,7 +184,7 @@ export const COLLECTIONS = {
             title: "The palm command surface",
             nav: "Command surface",
             description:
-              "One CLI through which an agent can operate every part of Palmframe: the convention every application's command line follows.",
+              "One CLI through which an agent can operate every part of Palmy: the convention every application's command line follows.",
             source: { file: "docs/PALM-CLI.md" },
             note: {
               type: "warning",
@@ -215,7 +215,7 @@ export const COLLECTIONS = {
             note: {
               type: "info",
               title: "A contract for work in progress",
-              body: "These pieces run against a local Supabase stack (`cloud/dev`) and are not part of the distribution image yet; the idea behind them is on [The cloud part](/palmframe/cloud).",
+              body: "These pieces run against a local Supabase stack (`cloud/dev`) and are not part of the distribution image yet; the idea behind them is on [The cloud part](/vision/cloud).",
             },
           },
           {
@@ -241,7 +241,7 @@ export const COLLECTIONS = {
             title: "Product principles",
             nav: "Product principles",
             description:
-              "One account, several identities: the principles, the information architecture and what Palmframe will not do.",
+              "One account, several identities: the principles, the information architecture and what Palmy will not do.",
             source: { file: "cloud/docs/product.md" },
           },
           {
@@ -321,7 +321,7 @@ export const COLLECTIONS = {
             title: "Browser",
             nav: "Browser",
             description:
-              "Palmframe's own browser chrome over Chromium or Firefox, chosen per identity, with bookmark sync.",
+              "Palmy's own browser chrome over Chromium or Firefox, chosen per identity, with bookmark sync.",
             source: { file: "cloud/docs/browser.md" },
           },
           {
@@ -385,18 +385,18 @@ export const COLLECTIONS = {
       {
         title: "Engineering notes",
         pages: [
-          ["notes-integrate", "Integration", "distro/notes/integrate.md", "From the pieces to a bootable Palmframe: build order, packages, what was verified and the known gaps."],
-          ["notes-init", "palm-init notes", "distro/notes/init.md", "palm-init and palmframe-base: what the other pieces need to know."],
+          ["notes-integrate", "Integration", "distro/notes/integrate.md", "From the pieces to a bootable Palmy: build order, packages, what was verified and the known gaps."],
+          ["notes-init", "palm-init notes", "distro/notes/init.md", "palm-init and palmy-base: what the other pieces need to know."],
           ["notes-login", "palm-login and greeter notes", "distro/notes/login.md", "palm-login and the greeter: power actions, knobs for images and tests, and open points."],
           ["notes-palm", "palm notes", "distro/notes/palm.md", "The palm side: the CLI as built, format decisions the contract left open, and what was verified."],
           ["notes-store", "Software and palmd notes", "distro/notes/store.md", "Decisions behind Software and palmd, and the verification run."],
           ["notes-wm", "wm on bare metal", "distro/notes/wm.md", "What palm-login gets from wm --drm, keyboard layouts and local time, and the known gaps."],
-          ["notes-apps", "Applications notes", "distro/notes/apps.md", "What the applications need at runtime on Palmframe, and what changed in palmy for it."],
+          ["notes-apps", "Applications notes", "distro/notes/apps.md", "What the applications need at runtime on Palmy, and what changed in palmy for it."],
           ["notes-live", "Live image notes", "distro/notes/live.md", "The live installer image, its services and packages, and how it was verified."],
           ["notes-installer-core", "install_core notes", "distro/notes/installer-core.md", "The install core and palm-install: the API as built, decisions, requests and gaps."],
           ["notes-installer-gui", "Graphical installer notes", "distro/notes/installer-gui.md", "apps/installer: modes, pages, right to left, translations, and where it differs from INSTALLER.md."],
           ["notes-i18n", "Translations notes", "distro/notes/i18n.md", "Translations, locale and time zone across the session stack."],
-          ["notes-browser", "Browser, GPU and X11 research", "distro/notes/browser.md", "Research, nothing built: what a real web browser, GPU clients and X11 applications on Palmframe would take, and what to do first."],
+          ["notes-browser", "Browser, GPU and X11 research", "distro/notes/browser.md", "Research, nothing built: what a real web browser, GPU clients and X11 applications on Palmy would take, and what to do first."],
         ].map(([slug, title, file, description]) => ({
           slug,
           title,

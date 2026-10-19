@@ -103,7 +103,7 @@ rail :: proc(ui: ^p.Ctx, h: ^Home) {
 	p.end(ui)
 	p.col(ui, "min-w-0 gap-0.5")
 	p.text(ui, h.store.owner, "text-[14] font-semibold truncate")
-	p.text(ui, tr("Palmframe account"), "text-[11.5] text-muted-foreground truncate")
+	p.text(ui, tr("Palmy account"), "text-[11.5] text-muted-foreground truncate")
 	p.end(ui)
 	p.end(ui)
 

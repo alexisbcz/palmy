@@ -6,8 +6,8 @@ export default [
   route("docs", "routes/docs.index.tsx"),
   route("docs/:slug", "routes/docs.slug.tsx"),
 
-  route("palmframe", "routes/palmframe.index.tsx"),
-  route("palmframe/:slug", "routes/palmframe.slug.tsx"),
+  route("vision", "routes/vision.index.tsx"),
+  route("vision/:slug", "routes/vision.slug.tsx"),
 
   route("components", "routes/components.index.tsx"),
   route("components/:slug", "routes/components.slug.tsx"),

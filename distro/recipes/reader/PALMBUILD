@@ -13,5 +13,5 @@ details  = Read EPUB books and plain text, with your place remembered.
 depend   = glibc fonts libxkbcommon
 provides = cmd:reader
 
-file     = ${PALMFRAME_OUT}/bin/reader -> /usr/bin/reader mode 0755
-file     = ${PALMFRAME_ROOT}/distro/apps/desktop/reader.desktop -> /usr/share/applications/reader.desktop mode 0644
+file     = ${PALMY_OUT}/bin/reader -> /usr/bin/reader mode 0755
+file     = ${PALMY_ROOT}/distro/apps/desktop/reader.desktop -> /usr/share/applications/reader.desktop mode 0644

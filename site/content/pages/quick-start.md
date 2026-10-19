@@ -1,9 +1,9 @@
 # Quick start
 
-From a checkout to the Palmframe desktop in QEMU, and from there to an install on a disk of its own. Nothing here needs root, and nothing touches a disk on the host: the installer only ever sees QEMU's virtual disks.
+From a checkout to the Palmy desktop in QEMU, and from there to an install on a disk of its own. Nothing here needs root, and nothing touches a disk on the host: the installer only ever sees QEMU's virtual disks.
 
 :::callout{type=warning title="QEMU only"}
-Palmframe has never booted on real hardware. The kernel configuration is written for QEMU's virtual devices, and the build has been run on an Arch Linux host, from which it copies glibc and a few libraries. [What is missing](/distro/missing) has the details.
+Palmy has never booted on real hardware. The kernel configuration is written for QEMU's virtual devices, and the build has been run on an Arch Linux host, from which it copies glibc and a few libraries. [What is missing](/distro/missing) has the details.
 :::
 
 ## What the build host needs
@@ -34,7 +34,7 @@ The examples open a window on any Wayland compositor with `xdg-shell`, or on an 
 make distro     # the same as make -C distro
 ```
 
-The first run downloads and builds the kernel and busybox, which takes minutes. Later runs rebuild only what changed: the Odin binaries, the packages, the signed repository and `distro/out/palmframe.img`.
+The first run downloads and builds the kernel and busybox, which takes minutes. Later runs rebuild only what changed: the Odin binaries, the packages, the signed repository and `distro/out/palmy.img`.
 
 ### Boot it
 
@@ -69,7 +69,7 @@ The disk image above is a demonstration system with a shared `palm` account. The
 ### Build the live ISO
 
 ```sh
-make -C distro iso        # distro/out/palmframe-live.iso
+make -C distro iso        # distro/out/palmy-live.iso
 ```
 
 ### Boot it with a blank disk

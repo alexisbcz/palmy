@@ -1,6 +1,6 @@
-# Palmframe mail
+# Palmy mail
 
-One Palmframe account owns several identities; each identity has its own
+One Palmy account owns several identities; each identity has its own
 mailbox, `<handle>@<domain>`, and the separation between them is enforced by
 Postgres row-level security through `can_access_identity()`
 (`cloud/CONTRACT.md`). This file describes what is built, and then — clearly
@@ -90,7 +90,7 @@ ever calls `mail_deliver`.
 **One JMAP account is one identity.** The session object lists, as accounts,
 exactly the identities the token can reach (`mail_identities()`, through RLS):
 all of a person's identities for an ordinary token, one for a token scoped
-with `palm_identity`. Each account carries a `urn:palmframe:params:jmap:identity`
+with `palm_identity`. Each account carries a `urn:palmy:params:jmap:identity`
 capability with its handle, kind and colour, which is how a client labels it.
 A request naming any other account gets `accountNotFound` — and would find
 nothing anyway.
@@ -116,7 +116,7 @@ front, see below), CHUNKING, SMTPUTF8 and DSN.
 `mailcore palm login` signs in to GoTrue and keeps the session (mode 0600);
 `mailcore palm sync` pushes local flag changes, submits what apps/mail queued
 in an identity's Outbox, and re-downloads every identity into its own Maildir
-under the mail data directory, writing `palmframe.conf` for the UI. apps/mail
+under the mail data directory, writing `palmy.conf` for the UI. apps/mail
 has no network code and still has none: it runs mailcore for sign-in and sync,
 shows one identity at a time (`1`–`9`, `0` for all), and prototypes a unified
 inbox behind `Shift+I`, with every conversation carrying the identity it came
@@ -195,7 +195,7 @@ Sent and received both count.
 ### Architecture
 
 ```
-          ┌───────────── Palmframe ─────────────────────────────────────┐
+          ┌───────────── Palmy ─────────────────────────────────────┐
  person ─▶│ JMAP / SMTP submission ─▶ mail_submit ─▶ local inboxes       │
           │                                     └─▶ mail_outbox (queued) │
           │  outbound worker ◀── claims rows ───────────┘               │
@@ -247,7 +247,7 @@ port uses today; the only new thing is how the raw bytes arrive.
 
 ### Inbound
 
-1. Each Palmframe mail domain is created in Resend with
+1. Each Palmy mail domain is created in Resend with
    `capabilities.receiving = enabled`, and its MX points at Resend. For the
    shared domain (`palm.app` or whatever it becomes), that is one domain;
    for custom domains, one per domain (below).
@@ -286,14 +286,14 @@ person (so they can un-suppress a fixed address).
 `mail_submit` checks `mail_suppressions` and holds a recipient on it with the
 reason, instead of letting Resend reject it later. Opens and clicks are not
 subscribed to: tracking pixels are exactly what apps/mail refuses to load, and
-Palmframe should not add them to other people's mail.
+Palmy should not add them to other people's mail.
 
 ### Per-identity custom domains
 
 A person can bring a domain for an identity (`alice@alicemartin.fr` for her
 personal identity, `alice@acme.example` for work):
 
-- `mail_domains` gains `identity_id uuid null` (null = a shared Palmframe
+- `mail_domains` gains `identity_id uuid null` (null = a shared Palmy
   domain), `resend_domain_id`, `status` (`pending | verified | failed`),
   `capabilities`, `records jsonb`, `verified_at`. A row with an `identity_id`
   is that person's data and gets a `can_access_identity(identity_id)` policy;
@@ -308,15 +308,15 @@ personal identity, `alice@acme.example` for work):
   `verified`, then enables outbound for that domain. Until then mail from it
   is `held` with "domain not verified".
 - DMARC guidance is shown with the records: start at `p=none` with a
-  Palmframe-hosted `rua` address (an identity-owned mailbox that the
+  Palmy-hosted `rua` address (an identity-owned mailbox that the
   assistant can summarise), then tighten.
-- A domain is unique across Palmframe; claiming one already verified by
+- A domain is unique across Palmy; claiming one already verified by
   another identity is refused.
 - Plan limits make this a paid feature (10 domains on Pro, 1,000 on Scale).
 
 ### Abuse limits
 
-Outbound is the one capability here that can hurt people outside Palmframe,
+Outbound is the one capability here that can hurt people outside Palmy,
 so it is off by default and earned:
 
 - **Per identity**: new identities start with outbound disabled; enabling it
@@ -340,7 +340,7 @@ so it is off by default and earned:
 
 ### TLS and the public edge
 
-palm-maild speaks plaintext on loopback. In production the MX (if Palmframe
+palm-maild speaks plaintext on loopback. In production the MX (if Palmy
 ever receives directly rather than through Resend), submission and JMAP
 listeners sit behind a TLS-terminating proxy; the webhook receiver is the
 only route that must be public in the Resend design, and it is a separate
@@ -352,7 +352,7 @@ listener with only `/hooks/resend` on it.
 2. Inbound: domain with receiving only (`capabilities.sending = disabled`),
    webhook receiver, raw download, `mail_deliver`. Receiving is lower risk
    than sending and proves the domain/DNS flow.
-3. Outbound for the shared domain behind the kill switch, Palmframe staff
+3. Outbound for the shared domain behind the kill switch, Palmy staff
    identities only, `held → queued` gated on the per-identity flag.
 4. Bounce/complaint handling and suppressions, before anyone else gets
    outbound.

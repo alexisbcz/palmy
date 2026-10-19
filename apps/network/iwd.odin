@@ -1,4 +1,4 @@
-// The iwd side of the applet: Palmframe ships iwd, not NetworkManager
+// The iwd side of the applet: Palmy ships iwd, not NetworkManager
 // (distro/notes/runtime.md), and iwd is reached over the system bus with the
 // D-Bus client in kit:dbus. Wired and every other interface come from the
 // kernel: /sys/class/net, /proc/net/route, `ip -o addr` and /etc/resolv.conf.
@@ -22,7 +22,7 @@ import "kit:dbus"
 import kit "kit:."
 
 Backend :: enum {
-	Iwd, // the default: what Palmframe ships
+	Iwd, // the default: what Palmy ships
 	Nm, // NetworkManager through nmcli, when iwd is not on the bus and nmcli exists
 }
 

@@ -16,7 +16,7 @@ package auth
 //	lastchg+max <= today                        expired: change it to log in
 //	lastchg+max-warn <= today                   still fine, but say how long is left
 //
-// An empty lastchg or max, or a max of 10000 days or more (Palmframe's own
+// An empty lastchg or max, or a max of 10000 days or more (Palmy's own
 // accounts use the customary 99999), switches aging off.
 
 import "core:time"

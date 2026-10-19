@@ -1,7 +1,7 @@
-// palm-rtc — the chat gateway of the Palmframe cloud.
+// palm-rtc — the chat gateway of the Palmy cloud.
 //
 // It speaks the palmy-chat wire protocol, version 2 (apps/chat/PROTOCOL.md),
-// to clients that sign in with a Palmframe account token and speak as one
+// to clients that sign in with a Palmy account token and speak as one
 // identity. State lives in Postgres (migrations/2026101970*), so the gateway
 // keeps nothing a restart would lose.
 //
@@ -207,7 +207,7 @@ main :: proc() {
 	serve()
 }
 
-USAGE :: `palm-rtc — the Palmframe chat gateway (wire protocol v2)
+USAGE :: `palm-rtc — the Palmy chat gateway (wire protocol v2)
 
   --db URL               Postgres, as a role that may SET ROLE authenticated
   --api URL              the Supabase API gateway (auth JWKS, Storage)

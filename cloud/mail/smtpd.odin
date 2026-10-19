@@ -61,7 +61,7 @@ smtpd_serve :: proc(c: ^SConn, role: Smtp_Role) {
 	defer delete(s.token)
 	defer delete(s.identity)
 	defer delete(s.address)
-	sline(c, "220 %s ESMTP Palmframe mail (%s; local delivery only, no relay)", cfg.domain, role == .MX ? "MX" : "submission")
+	sline(c, "220 %s ESMTP Palmy mail (%s; local delivery only, no relay)", cfg.domain, role == .MX ? "MX" : "submission")
 	for c.open {
 		line, ok := sread_line(c)
 		if !ok {

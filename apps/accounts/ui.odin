@@ -212,7 +212,7 @@ auth_screen :: proc(st: ^St, ui: ^p.Ctx) {
 		p.icon(ui, AI_CLOUD, "size-5 text-white")
 		p.end(ui)
 		p.col(ui, "gap-0")
-		p.text(ui, "Palmframe", "text-base font-semibold text-white")
+		p.text(ui, "Palmy", "text-base font-semibold text-white")
 		p.text(ui, kit.tr("Account"), "text-xs text-indigo-200")
 		p.end(ui)
 		p.end(ui)
@@ -265,7 +265,7 @@ auth_screen :: proc(st: ^St, ui: ^p.Ctx) {
 		creating := st.auth_mode == .Create
 		p.col(ui, "gap-1.5")
 		p.text(ui, creating ? kit.tr("Create your account") : kit.tr("Sign in"), "text-2xl font-semibold tracking-tight")
-		p.text(ui, creating ? kit.tr("Your first identity is created with it. You can add the others later.") : kit.tr("Use the email and password of your Palmframe account."), "text-sm text-muted-foreground leading-relaxed")
+		p.text(ui, creating ? kit.tr("Your first identity is created with it. You can add the others later.") : kit.tr("Use the email and password of your Palmy account."), "text-sm text-muted-foreground leading-relaxed")
 		p.end(ui)
 
 		// The two modes, as a segmented control.
@@ -412,7 +412,7 @@ sidebar :: proc(st: ^St, ui: ^p.Ctx) {
 		p.text(ui, kit.trf("Scoped to %s", st.scope.handle), "text-xs text-amber-700 truncate")
 		p.end(ui)
 	} else {
-		p.text(ui, kit.tr("Palmframe account"), "text-xs text-muted-foreground")
+		p.text(ui, kit.tr("Palmy account"), "text-xs text-muted-foreground")
 	}
 	p.end(ui)
 	p.end(ui)
@@ -1196,7 +1196,7 @@ session_page :: proc(st: ^St, ui: ^p.Ctx) {
 
 	p.col(ui, "w-full rounded-2xl border border-border p-5 gap-3")
 	p.text(ui, kit.tr("Running an app as one identity"), "text-sm font-semibold")
-	p.text(ui, kit.tr("Every Palmframe app reads PALM_IDENTITY. Set, it uses the session this machine holds for that identity and nothing else; there is no fallback to the full account."), "text-sm text-muted-foreground leading-relaxed")
+	p.text(ui, kit.tr("Every Palmy app reads PALM_IDENTITY. Set, it uses the session this machine holds for that identity and nothing else; there is no fallback to the full account."), "text-sm text-muted-foreground leading-relaxed")
 	p.col(ui, "rounded-lg bg-foreground px-4 py-3 gap-1")
 	handle := st.current != "" ? st.current : "work"
 	p.text(ui, fmt.tprintf("$ PALM_IDENTITY=%s mail", handle), "text-xs font-mono text-background")
@@ -1266,7 +1266,7 @@ confirm_dialog :: proc(st: ^St, ui: ^p.Ctx) {
 		body = kit.tr("That machine will have to sign in again with the password.")
 		action = kit.tr("Sign out")
 	case .Sign_Out:
-		title = kit.tr("Sign out of Palmframe?")
+		title = kit.tr("Sign out of Palmy?")
 		body = kit.tr("This machine forgets the account's session. Sessions delegated to identities keep working until you revoke them.")
 		action = kit.tr("Sign out")
 	case .None:

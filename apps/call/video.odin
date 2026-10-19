@@ -536,7 +536,7 @@ mjpeg_encode_args :: proc() -> []string {
 // shared screen is just another video source to everything downstream:
 // simulcast, SFrame and the SFU do not know the difference.
 //
-// It does **not** work under Palmframe's own window manager today: apps/wm
+// It does **not** work under Palmy's own window manager today: apps/wm
 // implements no screen-capture protocol (neither wlr-screencopy nor
 // ext-image-copy-capture-v1), so there is nothing for grim to ask. That is
 // the wm's gap, stated in apps/call/PROTOCOL.md; the source here is ready for

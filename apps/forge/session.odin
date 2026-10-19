@@ -5,7 +5,7 @@
 // server's JSON API with the same token.
 //
 // Who the caller is comes from apps/cloudkit's token store, shared with
-// apps/accounts and every other Palmframe application:
+// apps/accounts and every other Palmy application:
 //
 //	FORGE_TOKEN=palmforge_...  a personal access token, exchanged at the
 //	                           forge for a ten-minute session scoped to the

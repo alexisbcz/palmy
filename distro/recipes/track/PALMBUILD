@@ -13,5 +13,5 @@ details  = Issues kept as plain files in a directory, with a command line for ag
 depend   = glibc fonts libxkbcommon
 provides = cmd:track
 
-file     = ${PALMFRAME_OUT}/bin/track -> /usr/bin/track mode 0755
-file     = ${PALMFRAME_ROOT}/distro/apps/desktop/track.desktop -> /usr/share/applications/track.desktop mode 0644
+file     = ${PALMY_OUT}/bin/track -> /usr/bin/track mode 0755
+file     = ${PALMY_ROOT}/distro/apps/desktop/track.desktop -> /usr/share/applications/track.desktop mode 0644

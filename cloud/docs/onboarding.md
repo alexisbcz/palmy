@@ -1,7 +1,7 @@
 # The first run: from the installer's last page to a working account
 
-Before this, a fresh Palmframe install had no way to create or sign in to
-the Palmframe account, set up identities or choose what syncs: the cloud was
+Before this, a fresh Palmy install had no way to create or sign in to
+the Palmy account, set up identities or choose what syncs: the cloud was
 reachable only through CLI demos. `apps/welcome` is that way. It opens once
 per person at their first login, and anyone can run it again later.
 
@@ -17,14 +17,14 @@ why the order below is what it is.
 | --- | --- | --- | --- |
 | 1 | Welcome | language (the five catalogues) and appearance (light, dark), preselected from what the installer and the environment say | the installer chose for the machine; this is the person's own choice. Changing either writes a file, looking at the page writes nothing |
 | 2 | Account | **Use an account** or **Only on this computer** | local-only is first-class (P5): every app works without the cloud. Skip here means local |
-| 3 | Sign in | tabs: Create account (name, email, password, confirm) / Sign in; the server is a line with **Change** | the email is the recovery address and should be *outside* Palmframe (accounts.md, Recovery); the page says so when it is not |
+| 3 | Sign in | tabs: Create account (name, email, password, confirm) / Sign in; the server is a line with **Change** | the email is the recovery address and should be *outside* Palmy (accounts.md, Recovery); the page says so when it is not |
 | 4 | Identities | one suggested Personal identity named after the person; **Add an identity** (Ctrl N) adds Work, then Project, Public; name, handle, kind, colour; the mail address each handle gives is shown under it | handles are permanent (they are mail addresses), so this is where they are chosen with care. Colours come from shell.md's palette, never shared, never red |
 | 5 | Sync | per identity: Mail, Drive, Calendar & contacts, Notes, Passwords, Chat, defaults by kind | choices are per identity (P3); each card carries its identity's band and name (P2) |
-| 6 | Passwords | master password + confirm; then the **Emergency Kit**: Secret Key, Save (PNG and text, 0600), "I have saved it" before Next | the vault's two-secret design (vault.md) is only safe if the person has the kit; Palmframe cannot recover it |
+| 6 | Passwords | master password + confirm; then the **Emergency Kit**: Secret Key, Save (PNG and text, 0600), "I have saved it" before Next | the vault's two-secret design (vault.md) is only safe if the person has the kit; Palmy cannot recover it |
 | 7 | Set up | the whole list of what will happen first; **Set up** runs it; each line says Done, Waiting for the server, Not installed, Coming, Failed (with the tool's reason) | nothing ambient: nothing runs before this button, and every outcome is visible |
 | 8 | Import | Google and Microsoft, marked **Coming** | a placeholder another agent can fill; it already says imports go into *one* identity |
 | 9 | Tour | start menu (Super Space), identity switcher (Super I), five keys | three things, not a manual |
-| 10 | Done | the identities and what each syncs; **Start using Palmframe** writes the marker | |
+| 10 | Done | the identities and what each syncs; **Start using Palmy** writes the marker | |
 
 Every step but the first and the last can be skipped; skipping never does
 anything, it only moves on. The steps that need an account (3 to 7) drop out
@@ -52,7 +52,7 @@ it: a file put in one identity's drive is not in the other's.
 | choice | done by | on this computer |
 | --- | --- | --- |
 | (always) | `ck.scope_to` | `scoped/<handle>.json`, device "<host> · desktop" |
-| Mail | `mail_bootstrap` RPC on the identity's scoped session, then once for the account `mailcore palm login` + `mailcore palm sync` | the identity's mailboxes on the server; `~/.local/share/palmy-mail/<address>/`, `palmframe.conf` for apps/mail |
+| Mail | `mail_bootstrap` RPC on the identity's scoped session, then once for the account `mailcore palm login` + `mailcore palm sync` | the identity's mailboxes on the server; `~/.local/share/palmy-mail/<address>/`, `palmy.conf` for apps/mail |
 | Drive | `PALM_IDENTITY=h palm-drive sync`, then `palm-drive watch` | `~/Drive/<handle>`; `session.d/60-palm-drive` starts the watchers at every login |
 | Calendar & contacts | `PALM_IDENTITY=h calendar sync`, `contacts sync` | their local copies |
 | Notes | `PALM_IDENTITY=h notes sync` | `~/Notes/<handle>` (with notes from main and palm-collab running) |
@@ -73,7 +73,7 @@ later `welcome run`) picks up from it.
 | `$XDG_CONFIG_HOME/palmy/wm.conf` | its `theme = dark` line, the one the window manager, Settings and every app read; other lines are kept |
 | `$XDG_CONFIG_HOME/locale.conf` | `LANG=fr_FR.UTF-8`, only if the language was changed |
 | cloudkit's `config.json` | the server, only if **Change** was used and the server answered `/auth/v1/health` |
-| `~/Documents/Palmframe Emergency Kit.{png,txt}` | 0600 |
+| `~/Documents/Palmy Emergency Kit.{png,txt}` | 0600 |
 | `/etc/palm/session.d/90-welcome` | waits for the compositor's socket, then `welcome run --first-login` |
 | `/etc/palm/session.d/60-palm-drive` | one `palm-drive watch` per identity with `drive = on` |
 
@@ -128,7 +128,7 @@ palm-maild on base+70..72 and palm-collab on base+75:
 
 ## Signing in to the machine with the account (greeter): not built
 
-accounts.md's plan assumes PAM (`pam_palm` after `pam_unix`). Palmframe has
+accounts.md's plan assumes PAM (`pam_palm` after `pam_unix`). Palmy has
 no PAM: palm-login (`distro/login`) checks `/etc/shadow` itself. So the
 plan moves, and none of it is small or safe to do from the greeter:
 

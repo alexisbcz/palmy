@@ -61,7 +61,7 @@ request :: proc(
 		fmt.sbprintf(&sb, "%s: %s\r\n", h[0], h[1])
 	}
 	if !has_ua {
-		strings.write_string(&sb, "User-Agent: palmframe-dav\r\n")
+		strings.write_string(&sb, "User-Agent: palmy-dav\r\n")
 	}
 	if len(body) > 0 || method == "POST" || method == "PUT" || method == "PATCH" || method == "PROPFIND" || method == "REPORT" {
 		fmt.sbprintf(&sb, "Content-Length: %d\r\n", len(body))

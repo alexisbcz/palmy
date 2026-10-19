@@ -186,7 +186,7 @@ b64_24 :: proc(sb: ^strings.Builder, b2, b1, b0: u8, n: int) {
 }
 
 // verify_password reports whether `password` matches the shadow field
-// `stored`. Locked (`!...`, `*`) and empty fields never match: Palmframe has
+// `stored`. Locked (`!...`, `*`) and empty fields never match: Palmy has
 // no passwordless graphical login, an account without a hash is a locked one.
 // Only `$6$` is understood; anything else is refused rather than guessed at.
 verify_password :: proc(password: string, stored: string) -> bool {

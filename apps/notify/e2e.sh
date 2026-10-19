@@ -35,8 +35,8 @@ export XDG_RUNTIME_DIR="$R"
 export PALM_NOTIFY_STATE="$R/state" PALM_NOTIFY_CONFIG="$R/config" XDG_CONFIG_HOME="$R/config"
 export PALM_NOTIFY_SOUND=off
 unset PALM_IDENTITY PALM_NOTIFY_SOCKET WAYLAND_DISPLAY DISPLAY
-mkdir -p "$R/config/palmframe"
-cat > "$R/config/palmframe/identities.json" <<'JSON'
+mkdir -p "$R/config/palmy"
+cat > "$R/config/palmy/identities.json" <<'JSON'
 [{"handle": "camille", "name": "Personal", "color": "teal"},
  {"handle": "camille.roux", "name": "Northwind", "color": "blue"},
  {"handle": "hello", "name": "Public", "color": "amber"}]
@@ -197,7 +197,7 @@ fi
 echo "== the freedesktop door"
 if [ -n "${DBUS_SESSION_BUS_ADDRESS:-}" ] && command -v gdbus >/dev/null; then
 	info="$(gdbus call --session --dest org.freedesktop.Notifications --object-path /org/freedesktop/Notifications --method org.freedesktop.Notifications.GetServerInformation 2>&1)"
-	echo "$info" | grep -q "Palmframe" && ok "GetServerInformation: $info" || bad "server info" "$info"
+	echo "$info" | grep -q "Palmy" && ok "GetServerInformation: $info" || bad "server info" "$info"
 	caps="$(gdbus call --session --dest org.freedesktop.Notifications --object-path /org/freedesktop/Notifications --method org.freedesktop.Notifications.GetCapabilities 2>&1)"
 	echo "$caps" | grep -q "actions" && ok "GetCapabilities: $caps" || bad "caps" "$caps"
 fi
@@ -310,7 +310,7 @@ if [ "$UI" = 1 ] && [ "$BROWSER" = 1 ] && command -v chromium >/dev/null && [ -n
 	PORT=$((20000 + RANDOM % 20000))
 	# Northwind's Chromium profile, where apps/browser keeps it: the
 	# identity is read from this path (Chromium rewrites its own environ).
-	CH="$R/data/palmframe/browser/camille.roux/cef"
+	CH="$R/data/palmy/browser/camille.roux/cef"
 	mkdir -p "$R/web" "$CH/Default"
 	cat > "$R/web/index.html" <<'HTML'
 <!doctype html><meta charset="utf-8"><title>build</title>
@@ -346,7 +346,7 @@ HTML
 		wid="$(echo "$web" | jq_ 'd[0]["id"]')"
 		N invoke "$wid" >/dev/null
 		for _ in $(seq 1 30); do grep -q "/clicked" "$R/http.log" && break; sleep 0.2; done
-		grep -q "/clicked?tag=build-42" "$R/http.log" && ok "clicking it in Palmframe ran the page's onclick (ActionInvoked default)" || bad "web onclick" "$(tail -3 "$R/http.log")"
+		grep -q "/clicked?tag=build-42" "$R/http.log" && ok "clicking it in Palmy ran the page's onclick (ActionInvoked default)" || bad "web onclick" "$(tail -3 "$R/http.log")"
 	else
 		bad "no web notification from Chromium within 20 s" "$(tail -5 "$R/chrome.log")"
 	fi

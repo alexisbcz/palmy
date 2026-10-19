@@ -11,7 +11,7 @@ package auth
 // Two locks, because two families of tools edit these files:
 //
 //	/etc/.pwd.lock     an fcntl lock, lckpwdf(3)'s: shadow-utils and every
-//	                   Palmframe tool take it. The kernel drops it when the
+//	                   Palmy tool take it. The kernel drops it when the
 //	                   holder dies, so it can never go stale.
 //	/etc/shadow+       created with O_EXCL: busybox's passwd, chpasswd and
 //	                   adduser wait for it to disappear, and create it

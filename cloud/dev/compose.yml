@@ -1,4 +1,4 @@
-# The Palmframe cloud stack for local development.
+# The Palmy cloud stack for local development.
 #
 # Every service uses network_mode: host and binds 127.0.0.1 on a port derived
 # from PALM_PORT_BASE (see env.sh), so it needs no Docker bridge network

@@ -9,9 +9,9 @@ pkgdesc  = Code hosting: repositories, reviews, issues
 license  = MIT
 category = Development
 icon     = git-branch
-details  = Repositories owned by your identities: browse code, review changes, track issues. Works against a Palmframe forge server.
+details  = Repositories owned by your identities: browse code, review changes, track issues. Works against a Palmy forge server.
 depend   = glibc fonts libxkbcommon
 provides = cmd:forge
 
-file     = ${PALMFRAME_OUT}/bin/forge -> /usr/bin/forge mode 0755
-file     = ${PALMFRAME_ROOT}/distro/apps/desktop/forge.desktop -> /usr/share/applications/forge.desktop mode 0644
+file     = ${PALMY_OUT}/bin/forge -> /usr/bin/forge mode 0755
+file     = ${PALMY_ROOT}/distro/apps/desktop/forge.desktop -> /usr/share/applications/forge.desktop mode 0644

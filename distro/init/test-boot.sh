@@ -6,7 +6,7 @@
 #	                                                zram, say)
 #
 # The initramfs is the smallest thing palm-init can be PID 1 of: the
-# palmframe-base skeleton (distro/base), static busybox with its applet links,
+# palmy-base skeleton (distro/base), static busybox with its applet links,
 # and palm-init as /sbin/init. It is packed with fakeroot so every file is
 # root-owned and /dev/console is a real node, as the kernel expects.
 #

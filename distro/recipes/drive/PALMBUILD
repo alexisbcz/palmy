@@ -9,9 +9,9 @@ pkgdesc  = Drive
 license  = MIT
 category = Internet
 icon     = hard-drive
-details  = Your files in the Palmframe cloud, per identity: browse, share, make links and see what is synced. Works with palm-drive, which keeps ~/Drive/<identity> in sync.
+details  = Your files in the Palmy cloud, per identity: browse, share, make links and see what is synced. Works with palm-drive, which keeps ~/Drive/<identity> in sync.
 depend   = glibc fonts libxkbcommon
 provides = cmd:drive
 
-file     = ${PALMFRAME_OUT}/bin/drive -> /usr/bin/drive mode 0755
-file     = ${PALMFRAME_ROOT}/distro/apps/desktop/drive.desktop -> /usr/share/applications/drive.desktop mode 0644
+file     = ${PALMY_OUT}/bin/drive -> /usr/bin/drive mode 0755
+file     = ${PALMY_ROOT}/distro/apps/desktop/drive.desktop -> /usr/share/applications/drive.desktop mode 0644

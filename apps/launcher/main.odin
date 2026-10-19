@@ -700,7 +700,7 @@ copy_text :: proc(st: ^St, ui: ^p.Ctx, text, what: string) {
 	}
 	// wl-copy first when it is installed: its daemon keeps serving after
 	// the launcher closes, which a launcher does seconds after a copy.
-	// Without it (Palmframe ships none) palmy's own clipboard serves for as
+	// Without it (Palmy ships none) palmy's own clipboard serves for as
 	// long as the launcher stays open.
 	if which("wl-copy") == "" || !kit.launch({"wl-copy", "--", text}) {
 		if !p.clipboard_set(ui, text) {
@@ -783,7 +783,7 @@ which :: proc(bin: string) -> string {
 
 // find_terminals lists the terminal emulators installed, the preferred one
 // first, since that is the one Ctrl+Enter and Terminal=true entries use: the
-// user's $TERMINAL when it is set, then Palmframe's own `term`, then foot,
+// user's $TERMINAL when it is set, then Palmy's own `term`, then foot,
 // then the rest.
 find_terminals :: proc() -> []Term {
 	cands := [?]Term {

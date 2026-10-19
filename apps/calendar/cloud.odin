@@ -1,4 +1,4 @@
-// Calendars in the Palmframe cloud: the engine the window and the command
+// Calendars in the Palmy cloud: the engine the window and the command
 // line share.
 //
 // A *source* is one calendar the grid can show. Source 0 is always the
@@ -570,7 +570,7 @@ Draft :: struct {
 }
 
 new_uid :: proc() -> string {
-	return fmt.aprintf("%x-%x@palmframe", time.time_to_unix_nano(time.now()), u32(os.get_pid()))
+	return fmt.aprintf("%x-%x@palmy", time.time_to_unix_nano(time.now()), u32(os.get_pid()))
 }
 
 @(private = "file")
@@ -589,7 +589,7 @@ dt_line :: proc(sb: ^strings.Builder, name: string, d: Date, minutes: int, tzid:
 // build_vevent writes a whole calendar object for a new event.
 build_vevent :: proc(uid: string, dr: Draft, tzid: string, allocator := context.allocator) -> string {
 	sb := strings.builder_make(allocator)
-	strings.write_string(&sb, "BEGIN:VCALENDAR\r\nVERSION:2.0\r\nPRODID:-//Palmframe//Calendar//EN\r\nCALSCALE:GREGORIAN\r\nBEGIN:VEVENT\r\n")
+	strings.write_string(&sb, "BEGIN:VCALENDAR\r\nVERSION:2.0\r\nPRODID:-//Palmy//Calendar//EN\r\nCALSCALE:GREGORIAN\r\nBEGIN:VEVENT\r\n")
 	fmt.sbprintf(&sb, "UID:%s\r\n", uid)
 	fmt.sbprintf(&sb, "DTSTAMP:%s\r\n", ical.format_dt(ical.utc_dt(time.time_to_unix(time.now())), context.temp_allocator))
 	write_times(&sb, dr, tzid)

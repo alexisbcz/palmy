@@ -1,4 +1,4 @@
-// palmforge: the Palmframe forge server.
+// palmforge: the Palmy forge server.
 //
 // Git smart HTTP (protocol v0/v1 and v2 for fetch), git LFS (basic transfer)
 // and a small JSON API for the parts of a forge that need the repository on

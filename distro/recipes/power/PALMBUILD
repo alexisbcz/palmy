@@ -13,5 +13,5 @@ details  = Battery charge and health, read from /sys/class/power_supply.
 depend   = glibc fonts libxkbcommon
 provides = cmd:power
 
-file     = ${PALMFRAME_OUT}/bin/power -> /usr/bin/power mode 0755
-file     = ${PALMFRAME_ROOT}/distro/apps/desktop/power.desktop -> /usr/share/applications/power.desktop mode 0644
+file     = ${PALMY_OUT}/bin/power -> /usr/bin/power mode 0755
+file     = ${PALMY_ROOT}/distro/apps/desktop/power.desktop -> /usr/share/applications/power.desktop mode 0644

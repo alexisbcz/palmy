@@ -374,7 +374,7 @@ and they are legible in both themes.
 # Protocol v2 — the cloud gateway
 
 Version 2 is the same framing and the same records, spoken to **palm-rtc**
-(`cloud/rtc`), the chat gateway of the Palmframe cloud, instead of to the
+(`cloud/rtc`), the chat gateway of the Palmy cloud, instead of to the
 loopback server above. The loopback server is unchanged and still speaks v1:
 it is the account-less, local-first chat, and its 164 self-test assertions
 still pass. The client speaks both (`chat --cloud` for v2).
@@ -397,7 +397,7 @@ and calls.
 ## Who you are
 
 ```json
-{"t":"hello","token":"<Palmframe access token>","identity":"alice.northwind","rq":1}
+{"t":"hello","token":"<Palmy access token>","identity":"alice.northwind","rq":1}
 ```
 
 `token` is the account's access token (GoTrue; cloudkit holds it). The gateway

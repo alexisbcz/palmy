@@ -82,7 +82,7 @@ base_env :: proc(acct:   auth.Account, allocator := context.allocator) -> [dynam
 	append(&env, fmt.aprintf("PATH=%s", SESSION_PATH, allocator = allocator))
 	append(&env, fmt.aprintf("XDG_RUNTIME_DIR=/run/user/%d", acct.uid, allocator = allocator))
 	append(&env, strings.clone("XDG_SESSION_TYPE=wayland", allocator))
-	append(&env, strings.clone("XDG_CURRENT_DESKTOP=palmframe", allocator))
+	append(&env, strings.clone("XDG_CURRENT_DESKTOP=palmy", allocator))
 	append(&env, strings.clone("XDG_SEAT=seat0", allocator))
 	append(&env, strings.clone("LANG=C.UTF-8", allocator))
 	return env

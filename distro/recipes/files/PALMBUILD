@@ -13,5 +13,5 @@ details  = Browse folders in a list or as icons, with a sidebar of places, bread
 depend   = glibc fonts libxkbcommon
 provides = cmd:files
 
-file     = ${PALMFRAME_OUT}/bin/files -> /usr/bin/files mode 0755
-file     = ${PALMFRAME_ROOT}/distro/apps/desktop/files.desktop -> /usr/share/applications/files.desktop mode 0644
+file     = ${PALMY_OUT}/bin/files -> /usr/bin/files mode 0755
+file     = ${PALMY_ROOT}/distro/apps/desktop/files.desktop -> /usr/share/applications/files.desktop mode 0644

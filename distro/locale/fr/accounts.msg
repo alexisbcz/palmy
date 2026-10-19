@@ -1,4 +1,4 @@
-# Palmframe Accounts (apps/accounts) — French.
+# Palmy Accounts (apps/accounts) — French.
 # Format: distro/locale/README.md. Belongs in distro/locale/fr/accounts.msg,
 # installed as /usr/share/palm/locale/fr/accounts.msg; it lives beside the app
 # until the locale owner moves it. Render with:
@@ -30,8 +30,8 @@ msgstr "Créer un compte"
 msgid "Create your account"
 msgstr "Créez votre compte"
 
-msgid "Use the email and password of your Palmframe account."
-msgstr "Utilisez l'adresse et le mot de passe de votre compte Palmframe."
+msgid "Use the email and password of your Palmy account."
+msgstr "Utilisez l'adresse et le mot de passe de votre compte Palmy."
 
 msgid "Your first identity is created with it. You can add the others later."
 msgstr "Votre première identité est créée en même temps. Vous ajouterez les autres ensuite."
@@ -55,8 +55,8 @@ msgid "Also your mail address. It is permanent; the name above is not."
 msgstr "C'est aussi votre adresse de courrier. Il est définitif ; le nom ci-dessus ne l'est pas."
 
 # --- shell -------------------------------------------------------------------
-msgid "Palmframe account"
-msgstr "Compte Palmframe"
+msgid "Palmy account"
+msgstr "Compte Palmy"
 
 msgid "Scoped to %s"
 msgstr "Limité à %s"

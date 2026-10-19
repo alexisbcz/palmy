@@ -441,7 +441,7 @@ opener_for :: proc(entries: []Entry, path: string) -> int {
 		return best
 	}
 	// An entry that does not declare its types (the runtime packages' own
-	// .desktop files) is still the obvious home for some: Palmframe's
+	// .desktop files) is still the obvious home for some: Palmy's
 	// player plays what a player plays.
 	for f in FALLBACK_OPENERS {
 		if strings.has_prefix(mime, f.mime) {

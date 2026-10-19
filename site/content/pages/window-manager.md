@@ -3,7 +3,7 @@
 `wm` is palmy's Wayland compositor, written on the same toolkit as the applications it manages. It runs in two ways:
 
 - **Nested**, as a window inside another Wayland session. This is how it is developed and how its demos are recorded.
-- **On bare metal**, with `wm --drm`, which is how Palmframe runs it. It drives KMS dumb buffers with page flip, reads `/dev/input/event*` itself, and compiles its own keymap without libxkbcommon. `wm --drm --kiosk --exec greeter` is the login screen; `wm --drm` is the session.
+- **On bare metal**, with `wm --drm`, which is how Palmy runs it. It drives KMS dumb buffers with page flip, reads `/dev/input/event*` itself, and compiles its own keymap without libxkbcommon. `wm --drm --kiosk --exec greeter` is the login screen; `wm --drm` is the session.
 
 It tiles by default, with a master column and a stack, and also has monocle, grid and floating layouts. On top of that it has title bars with buttons, snapping to edges and corners, a taskbar in the bar, an Alt+Tab switcher, an overview, a window menu, and a cheat sheet on Super+/ that lists the bindings below from the live configuration.
 
@@ -29,7 +29,7 @@ There is one directive per line, `name = value`, with `#` or `//` comments. `bin
 
 ::wm-config
 
-## On Palmframe
+## On Palmy
 
 The keyboard layout comes from `/etc/palm/keyboard` (`layout = fr`, for example), which the installer writes and wm reloads when it changes. The bar's clock follows `/etc/localtime`.
 

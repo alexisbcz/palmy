@@ -1,6 +1,6 @@
 """The lock screen and the session's power actions on the built image.
 
-    python3 -I apps/wm/lock-qemu.py [--image distro/out/palmframe.img] [--out DIR]
+    python3 -I apps/wm/lock-qemu.py [--image distro/out/palmy.img] [--out DIR]
 
 Three boots of one disk (QEMU runs with -no-reboot, so a restart ends a
 boot; the logs on the disk say what happened before it):
@@ -70,7 +70,7 @@ def log_count(m, pattern):
 
 
 def root_login(m):
-    assert m.expect(r"palmframe login: ", 120), "no getty"
+    assert m.expect(r"palmy login: ", 120), "no getty"
     m.send("root")
     m.expect(r"Password: ", 10)
     m.send("palm")
@@ -224,7 +224,7 @@ def boot1(args, img, shot):
 
         # --- Restart, alone on the machine, left to its countdown ---------------
         m.send("exit")  # root leaves the serial console: nobody else is logged in
-        assert m.expect(r"palmframe login: ", 20), "root did not log out"
+        assert m.expect(r"palmy login: ", 20), "root did not log out"
         open_power_menu(m)
         m.screen(shot("b1-09-power-menu.png"))
         m.type("r")  # Restart… (the first item starting with r)
@@ -305,7 +305,7 @@ def boot3(args, img, shot):
 
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument("--image", default=os.path.join(ROOT, "distro/out/palmframe.img"))
+    ap.add_argument("--image", default=os.path.join(ROOT, "distro/out/palmy.img"))
     ap.add_argument("--out", default=os.path.join(ROOT, "distro/build/lock-qemu/shots"))
     ap.add_argument("--work", default=os.path.join(ROOT, "distro/build/lock-qemu"))
     ap.add_argument("--only", default="", help="1, 2 or 3: one boot (2 and 3 continue the disk the one before left)")

@@ -32,7 +32,7 @@ fi
 
 XDG_RUNTIME_DIR=/run/user/0
 mkdir -p "$XDG_RUNTIME_DIR" && chmod 0700 "$XDG_RUNTIME_DIR"
-export XDG_RUNTIME_DIR XDG_SESSION_TYPE=wayland XDG_CURRENT_DESKTOP=palmframe
+export XDG_RUNTIME_DIR XDG_SESSION_TYPE=wayland XDG_CURRENT_DESKTOP=palmy
 
 LANG=C.UTF-8
 if [ -r /etc/locale.conf ]; then . /etc/locale.conf; fi

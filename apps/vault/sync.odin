@@ -45,7 +45,7 @@ acct_connect :: proc(a: ^Acct) -> string {
 	}
 	if !ck.signed_in(c) {
 		ck.close(c)
-		return "not signed in to the Palmframe cloud (accounts sign-in)"
+		return "not signed in to the Palmy cloud (accounts sign-in)"
 	}
 	a.client = c
 	return ""

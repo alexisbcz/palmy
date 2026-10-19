@@ -1,6 +1,6 @@
 package main
 
-// palm-modules: loads kernel modules, the part of kmod and udev Palmframe
+// palm-modules: loads kernel modules, the part of kmod and udev Palmy
 // needs.
 //
 //	palm-modules coldplug        load a driver for every device already in /sys

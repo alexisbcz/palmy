@@ -12,7 +12,7 @@
 # CJK punctuation and the full-width forms, so a name typed in or shown
 # anywhere else still has its kana. The subset is committed, at
 # distro/live/root/usr/share/fonts/palm-live/NotoSansCJKjp-Regular.otf, which
-# palmframe-live ships; palmy finds it by that name (FALLBACK_CANDIDATES),
+# palmy-live ships; palmy finds it by that name (FALLBACK_CANDIDATES),
 # and install_core's language list counts it as a CJK font.
 #
 # An installed system that speaks Japanese gets the whole font: the
@@ -33,7 +33,7 @@ ROOT = os.path.dirname(os.path.dirname(HERE))
 SRC = sys.argv[1] if len(sys.argv) > 1 else '/usr/share/fonts/noto-cjk/NotoSansCJK-Regular.ttc'
 OUT = os.path.join(HERE, 'root/usr/share/fonts/palm-live/NotoSansCJKjp-Regular.otf')
 LICENSE_SRC = '/usr/share/licenses/noto-fonts-cjk/LICENSE'
-LICENSE_OUT = os.path.join(HERE, 'root/usr/share/licenses/palmframe-live/NotoSansCJK-OFL.txt')
+LICENSE_OUT = os.path.join(HERE, 'root/usr/share/licenses/palmy-live/NotoSansCJK-OFL.txt')
 
 RANGES = [
     (0x0020, 0x007E),  # ASCII, so the face is a whole font on its own

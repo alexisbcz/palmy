@@ -10,7 +10,7 @@ package palm
 // named in /etc/palm/repositories, which matters for freshness: a signed but
 // old index replayed by someone on the path is stopped by the rollback check
 // in repo.odin, and on https only the mirror itself could try it. The other
-// ways to get TLS were a dlopen of the system's OpenSSL (Palmframe ships
+// ways to get TLS were a dlopen of the system's OpenSSL (Palmy ships
 // none, and palm must keep working in an empty --root on any build host) or
 // shipping BearSSL as a package, which puts a C library under the package
 // manager that installs it. Odin's core:crypto already has every primitive and
@@ -103,7 +103,7 @@ Tls :: struct {
 // CA bundles, first match wins. PALM_CA_FILE is for the selftest and for a
 // person who wants palm to trust exactly one CA; the system bundle is used if
 // something installed one; palm's package ships its own copy of the Mozilla
-// roots so a Palmframe system needs nothing else.
+// roots so a Palmy system needs nothing else.
 CA_FILES := [?]string{"/etc/ssl/certs/ca-certificates.crt", "/etc/ssl/cert.pem", "/usr/share/palm/ca-certificates.crt"}
 
 @(private = "file")

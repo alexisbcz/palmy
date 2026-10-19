@@ -1,4 +1,4 @@
-// Package davclient is the CalDAV/CardDAV client the Palmframe apps share
+// Package davclient is the CalDAV/CardDAV client the Palmy apps share
 // (apps/calendar, apps/contacts).
 //
 // Sign-in, the session, its refresh and the identity list are cloudkit's
@@ -148,7 +148,7 @@ Remote :: struct {
 }
 
 PROPFIND_COLLECTIONS :: `<?xml version="1.0" encoding="utf-8"?>
-<d:propfind xmlns:d="DAV:" xmlns:c="urn:ietf:params:xml:ns:caldav" xmlns:cs="http://calendarserver.org/ns/" xmlns:a="http://apple.com/ns/ical/" xmlns:p="https://palmframe.dev/ns/dav">
+<d:propfind xmlns:d="DAV:" xmlns:c="urn:ietf:params:xml:ns:caldav" xmlns:cs="http://calendarserver.org/ns/" xmlns:a="http://apple.com/ns/ical/" xmlns:p="https://palmy.dev/ns/dav">
 <d:prop><d:resourcetype/><d:displayname/><a:calendar-color/><d:sync-token/><cs:getctag/><p:access/><p:owner/><p:collection-id/><c:supported-calendar-component-set/></d:prop>
 </d:propfind>`
 

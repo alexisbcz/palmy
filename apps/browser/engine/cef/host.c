@@ -2119,7 +2119,7 @@ static void CEF_CALLBACK app_on_before_command_line_processing(cef_app_t* self, 
 		/* Chromium's password manager is off (disable_password_storage) and
 		 * the vault keeps passwords. "basic" keeps Chromium from looking for a
 		 * GNOME keyring or KWallet for anything else it would encrypt (the
-		 * cookie key): Palmframe has neither. */
+		 * cookie key): Palmy has neither. */
 		add_switch(cl, "password-store", "basic");
 		/* Test mode for the autofill tests' local HTTPS site: trust exactly
 		 * the certificate whose public key hash is named (base64 SHA-256 of
@@ -2235,13 +2235,13 @@ int main(int argc, char** argv) {
 	cef_api_hash(CEF_API_VERSION, 0);
 
 	/* No session bus. Nothing an off-screen view needs lives there --
-	 * Palmframe does not run one -- and on a desktop that does, Chromium
+	 * Palmy does not run one -- and on a desktop that does, Chromium
 	 * would read the colour scheme and other settings from the desktop's
 	 * portal instead of from the chrome. PALM_BROWSER_KEEP_DBUS=1 keeps it
 	 * (MPRIS media keys, notifications). */
 	if (!getenv("PALM_BROWSER_KEEP_DBUS")) unsetenv("DBUS_SESSION_BUS_ADDRESS");
 
-	/* Without a system fontconfig, use the package's own (a Palmframe image
+	/* Without a system fontconfig, use the package's own (a Palmy image
 	 * has fonts but, so far, no /etc/fonts). */
 	if (access("/etc/fonts/fonts.conf", R_OK) != 0 && !getenv("FONTCONFIG_FILE")) {
 		char* d = exe_dir();

@@ -8,7 +8,7 @@ ja   Japanese, on an emulated NVMe disk, with the pointer. The live ISO under
      (QMP absolute events through virtio-tablet) on the language and keyboard
      pages, the account is typed, the install runs, and "Restart now" is
      clicked. Then the NVMe disk boots alone under OVMF through its own entry,
-     "Palmframe (kyoto)", to a Japanese greeter; and again under SeaBIOS,
+     "Palmy (kyoto)", to a Japanese greeter; and again under SeaBIOS,
      through limine's BIOS stages.
 ar   Arabic, under SeaBIOS: the live ISO boots through the BIOS, the
      installer runs right to left, the keyboard gets `us,ara`, the account is
@@ -17,7 +17,7 @@ ar   Arabic, under SeaBIOS: the live ISO boots through the BIOS, the
      the fallback path.
 two  Two disks in one machine: palm-install onto /dev/vdb with options, then
      palm-install's questions onto /dev/vda over the serial console. Each
-     disk gets its own Boot#### ("Palmframe (cli-b)", "Palmframe (cli-a)"),
+     disk gets its own Boot#### ("Palmy (cli-b)", "Palmy (cli-a)"),
      and each boots alone through its own.
 
 Screenshots go to distro/out/shots/more-<scenario>-NN-<step>.png.
@@ -171,7 +171,7 @@ def boot_target(name, scenario, opts, extra, host, pw, want_entry=None, shot_n=N
             mm = t.expect(r'BdsDxe: (?:loading|starting) (Boot[0-9A-F]{4}) "([^"]*)"', 60)
             t.check(f"{name}: OVMF starts \"{want_entry}\"", mm is not None and mm.group(2) == want_entry,
                     mm.group(0) if mm else t.buf[-800:])
-        ok = t.expect(r"palm-init: Palmframe is starting", 120) is not None
+        ok = t.expect(r"palm-init: Palmy is starting", 120) is not None
         t.check(f"{name}: limine boots the kernel, palm-init starts", ok, t.buf[-1500:])
         if not t.check(f"{name}: serial getty on host {host}", t.login("root", pw, host), t.buf[-1500:]):
             return False
@@ -245,7 +245,7 @@ def scenario_ja():
         print("        " + "\n        ".join(l for l in log.splitlines() if re.search(r"GPT written|nvme0n1p|bios-install|UEFI|swap|fonts-cjk", l))[:2000])
         m.check("partitions are nvme0n1p1..p3", "/dev/nvme0n1p1" in log and "/dev/nvme0n1p2" in log, log[-1500:])
         m.check("limine's BIOS stages went onto the NVMe disk", "bios-install /dev/nvme0n1 3" in log and "installed successfully" in log, log[-1500:])
-        m.check("the UEFI entry is \"Palmframe (kyoto)\"", re.search(r'UEFI: Boot[0-9A-F]{4} "Palmframe \(kyoto\)"', log) is not None)
+        m.check("the UEFI entry is \"Palmy (kyoto)\"", re.search(r'UEFI: Boot[0-9A-F]{4} "Palmy \(kyoto\)"', log) is not None)
         m.check("fonts-cjk is installed for Japanese", "fonts-cjk" in log, "")
         if not finished:
             return
@@ -267,7 +267,7 @@ def scenario_ja():
         ti.efi_entries(t)
 
     print("ja: the NVMe disk alone under OVMF", flush=True)
-    boot_target("ja-uefi", "ja", ["--disk", spare], nv, "kyoto", "sakurasakura", "Palmframe (kyoto)", 13, "installed-greeter-ja", checks)
+    boot_target("ja-uefi", "ja", ["--disk", spare], nv, "kyoto", "sakurasakura", "Palmy (kyoto)", 13, "installed-greeter-ja", checks)
     print("ja: the NVMe disk alone under SeaBIOS", flush=True)
     # SeaBIOS tries an NVMe disk only when it has a boot index (what choosing
     # it in the BIOS boot menu does); without one it never looks at it.
@@ -369,7 +369,7 @@ def scenario_two():
             (r"Keyboard layout.*\[fr\]: ", ""),
             (r"Time zone.*\[Europe/Paris\]: ", "?Paris"),
             (r"Time zone.*\[Europe/Paris\]: ", ""),
-            (r"Computer name \[palmframe\]: ", "cli-a"),
+            (r"Computer name \[palmy\]: ", "cli-a"),
             (r"Your full name \(optional\): ", "Ada Lovelace"),
             (r"User name \[ada\]: ", ""),
             (r"Password: ", "analytical"),
@@ -393,7 +393,7 @@ def scenario_two():
         out, _ = m.run("mount -t efivarfs efivarfs /sys/firmware/efi/efivars 2>/dev/null; cd /sys/firmware/efi/efivars && "
                        f"for f in Boot0*-{ti.EFI_GUID}; do printf '%s ' ${{f%%-*}}; od -An -c $f | tr -d ' \\n' | sed 's/\\\\0//g' | cut -c1-40; echo; done; cd /")
         print("        " + out.strip().replace("\n", "\n        "))
-        m.check("two Palmframe entries, one per disk", "Palmframe(cli-b)" in out and "Palmframe(cli-a)" in out, out)
+        m.check("two Palmy entries, one per disk", "Palmy(cli-b)" in out and "Palmy(cli-a)" in out, out)
         m.send("poweroff")
         m.check("the live machine powers off", m.wait_exit(60))
     finally:
@@ -406,17 +406,17 @@ def scenario_two():
         t.check("/swapfile and its fstab line", "/swapfile" in out, out)
 
     print("two: /dev/vdb alone", flush=True)
-    boot_target("two-b", "two", ["--disk", b], [], "cli-b", "gracehopper", "Palmframe (cli-b)", checks=swap)
+    boot_target("two-b", "two", ["--disk", b], [], "cli-b", "gracehopper", "Palmy (cli-b)", checks=swap)
     print("two: /dev/vda alone", flush=True)
-    boot_target("two-a", "two", ["--disk", a], [], "cli-a", "analytical", "Palmframe (cli-a)", checks=swap)
+    boot_target("two-a", "two", ["--disk", a], [], "cli-a", "analytical", "Palmy (cli-a)", checks=swap)
 
 
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--only", choices=("ja", "ar", "two"))
     args = ap.parse_args()
-    if not os.path.exists(os.path.join(OUT, "palmframe-live.iso")):
-        sys.exit("test-install-more: distro/out/palmframe-live.iso is missing (make -C distro iso)")
+    if not os.path.exists(os.path.join(OUT, "palmy-live.iso")):
+        sys.exit("test-install-more: distro/out/palmy-live.iso is missing (make -C distro iso)")
     os.makedirs(WORK, exist_ok=True)
     os.makedirs(SHOTS, exist_ok=True)
     for name, f in (("ja", scenario_ja), ("ar", scenario_ar), ("two", scenario_two)):

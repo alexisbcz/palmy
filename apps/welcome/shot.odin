@@ -233,8 +233,8 @@ shots_in :: proc(off: ^p.Offscreen, dir, lang: string, dark: bool) -> int {
 
 	st.vault_done = true
 	st.secret = FIX_SECRET
-	st.kit_paths[0] = "/home/camille/Documents/Palmframe Emergency Kit.png"
-	st.kit_paths[1] = "/home/camille/Documents/Palmframe Emergency Kit.txt"
+	st.kit_paths[0] = "/home/camille/Documents/Palmy Emergency Kit.png"
+	st.kit_paths[1] = "/home/camille/Documents/Palmy Emergency Kit.txt"
 	n += shoot(off, st, dir, name(prefix, 6, "emergency-kit"))
 	st.kit_ack = true
 

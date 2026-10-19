@@ -1,17 +1,17 @@
-# The browser: Palmframe's chrome, Chromium's or Firefox's engine
+# The browser: Palmy's chrome, Chromium's or Firefox's engine
 
 `apps/browser` is a web browser whose chrome — tabs, the address bar and its
 suggestions, the bookmarks bar and manager, history, downloads, the new-tab
 page, settings, menus and page dialogs — is palmy + shadcn, and whose pages
 are drawn by an engine the person chooses per profile: **Chromium** (Blink,
-through CEF) or **Firefox** (Gecko, Firefox itself). Each Palmframe identity
+through CEF) or **Firefox** (Gecko, Firefox itself). Each Palmy identity
 has its own profile, so cookies and storage never cross between identities,
 and bookmarks are stored in a shape designed to sync, with a working sync
 through the account (`browser_bookmarks`, scoped by `can_access_identity`).
 
 Everything below that says *measured* or *observed* was run on the build host
 (Arch, Hyprland, 16 cores) on 2026-10-19 against CEF 152.0.14 (Chromium
-152.0.7977.167) and Firefox 158.0. Nothing has run on Palmframe in QEMU yet;
+152.0.7977.167) and Firefox 158.0. Nothing has run on Palmy in QEMU yet;
 the closest is the engine packages running in a root holding nothing but
 glibc (see *Packaging*).
 
@@ -76,7 +76,7 @@ URL, favicon URLs, status, cursor, progress), load (state, errors), life span
   of `main` runs the child roles. On Linux the renderers are forked from a
   sandboxed zygote.
 - **Sandbox.** User namespaces when the kernel allows unprivileged ones,
-  otherwise the setuid `chrome-sandbox`. Palmframe's kernel has
+  otherwise the setuid `chrome-sandbox`. Palmy's kernel has
   `CONFIG_USER_NS`, `PID_NS`, `NET_NS` and `SECCOMP_FILTER`
   (`distro/out/kernel.config`), so the package ships no setuid helper.
   Observed on the host: renderers run with `Seccomp: 2` in their own user,
@@ -110,7 +110,7 @@ URL, favicon URLs, status, cursor, progress), load (state, errors), life span
 | **userChrome.css + enterprise policies** | Hides Firefox's chrome but the chrome you see is still Firefox's; nothing of ours. |
 | **Headless Firefox + BiDi/Marionette screencast** (`captureScreenshot` per frame) | PNG per frame, no damage, tens of ms each: a slideshow. Input through `input.performActions` works but is synthetic. |
 | **Firefox as a Wayland client of a private compositor + WebDriver BiDi** | **Chosen.** Firefox draws real `wl_shm` buffers with real damage; input is a real seat with real serials, so its own popups work; BiDi is Mozilla's supported remote protocol for navigation and events. |
-| **Servo** | Embeddable, but as a Rust crate with no C API, and it renders through OpenGL/wgpu — llvmpipe on Palmframe. A third backend later, not a Gecko substitute. |
+| **Servo** | Embeddable, but as a Rust crate with no C API, and it renders through OpenGL/wgpu — llvmpipe on Palmy. A third backend later, not a Gecko substitute. |
 | **WebKit (WPE)**, **Ladybird**, **NetSurf** | Not asked for here; covered in `distro/notes/browser.md`. WPE's view backend is the next most interesting embedding target. |
 
 How the chosen Gecko path works (`apps/browser/engine/gecko/`, ~3,200 lines of
@@ -207,7 +207,7 @@ calls with a different transport; nothing else in the browser would change.
 
 ### Identity-aware profiles
 
-`$XDG_DATA_HOME/palmframe/browser/<identity>/` holds `settings.json`
+`$XDG_DATA_HOME/palmy/browser/<identity>/` holds `settings.json`
 (engine, search, theme, bar, session restore, device id), `bookmarks.json`,
 `history.jsonl`, `downloads.json`, `session.json`, and each engine's own
 profile (`cef/`, `gecko/`). The identity is `--identity`, else
@@ -216,7 +216,7 @@ out of the directory. One window per identity owns a control socket
 (`palm-browser-<identity>.ctl`): a second `browser example.com` hands the URL
 to it. The window carries the identity's colour as a band across the top and
 a chip before the tabs; the chip's menu opens a window as another identity.
-Colours come from `~/.config/palmframe/identities.json` when apps/accounts
+Colours come from `~/.config/palmy/identities.json` when apps/accounts
 writes one, and otherwise from fixed defaults (personal blue, work amber).
 
 ![The work identity, Firefox](../../apps/browser/shots/work-identity-light.png)

@@ -1,4 +1,4 @@
-// forge — the Palmframe forge, as a window and as a command.
+// forge — the Palmy forge, as a window and as a command.
 //
 //	forge                         the window
 //	forge repo list --json        the command line (`forge --help`)

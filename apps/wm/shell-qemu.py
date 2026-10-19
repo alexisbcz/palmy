@@ -2,7 +2,7 @@
 search and launch, pin, the desktop menu's Settings, a setting that visibly
 applies, and every default application started once.
 
-    python3 -I apps/wm/shell-qemu.py [--image distro/out/palmframe.img] [--out DIR]
+    python3 -I apps/wm/shell-qemu.py [--image distro/out/palmy.img] [--out DIR]
 """
 import argparse
 import importlib.util
@@ -58,7 +58,7 @@ def luma(c):
 
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument("--image", default=os.path.join(ROOT, "distro/out/palmframe.img"))
+    ap.add_argument("--image", default=os.path.join(ROOT, "distro/out/palmy.img"))
     ap.add_argument("--out", default=os.path.join(ROOT, "distro/build/shell-qemu/shots"))
     ap.add_argument("--work", default=os.path.join(ROOT, "distro/build/shell-qemu"))
     ap.add_argument("--apps", default="")
@@ -72,7 +72,7 @@ def main():
 
     m = M(img, args.work)
     try:
-        assert m.expect(r"palmframe login: ", 120), "no getty"
+        assert m.expect(r"palmy login: ", 120), "no getty"
         m.send("root")
         m.expect(r"Password: ", 10)
         m.send("palm")
@@ -135,7 +135,7 @@ def main():
         time.sleep(0.6)
         w, h, rgb4 = m.screen(shot("06-start-click-light.png"))
         changed = sum(1 for x in range(20, 600, 37) for y in range(60, 600, 41) if pix(rgb3, w, x, y) != pix(rgb4, w, x, y))
-        m.check("clicking the Palmframe button opens the start menu", changed > 40, f"{changed} sample points changed")
+        m.check("clicking the Palmy button opens the start menu", changed > 40, f"{changed} sample points changed")
 
         # All apps, and pin one to the bar from its menu.
         m.click(560, 134)  # All apps ›

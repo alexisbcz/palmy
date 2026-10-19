@@ -18,7 +18,7 @@ package engine
 // The model fills arguments by choosing among candidates (constrained
 // decoding: it cannot write anything else), and an address that is only
 // `content` is never offered as a recipient. A proposal still carries
-// warnings for the person — "not typed by you", "outside Palmframe",
+// warnings for the person — "not typed by you", "outside Palmy",
 // "proposed after reading mail from …" — because the confirmation is the
 // last line, and it should show its working.
 
@@ -165,7 +165,7 @@ warnings_for :: proc(s: ^Seen, addrs: []string, body: string, local_domain: stri
 			append(&out, Warning{"info", fmt.aprintf("%s is a correspondent (%s), not someone you named.", a, c.source, allocator = allocator)})
 		}
 		if local_domain != "" && !strings.has_suffix(a, fmt.tprintf("@%s", local_domain)) {
-			append(&out, Warning{"info", fmt.aprintf("%s is outside Palmframe; it will wait in the Outbox until outbound delivery exists.", a, allocator = allocator)})
+			append(&out, Warning{"info", fmt.aprintf("%s is outside Palmy; it will wait in the Outbox until outbound delivery exists.", a, allocator = allocator)})
 		}
 	}
 	if strings.contains(body, "http://") || strings.contains(body, "https://") {

@@ -8,4 +8,4 @@ Icon=calendar-days
 Terminal=false
 Categories=Development;
 Keywords=date;colour;file;picker;demo;
-X-Palmframe-Demo=true
+X-Palmy-Demo=true

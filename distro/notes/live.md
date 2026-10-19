@@ -2,14 +2,14 @@
 
 Owner: `distro/live/`, the recipes `tzdata`, `e2fsprogs`, `dosfstools`,
 `limine`, `fonts-cjk`, `palm-locale`, `palm-install`, `installer`,
-`palmframe-live`, their part of `distro/recipes/generate.sh`, the `iso` /
+`palmy-live`, their part of `distro/recipes/generate.sh`, the `iso` /
 `run-iso` targets and installer rules in `distro/Makefile`, `--iso` / `--disk`
 in `distro/run-qemu.sh`, and this file.
 
 ## Use it
 
 ```
-make -C distro iso                       # distro/out/palmframe-live.iso
+make -C distro iso                       # distro/out/palmy-live.iso
 distro/run-qemu.sh --iso                 # boot it (OVMF), blank 8G target
                                          # distro/out/target.qcow2 made if absent
 distro/run-qemu.sh --iso --bios          # the same under SeaBIOS
@@ -31,22 +31,22 @@ disk it installed onto and survives into the `--disk` boot.
 - limine 12.8 on an ISO 9660 image (xorriso): BIOS El Torito
   `limine-bios-cd.bin`, UEFI El Torito `limine-uefi-cd.bin`, protective MBR,
   then `limine bios-install` for raw USB-stick boot. Menu, 5 s timeout:
-  - **Install Palmframe** — `console=tty0 console=ttyS0,115200 quiet loglevel=3`
-  - **Install Palmframe (serial console only)** — `console=ttyS0,115200 palm.live.serial`
+  - **Install Palmy** — `console=tty0 console=ttyS0,115200 quiet loglevel=3`
+  - **Install Palmy (serial console only)** — `console=ttyS0,115200 palm.live.serial`
 - `boot/vmlinuz` and `boot/initramfs.zst` (limine `module_path`). No `root=`,
   so the kernel keeps the initramfs as `/` on tmpfs; nothing is read from the
   medium after boot. The initramfs `/init` is a symlink to `usr/bin/palm-init`
-  (owned by palmframe-live); `/dev/console` and `/dev/null` are in the cpio.
-- The root is `palm --root … --initdb add palmframe-live` under fakeroot, cpio
+  (owned by palmy-live); `/dev/console` and `/dev/null` are in the cpio.
+- The root is `palm --root … --initdb add palmy-live` under fakeroot, cpio
   in the same session (owners and 0600 shadow preserved), zstd -19.
-  palmframe-live does not depend on `palmframe`: the live root is
-  palmframe-base, linux (whose kernel goes on the ISO, not in the cpio),
+  palmy-live does not depend on `palmy`: the live root is
+  palmy-base, linux (whose kernel goes on the ISO, not in the cpio),
   busybox, glibc, palm-init, palm, palmy-wm, fonts, libxkbcommon,
   xkeyboard-config, tzdata, palm-locale, term, palm-install, installer,
   e2fsprogs, dosfstools and limine. The applications, the greeter and
   palm-login only go onto installed disks.
 - **The medium's repository** is what an installation can ask for:
-  `palm --dry-run add palmframe fonts-cjk` (`LIVE_REPO_PACKAGES`) lists it,
+  `palm --dry-run add palmy fonts-cjk` (`LIVE_REPO_PACKAGES`) lists it,
   build.sh copies those `.palm` files and signs a new index with the build's
   key (`palm index --key`). 36 packages, 49 MB, instead of the build's 48.
   `palm-install --package` can only name packages in it.
@@ -55,7 +55,7 @@ disk it installed onto and survives into the `--disk` boot.
   (fontTools, from a virtualenv: the host has none) with every character of
   `distro/locale/ja/*.msg`, kana, CJK punctuation and the full-width forms.
   It is committed under `live/root/usr/share/fonts/palm-live/`, shipped by
-  palmframe-live with its OFL licence, found by palmy as a fallback by that
+  palmy-live with its OFL licence, found by palmy as a fallback by that
   name, and counted as a CJK font by `core.list_languages`. build.sh checks
   it with `subset-cjk.py --check` (fontconfig only) and refuses to build
   when a Japanese catalogue has a character it lacks. An installed system
@@ -67,10 +67,10 @@ disk it installed onto and survives into the `--disk` boot.
 
 ## The live system's services
 
-palmframe-live ships `/etc/palm/services/installer` and
+palmy-live ships `/etc/palm/services/installer` and
 `/etc/palm/services/getty-live`. palm-init has no disable mechanism and a
 package cannot remove another package's files (palm runs no scripts), so
-`distro/live/build.sh` **deletes** palmframe-base's `palm-login` and
+`distro/live/build.sh` **deletes** palmy-base's `palm-login` and
 `getty-ttyS0` service files from the live root after palm installs it. On the
 live system `palm verify` would therefore report those two files missing;
 nothing else is touched. (A `disabled = true` key or a mask directory in
@@ -94,10 +94,10 @@ palm-init would let the package do it instead — a nice-to-have for
 ## For install_core / palm-install / the GUI
 
 - **Repository on the medium**: `/usr/share/palm/repo/` flat — `PALMINDEX`,
-  `PALMINDEX.sig` and the `.palm` files of `palmframe`, its dependencies and
+  `PALMINDEX.sig` and the `.palm` files of `palmy`, its dependencies and
   `fonts-cjk` (above). `palm --repo /usr/share/palm/repo` reads it (palm
   falls back to `<base>` when `<base>/x86_64/PALMINDEX` is absent); the key is
-  palmframe-base's `/etc/palm/keys/palmframe.pub`. Checked in the guest:
+  palmy-base's `/etc/palm/keys/palmy.pub`. Checked in the guest:
   `palm --repo /usr/share/palm/repo --no-cache search tzdata` works offline.
 - **Block devices in the guest** (`/sys/block`): `loop0`–`loop7`, `sr0` (the
   ISO on q35's AHCI CD), `vda` (the target, 16777216 sectors for 8G). When the
@@ -107,7 +107,7 @@ palm-init would let the package do it instead — a nice-to-have for
   `limine-bios.sys`, and its tool `/usr/bin/limine` for `limine
   bios-install`) and installed on the live system, which is where
   `boot.odin`'s `limine_dir` fallback finds it. It is not in the default
-  `palmframe` set.
+  `palmy` set.
 - **Firmware**: `LIVE_FIRMWARE` in `build.sh` (one variable) names the
   firmware packages the live root installs and its repository carries;
   `distro/notes/kernel.md` (Firmware) has the decision and the sizes.
@@ -127,16 +127,16 @@ whose first face is Japanese; palmy loads `.ttc` and lists
 the 100 KB subset described above instead, so 日本語 is available there; a
 full Japanese installation ran in QEMU (README, *Installing*).
 
-It is **not** in the default `palmframe` meta-package: every palmy process
+It is **not** in the default `palmy` meta-package: every palmy process
 loads its fallback faces, and 19 MB per process is a lot for a machine that
 never shows a kanji. Suggestion for install_core / the GUI: when the chosen
 language is `ja` (or `zh`/`ko` later), add `fonts-cjk` to `Plan.packages` so
 the installed system can render its own UI language. The package is in the
 repository on the medium, so this works offline.
 
-## Packages added to `palmframe`
+## Packages added to `palmy`
 
-`tzdata` and `palm-locale` are now dependencies of the `palmframe`
+`tzdata` and `palm-locale` are now dependencies of the `palmy`
 meta-package (33 packages installed into the disk image instead of 31;
 `make -C distro image` checked after the change).
 
@@ -156,7 +156,7 @@ meta-package (33 packages installed into the disk image instead of 31;
   everything else had to keep building; their recipes are skipped while the
   binary is missing. A stale binary from an earlier successful build would be
   packaged — the warning says so.
-- `make iso` requires the `palm-install`, `installer` and `palmframe-live`
+- `make iso` requires the `palm-install`, `installer` and `palmy-live`
   packages in the repository and refuses otherwise (or use
   `LIVE_WITHOUT_INSTALLER=1` for a test ISO).
 - `check-libs` now covers the installer binaries too.
@@ -193,7 +193,7 @@ Not done: an actual install from the ISO through to booting the target disk
 
 - palm-login and getty-ttyS0 are now masked through
   `/etc/palm/services.off/` (palm-init, notes/init.md), shipped by
-  palmframe-live; build.sh no longer deletes them.
+  palmy-live; build.sh no longer deletes them.
 - The installer binaries' Makefile rules are fatal again, and their recipes
   always built (no stale packaging).
 - The end-to-end install from the ISO is `distro/live/test-install.py`

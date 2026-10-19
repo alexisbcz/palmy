@@ -3,7 +3,7 @@
 #
 # Taken from the build host rather than built: every Odin binary links the
 # host's glibc, so shipping the same files is what makes them run unchanged.
-# The loader lives in /usr/lib; /lib64 -> usr/lib (palmframe-base) is how the
+# The loader lives in /usr/lib; /lib64 -> usr/lib (palmy-base) is how the
 # ELF interpreter path /lib64/ld-linux-x86-64.so.2 finds it.
 pkgname  = glibc
 pkgver   = 2.44
@@ -14,7 +14,7 @@ url      = https://www.gnu.org/software/libc
 category = System
 icon     = binary
 details  = The C library and the dynamic loader every palmy program links against, copied from the machine that built the distribution so the binaries run unchanged.
-depend   = palmframe-base
+depend   = palmy-base
 provides = so:libc.so.6 so:libm.so.6 so:ld-linux-x86-64.so.2
 
 file     = /usr/lib/libc.so.6 -> /usr/lib/libc.so.6 mode 0755

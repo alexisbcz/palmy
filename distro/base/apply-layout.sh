@@ -1,5 +1,5 @@
 #!/bin/sh
-# Install the palmframe-base skeleton into a root directory:
+# Install the palmy-base skeleton into a root directory:
 #
 #	distro/base/apply-layout.sh <rootdir>
 #
@@ -46,7 +46,7 @@ while read -r kind path a b; do
 	esac
 done < "$here/layout"
 
-# The demo user's home, as the palmframe-demo package makes it on the disk
+# The demo user's home, as the palmy-demo package makes it on the disk
 # image: a copy of /etc/skel owned by palm (1000). The boot tests built on
 # this script log in as palm.
 if [ ! -d "$dest/home/palm" ]; then

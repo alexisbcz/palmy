@@ -370,7 +370,7 @@ cmd_show :: proc(c: ^kit.Call) -> int {
 		}
 		kit.jset(o, "upgradable", ua)
 		if !c.json {
-			fmt.printfln("Palmframe %s, %d packages, %d upgradable", u.system_ver, u.installed, len(u.upgradable))
+			fmt.printfln("Palmy %s, %d packages, %d upgradable", u.system_ver, u.installed, len(u.upgradable))
 		}
 	case "about":
 		a := read_about(context.temp_allocator)

@@ -2,7 +2,7 @@
 # Run once per graphical session, as the user, with the session's
 # environment (XDG_RUNTIME_DIR in particular): the PipeWire daemon, which
 # starts WirePlumber and the PulseAudio server itself
-# (/usr/share/pipewire/pipewire.conf.d/50-palmframe.conf).
+# (/usr/share/pipewire/pipewire.conf.d/50-palmy.conf).
 #
 # Whoever runs /etc/palm/session.d/* (see distro/notes/runtime.md) starts
 # each entry in the background and ends it with the session.

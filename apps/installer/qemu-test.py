@@ -2,7 +2,7 @@
 
     python3 -I apps/installer/qemu-test.py [--lang-only] [--keep]
 
-It boots distro/out/palmframe-live.iso through distro/run-qemu.sh --iso, the
+It boots distro/out/palmy-live.iso through distro/run-qemu.sh --iso, the
 way distro/live/test-boot.py does (whose machinery it reuses), with a blank
 8G scratch qcow2 in distro/build/installer-gui/qemu/ as the target. Then it
 works the installer with QMP key events only, as a person at the keyboard
@@ -215,7 +215,7 @@ def main():
     print("booting the installed disk", flush=True)
     t = TargetMachine(WORK, disk)
     try:
-        ok = t.expect(r"palm-init: Palmframe is starting", 120) is not None
+        ok = t.expect(r"palm-init: Palmy is starting", 120) is not None
         t.check("the installed system starts palm-init", ok, t.buf[-1500:])
         ok = t.expect(r"palm-login", 60) is not None
         time.sleep(8)

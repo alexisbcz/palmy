@@ -37,8 +37,8 @@ selftest :: proc() -> (pass, fail: int) {
 	check(&pass, &fail, !hidden, "NoDisplay entries are left out")
 	_, link := parse_desktop_text("[Desktop Entry]\nType=Link\nName=X\nURL=http://x\n", "/x/l.desktop", "l.desktop", context.temp_allocator)
 	check(&pass, &fail, !link, "a Link is not an application")
-	demo, _ := parse_desktop_text("[Desktop Entry]\nType=Application\nName=Shop\nExec=shop\nCategories=Network;\nX-Palmframe-Demo=true\n", "/x/shop.desktop", "shop.desktop", context.temp_allocator)
-	check(&pass, &fail, demo.demo && demo.cat == .Demo, "X-Palmframe-Demo puts an entry with the demos")
+	demo, _ := parse_desktop_text("[Desktop Entry]\nType=Application\nName=Shop\nExec=shop\nCategories=Network;\nX-Palmy-Demo=true\n", "/x/shop.desktop", "shop.desktop", context.temp_allocator)
+	check(&pass, &fail, demo.demo && demo.cat == .Demo, "X-Palmy-Demo puts an entry with the demos")
 
 	term, _ := parse_desktop_text("[Desktop Entry]\nType=Application\nName=Terminal\nExec=term\nIcon=square-terminal\nCategories=System;TerminalEmulator;\n", "/x/term.desktop", "term.desktop", context.temp_allocator)
 	htop, _ := parse_desktop_text("[Desktop Entry]\nType=Application\nName=Top\nExec=term -e top\nCategories=System;\n", "/x/top.desktop", "top.desktop", context.temp_allocator)

@@ -1,6 +1,6 @@
 # Accounts: what is built, and the plan for the rest
 
-One Palmframe account (a Supabase auth user) owns several identities
+One Palmy account (a Supabase auth user) owns several identities
 (`public.identities`). This note records how the account side works today and
 designs, without building, the parts that are not there yet: recovery,
 passkeys, two-step verification, where the backend runs, and signing in to the
@@ -75,7 +75,7 @@ starts from what must not happen: recovery must not be easier than signing in,
 and it must not route through an identity's own mail, because the person may
 have lost exactly that identity (a job ends; the work mailbox goes with it).
 
-- **Recovery email outside Palmframe.** The account's GoTrue email is the
+- **Recovery email outside Palmy.** The account's GoTrue email is the
   recovery address and is deliberately *not* one of the identities'
   `@palm.test` addresses; sign-up asks for an outside address. GoTrue's
   `/recover` sends the link. This is the baseline and needs only SMTP
@@ -84,7 +84,7 @@ have lost exactly that identity (a job ends; the work mailbox goes with it).
   verification is enrolled, shown once, stored hashed (argon2id) in an
   account-level table only a security-definer function reads. A code replaces
   the second factor, never the password.
-- **A recovery contact.** Another Palmframe account the person names in
+- **A recovery contact.** Another Palmy account the person names in
   advance. A recovery request notifies the person on every live session and
   waits (72 hours by default) before the contact can approve it; the person
   can cancel from any session in that window. This is the answer for someone
@@ -102,7 +102,7 @@ plan is:
 
 - **Security keys** over CTAP2 on `hidraw`: a small Odin implementation of the
   CTAP2 `makeCredential`/`getAssertion` exchange, beside cloudkit. The
-  relying-party id is the account domain (`palmframe.org` or the self-hosted
+  relying-party id is the account domain (`palmy.org` or the self-hosted
   one), never `localhost`.
 - **A platform passkey** for the machine itself: a key generated in the TPM
   (`/dev/tpmrm0`) when present, otherwise in the vault app's store sealed by
@@ -218,7 +218,7 @@ underneath it, offline-first:
   offer "Sign in with this machine's key": an assertion verified locally
   against the bound public key unlocks the session offline, and against
   GoTrue online. This is the end state; the password path comes first.
-- **First boot.** The installer offers "Sign in with a Palmframe account",
+- **First boot.** The installer offers "Sign in with a Palmy account",
   creates the local user from the account (name from the personal identity,
   login name from its handle) and does the binding in one step.
 - **What the greeter itself never does:** it never holds a token. It runs as

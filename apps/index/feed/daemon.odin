@@ -239,7 +239,7 @@ daemon_discover :: proc(d: ^Daemon) {
 		}
 		watch_add(d, fmt.tprintf("%s/%s", d.paths.index, x.handle), Watch{handle = strings.clone(x.handle), index = true})
 	}
-	// Parents: a new identity folder, a Maildir swap, palmframe.conf.
+	// Parents: a new identity folder, a Maildir swap, palmy.conf.
 	for dir in ([?]string{d.paths.mail, d.paths.drive, d.paths.notes, d.paths.dav, d.paths.browser, d.paths.track}) {
 		if os.is_dir(dir) {
 			watch_add(d, dir, Watch{root = true})

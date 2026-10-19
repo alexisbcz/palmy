@@ -16,7 +16,7 @@
 //	e2e <dirA> <handleA> <dirB> <handleB>
 //
 // The sync server is PALM_COLLAB_URL (ws://127.0.0.1:8790), the database
-// PALM_CLOUD_URL, as for every Palmframe program.
+// PALM_CLOUD_URL, as for every Palmy program.
 package main
 
 import "core:encoding/base64"

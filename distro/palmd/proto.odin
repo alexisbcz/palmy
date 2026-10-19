@@ -7,7 +7,7 @@ package palmd
 //	  payload:        a UTF-8 JSON object
 //
 // The framing is greetd-ipc(7)'s, the same palm-login speaks
-// (distro/login/ipc.odin) and apps/greeter reads, so Palmframe has one way of
+// (distro/login/ipc.odin) and apps/greeter reads, so Palmy has one way of
 // talking to a root daemon over a unix socket rather than two.
 //
 // Requests:

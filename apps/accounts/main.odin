@@ -1,4 +1,4 @@
-// Accounts — one Palmframe account, several identities.
+// Accounts — one Palmy account, several identities.
 //
 // The window and the command line (cli.odin) are two front ends over the same
 // procedures in this file, which are themselves thin: everything that talks to
@@ -233,7 +233,7 @@ say :: proc(st: ^St, msg: string, bad := false) {
 err_text :: proc(e: ck.Error) -> string {
 	switch e.kind {
 	case .Unavailable:
-		return kit.tr("The Palmframe cloud is not reachable.")
+		return kit.tr("The Palmy cloud is not reachable.")
 	case .Unauthorized:
 		if e.code == "invalid_credentials" {
 			return kit.tr("That email and password do not match.")

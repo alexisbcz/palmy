@@ -130,10 +130,10 @@ shot_model :: proc() -> ^Model {
 		upgradable = SHOT_UPGRADES[:],
 	}
 	m.about = About {
-		os_name      = "Palmframe",
+		os_name      = "Palmy",
 		os_version   = "0.1.0",
 		hostname     = "camille-laptop",
-		kernel       = "6.18.4-palmframe",
+		kernel       = "6.18.4-palmy",
 		cpu          = "AMD Ryzen 7 7840U w/ Radeon 780M Graphics",
 		cores        = 16,
 		mem_total_kb = 32 * 1024 * 1024,

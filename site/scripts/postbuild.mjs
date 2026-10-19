@@ -24,7 +24,7 @@ import satori from "satori";
 
 const require = createRequire(import.meta.url);
 const CLIENT = join(process.cwd(), "build", "client");
-const SITE_URL = (process.env.VITE_SITE_URL ?? "https://palmframe-os.vercel.app").replace(/\/$/, "");
+const SITE_URL = (process.env.VITE_SITE_URL ?? "https://palmy-os.vercel.app").replace(/\/$/, "");
 const SKIP_OG = process.argv.includes("--no-og");
 
 /* -------------------------------------------------------------------------- */
@@ -49,9 +49,9 @@ const GROUPS = [
   ["/reference/", "palmy"],
   ["/components", "Components"],
   ["/apps", "Applications"],
-  ["/palmframe/", "Vision"],
+  ["/vision/", "Vision"],
 ];
-const groupOf = (path) => GROUPS.find(([p]) => path.startsWith(p))?.[1] ?? "Palmframe";
+const groupOf = (path) => GROUPS.find(([p]) => path.startsWith(p))?.[1] ?? "Palmy";
 
 const text = (n) =>
   n.type === "text" ? n.value : n.children ? n.children.map(text).join("") : "";
@@ -166,7 +166,7 @@ const h = (type, style, ...children) => ({
 });
 
 function card({ path, h1, description }) {
-  const eyebrow = path === "/" ? "palmframe-os.vercel.app" : groupOf(path);
+  const eyebrow = path === "/" ? "palmy-os.vercel.app" : groupOf(path);
   const desc = description.length > 150 ? description.slice(0, 147).replace(/\s+\S*$/, "") + "…" : description;
   return h(
     "div",
@@ -201,7 +201,7 @@ function card({ path, h1, description }) {
         },
         "P",
       ),
-      h("div", { fontSize: "28px", fontWeight: 600 }, "Palmframe"),
+      h("div", { fontSize: "28px", fontWeight: 600 }, "Palmy"),
       h("div", { fontSize: "26px", color: "#a1a1aa", marginLeft: "8px" }, eyebrow),
       h("div", { fontSize: "22px", color: "#71717a", marginLeft: "auto" }, "github.com/alexisbcz/palmy"),
     ),

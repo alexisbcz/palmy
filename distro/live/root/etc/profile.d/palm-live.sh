@@ -2,7 +2,7 @@
 if [ -t 1 ]; then
 	cat <<'HINT'
 
-  This is the Palmframe live system. Everything here runs from RAM.
+  This is the Palmy live system. Everything here runs from RAM.
 
   The graphical installer is on the screen. From this console:
     palm-install                      install from here: it asks each question

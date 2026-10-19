@@ -17,7 +17,7 @@ Owner of this file: the agent that built `apps/store/` and `distro/palmd/`.
   JSON; `download_size` and `size_change` in a plan; JSON progress lines on
   stderr under `--json`. 520 selftest assertions.
 - **Packaging**: recipes `palmd` (hand-written) and `store` (generated); both
-  in `palmframe`; every recipe has a category, icon and details.
+  in `palmy`; every recipe has a category, icon and details.
 - **wm**: `SUPER+S` spawns `store` in the built-in config.
 
 ## Decisions
@@ -43,7 +43,7 @@ Owner of this file: the agent that built `apps/store/` and `distro/palmd/`.
   worse than one nobody watches.
 - **The log** is palmd's stderr, which palm-init writes to
   `/var/log/palmd.log` (`--log` overrides).
-- **Software never removes the system.** `palmframe`, `palmframe-base`, palm,
+- **Software never removes the system.** `palmy`, `palmy-base`, palm,
   palmd, glibc, busybox, linux, palm-init and palm-login have no Remove; a
   dependency something still needs shows who needs it instead.
 - **Unprivileged palm and the index cache.** palm as a user reads
@@ -79,9 +79,9 @@ guest's `/etc/palm/repositories` pointed at it over the serial console):
   (`qemu-01-discover.png`, `qemu-02/03-installed*.png`).
 - Install track from Discover: palmd's plan (track 0.1.0, download 561 kB,
   disk +1.4 MB) → Install → `track is installed`; `/usr/bin/track` existed and
-  `/etc/palm/world` held `palmframe track` (`qemu-04..07`). Its page listed
+  `/etc/palm/world` held `palmy track` (`qemu-04..07`). Its page listed
   `/usr/bin/track` from `palm info -L` (`qemu-08`). Remove → plan → confirm →
-  removed; `/usr/bin/track` gone, world back to `palmframe` (`qemu-09/10`).
+  removed; `/usr/bin/track` gone, world back to `palmy` (`qemu-09/10`).
 - Live search "emoji" → install fonts-emoji, with palm's progress in the
   dialog, "Installing fonts-emoji 0.1.0, 2 of 2" (`qemu-12..15`).
 - A calc 0.1.1 published on the host: *Check for updates* (palmd update) found

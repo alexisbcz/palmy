@@ -116,7 +116,7 @@ No static archive is published. automerge-c needs Cargo ≥ Rust 1.90, CMake ≥
 3.25, CMocka, Doxygen, Ninja and cbindgen, and its generated header "is
 generated in terms of the processor architecture" it was built on
 ([automerge-c README](https://github.com/automerge/automerge/blob/main/rust/automerge-c/README.md)).
-Palmframe's plan is Windows, macOS, Android, iOS and a WebAssembly build of
+Palmy's plan is Windows, macOS, Android, iOS and a WebAssembly build of
 the same binaries. Each target would need a Rust cross-build, and linking a
 Rust wasm32 static library into an Odin wasm module is not something either
 project documents. The Odin CRDT is ~1,700 lines, compiles with the app on
@@ -152,7 +152,7 @@ before anything used it (§9). It found two real divergence bugs while being
 written (a merged run inheriting a delete stamp; the search-marker cache) and
 nothing since.
 
-**Interop** is not a reason for Yjs here: Palmframe's other clients are the
+**Interop** is not a reason for Yjs here: Palmy's other clients are the
 same Odin code compiled elsewhere, and interchange with the rest of the world
 happens through `.docx`/`.xlsx`/`.pptx`/ODF, not through CRDT wire formats.
 
@@ -538,7 +538,7 @@ shape for it.
    collab grants as the document-level sharing and drive shares at folder
    level. Needs DRIVE's agreement.
 3. **May an *editor* re-share?** Today only the owning identity grants. Google
-   lets editors share by default; Palmframe's principle of deliberate
+   lets editors share by default; Palmy's principle of deliberate
    crossings argues for keeping it owner-only.
 4. **History retention.** Today the log is kept forever. Proposed: keep every
    update for 30 days, then only snapshots (hourly, then daily) and named

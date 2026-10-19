@@ -2,9 +2,9 @@
 # More URLs on the same line are mirrors of that repository, tried in order;
 # packages come from the mirror that served the index, then from the others.
 #
-# The public Palmframe repository (distro/repo-publish), signed with
-# /etc/palm/keys/palmframe-release.pub: Vercel first, GitHub Releases as the
+# The public Palmy repository (distro/repo-publish), signed with
+# /etc/palm/keys/palmy-release.pub: Vercel first, GitHub Releases as the
 # mirror. To use the repository a checkout builds instead, serve it with
 # `make -C distro serve` on the host and replace this line with
 # http://10.0.2.2:8080/x86_64 (the host as QEMU's user network shows it).
-https://palmframe-packages.vercel.app/x86_64 https://github.com/alexisbcz/palmframe-packages/releases/download/x86_64
+https://palmy-packages.vercel.app/x86_64 https://github.com/alexisbcz/palmy-packages/releases/download/x86_64

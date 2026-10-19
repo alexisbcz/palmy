@@ -2,7 +2,7 @@ package auth
 
 // The three account databases: /etc/passwd, /etc/shadow, /etc/group.
 //
-// There is no NSS here and no PAM. Palmframe's accounts are flat files and
+// There is no NSS here and no PAM. Palmy's accounts are flat files and
 // palm-login, doas and passwd read them directly, the same way busybox's
 // login does. The parsers take the text rather than a path so the selftests
 // can feed them fixtures, and so --test modes can point at files the
@@ -315,7 +315,7 @@ stored_hash :: proc(c: Credentials) -> string {
 
 // DUMMY_HASH is what an unknown user's attempt is checked against, so it
 // costs the same time as a real one.
-DUMMY_HASH :: "$6$palmframe$Bx42s72Foe9Q131t36Vl6afUo26skw/rGH.Gh2.1sxjLqcF/K29Hy0bvYDGyHaLynMyqorU41mNCDjhXf2q.T."
+DUMMY_HASH :: "$6$palmy$Bx42s72Foe9Q131t36Vl6afUo26skw/rGH.Gh2.1sxjLqcF/K29Hy0bvYDGyHaLynMyqorU41mNCDjhXf2q.T."
 
 // check_password is the whole of "is this the password?". An unknown user,
 // a locked account, a missing shadow entry and a wrong password all answer

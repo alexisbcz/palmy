@@ -1,4 +1,4 @@
-// `mail --selftest`, the Palmframe part.
+// `mail --selftest`, the Palmy part.
 package main
 
 import "core:fmt"
@@ -6,11 +6,11 @@ import "core:os"
 import "core:strings"
 import "core:time"
 
-// test_palmframe reads a palmframe.conf the way `mailcore palm sync` writes it
+// test_palmy reads a palmy.conf the way `mailcore palm sync` writes it
 // and checks the views: one identity at a time by default, all of them on 0,
 // and the prototype unified inbox only behind its toggle — and never a
 // message from one identity listed under another.
-test_palmframe :: proc() {
+test_palmy :: proc() {
 	dir := fmt.tprintf("%s/selftest-palm", default_data_dir(context.temp_allocator))
 	remove_tree(dir)
 	os.make_directory_all(dir)
@@ -54,8 +54,8 @@ test_palmframe :: proc() {
 	st.reader_msg = -1
 	st.now = time.now()
 	load_config(st)
-	eq_int(len(st.accounts), 2, "palmframe.conf gives two identities, the unsafe third is dropped, no built-in test accounts")
-	eq_int(palm_identities(st), 2, "both are Palmframe identities")
+	eq_int(len(st.accounts), 2, "palmy.conf gives two identities, the unsafe third is dropped, no built-in test accounts")
+	eq_int(palm_identities(st), 2, "both are Palmy identities")
 	eq_str(st.palm_email, "alice@example.test", "the signed-in account")
 	if len(st.accounts) < 2 {
 		return
@@ -120,7 +120,7 @@ test_palmframe :: proc() {
 	for f, fi in st.folders {
 		if f.role == .Outbox && f.account == 1 {
 			select_folder(st, fi)
-			ok(palm_outbox(st), "a Palmframe Outbox is recognised, so its banner shows")
+			ok(palm_outbox(st), "a Palmy Outbox is recognised, so its banner shows")
 			found = true
 		}
 	}

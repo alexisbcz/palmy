@@ -1,10 +1,10 @@
 package login
 
-// palm-login — Palmframe's login daemon.
+// palm-login — Palmy's login daemon.
 //
 // It is greetd, as far as a greeter can tell: the greetd IPC protocol on a
 // unix socket (ipc.odin), so apps/greeter talks to it unchanged. Behind the
-// socket it is much smaller than greetd, because Palmframe has no PAM, no
+// socket it is much smaller than greetd, because Palmy has no PAM, no
 // logind and no NSS: passwords are checked against /etc/shadow with SHA-512
 // crypt implemented here (crypt.odin, accounts.odin), and a session is a
 // fork that drops to the user (session.odin).

@@ -1,7 +1,7 @@
 // Who an identity is, as far as this device knows: its display name and its
 // colour, so a toast can say "● Northwind" in Northwind's blue.
 //
-// The registry is $XDG_CONFIG_HOME/palmframe/identities.json, the same seam
+// The registry is $XDG_CONFIG_HOME/palmy/identities.json, the same seam
 // apps/browser reads (profile.odin: registry_color):
 //
 //	[{"handle": "camille.roux", "name": "Northwind", "color": "blue"}, ...]
@@ -33,7 +33,7 @@ identities_path :: proc() -> string {
 	if cfg == "" {
 		cfg = fmt.tprintf("%s/.config", os.get_env("HOME", context.temp_allocator))
 	}
-	return fmt.tprintf("%s/palmframe/identities.json", cfg)
+	return fmt.tprintf("%s/palmy/identities.json", cfg)
 }
 
 identities_reload :: proc() {

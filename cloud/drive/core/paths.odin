@@ -72,7 +72,7 @@ human_size :: proc(n: i64) -> string {
 	return fmt.tprintf("%.2f GB", f64(n) / 1e9)
 }
 
-// app_for names the Palmframe application that opens a file, by extension.
+// app_for names the Palmy application that opens a file, by extension.
 // "" means none of ours does; the caller falls back to xdg-open.
 app_for :: proc(name: string) -> string {
 	dot := strings.last_index_byte(name, '.')

@@ -1,9 +1,9 @@
 package palmd
 
-// palmd -- the one thing in Palmframe that changes the system for a user.
+// palmd -- the one thing in Palmy that changes the system for a user.
 //
 // Software (apps/store) runs as the user who logged in, and installing a
-// package needs root. Palmframe has no polkit, no D-Bus and no working su
+// package needs root. Palmy has no polkit, no D-Bus and no working su
 // (busybox is not setuid), so instead there is this: a small root daemon,
 // started by palm-init from /etc/palm/services/palmd, that listens on
 // /run/palmd.sock and runs palm on behalf of root and of group wheel.

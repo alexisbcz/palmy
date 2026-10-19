@@ -1,6 +1,6 @@
 package main
 
-// installer — Palmframe's graphical installer.
+// installer — Palmy's graphical installer.
 //
 // The live system starts it as root inside `wm --drm --kiosk --exec
 // installer` (INSTALLER.md). It walks a person through eight pages —
@@ -16,7 +16,7 @@ package main
 //
 //   - real: the disks, layouts and zones come from install_core, the keyboard
 //     page switches the compositor's layout, and Install erases the chosen
-//     disk. Only as root on a Palmframe system (/etc/palm/keys exists).
+//     disk. Only as root on a Palmy system (/etc/palm/keys exists).
 //     --dry-run keeps everything real except the install itself, which the
 //     core then only describes (Options.dry_run): for trying the real disk
 //     list and keyboard switching inside QEMU without writing the disk.
@@ -92,8 +92,8 @@ main :: proc() {
 	}
 
 	cfg := p.Config {
-		title      = "Install Palmframe",
-		app_id     = "palmframe-installer",
+		title      = "Install Palmy",
+		app_id     = "palmy-installer",
 		width      = 1280,
 		height     = 800,
 		min_width  = 960,
@@ -117,7 +117,7 @@ main :: proc() {
 }
 
 // choose_mode returns true for demo. Real mode needs all of: no --demo, root,
-// and a Palmframe system underneath. A developer who runs the binary on
+// and a Palmy system underneath. A developer who runs the binary on
 // their own desktop, even as root, gets the demo.
 choose_mode :: proc(want_demo: bool) -> bool {
 	if want_demo {
@@ -128,7 +128,7 @@ choose_mode :: proc(want_demo: bool) -> bool {
 		return true
 	}
 	if !os.exists("/etc/palm/keys") {
-		fmt.eprintln("installer: this is not a Palmframe system; starting in demo mode (nothing will be changed)")
+		fmt.eprintln("installer: this is not a Palmy system; starting in demo mode (nothing will be changed)")
 		return true
 	}
 	return false

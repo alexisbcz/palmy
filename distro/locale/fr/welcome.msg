@@ -1,4 +1,4 @@
-# Palmframe's first run (apps/welcome) — French. Typography: the narrow spaces before : ; ? ! are ordinary spaces, as in installer.msg.
+# Palmy's first run (apps/welcome) — French. Typography: the narrow spaces before : ; ? ! are ordinary spaces, as in installer.msg.
 # Format: distro/locale/README.md. Installed as
 # /usr/share/palm/locale/fr/welcome.msg.
 #
@@ -9,17 +9,17 @@ name      = Français
 english   = French
 plural    = n > 1
 
-msgid "Welcome to Palmframe"
-msgstr "Bienvenue dans Palmframe"
+msgid "Welcome to Palmy"
+msgstr "Bienvenue dans Palmy"
 
-msgid "Use Palmframe with an account?"
-msgstr "Utiliser Palmframe avec un compte ?"
+msgid "Use Palmy with an account?"
+msgstr "Utiliser Palmy avec un compte ?"
 
 msgid "You are signed in"
 msgstr "Vous êtes connecté"
 
-msgid "Create your Palmframe account"
-msgstr "Créez votre compte Palmframe"
+msgid "Create your Palmy account"
+msgstr "Créez votre compte Palmy"
 
 msgid "Sign in to your account"
 msgstr "Connectez-vous à votre compte"
@@ -51,8 +51,8 @@ msgstr "Quelques choix, tous facultatifs. Rien n’est configuré sans votre acc
 msgid "Everything on this computer works without one. An account adds identities, and keeps each of them in sync across your devices."
 msgstr "Tout fonctionne sur cet ordinateur sans compte. Un compte ajoute des identités et les garde synchronisées entre vos appareils."
 
-msgid "Your email is how you sign in and how you get back in if you forget the password. Use an address outside Palmframe."
-msgstr "Votre adresse e-mail sert à vous connecter, et à revenir si vous oubliez le mot de passe. Utilisez une adresse extérieure à Palmframe."
+msgid "Your email is how you sign in and how you get back in if you forget the password. Use an address outside Palmy."
+msgstr "Votre adresse e-mail sert à vous connecter, et à revenir si vous oubliez le mot de passe. Utilisez une adresse extérieure à Palmy."
 
 msgid "One account, several selves: personal, work, public, a project. Each has its own address, its own data and its own colour, and nothing passes between them unless you carry it."
 msgstr "Un compte, plusieurs facettes : personnelle, professionnelle, publique, un projet. Chacune a son adresse, ses données et sa couleur, et rien ne passe de l’une à l’autre sans que vous le transportiez."
@@ -60,8 +60,8 @@ msgstr "Un compte, plusieurs facettes : personnelle, professionnelle, publique, 
 msgid "Choose per identity. Each one syncs on its own session, so what one identity holds is never visible to another."
 msgstr "Choisissez pour chaque identité. Chacune se synchronise avec sa propre session : ce qu’une identité contient n’est jamais visible d’une autre."
 
-msgid "This is the only copy of your Secret Key outside this computer. Without it and your master password, nobody can open your vault: not Palmframe, and not you on a new computer."
-msgstr "C’est la seule copie de votre clé secrète hors de cet ordinateur. Sans elle et sans votre mot de passe principal, personne ne peut ouvrir votre coffre : ni Palmframe, ni vous sur un nouvel ordinateur."
+msgid "This is the only copy of your Secret Key outside this computer. Without it and your master password, nobody can open your vault: not Palmy, and not you on a new computer."
+msgstr "C’est la seule copie de votre clé secrète hors de cet ordinateur. Sans elle et sans votre mot de passe principal, personne ne peut ouvrir votre coffre : ni Palmy, ni vous sur un nouvel ordinateur."
 
 msgid "Passwords are encrypted on this computer before they leave it. Two things unlock them: a master password you remember, and a Secret Key this computer keeps."
 msgstr "Les mots de passe sont chiffrés sur cet ordinateur avant de le quitter. Deux choses les déverrouillent : un mot de passe principal dont vous vous souvenez, et une clé secrète que garde cet ordinateur."
@@ -147,11 +147,11 @@ msgstr "Saisissez votre nom."
 msgid "Your first identity is named after you. You can change it on the next page."
 msgstr "Votre première identité porte votre nom. Vous pourrez le changer à la page suivante."
 
-msgid "Your recovery address. Mail at Palmframe addresses comes later, per identity."
-msgstr "Votre adresse de récupération. Le courrier à des adresses Palmframe vient ensuite, identité par identité."
+msgid "Your recovery address. Mail at Palmy addresses comes later, per identity."
+msgstr "Votre adresse de récupération. Le courrier à des adresses Palmy vient ensuite, identité par identité."
 
-msgid "This is a Palmframe address. If you lose that identity, you lose your way back in: an outside address is safer."
-msgstr "C’est une adresse Palmframe. Si vous perdez cette identité, vous perdez aussi le moyen de revenir : une adresse extérieure est plus sûre."
+msgid "This is a Palmy address. If you lose that identity, you lose your way back in: an outside address is safer."
+msgstr "C’est une adresse Palmy. Si vous perdez cette identité, vous perdez aussi le moyen de revenir : une adresse extérieure est plus sûre."
 
 msgid "Email"
 msgstr "E-mail"
@@ -180,8 +180,8 @@ msgstr "Serveur"
 msgid "Change"
 msgstr "Modifier"
 
-msgid "The address of a Palmframe server. Ask whoever runs yours."
-msgstr "L’adresse d’un serveur Palmframe. Demandez-la à qui gère le vôtre."
+msgid "The address of a Palmy server. Ask whoever runs yours."
+msgstr "L’adresse d’un serveur Palmy. Demandez-la à qui gère le vôtre."
 
 msgid "Use this server"
 msgstr "Utiliser ce serveur"
@@ -321,8 +321,8 @@ msgstr "Une clé secrète et un mot de passe principal protègent tout le compte
 msgid "Chosen for:"
 msgstr "Choisi pour :"
 
-msgid "Palmframe Emergency Kit"
-msgstr "Kit de secours Palmframe"
+msgid "Palmy Emergency Kit"
+msgstr "Kit de secours Palmy"
 
 msgid "Account"
 msgstr "Compte"
@@ -339,8 +339,8 @@ msgstr "Enregistrer le kit de secours"
 msgid "I have saved my Emergency Kit somewhere safe"
 msgstr "J’ai mis mon kit de secours en lieu sûr"
 
-msgid "Palmframe cannot recover your vault for you. That is what makes it yours."
-msgstr "Palmframe ne peut pas récupérer votre coffre à votre place. C’est ce qui le rend vraiment vôtre."
+msgid "Palmy cannot recover your vault for you. That is what makes it yours."
+msgstr "Palmy ne peut pas récupérer votre coffre à votre place. C’est ce qui le rend vraiment vôtre."
 
 msgid "A session for this identity on this computer"
 msgstr "Une session pour cette identité sur cet ordinateur"
@@ -456,8 +456,8 @@ msgstr "Fermer la fenêtre"
 msgid "Every shortcut"
 msgstr "Tous les raccourcis"
 
-msgid "Palmframe is ready"
-msgstr "Palmframe est prêt"
+msgid "Palmy is ready"
+msgstr "Palmy est prêt"
 
 msgid "Signed in as %s."
 msgstr "Connecté en tant que %s."
@@ -465,8 +465,8 @@ msgstr "Connecté en tant que %s."
 msgid "Everything stays on this computer. You can add an account whenever you like."
 msgstr "Tout reste sur cet ordinateur. Vous pourrez ajouter un compte quand vous voudrez."
 
-msgid "Start using Palmframe"
-msgstr "Commencer à utiliser Palmframe"
+msgid "Start using Palmy"
+msgstr "Commencer à utiliser Palmy"
 
 msgid "To see this again:"
 msgstr "Pour revoir ceci :"
@@ -555,8 +555,8 @@ msgstr "Deux identités ne peuvent pas avoir le même identifiant."
 msgid "Saved. Print it, or copy it somewhere only you can reach, then delete the files."
 msgstr "Enregistré. Imprimez-le ou copiez-le là où vous seul avez accès, puis supprimez les fichiers."
 
-msgid "The Palmframe server is not reachable. Check the address, or continue without an account."
-msgstr "Le serveur Palmframe est injoignable. Vérifiez l’adresse, ou continuez sans compte."
+msgid "The Palmy server is not reachable. Check the address, or continue without an account."
+msgstr "Le serveur Palmy est injoignable. Vérifiez l’adresse, ou continuez sans compte."
 
 msgid "That email and password do not match."
 msgstr "Cette adresse e-mail et ce mot de passe ne correspondent pas."
@@ -624,8 +624,8 @@ msgstr "Pour ouvrir votre coffre sur un nouvel ordinateur, il vous faut cette cl
 msgid "Keep this page somewhere safe: a drawer, a safe, with your passport. Then delete this file."
 msgstr "Gardez cette page en lieu sûr : un tiroir, un coffre, avec votre passeport. Supprimez ensuite ce fichier."
 
-msgid "Palmframe cannot recover either of them for you."
-msgstr "Palmframe ne peut récupérer ni l’un ni l’autre à votre place."
+msgid "Palmy cannot recover either of them for you."
+msgstr "Palmy ne peut récupérer ni l’un ni l’autre à votre place."
 
 msgid "Choose a handle."
 msgstr "Choisissez un identifiant."

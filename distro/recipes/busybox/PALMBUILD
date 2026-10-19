@@ -13,10 +13,10 @@ url      = https://busybox.net
 category = System
 icon     = terminal
 details  = The shell and the command-line userland in one statically linked program: sh, the coreutils, mount, getty and login, udhcpc, syslogd and vi, each a link to the same binary.
-depend   = palmframe-base
+depend   = palmy-base
 provides = cmd:sh
 
-file     = ${PALMFRAME_OUT}/busybox -> /usr/bin/busybox mode 0755
+file     = ${PALMY_OUT}/busybox -> /usr/bin/busybox mode 0755
 symlink  = /usr/bin/[ -> busybox
 symlink  = /usr/bin/[[ -> busybox
 symlink  = /usr/bin/acpid -> busybox

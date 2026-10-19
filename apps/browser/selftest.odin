@@ -477,8 +477,8 @@ test_autofill :: proc(t: ^T, home: string) {
 
 	// the identity handle: from identities.json when it names the profile
 	cfg := fmt.tprintf("%s/config", home)
-	os.make_directory_all(fmt.tprintf("%s/palmframe", cfg))
-	_ = os.write_entire_file(fmt.tprintf("%s/palmframe/identities.json", cfg), transmute([]u8)string(`[{"handle": "alice-w", "name": "work", "color": "#d97706"}, {"handle": "alice"}]`))
+	os.make_directory_all(fmt.tprintf("%s/palmy", cfg))
+	_ = os.write_entire_file(fmt.tprintf("%s/palmy/identities.json", cfg), transmute([]u8)string(`[{"handle": "alice-w", "name": "work", "color": "#d97706"}, {"handle": "alice"}]`))
 	saved := strings.clone(os.get_env("XDG_CONFIG_HOME", context.temp_allocator), context.temp_allocator)
 	os.set_env("XDG_CONFIG_HOME", cfg)
 	check(t, identity_handle("work", context.temp_allocator) == "alice-w", "a profile named for an identity uses its handle")

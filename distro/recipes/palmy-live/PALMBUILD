@@ -6,7 +6,7 @@
 # serial port. Only distro/live/build.sh installs it; it never goes onto an
 # installed disk.
 #
-# It does not depend on `palmframe`: the applications, the greeter and
+# It does not depend on `palmy`: the applications, the greeter and
 # palm-login are installed onto the new disk from the repository copy that
 # distro/live/build.sh puts in /usr/share/palm/repo, and running them on the
 # live system would only take RAM. Nor on fonts-cjk: its 19 MB collection is
@@ -19,15 +19,15 @@
 #
 # /init is what the kernel runs from an initramfs; it is palm-init, as
 # /sbin/init is on a disk.
-pkgname  = palmframe-live
+pkgname  = palmy-live
 pkgver   = 0.1.0
 pkgrel   = 1
-pkgdesc  = The Palmframe live installer system (services and session)
+pkgdesc  = The Palmy live installer system (services and session)
 license  = MIT AND OFL-1.1
-depend   = palmframe-base linux busybox glibc palm-init palm
+depend   = palmy-base linux busybox glibc palm-init palm
 depend   = palmy-wm fonts libxkbcommon xkeyboard-config tzdata palm-locale term
 depend   = palm-install installer e2fsprogs dosfstools limine
 
-tree     = ${PALMFRAME_ROOT}/distro/live/root/etc -> /etc
-tree     = ${PALMFRAME_ROOT}/distro/live/root/usr -> /usr
+tree     = ${PALMY_ROOT}/distro/live/root/etc -> /etc
+tree     = ${PALMY_ROOT}/distro/live/root/usr -> /usr
 symlink  = /init -> usr/bin/palm-init

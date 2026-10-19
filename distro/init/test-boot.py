@@ -159,26 +159,26 @@ def scenario_login(args):
     m = Machine(args, "login", "console=ttyS0 rdinit=/sbin/init panic=-1 quiet")
     try:
         t0 = time.time()
-        m.expect(r"palm-init: Palmframe is starting", 30, "palm-init announces itself")
+        m.expect(r"palm-init: Palmy is starting", 30, "palm-init announces itself")
         m.check("palm-init runs as PID 1", True)
         m.check("early mounts", m.expect(r"palm-init: mounted /proc /sys /dev", 10) is not None)
         m.check("early hooks run", m.expect(r"palm-init: early hook 20-order done", 10) is not None)
         m.check("coldplug", m.expect(r"palm-init: device permissions set on \d+ nodes", 10) is not None)
-        m.check("hostname set", m.expect(r"palm-init: hostname palmframe", 10) is not None)
+        m.check("hostname set", m.expect(r"palm-init: hostname palmy", 10) is not None)
         m.check("lo up", m.expect(r"palm-init: lo up", 10) is not None)
         m.check("getty started", m.expect(r"palm-init: started getty-ttyS0", 10) is not None)
-        m.expect(r"palmframe login: ", 30, "login prompt on ttyS0", must=True)
+        m.expect(r"palmy login: ", 30, "login prompt on ttyS0", must=True)
         m.check("login prompt on ttyS0", True)
         print(f"  ....  login prompt after {time.time() - t0:.1f}s")
 
         m.send("root")
         m.check("password prompt", m.expect(r"Password: ", 10) is not None)
         m.send("palm")
-        m.expect(r"root@palmframe[^\n]*# ", 15, "root shell after login", must=True)
+        m.expect(r"root@palmy[^\n]*# ", 15, "root shell after login", must=True)
         m.check("root shell after login", True)
 
         out = m.run("id -u; hostname; readlink /proc/1/exe")
-        m.check("logged in as root on palmframe, PID 1 is palm-init", out.split() == ["0", "palmframe", "/usr/bin/palm-init"], out)
+        m.check("logged in as root on palmy, PID 1 is palm-init", out.split() == ["0", "palmy", "/usr/bin/palm-init"], out)
 
         out = m.run("cut -d' ' -f2,3 /proc/mounts")
         need = ["/proc proc", "/sys sysfs", "/dev devtmpfs", "/dev/pts devpts", "/dev/shm tmpfs", "/run tmpfs", "/tmp tmpfs"]
@@ -278,7 +278,7 @@ def scenario_single(args):
     m = Machine(args, "single", "console=ttyS0 rdinit=/sbin/init panic=-1 quiet palm.single palm.autologin=palm")
     try:
         m.check("single mode announced", m.expect(r"palm-init: palm.single: a root shell on /dev/ttyS0", 30) is not None)
-        m.expect(r"root@palmframe[^\n]*# ", 20, "root shell without login", must=True)
+        m.expect(r"root@palmy[^\n]*# ", 20, "root shell without login", must=True)
         m.check("root shell without login", True)
         out = m.run("id -u; ls /var/log; ps -o comm | grep -c getty || true")
         m.check("no services started in single mode", out.split()[-1] == "0", out)
@@ -297,7 +297,7 @@ def scenario_single(args):
     m = Machine(args, "autologin", "console=ttyS0 rdinit=/sbin/init panic=-1 quiet palm.autologin=palm")
     try:
         m.check("autologin noted", m.expect(r"palm-init: palm.autologin=palm passed to services", 30) is not None)
-        m.expect(r"palmframe login: ", 30, "login prompt", must=True)
+        m.expect(r"palmy login: ", 30, "login prompt", must=True)
         m.send("root")
         m.expect(r"Password: ", 10)
         m.send("palm")
@@ -321,13 +321,13 @@ def scenario_disk(args):
     print("disk: ext4 root mounted ro by the kernel, remounted rw, clean after poweroff")
     m = Machine(args, "disk", "console=ttyS0 root=/dev/vda ro rootfstype=ext4 init=/sbin/init panic=-1 quiet", disk=args.disk)
     try:
-        m.expect(r"palm-init: Palmframe is starting", 30, "palm-init starts from the disk", must=True)
+        m.expect(r"palm-init: Palmy is starting", 30, "palm-init starts from the disk", must=True)
         m.check("palm-init starts from the ext4 root", True)
-        m.expect(r"palmframe login: ", 30, "login prompt", must=True)
+        m.expect(r"palmy login: ", 30, "login prompt", must=True)
         m.send("root")
         m.expect(r"Password: ", 10)
         m.send("palm")
-        m.expect(r"root@palmframe[^\n]*# ", 15, "shell", must=True)
+        m.expect(r"root@palmy[^\n]*# ", 15, "shell", must=True)
         out = m.run("grep ' / ' /proc/mounts; touch /written-by-test && echo writable")
         m.check("/ is ext4 and read-write", "ext4 rw" in out and "writable" in out, out)
         m.send("poweroff")
@@ -370,11 +370,11 @@ def root_fsck(disk, work):
 
 
 def login_root(m):
-    m.expect(r"palmframe login: ", 40, "login prompt", must=True)
+    m.expect(r"palmy login: ", 40, "login prompt", must=True)
     m.send("root")
     m.expect(r"Password: ", 10)
     m.send("palm")
-    m.expect(r"root@palmframe[^\n]*# ", 15, "shell", must=True)
+    m.expect(r"root@palmy[^\n]*# ", 15, "shell", must=True)
 
 
 def scenario_grow(args):
@@ -387,7 +387,7 @@ def scenario_grow(args):
     m = Machine(args, "grow", append, disk=disk)
     machine_id = ""
     try:
-        m.expect(r"palm-init: Palmframe is starting", 30, "palm-init starts", must=True)
+        m.expect(r"palm-init: Palmy is starting", 30, "palm-init starts", must=True)
         m.check("fsck of / is attempted (no fsck.ext4 in this busybox: said so)", m.expect(r"palm-init: fsck /: no fsck.ext4; not checked", 10) is not None)
         m.check("grow-root: the partition is extended", m.expect(r"palm-init: grow-root: vda2 now ends at 1023 MiB \(was 159 MiB\)", 10) is not None)
         m.check("grow-root: ext4 grown online", m.expect(r"palm-init: grow-root: / grown from 128 MiB to 992 MiB", 15) is not None)

@@ -487,7 +487,7 @@ reports :: proc(w: ^x.Writer, list: ..[2]string) {
 	x.close(w)
 }
 
-SYNC_PREFIX :: "https://palmframe.dev/ns/sync/"
+SYNC_PREFIX :: "https://palmy.dev/ns/sync/"
 
 sync_token :: proc(col: Coll) -> string {
 	return fmt.tprintf("%s%s/%d", SYNC_PREFIX, col.id, col.sync_seq)
@@ -742,7 +742,7 @@ caldav_prop :: proc(c: ^Ctx, w: ^x.Writer, r: ^Res, n: Prop_Name) -> bool {
 		if r.kind != .Principal {
 			return false
 		}
-		// An unscoped session (the Palmframe app) may reach every identity's
+		// An unscoped session (the Palmy app) may reach every identity's
 		// home from its principal; a scoped one sees only its own.
 		if c.scoped == "" && r.ident == primary(c) {
 			list := make([dynamic]string, 0, len(c.idents))

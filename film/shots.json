@@ -64,7 +64,7 @@
       "type": "card",
       "lines": [
         {
-          "s": "PALMFRAME",
+          "s": "PALMY",
           "size": 190,
           "color": "cream"
         },
@@ -75,7 +75,7 @@
           "gap": 40
         }
       ],
-      "caption": "PALMFRAME — a UI toolkit with a three-line dependency list.",
+      "caption": "PALMY — a UI toolkit with a three-line dependency list.",
       "beat": 16,
       "beats": 8
     },
@@ -603,7 +603,7 @@
       "type": "card",
       "lines": [
         {
-          "s": "PALMFRAME",
+          "s": "PALMY",
           "size": 128,
           "color": "cream"
         },
@@ -615,7 +615,7 @@
         }
       ],
       "badge": "A PLAN, NOT A SHIPPED THING",
-      "caption": "Palmframe, the distribution: a plan, not a shipped thing.",
+      "caption": "Palmy, the distribution: a plan, not a shipped thing.",
       "beat": 260,
       "beats": 8
     },
@@ -747,7 +747,7 @@
       "type": "card",
       "lines": [
         {
-          "s": "PALMFRAME",
+          "s": "PALMY",
           "size": 110,
           "color": "cream"
         },
@@ -758,7 +758,7 @@
           "gap": 32
         }
       ],
-      "caption": "Palmframe. The toolkit is real. The rest is on the record.",
+      "caption": "Palmy. The toolkit is real. The rest is on the record.",
       "beat": 316,
       "beats": 4
     }

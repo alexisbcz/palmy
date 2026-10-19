@@ -4,7 +4,7 @@ package main
 // in, the sessions that can be started, the hostname, and the power actions.
 //
 // The power actions are inert everywhere except one place: the installed
-// login screen of Palmframe, under palm-login. See `power_request`.
+// login screen of Palmy, under palm-login. See `power_request`.
 
 import "core:encoding/json"
 import "core:fmt"
@@ -150,21 +150,21 @@ Session :: struct {
 WAYLAND_SESSION_DIRS := [?]string{"/usr/share/wayland-sessions", "/usr/local/share/wayland-sessions"}
 X11_SESSION_DIRS := [?]string{"/usr/share/xsessions", "/usr/local/share/xsessions"}
 
-// PALMFRAME_SESSION is the session Palmframe's login screen offers first: the
+// PALMY_SESSION is the session Palmy's login screen offers first: the
 // palmy window manager on the bare-metal backend. It is built in rather than
 // read from a .desktop file so the login screen can never come up with
 // nothing to start, whatever the image did or did not install.
-PALMFRAME_SESSION :: Session {
-	name    = "Palmframe",
+PALMY_SESSION :: Session {
+	name    = "Palmy",
 	comment = "The palmy window manager",
 	exec    = "wm --drm",
-	desktop = "palmframe",
+	desktop = "palmy",
 	kind    = .Wayland,
 }
 
 // read_sessions reads the real session desktop entries.
 //
-// Under palm-login the built-in Palmframe session comes first (unless an
+// Under palm-login the built-in Palmy session comes first (unless an
 // installed entry already starts `wm`), and there is no shell fallback: a
 // palm-login session has no terminal to put a shell on, so offering one would
 // only bounce straight back to this screen. Everywhere else a shell fallback
@@ -185,7 +185,7 @@ read_sessions :: proc() -> []Session {
 	})
 	if under_palm_login() {
 		if default_session(out[:]) < 0 {
-			inject_at(&out, 0, PALMFRAME_SESSION)
+			inject_at(&out, 0, PALMY_SESSION)
 		}
 		return out[:]
 	}
@@ -380,7 +380,7 @@ read_hostname :: proc() -> string {
 // local_zone loads the machine's time zone the way glibc finds it: TZ when it
 // is set (palm-login exports it only when /etc/localtime is missing and
 // /etc/timezone names a zone), otherwise /etc/localtime itself — a TZif file,
-// on Palmframe a symlink into /usr/share/zoneinfo that the installer points
+// on Palmy a symlink into /usr/share/zoneinfo that the installer points
 // at the zone picked. It used to ask `date +%z` once at start, which missed a
 // daylight-saving change while the screen stayed up and depended on a
 // `date` that reads the zone the same way. nil means UTC, which is also the
@@ -433,7 +433,7 @@ Power :: enum u8 {
 	Shutdown,
 }
 
-// under_palm_login reports whether this greeter is Palmframe's installed login
+// under_palm_login reports whether this greeter is Palmy's installed login
 // screen. palm-login sets both variables for the greeter session it starts;
 // a greeter run by hand on a development machine — even one pointed at a real
 // greetd, which sets only GREETD_SOCK — keeps its power buttons inert.
@@ -468,7 +468,7 @@ power_icon :: proc(pw: Power) -> p.Icon {
 
 // power_available is false for an action this machine cannot carry out, so
 // its button is not offered at all. That is only ever Suspend under
-// palm-login: Palmframe has no suspend path yet. A stub greeter keeps all
+// palm-login: Palmy has no suspend path yet. A stub greeter keeps all
 // three, since none of them do anything there.
 power_available :: proc(pw: Power) -> bool {
 	return !(pw == .Suspend && under_palm_login())
@@ -481,7 +481,7 @@ power_command :: proc(pw: Power) -> string {
 	if under_palm_login() {
 		switch pw {
 		case .Suspend:
-			return "" // Palmframe has no suspend path yet
+			return "" // Palmy has no suspend path yet
 		case .Reboot:
 			return "/sbin/reboot"
 		case .Shutdown:
@@ -555,7 +555,7 @@ power_request :: proc(pw: Power, sock: string) -> string {
 // through whatever control tool it ships; the fallback is 1080p.
 detect_output_size :: proc() -> (w: int, h: int) {
 	if under_palm_login() {
-		// Palmframe's wm sizes a zero-sized layer surface anchored to all
+		// Palmy's wm sizes a zero-sized layer surface anchored to all
 		// four edges to the output it is on — whatever that output is in a
 		// QEMU window or on real hardware — and palmy now passes 0 through.
 		// There is no swaymsg or hyprctl to ask there anyway.

@@ -11,7 +11,7 @@ migrations and pgTAP tests pass under it (70 of 70). This stack is still the
 one that carries the gateway rule (see the end of this file).
 
 ```sh
-cloud/dev/up.sh                        # project palmframe, API 54321, DB 54322
+cloud/dev/up.sh                        # project palmy, API 54321, DB 54322
 cloud/dev/test.sh                      # every pgTAP file in cloud/supabase/tests
 cloud/dev/test.sh accounts_            # only files starting accounts_
 cloud/dev/psql.sh                      # psql as postgres

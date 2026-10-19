@@ -1,6 +1,6 @@
 // clock.odin — local time, for the bar's clock.
 //
-// The kernel keeps UTC; the time zone is a file. Palmframe's installer points
+// The kernel keeps UTC; the time zone is a file. Palmy's installer points
 // /etc/localtime at ../usr/share/zoneinfo/<Region/City> (tzdata's TZif files),
 // and everything that shows a time to a person has to go through it — a bar
 // that says 14:05 in Paris when it is 16:05 there is wrong, not "in UTC".

@@ -13,4 +13,4 @@ details  = The local search index behind Home and the assistant: one index per i
 depend   = glibc fonts libxkbcommon
 provides = cmd:index
 
-file     = ${PALMFRAME_OUT}/bin/index -> /usr/bin/index mode 0755
+file     = ${PALMY_OUT}/bin/index -> /usr/bin/index mode 0755

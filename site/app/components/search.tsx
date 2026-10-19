@@ -13,7 +13,7 @@ import {
 } from "~/components/ui/command";
 import { Kbd } from "~/components/bits";
 import { PALMY_DOCS } from "~/content/docs-palmy";
-import { PALMFRAME_DOCS } from "~/content/docs-palmframe";
+import { VISION_DOCS } from "~/content/docs-vision";
 import { COMPONENTS } from "~/content/components";
 import { APPS } from "~/content/apps";
 import { GENERATED } from "~/lib/generated-nav";
@@ -49,9 +49,9 @@ function titleIndex(): Rec[] {
     ...gen("reference", "palmy"),
     ...COMPONENTS.map((c) => ({ u: `/components/${c.slug}`, t: c.title, s: "", x: c.blurb, g: "Components" })),
     ...APPS.map((a) => ({ u: `/apps#${a.slug}`, t: a.name, s: "", x: a.summary, g: "Applications" })),
-    ...PALMFRAME_DOCS.map((d) => ({
-      u: `/palmframe/${d.slug}`,
-      t: d.slug === "overview" ? "Palmframe, the vision" : d.title,
+    ...VISION_DOCS.map((d) => ({
+      u: `/vision/${d.slug}`,
+      t: d.slug === "overview" ? "Palmy, the vision" : d.title,
       s: "",
       x: d.description,
       g: "Vision",

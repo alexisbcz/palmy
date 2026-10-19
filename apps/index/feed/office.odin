@@ -10,7 +10,7 @@
 // beyond core:compress/zlib.
 //
 // PDF text comes from `pdftotext` (poppler) when it is installed, the same
-// tool apps/reader uses. Palmframe doesn't ship poppler yet, so on the
+// tool apps/reader uses. Palmy doesn't ship poppler yet, so on the
 // image a PDF is found by its name only; search.md lists it as a gap.
 package indexfeed
 

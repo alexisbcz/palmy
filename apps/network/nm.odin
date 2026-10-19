@@ -1,7 +1,7 @@
 // The NetworkManager side of the applet: everything that shells out to
 // `nmcli`, parses its terse output, and hands the result to the UI thread.
 // It is used where iwd is not on the system bus and nmcli is installed (a
-// development machine); Palmframe itself runs iwd (iwd.odin). The model,
+// development machine); Palmy itself runs iwd (iwd.odin). The model,
 // the job queue and the worker below are shared by both.
 //
 // Two rules shape this file.

@@ -53,8 +53,8 @@ write_kit :: proc(dir, secret, email, url: string) -> (png, txt: string, err: st
 	if e := os.make_directory_all(dir, os.perm(0o700)); e != nil && !os.exists(dir) {
 		return "", "", fmt.tprintf("cannot create %s", dir)
 	}
-	png = fmt.aprintf("%s/Palmframe Emergency Kit.png", dir)
-	txt = fmt.aprintf("%s/Palmframe Emergency Kit.txt", dir)
+	png = fmt.aprintf("%s/Palmy Emergency Kit.png", dir)
+	txt = fmt.aprintf("%s/Palmy Emergency Kit.txt", dir)
 	host := ck.machine_name()
 
 	// The text, first: it is what survives every printer.
@@ -63,7 +63,7 @@ write_kit :: proc(dir, secret, email, url: string) -> (png, txt: string, err: st
 		append(b, ..transmute([]u8)s)
 		append(b, '\n')
 	}
-	line(&b, tr("Palmframe Emergency Kit"))
+	line(&b, tr("Palmy Emergency Kit"))
 	line(&b, trf("Created %s on %s", today(), host))
 	line(&b, "")
 	line(&b, fmt.tprintf("%s: %s", tr("Account"), email))
@@ -73,7 +73,7 @@ write_kit :: proc(dir, secret, email, url: string) -> (png, txt: string, err: st
 	line(&b, "")
 	line(&b, tr("To open your vault on a new computer you need this Secret Key and your master password."))
 	line(&b, tr("Keep this page somewhere safe: a drawer, a safe, with your passport. Then delete this file."))
-	line(&b, tr("Palmframe cannot recover either of them for you."))
+	line(&b, tr("Palmy cannot recover either of them for you."))
 	if !write_text(txt, string(b[:]), private = true) {
 		return "", "", fmt.tprintf("cannot write %s", txt)
 	}
@@ -104,7 +104,7 @@ kit_page :: proc(ui: ^p.Ctx, secret, email, url, host: string) {
 	p.icon(ui, WI_PACKAGE, "size-9 text-white")
 	p.end(ui)
 	p.col(ui, "flex-1 gap-1")
-	txt(ui, tr("Palmframe Emergency Kit"), "text-5xl font-semibold tracking-tight text-[#18181b]")
+	txt(ui, tr("Palmy Emergency Kit"), "text-5xl font-semibold tracking-tight text-[#18181b]")
 	txt(ui, trf("Created %s on %s", today(), host), "text-xl text-[#71717a]")
 	p.end(ui)
 	p.end(ui)
@@ -131,7 +131,7 @@ kit_page :: proc(ui: ^p.Ctx, secret, email, url, host: string) {
 	p.col(ui, "w-full gap-4")
 	for s in ([?]string {
 			N("Keep this page somewhere safe: a drawer, a safe, with your passport. Then delete this file."),
-			N("Palmframe cannot recover either of them for you."),
+			N("Palmy cannot recover either of them for you."),
 		}) {
 		p.row(ui, "w-full items-start gap-4")
 		p.div(ui, "size-3 mt-3 rounded-full bg-[#18181b] shrink-0")

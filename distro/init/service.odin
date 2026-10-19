@@ -40,7 +40,7 @@ package main
 // A service is masked, never started, while a file of its name exists in
 // /etc/palm/services.off/. That lets one package turn off another's service
 // without deleting a file palm owns (so `palm verify` stays clean): the live
-// installer's palmframe-live masks palmframe-base's palm-login and
+// installer's palmy-live masks palmy-base's palm-login and
 // getty-ttyS0 this way. The mask also stops the built-in network.
 
 import "core:fmt"

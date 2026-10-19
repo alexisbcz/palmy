@@ -192,7 +192,7 @@ choice_value :: proc(ui: ^p.Ctx, c: ^Cal, f: Field, active, editable: bool) {
 		}
 	} else {
 		p.icon(ui, ICON_REPEAT, "size-3.5 shrink-0 text-muted-foreground")
-		p.text(ui, editable ? RECUR_LABELS[c.form.recur] : "for calendars in your Palmframe account",
+		p.text(ui, editable ? RECUR_LABELS[c.form.recur] : "for calendars in your Palmy account",
 			editable ? "flex-1 min-w-0 truncate text-[13] text-foreground pl-1" : "flex-1 min-w-0 truncate text-[13] text-muted-foreground/60 pl-1")
 	}
 	if editable && active {
@@ -215,7 +215,7 @@ sign_in_sheet :: proc(ui: ^p.Ctx, c: ^Cal) {
 	p.div(ui, "flex-row size-10 items-center justify-center rounded-full bg-accent-blue/10 shrink-0")
 	p.icon(ui, ICON_CLOUD, "size-4.5 text-accent-blue")
 	p.end(ui)
-	p.text(ui, "Sign in to Palmframe", "text-[16] font-semibold")
+	p.text(ui, "Sign in to Palmy", "text-[16] font-semibold")
 	p.text(ui, "Every identity's calendars, the ones shared with you, and invitations.", "max-w-[340] text-center text-[12] text-muted-foreground")
 	p.end(ui)
 

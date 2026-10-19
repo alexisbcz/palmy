@@ -10,8 +10,8 @@ url      = https://bitbucket.org/chromiumembedded/cef
 category = Internet
 icon     = globe
 details  = Chromium's Blink and V8, through the Chromium Embedded Framework's off-screen rendering, for the browser app. Pages are drawn into shared memory and shown inside the browser's own window; renderer processes run in Chromium's user-namespace sandbox with a seccomp filter.
-details  = The libraries libcef.so needs that Palmframe does not otherwise ship (NSS, GLib, ATK, cups, the X11 client libraries) are copied from the build host into a directory of the package's own.
+details  = The libraries libcef.so needs that Palmy does not otherwise ship (NSS, GLib, ATK, cups, the X11 client libraries) are copied from the build host into a directory of the package's own.
 depend   = glibc fonts browser
 provides = palm-browser-engine
 
-tree     = ${PALMFRAME_OUT}/palm-browser-cef -> /usr/lib/palm-browser/cef
+tree     = ${PALMY_OUT}/palm-browser-cef -> /usr/lib/palm-browser/cef

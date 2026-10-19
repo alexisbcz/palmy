@@ -9,9 +9,9 @@ pkgdesc  = First-run setup
 license  = MIT
 category = System
 icon     = rocket
-details  = The first-run setup: language and look, a Palmframe account or this computer only, identities, what each identity syncs, the password vault and its Emergency Kit. Opens once at first login; welcome run starts it again.
+details  = The first-run setup: language and look, a Palmy account or this computer only, identities, what each identity syncs, the password vault and its Emergency Kit. Opens once at first login; welcome run starts it again.
 depend   = glibc fonts libxkbcommon
 provides = cmd:welcome
 
-file     = ${PALMFRAME_OUT}/bin/welcome -> /usr/bin/welcome mode 0755
-file     = ${PALMFRAME_ROOT}/distro/apps/desktop/welcome.desktop -> /usr/share/applications/welcome.desktop mode 0644
+file     = ${PALMY_OUT}/bin/welcome -> /usr/bin/welcome mode 0755
+file     = ${PALMY_ROOT}/distro/apps/desktop/welcome.desktop -> /usr/share/applications/welcome.desktop mode 0644

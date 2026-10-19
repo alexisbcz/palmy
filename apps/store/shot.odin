@@ -93,7 +93,7 @@ shots :: proc(dir: string) -> int {
 	step(off, st)
 	shot(off, dir, "07-updates", &count)
 
-	// A package page: installed, with an update, required by palmframe.
+	// A package page: installed, with an update, required by palmy.
 	open_package(st, "term")
 	step(off, st)
 	shot(off, dir, "08-package-installed", &count)

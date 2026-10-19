@@ -17,8 +17,8 @@ bash film/build.sh cut      # just the edit
 bash film/build.sh encode   # just the two encodes, the poster and the captions
 ```
 
-Outputs land in `site/public/film/`: `palmframe.webm` (VP9/Opus),
-`palmframe.mp4` (H.264/AAC), `palmframe-poster.jpg` and `film.vtt`.
+Outputs land in `site/public/film/`: `palmy.webm` (VP9/Opus),
+`palmy.mp4` (H.264/AAC), `palmy-poster.jpg` and `film.vtt`.
 Intermediates go in `film/.work/`, which is not committed.
 
 ## The one rule

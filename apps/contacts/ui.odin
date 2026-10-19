@@ -220,7 +220,7 @@ sidebar :: proc(ui: ^p.Ctx, s: ^App_State) {
 		p.col(ui, "w-full items-center gap-2 px-4 pt-10")
 		p.icon(ui, ICON_CLOUD_OFF, "size-5 text-muted-foreground")
 		p.text(ui, signed_out(s) ? "Not signed in" : "No address books yet", "text-[12.5] font-medium")
-		p.text(ui, "Sign in with your Palmframe account to see each identity's contacts.", "max-w-[200] text-center text-[11.5] text-muted-foreground")
+		p.text(ui, "Sign in with your Palmy account to see each identity's contacts.", "max-w-[200] text-center text-[11.5] text-muted-foreground")
 		p.end(ui)
 	}
 }
@@ -870,7 +870,7 @@ signin_dialog :: proc(ui: ^p.Ctx, s: ^App_State) {
 	win := p.size(ui)
 	sheet_open(ui, 440, max(8, win.y / 2 - 170))
 	defer sheet_close(ui)
-	sheet_title(ui, ICON_USERS, "Sign in to Palmframe", "Your contacts for every identity, synced over CardDAV.")
+	sheet_title(ui, ICON_USERS, "Sign in to Palmy", "Your contacts for every identity, synced over CardDAV.")
 	p.col(ui, "w-full px-5 pt-3 pb-4 gap-2.5")
 	p.row(ui, "w-full items-center gap-3")
 	p.text(ui, "Email", "w-[70] shrink-0 text-right text-[12] font-medium text-muted-foreground")

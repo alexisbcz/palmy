@@ -9,7 +9,7 @@ and what was verified in QEMU, is under *Installing* in `README.md`.
 
 ## What a person does
 
-Boot `distro/out/palmframe-live.iso` in QEMU or from a USB stick. The ISO
+Boot `distro/out/palmy-live.iso` in QEMU or from a USB stick. The ISO
 boots under UEFI and under BIOS (limine's CD images plus `limine bios-install`
 for hybrid USB boot). The live system runs entirely from RAM. It starts
 straight into the graphical installer, which is `wm --drm --kiosk --exec
@@ -82,7 +82,7 @@ Plan :: struct {
 	password:   string,   // hashed with SHA-512 crypt before it touches disk
 	root_password: string, // empty = same as user
 	repo:       string,   // default: the live medium's repository, file:///usr/share/palm/repo
-	packages:   []string, // default: {"palmframe"}
+	packages:   []string, // default: {"palmy"}
 	efi_boot_entry: bool, // write a UEFI Boot#### variable via efivarfs (default true when /sys/firmware/efi exists)
 	swap_bytes:     u64,  // built: a /swapfile of this size; 0 = none
 }
@@ -122,14 +122,14 @@ needs:
   `Zone.country_code` its code. `list_zones` includes `UTC`.
 - Language codes are `en_US`, `fr_FR`, `de_DE`, `es_ES`, `ar` and `ja_JP`.
   Any other catalogue directory under `locale_root` is offered by its code.
-- `Plan.packages` empty means `{"palmframe"}`. The GUI passes
-  `{"palmframe", "fonts-cjk"}` for Japanese.
+- `Plan.packages` empty means `{"palmy"}`. The GUI passes
+  `{"palmy", "fonts-cjk"}` for Japanese.
 
 Additions, all optional for a front end:
 
 | name | what |
 | --- | --- |
-| `default_plan() -> Plan` | en_US, us, UTC, hostname palmframe, the medium's repository, `efi_boot_entry` if `/sys/firmware/efi` exists |
+| `default_plan() -> Plan` | en_US, us, UTC, hostname palmy, the medium's repository, `efi_boot_entry` if `/sys/firmware/efi` exists |
 | `Options`, `default_options()` | target directory (default `/mnt/target`), `disk_image` (the disk is a plain file; refused for `/dev/*`), a subset of `steps`, palm binary, keys dir, limine dir, efivars dir, log path, `dry_run`, `on_log` (each log line, used for the GUI's log view and the CLI's `--verbose`) |
 | `install_with(p, o, report, user)` | `install` is `install_with(p, default_options(), ...)` |
 | `validate_with(p, o, disks)` | validate against a given disk list, or for a disk image |
@@ -156,12 +156,12 @@ What `install` does, in order:
 3. **Mount.** The root goes at `/mnt/target` and the ESP at
    `/mnt/target/boot/efi`.
 4. **Packages.** `palm --root /mnt/target --initdb --repo <repo> --keys-dir
-   /etc/palm/keys --yes add palmframe <extra>`.
+   /etc/palm/keys --yes add palmy <extra>`.
    *Built:* palm's `--json` is a single document printed at the end, so
    progress comes from palm's text output instead: the plan lines give the
    total and the `installing <pkg>` lines give progress. `file://` is
    stripped from the repository, because palm takes a path. 33 packages
-   are installed; `palmframe-demo` (the disk image's `/home/palm`) is not
+   are installed; `palmy-demo` (the disk image's `/home/palm`) is not
    among them.
 5. **Configure.** The core writes:
    - `/etc/hostname` and `/etc/hosts`.
@@ -178,12 +178,12 @@ What `install` does, in order:
    - `/etc/palm/repositories`, pointing at the network repository.
    *Built:* `repositories` is rewritten only when the install came from an
    `http(s)://` repository. An install from the medium keeps
-   palmframe-base's network repository.
+   palmy-base's network repository.
 6. **Bootloader.** limine's `BOOTX64.EFI` goes at `EFI/BOOT/BOOTX64.EFI`
-   *and* at `EFI/palmframe/BOOTX64.EFI`. A `limine.conf` boots `/vmlinuz`,
+   *and* at `EFI/palmy/BOOTX64.EFI`. A `limine.conf` boots `/vmlinuz`,
    copied onto the ESP, with `root=PARTUUID=<root> rw`. If `efi_boot_entry`
-   is set, a `Boot####` variable named "Palmframe" points at
-   `\EFI\palmframe\BOOTX64.EFI`, and `BootOrder` is updated. Both are written
+   is set, a `Boot####` variable named "Palmy" points at
+   `\EFI\palmy\BOOTX64.EFI`, and `BootOrder` is updated. Both are written
    through efivarfs (`/sys/firmware/efi/efivars`, attributes NV|BS|RT, with
    the immutable flag cleared through FS_IOC_SETFLAGS).
    *Built:*
@@ -192,8 +192,8 @@ What `install` does, in order:
      (`palm.single`).
    - `BOOTX64.EFI` comes from the target's `/usr/share/limine` if present,
      and otherwise from the live system's.
-   - The device path is the short form `HD(1,GPT,<esp guid>,start,size)/\EFI\palmframe\BOOTX64.EFI`.
-   - The description is "Palmframe (<host name>)", or "Palmframe" for the
+   - The device path is the short form `HD(1,GPT,<esp guid>,start,size)/\EFI\palmy\BOOTX64.EFI`.
+   - The description is "Palmy (<host name>)", or "Palmy" for the
      default host name. An existing entry is reused only when it is ours
      and points at the new ESP or at a partition of the erased table;
      otherwise the lowest free number is taken, so each disk keeps its own
@@ -289,8 +289,8 @@ not use them:
 # comment
 plural = n > 1
 
-msgid "Install Palmframe"
-msgstr "Installer Palmframe"
+msgid "Install Palmy"
+msgstr "Installer Palmy"
 
 msgid "%d package"
 msgid_plural "%d packages"
@@ -308,15 +308,15 @@ is the translators' guide.
 ## Live image (`distro/live/`)
 
 - The root filesystem is assembled with `palm --root ... --initdb add
-  palmframe-live` under fakeroot, from the same signed repository.
-  *Built:* `palmframe-live` depends on the base system, the kiosk wm,
+  palmy-live` under fakeroot, from the same signed repository.
+  *Built:* `palmy-live` depends on the base system, the kiosk wm,
   `term`, `palm-install`, `installer`, `e2fsprogs`, `dosfstools`, `limine`,
   `tzdata`, `xkeyboard-config` and `palm-locale`, 19 packages in all, and
   carries a 100 KB Japanese subset of Noto Sans CJK instead of `fonts-cjk`.
-  The packages of `palmframe` and `fonts-cjk` with their dependencies (36)
+  The packages of `palmy` and `fonts-cjk` with their dependencies (36)
   are copied flat to `/usr/share/palm/repo` with a newly signed index, so
   installing needs no network.
-- `palmframe-live` provides:
+- `palmy-live` provides:
   - the `installer` service, running `/usr/lib/palm-live/installer-session`
     as root, which runs `wm --drm --kiosk --exec installer`. The kernel
     option `palm.live.serial` starts no session, and `palm.live.exec=<cmd>`
@@ -324,7 +324,7 @@ is the translators' guide.
   - a root autologin getty on ttyS0 (`getty-live`).
   - the `/etc/palm/live` marker and the `/init` symlink to palm-init.
   - `/etc/palm/services.off/palm-login` and `getty-ttyS0`, which mask
-    palmframe-base's services.
+    palmy-base's services.
 - `/boot/vmlinuz` is left out of the initramfs to save RAM, because the
   kernel is on the ISO beside it. `palm verify` on the live system reports
   exactly that one file as missing.
@@ -332,8 +332,8 @@ is the translators' guide.
   limine from an ISO 9660 image built with `xorriso`: UEFI El Torito with
   `limine-uefi-cd.bin`, BIOS with `limine-bios-cd.bin`, then `limine
   bios-install` for hybrid USB boot. The limine menu has two entries,
-  *Install Palmframe* and *Install Palmframe (serial console only)*.
-- The output is `distro/out/palmframe-live.iso`, built by `make -C distro iso`:
+  *Install Palmy* and *Install Palmy (serial console only)*.
+- The output is `distro/out/palmy-live.iso`, built by `make -C distro iso`:
   about 74 MB, with a 57 MB initramfs that unpacks to about 81 MiB.
   `distro/run-qemu.sh --iso [--disk <target.qcow2>]` boots it with a target
   disk attached as virtio. Without `--disk`, it makes

@@ -74,7 +74,7 @@ do_get :: proc(c: ^Ctx, r: ^Res) {
 	case:
 		c.res.status = 200
 		web.set_header(c.res, "Content-Type", "text/plain; charset=utf-8")
-		c.res.body = "Palmframe CalDAV and CardDAV. Point a client at /dav/ or /.well-known/caldav.\n"
+		c.res.body = "Palmy CalDAV and CardDAV. Point a client at /dav/ or /.well-known/caldav.\n"
 	}
 }
 
@@ -84,7 +84,7 @@ export_calendar :: proc(c: ^Ctx, col: Coll) -> string {
 	out := new(ical.Component)
 	out.name = "VCALENDAR"
 	append(&out.props, ical.Prop{name = "VERSION", value = "2.0"})
-	append(&out.props, ical.Prop{name = "PRODID", value = "-//Palmframe//DAV//EN"})
+	append(&out.props, ical.Prop{name = "PRODID", value = "-//Palmy//DAV//EN"})
 	append(&out.props, ical.Prop{name = "X-WR-CALNAME", value = ical.escape_text(col.display_name)})
 	seen_tz := make(map[string]bool)
 	for o in objects(c, col, true) {

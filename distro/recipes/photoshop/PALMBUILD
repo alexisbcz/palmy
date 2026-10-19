@@ -13,5 +13,5 @@ details  = A raster image editor with layers, brushes and selections.
 depend   = glibc fonts libxkbcommon
 provides = cmd:photoshop
 
-file     = ${PALMFRAME_OUT}/bin/photoshop -> /usr/bin/photoshop mode 0755
-file     = ${PALMFRAME_ROOT}/distro/apps/desktop/photoshop.desktop -> /usr/share/applications/photoshop.desktop mode 0644
+file     = ${PALMY_OUT}/bin/photoshop -> /usr/bin/photoshop mode 0755
+file     = ${PALMY_ROOT}/distro/apps/desktop/photoshop.desktop -> /usr/share/applications/photoshop.desktop mode 0644

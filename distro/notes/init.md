@@ -1,7 +1,7 @@
-# palm-init and palmframe-base — notes for the other pieces
+# palm-init and palmy-base — notes for the other pieces
 
 Owner of `distro/init/`, `distro/base/`, `distro/image/`, the palm-init and
-palmframe-base recipes, and this file.
+palmy-base recipes, and this file.
 
 ## What exists
 
@@ -12,7 +12,7 @@ palmframe-base recipes, and this file.
 - `distro/init/test-boot.sh` — boots it in QEMU (headless) and drives the
   serial console. Scenarios: `login`, `single`, `disk`, `grow`, `all`.
   `KERNEL=<bzImage>` boots another kernel (one with zram, for instance).
-- `distro/base/root/` — the files of the `palmframe-base` package.
+- `distro/base/root/` — the files of the `palmy-base` package.
 - `distro/base/layout` — what a plain file tree in git cannot hold: the
   merged-/usr symlinks, directory modes, non-root owners, `etc/shadow` 0600.
 - `distro/base/apply-layout.sh <rootdir>` — copies `root/` and applies
@@ -50,7 +50,7 @@ in `PATH` (`/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin`). udhcpc's script is
 `/usr/share/udhcpc/default.script` (in base; busybox is configured with that
 path) — it sets the address, default route and `/etc/resolv.conf`.
 
-A `palmframe-base` PALMBUILD should ship `distro/base/root/` plus `layout`'s
+A `palmy-base` PALMBUILD should ship `distro/base/root/` plus `layout`'s
 symlinks/dirs; whether palm records symlinks and per-file owners is the
 recipes' and palm's call — `layout` is the list to honour.
 
@@ -114,8 +114,8 @@ foreground run" (lease obtained, or backgrounded after 5 tries).
 
 - **Masks** (`service.odin`): a service is not started while
   `/etc/palm/services.off/<name>` exists (also for the built-in `network`).
-  palmframe-live ships `services.off/palm-login` and `services.off/getty-ttyS0`
-  instead of the live build deleting palmframe-base's service files, so
+  palmy-live ships `services.off/palm-login` and `services.off/getty-ttyS0`
+  instead of the live build deleting palmy-base's service files, so
   `palm verify` on the live system no longer reports them missing. Logged as
   `service X is masked by ...`. Selftest: 3 mask checks.
 
@@ -215,9 +215,9 @@ filesystems and services:
 
 ### The image (distro/image/build.sh)
 
-- `palm add palmframe palmframe-demo e2fsprogs dosfstools` (PACKAGES=).
+- `palm add palmy palmy-demo e2fsprogs dosfstools` (PACKAGES=).
 - Kernel command line `ro` (was `rw`) so `/` can be checked.
-- fstab gets `LABEL=palmframe /` and `LABEL=PALMESP /boot/efi`; the root
+- fstab gets `LABEL=palmy /` and `LABEL=PALMESP /boot/efi`; the root
   gets `/etc/palm/grow-root`; `/etc/localtime` and `/etc/timezone` from
   `TIMEZONE=` (UTC; `host` = the build host's zone); no `/etc/machine-id`.
   `palm verify` reports the fstab edit as `modified (config)`, which is not
@@ -252,10 +252,10 @@ fstab without a `/` line gives the old behaviour).
   priority 5 on the next boot, swap off and `/boot/efi` unmounted at
   poweroff; on the host `sfdisk --verify` says `No errors detected` with the
   backup GPT at the end, and `e2fsck -fn` is clean.
-- The disk image (palm-init and palmframe-base rebuilt into a copy of the
+- The disk image (palm-init and palmy-base rebuilt into a copy of the
   repository, `distro/image/build.sh`, `python3 -I distro/image/test-boot.py`):
   27 checks pass. The 1223 MiB image enlarged to 6 GiB booted through OVMF and
-  limine: `checking / (/dev/vda2)` (`palmframe: clean`), `grow-root: vda2 now
+  limine: `checking / (/dev/vda2)` (`palmy: clean`), `grow-root: vda2 now
   ends at 6143 MiB (was 1222 MiB)`, `/ grown from 1092 MiB to 6013 MiB`, df
   5887 MiB for `/`, `/dev/vda1 /boot/efi vfat`, `/etc/localtime ->
   ../usr/share/zoneinfo/UTC`, greeter, login, term, launcher, `palm verify`

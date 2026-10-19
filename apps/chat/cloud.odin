@@ -1,7 +1,7 @@
 package main
 
 // Cloud mode: the same client speaking protocol v2 to palm-rtc
-// (cloud/rtc), signed in with the Palmframe account and speaking as one
+// (cloud/rtc), signed in with the Palmy account and speaking as one
 // identity.
 //
 //	PALM_IDENTITY=alice.northwind chat --cloud

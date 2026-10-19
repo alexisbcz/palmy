@@ -12,5 +12,5 @@ icon     = mail
 depend   = glibc fonts libxkbcommon mailcore
 provides = cmd:mail
 
-file     = ${PALMFRAME_OUT}/bin/mail -> /usr/bin/mail mode 0755
-file     = ${PALMFRAME_ROOT}/distro/apps/desktop/mail.desktop -> /usr/share/applications/mail.desktop mode 0644
+file     = ${PALMY_OUT}/bin/mail -> /usr/bin/mail mode 0755
+file     = ${PALMY_ROOT}/distro/apps/desktop/mail.desktop -> /usr/share/applications/mail.desktop mode 0644

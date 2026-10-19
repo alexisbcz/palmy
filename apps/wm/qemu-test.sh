@@ -263,7 +263,7 @@ if [ -n "\$VT" ]; then
 	# start the session as a session leader so the VT can be its terminal.
 	chown palm:tty /dev/tty\$VT; chmod 0620 /dev/tty\$VT
 	ENVS="\$ENVS XDG_VTNR=\$VT"
-	printf '\033[2J\033[H\n  palmframe tty2: a text console.\n  Ctrl+Alt+F1 goes back to the desktop.\n' > /dev/tty2
+	printf '\033[2J\033[H\n  palmy tty2: a text console.\n  Ctrl+Alt+F1 goes back to the desktop.\n' > /dev/tty2
 	chvt \$VT
 fi
 if [ $as_user = 1 ]; then

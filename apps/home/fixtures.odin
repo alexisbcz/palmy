@@ -3,7 +3,7 @@
 // from the machine, the account or the network, and nothing here should be
 // mistaken for a sample of anybody's real data.
 //
-// The persona: Camille, one Palmframe account, four identities — a personal
+// The persona: Camille, one Palmy account, four identities — a personal
 // self, a job at an invented co-operative called Northwind, a public face for
 // talks and shopping, and an open-source side project called Halcyon. It is
 // Monday 19 October, 09:40.

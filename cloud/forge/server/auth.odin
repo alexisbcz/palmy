@@ -125,6 +125,6 @@ authenticate :: proc(req: ^Request) -> (c: Caller, bad: bool) {
 
 challenge :: proc() -> []wire.Header {
 	h := make([]wire.Header, 1, context.temp_allocator)
-	h[0] = {"WWW-Authenticate", `Basic realm="Palmframe forge (use a personal access token)"`}
+	h[0] = {"WWW-Authenticate", `Basic realm="Palmy forge (use a personal access token)"`}
 	return h
 }

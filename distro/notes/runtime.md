@@ -22,7 +22,7 @@ python3 -I distro/recipes/runtime/test-runtime.py [--kernel K] [--ollama]
 
 The first `make` on a fresh checkout spends ~8 minutes (at `JOBS=8`) building
 nasm, x264, opus, ffmpeg, dbus, iwd and libarchive; afterwards the stamps make
-it a no-op. `PALMFRAME_SKIP_SRC=1` skips the source step. When a recipe for a
+it a no-op. `PALMY_SKIP_SRC=1` skips the source step. When a recipe for a
 new application appears, `distro/Makefile` only learns of its binary on the
 *next* make (it lists `APP_BINS` when it parses, before `recipes` runs): run
 `make -C distro recipes` once, then `make -C distro`.
@@ -34,7 +34,7 @@ new application appears, `distro/Makefile` only learns of its binary on the
 | iwd, bluetoothd | D-Bus system bus | **ship**, built from source without systemd/X11/audit (`dbus.build`). No session bus. |
 | network | NetworkManager (`nmcli`) | **replace with iwd** — see below. Done: `apps/network/iwd.odin`. |
 | Wi-Fi | wpa_supplicant or iwd + DHCP client | **iwd**, from source. It needs no OpenSSL, libnl or wpa_supplicant (crypto is the kernel's), and does DHCP itself (`EnableNetworkConfiguration=true`), so no dhcpcd. DNS goes through a 20-line `resolvconf` shim it ships. Wired stays palm-init's udhcpc. |
-| audio, video, mixer, call | PipeWire, WirePlumber, pw-cat, wpctl, pactl | **ship** (host-copied). PipeWire does not need a bus (RTKit and portal modules just warn). wpctl needs WirePlumber; pactl needs pipewire-pulse; all three are started per session by one `pipewire` (`pipewire.conf.d/50-palmframe.conf`). Plain ALSA would not do: the apps call pw-cat/wpctl/pactl by name. |
+| audio, video, mixer, call | PipeWire, WirePlumber, pw-cat, wpctl, pactl | **ship** (host-copied). PipeWire does not need a bus (RTKit and portal modules just warn). wpctl needs WirePlumber; pactl needs pipewire-pulse; all three are started per session by one `pipewire` (`pipewire.conf.d/50-palmy.conf`). Plain ALSA would not do: the apps call pw-cat/wpctl/pactl by name. |
 | PipeWire's ALSA monitor | udev | **no udevd**: a palm-init one-shot (`sound-cards`) writes `/run/udev/data/+sound:cardN` with `SOUND_INITIALIZED=1`, which is the one property PipeWire gates on. Hotplugged (USB) cards are not covered. libudev itself comes from systemd-libs (a library only; no systemd daemon runs). |
 | bluetooth | BlueZ, bluetoothctl, rfkill | **ship** bluetoothd + bluetoothctl + btmgmt (host), rfkill from util-linux (busybox has none). Needs `CONFIG_BT`. |
 | audio, video, videoedit, call, captions | ffmpeg | **ship, from source**, with its own codecs plus libx264 (static) and libopus, `--disable-autodetect`: links glibc, zlib, libopus only (Arch's links ~120 packages). No libass (videoedit's `subtitles` filter), no SDL (no ffplay). |
@@ -42,13 +42,13 @@ new application appears, `distro/Makefile` only learns of its binary on the
 | call | libopus.so.0 | **ship, from source**. |
 | archive | bsdtar | **ship, from source** without libxml2 (which pulls 40 MB of ICU), OpenSSL, nettle, ACLs. |
 | clipboard, vault, emoji, sheets, files, colorpick | wl-copy, wl-paste | **ship** wl-clipboard (host). The wm implements `wl_data_device_manager`, and wl-copy works through it (verified). |
-| ai, chatbot | ollama | **ship, optional** (host, 66 MB, CPU backends only; not in `palmframe-runtime`). Pull + answer verified with qwen3:0.6b. |
+| ai, chatbot | ollama | **ship, optional** (host, 66 MB, CPU backends only; not in `palmy-runtime`). Pull + answer verified with qwen3:0.6b. |
 | captions | whisper-cli, ffplay | not shipped. |
 | reader, ocr | poppler | not shipped: Arch's pdftoppm pulls curl, krb5, NSS, gpgme… A minimal source build needs cmake on the host. |
 | call | v4l2-ctl | not shipped. |
 
-`palmframe-runtime` is the meta-package for the services and libraries (not
-the applications, not ollama); the `palmframe` meta-package depends on it, so
+`palmy-runtime` is the meta-package for the services and libraries (not
+the applications, not ollama); the `palmy` meta-package depends on it, so
 the image and every install have them.
 
 ### NetworkManager without systemd
@@ -139,7 +139,7 @@ is not packaged: the glibc recipe is the integrator's. Checked:
   chroot lacks), so no difference attributable to the build.
 
 To switch: in the glibc block of `generate.sh`, take the three files from
-`${PALMFRAME_OUT}/src/glibc/usr/lib/` instead of `/usr/lib`, drop
+`${PALMY_OUT}/src/glibc/usr/lib/` instead of `/usr/lib`, drop
 `package=no` from `glibc.build` and `auto=no` so `make` builds it, and boot the
 image. Not done here: booting an image on it, and the version skew rule (the
 Odin binaries link the host's glibc, so the shipped one must be at least as
@@ -152,7 +152,7 @@ palm-init service files shipped by the packages (in `/etc/palm/services`):
 
 | file | package | what |
 | --- | --- | --- |
-| `dbus` | dbus | `/usr/lib/palmframe/dbus-system`: makes `/run/dbus` and `/etc/machine-id`, execs `dbus-daemon --nofork`, which drops to user `dbus` (81, in palmframe-base since the integration round). The wrapper's fallback to `nobody` only applies to a system whose `/etc/passwd` has no `dbus`. |
+| `dbus` | dbus | `/usr/lib/palmy/dbus-system`: makes `/run/dbus` and `/etc/machine-id`, execs `dbus-daemon --nofork`, which drops to user `dbus` (81, in palmy-base since the integration round). The wrapper's fallback to `nobody` only applies to a system whose `/etc/passwd` has no `dbus`. |
 | `iwd` | iwd | `/usr/lib/iwd/iwd`, `after = dbus`. Needs the kernel's crypto API (built in now) and `/usr/bin/resolvconf` (the shim; see below). |
 | `bluetooth` | bluez | `bluetoothd --nodetach`, `after = dbus`. Bluetooth is a module the kernel loads when bluetoothd opens its socket. |
 | `sound-cards` | pipewire | the one-shot above. |
@@ -194,19 +194,19 @@ python3 -I distro/recipes/runtime/test-runtime.py \
 ```
 
 Since the integration round the shipped kernel has what this needed
-(`runtime/kernel.config` is merged into `distro/kernel/palmframe.config`),
+(`runtime/kernel.config` is merged into `distro/kernel/palmy.config`),
 and `test-runtime.py` with no `--kernel` passes all 24 checks; it loads
 `mac80211_hwsim` itself (a module nothing loads by its own), checks that the
 bus runs as `dbus` and `/var/log/messages` is root's 0600, and expects
 PipeWire from palm-login's hook. Before that, with the stock kernel: 4
 failures, all iwd (missing crypto). With the kernel built from
-`palmframe.config` + `runtime/kernel.config` (`--kernel`): **all passed**:
+`palmy.config` + `runtime/kernel.config` (`--kernel`): **all passed**:
 
 - dbus-daemon (as nobody), iwd and bluetoothd run as palm-init services;
   `net.connman.iwd` and `org.bluez` are on the system bus; `bluetoothctl show`
   says "No default controller available" (no controller in QEMU).
 - Wi-Fi end to end over `mac80211_hwsim`: iwd puts wlan1 in AP mode
-  (`PalmframeTest`, WPA2), iwd on wlan0 scans, sees it, connects with
+  (`PalmyTest`, WPA2), iwd on wlan0 scans, sees it, connects with
   `iwctl --passphrase`, and gets 192.168.5.34/28 from iwd's DHCP server.
 - `rfkill list` shows both radios.
 - ffmpeg encodes H.264 (libx264) + AAC and Opus; ffprobe reads them back.
@@ -235,12 +235,12 @@ mailcore/ocr selftests that ended up writing under `/root` in the harness
 | | before | after |
 | --- | --- | --- |
 | packages in the repository | 50 | 111 |
-| installed by `palmframe` + `palmframe-demo` | 36 | 85 |
+| installed by `palmy` + `palmy-demo` | 36 | 85 |
 | root filesystem (apparent) | 62 MB | 136 MB |
-| `palmframe.img` on disk (1.2 → 1.3 GB sparse) | 89 MB | 165 MB |
+| `palmy.img` on disk (1.2 → 1.3 GB sparse) | 89 MB | 165 MB |
 | + the 13 application packages | | 150 MB root |
-| palmframe + palmframe-runtime + `ai` (ollama) | | 207 MB root |
-| `palmframe-live.iso` (carries the whole repository, ollama included) | 108 MB | 200 MB |
+| palmy + palmy-runtime + `ai` (ollama) | | 207 MB root |
+| `palmy-live.iso` (carries the whole repository, ollama included) | 108 MB | 200 MB |
 
 `make -C distro test` (`image/test-boot.py`) still passes on the new image
 (greeter, login, term, launcher, `palm verify` clean, `palm add shop`,

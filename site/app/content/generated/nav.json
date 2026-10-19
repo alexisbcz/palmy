@@ -9,7 +9,7 @@
           {
             "slug": "overview",
             "url": "/distro/overview",
-            "title": "Palmframe, the distribution",
+            "title": "Palmy, the distribution",
             "nav": "Overview",
             "description": "What the distribution is, what it is modelled on, and where it stands: it boots in QEMU to a desktop and installs onto a disk, and has never run on real hardware."
           },
@@ -56,7 +56,7 @@
           {
             "slug": "applications",
             "url": "/distro/applications",
-            "title": "Applications on Palmframe",
+            "title": "Applications on Palmy",
             "nav": "Applications",
             "description": "Every palmy application, whether it builds, whether it works on the bare system, what it needs at runtime, and which are installed by default. Read from distro/apps/apps.tsv."
           }
@@ -98,7 +98,7 @@
             "url": "/distro/packages",
             "title": "Package list",
             "nav": "Package list",
-            "description": "Every package in the repository, its version, what it depends on, and whether the palmframe meta-package installs it. Read from distro/recipes."
+            "description": "Every package in the repository, its version, what it depends on, and whether the palmy meta-package installs it. Read from distro/recipes."
           },
           {
             "slug": "contract",
@@ -150,7 +150,7 @@
             "url": "/distro/command-surface",
             "title": "The palm command surface",
             "nav": "Command surface",
-            "description": "One CLI through which an agent can operate every part of Palmframe: the convention every application's command line follows."
+            "description": "One CLI through which an agent can operate every part of Palmy: the convention every application's command line follows."
           },
           {
             "slug": "package-design",
@@ -183,7 +183,7 @@
             "url": "/distro/cloud-product",
             "title": "Product principles",
             "nav": "Product principles",
-            "description": "One account, several identities: the principles, the information architecture and what Palmframe will not do."
+            "description": "One account, several identities: the principles, the information architecture and what Palmy will not do."
           },
           {
             "slug": "cloud-research",
@@ -253,7 +253,7 @@
             "url": "/distro/cloud-browser",
             "title": "Browser",
             "nav": "Browser",
-            "description": "Palmframe's own browser chrome over Chromium or Firefox, chosen per identity, with bookmark sync."
+            "description": "Palmy's own browser chrome over Chromium or Firefox, chosen per identity, with bookmark sync."
           },
           {
             "slug": "cloud-office",
@@ -314,14 +314,14 @@
             "url": "/distro/notes-integrate",
             "title": "Integration",
             "nav": "Integration",
-            "description": "From the pieces to a bootable Palmframe: build order, packages, what was verified and the known gaps."
+            "description": "From the pieces to a bootable Palmy: build order, packages, what was verified and the known gaps."
           },
           {
             "slug": "notes-init",
             "url": "/distro/notes-init",
             "title": "palm-init notes",
             "nav": "palm-init notes",
-            "description": "palm-init and palmframe-base: what the other pieces need to know."
+            "description": "palm-init and palmy-base: what the other pieces need to know."
           },
           {
             "slug": "notes-login",
@@ -356,7 +356,7 @@
             "url": "/distro/notes-apps",
             "title": "Applications notes",
             "nav": "Applications notes",
-            "description": "What the applications need at runtime on Palmframe, and what changed in palmy for it."
+            "description": "What the applications need at runtime on Palmy, and what changed in palmy for it."
           },
           {
             "slug": "notes-live",
@@ -391,7 +391,7 @@
             "url": "/distro/notes-browser",
             "title": "Browser, GPU and X11 research",
             "nav": "Browser, GPU and X11 research",
-            "description": "Research, nothing built: what a real web browser, GPU clients and X11 applications on Palmframe would take, and what to do first."
+            "description": "Research, nothing built: what a real web browser, GPU clients and X11 applications on Palmy would take, and what to do first."
           }
         ]
       },

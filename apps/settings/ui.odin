@@ -513,7 +513,7 @@ page_appearance :: proc(ui: ^p.Ctx, m: ^Model) {
 		}
 	}
 	row_close(ui)
-	if switch_row(ui, "Pinned apps in the bar", "Apps pinned to the bar sit beside the Palmframe button.", m.bar_pins) && apply(m, "shell.bar_pins", m.bar_pins ? "off" : "on") {
+	if switch_row(ui, "Pinned apps in the bar", "Apps pinned to the bar sit beside the Palmy button.", m.bar_pins) && apply(m, "shell.bar_pins", m.bar_pins ? "off" : "on") {
 		m.bar_pins = !m.bar_pins
 	}
 	if switch_row(ui, "Hot corner", "Pushing the pointer into the top-left corner opens the overview.", m.hot_corner) && apply(m, "shell.hot_corner", m.hot_corner ? "off" : "on") {

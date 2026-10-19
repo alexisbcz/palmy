@@ -12,4 +12,4 @@ icon     = mail
 depend   = glibc fonts libxkbcommon openssl
 provides = cmd:mailcore
 
-file     = ${PALMFRAME_OUT}/bin/mailcore -> /usr/bin/mailcore mode 0755
+file     = ${PALMY_OUT}/bin/mailcore -> /usr/bin/mailcore mode 0755

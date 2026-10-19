@@ -9,4 +9,4 @@
 
 ## Where it stands
 
-It has only ever run in QEMU. Of the {{appTotal}} programs in the application table, {{appYes}} work on the bare system, {{appPartial}} work partly and {{appNo}} not at all, because they need software Palmframe does not ship ([Applications](/distro/applications)). [What has been verified](/distro/verified) lists what was run and observed, and [What is missing](/distro/missing) lists the rest.
+It has only ever run in QEMU. Of the {{appTotal}} programs in the application table, {{appYes}} work on the bare system, {{appPartial}} work partly and {{appNo}} not at all, because they need software Palmy does not ship ([Applications](/distro/applications)). [What has been verified](/distro/verified) lists what was run and observed, and [What is missing](/distro/missing) lists the rest.

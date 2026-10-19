@@ -13,5 +13,5 @@ details  = Explore a generated city offline: pan, zoom and search its streets.
 depend   = glibc fonts libxkbcommon
 provides = cmd:maps
 
-file     = ${PALMFRAME_OUT}/bin/maps -> /usr/bin/maps mode 0755
-file     = ${PALMFRAME_ROOT}/distro/apps/desktop/maps.desktop -> /usr/share/applications/maps.desktop mode 0644
+file     = ${PALMY_OUT}/bin/maps -> /usr/bin/maps mode 0755
+file     = ${PALMY_ROOT}/distro/apps/desktop/maps.desktop -> /usr/share/applications/maps.desktop mode 0644

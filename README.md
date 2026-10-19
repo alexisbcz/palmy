@@ -1,9 +1,10 @@
-# Palmframe
+# Palmy
 
 An experiment in rethinking a Linux distribution for a machine where AI is
 part of the system rather than a website you visit.
 
-**palmy** is its UI toolkit, and what most of this README describes: written
+Its UI toolkit shares the name, in lowercase: **palmy**, and it is what most of
+this README describes: written
 from scratch in Odin, speaking Wayland and X11, both hand-rolled. Components
 are procedures, styling is Tailwind class strings, and the result is pixels
 written straight into the display server's shared memory.
@@ -105,7 +106,7 @@ window in the wrong place.
 make            # build every example into ./bin
 make run-todo   # or run-counter, run-gallery, run-pixels
 make test       # the headless test suite
-make distro     # the Palmframe disk image; distro/run-qemu.sh boots it
+make distro     # the Palmy disk image; distro/run-qemu.sh boots it
 make -C distro iso   # the live installer; distro/run-qemu.sh --iso boots it
 ```
 
@@ -487,7 +488,7 @@ files, cannot act on your mail, and forgets you between sessions — so the work
 of connecting it to your life falls to you, by copying and pasting. The
 alternative usually offered is worse: hand everything to one vendor and hope.
 
-Palmframe is an attempt at a third shape. A model runs locally, as a user
+Palmy is an attempt at a third shape. A model runs locally, as a user
 process, and the system's own applications are built to be addressed by it —
 the mail client, the file browser, the calendar, the notes. `apps/ai` and
 `apps/chatbot` are the first two pieces of that: a local-model client, and a
@@ -506,7 +507,7 @@ or a company. Today each lives in a separate browser profile, a separate mail
 client, a separate password store, and the separation is entirely manual — it
 holds right up until you paste the wrong thing into the wrong window.
 
-The plan is a single Palmframe account that owns several **sub-identities**,
+The plan is a single Palmy account that owns several **sub-identities**,
 each with its own mail, files, credentials, browsing state, and its own
 assistant scope. Switching between them is a first-class operation, not a
 matter of remembering which window you are in. They can be **explicitly

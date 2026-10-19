@@ -13,5 +13,5 @@ details  = A demonstration storefront: a catalogue, a basket and a checkout that
 depend   = glibc fonts libxkbcommon
 provides = cmd:shop
 
-file     = ${PALMFRAME_OUT}/bin/shop -> /usr/bin/shop mode 0755
-file     = ${PALMFRAME_ROOT}/distro/apps/desktop/shop.desktop -> /usr/share/applications/shop.desktop mode 0644
+file     = ${PALMY_OUT}/bin/shop -> /usr/bin/shop mode 0755
+file     = ${PALMY_ROOT}/distro/apps/desktop/shop.desktop -> /usr/share/applications/shop.desktop mode 0644

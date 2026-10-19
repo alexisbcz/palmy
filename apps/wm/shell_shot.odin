@@ -48,7 +48,7 @@ shell_shots :: proc(s: ^Server, app: ^p.App, cv: ^p.Canvas, off: ^p.Offscreen, d
 		"6 mail.desktop %d\n9 term.desktop %d\n3 docs.desktop %d\n2 calendar.desktop %d\n",
 		now - 600, now - 7200, now - 90000, now - 300000,
 	))
-	mk(fmt.tprintf("%s/.config/palmframe/identities.json", home), `[{"handle":"northwind","display_name":"Northwind","color":"blue"},{"handle":"personal","display_name":"Personal","color":"teal"}]`)
+	mk(fmt.tprintf("%s/.config/palmy/identities.json", home), `[{"handle":"northwind","display_name":"Northwind","color":"blue"},{"handle":"personal","display_name":"Personal","color":"teal"}]`)
 	mk(fmt.tprintf("%s/cloud/current", tmp), "northwind\n")
 	bin := fmt.tprintf("%s/bin", tmp)
 	for prog in ([?]string{"term", "files", "launcher", "store", "settings", "accounts"}) {

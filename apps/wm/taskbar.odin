@@ -1,7 +1,7 @@
 // taskbar.odin — the bar across the top of each output, and what clicking
 // it does (UX.md P0-10).
 //
-//     [◆ Palmframe] [1 2 3 … 9] [layout]  [▣ Terminal] [▣ gallery] …  [kbd] [clock]
+//     [◆ Palmy] [1 2 3 … 9] [layout]  [▣ Terminal] [▣ gallery] …  [kbd] [clock]
 //
 // The bar used to be a debugging HUD — window and client counts, the frame
 // rate, an F-key legend, a status line that announced every action — and it
@@ -89,7 +89,7 @@ draw_bar :: proc(s: ^Server, app: ^p.App, cv: ^p.Canvas, oi, ws_idx: int) {
 	// The start button: the brand, which opens the start menu (start.odin).
 	// Its hit area runs to the corner of the screen, so a pointer thrown
 	// into the corner and clicked lands on it.
-	brand := session.bare ? "Palmframe" : "palmy wm"
+	brand := session.bare ? "Palmy" : "palmy wm"
 	bw := p.text_width(f, brand, 13, .Sans, .Semibold)
 	bhot := hit(.Brand, {X, Y, bw + 46, H}, 0, nil, oi)
 	{

@@ -1,4 +1,4 @@
-// Contacts — address books for every Palmframe identity, over CardDAV.
+// Contacts — address books for every Palmy identity, over CardDAV.
 //
 // The window and `contacts <verb>` share one model (model.odin). Cards live
 // in the davclient cache and sync with cloud/dav; see cloud/docs/calendar-

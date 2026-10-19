@@ -1,6 +1,6 @@
 package install_core
 
-// install_core — what installing Palmframe onto a disk means, as a library.
+// install_core — what installing Palmy onto a disk means, as a library.
 //
 // Two front ends drive it: `palm-install` (distro/installer/cli), a command
 // line for the serial console and for scripts, and `installer`
@@ -16,7 +16,7 @@ package install_core
 //   Partition   gpt.odin, blk.odin   our own GPT, then BLKRRPART
 //   Format      run.odin             mkfs.fat, mkfs.ext4
 //   Mount       blk.odin             mount(2) root, then the ESP inside it
-//   Packages    run.odin             palm --root ... add palmframe
+//   Packages    run.odin             palm --root ... add palmy
 //   Configure   configure.odin       /etc, users, locale, keyboard, clock, fstab
 //   Bootloader  boot.odin            limine on the ESP, a UEFI Boot#### entry
 //   Unmount     blk.odin             sync, umount
@@ -80,7 +80,7 @@ Plan :: struct {
 	password:       string, // hashed with SHA-512 crypt before it touches disk
 	root_password:  string, // empty = same as user
 	repo:           string, // default: the live medium's repository, file:///usr/share/palm/repo
-	packages:       []string, // default: {"palmframe"}
+	packages:       []string, // default: {"palmy"}
 	efi_boot_entry: bool, // write a UEFI Boot#### variable via efivarfs
 	swap_bytes:     u64, // a /swapfile of this size on the root; 0 = none
 	// No firmware packages. By default the install adds linux-firmware, or
@@ -114,7 +114,7 @@ Progress :: struct {
 DEFAULT_REPO :: "file:///usr/share/palm/repo"
 // A package-level slice, not a literal in normalise_plan: a slice literal
 // there would point into that procedure's stack frame.
-DEFAULT_PACKAGES := []string{"palmframe"}
+DEFAULT_PACKAGES := []string{"palmy"}
 DEFAULT_TARGET :: "/mnt/target"
 DEFAULT_EFIVARS :: "/sys/firmware/efi/efivars"
 DEFAULT_LOG :: "/var/log/palm-install.log"
@@ -165,7 +165,7 @@ default_plan :: proc() -> Plan {
 		language = "en_US",
 		keyboard = {layout = "us"},
 		timezone = "UTC",
-		hostname = "palmframe",
+		hostname = "palmy",
 		repo = DEFAULT_REPO,
 		packages = nil,
 		efi_boot_entry = os.is_dir("/sys/firmware/efi"),

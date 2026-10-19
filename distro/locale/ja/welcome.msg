@@ -1,4 +1,4 @@
-# Palmframe's first run (apps/welcome) — Japanese. Needs a CJK font to render, as the installer's catalogue does. palmy breaks lines only at spaces, so long sentences carry one after each 、 and 。.
+# Palmy's first run (apps/welcome) — Japanese. Needs a CJK font to render, as the installer's catalogue does. palmy breaks lines only at spaces, so long sentences carry one after each 、 and 。.
 # Format: distro/locale/README.md. Installed as
 # /usr/share/palm/locale/ja/welcome.msg.
 #
@@ -9,17 +9,17 @@ name      = 日本語
 english   = Japanese
 plural    = 0
 
-msgid "Welcome to Palmframe"
-msgstr "Palmframe へようこそ"
+msgid "Welcome to Palmy"
+msgstr "Palmy へようこそ"
 
-msgid "Use Palmframe with an account?"
-msgstr "アカウントで Palmframe を使いますか？"
+msgid "Use Palmy with an account?"
+msgstr "アカウントで Palmy を使いますか？"
 
 msgid "You are signed in"
 msgstr "サインインしています"
 
-msgid "Create your Palmframe account"
-msgstr "Palmframe アカウントを作成"
+msgid "Create your Palmy account"
+msgstr "Palmy アカウントを作成"
 
 msgid "Sign in to your account"
 msgstr "アカウントにサインイン"
@@ -51,8 +51,8 @@ msgstr "いくつかの選択です。 どれもスキップできます。 あ�
 msgid "Everything on this computer works without one. An account adds identities, and keeps each of them in sync across your devices."
 msgstr "このコンピュータではアカウントなしですべて動作します。 アカウントを使うとアイデンティティが加わり、 それぞれをデバイス間で同期できます。"
 
-msgid "Your email is how you sign in and how you get back in if you forget the password. Use an address outside Palmframe."
-msgstr "メールアドレスはサインインと、 パスワードを忘れたときの復旧に使います。 Palmframe 以外のアドレスを使ってください。"
+msgid "Your email is how you sign in and how you get back in if you forget the password. Use an address outside Palmy."
+msgstr "メールアドレスはサインインと、 パスワードを忘れたときの復旧に使います。 Palmy 以外のアドレスを使ってください。"
 
 msgid "One account, several selves: personal, work, public, a project. Each has its own address, its own data and its own colour, and nothing passes between them unless you carry it."
 msgstr "1 つのアカウントに複数の顔：個人、 仕事、 公開、 プロジェクト。 それぞれに専用のアドレス、 データ、 色があり、 あなたが運ばない限り互いに何も渡りません。"
@@ -60,8 +60,8 @@ msgstr "1 つのアカウントに複数の顔：個人、 仕事、 公開、 �
 msgid "Choose per identity. Each one syncs on its own session, so what one identity holds is never visible to another."
 msgstr "アイデンティティごとに選んでください。 それぞれ専用のセッションで同期するため、 あるアイデンティティの中身が別のアイデンティティから見えることはありません。"
 
-msgid "This is the only copy of your Secret Key outside this computer. Without it and your master password, nobody can open your vault: not Palmframe, and not you on a new computer."
-msgstr "これはこのコンピュータの外にある、 シークレットキーの唯一のコピーです。 これとマスターパスワードがなければ、 誰も保管庫を開けません。 Palmframe も、 新しいコンピュータのあなたも同じです。"
+msgid "This is the only copy of your Secret Key outside this computer. Without it and your master password, nobody can open your vault: not Palmy, and not you on a new computer."
+msgstr "これはこのコンピュータの外にある、 シークレットキーの唯一のコピーです。 これとマスターパスワードがなければ、 誰も保管庫を開けません。 Palmy も、 新しいコンピュータのあなたも同じです。"
 
 msgid "Passwords are encrypted on this computer before they leave it. Two things unlock them: a master password you remember, and a Secret Key this computer keeps."
 msgstr "パスワードはこのコンピュータを出る前に暗号化されます。 解錠に必要なのは 2 つ：あなたが覚えるマスターパスワードと、 このコンピュータが保持するシークレットキーです。"
@@ -147,11 +147,11 @@ msgstr "お名前を入力してください。"
 msgid "Your first identity is named after you. You can change it on the next page."
 msgstr "最初のアイデンティティにはあなたの名前が付きます。 次のページで変更できます。"
 
-msgid "Your recovery address. Mail at Palmframe addresses comes later, per identity."
-msgstr "復旧用のアドレスです。 Palmframe のメールアドレスはあとで、 アイデンティティごとに作ります。"
+msgid "Your recovery address. Mail at Palmy addresses comes later, per identity."
+msgstr "復旧用のアドレスです。 Palmy のメールアドレスはあとで、 アイデンティティごとに作ります。"
 
-msgid "This is a Palmframe address. If you lose that identity, you lose your way back in: an outside address is safer."
-msgstr "これは Palmframe のアドレスです。 そのアイデンティティを失うと復旧手段も失います。 外部のアドレスの方が安全です。"
+msgid "This is a Palmy address. If you lose that identity, you lose your way back in: an outside address is safer."
+msgstr "これは Palmy のアドレスです。 そのアイデンティティを失うと復旧手段も失います。 外部のアドレスの方が安全です。"
 
 msgid "Email"
 msgstr "メールアドレス"
@@ -180,8 +180,8 @@ msgstr "サーバー"
 msgid "Change"
 msgstr "変更"
 
-msgid "The address of a Palmframe server. Ask whoever runs yours."
-msgstr "Palmframe サーバーのアドレスです。 運用している人に確認してください。"
+msgid "The address of a Palmy server. Ask whoever runs yours."
+msgstr "Palmy サーバーのアドレスです。 運用している人に確認してください。"
 
 msgid "Use this server"
 msgstr "このサーバーを使う"
@@ -321,8 +321,8 @@ msgstr "1 つのシークレットキーと 1 つのマスターパスワード�
 msgid "Chosen for:"
 msgstr "対象："
 
-msgid "Palmframe Emergency Kit"
-msgstr "Palmframe 緊急キット"
+msgid "Palmy Emergency Kit"
+msgstr "Palmy 緊急キット"
 
 msgid "Account"
 msgstr "アカウント"
@@ -339,8 +339,8 @@ msgstr "緊急キットを保存"
 msgid "I have saved my Emergency Kit somewhere safe"
 msgstr "緊急キットを安全な場所に保存しました"
 
-msgid "Palmframe cannot recover your vault for you. That is what makes it yours."
-msgstr "Palmframe はあなたの代わりに保管庫を復旧できません。 だからこそ、 あなただけのものなのです。"
+msgid "Palmy cannot recover your vault for you. That is what makes it yours."
+msgstr "Palmy はあなたの代わりに保管庫を復旧できません。 だからこそ、 あなただけのものなのです。"
 
 msgid "A session for this identity on this computer"
 msgstr "このコンピュータでのこのアイデンティティのセッション"
@@ -456,8 +456,8 @@ msgstr "ウィンドウを閉じる"
 msgid "Every shortcut"
 msgstr "すべてのショートカット"
 
-msgid "Palmframe is ready"
-msgstr "Palmframe の準備ができました"
+msgid "Palmy is ready"
+msgstr "Palmy の準備ができました"
 
 msgid "Signed in as %s."
 msgstr "%s としてサインインしています。"
@@ -465,8 +465,8 @@ msgstr "%s としてサインインしています。"
 msgid "Everything stays on this computer. You can add an account whenever you like."
 msgstr "すべてこのコンピュータに残ります。 アカウントはいつでも追加できます。"
 
-msgid "Start using Palmframe"
-msgstr "Palmframe を使い始める"
+msgid "Start using Palmy"
+msgstr "Palmy を使い始める"
 
 msgid "To see this again:"
 msgstr "もう一度表示するには："
@@ -555,8 +555,8 @@ msgstr "2 つのアイデンティティに同じハンドルは使えません�
 msgid "Saved. Print it, or copy it somewhere only you can reach, then delete the files."
 msgstr "保存しました。 印刷するか、 あなただけが触れられる場所にコピーしてから、 ファイルを削除してください。"
 
-msgid "The Palmframe server is not reachable. Check the address, or continue without an account."
-msgstr "Palmframe サーバーに接続できません。 アドレスを確認するか、 アカウントなしで続けてください。"
+msgid "The Palmy server is not reachable. Check the address, or continue without an account."
+msgstr "Palmy サーバーに接続できません。 アドレスを確認するか、 アカウントなしで続けてください。"
 
 msgid "That email and password do not match."
 msgstr "メールアドレスとパスワードが一致しません。"
@@ -624,8 +624,8 @@ msgstr "新しいコンピュータで保管庫を開くには、 このシー�
 msgid "Keep this page somewhere safe: a drawer, a safe, with your passport. Then delete this file."
 msgstr "このページは引き出しや金庫、 パスポートと一緒など、 安全な場所に保管してください。 その後、 このファイルは削除してください。"
 
-msgid "Palmframe cannot recover either of them for you."
-msgstr "Palmframe はどちらも代わりに復旧できません。"
+msgid "Palmy cannot recover either of them for you."
+msgstr "Palmy はどちらも代わりに復旧できません。"
 
 msgid "Choose a handle."
 msgstr "ハンドルを選んでください。"

@@ -1,4 +1,4 @@
-# Palmframe login screen (apps/greeter) — Spanish.
+# Palmy login screen (apps/greeter) — Spanish.
 # Format: distro/locale/README.md. Installed as
 # /usr/share/palm/locale/es/greeter.msg.
 language = es

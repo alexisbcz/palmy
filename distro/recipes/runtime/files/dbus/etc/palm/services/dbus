@@ -1,5 +1,5 @@
 # The D-Bus system bus, which iwd and bluetoothd register on. The wrapper
 # makes /run/dbus and the machine id, then execs dbus-daemon in the
 # foreground (distro/notes/runtime.md).
-cmd     = /usr/lib/palmframe/dbus-system
+cmd     = /usr/lib/palmy/dbus-system
 restart = always

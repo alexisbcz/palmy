@@ -75,7 +75,7 @@ def rest(method, path, token, body=None):
 
 alice, work, bob = client("alice", alice_pw), client("alice-work", work_pw), client("bob", bob_pw)
 a_cal, b_cal = default_cal(alice), default_cal(bob)
-OPT = """<d:propertyupdate xmlns:d="DAV:" xmlns:p="https://palmframe.dev/ns/dav">
+OPT = """<d:propertyupdate xmlns:d="DAV:" xmlns:p="https://palmy.dev/ns/dav">
 <d:set><d:prop><p:public-freebusy>%s</p:public-freebusy></d:prop></d:set></d:propertyupdate>"""
 bob.proppatch(str(b_cal.url), OPT % "false")
 UID = f"lunch-{int(time.time())}@palm.test"

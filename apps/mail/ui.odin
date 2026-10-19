@@ -646,7 +646,7 @@ sidebar :: proc(ui: ^p.Ctx, st: ^State, drawer: bool) {
 		hint(ui, "1-9 0", "identity · all")
 		hint(ui, "⇧I", "unified inbox (prototype)")
 	} else {
-		hint(ui, "P", "sign in to Palmframe")
+		hint(ui, "P", "sign in to Palmy")
 	}
 	p.end(ui)
 }

@@ -12,5 +12,5 @@ icon     = clapperboard
 depend   = glibc fonts libxkbcommon ffmpeg pipewire
 provides = cmd:video
 
-file     = ${PALMFRAME_OUT}/bin/video -> /usr/bin/video mode 0755
-file     = ${PALMFRAME_ROOT}/distro/apps/desktop/video.desktop -> /usr/share/applications/video.desktop mode 0644
+file     = ${PALMY_OUT}/bin/video -> /usr/bin/video mode 0755
+file     = ${PALMY_ROOT}/distro/apps/desktop/video.desktop -> /usr/share/applications/video.desktop mode 0644

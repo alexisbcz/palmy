@@ -14,17 +14,17 @@ const PLANNED = (
   </Callout>
 );
 
-export const PALMFRAME_DOCS: DocPage[] = [
+export const VISION_DOCS: DocPage[] = [
   /* ---------------------------------------------------------------------- */
   {
     slug: "overview",
-    title: "Palmframe",
+    title: "Palmy",
     description:
       "An experiment in rethinking a Linux distribution for a machine where AI is part of the system rather than a website you visit.",
     lead: () => (
       <>
         <Lede>
-          Palmframe is an experiment in rethinking a Linux distribution for a
+          Palmy is an experiment in rethinking a Linux distribution for a
           machine where AI is part of the system rather than a website you
           visit. <strong>palmy</strong> is its UI toolkit, and the toolkit came
           first because the rest is not worth attempting on a stack you cannot
@@ -91,48 +91,48 @@ export const PALMFRAME_DOCS: DocPage[] = [
               head={["", "", ""]}
               rows={[
                 [
-                  <Link to="/palmframe/ai-in-the-system">
+                  <Link to="/vision/ai-in-the-system">
                     AI as part of the system
                   </Link>,
                   <StatusBadge status="planned" />,
                   "A local model the system's own applications are built to be addressed by.",
                 ],
                 [
-                  <Link to="/palmframe/identities">
+                  <Link to="/vision/identities">
                     One account, several identities
                   </Link>,
                   <StatusBadge status="planned" />,
                   "Sub-identities with their own mail, files, credentials and assistant scope.",
                 ],
                 [
-                  <Link to="/palmframe/cloud">The cloud part</Link>,
+                  <Link to="/vision/cloud">The cloud part</Link>,
                   <StatusBadge status="planned" />,
                   "Postgres with row-level security as the enforcement point, files syncing rather than living remotely.",
                 ],
                 [
-                  <Link to="/palmframe/palm-cli">
+                  <Link to="/vision/palm-cli">
                     The <code>palm</code> command surface
                   </Link>,
                   <StatusBadge status="planned" />,
                   "One front door, designed for agents: a machine-readable schema and a scope rule.",
                 ],
                 [
-                  <Link to="/palmframe/beyond-linux">Beyond Linux</Link>,
+                  <Link to="/vision/beyond-linux">Beyond Linux</Link>,
                   <StatusBadge status="partial" label="Partly paid for" />,
                   "Windows, macOS, Android and iOS. The backend seam exists; no third backend does.",
                 ],
                 [
-                  <Link to="/palmframe/the-web">The web as another backend</Link>,
+                  <Link to="/vision/the-web">The web as another backend</Link>,
                   <StatusBadge status="planned" />,
                   "WebAssembly into a canvas buffer, which is the operation the rasterizer already performs.",
                 ],
                 [
-                  <Link to="/palmframe/devices">Devices</Link>,
+                  <Link to="/vision/devices">Devices</Link>,
                   <StatusBadge status="planned" />,
                   "Clipboard, application state, notifications, input and agent context, moving between devices.",
                 ],
                 [
-                  <Link to="/palmframe/hard-parts">The hard parts</Link>,
+                  <Link to="/vision/hard-parts">The hard parts</Link>,
                   <StatusBadge status="planned" />,
                   "Three tensions worth naming before they are discovered.",
                 ],
@@ -154,7 +154,7 @@ export const PALMFRAME_DOCS: DocPage[] = [
               hand everything to one vendor and hope.
             </p>
             <p>
-              Palmframe is an attempt at a third shape, and the design
+              Palmy is an attempt at a third shape, and the design
               constraint that makes it interesting is <em>scope</em>. An
               assistant that can read your work mail should not silently also
               read your personal mail, and the way to guarantee that is not to
@@ -238,7 +238,7 @@ export const PALMFRAME_DOCS: DocPage[] = [
               about which of the two it gave up.
             </p>
             <p>
-              See <Link to="/palmframe/hard-parts">The hard parts</Link>, where
+              See <Link to="/vision/hard-parts">The hard parts</Link>, where
               this is one of three tensions stated rather than resolved.
             </p>
           </>
@@ -261,7 +261,7 @@ export const PALMFRAME_DOCS: DocPage[] = [
             </p>
             <p>
               That is what{" "}
-              <Link to="/palmframe/palm-cli">
+              <Link to="/vision/palm-cli">
                 the <code>palm</code> command surface
               </Link>{" "}
               is for, and it is also where the scope rule is enforced, because
@@ -311,7 +311,7 @@ export const PALMFRAME_DOCS: DocPage[] = [
         body: () => (
           <>
             <p>
-              A single Palmframe account owns several sub-identities, each with
+              A single Palmy account owns several sub-identities, each with
               its own mail, files, credentials, browsing state, and its own
               assistant scope. Switching between them is a first-class
               operation, not a matter of remembering which window you are in.
@@ -456,7 +456,7 @@ PALM_IDENTITY=work palm mail list --identity personal
       <>
         <Lede>
           A single command surface through which a coding agent can operate
-          every part of Palmframe: the window manager, the applications, the
+          every part of Palmy: the window manager, the applications, the
           system state, and eventually the identity and cloud layer. Humans use
           it too, but they are the second audience.
         </Lede>
@@ -1158,7 +1158,7 @@ palm commands   the command index`}
             <p>
               That last point is worth being precise about, because it is where
               this differs from{" "}
-              <Link to="/palmframe/cloud">the cloud paragraph</Link>: a relay
+              <Link to="/vision/cloud">the cloud paragraph</Link>: a relay
               that only forwards opaque bytes needs no ability to read them, so
               device-to-device can be genuinely end-to-end even though a{" "}
               <em>server-side model</em> reasoning over your mail cannot be.
@@ -1235,7 +1235,7 @@ palm commands   the command index`}
             If a model runs on a server and reasons over your mail, the server
             can read your mail — that is not a policy choice, it is arithmetic.
             Local models avoid it entirely, which is why{" "}
-            <Link to="/palmframe/ai-in-the-system">the local one came first</Link>
+            <Link to="/vision/ai-in-the-system">the local one came first</Link>
             ; anything that moves to a server has to be honest about which of
             the two it gave up.
           </p>
@@ -1259,7 +1259,7 @@ palm commands   the command index`}
         title: "Convenience between devices is indistinguishable from leakage until you can say which is which",
         body: () => (
           <p>
-            Everything in <Link to="/palmframe/devices">the devices section</Link>{" "}
+            Everything in <Link to="/vision/devices">the devices section</Link>{" "}
             makes data move with less friction, and friction is doing some of the
             security work today. The answer is not less capability; it is that
             every channel is authenticated per device, revocable the moment one

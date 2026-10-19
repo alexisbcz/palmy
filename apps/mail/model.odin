@@ -92,7 +92,7 @@ Account :: struct {
 	// the UI says "Maildir" instead of guessing one.
 	discovered:  bool,
 
-	// A Palmframe identity, read from palmframe.conf (see palm.odin). Each
+	// A Palmy identity, read from palmy.conf (see palm.odin). Each
 	// identity of the signed-in account is its own account here, with its
 	// own Maildir, because it is its own mailbox on the server.
 	palm:        bool,
@@ -543,11 +543,11 @@ State :: struct {
 	att_chip_ids: [24]u64,
 	att_chip_n:   int,
 
-	// Palmframe. `id_view` is the identity being looked at: 1 + an index into
+	// Palmy. `id_view` is the identity being looked at: 1 + an index into
 	// `accounts`, or 0 for all of them (so a zeroed State shows everything).
 	// `unified_on` is the prototype toggle
 	// that adds the "All inboxes" view; `unified` is that view being shown.
-	palm_email:  string, // the signed-in account, from palmframe.conf
+	palm_email:  string, // the signed-in account, from palmy.conf
 	id_view:     int,
 	unified_on:  bool,
 	unified:     bool,
@@ -651,13 +651,13 @@ load_config :: proc(st: ^State) {
 	if ok && len(raw) > 0 {
 		text = string(raw)
 	} else if data_dir_explicit || os.exists(palm_conf_path(st.data_dir, context.temp_allocator)) {
-		// Signed in to Palmframe and nothing else configured, or a data
+		// Signed in to Palmy and nothing else configured, or a data
 		// directory named on the command line: the identities are the
 		// accounts, and the built-in test accounts would only be noise.
 		text = ""
 	}
 	parse_config(st, text)
-	load_palmframe(st)
+	load_palmy(st)
 }
 
 parse_config :: proc(st: ^State, text: string) {

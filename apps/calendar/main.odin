@@ -6,7 +6,7 @@
 //
 // Two kinds of calendar share the grid. The one on this device is the
 // tab-separated file in store.odin and needs no account. Signed in to a
-// Palmframe account, every identity's calendars join it — its own and the
+// Palmy account, every identity's calendars join it — its own and the
 // ones shared with it — synced over CalDAV (cloud.odin), each in its own
 // colour, each one switchable on and off in the sidebar.
 package main
@@ -491,7 +491,7 @@ commit_cloud :: proc(c: ^Cal, date: Date, start, mins: int, title, place: string
 			continue
 		}
 		if !strings.contains(a, "@") {
-			// A bare handle means a Palmframe identity.
+			// A bare handle means a Palmy identity.
 			a = tfmt("%s@%s", a, mail_domain())
 		}
 		append(&atts, a)

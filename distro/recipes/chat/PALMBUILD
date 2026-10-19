@@ -9,9 +9,9 @@ pkgdesc  = Messages
 license  = MIT
 category = Internet
 icon     = message-circle
-details  = Conversations, with the identity you write as always shown. Talks to a chat server: Palmframe's, or one on your network.
+details  = Conversations, with the identity you write as always shown. Talks to a chat server: Palmy's, or one on your network.
 depend   = glibc fonts libxkbcommon
 provides = cmd:chat
 
-file     = ${PALMFRAME_OUT}/bin/chat -> /usr/bin/chat mode 0755
-file     = ${PALMFRAME_ROOT}/distro/apps/desktop/chat.desktop -> /usr/share/applications/chat.desktop mode 0644
+file     = ${PALMY_OUT}/bin/chat -> /usr/bin/chat mode 0755
+file     = ${PALMY_ROOT}/distro/apps/desktop/chat.desktop -> /usr/share/applications/chat.desktop mode 0644

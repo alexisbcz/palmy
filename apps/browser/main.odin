@@ -1,4 +1,4 @@
-// browser: a web browser whose chrome is Palmframe's own (palmy + shadcn) and
+// browser: a web browser whose chrome is Palmy's own (palmy + shadcn) and
 // whose pages are drawn by the engine each profile chooses -- Chromium (Blink,
 // through CEF) or Firefox (Gecko, Firefox itself in a private compositor).
 //
@@ -178,7 +178,7 @@ COMMANDS := []kit.Command {
 	},
 	{
 		verb = "sync",
-		summary = "push and pull bookmarks through the Palmframe account, scoped to this identity",
+		summary = "push and pull bookmarks through the Palmy account, scoped to this identity",
 		effect = .Idempotent,
 		out = {{name = "ok", kind = .Bool}, {name = "pushed", kind = .Int}, {name = "pulled", kind = .Int}, {name = "merged", kind = .Int}, {name = "message", kind = .String}},
 		examples = {"PALM_IDENTITY=work browser sync --json"},
@@ -240,7 +240,7 @@ surface :: proc() -> ^kit.Surface {
 	}
 	g_surface = kit.Surface {
 		noun       = "browser",
-		summary    = "a web browser: Palmframe's chrome, Chromium's or Firefox's engine",
+		summary    = "a web browser: Palmy's chrome, Chromium's or Firefox's engine",
 		gui        = true,
 		takes_path = true,
 		selftest   = selftest,
@@ -253,7 +253,7 @@ surface :: proc() -> ^kit.Surface {
 
 NOTES :: `One profile per identity: $PALM_IDENTITY (or --identity) chooses it, and
 cookies, storage, history and bookmarks never cross between profiles.
-Profiles live under $XDG_DATA_HOME/palmframe/browser/<identity>/;
+Profiles live under $XDG_DATA_HOME/palmy/browser/<identity>/;
 $PALM_BROWSER_HOME moves them.
 
 Engines: Chromium through palm-browser-cef (the palm-browser-cef package, in

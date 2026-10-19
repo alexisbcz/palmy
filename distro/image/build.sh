@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Assemble distro/out/palmframe.img, the bootable Palmframe disk, from the
+# Assemble distro/out/palmy.img, the bootable Palmy disk, from the
 # signed repository in distro/out/repo/x86_64.
 #
 #	distro/image/build.sh            (make -C distro image runs it)
@@ -7,7 +7,7 @@
 # No root and no loop devices. The steps, and why each is done this way:
 #
 # 1. The root filesystem is made by palm itself: `palm --root ... --initdb
-#    add palmframe palmframe-demo` into an empty directory (palmframe-demo is
+#    add palmy palmy-demo` into an empty directory (palmy-demo is
 #    the demo user's home), against the local repository and the build's own
 #    key. That is the same code path, the same signature
 #    check and the same installed database a user's `palm add` produces, so
@@ -41,7 +41,7 @@ REPO="$OUT/repo/x86_64"
 KEYS="$DISTRO/build/keys"
 PALM="$OUT/bin/palm"
 ROOTFS="$OUT/rootfs"
-IMG="$OUT/palmframe.img"
+IMG="$OUT/palmy.img"
 LIMINE_SHARE="${LIMINE_SHARE:-/usr/share/limine}"
 
 # Partition sizes in MiB. The root gets the installed size plus room for the
@@ -62,9 +62,9 @@ if [ "$TIMEZONE" = host ]; then
 fi
 # Besides the system: e2fsprogs and dosfstools, so that palm-init can check
 # `/` and the EFI system partition at boot (fsck.ext4, fsck.fat).
-PACKAGES="${PACKAGES:-palmframe palmframe-demo e2fsprogs dosfstools}"
+PACKAGES="${PACKAGES:-palmy palmy-demo e2fsprogs dosfstools}"
 
-for f in "$PALM" "$REPO/PALMINDEX" "$REPO/PALMINDEX.sig" "$KEYS/palmframe.pub"; do
+for f in "$PALM" "$REPO/PALMINDEX" "$REPO/PALMINDEX.sig" "$KEYS/palmy.pub"; do
 	[ -f "$f" ] || { echo "image: $f is missing (run make -C distro repo)" >&2; exit 1; }
 done
 for t in fakeroot mkfs.ext4 sfdisk mformat mcopy mmd limine; do
@@ -75,7 +75,7 @@ rm -rf "$WORK" "$ROOTFS"
 mkdir -p "$WORK" "$ROOTFS"
 
 # --- 1 + 2: the root filesystem, under one fakeroot session -------------------
-# The keys directory holds palmframe.sec too; palm only reads *.pub from it.
+# The keys directory holds palmy.sec too; palm only reads *.pub from it.
 root_bytes_file="$WORK/root.bytes"
 fakeroot -- bash -euo pipefail -c '
 	palm=$1 rootfs=$2 repo=$3 keys=$4 work=$5 extra=$6 tz=$7 packages=$8
@@ -92,7 +92,7 @@ fakeroot -- bash -euo pipefail -c '
 	#  - no /etc/machine-id: palm-init makes one on the first boot, so two
 	#    copies of the image are two machines.
 	cat >>"$rootfs/etc/fstab" <<-FSTAB
-	LABEL=palmframe	/	ext4	rw,relatime	0 1
+	LABEL=palmy	/	ext4	rw,relatime	0 1
 	LABEL=PALMESP	/boot/efi	vfat	rw,relatime,fmask=0077,dmask=0077,shortname=mixed,utf8,errors=remount-ro	0 2
 	FSTAB
 	: >"$rootfs/etc/palm/grow-root"
@@ -101,7 +101,7 @@ fakeroot -- bash -euo pipefail -c '
 	echo "$tz" >"$rootfs/etc/timezone"
 	rm -f "$rootfs/etc/machine-id"
 
-	# The repository the installed system uses is the one palmframe-base
+	# The repository the installed system uses is the one palmy-base
 	# ships in /etc/palm/repositories: the public https repository and its
 	# mirror (distro/repo-publish). Say so here, so a changed base file does
 	# not silently produce an image that points nowhere.
@@ -113,7 +113,7 @@ fakeroot -- bash -euo pipefail -c '
 	mib=$(( (used + extra + 3) / 4 * 4 ))
 	echo $((mib * 1024 * 1024)) > "$work/root.bytes"
 	truncate -s "${mib}M" "$work/root.ext4"
-	mkfs.ext4 -q -F -L palmframe -E root_owner=0:0 -d "$rootfs" "$work/root.ext4"
+	mkfs.ext4 -q -F -L palmy -E root_owner=0:0 -d "$rootfs" "$work/root.ext4"
 ' fakeroot-image "$PALM" "$ROOTFS" "$REPO" "$KEYS" "$WORK" "$ROOT_EXTRA_MIB" "$TIMEZONE" "$PACKAGES"
 ROOT_BYTES=$(cat "$root_bytes_file")
 
@@ -129,17 +129,17 @@ cat >"$WORK/limine.conf" <<EOF
 timeout: 3
 default_entry: 1
 
-/Palmframe
+/Palmy
     protocol: linux
     path: boot():/vmlinuz
     cmdline: $CMDLINE
 
-/Palmframe (log in automatically as palm)
+/Palmy (log in automatically as palm)
     protocol: linux
     path: boot():/vmlinuz
     cmdline: $CMDLINE palm.autologin=palm
 
-/Palmframe (single user, root shell)
+/Palmy (single user, root shell)
     protocol: linux
     path: boot():/vmlinuz
     cmdline: ${CMDLINE/ quiet loglevel=3/} palm.single
@@ -169,7 +169,7 @@ truncate -s "$TOTAL" "$IMG.tmp"
 sfdisk --quiet "$IMG.tmp" <<EOF
 label: gpt
 ${IMG}.tmp1 : start=$((ESP_START / 512)), size=$((ESP_MIB * MiB / 512)), type=uefi, name="EFI system"
-${IMG}.tmp2 : start=$((ROOT_START / 512)), size=$((ROOT_BYTES / 512)), type=linux, name="palmframe"
+${IMG}.tmp2 : start=$((ROOT_START / 512)), size=$((ROOT_BYTES / 512)), type=linux, name="palmy"
 ${IMG}.tmp3 : start=$((BIOS_START / 512)), size=$((MiB / 512)), type=21686148-6449-6E6F-744E-656564454649, name="BIOS boot"
 EOF
 dd if="$ESP" of="$IMG.tmp" bs=1M seek=$((ESP_START / MiB)) conv=notrunc,sparse status=none

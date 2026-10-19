@@ -9,7 +9,7 @@ package main
 // in for anything but a badge on the screen.
 //
 // Real mode is not the default anywhere it could do harm. `choose_mode` in
-// main.odin only allows it as root on a Palmframe system; anywhere else the
+// main.odin only allows it as root on a Palmy system; anywhere else the
 // installer runs as --demo and says so.
 
 import "core:fmt"

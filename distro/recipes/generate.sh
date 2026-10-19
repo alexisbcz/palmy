@@ -7,7 +7,7 @@
 # PALMBUILD.md), which is right for a package of three files and wrong for
 # one whose file list lives elsewhere: busybox's applets are whatever
 # `busybox --list` says, glibc's version is whatever the build host runs,
-# palmframe-base is distro/base/root plus distro/base/layout, the fonts are
+# palmy-base is distro/base/root plus distro/base/layout, the fonts are
 # distro/apps/fonts.list, and the applications are distro/apps/default.list.
 # Copying those lists into hand-written recipes would let them drift, so this
 # script writes them, and `make -C distro` runs it before every build. The
@@ -15,8 +15,8 @@
 # holds without running anything.
 #
 # Hand-written recipes (linux, palm-init, palm, palm-login, doas, passwd, palmd, greeter,
-# palmy-wm, palmframe-demo, and the installer's palm-install, installer and
-# palmframe-live) are left alone.
+# palmy-wm, palmy-demo, and the installer's palm-install, installer and
+# palmy-live) are left alone.
 #
 # Every recipe also carries the fields Software (apps/store) reads:
 # `category` (its shelf in Discover; one of the closed list in
@@ -24,8 +24,8 @@
 # `details` (the prose on the package's page). pkgdesc is the one-line
 # summary under the name.
 #
-# Sources in the recipes are spelled ${PALMFRAME_ROOT} (the checkout),
-# ${PALMFRAME_OUT} (distro/out) and ${PALMFRAME_KEYS} (distro/build/keys);
+# Sources in the recipes are spelled ${PALMY_ROOT} (the checkout),
+# ${PALMY_OUT} (distro/out) and ${PALMY_KEYS} (distro/build/keys);
 # distro/Makefile exports all three before calling `palm build`. Host files
 # (glibc, libxkbcommon, the XKB data, some fonts) are absolute paths.
 set -euo pipefail
@@ -85,7 +85,7 @@ id_name() {
 	esac
 }
 
-# --- palmframe-base: distro/base/root and distro/base/layout -----------------
+# --- palmy-base: distro/base/root and distro/base/layout -----------------
 {
 	header " from distro/base/root and distro/base/layout"
 	cat <<EOF
@@ -94,10 +94,10 @@ id_name() {
 # the mount points palm-init mounts on, and /etc/skel. Every other
 # package depends on this one, so it is always installed first and its
 # /etc/passwd is in place when later packages' owners are resolved.
-pkgname  = palmframe-base
+pkgname  = palmy-base
 pkgver   = $OWN_VER
 pkgrel   = 0
-pkgdesc  = The Palmframe filesystem layout, users and base configuration
+pkgdesc  = The Palmy filesystem layout, users and base configuration
 license  = MIT
 category = System
 icon     = hard-drive
@@ -111,9 +111,9 @@ EOF
 	# directory's mode and owner are the layout's, not the tree's 0755.
 	for top in "$DISTRO"/base/root/*; do
 		t="$(basename "$top")"
-		echo "tree     = \${PALMFRAME_ROOT}/distro/base/root/$t -> /$t"
+		echo "tree     = \${PALMY_ROOT}/distro/base/root/$t -> /$t"
 	done
-	echo "file     = \${PALMFRAME_KEYS}/palmframe.pub -> /etc/palm/keys/palmframe.pub mode 0644"
+	echo "file     = \${PALMY_KEYS}/palmy.pub -> /etc/palm/keys/palmy.pub mode 0644"
 	echo
 	while read -r kind path a b; do
 		case "$kind" in
@@ -128,10 +128,10 @@ EOF
 		*) echo "generate: unknown layout line: $kind $path" >&2; exit 1 ;;
 		esac
 	done <"$DISTRO/base/layout"
-} | emit palmframe-base
+} | emit palmy-base
 
 # --- busybox: the binary and one symlink per applet --------------------------
-# Applets that would shadow a Palmframe program are left out; today that is
+# Applets that would shadow a Palmy program are left out; today that is
 # busybox's PPP `chat`, which collides with the chat application's name, and
 # passwd, which distro/passwd replaces (busybox is not setuid, so its passwd
 # works only for root).
@@ -153,10 +153,10 @@ url      = https://busybox.net
 category = System
 icon     = terminal
 details  = The shell and the command-line userland in one statically linked program: sh, the coreutils, mount, getty and login, udhcpc, syslogd and vi, each a link to the same binary.
-depend   = palmframe-base
+depend   = palmy-base
 provides = cmd:sh
 
-file     = \${PALMFRAME_OUT}/busybox -> /usr/bin/busybox mode 0755
+file     = \${PALMY_OUT}/busybox -> /usr/bin/busybox mode 0755
 EOF
 	for applet in $("$BUSYBOX" --list | sort); do
 		case "$BB_SKIP" in *" $applet "*) continue ;; esac
@@ -174,7 +174,7 @@ GLIBC_VER="$(host_version glibc 2.44)"
 #
 # Taken from the build host rather than built: every Odin binary links the
 # host's glibc, so shipping the same files is what makes them run unchanged.
-# The loader lives in /usr/lib; /lib64 -> usr/lib (palmframe-base) is how the
+# The loader lives in /usr/lib; /lib64 -> usr/lib (palmy-base) is how the
 # ELF interpreter path /lib64/ld-linux-x86-64.so.2 finds it.
 pkgname  = glibc
 pkgver   = $GLIBC_VER
@@ -185,7 +185,7 @@ url      = https://www.gnu.org/software/libc
 category = System
 icon     = binary
 details  = The C library and the dynamic loader every palmy program links against, copied from the machine that built the distribution so the binaries run unchanged.
-depend   = palmframe-base
+depend   = palmy-base
 provides = so:libc.so.6 so:libm.so.6 so:ld-linux-x86-64.so.2
 
 file     = /usr/lib/libc.so.6 -> /usr/lib/libc.so.6 mode 0755
@@ -270,7 +270,7 @@ details  = $5
 EOF
 	grep -v '^#' "$DISTRO/apps/fonts.list" | while read -r src dst set; do
 		if [ -z "${src:-}" ] || [ "$set" != "$2" ]; then continue; fi
-		case "$src" in /*) ;; *) src="\${PALMFRAME_ROOT}/$src" ;; esac
+		case "$src" in /*) ;; *) src="\${PALMY_ROOT}/$src" ;; esac
 		echo "file     = $src -> $dst mode 0644"
 	done
 }
@@ -297,7 +297,7 @@ declare -A DESC=(
 	[prose]="The prose engine behind docs (command line)"
 	[store]="Find, install and update software"
 	[network]="Network interfaces and Wi-Fi"
-	[settings]="System settings" [accounts]="Your Palmframe account and its identities" [welcome]="First-run setup" [notify]="Notifications" [index]="Search index" [drive]="Drive" [palm-drive]="Drive sync"
+	[settings]="System settings" [accounts]="Your Palmy account and its identities" [welcome]="First-run setup" [notify]="Notifications" [index]="Search index" [drive]="Drive" [palm-drive]="Drive sync"
 	[contacts]="Address book" [chat]="Messages" [forge]="Code hosting: repositories, reviews, issues"
 	[home]="Today across your identities (prototype)" [power]="Battery and power"
 	[colorpick]="Colour picker"
@@ -352,15 +352,15 @@ declare -A DETAILS=(
 	[store]="Discover applications by category, search, install and remove them, and keep the system up to date. Changes go through palmd and are shown as a plan before anything happens."
 	[network]="Every interface with its addresses, gateway and DNS, and the Wi-Fi networks in range with their signal, read from iwd and the kernel. It scans and can turn a radio on; it never drops a connection."
 	[settings]="Appearance (dark or light, the accent, the wallpaper), keyboard layout and repeat, mouse and touchpad, sound, the time zone, your password, and what the displays, network, updates and hardware are. Every change is applied by the window manager within a second; settings get and set do the same from a terminal."
-	[accounts]="Sign in to Palmframe, see the identities your account holds, switch the current one and the sessions this machine keeps for each."
+	[accounts]="Sign in to Palmy, see the identities your account holds, switch the current one and the sessions this machine keeps for each."
 	[notify]="One place for every notification, per identity: toasts, the notification center, quiet hours and digests written as sentences, and the standard desktop notification service so browsers and notify-send work too. palm-notifyd starts with each session."
 	[index]="The local search index behind Home and the assistant: one index per identity over mail, files, notes, events, contacts and browser history, kept current by palm-indexd, which starts with each session."
-	[drive]="Your files in the Palmframe cloud, per identity: browse, share, make links and see what is synced. Works with palm-drive, which keeps ~/Drive/<identity> in sync."
-	[palm-drive]="Keeps ~/Drive/<identity> in sync with the Palmframe cloud for each identity you chose to sync, both ways, offline-safe. Started with each session for those identities."
-	[welcome]="The first-run setup: language and look, a Palmframe account or this computer only, identities, what each identity syncs, the password vault and its Emergency Kit. Opens once at first login; welcome run starts it again."
-	[contacts]="People and how to reach them, kept per identity and synced with your Palmframe account."
-	[chat]="Conversations, with the identity you write as always shown. Talks to a chat server: Palmframe's, or one on your network."
-	[forge]="Repositories owned by your identities: browse code, review changes, track issues. Works against a Palmframe forge server."
+	[drive]="Your files in the Palmy cloud, per identity: browse, share, make links and see what is synced. Works with palm-drive, which keeps ~/Drive/<identity> in sync."
+	[palm-drive]="Keeps ~/Drive/<identity> in sync with the Palmy cloud for each identity you chose to sync, both ways, offline-safe. Started with each session for those identities."
+	[welcome]="The first-run setup: language and look, a Palmy account or this computer only, identities, what each identity syncs, the password vault and its Emergency Kit. Opens once at first login; welcome run starts it again."
+	[contacts]="People and how to reach them, kept per identity and synced with your Palmy account."
+	[chat]="Conversations, with the identity you write as always shown. Talks to a chat server: Palmy's, or one on your network."
+	[forge]="Repositories owned by your identities: browse code, review changes, track issues. Works against a Palmy forge server."
 	[home]="A prototype of the hub that shows today across every identity: mail, events, files and people, on invented sample data."
 	[power]="Battery charge and health, read from /sys/class/power_supply."
 	[colorpick]="Keep a palette of colours and copy them in any format. Picking from the screen needs a screenshot tool."
@@ -375,7 +375,7 @@ EXTRA_APPS="$EXTRA_APPS browser"
 DESC[browser]="Web browser"
 CATEGORY[browser]=Internet
 ICON[browser]=globe
-DETAILS[browser]="A web browser whose tabs, address bar, bookmarks and settings are Palmframe's own, with pages drawn by the engine you choose per identity: Chromium (palm-browser-cef) or Firefox (firefox). One profile per identity, so cookies never cross between them."
+DETAILS[browser]="A web browser whose tabs, address bar, bookmarks and settings are Palmy's own, with pages drawn by the engine you choose per identity: Chromium (palm-browser-cef) or Firefox (firefox). One profile per identity, so cookies never cross between them."
 # --- end browser ---------------------------------------------------------------
 apps="$(grep -v '^#' "$DISTRO/apps/default.list" | grep -vx -e wm -e greeter -e '') $EXTRA_APPS"
 # The applications the runtime block packages (their RT_APP_DEPS keys) are
@@ -410,10 +410,10 @@ details  = ${DETAILS[$app]:-${DESC[$app]:-$app}}
 depend   = $deps
 provides = cmd:$app
 
-file     = \${PALMFRAME_OUT}/bin/$app -> /usr/bin/$app mode 0755
+file     = \${PALMY_OUT}/bin/$app -> /usr/bin/$app mode 0755
 EOF
 		if [ -f "$DISTRO/apps/desktop/$app.desktop" ]; then
-			echo "file     = \${PALMFRAME_ROOT}/distro/apps/desktop/$app.desktop -> /usr/share/applications/$app.desktop mode 0644"
+			echo "file     = \${PALMY_ROOT}/distro/apps/desktop/$app.desktop -> /usr/share/applications/$app.desktop mode 0644"
 		fi
 	} | emit "$app"
 done
@@ -422,7 +422,7 @@ done
 # The installer's time zone step lists zone1970.tab and links /etc/localtime
 # into this tree; glibc reads the TZif files. The host's right/ (leap-second
 # variants) and posix/ (a second copy of every zone under another name)
-# directories are left out: nothing on Palmframe asks for them, and they
+# directories are left out: nothing on Palmy asks for them, and they
 # would triple the package.
 # tzdata's releases are a year and a letter (2026c), which apk-style
 # versions accept as they are; host_version would drop the letter.
@@ -492,7 +492,7 @@ E2_SHARED='libblkid\.so\.1|libuuid\.so\.1'
 #
 # mkfs.ext4 is mke2fs under the name that selects ext4 (mke2fs looks at
 # argv[0]); /etc/mke2fs.conf carries the host's feature defaults, which the
-# Palmframe kernel supports in full.
+# Palmy kernel supports in full.
 pkgname  = e2fsprogs
 pkgver   = $(host_version e2fsprogs 1.47)
 pkgrel   = 0
@@ -546,7 +546,7 @@ EOF
 	cat <<EOF
 #
 # The installer copies BOOTX64.EFI onto the EFI system partition it creates
-# (EFI/BOOT and EFI/palmframe), and "limine bios-install" (the tool, which
+# (EFI/BOOT and EFI/palmy), and "limine bios-install" (the tool, which
 # links only glibc) puts the BIOS stages into a disk's MBR and its BIOS boot
 # partition, reading limine-bios.sys from the same build. The same files
 # distro/image/build.sh and distro/live/build.sh take from the host.
@@ -569,7 +569,7 @@ EOF
 # One weight of Noto Sans CJK, as the host ships it: a TrueType collection of
 # 19 MB whose first face is Japanese. palmy loads .ttc files and lists
 # NotoSansCJK-Regular first among its fallback faces. Not in the default
-# `palmframe` set -- every palmy process maps its fallbacks, and most
+# `palmy` set -- every palmy process maps its fallbacks, and most
 # machines never show a kanji -- but the live image carries it so the
 # installer can offer 日本語 (distro/notes/live.md).
 CJK_TTC=/usr/share/fonts/noto-cjk/NotoSansCJK-Regular.ttc
@@ -610,7 +610,7 @@ fi
 pkgname  = palm-locale
 pkgver   = $OWN_VER
 pkgrel   = 0
-pkgdesc  = Translations for the Palmframe installer and applications
+pkgdesc  = Translations for the Palmy installer and applications
 license  = MIT AND LGPL-2.1-only AND $XKB_LICENSE
 
 dir      = /usr/share/palm/locale
@@ -621,7 +621,7 @@ EOF
 	if [ -d "$DISTRO/locale" ]; then
 		(cd "$DISTRO/locale" && find . -name '*.msg' -type f | LC_ALL=C sort) | while read -r f; do
 			f="${f#./}"
-			echo "file     = \${PALMFRAME_ROOT}/distro/locale/$f -> /usr/share/palm/locale/$f mode 0644"
+			echo "file     = \${PALMY_ROOT}/distro/locale/$f -> /usr/share/palm/locale/$f mode 0644"
 		done
 	fi
 } | emit palm-locale
@@ -631,34 +631,34 @@ EOF
 # it writes is in distro/recipes/runtime/generate.sh, which builds the
 # source packages (runtime/src/*.build) when they are missing or stale and
 # writes their recipes and those of the host-copied ones it closes over.
-# PALMFRAME_SKIP_SRC=1 skips the source builds (their recipes must then
+# PALMY_SKIP_SRC=1 skips the source builds (their recipes must then
 # already exist, with distro/out/src filled by an earlier run).
 # shellcheck source=runtime/generate.sh
 source "$HERE/runtime/generate.sh"
 # <<< runtime -------------------------------------------------------------------
 
-# --- palmframe: the meta-package ---------------------------------------------
+# --- palmy: the meta-package ---------------------------------------------
 {
 	header " from distro/apps/default.list"
 	cat <<EOF
 #
-# Everything a Palmframe machine has after installation: \`palm add palmframe\`
+# Everything a Palmy machine has after installation: \`palm add palmy\`
 # into an empty root is how distro/image/build.sh makes the disk image.
-pkgname  = palmframe
+pkgname  = palmy
 pkgver   = $OWN_VER
 pkgrel   = 0
-pkgdesc  = The Palmframe system: kernel, init, login, window manager and the default applications
+pkgdesc  = The Palmy system: kernel, init, login, window manager and the default applications
 license  = MIT
 category = System
 icon     = monitor
-details  = Everything a Palmframe machine has after installation. Removing an application keeps it out; removing this package would remove the system.
-depend   = palmframe-base linux busybox glibc palm-init palm palm-login palmd doas passwd
+details  = Everything a Palmy machine has after installation. Removing an application keeps it out; removing this package would remove the system.
+depend   = palmy-base linux busybox glibc palm-init palm palm-login palmd doas passwd
 depend   = palmy-wm greeter fonts libxkbcommon xkeyboard-config
 depend   = tzdata palm-locale
-depend   = palmframe-runtime
+depend   = palmy-runtime
 depend   = $(grep -v '^#' "$DISTRO/apps/default.list" | grep -vx -e wm -e greeter -e '' | tr '\n' ' ' | sed 's/ $//')
 EOF
-} | emit palmframe
+} | emit palmy
 
 # --- firmware: one package per host firmware package (distro/recipes/linux-firmware)
 "$HERE/linux-firmware/generate.sh"

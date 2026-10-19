@@ -2,8 +2,8 @@ package main
 
 // `store --demo` and `store --shots`: fabricated data, and a stand-in palmd.
 //
-// The catalogue below is shaped like a fresh Palmframe machine -- the
-// default applications installed as part of `palmframe`, a few more in the
+// The catalogue below is shaped like a fresh Palmy machine -- the
+// default applications installed as part of `palmy`, a few more in the
 // repository, two updates waiting -- so the screenshots show what a real
 // first look at Software is like. A handful of entries (audio, video,
 // solitaire) are there only so every shelf in Discover has something on it.
@@ -30,15 +30,15 @@ Demo_Pkg :: struct {
 
 @(private = "file")
 DEMO := [?]Demo_Pkg {
-	{"palmframe", "System", "monitor", "The Palmframe system: kernel, init, login, window manager and the default applications", "Everything a Palmframe machine has after installation.", 0, "palmframe-base linux busybox glibc palm palm-init palm-login palmd palmy-wm greeter fonts term launcher files editor notes calc sysmon image docs sheets slides calendar reader photoshop maps money torrent store", true, true, "", false},
-	{"palmframe-base", "System", "hard-drive", "The Palmframe filesystem layout, users and base configuration", "The skeleton every other package stands on.", 4_934, "", true, false, "", false},
-	{"linux", "System", "server", "The Linux kernel, Palmframe configuration", "Linux 6.18 LTS with everything built in: no modules, no initramfs.", 14_764_000, "", true, false, "", false},
-	{"busybox", "System", "terminal", "Tiny versions of many common UNIX utilities in a single static binary", "The shell and the command-line userland in one statically linked program.", 2_538_648, "palmframe-base", true, false, "", false},
-	{"glibc", "System", "binary", "GNU C Library runtime (from the build host)", "The C library and dynamic loader every palmy program links against.", 3_746_560, "palmframe-base", true, false, "", false},
-	{"palm", "System", "package", "The Palmframe package manager", "palm installs, removes and upgrades packages from signed repositories.", 1_402_112, "palmframe-base glibc", true, false, "0.1.1-r0", true},
-	{"palm-init", "System", "activity", "Palmframe's init and service supervisor", "PID 1: mounts, device permissions, services and shutdown.", 1_210_480, "palmframe-base busybox", true, false, "", false},
-	{"palm-login", "System", "lock-keyhole", "Palmframe's login manager (greetd protocol)", "Runs the login screen and starts your session.", 1_640_224, "palmframe-base glibc", true, false, "", false},
-	{"palmd", "System", "shield-check", "Lets members of wheel install and remove software", "The root daemon behind Software: it answers only root and group wheel.", 702_976, "palmframe-base glibc palm", true, false, "", true},
+	{"palmy", "System", "monitor", "The Palmy system: kernel, init, login, window manager and the default applications", "Everything a Palmy machine has after installation.", 0, "palmy-base linux busybox glibc palm palm-init palm-login palmd palmy-wm greeter fonts term launcher files editor notes calc sysmon image docs sheets slides calendar reader photoshop maps money torrent store", true, true, "", false},
+	{"palmy-base", "System", "hard-drive", "The Palmy filesystem layout, users and base configuration", "The skeleton every other package stands on.", 4_934, "", true, false, "", false},
+	{"linux", "System", "server", "The Linux kernel, Palmy configuration", "Linux 6.18 LTS with everything built in: no modules, no initramfs.", 14_764_000, "", true, false, "", false},
+	{"busybox", "System", "terminal", "Tiny versions of many common UNIX utilities in a single static binary", "The shell and the command-line userland in one statically linked program.", 2_538_648, "palmy-base", true, false, "", false},
+	{"glibc", "System", "binary", "GNU C Library runtime (from the build host)", "The C library and dynamic loader every palmy program links against.", 3_746_560, "palmy-base", true, false, "", false},
+	{"palm", "System", "package", "The Palmy package manager", "palm installs, removes and upgrades packages from signed repositories.", 1_402_112, "palmy-base glibc", true, false, "0.1.1-r0", true},
+	{"palm-init", "System", "activity", "Palmy's init and service supervisor", "PID 1: mounts, device permissions, services and shutdown.", 1_210_480, "palmy-base busybox", true, false, "", false},
+	{"palm-login", "System", "lock-keyhole", "Palmy's login manager (greetd protocol)", "Runs the login screen and starts your session.", 1_640_224, "palmy-base glibc", true, false, "", false},
+	{"palmd", "System", "shield-check", "Lets members of wheel install and remove software", "The root daemon behind Software: it answers only root and group wheel.", 702_976, "palmy-base glibc palm", true, false, "", true},
 	{"palmy-wm", "System", "layout-grid", "The palmy Wayland window manager", "A tiling and floating Wayland compositor.", 3_102_448, "glibc fonts", true, false, "", false},
 	{"greeter", "System", "user", "The palmy login screen", "The screen you log in on.", 2_240_512, "glibc fonts", true, false, "", true},
 	{"fonts", "System", "type", "Geist, JetBrains Mono and DejaVu Sans: the fonts every palmy application uses", "palmy finds fonts by walking /usr/share/fonts.", 6_051_219, "", true, false, "", false},
@@ -58,8 +58,8 @@ DEMO := [?]Demo_Pkg {
 	{"photoshop", "Graphics", "palette", "Image editor", "A raster image editor with layers, brushes and selections.", 2_105_344, "glibc fonts", true, false, "", true},
 	{"torrent", "Internet", "download", "BitTorrent client", "Download and share files over BitTorrent, with magnet links and per-file progress.", 1_683_456, "glibc fonts", true, false, "", true},
 	{"shop", "Internet", "tag", "Shop demo", "A demonstration storefront: a catalogue, a basket and a checkout that sells nothing.", 1_048_576, "glibc fonts", false, false, "", true},
-	{"audio", "Multimedia", "music", "Music player", "Play your music library. Needs ffmpeg and PipeWire, which Palmframe does not ship yet.", 1_310_720, "glibc fonts", false, false, "", true},
-	{"video", "Multimedia", "film", "Video player", "Play video files. Needs ffmpeg and PipeWire, which Palmframe does not ship yet.", 1_441_792, "glibc fonts", false, false, "", true},
+	{"audio", "Multimedia", "music", "Music player", "Play your music library. Needs ffmpeg and PipeWire, which Palmy does not ship yet.", 1_310_720, "glibc fonts", false, false, "", true},
+	{"video", "Multimedia", "film", "Video player", "Play video files. Needs ffmpeg and PipeWire, which Palmy does not ship yet.", 1_441_792, "glibc fonts", false, false, "", true},
 	{"solitaire", "Games", "star", "Klondike solitaire", "The card game, drawn with palmy. (A placeholder in the demo catalogue.)", 655_360, "glibc fonts", false, false, "", true},
 	{"notes", "Office", "notebook-pen", "Markdown notes", "Markdown notes kept as plain files under your home directory.", 1_253_376, "glibc fonts", true, false, "", true},
 	{"docs", "Office", "file-text", "Documents", "A word processor for writing documents, with a prose checker that suggests plainer wording.", 2_621_440, "glibc fonts prose", true, false, "", true},

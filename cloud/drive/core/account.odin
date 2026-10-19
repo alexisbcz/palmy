@@ -1,4 +1,4 @@
-// The drive configured from the person's Palmframe account, through
+// The drive configured from the person's Palmy account, through
 // apps/cloudkit, rather than from a hand-written drive.conf.
 //
 // After `accounts sign-in`, cloudkit's token store holds the person's session.
@@ -36,7 +36,7 @@ config_from_account :: proc() -> (cfg: Config, err: string) {
 	cfg.storage = fmt.aprintf("%s/storage/v1", strings.trim_right(c.url_text, "/"))
 	cfg.anon = strings.clone(c.anon_key)
 	if !ck.signed_in(c) {
-		return cfg, strings.clone("not signed in to a Palmframe account: run `accounts sign-in` first")
+		return cfg, strings.clone("not signed in to a Palmy account: run `accounts sign-in` first")
 	}
 
 	ids, ie := ck.identities(c)

@@ -1,6 +1,6 @@
 # What people hate and love in the suites we are up against
 
-Research for the Palmframe account, its identities and the apps on top of it.
+Research for the Palmy account, its identities and the apps on top of it.
 The question is narrow: where Google Workspace, Microsoft 365, iCloud, Proton,
 Zoho, Fastmail, HEY, Superhuman, Notion and Linear fail or delight people, in
 the areas that a *one account, several identities* design touches. Collected
@@ -70,7 +70,7 @@ goes with which app". Profiles are local to one machine
 [Claremont](https://tccs-help.claremont.edu/support/solutions/articles/21004960254)).
 
 > **For us.** The identity is a property of the *object and the window*, never
-> of sign-in order. A Palmframe link carries the identity it belongs to. Opening
+> of sign-in order. A Palmy link carries the identity it belongs to. Opening
 > it either goes straight to that identity, or says plainly that the link
 > belongs to one of your other identities and offers to open it there. It never
 > answers "you need access" to the person who owns both.

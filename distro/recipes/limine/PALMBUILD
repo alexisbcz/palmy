@@ -2,7 +2,7 @@
 # change the source and run `make -C distro recipes`.
 #
 # The installer copies BOOTX64.EFI onto the EFI system partition it creates
-# (EFI/BOOT and EFI/palmframe), and "limine bios-install" (the tool, which
+# (EFI/BOOT and EFI/palmy), and "limine bios-install" (the tool, which
 # links only glibc) puts the BIOS stages into a disk's MBR and its BIOS boot
 # partition, reading limine-bios.sys from the same build. The same files
 # distro/image/build.sh and distro/live/build.sh take from the host.

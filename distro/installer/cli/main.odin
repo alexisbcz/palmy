@@ -1,6 +1,6 @@
 package palm_install
 
-// palm-install — install Palmframe from the command line.
+// palm-install — install Palmy from the command line.
 //
 // The text front end of install_core (distro/installer/core): everything the
 // graphical installer can do, from a serial console or a script. It builds
@@ -44,20 +44,20 @@ EXIT_FAILED :: 7
 USAGE :: `usage: palm-install [options]
        palm-install [--interactive]     ask each question on this terminal
 
-install Palmframe on a disk, erasing it (GPT: 512 MiB ESP + ext4 root, and a
+install Palmy on a disk, erasing it (GPT: 512 MiB ESP + ext4 root, and a
 BIOS boot partition so the disk starts under UEFI and under a BIOS)
 
   --disk <dev>                  the disk to erase, e.g. /dev/vda
   --language <ll_CC>            fr_FR (default en_US)
   --keyboard <layout[:variant]> fr, de:nodeadkeys (default us)
   --timezone <Region/City>      Europe/Paris (default UTC)
-  --hostname <name>             (default palmframe)
+  --hostname <name>             (default palmy)
   --user <name>                 the account to create (required)
   --full-name <text>
   --password-file <file|->      the user's password, first line; - = stdin
   --root-password-file <file|-> root's password (default: the user's)
   --repo <path|url>             (default file:///usr/share/palm/repo)
-  --package <name>              repeatable (default palmframe)
+  --package <name>              repeatable (default palmy)
   --swap <size>                 a swap file on the root: 2G, 512M (default none)
   --no-efi-entry                do not write a UEFI Boot#### variable
   --no-bios-boot                do not install limine's BIOS boot code
@@ -300,7 +300,7 @@ install :: proc(a: ^Args) -> int {
 			if a.opts.dry_run {
 				fmt.println("palm-install: dry run finished; nothing was changed")
 			} else {
-				fmt.println("palm-install: Palmframe is installed. Remove the installation medium and restart.")
+				fmt.println("palm-install: Palmy is installed. Remove the installation medium and restart.")
 			}
 		} else {
 			fmt.eprintf("palm-install: %s\n", err)
@@ -489,8 +489,8 @@ print_summary :: proc(a: ^Args) {
 		what = fmt.tprintf("%s (disk image, system built in %s)", p.disk, a.opts.target)
 	}
 	pk := p.packages
-	if len(pk) == 0 {pk = {"palmframe"}}
-	fmt.printf("Palmframe will be installed on %s.\n", what)
+	if len(pk) == 0 {pk = {"palmy"}}
+	fmt.printf("Palmy will be installed on %s.\n", what)
 	fmt.printf("  EVERYTHING ON %s WILL BE ERASED: a 512 MiB EFI partition and an ext4 root.\n", p.disk)
 	fmt.printf("  boot: UEFI%s\n", a.opts.no_bios_boot ? " only (no BIOS boot code)" : " and BIOS")
 	if p.swap_bytes > 0 {

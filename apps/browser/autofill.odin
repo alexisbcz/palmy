@@ -413,7 +413,7 @@ w_ensure :: proc(w: ^Af_Worker) -> Af_Vault {
 	if !w_dial(w) {
 		return .Not_Running
 	}
-	hello := af_req("op", "hello", "client", "Palmframe Browser")
+	hello := af_req("op", "hello", "client", "Palmy Browser")
 	h, ok := w_call(w, &hello, 5000)
 	if !ok {
 		return .Not_Running
@@ -479,7 +479,7 @@ w_run :: proc(w: ^Af_Worker, j: ^Af_Job) {
 			r.error = strings.clone("Passwords is not running")
 			break
 		}
-		hello := af_req("op", "hello", "client", "Palmframe Browser")
+		hello := af_req("op", "hello", "client", "Palmy Browser")
 		if _, ok := w_call(w, &hello, 5000); !ok {
 			r.state = .Not_Running
 			break
@@ -489,7 +489,7 @@ w_run :: proc(w: ^Af_Worker, j: ^Af_Job) {
 		code := af_pair_code(pr.key[:])
 		w_post(w, Af_Result{kind = .Pair, seq = j.seq, interim = true, code = code, state = .Pairing})
 		k, _ := base64.encode(pr.key[:], allocator = context.temp_allocator)
-		req := af_req("op", "pair", "name", "Palmframe Browser", "key", k)
+		req := af_req("op", "pair", "name", "Palmy Browser", "key", k)
 		resp, ok := w_call(w, &req, 300_000)
 		if !ok {
 			r.state = .Unpaired
@@ -668,7 +668,7 @@ af_worker_stop :: proc(w: ^Af_Worker) {
 // ---------------------------------------------------------------------------
 
 // identity_handle is what the vault calls this profile's identity: the
-// account handle in ~/.config/palmframe/identities.json when that file names
+// account handle in ~/.config/palmy/identities.json when that file names
 // the profile, the profile's name otherwise (which is the handle whenever
 // apps/accounts made the profile).
 identity_handle :: proc(name: string, allocator := context.allocator) -> string {
@@ -676,7 +676,7 @@ identity_handle :: proc(name: string, allocator := context.allocator) -> string 
 	if cfg == "" {
 		cfg = fmt.tprintf("%s/.config", os.get_env("HOME", context.temp_allocator))
 	}
-	data, err := os.read_entire_file(fmt.tprintf("%s/palmframe/identities.json", cfg), context.temp_allocator)
+	data, err := os.read_entire_file(fmt.tprintf("%s/palmy/identities.json", cfg), context.temp_allocator)
 	if err == nil {
 		Entry :: struct {
 			handle: string,

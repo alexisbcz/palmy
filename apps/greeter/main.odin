@@ -9,7 +9,7 @@ package main
 // The login itself is the greetd IPC conversation in ipc.odin. Everything the
 // screen shows about the machine — the accounts, the sessions, the hostname —
 // is read off the real system in system.odin. The power buttons are stubs
-// except under Palmframe's palm-login, where they really power off and
+// except under Palmy's palm-login, where they really power off and
 // reboot; see `power_request`.
 //
 // Under palm-login the greeter runs inside `wm --drm --kiosk` and covers

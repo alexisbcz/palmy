@@ -1,4 +1,4 @@
-// Package cloudkit is the Odin client for the Palmframe cloud: Supabase's
+// Package cloudkit is the Odin client for the Palmy cloud: Supabase's
 // GoTrue (auth), PostgREST (tables and functions) and Storage (files),
 // behind one API gateway.
 //
@@ -133,7 +133,7 @@ open :: proc(url := "", anon_key := "", dir := "", scope := "", app := "cloudkit
 	}
 	c.url = parsed
 	host := machine_name()
-	c.user_agent = fmt.aprintf("palm-%s/0.1 (%s)", app, host != "" ? host : "palmframe")
+	c.user_agent = fmt.aprintf("palm-%s/0.1 (%s)", app, host != "" ? host : "palmy")
 
 	if c.scope != "" && !handle_ok(c.scope) {
 		return c, Error{kind = .Invalid, message = fmt.aprintf("not an identity handle: %q", c.scope)}

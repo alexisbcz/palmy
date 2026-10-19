@@ -394,9 +394,9 @@ function genApps() {
     }
     out.push("");
   };
-  section("Works on the bare system", (a) => a.works_minimal === "yes", "Usable on a fresh Palmframe install with nothing added.");
-  section("Works partly", (a) => a.works_minimal === "partial", "Runs, but a named part of it needs something Palmframe does not ship.");
-  section("Does not work yet", (a) => a.works_minimal === "no", "Builds, but needs a program or service Palmframe does not ship.");
+  section("Works on the bare system", (a) => a.works_minimal === "yes", "Usable on a fresh Palmy install with nothing added.");
+  section("Works partly", (a) => a.works_minimal === "partial", "Runs, but a named part of it needs something Palmy does not ship.");
+  section("Does not work yet", (a) => a.works_minimal === "no", "Builds, but needs a program or service Palmy does not ship.");
   const other = apps.filter((a) => !["yes", "partial", "no"].includes(a.works_minimal));
   if (other.length) section("Unclassified", (a) => other.includes(a), "No status recorded in apps.tsv.");
   return out.join("\n");
@@ -410,11 +410,11 @@ function appCounts() {
 
 function genPackages() {
   const pk = gen.packages(ROOT);
-  const out = ["| Package | Version | Category | Installed by `palmframe` | Description | Depends on |", "| --- | --- | --- | --- | --- | --- |"];
+  const out = ["| Package | Version | Category | Installed by `palmy` | Description | Depends on |", "| --- | --- | --- | --- | --- | --- |"];
   for (const p of pk) {
     const ver = p.version ? `${p.version}${p.release ? "-r" + p.release : ""}` : "";
     out.push(
-      `| ${ic(p.name)} | ${esc(ver)} | ${esc(p.category)} | ${p.name === "palmframe" ? "(itself)" : p.inPalmframe ? "yes" : "no"} | ${esc(p.desc)} | ${p.depends.map(ic).join(" ")} |`,
+      `| ${ic(p.name)} | ${esc(ver)} | ${esc(p.category)} | ${p.name === "palmy" ? "(itself)" : p.inPalmy ? "yes" : "no"} | ${esc(p.desc)} | ${p.depends.map(ic).join(" ")} |`,
     );
   }
   return out.join("\n");
@@ -602,7 +602,7 @@ function templateVars() {
     appNo: a.no,
     appDefault: a.defaults,
     packageCount: pk.length,
-    palmframeCount: pk.find((p) => p.name === "palmframe")?.depends.length ?? 0,
+    palmyCount: pk.find((p) => p.name === "palmy")?.depends.length ?? 0,
     palmyProcs: pa.procs,
     palmyTypes: pa.types,
     palmyFiles: pa.files,
@@ -640,7 +640,7 @@ function expandDirectives(tree, pageFile) {
           nodes = md(genApps(), "distro/apps/apps.tsv");
           break;
         case "package-table":
-          nodes = md(genPackages(), "distro/recipes/palmframe/PALMBUILD");
+          nodes = md(genPackages(), "distro/recipes/palmy/PALMBUILD");
           break;
         case "class-reference":
           nodes = md(genClasses(), "palmy/class.odin");

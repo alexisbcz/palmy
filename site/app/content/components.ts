@@ -674,14 +674,14 @@ if p.is_hovered(ui, card) {
 	p.div(ui, "absolute top-6 left-0 z-50")
 	sc.hover_card_content_open(ui)
 	sc.avatar_fallback_sm(ui, "PY")
-	p.text(ui, "The Palmframe UI toolkit.", "text-sm")
+	p.text(ui, "The Palmy UI toolkit.", "text-sm")
 	p.end(ui)
 	p.end(ui)
 }
 p.end(ui)`,
     react: `<HoverCard>
   <HoverCardTrigger>@palmy</HoverCardTrigger>
-  <HoverCardContent>The Palmframe UI toolkit.</HoverCardContent>
+  <HoverCardContent>The Palmy UI toolkit.</HoverCardContent>
 </HoverCard>`,
   },
   {

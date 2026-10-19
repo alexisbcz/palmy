@@ -254,7 +254,7 @@ demo_install :: proc(p: Plan, report: proc(pr: Progress, user: rawptr), user: ra
 		"filesystem", "glibc", "busybox", "palm-init", "palm", "palm-login", "fonts",
 		"xkeyboard-config", "tzdata", "libxkbcommon", "wm", "greeter", "term",
 		"launcher", "files", "editor", "calc", "calendar", "notes", "settings",
-		"palmframe",
+		"palmy",
 	}
 	for name, i in packages {
 		f := f32(i) / f32(len(packages))
@@ -280,7 +280,7 @@ demo_install :: proc(p: Plan, report: proc(pr: Progress, user: rawptr), user: ra
 	)
 	nap(250)
 
-	say(report, user, .Bootloader, 0, "demo: would copy BOOTX64.EFI to EFI/BOOT and EFI/palmframe")
+	say(report, user, .Bootloader, 0, "demo: would copy BOOTX64.EFI to EFI/BOOT and EFI/palmy")
 	nap(400)
 	say(report, user, .Bootloader, 0.6, "demo: would write limine.conf with root=PARTUUID=…")
 	nap(400)

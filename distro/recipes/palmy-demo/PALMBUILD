@@ -1,20 +1,20 @@
 # The demo account's home: /home/palm, made from the same skeleton the
-# installer gives a new user (palmframe-base's /etc/skel). The disk image
-# (distro/image/build.sh) installs `palmframe palmframe-demo`, so its `palm`
-# user can log in; the installer installs `palmframe` alone and removes the
+# installer gives a new user (palmy-base's /etc/skel). The disk image
+# (distro/image/build.sh) installs `palmy palmy-demo`, so its `palm`
+# user can log in; the installer installs `palmy` alone and removes the
 # `palm` user, so an installed system has no /home/palm for `palm verify` to
-# find missing. The user itself stays in palmframe-base's /etc/passwd: every
+# find missing. The user itself stays in palmy-base's /etc/passwd: every
 # owner name is resolved against that file, and the installer edits it.
-pkgname  = palmframe-demo
+pkgname  = palmy-demo
 pkgver   = 0.1.0
 pkgrel   = 0
-pkgdesc  = The demo user's home directory on the Palmframe disk image
+pkgdesc  = The demo user's home directory on the Palmy disk image
 license  = MIT
-depend   = palmframe-base
+depend   = palmy-base
 install_user = palm
 
 dir      = /home/palm mode 0700
-file     = ${PALMFRAME_ROOT}/distro/base/root/etc/skel/.profile -> /home/palm/.profile mode 0644
+file     = ${PALMY_ROOT}/distro/base/root/etc/skel/.profile -> /home/palm/.profile mode 0644
 dir      = /home/palm/.config mode 0755
 dir      = /home/palm/.cache mode 0755
 dir      = /home/palm/.local mode 0755

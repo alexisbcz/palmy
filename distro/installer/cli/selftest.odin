@@ -228,7 +228,7 @@ test_gpt :: proc() {
 	for size in sizes {
 		img := core.join(dir, fmt.tprintf("disk-%d.img", size))
 		check(make_image(img, size), "made a %d-byte image", size)
-		g, ok := core.gpt_layout_palmframe(u64(size), 512)
+		g, ok := core.gpt_layout_palmy(u64(size), 512)
 		check(ok, "layout for %d bytes", size)
 		if !ok {continue}
 
@@ -279,7 +279,7 @@ test_gpt :: proc() {
 	img := core.join(dir, "corrupt.img")
 	size := i64(4 * 1024 * 1024 * 1024)
 	make_image(img, size)
-	g, _ := core.gpt_layout_palmframe(u64(size), 512)
+	g, _ := core.gpt_layout_palmy(u64(size), 512)
 	fd, _ := linux.open(strings.clone_to_cstring(img, context.temp_allocator), {.RDWR, .CLOEXEC})
 	defer linux.close(fd)
 	core.gpt_write(fd, g)
@@ -305,7 +305,7 @@ test_gpt :: proc() {
 	eq(e4, "", "and the repaired table reads again")
 
 	// 4 KiB sectors: same layout in bytes, fewer entry sectors.
-	g4, ok4 := core.gpt_layout_palmframe(u64(size), 4096)
+	g4, ok4 := core.gpt_layout_palmy(u64(size), 4096)
 	check(ok4, "layout with 4096-byte sectors")
 	eq(g4.first_usable, 6, "4K: first usable LBA (MBR, header, 4 entry sectors)")
 	eq(g4.parts[0].first_lba * 4096, 1024 * 1024, "4K: ESP at 1 MiB")
@@ -323,7 +323,7 @@ test_gpt :: proc() {
 	eq(core.partition_path("/dev/vda", 2), "/dev/vda2", "partition node of vda")
 	eq(core.partition_path("/dev/nvme0n1", 1), "/dev/nvme0n1p1", "partition node of nvme0n1")
 	eq(core.partition_path("/dev/mmcblk0", 2), "/dev/mmcblk0p2", "partition node of mmcblk0")
-	_, small := core.gpt_layout_palmframe(300 * 1024 * 1024, 512)
+	_, small := core.gpt_layout_palmy(300 * 1024 * 1024, 512)
 	check(!small, "no layout on a 300 MiB disk")
 }
 
@@ -529,13 +529,13 @@ test_disks :: proc() {
 @(private = "file")
 test_efi_load_option :: proc() {
 	// UEFI 2.10 §3.1.3 EFI_LOAD_OPTION and §10.3.5.1/§10.3.5.4 device path
-	// nodes, written out byte by byte by hand for: description "Palmframe",
+	// nodes, written out byte by byte by hand for: description "Palmy",
 	// GPT partition 1 at LBA 2048 of 1048576 sectors, partition GUID
-	// 01234567-89AB-CDEF-0123-456789ABCDEF, file \EFI\palmframe\BOOTX64.EFI.
+	// 01234567-89AB-CDEF-0123-456789ABCDEF, file \EFI\palmy\BOOTX64.EFI.
 	want := strings.concatenate({
 		"01000000", // Attributes: LOAD_OPTION_ACTIVE
 		"6800", // FilePathListLength = 42 + 58 + 4 = 104
-		"500061006c006d006600720061006d0065000000", // "Palmframe\0", UTF-16LE
+		"500061006c006d006600720061006d0065000000", // "Palmy\0", UTF-16LE
 		"04012a00", // HD(): type 4 (media), subtype 1 (hard drive), length 42
 		"01000000", // partition number 1
 		"0008000000000000", // partition start, LBA 2048
@@ -545,18 +545,18 @@ test_efi_load_option :: proc() {
 		"02", // signature type: GUID
 		"04043a00", // file path: type 4, subtype 4, length 4 + 27 * 2 = 58
 		"5c00450046004900", // \EFI
-		"5c00700061006c006d006600720061006d006500", // \palmframe
+		"5c00700061006c006d006600720061006d006500", // \palmy
 		"5c0042004f004f0054005800360034002e00450046004900", // \BOOTX64.EFI
 		"0000", // the path's terminating NUL
 		"7fff0400", // end of entire device path
 	})
 	g, _ := core.guid_parse("01234567-89AB-CDEF-0123-456789ABCDEF")
-	got := core.efi_load_option("Palmframe", 1, 2048, 1048576, g, "\\EFI\\palmframe\\BOOTX64.EFI")
+	got := core.efi_load_option("Palmy", 1, 2048, 1048576, g, "\\EFI\\palmy\\BOOTX64.EFI")
 	sb := strings.builder_make()
 	for b in got {fmt.sbprintf(&sb, "%02x", b)}
 	eq(strings.to_string(sb), want, "EFI_LOAD_OPTION bytes")
 	eq(len(got), 4 + 2 + 20 + 104, "EFI_LOAD_OPTION length")
-	eq(core.load_option_description(got), "Palmframe", "description reads back")
+	eq(core.load_option_description(got), "Palmy", "description reads back")
 }
 
 // ---------------------------------------------------------------- validate --
@@ -637,7 +637,7 @@ test_validate :: proc() {
 	p = good
 	p.repo = "ftp://x"; bad(p, disks, "repository", "an ftp repository")
 	p = good
-	p.packages = {"palmframe", "Bad Name"}; bad(p, disks, "package", "a bad package name")
+	p.packages = {"palmy", "Bad Name"}; bad(p, disks, "package", "a bad package name")
 
 	// Disk images: plain files only, and big enough.
 	o := core.default_options()
@@ -706,7 +706,7 @@ test_install_image :: proc() {
 	p.keyboard = {layout = "fr", variant = "azerty"}
 	p.timezone = "Europe/Paris"
 	p.hostname = "desk"
-	p.repo = "http://example.org/palmframe/x86_64"
+	p.repo = "http://example.org/palmy/x86_64"
 	p.efi_boot_entry = true
 	p.swap_bytes = 64 << 20
 
@@ -791,7 +791,7 @@ test_install_image :: proc() {
 	check(ok, "a second configure run: %s", err)
 	order := transmute([]u8)slurp(core.join(efivars, "BootOrder" + SUFFIX))
 	eq(len(order), 8, "BootOrder still has two entries after a second run")
-	check(!os.exists(core.join(efivars, "Boot0002" + SUFFIX)), "no second Palmframe entry")
+	check(!os.exists(core.join(efivars, "Boot0002" + SUFFIX)), "no second Palmy entry")
 	pw := slurp(core.join(root, "etc/passwd"))
 	eq(strings.count(pw, "\nalex:x:"), 1, "the user is not added twice")
 	eq(strings.count(slurp(core.join(root, "etc/fstab")), "/swapfile"), 1, "the swap file is in fstab once")
@@ -820,7 +820,7 @@ test_install_image :: proc() {
 		g2, ok2g := core.load_option_partition(b2[4:])
 		eq(g1, g.parts[0].part_guid, "Boot0001 still points at the first disk's ESP")
 		check(ok2g && g2 != g1, "Boot0002 points at the second disk's ESP")
-		eq(core.load_option_description(b2[4:]), "Palmframe (other)", "the second entry names its computer")
+		eq(core.load_option_description(b2[4:]), "Palmy (other)", "the second entry names its computer")
 		order2 := transmute([]u8)slurp(core.join(efivars, "BootOrder" + SUFFIX))
 		check(len(order2) == 10 && core.get_u16(order2[4:]) == 2 && core.get_u16(order2[6:]) == 1 && core.get_u16(order2[8:]) == 0, "BootOrder is 0002,0001,0000 (%v)", order2)
 
@@ -918,8 +918,8 @@ check_configured :: proc(root: string, g: core.Gpt, efivars: string) {
 		check(strings.contains(conf, fmt.tprintf("cmdline: root=PARTUUID=%s rw ", root_uuid)), "limine.conf boots root=PARTUUID (%s)", conf)
 		check(strings.contains(conf, "path: boot():/vmlinuz"), "limine.conf boots /vmlinuz on the ESP")
 	}
-	eq(slurp(core.join(root, "etc/palm/repositories")), "# One repository per line: an http:// URL or an absolute path.\n# Written by palm-install: the repository this system was installed from.\nhttp://example.org/palmframe/x86_64\n", "/etc/palm/repositories")
-	for f in ([]string{"EFI/BOOT/BOOTX64.EFI", "EFI/palmframe/BOOTX64.EFI", "vmlinuz"}) {
+	eq(slurp(core.join(root, "etc/palm/repositories")), "# One repository per line: an http:// URL or an absolute path.\n# Written by palm-install: the repository this system was installed from.\nhttp://example.org/palmy/x86_64\n", "/etc/palm/repositories")
+	for f in ([]string{"EFI/BOOT/BOOTX64.EFI", "EFI/palmy/BOOTX64.EFI", "vmlinuz"}) {
 		check(os.is_file(core.join(root, "boot/efi", f)), "ESP has %s", f)
 	}
 	eq(slurp(core.join(root, "boot/efi/vmlinuz")), "not really a kernel", "the kernel copied to the ESP")
@@ -927,8 +927,8 @@ check_configured :: proc(root: string, g: core.Gpt, efivars: string) {
 	b1 := transmute([]u8)slurp(core.join(efivars, "Boot0001" + SUFFIX))
 	check(len(b1) > 4 && core.get_u32(b1) == 7, "Boot0001 has NV|BS|RT")
 	if len(b1) > 4 && len(g.parts) >= 2 {
-		want := core.efi_load_option("Palmframe (desk)", 1, g.parts[0].first_lba, g.parts[0].last_lba - g.parts[0].first_lba + 1, g.parts[0].part_guid, "\\EFI\\palmframe\\BOOTX64.EFI", context.temp_allocator)
-		check(string(b1[4:]) == string(want), "Boot0001 names the ESP and \\EFI\\palmframe\\BOOTX64.EFI")
+		want := core.efi_load_option("Palmy (desk)", 1, g.parts[0].first_lba, g.parts[0].last_lba - g.parts[0].first_lba + 1, g.parts[0].part_guid, "\\EFI\\palmy\\BOOTX64.EFI", context.temp_allocator)
+		check(string(b1[4:]) == string(want), "Boot0001 names the ESP and \\EFI\\palmy\\BOOTX64.EFI")
 		pg, pok := core.load_option_partition(b1[4:])
 		check(pok && pg == g.parts[0].part_guid, "the entry's partition GUID reads back")
 	}
@@ -980,12 +980,12 @@ test_firmware :: proc() {
 	full := "pkgname = glibc\nfilename = glibc.palm\n\npkgname = linux-firmware-intel\n\npkgname = linux-firmware\npkgname = wireless-regdb\n"
 	fw := core.firmware_from_index(full, context.temp_allocator)
 	check(len(fw) == 1 && fw[0] == "linux-firmware", "firmware: linux-firmware when the index has it (%v)", fw)
-	live := "pkgname = palmframe\npkgname = linux-firmware-intel\npkgname = linux-firmware-amdgpu\npkgname = linux-firmware-whence\npkgname = wireless-regdb\npkgname = sof-firmware\npkgname = firmware-tools\n"
+	live := "pkgname = palmy\npkgname = linux-firmware-intel\npkgname = linux-firmware-amdgpu\npkgname = linux-firmware-whence\npkgname = wireless-regdb\npkgname = sof-firmware\npkgname = firmware-tools\n"
 	fw = core.firmware_from_index(live, context.temp_allocator)
 	check(len(fw) == 5 && fw[0] == "linux-firmware-intel" && fw[4] == "sof-firmware", "firmware: else every part the index has, nothing else (%v)", fw)
-	fw = core.firmware_from_index("pkgname = palmframe\n", context.temp_allocator)
+	fw = core.firmware_from_index("pkgname = palmy\n", context.temp_allocator)
 	check(len(fw) == 0, "firmware: none in an index without any")
-	fw = core.firmware_for_repo("https://palmframe-packages.vercel.app/x86_64", context.temp_allocator)
+	fw = core.firmware_for_repo("https://palmy-packages.vercel.app/x86_64", context.temp_allocator)
 	check(len(fw) == 1 && fw[0] == "linux-firmware", "firmware: a network repository is taken to have linux-firmware")
 	dir := core.join(scratch_dir, "fwrepo")
 	_ = os.make_directory_all(core.join(dir, "x86_64"))
@@ -1006,7 +1006,7 @@ test_full_install :: proc() {
 	palm := "distro/out/bin/palm"
 	repo := "distro/out/repo/x86_64"
 	keys := "distro/build/keys"
-	if !os.is_file(palm) || !os.is_file(core.join(repo, "PALMINDEX")) || !os.is_file(core.join(keys, "palmframe.pub")) {
+	if !os.is_file(palm) || !os.is_file(core.join(repo, "PALMINDEX")) || !os.is_file(core.join(keys, "palmy.pub")) {
 		fmt.println("  skip  full install: distro/out has no palm or repository (make -C distro repo)")
 		return
 	}

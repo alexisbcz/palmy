@@ -12,5 +12,5 @@ icon     = phone
 depend   = glibc fonts libxkbcommon opus ffmpeg pipewire wireplumber pipewire-pulse
 provides = cmd:call
 
-file     = ${PALMFRAME_OUT}/bin/call -> /usr/bin/call mode 0755
-file     = ${PALMFRAME_ROOT}/distro/apps/desktop/call.desktop -> /usr/share/applications/call.desktop mode 0644
+file     = ${PALMY_OUT}/bin/call -> /usr/bin/call mode 0755
+file     = ${PALMY_ROOT}/distro/apps/desktop/call.desktop -> /usr/share/applications/call.desktop mode 0644

@@ -441,7 +441,7 @@ extract :: proc(t: ^Txn, s: ^Staged) -> ([]File_Rec, Err) {
 			rec.sha = strings.clone(e.link)
 			rec.mode = 0o777
 			// A symlink under /etc is configuration as much as a file is:
-			// /etc/localtime is palmframe-base's link to UTC until the
+			// /etc/localtime is palmy-base's link to UTC until the
 			// installer (or the person) points it at their zone. Like an
 			// edited file, a link retargeted locally is kept; unlike a file
 			// there is nothing useful to put beside it as .palm-new.

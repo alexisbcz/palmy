@@ -2,7 +2,7 @@
 //
 // With logind, the session's VT is logind's business: TakeControl puts it in
 // graphics mode and PauseDevice/ResumeDevice bracket every switch (seat.odin).
-// Palmframe has no logind, so on bare metal wm does what logind would have
+// Palmy has no logind, so on bare metal wm does what logind would have
 // done, the way X servers and weston-launch always did it:
 //
 //   - KDSETMODE KD_GRAPHICS, so the kernel console stops drawing over us and

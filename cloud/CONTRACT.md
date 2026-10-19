@@ -1,4 +1,4 @@
-# The Palmframe cloud contract
+# The Palmy cloud contract
 
 The account, mail and drive pieces are built in parallel against this file.
 It is short on purpose: what every piece must agree on, and nothing else.
@@ -94,5 +94,5 @@ Resend and are designed, not built.
 
 One stack per worktree. Agents working in parallel run a scratch copy of
 `cloud/supabase` with its own `project_id` and ports shifted, so the stacks
-do not collide; the committed `config.toml` keeps project `palmframe` on the
+do not collide; the committed `config.toml` keeps project `palmy` on the
 default ports.

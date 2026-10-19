@@ -118,7 +118,7 @@ state_init :: proc(st: ^St, b: Backend) {
 			append(&st.layouts, i)
 		}
 	}
-	append(&st.hostname, "palmframe")
+	append(&st.hostname, "palmy")
 
 	st.disk_i = preselect_disk(st.disks)
 
@@ -129,7 +129,7 @@ state_init :: proc(st: ^St, b: Backend) {
 
 // swap_size_for is the swap file offered by default: half the memory, in
 // whole GiB, at least 1 GiB and at most 4 GiB. It is room to page out what
-// sits idle, not hibernation, which Palmframe does not do.
+// sits idle, not hibernation, which Palmy does not do.
 swap_size_for :: proc(mem: u64) -> u64 {
 	gib := (mem / 2 + (1 << 30) - 1) >> 30
 	return clamp(gib, 1, 4) << 30
@@ -506,7 +506,7 @@ plan_of :: proc(st: ^St) -> Plan {
 }
 
 // A package-level array, so the slice plan_of hands out outlives the call.
-CJK_PACKAGES := [?]string{"palmframe", "fonts-cjk"}
+CJK_PACKAGES := [?]string{"palmy", "fonts-cjk"}
 
 start_install :: proc(st: ^St) {
 	if st.worker != nil {

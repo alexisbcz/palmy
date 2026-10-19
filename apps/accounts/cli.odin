@@ -39,7 +39,7 @@ COMMANDS := []kit.Command {
 	},
 	{
 		verb = "server",
-		summary = "which Palmframe server this machine uses, or change it (checked before it is kept)",
+		summary = "which Palmy server this machine uses, or change it (checked before it is kept)",
 		effect = .Idempotent,
 		args = {{name = "url", kind = .String, help = "the server to use from now on, e.g. https://cloud.example.org"}},
 		out = {
@@ -321,7 +321,7 @@ surface :: proc() -> ^kit.Surface {
 	if g_surface.noun == "" {
 		g_surface = kit.Surface {
 			noun     = "accounts",
-			summary  = "one Palmframe account, several identities",
+			summary  = "one Palmy account, several identities",
 			gui      = true,
 			selftest = cli_selftest,
 			notes    = SURFACE_NOTES,

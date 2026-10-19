@@ -2,7 +2,7 @@ package doas
 
 // doas — run a command as another user, usually root.
 //
-// OpenBSD's doas, rewritten small for Palmframe: a setuid-root program that
+// OpenBSD's doas, rewritten small for Palmy: a setuid-root program that
 // reads one policy file (/etc/doas.conf, conf.odin), asks the caller for
 // their own password, and runs the command as the target user with a clean
 // environment (policy.odin). The password check, the rate limit and the

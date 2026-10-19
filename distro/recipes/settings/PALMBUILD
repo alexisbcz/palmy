@@ -13,5 +13,5 @@ details  = Appearance (dark or light, the accent, the wallpaper), keyboard layou
 depend   = glibc fonts libxkbcommon
 provides = cmd:settings
 
-file     = ${PALMFRAME_OUT}/bin/settings -> /usr/bin/settings mode 0755
-file     = ${PALMFRAME_ROOT}/distro/apps/desktop/settings.desktop -> /usr/share/applications/settings.desktop mode 0644
+file     = ${PALMY_OUT}/bin/settings -> /usr/bin/settings mode 0755
+file     = ${PALMY_ROOT}/distro/apps/desktop/settings.desktop -> /usr/share/applications/settings.desktop mode 0644

@@ -364,7 +364,7 @@ function CollapsibleDemo() {
         <ChevronDownIcon className="size-4" />
       </CollapsibleTrigger>
       <CollapsibleContent className="px-3 py-2 text-sm text-muted-foreground">
-        palmframe/palmy
+        palmy/palmy
       </CollapsibleContent>
     </Collapsible>
   );
@@ -642,7 +642,7 @@ export const PREVIEWS: Record<string, () => ReactNode> = {
         </DialogHeader>
         <Field>
           <FieldLabel>Name</FieldLabel>
-          <Input defaultValue="Palmframe" />
+          <Input defaultValue="Palmy" />
         </Field>
       </DialogContent>
     </Dialog>
@@ -712,7 +712,7 @@ export const PREVIEWS: Record<string, () => ReactNode> = {
   "hover-card": () => (
     <HoverCard>
       <HoverCardTrigger
-        render={<Button variant="link">@palmframe</Button>}
+        render={<Button variant="link">@palmy</Button>}
       />
       <HoverCardContent className="w-64 text-sm">
         A Linux distribution where the assistant is part of the system.

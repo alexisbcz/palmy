@@ -1,6 +1,6 @@
 // start.odin — the start menu: every application, one click or one key away.
 //
-// Opened by a lone tap of Super, by clicking the Palmframe button at the left
+// Opened by a lone tap of Super, by clicking the Palmy button at the left
 // of the bar, or by pushing the pointer into that corner and clicking. It
 // drops from the button:
 //
@@ -1241,7 +1241,7 @@ start_draw_footer :: proc(s: ^Server, f: ^p.Fonts, cv: ^p.Canvas, foot: p.Rect) 
 	p.draw_text(cv, f, ellipsize_end(f, id.name, 13, .Semibold, 190), cx + 24, cy - 2, 13, p.hex(pal.pop_text), .Sans, .Semibold)
 	sub := id.subtitle
 	if !id.ok && have_accounts {
-		sub = "Sign in to Palmframe"
+		sub = "Sign in to Palmy"
 	}
 	p.draw_text(cv, f, sub, cx + 24, cy + 14, 11.5, p.hex(pal.pop_dim))
 

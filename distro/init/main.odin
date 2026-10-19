@@ -1,6 +1,6 @@
 package main
 
-// palm-init — Palmframe's PID 1.
+// palm-init — Palmy's PID 1.
 //
 // The kernel runs it as /sbin/init. It brings the machine up, in this order:
 //
@@ -90,7 +90,7 @@ boot :: proc() {
 	linux.umask(transmute(linux.Mode)u32(0o022))
 	linux.chdir("/")
 
-	say("Palmframe is starting")
+	say("Palmy is starting")
 	mount_early()
 	reopen_console()
 

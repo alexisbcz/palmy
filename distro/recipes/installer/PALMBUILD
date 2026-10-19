@@ -8,10 +8,10 @@
 pkgname  = installer
 pkgver   = 0.1.0
 pkgrel   = 0
-pkgdesc  = Install Palmframe onto a disk (graphical)
+pkgdesc  = Install Palmy onto a disk (graphical)
 license  = MIT
 depend   = glibc fonts libxkbcommon palmy-wm palm-locale tzdata xkeyboard-config
 depend   = palm palm-install e2fsprogs dosfstools limine
 provides = cmd:installer
 
-file     = ${PALMFRAME_OUT}/bin/installer -> /usr/bin/installer mode 0755
+file     = ${PALMY_OUT}/bin/installer -> /usr/bin/installer mode 0755

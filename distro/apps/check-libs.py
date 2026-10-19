@@ -35,7 +35,7 @@ for name in sorted(os.listdir(RECIPES)):
         elif key == "provides":
             provs |= {p[3:] for p in val.split() if p.startswith("so:")}
         elif key == "file":
-            m = re.match(r"\s*\$\{PALMFRAME_OUT\}/bin/(\S+)\s+->", val)
+            m = re.match(r"\s*\$\{PALMY_OUT\}/bin/(\S+)\s+->", val)
             if m:
                 bins[m.group(1)] = name
     depends[name], provides[name] = deps, provs

@@ -19,7 +19,7 @@
 //                     menus back to the chrome.
 //
 // Firefox runs in kiosk mode, so none of its own chrome is drawn: tabs,
-// address bar and menus are the Palmframe chrome's. Each chrome tab is a
+// address bar and menus are the Palmy chrome's. Each chrome tab is a
 // Firefox tab (a BiDi browsing context); the one showing is the one
 // activated, and it is what the compositor's one window shows.
 package gecko
@@ -228,7 +228,7 @@ start_firefox :: proc() -> bool {
 		append(&env, e)
 	}
 	append(&env, fmt.tprintf("WAYLAND_DISPLAY=%s", h.wl_path))
-	// the firefox package carries the system libraries Palmframe does not
+	// the firefox package carries the system libraries Palmy does not
 	// ship in syslib/, and a fontconfig file for a system without /etc/fonts
 	ffdir := h.ff_bin[:max(strings.last_index_byte(h.ff_bin, '/'), 0)]
 	if os.exists(fmt.tprintf("%s/syslib", ffdir)) {

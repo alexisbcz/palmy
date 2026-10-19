@@ -107,13 +107,13 @@ index. distro/apps/build.sh ships apps/palm as `distro/out/bin/palm-apps` —
 ## For the image builder
 
 ```
-palm keygen distro/build/keys/palmframe          # once; keep the .sec out of git
+palm keygen distro/build/keys/palmy          # once; keep the .sec out of git
 palm build distro/recipes/<pkg> -o distro/out/repo/x86_64
-palm index distro/out/repo/x86_64 --key distro/build/keys/palmframe.sec
+palm index distro/out/repo/x86_64 --key distro/build/keys/palmy.sec
 fakeroot -s <state> -- sh -c '
   palm --root <rootfs> --initdb --repo distro/out/repo \
-       --keys-dir distro/build/keys add palmframe-base ... &&
-  cp distro/build/keys/palmframe.pub <rootfs>/etc/palm/keys/ &&   # or ship it in a package
+       --keys-dir distro/build/keys add palmy-base ... &&
+  cp distro/build/keys/palmy.pub <rootfs>/etc/palm/keys/ &&   # or ship it in a package
   mkfs.ext4 -d <rootfs> ...'                      # same fakeroot session
 ```
 
@@ -203,7 +203,7 @@ validity) against the first CA bundle found: `$PALM_CA_FILE`,
 `/etc/ssl/certs/ca-certificates.crt`, `/etc/ssl/cert.pem`,
 `/usr/share/palm/ca-certificates.crt` (shipped by the palm package);
 CertificateVerify for ECDSA P-256/P-384, RSA-PSS and Ed25519; KeyUpdate and
-NewSessionTicket handled. Weighed: dlopen of the system OpenSSL (Palmframe
+NewSessionTicket handled. Weighed: dlopen of the system OpenSSL (Palmy
 has none, and palm must work in an empty --root), BearSSL as a package (a C
 library under the package manager that installs it), or our own client.
 core:crypto already had every primitive and a strict X.509 validator, so
@@ -248,19 +248,19 @@ download 2.1 MiB, disk +340 KiB`) and the result (`OK: upgraded 3, ...`), or
 `nothing to upgrade`. It reads cached indexes like apk and notes when they
 are over a day old; `-U` refreshes first.
 
-**The public repository.** `https://palmframe-packages.vercel.app/x86_64`
-(Vercel static, project `palmframe-packages`), mirrored at
-`https://github.com/alexisbcz/palmframe-packages/releases/download/x86_64`
+**The public repository.** `https://palmy-packages.vercel.app/x86_64`
+(Vercel static, project `palmy-packages`), mirrored at
+`https://github.com/alexisbcz/palmy-packages/releases/download/x86_64`
 (release assets of a public repository); both on the one line in
 `distro/base/root/etc/palm/repositories`. Signed with
-`palmframe-release.pub` (`distro/recipes/palm/`, installed into
+`palmy-release.pub` (`distro/recipes/palm/`, installed into
 `/etc/palm/keys/` by the palm package); the secret lives at
-`~/.config/palmframe/keys/palmframe-release.sec` on the publishing machine,
+`~/.config/palmy/keys/palmy-release.sec` on the publishing machine,
 never in a checkout. `distro/repo-publish/publish.sh` stages under
-`~/.cache/palmframe/publish` (outside any git repository: `vercel link`
+`~/.cache/palmy/publish` (outside any git repository: `vercel link`
 inside one connects the project to it, and Vercel then deploys the source
 tree on every push -- this happened once and was undone), rebuilds
-palmframe-base with the release key as its `palmframe.pub`, signs a fresh
+palmy-base with the release key as its `palmy.pub`, signs a fresh
 index, checks it with palm in a root trusting only the release key, deploys,
 uploads packages before the index, deletes stale assets after, and checks
 each public URL with palm. Limits: Vercel takes up to 100 MB per file from
@@ -304,15 +304,15 @@ the selftest as a user.
   fell through and installed.
 - QEMU, a fresh `make -C distro image` from this worktree, serial root shell:
   `palm list`/`info` said nothing about the network; `palm update` ->
-  `https://palmframe-packages.vercel.app/x86_64: 48 packages, signed by
-  palmframe-release.pub`; `palm add --yes track` in 0.76 s; `palm verify` OK
+  `https://palmy-packages.vercel.app/x86_64: 48 packages, signed by
+  palmy-release.pub`; `palm add --yes track` in 0.76 s; `palm verify` OK
   over 37 packages; `palm upgrade --dry-run`: nothing to upgrade; the setuid
   package as above.
 
 ## Changed by the installer integration (2026-10-13)
 
 - **Symlinks under /etc are configuration** (`install.odin`, `main.odin`).
-  `/etc/localtime` is palmframe-base's link to UTC until the installer points
+  `/etc/localtime` is palmy-base's link to UTC until the installer points
   it at the chosen zone. `palm verify` now reports a retargeted /etc link as
   `modified (config): points to X, not Y` (soft, exit 0), like an edited
   file, instead of a hard problem. On install/upgrade/fix a link under /etc

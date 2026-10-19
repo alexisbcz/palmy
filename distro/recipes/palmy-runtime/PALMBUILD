@@ -4,7 +4,7 @@
 # The system bus, Wi-Fi, sound, Bluetooth, media, TLS and archives: what the
 # applications beyond the default set run. Not the applications themselves,
 # and not ollama.
-pkgname  = palmframe-runtime
+pkgname  = palmy-runtime
 pkgver   = 0.1.0
 pkgrel   = 0
 pkgdesc  = System services and runtime libraries: D-Bus, iwd, PipeWire, BlueZ, FFmpeg, OpenSSL

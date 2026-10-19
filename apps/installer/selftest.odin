@@ -125,7 +125,7 @@ test_flow :: proc() {
 	plan := plan_of(st)
 	check("plan: disk", plan.disk == "/dev/vda", plan.disk)
 	check("plan: user", plan.user == "ada" && plan.full_name == "Ada Lovelace")
-	check("plan: hostname default", plan.hostname == "palmframe", plan.hostname)
+	check("plan: hostname default", plan.hostname == "palmy", plan.hostname)
 	check("plan: root password empty means same as the user's", plan.root_password == "")
 	check("plan: language and keyboard", plan.language == "en_US" && plan.keyboard.layout == "us", fmt.tprintf("%s %s", plan.language, plan.keyboard.layout))
 	check("plan: time zone", plan.timezone == "America/New_York", plan.timezone)
@@ -191,7 +191,7 @@ test_account :: proc() {
 		check(fmt.tprintf("user name %q refused", u), user_problem(u) != "", user_problem(u))
 	}
 
-	ok_host := [?]string{"palmframe", "atelier-2", "A1"}
+	ok_host := [?]string{"palmy", "atelier-2", "A1"}
 	bad_host := [?]string{"", "-atelier", "atelier-", "my host", "host.local", "ordinateur_de_marie"}
 	for h in ok_host {
 		check(fmt.tprintf("host name %q accepted", h), hostname_problem(h) == "", hostname_problem(h))
@@ -200,7 +200,7 @@ test_account :: proc() {
 		check(fmt.tprintf("host name %q refused", h), hostname_problem(h) != "", hostname_problem(h))
 	}
 
-	a := Account{user = "ada", hostname = "palmframe", password = "x", confirm = "y", same_root = true}
+	a := Account{user = "ada", hostname = "palmy", password = "x", confirm = "y", same_root = true}
 	pr := validate_account(a)
 	check("account: mismatched passwords are reported on the confirmation", pr[.Confirm] != "" && pr[.Password] == "")
 	a.confirm = "x"

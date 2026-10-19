@@ -1,4 +1,4 @@
-# Palmframe installer (apps/installer) — French. Typography: the narrow spaces before : ; ? ! are ordinary spaces, because
+# Palmy installer (apps/installer) — French. Typography: the narrow spaces before : ; ? ! are ordinary spaces, because
 # not every font the live system might fall back to has U+202F.
 # Format: distro/locale/README.md. Installed as
 # /usr/share/palm/locale/fr/installer.msg.
@@ -57,8 +57,8 @@ msgid "Step %d of %d"
 msgstr "Étape %d sur %d"
 
 # --- page headings -------------------------------------------------------------
-msgid "Welcome to Palmframe"
-msgstr "Bienvenue dans Palmframe"
+msgid "Welcome to Palmy"
+msgstr "Bienvenue dans Palmy"
 
 msgid "Choose the language for the installer and for the new system."
 msgstr "Choisissez la langue de l’installation et du nouveau système."
@@ -75,8 +75,8 @@ msgstr "Choisissez la ville la plus proche de chez vous. L’horloge indique l�
 msgid "Installation disk"
 msgstr "Disque d’installation"
 
-msgid "Choose the disk to install Palmframe on."
-msgstr "Choisissez le disque sur lequel installer Palmframe."
+msgid "Choose the disk to install Palmy on."
+msgstr "Choisissez le disque sur lequel installer Palmy."
 
 msgid "Your account"
 msgstr "Votre compte"
@@ -90,8 +90,8 @@ msgstr "Prêt pour l’installation"
 msgid "Check your choices. Nothing has been changed yet."
 msgstr "Vérifiez vos choix. Rien n’a encore été modifié."
 
-msgid "Installing Palmframe"
-msgstr "Installation de Palmframe"
+msgid "Installing Palmy"
+msgstr "Installation de Palmy"
 
 msgid "This takes a few minutes. Every step is in the log."
 msgstr "Cela prend quelques minutes. Chaque étape figure dans le journal."
@@ -235,8 +235,8 @@ msgstr "%d Mio"
 msgid "The whole disk will be used"
 msgstr "Le disque entier sera utilisé"
 
-msgid "Palmframe erases the disk you choose and creates a 512 MiB EFI system partition, a small BIOS boot partition so that older computers can start it too, and an ext4 root file system on the rest. Sharing a disk with another system is not supported."
-msgstr "Palmframe efface le disque choisi et y crée une partition système EFI de 512 Mio, une petite partition d'amorçage BIOS pour que les ordinateurs plus anciens puissent aussi le démarrer, et un système de fichiers racine ext4 sur le reste. Le partage d'un disque avec un autre système n'est pas pris en charge."
+msgid "Palmy erases the disk you choose and creates a 512 MiB EFI system partition, a small BIOS boot partition so that older computers can start it too, and an ext4 root file system on the rest. Sharing a disk with another system is not supported."
+msgstr "Palmy efface le disque choisi et y crée une partition système EFI de 512 Mio, une petite partition d'amorçage BIOS pour que les ordinateurs plus anciens puissent aussi le démarrer, et un système de fichiers racine ext4 sur le reste. Le partage d'un disque avec un autre système n'est pas pris en charge."
 
 msgid "No disks were found. Attach a disk and restart the installer."
 msgstr "Aucun disque n’a été trouvé. Branchez un disque puis relancez l’installation."
@@ -265,8 +265,8 @@ msgstr "Le système live fonctionne depuis ce disque"
 msgid "This disk is read-only"
 msgstr "Ce disque est en lecture seule"
 
-msgid "Too small: Palmframe needs at least 4 GiB"
-msgstr "Trop petit : Palmframe a besoin d’au moins 4 Gio"
+msgid "Too small: Palmy needs at least 4 GiB"
+msgstr "Trop petit : Palmy a besoin d’au moins 4 Gio"
 
 # --- 4. disk — the erase confirmation ------------------------------------------
 msgid "Erase %s?"
@@ -436,8 +436,8 @@ msgid "Restart"
 msgstr "Redémarrer"
 
 # --- 8. done -------------------------------------------------------------------
-msgid "Palmframe is installed"
-msgstr "Palmframe est installé"
+msgid "Palmy is installed"
+msgstr "Palmy est installé"
 
 msgid "Remove the installation medium, then restart the computer to start your new system."
 msgstr "Retirez le support d’installation, puis redémarrez l’ordinateur pour lancer votre nouveau système."

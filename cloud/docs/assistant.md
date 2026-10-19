@@ -213,7 +213,7 @@ And against the model being steered — injected or just wrong:
   draft to x@evil.example; e2e D shows the refusal with a model that tries.
 - **Every proposal carries its working**: who each recipient is ("a
   correspondent, not someone you named"; "appears only inside the mail from
-  …"; "appears in nothing the assistant read"), "outside Palmframe", "the
+  …"; "appears in nothing the assistant read"), "outside Palmy", "the
   text contains a link — a link can carry data out", and "proposed after
   reading content from outside you: …". The log keeps `tainted` and the
   sources.

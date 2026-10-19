@@ -12,5 +12,5 @@ icon     = volume-2
 depend   = glibc fonts libxkbcommon wireplumber pipewire-pulse
 provides = cmd:mixer
 
-file     = ${PALMFRAME_OUT}/bin/mixer -> /usr/bin/mixer mode 0755
-file     = ${PALMFRAME_ROOT}/distro/apps/desktop/mixer.desktop -> /usr/share/applications/mixer.desktop mode 0644
+file     = ${PALMY_OUT}/bin/mixer -> /usr/bin/mixer mode 0755
+file     = ${PALMY_ROOT}/distro/apps/desktop/mixer.desktop -> /usr/share/applications/mixer.desktop mode 0644

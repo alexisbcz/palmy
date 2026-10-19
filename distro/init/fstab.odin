@@ -4,14 +4,14 @@ package main
 // shutdown.
 //
 //	<device>   <mountpoint>  <type>  <options>              <dump>  <pass>
-//	LABEL=palmframe   /           ext4  rw,relatime                0  1
+//	LABEL=palmy   /           ext4  rw,relatime                0  1
 //	LABEL=PALMESP     /boot/efi   vfat  rw,relatime,fmask=0077...  0  2
 //	/swapfile         none        swap  sw,pri=10                  0  0
 //
 // The device is a path, or UUID=, LABEL=, PARTUUID= or PARTLABEL= (quotes
 // allowed). PARTUUID and PARTLABEL come from the kernel's own uevent for the
 // partition; UUID and LABEL are read from the filesystem's superblock
-// (probe.odin: ext2/3/4, FAT and swap, what Palmframe makes). A device that
+// (probe.odin: ext2/3/4, FAT and swap, what Palmy makes). A device that
 // is not there yet is waited for, up to DEVICE_WAIT_MS, once per boot.
 //
 // The order at boot (main.odin):

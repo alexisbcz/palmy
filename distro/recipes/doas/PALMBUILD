@@ -9,10 +9,10 @@ pkgdesc  = Run a command as root, after your own password
 license  = MIT
 category = System
 icon     = shield-check
-details  = OpenBSD's doas, rewritten small in Odin for Palmframe: one policy file, /etc/doas.conf, which by default lets members of wheel run anything after typing their own password. `doas palm add foo` installs a package from a terminal.
+details  = OpenBSD's doas, rewritten small in Odin for Palmy: one policy file, /etc/doas.conf, which by default lets members of wheel run anything after typing their own password. `doas palm add foo` installs a package from a terminal.
 details  = It refuses a policy anyone but root could change, looks commands up only in /usr/local/bin, /usr/bin and /bin, passes on almost none of the caller's environment, slows down after repeated wrong passwords, and logs every grant and refusal to /var/log/messages.
-depend   = palmframe-base glibc
+depend   = palmy-base glibc
 provides = cmd:doas
 
-file     = ${PALMFRAME_OUT}/bin/doas -> /usr/bin/doas mode 4755
-file     = ${PALMFRAME_ROOT}/distro/doas/doas.conf -> /etc/doas.conf mode 0644
+file     = ${PALMY_OUT}/bin/doas -> /usr/bin/doas mode 4755
+file     = ${PALMY_ROOT}/distro/doas/doas.conf -> /etc/doas.conf mode 0644

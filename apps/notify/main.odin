@@ -1,4 +1,4 @@
-// notify: Palmframe's notifications. One program, four faces:
+// notify: Palmy's notifications. One program, four faces:
 //
 //	notify daemon                the per-session service (palm-notifyd):
 //	                             socket + org.freedesktop.Notifications

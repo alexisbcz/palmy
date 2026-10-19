@@ -12,7 +12,7 @@ package palm
 //	pkgver  = 0.1.0
 //	pkgrel  = 0
 //	pkgdesc = The palmy terminal
-//	depend  = glibc palmframe-fonts
+//	depend  = glibc palmy-fonts
 //	file    = ../../out/bin/term -> /usr/bin/term mode 0755
 //	tree    = share -> /usr/share/term
 //	dir     = /etc/term

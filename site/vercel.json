@@ -2,5 +2,17 @@
   "$schema": "https://openapi.vercel.sh/vercel.json",
   "buildCommand": "npm run build",
   "outputDirectory": "build/client",
-  "framework": null
+  "framework": null,
+  "redirects": [
+    {
+      "source": "/palmframe",
+      "destination": "/vision",
+      "permanent": true
+    },
+    {
+      "source": "/palmframe/:slug",
+      "destination": "/vision/:slug",
+      "permanent": true
+    }
+  ]
 }

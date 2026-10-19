@@ -71,7 +71,7 @@ def wav_peak(path, since=0):
 
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument("--image", default=os.path.join(DISTRO, "out", "palmframe.img"))
+    ap.add_argument("--image", default=os.path.join(DISTRO, "out", "palmy.img"))
     ap.add_argument("--shots", default=os.path.join(DISTRO, "out", "shots"))
     ap.add_argument("--work", default=os.path.join(DISTRO, "build", "runtime-test"))
     ap.add_argument("--port", type=int, default=8093)
@@ -113,7 +113,7 @@ def main():
     m = tb.Machine(img, args.work)
     report = {}
     try:
-        if not m.check("palm-init starts", m.expect(r"palm-init: Palmframe is starting", 60) is not None):
+        if not m.check("palm-init starts", m.expect(r"palm-init: Palmy is starting", 60) is not None):
             return m.failures
         if not m.check("getty on ttyS0", m.expect(r"login: ", 60) is not None):
             return m.failures
@@ -207,14 +207,14 @@ def main():
             print("  ....  iwctl device list:\n        " + iw("device list").strip().replace("\n", "\n        "))
             iw("device wlan1 set-property Mode ap")
             time.sleep(2)
-            out = iw("ap wlan1 start PalmframeTest palmframe123")
+            out = iw("ap wlan1 start PalmyTest palmy123")
             print("  ....  ap start: " + out.strip())
             time.sleep(3)
             iw("station wlan0 scan")
             time.sleep(5)
             out = iw("station wlan0 get-networks")
-            m.check("iwd (station) sees the iwd access point over mac80211_hwsim", "PalmframeTest" in out, out)
-            out = iw("--passphrase palmframe123 station wlan0 connect PalmframeTest")
+            m.check("iwd (station) sees the iwd access point over mac80211_hwsim", "PalmyTest" in out, out)
+            out = iw("--passphrase palmy123 station wlan0 connect PalmyTest")
             ok, out = tb.wait_for(m, "ip -4 addr show wlan0", r"inet \d", 20)
             st_out = iw("station wlan0 show")
             m.check("iwd joins it with WPA2 and gets an address by DHCP", ok, out + st_out)
@@ -244,9 +244,9 @@ def main():
                 f"exit {st}, peak before {before}, after {after}\n{out}")
         print(f"  ....  hda-out.wav peak after pw-play: {after}")
 
-        out, st = m.run(as_palm("echo palmframe-clip | timeout 10 wl-copy; sleep 1; timeout 10 wl-paste"), 20)
+        out, st = m.run(as_palm("echo palmy-clip | timeout 10 wl-copy; sleep 1; timeout 10 wl-paste"), 20)
         report["wl-copy"] = (st, out.strip())
-        m.check("wl-copy / wl-paste round-trip through the wm", "palmframe-clip" in out, out)
+        m.check("wl-copy / wl-paste round-trip through the wm", "palmy-clip" in out, out)
 
         # --- the applications -------------------------------------------------------
         for app in args.apps.split():

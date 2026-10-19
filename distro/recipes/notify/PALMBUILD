@@ -13,5 +13,5 @@ details  = One place for every notification, per identity: toasts, the notificat
 depend   = glibc fonts libxkbcommon
 provides = cmd:notify
 
-file     = ${PALMFRAME_OUT}/bin/notify -> /usr/bin/notify mode 0755
-file     = ${PALMFRAME_ROOT}/distro/apps/desktop/notify.desktop -> /usr/share/applications/notify.desktop mode 0644
+file     = ${PALMY_OUT}/bin/notify -> /usr/bin/notify mode 0755
+file     = ${PALMY_ROOT}/distro/apps/desktop/notify.desktop -> /usr/share/applications/notify.desktop mode 0644

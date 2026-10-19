@@ -592,7 +592,7 @@ collect_busy :: proc(cal: ^ical.Component, s, e: i64, floating: ^ical.Zone, out:
 vfreebusy :: proc(organizer, attendee: string, s, e: i64, busy: []Busy, method: string) -> string {
 	slice.sort_by(busy, proc(a, b: Busy) -> bool {return a.start < b.start})
 	sb := strings.builder_make()
-	strings.write_string(&sb, "BEGIN:VCALENDAR\r\nVERSION:2.0\r\nPRODID:-//Palmframe//DAV//EN\r\n")
+	strings.write_string(&sb, "BEGIN:VCALENDAR\r\nVERSION:2.0\r\nPRODID:-//Palmy//DAV//EN\r\n")
 	if method != "" {
 		fmt.sbprintf(&sb, "METHOD:%s\r\n", method)
 	}

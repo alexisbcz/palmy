@@ -192,7 +192,7 @@ itip_message :: proc(cal: ^ical.Component, method: string) -> string {
 @(private = "file")
 reply_message :: proc(cal: ^ical.Component, me: string, force_partstat := "") -> string {
 	sb := strings.builder_make()
-	strings.write_string(&sb, "BEGIN:VCALENDAR\r\nVERSION:2.0\r\nPRODID:-//Palmframe//DAV//EN\r\nMETHOD:REPLY\r\n")
+	strings.write_string(&sb, "BEGIN:VCALENDAR\r\nVERSION:2.0\r\nPRODID:-//Palmy//DAV//EN\r\nMETHOD:REPLY\r\n")
 	for comp in sched_comps(cal) {
 		mine: ^ical.Prop
 		for p in ical.props(comp, "ATTENDEE") {

@@ -1,5 +1,5 @@
 # A one-shot at boot: marks each ALSA card as initialised in the udev
 # database, as udev's rules would, so PipeWire's ALSA monitor (which reads
-# SOUND_INITIALIZED through libudev) sees the cards. Palmframe runs no udevd.
-cmd     = /usr/lib/palmframe/sound-cards
+# SOUND_INITIALIZED through libudev) sees the cards. Palmy runs no udevd.
+cmd     = /usr/lib/palmy/sound-cards
 restart = never

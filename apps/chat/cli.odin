@@ -1,7 +1,7 @@
 package main
 
 // The command line: `chat <verb>` (or `palm chat <verb>`), against the
-// Palmframe cloud. Every verb opens one connection to palm-rtc, says hello as
+// Palmy cloud. Every verb opens one connection to palm-rtc, says hello as
 // one identity, makes the same requests the window makes, and prints what
 // came back. Same wire, same gateway, same RLS: the window and the command
 // line cannot disagree about who may see what (docs/PALM-CLI.md).
@@ -252,7 +252,7 @@ surface :: proc() -> ^kit.Surface {
 	if g_surface.noun == "" {
 		g_surface = kit.Surface {
 			noun     = "chat",
-			summary  = "team chat in the Palmframe cloud: spaces, channels, threads, calls",
+			summary  = "team chat in the Palmy cloud: spaces, channels, threads, calls",
 			gui      = true,
 			commands = COMMANDS,
 			notes    = "The window is `chat --cloud` (or `chat --nick N` for the loopback server). Commands talk to palm-rtc on 127.0.0.1:$PALM_RTC_PORT (8790).",

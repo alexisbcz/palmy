@@ -4,13 +4,13 @@ import "core:strings"
 import p "palmy:."
 
 // icon_for picks an entry's glyph: the lucide icon its Icon= line names
-// (Palmframe's own .desktop files name one), then a few names recognisable
+// (Palmy's own .desktop files name one), then a few names recognisable
 // enough to deserve their own, then the category.
 icon_for :: proc(e: ^Entry) -> p.Icon {
 	if ic, ok := icon_named(e.icon); ok {
 		return ic
 	}
-	// Palmframe's own entries that name themselves (Icon=mixer) rather than
+	// Palmy's own entries that name themselves (Icon=mixer) rather than
 	// a lucide glyph.
 	for a in ICON_ALIASES {
 		if a.name == e.icon || (e.icon == "" && a.name == exec_name(e)) {
@@ -73,7 +73,7 @@ icon_for :: proc(e: ^Entry) -> p.Icon {
 	return ICON_PACKAGE
 }
 
-// ICON_ALIASES maps the names Palmframe's applications go by to the lucide
+// ICON_ALIASES maps the names Palmy's applications go by to the lucide
 // glyph that stands for them.
 ICON_ALIASES := [?]struct {
 	name, lucide: string,

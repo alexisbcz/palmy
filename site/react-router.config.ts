@@ -67,14 +67,14 @@ const GENERATED_PATHS = Object.values(generated).flatMap((c) =>
 const paths = [
   "/",
   "/docs",
-  "/palmframe",
+  "/vision",
   "/components",
   "/apps",
   "/distro",
   "/reference",
   ...GENERATED_PATHS,
   ...docSlugs("./app/content/docs-palmy.tsx", 17).map((s) => `/docs/${s}`),
-  ...docSlugs("./app/content/docs-palmframe.tsx", 9).map((s) => `/palmframe/${s}`),
+  ...docSlugs("./app/content/docs-vision.tsx", 9).map((s) => `/vision/${s}`),
   ...COMPONENT_SLUGS.map((s) => `/components/${s}`),
 ];
 

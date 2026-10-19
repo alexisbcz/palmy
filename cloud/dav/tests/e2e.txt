@@ -16,15 +16,15 @@ calendars:
   maya-work/default  maya-work  Calendar        #10b981  owner   maya-work  0
 count:     3
 
-== 1. events from the Palmframe calendar app
+== 1. events from the Palmy calendar app
 $ as maya calendar add Dentist --date 2026-10-22 --time 08:30 --minutes 30 --calendar maya/default
 calendar: maya/default
-uid:      18dfe9b4277a10f4-14d087@palmframe
-name:     18dfe9b4277a10f4-14d087@palmframe.ics
+uid:      18dfe9b4277a10f4-14d087@palmy
+name:     18dfe9b4277a10f4-14d087@palmy.ics
 synced:   yes
-stand-up uid: 18dfe9b4292ff21c-14d08d@palmframe
-$ as maya calendar delete 18dfe9b4292ff21c-14d08d@palmframe --occurrence 2026-10-21 --yes
-uid:      18dfe9b4292ff21c-14d08d@palmframe
+stand-up uid: 18dfe9b4292ff21c-14d08d@palmy
+$ as maya calendar delete 18dfe9b4292ff21c-14d08d@palmy --occurrence 2026-10-21 --yes
+uid:      18dfe9b4292ff21c-14d08d@palmy
 calendar: maya-work/default
 
 == app passwords for the third-party client
@@ -43,7 +43,7 @@ SUMMARY:Ceramics class
 END:VEVENT
 END:VCALENDAR
 stored
-$ py maya-work <app-password> override default 18dfe9b4292ff21c-14d08d@palmframe 20261023T073000Z 20261023T090000Z 20261023T091500Z
+$ py maya-work <app-password> override default 18dfe9b4292ff21c-14d08d@palmy 20261023T073000Z 20261023T090000Z 20261023T091500Z
 override stored
 -- what python-caldav sees in maya-work, week of 19 October (expanded):
 $ py maya-work <app-password> events default 20261019 20261026
@@ -59,7 +59,7 @@ events:
   title:     Stand-up
   place:     
   calendar:  maya-work/default
-  uid:       18dfe9b4292ff21c-14d08d@palmframe
+  uid:       18dfe9b4292ff21c-14d08d@palmy
   recurring: yes
   cancelled: no
 
@@ -69,7 +69,7 @@ events:
   title:     Dentist
   place:     
   calendar:  maya/default
-  uid:       18dfe9b4277a10f4-14d087@palmframe
+  uid:       18dfe9b4277a10f4-14d087@palmy
   recurring: no
   cancelled: no
 
@@ -79,7 +79,7 @@ events:
   title:     Stand-up (moved by python-caldav)
   place:     
   calendar:  maya-work/default
-  uid:       18dfe9b4292ff21c-14d08d@palmframe
+  uid:       18dfe9b4292ff21c-14d08d@palmy
   recurring: yes
   cancelled: no
 
@@ -101,10 +101,10 @@ ok    python-caldav sees the event the app made
 $ as noah calendar invitations
 invitations:
   uid                                title            identity  organizer            start                 calendar
-  18dfe9b49033e68d-14d1ab@palmframe  Project kickoff  noah      maya-work@palm.test  2026-10-27T13:00:00Z  noah/default
+  18dfe9b49033e68d-14d1ab@palmy  Project kickoff  noah      maya-work@palm.test  2026-10-27T13:00:00Z  noah/default
 count:       1
-$ as noah calendar accept 18dfe9b49033e68d-14d1ab@palmframe
-uid:      18dfe9b49033e68d-14d1ab@palmframe
+$ as noah calendar accept 18dfe9b49033e68d-14d1ab@palmy
+uid:      18dfe9b49033e68d-14d1ab@palmy
 partstat: ACCEPTED
 {"title":"Project kickoff","attendees":[{"address":"maya-work@palm.test","partstat":"ORGANIZER"},{"address":"noah@palm.test","partstat":"ACCEPTED"}]}
 ok    Maya's copy says Noah ACCEPTED
@@ -150,7 +150,7 @@ groups:
   (none)
 vcard:    BEGIN:VCARD
 VERSION:4.0
-PRODID:-//Palmframe//Contacts//EN
+PRODID:-//Palmy//Contacts//EN
 UID:9ee36ba8-4c1a-4e74-89a3-cee017ec5d10
 FN:Ingrid Solberg
 N:Solberg;Ingrid;;;

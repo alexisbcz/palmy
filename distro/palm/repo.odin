@@ -8,7 +8,7 @@ package palm
 // and may name more URLs after it, separated by spaces: mirrors of the same
 // repository, tried in order.
 //
-//	https://repo.example.org/palmframe https://mirror.example.net/palmframe
+//	https://repo.example.org/palmy https://mirror.example.net/palmy
 //
 // As with apk, palm looks for the architecture directory beneath a base
 // first:

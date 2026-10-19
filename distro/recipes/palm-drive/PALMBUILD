@@ -9,8 +9,8 @@ pkgdesc  = Drive sync
 license  = MIT
 category = System
 icon     = refresh-cw
-details  = Keeps ~/Drive/<identity> in sync with the Palmframe cloud for each identity you chose to sync, both ways, offline-safe. Started with each session for those identities.
+details  = Keeps ~/Drive/<identity> in sync with the Palmy cloud for each identity you chose to sync, both ways, offline-safe. Started with each session for those identities.
 depend   = glibc fonts libxkbcommon
 provides = cmd:palm-drive
 
-file     = ${PALMFRAME_OUT}/bin/palm-drive -> /usr/bin/palm-drive mode 0755
+file     = ${PALMY_OUT}/bin/palm-drive -> /usr/bin/palm-drive mode 0755

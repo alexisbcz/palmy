@@ -19,7 +19,7 @@ NS_CALDAV :: "urn:ietf:params:xml:ns:caldav"
 NS_CARDDAV :: "urn:ietf:params:xml:ns:carddav"
 NS_CS :: "http://calendarserver.org/ns/"
 NS_APPLE :: "http://apple.com/ns/ical/"
-NS_PALM :: "https://palmframe.dev/ns/dav"
+NS_PALM :: "https://palmy.dev/ns/dav"
 
 Attr :: struct {
 	ns:    string,

@@ -1,10 +1,10 @@
-# Palmframe — build the distribution from this checkout.
+# Palmy — build the distribution from this checkout.
 #
 #   make -C distro            everything: kernel and busybox (if missing), the
 #                             Odin binaries, the packages, the signed
 #                             repository and the bootable disk image
 #   make -C distro repo       stop after distro/out/repo/x86_64/PALMINDEX
-#   make -C distro image      distro/out/palmframe.img (from the repository)
+#   make -C distro image      distro/out/palmy.img (from the repository)
 #   make -C distro run        boot the image in QEMU, in a window
 #   make -C distro test       boot it headless: greeter, login, desktop, term,
 #                             launcher, palm verify/update/add, poweroff;
@@ -13,7 +13,7 @@
 #                             `palm update` (QEMU shows the host as 10.0.2.2)
 #   make -C distro check-libs every shipped binary links only glibc and what its
 #                             recipe's dependencies provide
-#   make -C distro iso        distro/out/palmframe-live.iso, the live installer
+#   make -C distro iso        distro/out/palmy-live.iso, the live installer
 #                             (UEFI and BIOS, runs from RAM; distro/live)
 #   make -C distro run-iso    boot it in QEMU with a blank target disk
 #   make -C distro test-installer  the installer's selftests (no disks touched)
@@ -28,7 +28,7 @@
 #
 # The order is the CONTRACT's: compile, then `palm build` every recipe in
 # distro/recipes into the repository, sign its index, then let palm itself
-# install the `palmframe` meta-package into an empty root — the image is
+# install the `palmy` meta-package into an empty root — the image is
 # assembled exactly the way a user's `palm add` would assemble it.
 #
 # The kernel and busybox take minutes and change rarely, so they are built
@@ -49,9 +49,9 @@ COLL   := -collection:palmy=palmy -collection:kit=apps/kit -collection:shadcn=sh
 ICOLL  := $(COLL) -collection:install=distro/installer
 
 # What palm build substitutes for ${...} in the recipes.
-export PALMFRAME_ROOT := $(ROOT)
-export PALMFRAME_OUT  := $(OUT)
-export PALMFRAME_KEYS := $(KEYS)
+export PALMY_ROOT := $(ROOT)
+export PALMY_OUT  := $(OUT)
+export PALMY_KEYS := $(KEYS)
 export SOURCE_DATE_EPOCH ?= 0
 
 PALM := $(BIN)/palm
@@ -68,7 +68,7 @@ srcs = $(shell find $(ROOT)/$(1) -name '*.odin' 2>/dev/null)
 # --- kernel and busybox: only when missing ------------------------------------
 # kernel.release is written last by build.sh, after bzImage, kernel.config and
 # modules/<release>/, so it stands for all four (distro/notes/kernel.md).
-KERNEL_CONF := $(DISTRO)/kernel/palmframe.config $(DISTRO)/kernel/modular.list $(DISTRO)/kernel/build.sh
+KERNEL_CONF := $(DISTRO)/kernel/palmy.config $(DISTRO)/kernel/modular.list $(DISTRO)/kernel/build.sh
 $(OUT)/kernel.release: $(KERNEL_CONF)
 	$(DISTRO)/kernel/build.sh
 $(OUT)/bzImage $(OUT)/kernel.config: | $(OUT)/kernel.release
@@ -115,7 +115,7 @@ $(BIN)/wm: $(call srcs,apps/wm) $(TOOLKIT)
 # distro/apps/build.sh (which knows that palm-apps comes from apps/palm and
 # prose from apps/prose/cli).
 APP_BINS := $(filter-out palm palm-init palm-login palm-modules doas passwd palmd wm palm-install installer, \
-	$(sort $(shell grep -ho 'PALMFRAME_OUT}/bin/[a-z0-9-]*' $(DISTRO)/recipes/*/PALMBUILD | sed 's|.*/||')))
+	$(sort $(shell grep -ho 'PALMY_OUT}/bin/[a-z0-9-]*' $(DISTRO)/recipes/*/PALMBUILD | sed 's|.*/||')))
 app_dir = $(if $(filter palm-apps,$(1)),palm,$(if $(filter prose,$(1)),prose,$(if $(filter palm-drive,$(1)),../cloud/drive,$(1))))
 app_src = $(if $(filter palm-apps,$(1)),palm,$(if $(filter prose,$(1)),prose/cli,$(if $(filter palm-drive,$(1)),../cloud/drive/palm-drive,$(1))))
 
@@ -142,12 +142,12 @@ binaries: $(BIN)/palm $(BIN)/palm-init $(BIN)/palm-login $(BIN)/palm-modules $(B
 
 # --- the signing key ----------------------------------------------------------
 # Made once per checkout and kept out of git (distro/build/ is ignored). The
-# public half goes into palmframe-base's /etc/palm/keys, so every installed
+# public half goes into palmy-base's /etc/palm/keys, so every installed
 # system trusts exactly the repository it was built from.
-$(KEYS)/palmframe.sec: | $(PALM)
+$(KEYS)/palmy.sec: | $(PALM)
 	@mkdir -p $(KEYS)
-	$(PALM) keygen $(KEYS)/palmframe
-$(KEYS)/palmframe.pub: $(KEYS)/palmframe.sec
+	$(PALM) keygen $(KEYS)/palmy
+$(KEYS)/palmy.pub: $(KEYS)/palmy.sec
 
 # --- recipes, packages, the repository ----------------------------------------
 recipes: $(OUT)/busybox
@@ -156,7 +156,7 @@ recipes: $(OUT)/busybox
 # Every package is rebuilt on each run: palm build is reproducible (same
 # inputs, same bytes, same sha256 in the index) and takes seconds, and it is
 # the only way to notice a host file such as glibc changing underneath.
-packages: recipes binaries $(OUT)/kernel.release $(OUT)/busybox $(KEYS)/palmframe.pub
+packages: recipes binaries $(OUT)/kernel.release $(OUT)/busybox $(KEYS)/palmy.pub
 	@mkdir -p $(REPO)
 	rm -f $(REPO)/*.palm
 	@set -e; for r in $(DISTRO)/recipes/*/PALMBUILD; do \
@@ -165,7 +165,7 @@ packages: recipes binaries $(OUT)/kernel.release $(OUT)/busybox $(KEYS)/palmfram
 	@echo "packages: $$(ls $(REPO)/*.palm | wc -l) in $(REPO)"
 
 repo: packages
-	$(PALM) index $(REPO) --key $(KEYS)/palmframe.sec
+	$(PALM) index $(REPO) --key $(KEYS)/palmy.sec
 
 # The public repository: the packages just built, signed again with the
 # release key (kept outside every checkout) and uploaded to Vercel and GitHub
@@ -182,7 +182,7 @@ run:
 	$(DISTRO)/run-qemu.sh
 
 # --- the live installer -------------------------------------------------------
-# A zstd initramfs of the live root (palmframe + palmframe-live, with the
+# A zstd initramfs of the live root (palmy + palmy-live, with the
 # repository inside it) on an ISO that limine boots from UEFI and BIOS.
 iso: repo
 	$(DISTRO)/live/build.sh
@@ -221,5 +221,5 @@ check-libs: binaries
 	python3 -I $(DISTRO)/apps/check-libs.py
 
 clean:
-	rm -rf $(OUT)/repo $(OUT)/rootfs $(OUT)/palmframe.img $(OUT)/shots $(DISTRO)/build/image
-	rm -rf $(OUT)/palmframe-live.iso $(DISTRO)/build/live/rootfs $(DISTRO)/build/live/iso
+	rm -rf $(OUT)/repo $(OUT)/rootfs $(OUT)/palmy.img $(OUT)/shots $(DISTRO)/build/image
+	rm -rf $(OUT)/palmy-live.iso $(DISTRO)/build/live/rootfs $(DISTRO)/build/live/iso

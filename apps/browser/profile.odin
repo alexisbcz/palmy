@@ -1,4 +1,4 @@
-// Profiles: one per Palmframe identity.
+// Profiles: one per Palmy identity.
 //
 // The README's identity model says each sub-identity has its own browsing
 // state, and the way to hold that line is to make it a directory boundary
@@ -9,7 +9,7 @@
 // reach a personal tab because the process rendering the personal tab was
 // never told where the work profile is.
 //
-//   $XDG_DATA_HOME/palmframe/browser/<identity>/
+//   $XDG_DATA_HOME/palmy/browser/<identity>/
 //     settings.json      engine choice, search, theme, ...
 //     bookmarks.json     sync-ready: UUIDs, per-field clocks, tombstones
 //     history.jsonl      append-only visits
@@ -130,7 +130,7 @@ browser_home :: proc(allocator := context.allocator) -> string {
 	if data == "" {
 		data = fmt.tprintf("%s/.local/share", os.get_env("HOME", context.temp_allocator))
 	}
-	return fmt.aprintf("%s/palmframe/browser", data, allocator = allocator)
+	return fmt.aprintf("%s/palmy/browser", data, allocator = allocator)
 }
 
 // identity_valid keeps an identity name usable as a directory name and
@@ -176,7 +176,7 @@ identity_color :: proc(name: string) -> u32 {
 	return IDENTITY_PALETTE[h % len(IDENTITY_PALETTE)]
 }
 
-// registry_color reads $XDG_CONFIG_HOME/palmframe/identities.json when it
+// registry_color reads $XDG_CONFIG_HOME/palmy/identities.json when it
 // exists: [{"handle": "work", "color": "#d97706", ...}]. This is the seam for
 // apps/accounts; nothing else in the browser reads that file.
 registry_color :: proc(name: string) -> (c: u32, ok: bool) {
@@ -184,7 +184,7 @@ registry_color :: proc(name: string) -> (c: u32, ok: bool) {
 	if cfg == "" {
 		cfg = fmt.tprintf("%s/.config", os.get_env("HOME", context.temp_allocator))
 	}
-	data, err := os.read_entire_file(fmt.tprintf("%s/palmframe/identities.json", cfg), context.temp_allocator)
+	data, err := os.read_entire_file(fmt.tprintf("%s/palmy/identities.json", cfg), context.temp_allocator)
 	if err != nil {
 		return 0, false
 	}

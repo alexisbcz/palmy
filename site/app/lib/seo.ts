@@ -5,9 +5,9 @@
  */
 
 export const SITE_URL = (
-  import.meta.env.VITE_SITE_URL ?? "https://palmframe-os.vercel.app"
+  import.meta.env.VITE_SITE_URL ?? "https://palmy-os.vercel.app"
 ).replace(/\/$/, "");
-export const SITE_NAME = "Palmframe";
+export const SITE_NAME = "Palmy";
 export const REPO_URL = "https://github.com/alexisbcz/palmy";
 
 /** /distro/quick-start -> distro--quick-start; / -> index. */
@@ -25,7 +25,7 @@ export function seo({
   title: string;
   description: string;
   path: string;
-  /** When false, " — Palmframe" is appended. */
+  /** When false, " — Palmy" is appended. */
   fullTitle?: boolean;
 }) {
   const t = fullTitle ? title : `${title} — ${SITE_NAME}`;

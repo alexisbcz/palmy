@@ -1,6 +1,6 @@
 # `palm` — one command surface, designed for agents
 
-A single CLI through which a coding agent can operate every part of Palmframe:
+A single CLI through which a coding agent can operate every part of Palmy:
 the window manager, the applications, the system state, and eventually the
 identity and cloud layer. Humans use it too, but they are the second audience.
 

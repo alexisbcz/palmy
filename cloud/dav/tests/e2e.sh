@@ -7,7 +7,7 @@
 # palm-davd on 59585, builds the server and both apps into WORKDIR/bin, and
 # then, with two people — Maya (identities maya, maya-work) and Noah (noah):
 #
-#   1. events from the Palmframe calendar app, including a weekly stand-up
+#   1. events from the Palmy calendar app, including a weekly stand-up
 #      with one occurrence deleted (an EXDATE);
 #   2. an event and a moved instance (RECURRENCE-ID) from python-caldav, a
 #      third-party client on an app password; both sides see both;
@@ -15,7 +15,7 @@
 #   4. a read-only share from Maya to Noah, which Noah can read and not write;
 #   5. isolation: Maya's work app password cannot see her personal calendar,
 #      and the app refuses to widen its scope;
-#   6. contacts made in the Palmframe contacts app round-trip through
+#   6. contacts made in the Palmy contacts app round-trip through
 #      vdirsyncer and khard and back.
 #
 # VENV_BIN holds python with caldav and icalendar, vdirsyncer and khard.
@@ -84,7 +84,7 @@ as maya calendar sync >/dev/null
 as noah calendar sync >/dev/null
 show as maya calendar list
 
-step "1. events from the Palmframe calendar app"
+step "1. events from the Palmy calendar app"
 show as maya calendar add "Dentist" --date 2026-10-22 --time 08:30 --minutes 30 --calendar maya/default
 standup=$(as maya calendar add "Stand-up" --date 2026-10-19 --time 09:30 --minutes 15 \
 	--calendar maya-work/default --rrule "FREQ=WEEKLY;BYDAY=MO,WE,FR;COUNT=9" --json | jq -r .uid)

@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Build distro/out/palmframe-live.iso, the Palmframe live installer, from the
+# Build distro/out/palmy-live.iso, the Palmy live installer, from the
 # signed repository in distro/out/repo/x86_64.
 #
 #	distro/live/build.sh             (make -C distro iso runs it)
@@ -11,34 +11,34 @@
 #	LIVE_WITHOUT_INSTALLER=1 a test build for when palm-install/installer are
 #	                         not in the repository yet: everything else is
 #	                         installed by palm, distro/live/root is copied in
-#	                         by hand instead of via palmframe-live, and the
+#	                         by hand instead of via palmy-live, and the
 #	                         session falls back to term. Never for a release.
 #
 # What it makes, and why each step is done this way:
 #
 # 1. The live root is made by palm itself, exactly like the disk image
-#    (distro/image/build.sh): `palm --root ... --initdb add palmframe-live`
+#    (distro/image/build.sh): `palm --root ... --initdb add palmy-live`
 #    into an empty directory under fakeroot, against the local repository and
-#    the build's key. palmframe-live pulls in the base system, the kiosk wm,
+#    the build's key. palmy-live pulls in the base system, the kiosk wm,
 #    the installer and the tools it formats with, tzdata and the catalogues,
 #    but not the applications, which only the installed disk needs, and
 #    only a subset of the CJK font (distro/live/subset-cjk.py).
-# 2. Two services of palmframe-base are masked, not deleted: palmframe-live
+# 2. Two services of palmy-base are masked, not deleted: palmy-live
 #    ships /etc/palm/services.off/palm-login (the live system's session is
 #    the installer, not a login screen) and .../getty-ttyS0 (its own
 #    root-autologin getty takes the port), and palm-init starts nothing named
 #    there. Every file palm installed stays, so `palm verify` on the live
 #    system is clean.
-# 3. The packages an installation can ask for -- `palmframe`, and
+# 3. The packages an installation can ask for -- `palmy`, and
 #    `fonts-cjk` for Japanese (LIVE_REPO_PACKAGES) -- and everything they
 #    depend on are copied into the root at /usr/share/palm/repo, flat, with
 #    an index of their own signed by the build's key: palm reads
 #    <base>/x86_64 if it has an index, else <base> itself, so `--repo
 #    /usr/share/palm/repo` installs offline with the same signature check,
-#    against the public key palmframe-base already put in /etc/palm/keys.
+#    against the public key palmy-base already put in /etc/palm/keys.
 #    palm itself works out that set (`add --dry-run`), so it follows the
 #    recipes. The rest of the build's repository (the live-only packages,
-#    palmframe-demo, fonts-emoji...) stays off the medium.
+#    palmy-demo, fonts-emoji...) stays off the medium.
 #    Firmware (LIVE_FIRMWARE) is both installed in the live root, so the
 #    live system's own GPU, Wi-Fi and Ethernet start, and carried in that
 #    repository, so an offline install gets the same parts; install_core
@@ -48,7 +48,7 @@
 #    session so the owners palm recorded (root, palm 1000, greeter 900) and
 #    modes such as /etc/shadow's 0600 are what the archive says, and
 #    compressed with zstd (the kernel has CONFIG_RD_ZSTD). The kernel unpacks
-#    it into a tmpfs and runs /init (palmframe-live: -> usr/bin/palm-init).
+#    it into a tmpfs and runs /init (palmy-live: -> usr/bin/palm-init).
 #    /dev/console is created in the archive so PID 1 has a console before it
 #    mounts devtmpfs. /boot/vmlinuz is left out: the kernel is on the ISO,
 #    and a second copy would only take RAM.
@@ -66,7 +66,7 @@ KEYS="$DISTRO/build/keys"
 PALM="$OUT/bin/palm"
 ROOTFS="$WORK/rootfs"
 ISOROOT="$WORK/iso"
-ISO="$OUT/palmframe-live.iso"
+ISO="$OUT/palmy-live.iso"
 LIMINE_SHARE="${LIMINE_SHARE:-/usr/share/limine}"
 ZSTD_LEVEL="${ZSTD_LEVEL:-19}"
 LIVE_WITHOUT_INSTALLER="${LIVE_WITHOUT_INSTALLER:-0}"
@@ -79,12 +79,12 @@ LIVE_WITHOUT_INSTALLER="${LIVE_WITHOUT_INSTALLER:-0}"
 # repository. One variable: LIVE_FIRMWARE=linux-firmware for everything,
 # LIVE_FIRMWARE= for none.
 LIVE_FIRMWARE="${LIVE_FIRMWARE-linux-firmware-intel linux-firmware-amdgpu linux-firmware-realtek linux-firmware-mediatek wireless-regdb}"
-LIVE_REPO_PACKAGES="${LIVE_REPO_PACKAGES:-palmframe fonts-cjk} $LIVE_FIRMWARE"
+LIVE_REPO_PACKAGES="${LIVE_REPO_PACKAGES:-palmy fonts-cjk} $LIVE_FIRMWARE"
 LIVE_REPO="$WORK/repo"
 CJK_SUBSET="$HERE/root/usr/share/fonts/palm-live/NotoSansCJKjp-Regular.otf"
 CMDLINE="${CMDLINE:-console=tty0 console=ttyS0,115200 quiet loglevel=3}"
 
-for f in "$PALM" "$REPO/PALMINDEX" "$REPO/PALMINDEX.sig" "$KEYS/palmframe.pub" "$KEYS/palmframe.sec"; do
+for f in "$PALM" "$REPO/PALMINDEX" "$REPO/PALMINDEX.sig" "$KEYS/palmy.pub" "$KEYS/palmy.sec"; do
 	[ -f "$f" ] || { echo "live: $f is missing (run make -C distro repo)" >&2; exit 1; }
 done
 for t in fakeroot cpio zstd xorriso limine; do
@@ -94,21 +94,21 @@ for f in BOOTX64.EFI limine-bios.sys limine-bios-cd.bin limine-uefi-cd.bin; do
 	[ -f "$LIMINE_SHARE/$f" ] || { echo "live: $LIMINE_SHARE/$f is missing" >&2; exit 1; }
 done
 
-# What goes into the root. The real build installs palmframe-live and lets
+# What goes into the root. The real build installs palmy-live and lets
 # its dependencies say the rest; the test build names them by hand, minus
 # the two front ends that are not in the repository.
 if [ "$LIVE_WITHOUT_INSTALLER" = 1 ]; then
 	echo "live: test build WITHOUT palm-install and installer (LIVE_WITHOUT_INSTALLER=1)" >&2
-	PKGS="palmframe-base linux busybox glibc palm-init palm palmy-wm fonts libxkbcommon xkeyboard-config tzdata palm-locale term e2fsprogs dosfstools limine $LIVE_FIRMWARE"
+	PKGS="palmy-base linux busybox glibc palm-init palm palmy-wm fonts libxkbcommon xkeyboard-config tzdata palm-locale term e2fsprogs dosfstools limine $LIVE_FIRMWARE"
 else
-	for p in palm-install installer palmframe-live; do
+	for p in palm-install installer palmy-live; do
 		ls "$REPO/$p"-[0-9]*.palm >/dev/null 2>&1 || {
 			echo "live: package $p is not in $REPO (are distro/out/bin/palm-install and installer built?)" >&2
 			echo "live: LIVE_WITHOUT_INSTALLER=1 makes a test image without them" >&2
 			exit 1
 		}
 	done
-	PKGS="palmframe-live $LIVE_FIRMWARE"
+	PKGS="palmy-live $LIVE_FIRMWARE"
 fi
 
 # The Japanese subset must still cover every catalogue; a changed Japanese
@@ -130,7 +130,7 @@ while read -r f; do
 	[ -f "$REPO/$f" ] || { echo "live: $f is not in $REPO" >&2; exit 1; }
 	cp "$REPO/$f" "$LIVE_REPO/"
 done <"$WORK/repo.list"
-"$PALM" index "$LIVE_REPO" --key "$KEYS/palmframe.sec" >/dev/null
+"$PALM" index "$LIVE_REPO" --key "$KEYS/palmy.sec" >/dev/null
 
 # --- 1-4: the root and the initramfs, under one fakeroot session ---------------
 # shellcheck disable=SC2016
@@ -168,19 +168,19 @@ cp "$LIMINE_SHARE/BOOTX64.EFI" "$ISOROOT/EFI/BOOT/BOOTX64.EFI"
 
 # No root= : the kernel then keeps the initramfs as the root, in a tmpfs.
 cat >"$ISOROOT/boot/limine/limine.conf" <<EOF
-# The Palmframe live installer. Written by distro/live/build.sh.
+# The Palmy live installer. Written by distro/live/build.sh.
 # The whole system is the initramfs; nothing is read from this medium after
 # the kernel starts, so it can be removed once the menu has gone.
 timeout: 5
 default_entry: 1
 
-/Install Palmframe
+/Install Palmy
     protocol: linux
     path: boot():/boot/vmlinuz
     module_path: boot():/boot/initramfs.zst
     cmdline: $CMDLINE
 
-/Install Palmframe (serial console only)
+/Install Palmy (serial console only)
     protocol: linux
     path: boot():/boot/vmlinuz
     module_path: boot():/boot/initramfs.zst
@@ -188,7 +188,7 @@ default_entry: 1
 EOF
 
 rm -f "$ISO.tmp"
-xorriso -as mkisofs -quiet -R -r -J -V PALMFRAME_LIVE \
+xorriso -as mkisofs -quiet -R -r -J -V PALMY_LIVE \
 	-b boot/limine/limine-bios-cd.bin -no-emul-boot -boot-load-size 4 -boot-info-table \
 	--efi-boot boot/limine/limine-uefi-cd.bin -efi-boot-part --efi-boot-image \
 	--protective-msdos-label \

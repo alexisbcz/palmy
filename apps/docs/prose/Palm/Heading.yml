@@ -10,7 +10,7 @@ message: "'%s' should read as a sentence, not a Title."
 exceptions:
   - Odin
   - Markdown
-  - Palmframe
+  - Palmy
   - Unicode
   - Wayland
   - A4

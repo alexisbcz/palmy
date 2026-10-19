@@ -1,4 +1,4 @@
-# Palmframe login screen (apps/greeter) — Arabic (Modern Standard).
+# Palmy login screen (apps/greeter) — Arabic (Modern Standard).
 # Format: distro/locale/README.md. Installed as
 # /usr/share/palm/locale/ar/greeter.msg.
 #

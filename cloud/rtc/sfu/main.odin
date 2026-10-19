@@ -1,4 +1,4 @@
-// palm-sfu — the selective forwarding unit for Palmframe calls.
+// palm-sfu — the selective forwarding unit for Palmy calls.
 //
 // One UDP socket. A participant sends one copy of its media; the SFU forwards
 // it to everyone else in the call, choosing per receiver which simulcast
@@ -307,7 +307,7 @@ main :: proc() {
 	print_summary(s)
 }
 
-USAGE :: `palm-sfu — selective forwarding unit for Palmframe calls
+USAGE :: `palm-sfu — selective forwarding unit for Palmy calls
 
   palm-sfu --secret-file FILE [--bind 127.0.0.1] [--port 47900]
            [--gateway HOST:PORT] [--stats] [--json-out FILE] [--quit-after S]

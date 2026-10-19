@@ -1,10 +1,10 @@
 # What this protects against, and what it does not
 
 This is a password manager with two vaults behind one window. On a machine
-that is not enrolled in a Palmframe account it opens **the local vault**: one
+that is not enrolled in a Palmy account it opens **the local vault**: one
 encrypted file, no network code reachable from the window. On an enrolled
 machine it opens **the account vault**: each identity's vaults, encrypted on
-the device and synced through the Palmframe cloud, which stores ciphertext it
+the device and synced through the Palmy cloud, which stores ciphertext it
 cannot open (`cloud/docs/vault.md` has the whole design).
 
 The cryptography is real, built out of `core:crypto` primitives and checked
@@ -196,7 +196,7 @@ under one.
 
 **Your secrets leaving the machine, beyond sync.** The local vault has no
 network code reachable from it: no socket, no DNS, no breach check, no
-telemetry, no update check. The account vault talks to the Palmframe cloud
+telemetry, no update check. The account vault talks to the Palmy cloud
 and nothing else, and sends only ciphertext. The breach check is off by
 default and, when the person runs it, sends five hex digits of each
 password's SHA-1 to Have I Been Pwned and nothing more.

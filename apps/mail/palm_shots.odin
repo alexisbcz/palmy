@@ -1,4 +1,4 @@
-// `mail --palm-shots=DIR --data-dir=PATH`: the Palmframe walkthrough, rendered
+// `mail --palm-shots=DIR --data-dir=PATH`: the Palmy walkthrough, rendered
 // offscreen against a live dev stack.
 //
 // Unlike `--shots`, nothing here is a fixture. The run starts signed out,

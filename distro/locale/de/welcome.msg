@@ -1,4 +1,4 @@
-# Palmframe's first run (apps/welcome) — German. 
+# Palmy's first run (apps/welcome) — German. 
 # Format: distro/locale/README.md. Installed as
 # /usr/share/palm/locale/de/welcome.msg.
 #
@@ -9,17 +9,17 @@ name      = Deutsch
 english   = German
 plural    = n != 1
 
-msgid "Welcome to Palmframe"
-msgstr "Willkommen bei Palmframe"
+msgid "Welcome to Palmy"
+msgstr "Willkommen bei Palmy"
 
-msgid "Use Palmframe with an account?"
-msgstr "Palmframe mit einem Konto nutzen?"
+msgid "Use Palmy with an account?"
+msgstr "Palmy mit einem Konto nutzen?"
 
 msgid "You are signed in"
 msgstr "Sie sind angemeldet"
 
-msgid "Create your Palmframe account"
-msgstr "Erstellen Sie Ihr Palmframe-Konto"
+msgid "Create your Palmy account"
+msgstr "Erstellen Sie Ihr Palmy-Konto"
 
 msgid "Sign in to your account"
 msgstr "Bei Ihrem Konto anmelden"
@@ -51,8 +51,8 @@ msgstr "Ein paar Entscheidungen, jede überspringbar. Nichts wird eingerichtet, 
 msgid "Everything on this computer works without one. An account adds identities, and keeps each of them in sync across your devices."
 msgstr "Auf diesem Computer funktioniert alles auch ohne. Ein Konto fügt Identitäten hinzu und hält jede davon auf Ihren Geräten synchron."
 
-msgid "Your email is how you sign in and how you get back in if you forget the password. Use an address outside Palmframe."
-msgstr "Mit Ihrer E-Mail-Adresse melden Sie sich an und kommen wieder herein, falls Sie das Passwort vergessen. Verwenden Sie eine Adresse außerhalb von Palmframe."
+msgid "Your email is how you sign in and how you get back in if you forget the password. Use an address outside Palmy."
+msgstr "Mit Ihrer E-Mail-Adresse melden Sie sich an und kommen wieder herein, falls Sie das Passwort vergessen. Verwenden Sie eine Adresse außerhalb von Palmy."
 
 msgid "One account, several selves: personal, work, public, a project. Each has its own address, its own data and its own colour, and nothing passes between them unless you carry it."
 msgstr "Ein Konto, mehrere Rollen: privat, beruflich, öffentlich, ein Projekt. Jede hat ihre eigene Adresse, ihre eigenen Daten und ihre eigene Farbe, und nichts wechselt zwischen ihnen, ohne dass Sie es übertragen."
@@ -60,8 +60,8 @@ msgstr "Ein Konto, mehrere Rollen: privat, beruflich, öffentlich, ein Projekt. 
 msgid "Choose per identity. Each one syncs on its own session, so what one identity holds is never visible to another."
 msgstr "Wählen Sie pro Identität. Jede synchronisiert mit ihrer eigenen Sitzung, daher ist der Inhalt einer Identität für keine andere sichtbar."
 
-msgid "This is the only copy of your Secret Key outside this computer. Without it and your master password, nobody can open your vault: not Palmframe, and not you on a new computer."
-msgstr "Dies ist die einzige Kopie Ihres geheimen Schlüssels außerhalb dieses Computers. Ohne ihn und Ihr Master-Passwort kann niemand Ihren Tresor öffnen: nicht Palmframe und auch Sie nicht auf einem neuen Computer."
+msgid "This is the only copy of your Secret Key outside this computer. Without it and your master password, nobody can open your vault: not Palmy, and not you on a new computer."
+msgstr "Dies ist die einzige Kopie Ihres geheimen Schlüssels außerhalb dieses Computers. Ohne ihn und Ihr Master-Passwort kann niemand Ihren Tresor öffnen: nicht Palmy und auch Sie nicht auf einem neuen Computer."
 
 msgid "Passwords are encrypted on this computer before they leave it. Two things unlock them: a master password you remember, and a Secret Key this computer keeps."
 msgstr "Passwörter werden auf diesem Computer verschlüsselt, bevor sie ihn verlassen. Zwei Dinge entsperren sie: ein Master-Passwort, das Sie sich merken, und ein geheimer Schlüssel, den dieser Computer aufbewahrt."
@@ -147,11 +147,11 @@ msgstr "Geben Sie Ihren Namen ein."
 msgid "Your first identity is named after you. You can change it on the next page."
 msgstr "Ihre erste Identität trägt Ihren Namen. Sie können ihn auf der nächsten Seite ändern."
 
-msgid "Your recovery address. Mail at Palmframe addresses comes later, per identity."
-msgstr "Ihre Wiederherstellungsadresse. E-Mail an Palmframe-Adressen kommt später, pro Identität."
+msgid "Your recovery address. Mail at Palmy addresses comes later, per identity."
+msgstr "Ihre Wiederherstellungsadresse. E-Mail an Palmy-Adressen kommt später, pro Identität."
 
-msgid "This is a Palmframe address. If you lose that identity, you lose your way back in: an outside address is safer."
-msgstr "Das ist eine Palmframe-Adresse. Verlieren Sie diese Identität, verlieren Sie auch den Weg zurück: Eine Adresse außerhalb ist sicherer."
+msgid "This is a Palmy address. If you lose that identity, you lose your way back in: an outside address is safer."
+msgstr "Das ist eine Palmy-Adresse. Verlieren Sie diese Identität, verlieren Sie auch den Weg zurück: Eine Adresse außerhalb ist sicherer."
 
 msgid "Email"
 msgstr "E-Mail"
@@ -180,8 +180,8 @@ msgstr "Server"
 msgid "Change"
 msgstr "Ändern"
 
-msgid "The address of a Palmframe server. Ask whoever runs yours."
-msgstr "Die Adresse eines Palmframe-Servers. Fragen Sie, wer Ihren betreibt."
+msgid "The address of a Palmy server. Ask whoever runs yours."
+msgstr "Die Adresse eines Palmy-Servers. Fragen Sie, wer Ihren betreibt."
 
 msgid "Use this server"
 msgstr "Diesen Server verwenden"
@@ -321,8 +321,8 @@ msgstr "Ein geheimer Schlüssel und ein Master-Passwort schützen das ganze Kont
 msgid "Chosen for:"
 msgstr "Gewählt für:"
 
-msgid "Palmframe Emergency Kit"
-msgstr "Palmframe-Notfall-Kit"
+msgid "Palmy Emergency Kit"
+msgstr "Palmy-Notfall-Kit"
 
 msgid "Account"
 msgstr "Konto"
@@ -339,8 +339,8 @@ msgstr "Notfall-Kit speichern"
 msgid "I have saved my Emergency Kit somewhere safe"
 msgstr "Ich habe mein Notfall-Kit sicher aufbewahrt"
 
-msgid "Palmframe cannot recover your vault for you. That is what makes it yours."
-msgstr "Palmframe kann Ihren Tresor nicht für Sie wiederherstellen. Genau das macht ihn zu Ihrem."
+msgid "Palmy cannot recover your vault for you. That is what makes it yours."
+msgstr "Palmy kann Ihren Tresor nicht für Sie wiederherstellen. Genau das macht ihn zu Ihrem."
 
 msgid "A session for this identity on this computer"
 msgstr "Eine Sitzung für diese Identität auf diesem Computer"
@@ -456,8 +456,8 @@ msgstr "Fenster schließen"
 msgid "Every shortcut"
 msgstr "Alle Tastenkürzel"
 
-msgid "Palmframe is ready"
-msgstr "Palmframe ist bereit"
+msgid "Palmy is ready"
+msgstr "Palmy ist bereit"
 
 msgid "Signed in as %s."
 msgstr "Angemeldet als %s."
@@ -465,8 +465,8 @@ msgstr "Angemeldet als %s."
 msgid "Everything stays on this computer. You can add an account whenever you like."
 msgstr "Alles bleibt auf diesem Computer. Sie können jederzeit ein Konto hinzufügen."
 
-msgid "Start using Palmframe"
-msgstr "Palmframe verwenden"
+msgid "Start using Palmy"
+msgstr "Palmy verwenden"
 
 msgid "To see this again:"
 msgstr "Um dies erneut zu sehen:"
@@ -555,8 +555,8 @@ msgstr "Zwei Identitäten können nicht dieselbe Kennung haben."
 msgid "Saved. Print it, or copy it somewhere only you can reach, then delete the files."
 msgstr "Gespeichert. Drucken Sie es aus oder kopieren Sie es dorthin, wo nur Sie herankommen, und löschen Sie dann die Dateien."
 
-msgid "The Palmframe server is not reachable. Check the address, or continue without an account."
-msgstr "Der Palmframe-Server ist nicht erreichbar. Prüfen Sie die Adresse oder fahren Sie ohne Konto fort."
+msgid "The Palmy server is not reachable. Check the address, or continue without an account."
+msgstr "Der Palmy-Server ist nicht erreichbar. Prüfen Sie die Adresse oder fahren Sie ohne Konto fort."
 
 msgid "That email and password do not match."
 msgstr "E-Mail-Adresse und Passwort passen nicht zusammen."
@@ -624,8 +624,8 @@ msgstr "Um Ihren Tresor auf einem neuen Computer zu öffnen, brauchen Sie diesen
 msgid "Keep this page somewhere safe: a drawer, a safe, with your passport. Then delete this file."
 msgstr "Bewahren Sie diese Seite sicher auf: in einer Schublade, einem Safe, bei Ihrem Reisepass. Löschen Sie danach diese Datei."
 
-msgid "Palmframe cannot recover either of them for you."
-msgstr "Palmframe kann keines von beiden für Sie wiederherstellen."
+msgid "Palmy cannot recover either of them for you."
+msgstr "Palmy kann keines von beiden für Sie wiederherstellen."
 
 msgid "Choose a handle."
 msgstr "Wählen Sie eine Kennung."

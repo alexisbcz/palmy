@@ -1,4 +1,4 @@
-# Palmframe's first run (apps/welcome) — Arabic. Palmframe, paths and addresses stay in Latin script; palmy's bidi orders them.
+# Palmy's first run (apps/welcome) — Arabic. Palmy, paths and addresses stay in Latin script; palmy's bidi orders them.
 # Format: distro/locale/README.md. Installed as
 # /usr/share/palm/locale/ar/welcome.msg.
 #
@@ -10,17 +10,17 @@ english   = Arabic
 direction = rtl
 plural    = n==0 ? 0 : n==1 ? 1 : n==2 ? 2 : n%100>=3 && n%100<=10 ? 3 : n%100>=11 ? 4 : 5
 
-msgid "Welcome to Palmframe"
-msgstr "مرحبًا بك في Palmframe"
+msgid "Welcome to Palmy"
+msgstr "مرحبًا بك في Palmy"
 
-msgid "Use Palmframe with an account?"
-msgstr "هل تريد استخدام Palmframe مع حساب؟"
+msgid "Use Palmy with an account?"
+msgstr "هل تريد استخدام Palmy مع حساب؟"
 
 msgid "You are signed in"
 msgstr "لقد سجّلت الدخول"
 
-msgid "Create your Palmframe account"
-msgstr "أنشئ حسابك في Palmframe"
+msgid "Create your Palmy account"
+msgstr "أنشئ حسابك في Palmy"
 
 msgid "Sign in to your account"
 msgstr "سجّل الدخول إلى حسابك"
@@ -52,8 +52,8 @@ msgstr "بضعة خيارات، ويمكن تخطي كل منها. لن يُعد
 msgid "Everything on this computer works without one. An account adds identities, and keeps each of them in sync across your devices."
 msgstr "كل شيء على هذا الحاسوب يعمل من دون حساب. يضيف الحساب هويات، ويُبقي كل واحدة منها متزامنة عبر أجهزتك."
 
-msgid "Your email is how you sign in and how you get back in if you forget the password. Use an address outside Palmframe."
-msgstr "بريدك الإلكتروني هو وسيلتك لتسجيل الدخول واستعادة الوصول إذا نسيت كلمة المرور. استخدم عنوانًا من خارج Palmframe."
+msgid "Your email is how you sign in and how you get back in if you forget the password. Use an address outside Palmy."
+msgstr "بريدك الإلكتروني هو وسيلتك لتسجيل الدخول واستعادة الوصول إذا نسيت كلمة المرور. استخدم عنوانًا من خارج Palmy."
 
 msgid "One account, several selves: personal, work, public, a project. Each has its own address, its own data and its own colour, and nothing passes between them unless you carry it."
 msgstr "حساب واحد وهويات متعددة: شخصية، وعمل، وعامة، ومشروع. لكل منها عنوانها وبياناتها ولونها، ولا ينتقل شيء بينها إلا إذا نقلته أنت."
@@ -61,8 +61,8 @@ msgstr "حساب واحد وهويات متعددة: شخصية، وعمل، و�
 msgid "Choose per identity. Each one syncs on its own session, so what one identity holds is never visible to another."
 msgstr "اختر لكل هوية على حدة. تتزامن كل هوية بجلستها الخاصة، فلا يظهر ما تحمله هوية لأخرى أبدًا."
 
-msgid "This is the only copy of your Secret Key outside this computer. Without it and your master password, nobody can open your vault: not Palmframe, and not you on a new computer."
-msgstr "هذه هي النسخة الوحيدة من مفتاحك السري خارج هذا الحاسوب. من دونه ومن دون كلمة المرور الرئيسية لا يستطيع أحد فتح خزنتك: لا Palmframe، ولا أنت على حاسوب جديد."
+msgid "This is the only copy of your Secret Key outside this computer. Without it and your master password, nobody can open your vault: not Palmy, and not you on a new computer."
+msgstr "هذه هي النسخة الوحيدة من مفتاحك السري خارج هذا الحاسوب. من دونه ومن دون كلمة المرور الرئيسية لا يستطيع أحد فتح خزنتك: لا Palmy، ولا أنت على حاسوب جديد."
 
 msgid "Passwords are encrypted on this computer before they leave it. Two things unlock them: a master password you remember, and a Secret Key this computer keeps."
 msgstr "تُشفَّر كلمات المرور على هذا الحاسوب قبل أن تغادره. يفتحها أمران: كلمة مرور رئيسية تتذكرها، ومفتاح سري يحتفظ به هذا الحاسوب."
@@ -148,11 +148,11 @@ msgstr "أدخل اسمك."
 msgid "Your first identity is named after you. You can change it on the next page."
 msgstr "تحمل هويتك الأولى اسمك. يمكنك تغييره في الصفحة التالية."
 
-msgid "Your recovery address. Mail at Palmframe addresses comes later, per identity."
-msgstr "عنوان الاسترداد الخاص بك. يأتي البريد بعناوين Palmframe لاحقًا، لكل هوية."
+msgid "Your recovery address. Mail at Palmy addresses comes later, per identity."
+msgstr "عنوان الاسترداد الخاص بك. يأتي البريد بعناوين Palmy لاحقًا، لكل هوية."
 
-msgid "This is a Palmframe address. If you lose that identity, you lose your way back in: an outside address is safer."
-msgstr "هذا عنوان Palmframe. إذا فقدت تلك الهوية، فقدت طريق العودة: العنوان الخارجي أكثر أمانًا."
+msgid "This is a Palmy address. If you lose that identity, you lose your way back in: an outside address is safer."
+msgstr "هذا عنوان Palmy. إذا فقدت تلك الهوية، فقدت طريق العودة: العنوان الخارجي أكثر أمانًا."
 
 msgid "Email"
 msgstr "البريد الإلكتروني"
@@ -181,8 +181,8 @@ msgstr "الخادم"
 msgid "Change"
 msgstr "تغيير"
 
-msgid "The address of a Palmframe server. Ask whoever runs yours."
-msgstr "عنوان خادم Palmframe. اسأل من يدير خادمك."
+msgid "The address of a Palmy server. Ask whoever runs yours."
+msgstr "عنوان خادم Palmy. اسأل من يدير خادمك."
 
 msgid "Use this server"
 msgstr "استخدام هذا الخادم"
@@ -322,8 +322,8 @@ msgstr "مفتاح سري واحد وكلمة مرور رئيسية واحدة �
 msgid "Chosen for:"
 msgstr "مختار لـ:"
 
-msgid "Palmframe Emergency Kit"
-msgstr "حقيبة طوارئ Palmframe"
+msgid "Palmy Emergency Kit"
+msgstr "حقيبة طوارئ Palmy"
 
 msgid "Account"
 msgstr "الحساب"
@@ -340,8 +340,8 @@ msgstr "حفظ حقيبة الطوارئ"
 msgid "I have saved my Emergency Kit somewhere safe"
 msgstr "حفظت حقيبة الطوارئ في مكان آمن"
 
-msgid "Palmframe cannot recover your vault for you. That is what makes it yours."
-msgstr "لا يستطيع Palmframe استعادة خزنتك نيابة عنك. وهذا ما يجعلها ملكك."
+msgid "Palmy cannot recover your vault for you. That is what makes it yours."
+msgstr "لا يستطيع Palmy استعادة خزنتك نيابة عنك. وهذا ما يجعلها ملكك."
 
 msgid "A session for this identity on this computer"
 msgstr "جلسة لهذه الهوية على هذا الحاسوب"
@@ -457,8 +457,8 @@ msgstr "إغلاق النافذة"
 msgid "Every shortcut"
 msgstr "كل الاختصارات"
 
-msgid "Palmframe is ready"
-msgstr "Palmframe جاهز"
+msgid "Palmy is ready"
+msgstr "Palmy جاهز"
 
 msgid "Signed in as %s."
 msgstr "تم تسجيل الدخول باسم %s."
@@ -466,8 +466,8 @@ msgstr "تم تسجيل الدخول باسم %s."
 msgid "Everything stays on this computer. You can add an account whenever you like."
 msgstr "يبقى كل شيء على هذا الحاسوب. يمكنك إضافة حساب متى شئت."
 
-msgid "Start using Palmframe"
-msgstr "ابدأ استخدام Palmframe"
+msgid "Start using Palmy"
+msgstr "ابدأ استخدام Palmy"
 
 msgid "To see this again:"
 msgstr "لعرض هذا مرة أخرى:"
@@ -556,8 +556,8 @@ msgstr "لا يمكن أن تحمل هويتان المعرّف نفسه."
 msgid "Saved. Print it, or copy it somewhere only you can reach, then delete the files."
 msgstr "تم الحفظ. اطبعها أو انسخها إلى مكان لا يصل إليه غيرك، ثم احذف الملفات."
 
-msgid "The Palmframe server is not reachable. Check the address, or continue without an account."
-msgstr "لا يمكن الوصول إلى خادم Palmframe. تحقق من العنوان، أو تابع دون حساب."
+msgid "The Palmy server is not reachable. Check the address, or continue without an account."
+msgstr "لا يمكن الوصول إلى خادم Palmy. تحقق من العنوان، أو تابع دون حساب."
 
 msgid "That email and password do not match."
 msgstr "البريد الإلكتروني وكلمة المرور غير متطابقين."
@@ -625,8 +625,8 @@ msgstr "لفتح خزنتك على حاسوب جديد تحتاج إلى هذا 
 msgid "Keep this page somewhere safe: a drawer, a safe, with your passport. Then delete this file."
 msgstr "احتفظ بهذه الصفحة في مكان آمن: درج، أو خزنة، مع جواز سفرك. ثم احذف هذا الملف."
 
-msgid "Palmframe cannot recover either of them for you."
-msgstr "لا يستطيع Palmframe استعادة أيٍّ منهما نيابة عنك."
+msgid "Palmy cannot recover either of them for you."
+msgstr "لا يستطيع Palmy استعادة أيٍّ منهما نيابة عنك."
 
 msgid "Choose a handle."
 msgstr "اختر معرّفًا."

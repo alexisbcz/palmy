@@ -13,7 +13,7 @@ import "core:os"
 import "core:strings"
 
 // find_program looks a name up in PATH, then in the directories a root shell
-// on Palmframe would have, so the installer works from a service with a
+// on Palmy would have, so the installer works from a service with a
 // minimal environment too. A name with a slash is taken as given.
 find_program :: proc(name: string) -> string {
 	if strings.contains_rune(name, '/') {

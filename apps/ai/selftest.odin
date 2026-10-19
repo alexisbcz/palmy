@@ -1029,7 +1029,7 @@ test_engine :: proc() {
 		}
 		check(has(pr.warnings, "link"), "the proposal warns about the link in the text")
 		check(has(pr.warnings, "correspondent"), "and says the recipient is a correspondent, not someone the person named")
-		check(has(pr.warnings, "outside Palmframe"), "and that it is outside Palmframe")
+		check(has(pr.warnings, "outside Palmy"), "and that it is outside Palmy")
 		check(has(pr.warnings, "after reading content from outside you"), "and that it was proposed after reading untrusted content")
 	}
 	for c in a.seen.addresses {

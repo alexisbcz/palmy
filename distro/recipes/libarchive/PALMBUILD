@@ -14,6 +14,6 @@ icon     = archive
 depend   = bzip2 glibc libmd lz4 xz zlib zstd
 provides = cmd:bsdtar so:libarchive.so.13
 
-file     = ${PALMFRAME_OUT}/src/libarchive/usr/bin/bsdtar -> /usr/bin/bsdtar mode 0755
+file     = ${PALMY_OUT}/src/libarchive/usr/bin/bsdtar -> /usr/bin/bsdtar mode 0755
 symlink  = /usr/lib/libarchive.so.13 -> libarchive.so.13.8.10
-file     = ${PALMFRAME_OUT}/src/libarchive/usr/lib/libarchive.so.13.8.10 -> /usr/lib/libarchive.so.13.8.10 mode 0755
+file     = ${PALMY_OUT}/src/libarchive/usr/lib/libarchive.so.13.8.10 -> /usr/lib/libarchive.so.13.8.10 mode 0755

@@ -7,7 +7,7 @@
 // version (CardDAV address-data with a version attribute, RFC 6352 section
 // 10.4). The Card struct is the app's view: the fields a contacts window
 // shows and edits. Everything else on the card rides along untouched in
-// `raw`, so editing a phone number in Palmframe never loses the custom
+// `raw`, so editing a phone number in Palmy never loses the custom
 // field another client wrote.
 package vcard
 
@@ -322,7 +322,7 @@ structured :: proc(parts: []string) -> string {
 
 // to_component writes a Card in `version` ("4.0" or "3.0"), keeping every
 // property of `raw` that the Card does not own.
-to_component :: proc(c: Card, version := "4.0", prodid := "-//Palmframe//Contacts//EN") -> ^ical.Component {
+to_component :: proc(c: Card, version := "4.0", prodid := "-//Palmy//Contacts//EN") -> ^ical.Component {
 	v4 := version != "3.0"
 	out := new(ical.Component)
 	out.name = "VCARD"
@@ -477,7 +477,7 @@ convert :: proc(c: ^ical.Component, version: string) -> ^ical.Component {
 	// PRODID so the converted card still says who wrote it.
 	prodid := ical.value(c, "PRODID")
 	if prodid == "" {
-		prodid = "-//Palmframe//Contacts//EN"
+		prodid = "-//Palmy//Contacts//EN"
 	}
 	return to_component(card, version, prodid)
 }

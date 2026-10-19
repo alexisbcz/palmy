@@ -1,15 +1,15 @@
 # The graphical login daemon (distro/login): speaks the greetd protocol on
 # /run/palm-login.sock, runs the greeter as `greeter`, then the user's
-# session. palmframe-base's /etc/palm/services/palm-login starts it.
+# session. palmy-base's /etc/palm/services/palm-login starts it.
 pkgname  = palm-login
 pkgver   = 0.1.0
 pkgrel   = 1
-pkgdesc  = Palmframe's login manager (greetd protocol)
+pkgdesc  = Palmy's login manager (greetd protocol)
 license  = MIT
 category = System
 icon     = lock-keyhole
 details  = Speaks the greetd protocol on /run/palm-login.sock: it runs the login screen, checks passwords against /etc/shadow, and starts the session of whoever logged in.
-depend   = palmframe-base glibc palmy-wm greeter
+depend   = palmy-base glibc palmy-wm greeter
 install_user = greeter
 
-file     = ${PALMFRAME_OUT}/bin/palm-login -> /usr/bin/palm-login mode 0755
+file     = ${PALMY_OUT}/bin/palm-login -> /usr/bin/palm-login mode 0755

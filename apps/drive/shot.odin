@@ -90,7 +90,7 @@ shots :: proc(dir: string) -> int {
 	pick(st, "Design")
 	open_row(st)
 	st.view = .Grid
-	pick(st, "palmframe-poster.jpg")
+	pick(st, "palmy-poster.jpg")
 	step(off, st)
 	shot(off, dir, "02-drive-grid", &n)
 

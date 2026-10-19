@@ -587,14 +587,14 @@ bind_global :: proc(c: ^Client, kind: Kind, id: u32, version: u32) {
 }
 
 send_output :: proc(c: ^Client, id: u32, version: u32) {
-	event(c, id, 0, i32(0), i32(0), i32(g.w * 254 / 960), i32(g.h * 254 / 960), i32(0), "Palmframe", "browser view", i32(0))
+	event(c, id, 0, i32(0), i32(0), i32(g.w * 254 / 960), i32(g.h * 254 / 960), i32(0), "Palmy", "browser view", i32(0))
 	event(c, id, 1, u32(3), i32(g.w * g.scale), i32(g.h * g.scale), i32(60000))
 	if version >= 2 {
 		event(c, id, 3, i32(g.scale))
 	}
 	if version >= 4 {
 		event(c, id, 4, "PALM-1")
-		event(c, id, 5, "Palmframe browser view")
+		event(c, id, 5, "Palmy browser view")
 	}
 	if version >= 2 {
 		event(c, id, 2)

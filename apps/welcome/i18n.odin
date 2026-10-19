@@ -23,7 +23,7 @@ N :: proc "contextless" (msgid: string) -> string {
 }
 
 // A RIGHT-TO-LEFT MARK in front of an Arabic sentence that starts with
-// "Palmframe" or a %s keeps the paragraph right to left; isolates keep an
+// "Palmy" or a %s keeps the paragraph right to left; isolates keep an
 // address or a path in one piece inside it.
 RLM :: "‏"
 FSI :: "⁨"

@@ -32,7 +32,7 @@ touches the system, `backend_core.odin` the only file importing install_core,
 ### Modes, and why the host is safe
 
 - **real** only when *all* of: no `--demo`, euid 0, and `/etc/palm/keys`
-  exists (a Palmframe system). Anywhere else it starts in **demo** and says so
+  exists (a Palmy system). Anywhere else it starts in **demo** and says so
   on stderr and with a red "Demo" badge in the rail. Demo disks are invented
   (`/dev/nvme0n1`, `/dev/vda`, a live USB stick, a 2 GB card), the install is
   `demo_install`, which only sleeps and reports, and every log line starts
@@ -75,7 +75,7 @@ touches the system, `backend_core.odin` the only file importing install_core,
   N GiB" (on by default; half the memory in whole GiB, 1 to 4 GiB).
 - **Account** — full name (optional; `:`/`,` refused for GECOS), user name
   (follows the full name — "Élodie Martin" → `elodie` — until typed into),
-  computer name (default `palmframe`), password twice with a weak/fair/strong
+  computer name (default `palmy`), password twice with a weak/fair/strong
   meter, "use the same password for root" (on by default; off shows two more
   fields). Problems appear under a field once it has been typed into, all of
   them when Next is pressed (and the keyboard goes to the first one).
@@ -88,7 +88,7 @@ touches the system, `backend_core.odin` the only file importing install_core,
   (`Progress.detail`, `text_tr`), and "Show details" for the log
   (the core's own lines through `Options.on_log`, follows the end). On
   failure: the error, the log unfolded, "Back to summary" and "Restart".
-- **Done** — "Palmframe is installed", Restart now (`/sbin/reboot`). Laid
+- **Done** — "Palmy is installed", Restart now (`/sbin/reboot`). Laid
   out from the top, so the pointer the compositor parks at the screen's
   centre does not cover the heading.
 
@@ -99,7 +99,7 @@ install starts; no way back after that.
 
 Plan details: `efi_boot_entry` = `/sys/firmware/efi` exists; `packages` is
 left empty (the core's default) except for Japanese, which adds `fonts-cjk`
-(`{"palmframe", "fonts-cjk"}`), as distro/notes/live.md suggested.
+(`{"palmy", "fonts-cjk"}`), as distro/notes/live.md suggested.
 
 ### Right to left
 
@@ -198,11 +198,11 @@ OVMF, headless, QMP keys and screendumps):
   erased.
 - Account typed through QMP ("Ada Lovelace" → user `ada`), Summary, Install:
   the core partitioned, formatted, installed 33 packages, configured, wrote
-  limine and `Boot0009 "Palmframe"`, unmounted — "installation finished" in
+  limine and `Boot0009 "Palmy"`, unmounted — "installation finished" in
   about 6 s (local repository, all in guest RAM). Done page, Restart now
   ended the live machine (`-no-reboot`).
 - The installed disk booted alone (`run-qemu.sh --disk`) to palm-login and
-  the greeter showing "Ada Lovelace · ada · uid 1000" on host `palmframe`,
+  the greeter showing "Ada Lovelace · ada · uid 1000" on host `palmy`,
   its clock at New York time (`13-installed-greeter.png`).
 
 Not done / not verified: logging in to the installed system, an install in a

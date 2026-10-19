@@ -77,7 +77,7 @@ fixture_end :: proc(cl: ^Cloud) {
 // vevent is a compact calendar object for fixtures.
 vevent :: proc(uid, start, end, summary: string, extra := "", tz := "Europe/Paris") -> string {
 	sb := strings.builder_make()
-	strings.write_string(&sb, "BEGIN:VCALENDAR\r\nVERSION:2.0\r\nPRODID:-//Palmframe//Fixture//EN\r\nBEGIN:VEVENT\r\n")
+	strings.write_string(&sb, "BEGIN:VCALENDAR\r\nVERSION:2.0\r\nPRODID:-//Palmy//Fixture//EN\r\nBEGIN:VEVENT\r\n")
 	fmt.sbprintf(&sb, "UID:%s\r\nDTSTAMP:20261001T080000Z\r\n", uid)
 	if len(start) == 8 {
 		fmt.sbprintf(&sb, "DTSTART;VALUE=DATE:%s\r\nDTEND;VALUE=DATE:%s\r\n", start, end)

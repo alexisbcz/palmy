@@ -31,7 +31,7 @@ as $$
 	select h in (
 		'abuse', 'admin', 'administrator', 'hostmaster', 'info', 'mailer-daemon',
 		'noc', 'no-reply', 'noreply', 'postmaster', 'root', 'security', 'support',
-		'webmaster', 'www', 'palm', 'palmframe', 'system', 'help', 'billing')
+		'webmaster', 'www', 'palm', 'palmy', 'system', 'help', 'billing')
 $$;
 
 -- How many identities one account may hold. A person has a handful; this is

@@ -993,7 +993,7 @@ private headless sway with a terminal on it, Bob shares that screen into a
 call, and Alice's window, rendered offscreen, shows it in speaker view
 (`shots/sfu-screen-share-dark.png`).
 
-It does **not** work under Palmframe's own window manager today: `apps/wm`
+It does **not** work under Palmy's own window manager today: `apps/wm`
 implements no screen-capture protocol, neither wlr-screencopy nor
 `ext-image-copy-capture-v1`, so there is nothing for a capture tool to ask.
 That is the wm's gap to close (plus a portal for the permission prompt), and
@@ -1006,7 +1006,7 @@ Not implemented in this app, deliberately. The realistic path is PipeWire's
 is installed on this machine) between a virtual source and a virtual sink.
 `--echo-cancel` makes the real-device path record from `echo-cancel-source` and
 play into `echo-cancel-sink`; the synthetic sources are untouched, and nothing
-changes unless the module is loaded, which belongs in Palmframe's PipeWire
+changes unless the module is loaded, which belongs in Palmy's PipeWire
 configuration. It is not loaded here, and no real microphone was opened to
 test it — the self-test asserts the command lines only. In-process AEC3 would
 mean linking webrtc-audio-processing (C++ only) behind a C shim; speexdsp's

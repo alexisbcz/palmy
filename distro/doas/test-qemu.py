@@ -1,6 +1,6 @@
 """doas, passwd, who and last on the real disk image, in QEMU, headless.
 
-    python3 -I distro/doas/test-qemu.py [--image distro/out/palmframe.img]
+    python3 -I distro/doas/test-qemu.py [--image distro/out/palmy.img]
 
 Boots a sparse copy of the image with distro/image/test-boot.py's Machine
 (OVMF, limine, the serial console as a socket, QMP for screen and keys), and
@@ -35,7 +35,7 @@ spec.loader.exec_module(tb)
 
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument("--image", default=os.path.join(DISTRO, "out", "palmframe.img"))
+    ap.add_argument("--image", default=os.path.join(DISTRO, "out", "palmy.img"))
     ap.add_argument("--work", default=os.path.join(DISTRO, "build", "doas-qemu"))
     ap.add_argument("--port", type=int, default=8093)
     ap.add_argument("--add", default="shop")
@@ -47,7 +47,7 @@ def main():
 
     m = tb.Machine(img, args.work)
     try:
-        if not m.check("getty on ttyS0", m.expect(r"palmframe login: ", 90) is not None):
+        if not m.check("getty on ttyS0", m.expect(r"palmy login: ", 90) is not None):
             return m.failures
 
         def login(user, pw):
@@ -67,7 +67,7 @@ def main():
         m.send("exit")
 
         # --- as palm on the console ---
-        m.expect(r"palmframe login: ", 20)
+        m.expect(r"palmy login: ", 20)
         m.check("palm logs in on the console", login("palm", "palm"))
         m.run("stty -echo cols 200")
         out, _ = m.run("id")
@@ -109,12 +109,12 @@ def main():
         m.send("exit")
 
         # --- the new password, on the console and at the greeter ---
-        m.expect(r"palmframe login: ", 20)
+        m.expect(r"palmy login: ", 20)
         m.send("palm")
         m.expect(r"Password: ", 10)
         m.send("palm")
         m.check("the old password no longer logs in", m.expect(r"Login incorrect", 15) is not None, m.buf[-300:])
-        m.expect(r"palmframe login: ", 20)
+        m.expect(r"palmy login: ", 20)
         m.check("busybox login accepts the new one", login("palm", "newpalm1"))
         m.run("stty -echo cols 200")
 

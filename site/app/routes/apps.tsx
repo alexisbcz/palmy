@@ -33,7 +33,7 @@ export default function AppsPage() {
     <Shell toc={toc}>
       <div className="mx-auto max-w-5xl">
         <header className="mb-8 space-y-3">
-          <p className="text-xs text-muted-foreground">Palmframe</p>
+          <p className="text-xs text-muted-foreground">Palmy</p>
           <h1 className="text-3xl font-bold tracking-tight sm:text-4xl">
             {APPS.length} applications
           </h1>

@@ -134,7 +134,7 @@ COMMANDS := []kit.Command {
 	},
 	{
 		verb = "open",
-		summary = "open a file in the Palmframe app for its kind",
+		summary = "open a file in the Palmy app for its kind",
 		effect = .Mutate,
 		args = {{name = "path", kind = .String, required = true}},
 		out = {{name = "path", kind = .String}, {name = "app", kind = .String}},

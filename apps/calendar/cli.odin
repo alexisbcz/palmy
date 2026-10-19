@@ -61,7 +61,7 @@ COMMANDS := []kit.Command {
 	},
 	{
 		verb = "signin",
-		summary = "sign in to the Palmframe account (the same session Accounts uses)",
+		summary = "sign in to the Palmy account (the same session Accounts uses)",
 		effect = .Mutate,
 		args = {{name = "email", kind = .String, required = true}},
 		flags = {
@@ -140,7 +140,7 @@ COMMANDS := []kit.Command {
 		args = {{name = "uid", kind = .String, required = true}},
 		flags = {{name = "occurrence", kind = .String, help = "YYYY-MM-DD: only that day's occurrence"}},
 		out = {{name = "uid", kind = .String}, {name = "calendar", kind = .String}},
-		examples = {"calendar delete 1a2b@palmframe --occurrence 2026-10-27 --yes"},
+		examples = {"calendar delete 1a2b@palmy --occurrence 2026-10-27 --yes"},
 		run = cmd_delete,
 	},
 	{
@@ -171,7 +171,7 @@ COMMANDS := []kit.Command {
 		effect = .Idempotent,
 		args = {{name = "uid", kind = .String, required = true}},
 		out = {{name = "uid", kind = .String}, {name = "partstat", kind = .String}},
-		examples = {"calendar accept 1a2b@palmframe"},
+		examples = {"calendar accept 1a2b@palmy"},
 		run = cmd_accept,
 	},
 	{
@@ -180,7 +180,7 @@ COMMANDS := []kit.Command {
 		effect = .Idempotent,
 		args = {{name = "uid", kind = .String, required = true}},
 		out = {{name = "uid", kind = .String}, {name = "partstat", kind = .String}},
-		examples = {"calendar decline 1a2b@palmframe"},
+		examples = {"calendar decline 1a2b@palmy"},
 		run = cmd_decline,
 	},
 	{
@@ -236,7 +236,7 @@ surface :: proc() -> ^kit.Surface {
 	if g_surface.noun == "" {
 		g_surface = kit.Surface {
 			noun     = "calendar",
-			summary  = "a month grid of your calendars: this device, and every identity's in the Palmframe cloud",
+			summary  = "a month grid of your calendars: this device, and every identity's in the Palmy cloud",
 			gui      = true,
 			selftest = cli_selftest,
 			notes    = SURFACE_NOTES,
@@ -600,7 +600,7 @@ cmd_add :: proc(c: ^kit.Call) -> int {
 	}
 	if s.device {
 		if rrule != "" || len(atts) > 0 {
-			return kit.cli_fail(c, kit.EXIT_USAGE, "repetition and invitations need a calendar in the Palmframe cloud")
+			return kit.cli_fail(c, kit.EXIT_USAGE, "repetition and invitations need a calendar in the Palmy cloud")
 		}
 		dir := store_dir()
 		list := events_load(dir)
@@ -802,7 +802,7 @@ cmd_share :: proc(c: ^kit.Call) -> int {
 	who := kit.cli_str(c, "with")
 	grantee := resolve(&cl, who)
 	if grantee == "" {
-		return kit.cli_fail(c, kit.EXIT_NOT_FOUND, fmt.tprintf("%s is not a Palmframe identity", who))
+		return kit.cli_fail(c, kit.EXIT_NOT_FOUND, fmt.tprintf("%s is not a Palmy identity", who))
 	}
 	access := kit.cli_str(c, "access")
 	if access == "" {
@@ -840,7 +840,7 @@ cmd_unshare :: proc(c: ^kit.Call) -> int {
 	who := kit.cli_str(c, "with")
 	grantee := resolve(&cl, who)
 	if grantee == "" {
-		return kit.cli_fail(c, kit.EXIT_NOT_FOUND, fmt.tprintf("%s is not a Palmframe identity", who))
+		return kit.cli_fail(c, kit.EXIT_NOT_FOUND, fmt.tprintf("%s is not a Palmy identity", who))
 	}
 	kit.jset_str(c.out, "calendar", key)
 	kit.jset_str(c.out, "with", who)

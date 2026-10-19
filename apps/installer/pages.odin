@@ -361,7 +361,7 @@ page_disk :: proc(st: ^St, ui: ^p.Ctx) {
 		txt(ui, tr("The whole disk will be used"), "text-sm font-medium text-foreground")
 		txt(
 			ui,
-			tr("Palmframe erases the disk you choose and creates a 512 MiB EFI system partition, a small BIOS boot partition so that older computers can start it too, and an ext4 root file system on the rest. Sharing a disk with another system is not supported."),
+			tr("Palmy erases the disk you choose and creates a 512 MiB EFI system partition, a small BIOS boot partition so that older computers can start it too, and an ext4 root file system on the rest. Sharing a disk with another system is not supported."),
 			"text-sm text-muted-foreground",
 		)
 		p.end(ui)
@@ -441,7 +441,7 @@ page_account :: proc(st: ^St, ui: ^p.Ctx) {
 		if text_field(st, ui, .User, &st.user, tr("User name"), tr("ada"), probs, tr("Lowercase letters and digits; used to log in.")) {
 			st.user_edited = len(st.user) > 0
 		}
-		text_field(st, ui, .Hostname, &st.hostname, tr("Computer name"), "palmframe", probs, tr("How this computer appears on a network."))
+		text_field(st, ui, .Hostname, &st.hostname, tr("Computer name"), "palmy", probs, tr("How this computer appears on a network."))
 	}
 	p.end(ui)
 
@@ -759,7 +759,7 @@ page_done :: proc(st: ^St, ui: ^p.Ctx) {
 	p.div(ui, "size-20 rounded-full bg-emerald-950 border border-emerald-700 items-center justify-center")
 	p.icon(ui, II_CIRCLE_CHECK, "size-10 text-emerald-400")
 	p.end(ui)
-	text(ui, tr("Palmframe is installed"), "text-2xl font-semibold text-foreground text-center")
+	text(ui, tr("Palmy is installed"), "text-2xl font-semibold text-foreground text-center")
 	p.text(
 		ui,
 		tr("Remove the installation medium, then restart the computer to start your new system."),

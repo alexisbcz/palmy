@@ -1,4 +1,4 @@
-# A real browser, GPU clients and X11 on Palmframe — design note
+# A real browser, GPU clients and X11 on Palmy — design note
 
 Status: research and one afternoon of experiments, nothing built. Written
 against `main` at 3323cb0 (the window-manager rework merge). Nothing in the
@@ -7,7 +7,7 @@ source under a scratch directory.
 
 The question, from TODO.md W2 and *The long work → A browser*: what is the
 path to letting a user run a real web browser, GPU (EGL/Vulkan) applications
-and X11 applications on Palmframe, and what should be done first.
+and X11 applications on Palmy, and what should be done first.
 
 ## The short answer
 
@@ -24,7 +24,7 @@ and X11 applications on Palmframe, and what should be done first.
 3. **linux-dmabuf is not needed for a browser.** Without it Chromium reports
    `gpu_compositing: disabled_software` and still has WebGL (`enabled_readback`);
    Firefox draws through software WebRender. The cost is CPU time, which on
-   Palmframe's current target (QEMU virtio-gpu without virgl) is the only
+   Palmy's current target (QEMU virtio-gpu without virgl) is the only
    option anyway.
 4. **X11 needs no new code to *start*:** rootful `Xwayland -shm` runs as an
    ordinary xdg_toplevel client of the wm today, and Chromium in X11 mode drew
@@ -80,7 +80,7 @@ Screenshots of the runs are in `browser/` next to this note
 ### Chromium
 
 - Ozone/Wayland is the default platform on Linux with
-  `--ozone-platform-hint=auto` when `WAYLAND_DISPLAY` is set; Palmframe has no
+  `--ozone-platform-hint=auto` when `WAYLAND_DISPLAY` is set; Palmy has no
   `DISPLAY`, so `--ozone-platform=wayland` (or the hint) is all it needs.
 - With no `zwp_linux_dmabuf_v1` and no `wl_drm`, the GPU process cannot share
   buffers with the compositor, so the display compositor runs in software
@@ -306,7 +306,7 @@ Pitfalls, in the order they will bite:
    `begin_cpu_access`, so mmap shows stale pixels unless something issues
    `VIRTGPU_TRANSFER_FROM_HOST` (read from
    [virtgpu_prime.c](https://github.com/torvalds/linux/blob/master/drivers/gpu/drm/virtio/virtgpu_prime.c),
-   not run). **Without virgl** — the current Palmframe QEMU target — there is
+   not run). **Without virgl** — the current Palmy QEMU target — there is
    no GPU rendering at all, clients use llvmpipe over wl_shm, and dmabuf buys
    nothing except making Vulkan (lavapipe) and dmabuf-only clients not fail.
 
@@ -417,7 +417,7 @@ Both need Xwayland itself.
 
 ## 4. What the distribution would have to ship
 
-Palmframe copies glibc, libxkbcommon and xkeyboard-config from the Arch build
+Palmy copies glibc, libxkbcommon and xkeyboard-config from the Arch build
 host (`distro/recipes/generate.sh`); the same mechanism can package any of
 these, with the same caveat — nothing is built from source. Measured on the
 host:
@@ -426,7 +426,7 @@ host:
 | --- | --- | --- |
 | **Firefox** (mozilla.org tarball) | The tarball (bundles NSS, its own sqlite, codecs) + gtk3, glib2, pango, cairo, harfbuzz, freetype, fontconfig, gdk-pixbuf, atk/at-spi2, libX11/libxcb family (linked even on Wayland), dbus libs, libxkbcommon, libwayland-client/-cursor/-egl, ICU, libsystemd (linked, not run), libasound, libseccomp. `ldd libxul.so` resolves to 77 MB of system libraries. | 326 MB unpacked + ~77 MB libraries |
 | **Chromium** (Arch build) | As above minus GTK at link time, plus **libgbm + libdrm (Mesa's)**, libcups, avahi, pulse, NSS, gnutls, dav1d, openh264, libwebp, flac/opus/vorbis. ~84 MB of libraries. | 397 MB + ~84 MB |
-| Both browsers, always | **fontconfig + fonts** (a sans, a serif, a mono, emoji, CJK — `fonts`, `fonts-cjk`, `fonts-emoji` packages exist), **CA certificates** (`/etc/ssl/certs`, for NSS: Firefox bundles its own roots, Chromium on Linux uses NSS + system store), `/etc/machine-id` is expected by D-Bus libraries. A session bus is optional: both started without one, with warnings. ALSA or PulseAudio/PipeWire for sound (Palmframe has none). | small |
+| Both browsers, always | **fontconfig + fonts** (a sans, a serif, a mono, emoji, CJK — `fonts`, `fonts-cjk`, `fonts-emoji` packages exist), **CA certificates** (`/etc/ssl/certs`, for NSS: Firefox bundles its own roots, Chromium on Linux uses NSS + system store), `/etc/machine-id` is expected by D-Bus libraries. A session bus is optional: both started without one, with warnings. ALSA or PulseAudio/PipeWire for sound (Palmy has none). | small |
 | GL for WebGL / GTK4 / mpv | Mesa (llvmpipe at minimum): mesa + llvm-libs ≈ 220 MB. Without it, Chromium uses its bundled SwiftShader; Firefox disables WebGL; GTK4 needs `GSK_RENDERER=cairo`. | ~220 MB, optional |
 | Vulkan | lavapipe (`vulkan-swrast`) uses wl_shm; radv/anv need linux-dmabuf | optional |
 | XWayland | `Xwayland` (2.4 MB) + pixman, libxfont2, libxcvt, libepoxy, libtirpc, nettle, libXau, libei, libdecor; **`xkbcomp`** + xkeyboard-config at runtime. Arch's build also pulls mesa/libdrm for glamor, unused with `-shm`; a `-Dglamor=false` build drops them ([meson_options.txt](https://gitlab.freedesktop.org/xorg/xserver/-/blob/master/meson_options.txt#L7)). xwayland-satellite adds libxcb + xcb-util-cursor. | ~10 MB without Mesa |
@@ -452,7 +452,7 @@ every one of them except a NetSurf-on-palmy frontend.
 TODO.md asks this before anyone starts. The finding above changes the cost of
 the answer: running Firefox is not a port and not a GPU project, it is
 **xdg_popup plus window geometry** — perhaps a week of compositor work — and
-a package. The question then becomes only whether Palmframe ships a browser
+a package. The question then becomes only whether Palmy ships a browser
 in the base image (no: it is half a gigabyte) or makes one installable (yes:
 an assistant that is "part of the system rather than a browser tab" still has
 to coexist with the web people use). Sub-identities map naturally onto browser
@@ -493,7 +493,7 @@ place the identity design touches the browser.
    only if satellite's placement limits matter in practice. Before that, a
    rootful `Xwayland -shm -decorate` launcher entry is a 20-line stopgap.
 8. **linux-dmabuf v4, LINEAR only, CPU import** with `poll()` before
-   `DMA_BUF_IOCTL_SYNC` and damage-only streaming copies — when Palmframe runs
+   `DMA_BUF_IOCTL_SYNC` and damage-only streaming copies — when Palmy runs
    on real hardware, to stop Vulkan clients failing and give browsers GPU
    rasterization. Not useful in QEMU without virgl.
 9. **Direct scanout** of opaque fullscreen dmabuf surfaces (needs buffer

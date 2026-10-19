@@ -96,7 +96,7 @@ selftest_reload :: proc() {
 
 selftest_fstab :: proc() {
 	entries := parse_fstab(`# <device>  <mountpoint>  <type>  <options>  <dump>  <pass>
-LABEL=palmframe	/	ext4	rw,relatime	0 1
+LABEL=palmy	/	ext4	rw,relatime	0 1
 PARTUUID=0a1b2c3d-0000-4000-8000-00000000abcd  /boot/efi  vfat  rw,relatime,fmask=0077,dmask=0077,errors=remount-ro  0 2
 /swapfile none swap sw,pri=10,discard 0 0
 /dev/sdb1 /mnt/My\040Disk ext4
@@ -105,7 +105,7 @@ tmpfs /tmp tmpfs size=50%,mode=1777 0 0
 `, context.temp_allocator)
 	check("fstab: well-formed lines only", len(entries) == 5, fmt.tprint(len(entries)))
 	if len(entries) == 5 {
-		check("fstab: root line", entries[0].spec == "LABEL=palmframe" && entries[0].dir == "/" && entries[0].type == "ext4" && entries[0].pass == 1)
+		check("fstab: root line", entries[0].spec == "LABEL=palmy" && entries[0].dir == "/" && entries[0].type == "ext4" && entries[0].pass == 1)
 		check("fstab: ESP line, pass 2", entries[1].dir == "/boot/efi" && entries[1].type == "vfat" && entries[1].pass == 2)
 		check("fstab: \\040 is a space", entries[3].dir == "/mnt/My Disk", entries[3].dir)
 		check("fstab: missing options, dump, pass default", entries[3].options == "defaults" && entries[3].pass == 0)
@@ -132,9 +132,9 @@ selftest_probe :: proc() {
 	buf[1024 + 0x38], buf[1024 + 0x39] = 0x53, 0xEF
 	uuid := [16]u8{0x2f, 0x1e, 0x0a, 0x4b, 0x11, 0x22, 0x43, 0x44, 0x95, 0x66, 0x77, 0x88, 0x99, 0xaa, 0xbb, 0xcc}
 	copy(buf[1024 + 0x68:], uuid[:])
-	copy(buf[1024 + 0x78:], "palmframe")
+	copy(buf[1024 + 0x78:], "palmy")
 	p := probe_buffer(buf[:], context.temp_allocator)
-	check("probe: ext4 type, UUID, label", p.type == "ext4" && p.uuid == "2f1e0a4b-1122-4344-9566-778899aabbcc" && p.label == "palmframe", fmt.tprint(p))
+	check("probe: ext4 type, UUID, label", p.type == "ext4" && p.uuid == "2f1e0a4b-1122-4344-9566-778899aabbcc" && p.label == "palmy", fmt.tprint(p))
 
 	// FAT32 as mformat -F writes it.
 	buf = {}
@@ -166,9 +166,9 @@ selftest_probe :: proc() {
 	check("tag: quotes stripped", ok && t.key == "LABEL" && t.value == "My Disk", fmt.tprint(t))
 	_, ok = parse_tag("/dev/vda2")
 	check("tag: a path is not a tag", !ok)
-	ue := "MAJOR=253\nMINOR=2\nDEVNAME=vda2\nDEVTYPE=partition\nDISKSEQ=1\nPARTN=2\nPARTNAME=palmframe\nPARTUUID=0A1B2C3D-0000-4000-8000-00000000ABCD\n"
+	ue := "MAJOR=253\nMINOR=2\nDEVNAME=vda2\nDEVTYPE=partition\nDISKSEQ=1\nPARTN=2\nPARTNAME=palmy\nPARTUUID=0A1B2C3D-0000-4000-8000-00000000ABCD\n"
 	check("tag: PARTUUID ignores case", tag_matches({"PARTUUID", "0a1b2c3d-0000-4000-8000-00000000abcd"}, ue, {}))
-	check("tag: PARTLABEL is the GPT name", tag_matches({"PARTLABEL", "palmframe"}, ue, {}) && !tag_matches({"PARTLABEL", "Palmframe"}, ue, {}))
+	check("tag: PARTLABEL is the GPT name", tag_matches({"PARTLABEL", "palmy"}, ue, {}) && !tag_matches({"PARTLABEL", "Palmy"}, ue, {}))
 	check("tag: UUID from the probe, case-blind", tag_matches({"UUID", "dead-beef"}, ue, {type = "vfat", uuid = "DEAD-BEEF"}))
 	check("tag: LABEL is exact", tag_matches({"LABEL", "PALMESP"}, ue, {label = "PALMESP"}) && !tag_matches({"LABEL", "palmesp"}, ue, {label = "PALMESP"}))
 }

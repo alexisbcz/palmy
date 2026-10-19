@@ -1,6 +1,6 @@
-# Palmframe: one account, several selves
+# Palmy: one account, several selves
 
-The product principles and the information architecture for the Palmframe
+The product principles and the information architecture for the Palmy
 account and the apps on top of it. `research.md` is the evidence. `shell.md`
 covers how identity appears in the window manager, the greeter and every app.
 `roadmap.md` sets the order of work. The prototype of the hub is `apps/home`,
@@ -28,7 +28,7 @@ assistant whose reach you can state in one sentence, and a calm day.
 ## 1. The model
 
 ```
-Person ─── one Palmframe account (auth.users)       "Camille Roux"
+Person ─── one Palmy account (auth.users)       "Camille Roux"
   │          owns devices, billing, the password, recovery
   │
   ├── Identity  Personal   camille@palm.test        teal    P
@@ -69,7 +69,7 @@ mascot.
 
 | name | what it is | why this word |
 | --- | --- | --- |
-| **account** | the person's Palmframe login | ordinary word, used only for login, devices and billing |
+| **account** | the person's Palmy login | ordinary word, used only for login, devices and billing |
 | **identity** | one self: an address, its data, its assistant | "profile" is taken by browsers, "space" sounds like a place rather than a self, and "persona" sounds fake. "Identity" matches what From: actually means |
 | **All identities** | the mixed view in Home and the shell | says exactly what it is. Not "Unified" or "Everything" |
 | **Home** | the hub app (`apps/home`) | where the day starts |

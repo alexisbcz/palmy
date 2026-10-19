@@ -9,9 +9,9 @@ pkgdesc  = Web browser
 license  = MIT
 category = Internet
 icon     = globe
-details  = A web browser whose tabs, address bar, bookmarks and settings are Palmframe's own, with pages drawn by the engine you choose per identity: Chromium (palm-browser-cef) or Firefox (firefox). One profile per identity, so cookies never cross between them.
+details  = A web browser whose tabs, address bar, bookmarks and settings are Palmy's own, with pages drawn by the engine you choose per identity: Chromium (palm-browser-cef) or Firefox (firefox). One profile per identity, so cookies never cross between them.
 depend   = glibc fonts libxkbcommon
 provides = cmd:browser
 
-file     = ${PALMFRAME_OUT}/bin/browser -> /usr/bin/browser mode 0755
-file     = ${PALMFRAME_ROOT}/distro/apps/desktop/browser.desktop -> /usr/share/applications/browser.desktop mode 0644
+file     = ${PALMY_OUT}/bin/browser -> /usr/bin/browser mode 0755
+file     = ${PALMY_ROOT}/distro/apps/desktop/browser.desktop -> /usr/share/applications/browser.desktop mode 0644

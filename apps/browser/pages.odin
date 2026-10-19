@@ -1,6 +1,6 @@
 // The internal pages -- palm://newtab, bookmarks, history, downloads,
 // settings -- drawn by the chrome itself with shadcn, never by the engine. A
-// web page cannot script them, and they look like the rest of Palmframe.
+// web page cannot script them, and they look like the rest of Palmy.
 package browser
 
 import "core:fmt"
@@ -342,7 +342,7 @@ bookmarks_page :: proc(ui: ^p.Ctx, s: ^State) {
 	folder_title := "Bookmarks"
 	if f := find(&s.bookmarks, s.bm_folder); f != nil {folder_title = f.title}
 	n_all := len(all_visible(&s.bookmarks, context.temp_allocator))
-	page_header(ui, query != "" ? "Search results" : folder_title, tfmt("%d bookmarks in the %s profile · synced format, ready for your Palmframe account", n_all, s.prof.identity))
+	page_header(ui, query != "" ? "Search results" : folder_title, tfmt("%d bookmarks in the %s profile · synced format, ready for your Palmy account", n_all, s.prof.identity))
 	p.row(ui, "w-full items-center gap-2")
 	page_field(ui, s, .Bookmarks, "Search bookmarks", "flex-1 h-9 items-center gap-2 px-3 rounded-lg border bg-background")
 	if outline_button(ui, "Export", ICON_FILE_DOWN) {
@@ -690,7 +690,7 @@ choice_row :: proc(ui: ^p.Ctx, label, desc: string, on: bool, ic: p.Icon = {}) -
 }
 
 settings_engine :: proc(ui: ^p.Ctx, s: ^State) {
-	page_header(ui, "Engine", "Which engine draws web pages in this profile. Everything around the page — tabs, the address bar, bookmarks, these settings — is Palmframe's own, whichever you choose.")
+	page_header(ui, "Engine", "Which engine draws web pages in this profile. Everything around the page — tabs, the address bar, bookmarks, these settings — is Palmy's own, whichever you choose.")
 	chosen := profile_engine(&s.prof)
 	ENGINES := [2]struct {
 		kind:  Engine_Kind,
@@ -850,7 +850,7 @@ settings_startup :: proc(ui: ^p.Ctx, s: ^State) {
 }
 
 settings_profile :: proc(ui: ^p.Ctx, s: ^State) {
-	page_header(ui, "Profile", "One browser profile per Palmframe identity. Cookies, site storage, history and bookmarks never cross between them: each identity's engine is started with its own directory and nothing else.")
+	page_header(ui, "Profile", "One browser profile per Palmy identity. Cookies, site storage, history and bookmarks never cross between them: each identity's engine is started with its own directory and nothing else.")
 	section_card(ui, "This window", "")
 	p.row(ui, "items-center gap-3")
 	dot := p.div(ui, "size-10 rounded-full items-center justify-center shrink-0")
@@ -887,7 +887,7 @@ settings_profile :: proc(ui: ^p.Ctx, s: ^State) {
 }
 
 settings_sync :: proc(ui: ^p.Ctx, s: ^State) {
-	page_header(ui, "Sync", "Bookmarks can sync through your Palmframe account, per identity: a work window syncs work bookmarks and cannot see personal ones — the database refuses, not just this window.")
+	page_header(ui, "Sync", "Bookmarks can sync through your Palmy account, per identity: a work window syncs work bookmarks and cannot see personal ones — the database refuses, not just this window.")
 	section_card(ui, "Bookmarks", "")
 	pend := pending(&s.bookmarks, context.temp_allocator)
 	p.row(ui, "items-center gap-3")
@@ -906,7 +906,7 @@ settings_sync :: proc(ui: ^p.Ctx, s: ^State) {
 		}
 	}
 	p.end(ui)
-	if switch_row(ui, "Sync bookmarks", tfmt("Signs in through the Palmframe account on this machine, with a session scoped to the %s identity.", s.prof.identity), s.prof.settings.sync_bookmarks) {
+	if switch_row(ui, "Sync bookmarks", tfmt("Signs in through the Palmy account on this machine, with a session scoped to the %s identity.", s.prof.identity), s.prof.settings.sync_bookmarks) {
 		s.prof.settings.sync_bookmarks = !s.prof.settings.sync_bookmarks
 		settings_save(&s.prof)
 		if s.prof.settings.sync_bookmarks {

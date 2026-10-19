@@ -9,7 +9,7 @@
 //     in <cloud dir>/current (apps/cloudkit's token store: $PALM_CLOUD_DIR,
 //     else $XDG_DATA_HOME/palm/cloud, else ~/.local/share/palm/cloud). Its
 //     display name and colour come from the registry apps/accounts keeps at
-//     $XDG_CONFIG_HOME/palmframe/identities.json — the same file the browser
+//     $XDG_CONFIG_HOME/palmy/identities.json — the same file the browser
 //     reads for its profile colours.
 //   - With no account on the machine it is the local user, by their passwd
 //     name, and no colour: "no identity" is a state of its own (shell.md).
@@ -27,7 +27,7 @@ import "core:os"
 import "core:strings"
 
 Shell_Identity :: struct {
-	ok:      bool, // a Palmframe identity is current (else: the local user)
+	ok:      bool, // a Palmy identity is current (else: the local user)
 	handle:  string,
 	name:    string,
 	color:   u32, // 0 when there is none
@@ -89,7 +89,7 @@ shell_identity :: proc() -> Shell_Identity {
 		if cfg == "" {
 			cfg = fmt.tprintf("%s/.config", os.get_env("HOME", context.temp_allocator))
 		}
-		if reg, rerr := os.read_entire_file(fmt.tprintf("%s/palmframe/identities.json", cfg), context.temp_allocator); rerr == nil {
+		if reg, rerr := os.read_entire_file(fmt.tprintf("%s/palmy/identities.json", cfg), context.temp_allocator); rerr == nil {
 			Entry :: struct {
 				handle:       string,
 				name:         string,

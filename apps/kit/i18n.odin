@@ -14,7 +14,7 @@
 // broken catalogue means English, with one line on stderr for the broken one.
 //
 // Catalogues live in <root>/<lang>/<domain>.msg, where <root> is
-// /usr/share/palm/locale on Palmframe and PALM_LOCALE_DIR overrides it (the
+// /usr/share/palm/locale on Palmy and PALM_LOCALE_DIR overrides it (the
 // repository's distro/locale for tests and for running an app from the
 // checkout). The format is gettext's .po with everything that needs a tool
 // taken out; distro/locale/README.md describes it for translators:
@@ -22,8 +22,8 @@
 //	# comment
 //	plural = n > 1                      header lines: key = value, unquoted
 //
-//	msgid "Install Palmframe"
-//	msgstr "Installer Palmframe"
+//	msgid "Install Palmy"
+//	msgstr "Installer Palmy"
 //
 //	msgid "%d package"
 //	msgid_plural "%d packages"

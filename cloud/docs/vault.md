@@ -1,10 +1,10 @@
 # The vault: end-to-end encrypted passwords, per identity
 
-`apps/vault` is Palmframe's password manager. On a machine that is not
+`apps/vault` is Palmy's password manager. On a machine that is not
 enrolled in an account it is what it always was: one encrypted file, no
 network code reachable from the window. On an enrolled machine it is the
 **account vault**: every identity's vaults, encrypted on the device, synced
-item by item through the Palmframe cloud, shared deliberately between
+item by item through the Palmy cloud, shared deliberately between
 identities, and offered to the browser over a local socket.
 
 This note is the design, what was built, what was measured, and what is
@@ -356,7 +356,7 @@ and `/proc/<pid>/exe` are shown in every prompt.
 
 | op | request | response | needs |
 | --- | --- | --- | --- |
-| `hello` | `{"op":"hello","client":"Palmframe Browser"}` | `{"ok":true,"version":1,"state":"locked"\|"unlocked","challenge":"<b64 32 bytes>"}` | — |
+| `hello` | `{"op":"hello","client":"Palmy Browser"}` | `{"ok":true,"version":1,"state":"locked"\|"unlocked","challenge":"<b64 32 bytes>"}` | — |
 | `pair` | `{"op":"pair","name":"…","key":"<b64 32 random bytes>"}` | `{"ok":true,"pair_id":"<uuid>"}` or `{"ok":false,"error":"denied"}` | the person, after comparing the 6-digit code both sides show (SHA-256 of the key) |
 | `auth` | `{"op":"auth","pair_id":"…","proof":"<b64 HMAC-SHA256(key, challenge)>"}` | `{"ok":true}` / `unpaired` | a pairing; the challenge is single-use |
 | `query` | `{"op":"query","origin":"https://github.com","identity":"alice"}` | `{"ok":true,"state":…,"candidates":[{"id","title","username","match":"exact"\|"subdomain","totp":bool}]}` | auth; **never a password** |

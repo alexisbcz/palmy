@@ -13,7 +13,7 @@
 // desktop into a single fullscreen client (the greeter), and children are
 // reaped here rather than left as zombies under a long-lived compositor.
 //
-// Seat. Palmframe has no logind. When the system bus answers and logind is on
+// Seat. Palmy has no logind. When the system bus answers and logind is on
 // it, seat.odin brokers the devices (TakeDevice, PauseDevice) exactly as it
 // was written to. When it does not, the devices are opened directly: the
 // first process to open /dev/dri/card0 is DRM master by the kernel's own

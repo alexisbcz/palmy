@@ -28,7 +28,7 @@ distro/recipes/{palm-login,doas,passwd}/, apps/greeter/, this file.
 - `apps/greeter/` under palm-login (detected as `GREETD_SOCK` set **and**
   `PALM_LOGIN=1`; anywhere else the old stub behaviour is untouched):
   - Restart and Shut Down are real; Suspend is not offered (no suspend path).
-  - The session list gets a built-in "Palmframe" entry (`wm --drm`) first,
+  - The session list gets a built-in "Palmy" entry (`wm --drm`) first,
     unless an installed `.desktop` entry already runs `wm`, and it is the
     default; no `bash -l` fallback (there is no bash, and no tty to put it on).
   - The layer surface asks for 0x0 anchored to all edges, so `wm` sizes it to
@@ -98,7 +98,7 @@ polkit:
   than seat0 (dead pids do not count — a crashed login leaves its record) and
   the request must carry the password of a member of `wheel` (the group
   doas.conf permits by default). Shutting down under someone else's shell is
-  not for the person at the seat to decide alone. Remote sessions: Palmframe
+  not for the person at the seat to decide alone. Remote sessions: Palmy
   ships no sshd; one added later writes utmp and is counted the same way.
 - **Unlock is rate limited** with the shared `auth/` package, on the same
   `/run/faillock/<uid>` tally as doas and passwd (counted *before* the check,
@@ -260,7 +260,7 @@ would end the locked person's session); nested it still does.
 - A SIGKILLed PipeWire leaves its socket in `/run/user/<uid>`, and the next
   session's `50-pipewire` then starts nothing: palm-login does not empty the
   runtime directory between sessions.
-- The clock on the greeter shows UTC: Palmframe has no timezone setting yet.
+- The clock on the greeter shows UTC: Palmy has no timezone setting yet.
 - busybox's own `login` on ttyS0 ignores shadow aging; only palm-login,
   doas and passwd honour it.
 
@@ -348,8 +348,8 @@ makes its real uid root before writing, so the caller can no longer signal it.
   and `distro/login/auth`), both left out of APP_BINS and added to
   `binaries` and `check-libs`.
 - `distro/recipes/generate.sh`: `passwd` in BB_SKIP (busybox's applet would
-  claim /usr/bin/passwd), and `doas passwd` in palmframe's first depend line;
-  then regenerate the busybox and palmframe recipes.
+  claim /usr/bin/passwd), and `doas passwd` in palmy's first depend line;
+  then regenerate the busybox and palmy recipes.
 - `distro/base/root/etc/palm/services/syslog`: add `-L`. busybox 1.37.0's
   syslogd sets "log locally" in `option_mask32` when no `-R` is given but its
   receive loop tests a copy taken earlier (`opts`), so without `-L` it logs
@@ -357,5 +357,5 @@ makes its real uid root before writing, so the caller can no longer signal it.
   has been empty of every program's messages, `logger` included. With `-L`
   everything arrives (checked on the host in a namespace and in QEMU).
   /var/log/messages is now 0600 root: syslogd runs from
-  `/usr/lib/palmframe/syslog` (palmframe-base), which sets umask 077 and
+  `/usr/lib/palmy/syslog` (palmy-base), which sets umask 077 and
   fixes an older file's mode (test-runtime.py checks it).

@@ -319,7 +319,7 @@ shot_set :: proc(dir: string, dark: bool) -> int {
 	st.af.prompt = Af_Prompt {
 		kind     = .Fill,
 		conn     = -1,
-		client   = strings.clone("Palmframe Browser"),
+		client   = strings.clone("Palmy Browser"),
 		exe      = strings.clone("/usr/bin/browser"),
 		pid      = 4242,
 		origin   = strings.clone("https://github.com"),
@@ -334,7 +334,7 @@ shot_set :: proc(dir: string, dark: bool) -> int {
 	st.af.prompt = Af_Prompt {
 		kind   = .Pair,
 		conn   = -1,
-		client = strings.clone("Palmframe Browser"),
+		client = strings.clone("Palmy Browser"),
 		exe    = strings.clone("/usr/bin/browser"),
 		pid    = 4242,
 		code   = strings.clone("318 907"),

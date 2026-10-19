@@ -1,6 +1,6 @@
 package main
 
-// A Palmframe account: one sign-in, several identities, each with its own
+// A Palmy account: one sign-in, several identities, each with its own
 // mailbox.
 //
 //	mailcore palm login --email E --password P [--auth-port 55529]
@@ -10,14 +10,14 @@ package main
 //
 // LOGIN signs in to the account's Supabase Auth (GoTrue) with a password grant
 // and keeps the session — access token, refresh token, expiry — in
-// <data>/.palmframe/session, mode 0600. Nothing else holds the password; it is
+// <data>/.palmy/session, mode 0600. Nothing else holds the password; it is
 // not written anywhere.
 //
 // SYNC talks JMAP to palm-maild with that token as a bearer credential. The
 // session object lists, as JMAP accounts, exactly the identities the token
 // can reach (RLS decides, not this program), and each becomes its own Maildir
 // account under <data>/<address>/, which is what apps/mail reads. It also
-// writes <data>/palmframe.conf, naming each identity with its kind and colour
+// writes <data>/palmy.conf, naming each identity with its kind and colour
 // so the UI can label it. Per identity, in this order:
 //
 //   1. Flags changed in the Maildir since the last sync (read, flagged,
@@ -53,7 +53,7 @@ Palm_Session :: struct {
 }
 
 palm_dir :: proc() -> string {
-	return strings.concatenate({maildir_default_root(context.temp_allocator), "/.palmframe"}, context.allocator)
+	return strings.concatenate({maildir_default_root(context.temp_allocator), "/.palmy"}, context.allocator)
 }
 
 palm_session_path :: proc() -> string {
@@ -98,7 +98,7 @@ palm_save :: proc(s: Palm_Session) -> string {
 		return fmt.aprintf("cannot create %s", palm_dir())
 	}
 	body := fmt.tprintf(
-		"# A Palmframe session, written by `mailcore palm login`. Treat as a password.\nemail = %s\naccess_token = %s\nrefresh_token = %s\nexpires_at = %d\nauth_port = %d\njmap_port = %d\nsubmit_port = %d\n",
+		"# A Palmy session, written by `mailcore palm login`. Treat as a password.\nemail = %s\naccess_token = %s\nrefresh_token = %s\nexpires_at = %d\nauth_port = %d\njmap_port = %d\nsubmit_port = %d\n",
 		s.email, s.access_token, s.refresh_token, s.expires_at, s.auth_port, s.jmap_port, s.submit_port,
 	)
 	path := palm_session_path()
@@ -312,7 +312,7 @@ palm_sync :: proc(s: ^Palm_Session) -> int {
 			a.id, a.handle, a.display_name, a.kind, a.color, addr, addr,
 		)
 	}
-	conf_path := strings.concatenate({base, "/palmframe.conf"}, context.temp_allocator)
+	conf_path := strings.concatenate({base, "/palmy.conf"}, context.temp_allocator)
 	if os.write_entire_file(conf_path, transmute([]u8)strings.to_string(conf)) != nil {
 		fmt.eprintfln("mailcore palm: cannot write %s", conf_path)
 		return 1

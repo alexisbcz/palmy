@@ -582,7 +582,7 @@ sidebar :: proc(ui: ^p.Ctx, a: ^App) {
 	p.end(ui)
 	p.col(ui, "gap-px")
 	p.text(ui, "Forge", "text-sm font-semibold leading-tight")
-	p.text(ui, "Palmframe", "text-[10px] text-muted-foreground leading-tight")
+	p.text(ui, "Palmy", "text-[10px] text-muted-foreground leading-tight")
 	p.end(ui)
 	p.spacer(ui)
 	if btn(ui, "", .Ghost, .Icon_SM, ICON_PLUS) {

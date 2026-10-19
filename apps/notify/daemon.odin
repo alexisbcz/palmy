@@ -7,7 +7,7 @@
 //   - a unix socket, $XDG_RUNTIME_DIR/palm/notify.sock, speaking one JSON
 //     object per line. This is the native API: apps/kit/notify.odin, the CLI,
 //     the toast surface and the center all use it. Why not D-Bus for our own
-//     apps: Palmframe ships no session bus by default (distro/notes/
+//     apps: Palmy ships no session bus by default (distro/notes/
 //     runtime.md), a palmy app should not need one to say "you have mail",
 //     and SO_PEERCRED hands the daemon the sender's pid -- and through
 //     /proc/<pid>/environ its PALM_IDENTITY -- without a bus round trip. The
@@ -441,12 +441,12 @@ wm_identity :: proc(pid: i32) -> string {
 
 // profile_identity reads the identity out of a browser engine's command
 // line. apps/browser starts one engine per identity with its profile under
-// .../palmframe/browser/<identity>/ (cef/ for Chromium, gecko/ for Firefox),
+// .../palmy/browser/<identity>/ (cef/ for Chromium, gecko/ for Firefox),
 // and that path is the one thing about the process an engine does not
 // rewrite: Chromium overwrites its own environment block when it sets its
 // process title, so its /proc/<pid>/environ no longer has PALM_IDENTITY.
 profile_identity :: proc(pid: i32) -> string {
-	MARK :: "/palmframe/browser/"
+	MARK :: "/palmy/browser/"
 	p := pid
 	for _ in 0 ..< 6 {
 		if p <= 1 {

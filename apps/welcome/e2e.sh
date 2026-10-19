@@ -136,9 +136,9 @@ EOF"
 vs=$(as "$H1" vault status --json 2>&1)
 echo "     vault status: $vs"
 check "the vault is enrolled on this computer" jq -e '.enrolled' <<<"$vs"
-check "the Emergency Kit was saved (PNG and text)" sh -c "test -s '$H1/Documents/Palmframe Emergency Kit.png' && grep -q 'PV1-' '$H1/Documents/Palmframe Emergency Kit.txt'"
-check "the kit is readable by its owner only" sh -c "stat -c %a '$H1/Documents/Palmframe Emergency Kit.txt' | grep -q '^600$'"
-check "mail: palmframe.conf names both identities" sh -c "grep -q 'handle = gui$tag$' '$H1/.local/share/palmy-mail/palmframe.conf' && grep -q 'handle = gui$tag.northwind' '$H1/.local/share/palmy-mail/palmframe.conf'"
+check "the Emergency Kit was saved (PNG and text)" sh -c "test -s '$H1/Documents/Palmy Emergency Kit.png' && grep -q 'PV1-' '$H1/Documents/Palmy Emergency Kit.txt'"
+check "the kit is readable by its owner only" sh -c "stat -c %a '$H1/Documents/Palmy Emergency Kit.txt' | grep -q '^600$'"
+check "mail: palmy.conf names both identities" sh -c "grep -q 'handle = gui$tag$' '$H1/.local/share/palmy-mail/palmy.conf' && grep -q 'handle = gui$tag.northwind' '$H1/.local/share/palmy-mail/palmy.conf'"
 check "mail: a Maildir per address" sh -c "test -d '$H1/.local/share/palmy-mail/gui$tag@palm.test' && test -d '$H1/.local/share/palmy-mail/gui$tag.northwind@palm.test'"
 if [ -n "$COLLAB" ]; then
 	check "notes: ~/Notes/gui$tag exists after the first sync" test -d "$H1/Notes/gui$tag"
@@ -149,7 +149,7 @@ if [ -n "$COLLAB" ]; then
 else
 	check "notes: no sync verb here, the task says Coming" grep -q "Notes .*Coming" "$WORK/drive.err"
 fi
-[ -n "$SHOTS" ] && cp "$H1/Documents/Palmframe Emergency Kit.png" "$SHOTS/account/emergency-kit.png" 2>/dev/null
+[ -n "$SHOTS" ] && cp "$H1/Documents/Palmy Emergency Kit.png" "$SHOTS/account/emergency-kit.png" 2>/dev/null
 
 # --- 2. the same without a window -------------------------------------------------------
 echo "== 2. welcome setup, and the session.d hook"
@@ -166,7 +166,7 @@ echo "     $(echo "$out" | head -c 900)"
 [ "$code" = 0 ] && ok "welcome setup exits 0" || no "welcome setup exited $code"
 check "setup: both identities created" jq -e '[.identities[] | select(.created and (.error == null))] | length == 2' <<<"$out"
 check "setup: the drive task is Done for both" jq -e '[.tasks[] | select(.task == "Drive" and .state == "Done")] | length == 2' <<<"$out"
-check "setup: the kit was written where asked" test -s "$H2/kit/Palmframe Emergency Kit.png"
+check "setup: the kit was written where asked" test -s "$H2/kit/Palmy Emergency Kit.png"
 check "setup: work has no mailbox task (mail not chosen)" jq -e --arg w "cli$tag.work" '[.tasks[] | select(.identity == $w and .task == "Mailbox")] | length == 0' <<<"$out"
 # The hook, as palm-login runs it: as the user, with the session's environment.
 mkdir -p "$WORK/hook-bin"

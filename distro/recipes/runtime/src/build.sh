@@ -30,8 +30,8 @@
 set -euo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
 DISTRO="$(cd "$HERE/../../.." && pwd)"
-BUILD="${PALMFRAME_SRC_BUILD:-$DISTRO/build/src}"
-OUT="${PALMFRAME_SRC_OUT:-$DISTRO/out/src}"
+BUILD="${PALMY_SRC_BUILD:-$DISTRO/build/src}"
+OUT="${PALMY_SRC_OUT:-$DISTRO/out/src}"
 JOBS="${JOBS:-8}"
 mkdir -p "$BUILD/dl" "$BUILD/work" "$BUILD/stage" "$OUT"
 

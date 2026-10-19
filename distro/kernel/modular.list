@@ -1,5 +1,5 @@
 # Driver families every tristate option of which build.sh turns into a module
-# (=m), before palmframe.config is merged over them. Listing a directory is
+# (=m), before palmy.config is merged over them. Listing a directory is
 # shorter, and less likely to miss a chip, than naming each driver: these are
 # the parts of a laptop or desktop that differ from one machine to the next.
 # Options whose dependencies are not met (another architecture, a test

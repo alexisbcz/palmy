@@ -42,8 +42,8 @@ ffmpeg -nostdin -v error -y -i "$GRADED" -i "$SCORE" \
 	"${VP9_COMMON[@]}" -pass 2 -passlogfile "$WORK/pass/vp9" \
 	-c:a libopus -b:a 48k -ac 2 \
 	-map 0:v:0 -map 1:a:0 -shortest \
-	-metadata title="Palmframe" \
-	"$OUT/palmframe.webm"
+	-metadata title="Palmy" \
+	"$OUT/palmy.webm"
 
 # -- H.264 / MP4 -------------------------------------------------------------
 X264_COMMON=(-c:v libx264 -b:v "$VIDEO_H" -preset slower -profile:v high -level 4.0
@@ -54,20 +54,20 @@ ffmpeg -nostdin -v error -y -i "$GRADED" -i "$SCORE" \
 	"${X264_COMMON[@]}" -pass 2 -passlogfile "$WORK/pass/x264" \
 	-c:a aac -b:a 64k -ac 2 \
 	-map 0:v:0 -map 1:a:0 -shortest -movflags +faststart \
-	-metadata title="Palmframe" \
-	"$OUT/palmframe.mp4"
+	-metadata title="Palmy" \
+	"$OUT/palmy.mp4"
 
 # -- poster ------------------------------------------------------------------
 # Four applications live in a window manager that is itself written in the
 # toolkit, which is the one image that says what this is.
 ffmpeg -nostdin -v error -y -ss "$POSTER_AT" -i "$GRADED" -frames:v 1 \
-	-q:v 4 "$OUT/palmframe-poster.jpg"
+	-q:v 4 "$OUT/palmy-poster.jpg"
 
 python3 "$HERE/tools/captions.py" "$OUT/film.vtt"
 
 echo
-for f in "$OUT"/palmframe.webm "$OUT"/palmframe.mp4 \
-         "$OUT"/palmframe-poster.jpg "$OUT"/film.vtt; do
+for f in "$OUT"/palmy.webm "$OUT"/palmy.mp4 \
+         "$OUT"/palmy-poster.jpg "$OUT"/film.vtt; do
 	printf '%-34s %8.2f MB\n' "${f#"$ROOT/"}" \
 		"$(awk -v b="$(stat -c%s "$f")" 'BEGIN{print b/1048576}')"
 done

@@ -4,7 +4,7 @@ package login
 //
 //	1. SHA-512 crypt against the test vectors in Drepper's specification
 //	   (every one of them is also what `openssl passwd -6` prints), plus
-//	   hashes made with openssl for the Palmframe accounts.
+//	   hashes made with openssl for the Palmy accounts.
 //	2. The passwd, shadow and group parsers, on fixtures.
 //	3. An IPC round trip: palm-login is started again in --test mode on a
 //	   temporary socket with fixture account files, and this process plays the
@@ -45,15 +45,15 @@ VECTORS := [?][3]string {
 	{"$6$rounds=77777$short", "we have a short salt string but not a short password", "$6$rounds=77777$short$WuQyW2YR.hBNpjjRhpYD/ifIw05xdfeEyQoMxIXbkvr0gge1a1x3yRULJ5CCaUeOxFmtlcGZelFl5CxtgfiAc0"},
 	{"$6$rounds=123456$asaltof16chars..", "a short string", "$6$rounds=123456$asaltof16chars..$BtCwjqMJGx5hrJhZywWvt0RLE8uZ4oPwcelCjmw2kSYu.Ec6ycULevoBK25fs2xXgMNrCzIMVcgEJAstJeonj1"},
 	{"$6$rounds=10$roundstoolow", "the minimum number is still observed", "$6$rounds=1000$roundstoolow$kUMsbe306n21p9R.FRkW3IGn.S9NPN0x50YhH1xhLsPuWGsUSklZt58jaTfF4ZEQpyUNGc0dqbpBYYBaHHrsX."},
-	// openssl passwd -6 -salt palmframe palm
-	{"$6$palmframe", "palm", HASH_PALM},
+	// openssl passwd -6 -salt palmy palm
+	{"$6$palmy", "palm", HASH_PALM},
 	// openssl passwd -6 -salt 'rounds=6000$rootsalt' palm
 	{"$6$rounds=6000$rootsalt", "palm", HASH_ROOT},
 	// openssl passwd -6 -salt p4lm 'pässwörd "quoted" \ back' — UTF-8 and JSON metacharacters
 	{"$6$p4lm", `pässwörd "quoted" \ back`, HASH_ODD},
 }
 
-HASH_PALM :: "$6$palmframe$Bx42s72Foe9Q131t36Vl6afUo26skw/rGH.Gh2.1sxjLqcF/K29Hy0bvYDGyHaLynMyqorU41mNCDjhXf2q.T."
+HASH_PALM :: "$6$palmy$Bx42s72Foe9Q131t36Vl6afUo26skw/rGH.Gh2.1sxjLqcF/K29Hy0bvYDGyHaLynMyqorU41mNCDjhXf2q.T."
 HASH_ROOT :: "$6$rounds=6000$rootsalt$8MoobbtPehhfCz42EYUwppGiS8GThp9yQ9i9OoQGVpSVnQ.Hjpq.FgkddGDp8WFV13Nt0rQGlAf0SW7Iegu8y."
 HASH_ODD :: "$6$p4lm$tHJ1rMp6XDpVJGykSeliFHpOuDxKz9sDaghmF/1FmYbdn1O9hW.10/Bd8F/LfuDj.zlRfWcvmnfQNs2F3O/RK/"
 
@@ -143,7 +143,7 @@ selftest :: proc() -> int {
 			strings.contains(joined, "XDG_RUNTIME_DIR=/run/user/1000") &&
 			strings.contains(joined, "XDG_SESSION_TYPE=wayland") &&
 			strings.contains(joined, "XDG_CURRENT_DESKTOP=Other") &&
-			!strings.contains(joined, "XDG_CURRENT_DESKTOP=palmframe") &&
+			!strings.contains(joined, "XDG_CURRENT_DESKTOP=palmy") &&
 			strings.contains(joined, "EXTRA=1") &&
 			!strings.contains(joined, "bogus"),
 			joined,

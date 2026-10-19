@@ -5,10 +5,10 @@
 # the mount points palm-init mounts on, and /etc/skel. Every other
 # package depends on this one, so it is always installed first and its
 # /etc/passwd is in place when later packages' owners are resolved.
-pkgname  = palmframe-base
+pkgname  = palmy-base
 pkgver   = 0.1.0
 pkgrel   = 0
-pkgdesc  = The Palmframe filesystem layout, users and base configuration
+pkgdesc  = The Palmy filesystem layout, users and base configuration
 license  = MIT
 category = System
 icon     = hard-drive
@@ -17,9 +17,9 @@ install_user = root
 install_user = palm
 install_user = greeter
 
-tree     = ${PALMFRAME_ROOT}/distro/base/root/etc -> /etc
-tree     = ${PALMFRAME_ROOT}/distro/base/root/usr -> /usr
-file     = ${PALMFRAME_KEYS}/palmframe.pub -> /etc/palm/keys/palmframe.pub mode 0644
+tree     = ${PALMY_ROOT}/distro/base/root/etc -> /etc
+tree     = ${PALMY_ROOT}/distro/base/root/usr -> /usr
+file     = ${PALMY_KEYS}/palmy.pub -> /etc/palm/keys/palmy.pub mode 0644
 
 dir      = /usr mode 0755
 dir      = /usr/bin mode 0755
@@ -62,6 +62,6 @@ symlink  = /etc/mtab -> ../proc/self/mounts
 symlink  = /etc/localtime -> ../usr/share/zoneinfo/UTC
 mode     = /etc/shadow 0600
 mode     = /usr/share/udhcpc/default.script 0755
-mode     = /usr/lib/palmframe/syslog 0755
+mode     = /usr/lib/palmy/syslog 0755
 dir      = /etc/palm/keys mode 0755
 dir      = /etc/palm/early.d mode 0755

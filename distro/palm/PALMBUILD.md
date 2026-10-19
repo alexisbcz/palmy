@@ -16,8 +16,8 @@ pkgver  = 0.1.0
 pkgrel  = 0
 pkgdesc = The palmy terminal
 license = MIT
-url     = https://example.invalid/palmframe
-depend  = glibc palmframe-fonts
+url     = https://example.invalid/palmy
+depend  = glibc palmy-fonts
 provides = cmd:term
 category = System
 icon    = square-terminal
@@ -169,7 +169,7 @@ icon = square-terminal
 details = A terminal emulator with tabs, written with palmy.
 size = 1843200
 depend = glibc
-depend = palmframe-fonts
+depend = palmy-fonts
 provides = cmd:term
 ```
 

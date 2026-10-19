@@ -1,4 +1,4 @@
-"""Boot distro/out/palmframe.img headless and walk it from firmware to desktop.
+"""Boot distro/out/palmy.img headless and walk it from firmware to desktop.
 
     python3 -I distro/image/test-boot.py            (make -C distro test runs it)
 
@@ -215,7 +215,7 @@ def wait_for(m, command, pattern, tries=40):
 
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument("--image", default=os.path.join(DISTRO, "out", "palmframe.img"))
+    ap.add_argument("--image", default=os.path.join(DISTRO, "out", "palmy.img"))
     ap.add_argument("--shots", default=os.path.join(DISTRO, "out", "shots"))
     ap.add_argument("--work", default=os.path.join(DISTRO, "build", "integrate"))
     ap.add_argument("--port", type=int, default=8080)
@@ -239,11 +239,11 @@ def main():
     t0 = time.time()
     try:
         if not m.check("palm-init starts (firmware, limine, kernel, ext4 root)",
-                       m.expect(r"palm-init: Palmframe is starting", 60) is not None):
+                       m.expect(r"palm-init: Palmy is starting", 60) is not None):
             return m.failures
         print(f"  ....  palm-init after {time.time() - t0:.1f}s")
         m.check("palm-login started", m.expect(r"palm-init: started palm-login", 30) is not None)
-        if not m.check("getty on ttyS0", m.expect(r"palmframe login: ", 40) is not None):
+        if not m.check("getty on ttyS0", m.expect(r"palmy login: ", 40) is not None):
             return m.failures
         m.send("root")
         m.expect(r"Password: ", 10)
@@ -325,7 +325,7 @@ def main():
         out, st = m.run("palm list --installed", 30)
         print("  ....  palm list --installed:\n" + "\n".join("          " + l for l in out.strip().splitlines()))
         m.check("palm list --installed lists the 31 shipped packages",
-                st == 0 and "palmframe" in out and len(out.strip().splitlines()) >= 31, out)
+                st == 0 and "palmy" in out and len(out.strip().splitlines()) >= 31, out)
         out, st = m.run("palm verify", 60)
         print("  ....  palm verify (exit %d):\n" % st + "\n".join("          " + l for l in out.strip().splitlines()[-15:]))
         m.check("palm verify finds nothing wrong", st == 0, out)

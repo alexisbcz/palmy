@@ -1,4 +1,4 @@
-# Palmframe, the distribution
+# Palmy, the distribution
 
 A small Linux distribution built from this checkout: a kernel, a static
 busybox userland, an init, a login daemon and a package manager written in
@@ -34,10 +34,10 @@ distro/run-qemu.sh           # boot it in a QEMU window, UEFI firmware
 
 `make distro` builds the kernel (Linux 6.18.56) and busybox (1.37) only if
 `distro/out/kernel.release` or `distro/out/busybox` is missing (the kernel
-also when `distro/kernel/palmframe.config` changes), because those take
+also when `distro/kernel/palmy.config` changes), because those take
 minutes. Then it builds the Odin binaries, generates the recipes, builds 48
 packages into `distro/out/repo/x86_64/`, signs the index, and assembles
-`distro/out/palmframe.img` from 34 of them. Once the kernel exists, the rest
+`distro/out/palmy.img` from 34 of them. Once the kernel exists, the rest
 takes a few seconds. The image is 1.2 GB sparse and under 100 MB on disk.
 
 Nothing needs root. palm installs the system into an empty directory under
@@ -53,7 +53,7 @@ Other targets:
 | --- | --- |
 | `make -C distro repo` | stop after the signed repository |
 | `make -C distro image` | rebuild the image from the repository |
-| `make -C distro iso` | the live installer, `distro/out/palmframe-live.iso` (see *Installing*) |
+| `make -C distro iso` | the live installer, `distro/out/palmy-live.iso` (see *Installing*) |
 | `make -C distro run-iso` | `distro/run-qemu.sh --iso` |
 | `make -C distro run` | `distro/run-qemu.sh` |
 | `make -C distro test` | the headless boot test (`image/test-boot.py`); screenshots in `distro/out/shots/` |
@@ -97,11 +97,11 @@ bindings are in `apps/wm/config.odin`.
 ## Installing
 
 The disk image above is a demonstration system with a shared `palm` account.
-To put Palmframe on a disk of its own, boot the live ISO and run the
+To put Palmy on a disk of its own, boot the live ISO and run the
 installer.
 
 ```sh
-make -C distro iso                                  # distro/out/palmframe-live.iso
+make -C distro iso                                  # distro/out/palmy-live.iso
 distro/run-qemu.sh --iso                            # boot it, OVMF, blank 8 GiB distro/out/target.qcow2
 distro/run-qemu.sh --disk distro/out/target.qcow2   # afterwards: boot what was installed, alone
 ```
@@ -111,12 +111,12 @@ With `--iso` or `--disk`, OVMF's variable store is kept beside the disk as
 so the entry is still there when the disk boots without the ISO. Add `--bios`
 for SeaBIOS.
 
-The ISO is 576 MB. limine offers two entries, *Install Palmframe* and
-*Install Palmframe (serial console only)*. The whole system runs from RAM: a
+The ISO is 576 MB. limine offers two entries, *Install Palmy* and
+*Install Palmy (serial console only)*. The whole system runs from RAM: a
 559 MB zstd initramfs, about 608 MiB unpacked, holding 28 packages (the base
 system, the kiosk wm, term, the installer and its tools, a 100 KB Japanese
 subset of Noto Sans CJK, and firmware) and, in `/usr/share/palm/repo`, a
-signed repository of the 93 packages an installation needs: `palmframe`,
+signed repository of the 93 packages an installation needs: `palmy`,
 its dependencies, `fonts-cjk` and the firmware. Installing therefore needs
 no network. Most of the size is firmware, there twice (installed, so the
 live system's own GPU, Wi-Fi and Ethernet start, and as packages for the
@@ -166,7 +166,7 @@ focus, Up and Down move through a list, Enter is Next and Esc is Back.
    Next opens a dialog that names the device, model and size. Cancel has the
    focus, so Enter alone never erases.
 5. **Account.** Full name, a user name suggested from it, the computer name
-   (default `palmframe`), and the password twice with a strength meter. Root
+   (default `palmy`), and the password twice with a strength meter. Root
    gets the same password unless that option is turned off. Problems appear
    under each field as you type. Next refuses to continue while any remain
    and says which fields to correct.
@@ -180,7 +180,7 @@ focus, Up and Down move through a list, Enter is Next and Esc is Back.
 Going back keeps every choice already made. Once the install starts there is
 no going back.
 
-Outside a Palmframe system, or when not run as root, `installer` starts in
+Outside a Palmy system, or when not run as root, `installer` starts in
 demo mode, with a red *Demo* badge: the disks are invented and the "install"
 only waits. `installer --shots DIR` renders every page offscreen and
 `installer --selftest` runs its 141 checks. `notes/installer-gui.md` has the
@@ -208,10 +208,10 @@ echo gracehopper | palm-install --disk /dev/vdb --language de_DE --keyboard de \
 | `--language <ll_CC>` | default `en_US` |
 | `--keyboard <layout[:variant]>` | default `us` |
 | `--timezone <Region/City>` | default `UTC` |
-| `--hostname <name>` | default `palmframe` |
+| `--hostname <name>` | default `palmy` |
 | `--user <name>`, `--full-name <text>` | the account; `--user` is required |
 | `--password-file <file\|->`, `--root-password-file <file\|->` | first line of the file, `-` for stdin; root defaults to the user's password |
-| `--package <name>` | repeatable; default `palmframe` |
+| `--package <name>` | repeatable; default `palmy` |
 | `--repo <path\|url>` | default `file:///usr/share/palm/repo` |
 | `--swap <size>` | a swap file on the root, `2G` or `512M`; default none |
 | `--no-efi-entry` | do not write a UEFI `Boot####` variable |
@@ -301,12 +301,12 @@ stage 1 in the protective MBR, so an installed disk starts under UEFI and
 under a BIOS alike.
 
 The root is mounted at `/mnt/target` and the ESP at `/mnt/target/boot/efi`.
-Then `palm --root /mnt/target --initdb add palmframe` installs from the
-medium's repository: `palmframe` and its dependencies, plus `fonts-cjk` for
+Then `palm --root /mnt/target --initdb add palmy` installs from the
+medium's repository: `palmy` and its dependencies, plus `fonts-cjk` for
 Japanese, plus firmware: `linux-firmware` when the repository has it (a
 network one), else the firmware parts the repository carries, which from
 the medium are the live system's (`installer/core/firmware.odin`). The
-`palmframe-demo` package that the disk image adds is not installed, so
+`palmy-demo` package that the disk image adds is not installed, so
 neither is `/home/palm`. Then the configure step writes:
 
 - `/etc/passwd`, `group` and `shadow`. The demo user `palm` is removed. The
@@ -324,10 +324,10 @@ neither is `/home/palm`. Then the configure step writes:
   memory, 1 to 4 GiB).
 - `/etc/palm/repositories`, rewritten only when the install came from an
   `http(s)://` repository. An install from the medium keeps the network
-  repository that palmframe-base names.
+  repository that palmy-base names.
 
 On the ESP the bootloader step writes `EFI/BOOT/BOOTX64.EFI` (the
-removable-media path any UEFI firmware boots) and `EFI/palmframe/BOOTX64.EFI`
+removable-media path any UEFI firmware boots) and `EFI/palmy/BOOTX64.EFI`
 (the copy the boot entry points at), both limine. It also writes
 `boot/limine/limine.conf`, with a normal entry and a single-user entry
 booting `root=PARTUUID=<root>`, `boot/limine/limine-bios.sys` for the BIOS
@@ -339,11 +339,11 @@ system `palm verify` exits 0, listing the configured `/etc` files as
 ### The UEFI boot entry
 
 When `/sys/firmware/efi` exists, the core writes a `Boot####` variable named
-"Palmframe (<host name>)" ("Palmframe" for the default host name) through
+"Palmy (<host name>)" ("Palmy" for the default host name) through
 efivarfs, mounting it if needed and clearing the immutable flag first. The
 variable is an EFI_LOAD_OPTION whose device path is
-`HD(1,GPT,<ESP guid>,start,size)/\EFI\palmframe\BOOTX64.EFI`, the short form
-efibootmgr writes. The core reuses a Palmframe entry only when it points at
+`HD(1,GPT,<ESP guid>,start,size)/\EFI\palmy\BOOTX64.EFI`, the short form
+efibootmgr writes. The core reuses a Palmy entry only when it points at
 this disk, at the new ESP or at a partition of the table the installation
 erased; otherwise it takes the lowest free number. Each disk in a machine
 therefore keeps its own entry. The entry goes first in `BootOrder`.
@@ -351,7 +351,7 @@ therefore keeps its own entry. The entry goes first in `BootOrder`.
 install still succeeds, and the disk boots through `EFI/BOOT/BOOTX64.EFI`.
 
 In QEMU the installed disk, booted alone with the same variable store,
-showed `BdsDxe: loading Boot0009 "Palmframe (analytical)"`. efivarfs then
+showed `BdsDxe: loading Boot0009 "Palmy (analytical)"`. efivarfs then
 read `BootCurrent` 0009, first in `BootOrder`.
 
 ### What has been verified
@@ -370,8 +370,8 @@ them.
   dialog named `/dev/vda` with Annuler focused. Invalid user names and
   mismatched passwords were refused, each with its message. Esc back to
   Language and Enter forward again kept every choice. The install ended on
-  *Palmframe est installé*, and Restart ended the machine.
-- **The installed disk, alone.** OVMF booted it through the Palmframe
+  *Palmy est installé*, and Restart ended the machine.
+- **The installed disk, alone.** OVMF booted it through the Palmy
   entry. The serial prompt was `analytical login:`. The system had
   `LANG=fr_FR.UTF-8`, layout `fr`, local time in CEST and
   `/etc/localtime -> ../usr/share/zoneinfo/Europe/Paris`. `ada` was uid
@@ -381,8 +381,8 @@ them.
   screenshot below. Typing the password in AZERTY key positions logged ada
   in to `wm --drm`. In term, `date` printed CEST and `hostname` printed
   analytical.
-- **CLI install, German.** The command above ran to `Palmframe is
-  installed`, writing `Boot000B "Palmframe"`. Booted alone, that disk gave
+- **CLI install, German.** The command above ran to `Palmy is
+  installed`, writing `Boot000B "Palmy"`. Booted alone, that disk gave
   `cli-test login:`, `LANG=de_DE.UTF-8`, layout `de` and EDT, and
   `palm verify` was clean. The greeter was German, grace logged in, and
   term typed `qwertz` for physical q w e r t y.
@@ -405,7 +405,7 @@ layout, and `live/test-install-more.py` added (screenshots
   (QMP absolute events through virtio-tablet) on two pages; the progress
   detail and the Done page were Japanese; "Restart now" was clicked. The
   install wrote `nvme0n1p1`..`p3`, ran `limine bios-install /dev/nvme0n1 3`
-  and `Boot000A "Palmframe (kyoto)"`, and added `fonts-cjk`. The NVMe disk
+  and `Boot000A "Palmy (kyoto)"`, and added `fonts-cjk`. The NVMe disk
   then booted alone under OVMF through that entry, to a Japanese greeter
   with `LANG=ja_JP.UTF-8`, layout `jp`, JST and `/swapfile` in use; and
   under SeaBIOS, through limine's BIOS stages, once the disk had a boot
@@ -419,8 +419,8 @@ layout, and `live/test-install-more.py` added (screenshots
 - **Two disks in one machine.** `palm-install --disk /dev/vdb ... --swap 1G
   --yes`, then palm-install's questions answered over the serial console
   onto `/dev/vda` (French, a `?Paris` search, a 512 MiB swap file). The
-  firmware then held `Boot000A "Palmframe (cli-b)"` and `Boot000B
-  "Palmframe (cli-a)"`, and each disk booted alone through its own entry,
+  firmware then held `Boot000A "Palmy (cli-b)"` and `Boot000B
+  "Palmy (cli-a)"`, and each disk booted alone through its own entry,
   with its swap file.
 
 ![The installed system's greeter, in French: Paris time, host analytical, the account Ada Lovelace](docs/installed-greeter-fr.png)
@@ -519,7 +519,7 @@ Each service's output goes to `/var/log/<name>.log`. A service that exits is
 restarted after 1 s, doubling up to 30 s; a service whose binary is missing
 keeps retrying, so installing its package later makes it start. A file
 named `/etc/palm/services.off/<name>` masks a service, which is how the live
-system turns off palm-login without touching palmframe-base. Services get
+system turns off palm-login without touching palmy-base. Services get
 `LANG` and the other locale keys from `/etc/locale.conf`. `kill -HUP 1`
 re-reads the directory: new services start, services whose definition changed
 are stopped (SIGTERM, SIGKILL after 3 s) and started with the new one, and
@@ -658,22 +658,22 @@ the applications). `make` runs it on every build and its output is committed.
 **The repository.** The build makes a signing key once per checkout in
 `distro/build/keys/` (git-ignored), and its public half is installed in
 `/etc/palm/keys/`, so a built machine trusts exactly the repository it was
-built from. The palm package adds `palmframe-release.pub`, the key of the
+built from. The palm package adds `palmy-release.pub`, the key of the
 public repository, and `/etc/palm/repositories` names it:
-`https://palmframe-packages.vercel.app/x86_64`, with
-`https://github.com/alexisbcz/palmframe-packages/releases/download/x86_64` as
+`https://palmy-packages.vercel.app/x86_64`, with
+`https://github.com/alexisbcz/palmy-packages/releases/download/x86_64` as
 its mirror on the same line. `distro/repo-publish/publish.sh` signs and
 publishes both from a build; `notes/palm.md` says how a security fix travels
 from a recipe to a machine (palmd refreshes the indexes every six hours). To
 test against the checkout's own repository instead, run
 `make -C distro serve` on the host and give the guest
 `--repo http://10.0.2.2:8080/x86_64` (the host as QEMU's user network shows
-it). The repository has 48 packages. The `palmframe` meta-package installs 35 of them, and the
-disk image adds `palmframe-demo`, the demo user's home. `shop`, `track`,
+it). The repository has 48 packages. The `palmy` meta-package installs 35 of them, and the
+disk image adds `palmy-demo`, the demo user's home. `shop`, `track`,
 `pickdemo`, `emoji` and `fonts-emoji` are in the repository but not
 installed, so `palm add` has something to fetch. The rest serve the live
 system: `palm-install`, `installer`, `e2fsprogs`, `dosfstools`, `limine`,
-`fonts-cjk` and `palmframe-live`.
+`fonts-cjk` and `palmy-live`.
 
 `notes/palm.md` has the decisions the contract left open and the image
 builder's command lines.
@@ -730,7 +730,7 @@ QMP and the serial console. Screenshots are in `distro/out/shots/`
   network finished with status 0 and the serial login prompt appeared. The
   root was ext4 on `/dev/vda2`, read-write.
 - **Greeter.** `verify-r1-01-greeter.png`: clock, date, hostname, the Palm
-  account with a password field, the Palmframe session, Restart and Shut Down.
+  account with a password field, the Palmy session, Restart and Shut Down.
   `ps` showed `wm --drm --kiosk --exec greeter` and `greeter` running as user
   greeter.
 - **Login.** Typing `palm` and Enter through QMP replaced the greeter with
@@ -738,7 +738,7 @@ QMP and the serial console. Screenshots are in `distro/out/shots/`
   9 and the hint to press SUPER+Return.
 - **Terminal.** SUPER+Return opened term. `echo hello-verify; id; uname -r`
   printed `hello-verify`, `uid=1000(palm)` with groups wheel, video, audio,
-  input and palm, and `6.18.56-palmframe` (`verify-r1-03-term.png`). A second
+  input and palm, and `6.18.56-palmy` (`verify-r1-03-term.png`). A second
   SUPER+Return tiled two terminals with focus on the new one
   (`verify-r1-04-two-terms.png`).
 - **Pointer.** An absolute pointer move and click on the left window moved
@@ -750,10 +750,10 @@ QMP and the serial console. Screenshots are in `distro/out/shots/`
   `/etc/resolv.conf` modified, which udhcpc writes), and `palm info palmy-wm`
   showed the package.
 - **palm, with the repository.** With `make -C distro serve` running,
-  `palm update` reported 36 packages signed by `palmframe.pub`.
+  `palm update` reported 36 packages signed by `palmy.pub`.
   `palm add --yes track` installed `/usr/bin/track`; `palm verify` then
   reported 32 packages. `palm del --yes track` removed it and verify was back
-  to 31. `/etc/palm/world` still held only `palmframe`.
+  to 31. `/etc/palm/world` still held only `palmy`.
 - **palm refuses tampering.** An index with one changed line under the original
   signature: `palm update` and `palm add` refused, exit 4. A package with one
   byte flipped and the index untouched: `palm add` refused on the sha256
@@ -816,7 +816,7 @@ on real hardware yet.
 - **Applications.** 30 of the 48 programs work, 14 partly, 4 not at all
   (`apps/apps.tsv`). D-Bus (as user `dbus`), iwd, PipeWire (started in each
   session by palm-login), BlueZ, FFmpeg, OpenSSL and bsdtar are shipped and
-  run on the shipped kernel (`palmframe-runtime`, `notes/runtime.md`), and
+  run on the shipped kernel (`palmy-runtime`, `notes/runtime.md`), and
   `network` reads iwd. The launcher still offers `foot` as the terminal.
   The `chat` app is not packaged, and busybox's `chat` applet is left out
   because the names clash.

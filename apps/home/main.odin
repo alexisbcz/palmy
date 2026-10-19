@@ -1,4 +1,4 @@
-// Home — the unified hub of a Palmframe account: Today, universal search,
+// Home — the unified hub of a Palmy account: Today, universal search,
 // quick-create and a command palette, across every identity the person owns.
 //
 // It reads the local search index (apps/index, kept by palm-indexd) through

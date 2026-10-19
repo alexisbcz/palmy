@@ -13,11 +13,11 @@ category = System
 icon     = type
 details  = palmy finds fonts by walking /usr/share/fonts, with no fontconfig and no cache, so these files are all it takes: Geist for the interface, JetBrains Mono for code and terminals, DejaVu Sans for the scripts the others lack.
 
-file     = ${PALMFRAME_ROOT}/parity/web/public/fonts/Geist-400.ttf -> /usr/share/fonts/geist/Geist-400.ttf mode 0644
-file     = ${PALMFRAME_ROOT}/parity/web/public/fonts/Geist-500.ttf -> /usr/share/fonts/geist/Geist-500.ttf mode 0644
-file     = ${PALMFRAME_ROOT}/parity/web/public/fonts/Geist-600.ttf -> /usr/share/fonts/geist/Geist-600.ttf mode 0644
-file     = ${PALMFRAME_ROOT}/parity/web/public/fonts/Geist-700.ttf -> /usr/share/fonts/geist/Geist-700.ttf mode 0644
-file     = ${PALMFRAME_ROOT}/distro/apps/licenses/Geist-OFL.txt -> /usr/share/licenses/fonts/Geist-OFL.txt mode 0644
+file     = ${PALMY_ROOT}/parity/web/public/fonts/Geist-400.ttf -> /usr/share/fonts/geist/Geist-400.ttf mode 0644
+file     = ${PALMY_ROOT}/parity/web/public/fonts/Geist-500.ttf -> /usr/share/fonts/geist/Geist-500.ttf mode 0644
+file     = ${PALMY_ROOT}/parity/web/public/fonts/Geist-600.ttf -> /usr/share/fonts/geist/Geist-600.ttf mode 0644
+file     = ${PALMY_ROOT}/parity/web/public/fonts/Geist-700.ttf -> /usr/share/fonts/geist/Geist-700.ttf mode 0644
+file     = ${PALMY_ROOT}/distro/apps/licenses/Geist-OFL.txt -> /usr/share/licenses/fonts/Geist-OFL.txt mode 0644
 file     = /usr/share/fonts/TTF/JetBrainsMonoNerdFont-Regular.ttf -> /usr/share/fonts/TTF/JetBrainsMonoNerdFont-Regular.ttf mode 0644
 file     = /usr/share/fonts/TTF/JetBrainsMonoNerdFont-Italic.ttf -> /usr/share/fonts/TTF/JetBrainsMonoNerdFont-Italic.ttf mode 0644
 file     = /usr/share/licenses/ttf-jetbrains-mono-nerd-basic/OFL.txt -> /usr/share/licenses/fonts/JetBrainsMono-OFL.txt mode 0644

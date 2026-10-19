@@ -119,7 +119,7 @@ reopen_console :: proc() {
 }
 
 set_hostname :: proc() {
-	name := "palmframe"
+	name := "palmy"
 	if text, ok := read_file("/etc/hostname", context.temp_allocator); ok {
 		t := strings.trim_space(text)
 		if t != "" {name = t}

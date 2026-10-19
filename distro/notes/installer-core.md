@@ -23,7 +23,7 @@ those names, types and signatures. Additions (all optional for a front end):
 
 | name | why |
 | --- | --- |
-| `default_plan() -> Plan` | language en_US, keyboard us, UTC, hostname palmframe, repo `file:///usr/share/palm/repo`, `efi_boot_entry` = `/sys/firmware/efi` exists |
+| `default_plan() -> Plan` | language en_US, keyboard us, UTC, hostname palmy, repo `file:///usr/share/palm/repo`, `efi_boot_entry` = `/sys/firmware/efi` exists |
 | `Options`, `default_options()` | target dir, `disk_image` test path, `steps` subset, palm binary, keys dir, limine dir, efivars dir, log path, `dry_run`, `on_log` callback (log lines, for the GUI's log view) |
 | `install_with(p, o, report, user)` | `install` is `install_with(p, default_options(), ...)` |
 | `validate_with(p, o, disks)` | validate against a given disk list / for a disk image |
@@ -60,7 +60,7 @@ Semantics a front end should know:
   disks with a mounted filesystem, disks it cannot find, and a swap file
   that would leave less than 4 GiB.
 - `Plan.root_password == ""` means the user's password. `packages` empty
-  means `{"palmframe"}`.
+  means `{"palmy"}`.
 
 ## Decisions the contract left open
 
@@ -69,7 +69,7 @@ Semantics a front end should know:
   the backup table (partition 2), and a BIOS boot partition (type
   21686148-6449-6E6F-744E-656564454649, partition 3) in the gap from the first
   usable LBA to 1 MiB (1007 KiB with 512-byte sectors, 1000 KiB with 4 KiB);
-  names "EFI system partition", "Palmframe", "BIOS boot partition"; disk and
+  names "EFI system partition", "Palmy", "BIOS boot partition"; disk and
   partition GUIDs from getrandom (v4). Partition 3 comes first on the disk so
   that 1 and 2 keep their numbers, which fdisk notes as "not in disk order"
   and `sfdisk --verify` accepts. 4 KiB logical sectors are honoured
@@ -88,7 +88,7 @@ Semantics a front end should know:
   `pmbr_boot`); none was at hand to test.
 - **Paths the bootloader step writes**, for whoever moves the kernel
   (`ESP_KERNEL` in `boot.odin` is the one constant): `EFI/BOOT/BOOTX64.EFI`,
-  `EFI/palmframe/BOOTX64.EFI`, `boot/limine/limine.conf`,
+  `EFI/palmy/BOOTX64.EFI`, `boot/limine/limine.conf`,
   `boot/limine/limine-bios.sys` and `vmlinuz`, all relative to the ESP,
   mounted at `/mnt/target/boot/efi`; `limine.conf` boots
   `boot():/vmlinuz`. fstab's ESP line is
@@ -108,16 +108,16 @@ Semantics a front end should know:
   fstab uses PARTUUID too (root `0 1`, ESP at /boot/efi `vfat
   rw,relatime,fmask=0077,dmask=0077 0 2`), which palm-init mounts at boot
   (distro/init/fstab.odin).
-- **ESP layout**: `EFI/BOOT/BOOTX64.EFI`, `EFI/palmframe/BOOTX64.EFI`,
+- **ESP layout**: `EFI/BOOT/BOOTX64.EFI`, `EFI/palmy/BOOTX64.EFI`,
   `boot/limine/limine.conf` (limine finds it from both binaries),
   `vmlinuz` (contract: "booting /vmlinuz"). Two entries: normal and
   `palm.single`. BOOTX64.EFI comes from the target's `/usr/share/limine`, else
   `Options.limine_dir` (default the live system's `/usr/share/limine`, which
   the `palm-install` package pulls in through `limine`).
-- **UEFI entry**: short-form `HD(1,GPT,<esp guid>,start,size)/\EFI\palmframe\BOOTX64.EFI`,
-  description "Palmframe", or "Palmframe (<host name>)" when the host name
+- **UEFI entry**: short-form `HD(1,GPT,<esp guid>,start,size)/\EFI\palmy\BOOTX64.EFI`,
+  description "Palmy", or "Palmy (<host name>)" when the host name
   is not the default. An existing entry is reused only when its description
-  starts with "Palmframe" *and* its hard-drive node names the new ESP (a
+  starts with "Palmy" *and* its hard-drive node names the new ESP (a
   rerun) or a partition of the table this installation erased (the
   partition step reads the old GPT first): a reinstall takes its entry
   back, and a second disk in the same machine gets its own entry instead of
@@ -135,7 +135,7 @@ Semantics a front end should know:
   16-char salt.
 - **`/etc/palm/repositories`** is rewritten only when the install came from an
   `http(s)://` repository; installing from the live medium's local
-  repository keeps palmframe-base's network repository (the local one does
+  repository keeps palmy-base's network repository (the local one does
   not exist on the new disk).
 - **`file://` repos**: palm takes a path, so `file://` is stripped.
 - **Package progress**: palm's `--json` is one document at the end, so the
@@ -156,17 +156,17 @@ Semantics a front end should know:
 
 ## Requests for other areas
 
-*Integration, 2026-10-13: /etc/skel (palmframe-base, with the demo home moved
-to a palmframe-demo package), the /etc symlink treatment in palm verify, and
+*Integration, 2026-10-13: /etc/skel (palmy-base, with the demo home moved
+to a palmy-demo package), the /etc symlink treatment in palm verify, and
 `make -C distro test-installer` are done; see notes/integrate.md. An install
 now verifies clean.*
 
-- **palmframe-base (integrate)**: ship the new user's skeleton as
+- **palmy-base (integrate)**: ship the new user's skeleton as
   `/etc/skel/...` instead of (or as well as) `/home/palm/...`. Today the
   installer deletes `/home/palm`, and `palm verify` on an installed system
   then reports 7 "missing" files under /home/palm (seen in QEMU, below).
   The core already prefers `/etc/skel` when it exists.
-- **palm**: `/etc/localtime` is a symlink in palmframe-base; `palm verify`
+- **palm**: `/etc/localtime` is a symlink in palmy-base; `palm verify`
   reports the installer's changed target as a problem
   (`points to ../usr/share/zoneinfo/Europe/Paris, not .../UTC`) instead of
   "modified (config)" as it does for regular /etc files. Symlinks under /etc
@@ -217,12 +217,12 @@ All on the build host as an ordinary user, or inside QEMU:
     `--dry-run` left vdb blank; the real install exited 0 in 1–3 s: GPT,
     BLKRRPART, `/dev/vdb1 /dev/vdb2` appeared, mkfs.fat, mkfs.ext4, mount,
     palm installed 33 packages, configure, limine, `UEFI: Boot000A
-    "Palmframe"`. Mounting vdb2/vdb1 showed the hostname, `LANG=fr_FR.UTF-8`,
+    "Palmy"`. Mounting vdb2/vdb1 showed the hostname, `LANG=fr_FR.UTF-8`,
     `layout = fr`, the localtime symlink, PARTUUID fstab, alex 1000:1000 in
     wheel/audio/video/input, home 0700 1000:1000, shadow root 0600, both
     limine copies, limine.conf and vmlinuz on the ESP.
   - machine 2 (**only** the qcow2, same OVMF vars): OVMF booted
-    `BootCurrent = 000A`, first in BootOrder, the "Palmframe" entry;
+    `BootCurrent = 000A`, first in BootOrder, the "Palmy" entry;
     `palmtest login:`; root logs in with the user's password; `/proc/cmdline`
     has `root=PARTUUID=...`; `id alex` uid 1000 with wheel/audio/video/input;
     `date +%Z` = CEST. The greeter came up in French with the Paris time,
@@ -287,7 +287,7 @@ here instead.
   typed on AZERTY would not match. The installer would either warn and
   show the passphrase as US keys, or put busybox's `loadkmap` and a binary
   keymap of the chosen layout into the initramfs (busybox `dumpkmap` can
-  produce one from a console keymap, which Palmframe does not ship).
+  produce one from a console keymap, which Palmy does not ship).
 - **The installer.** `Plan.encrypt` and `Plan.passphrase`; Format opens
   the container before mkfs and Unmount closes it; the GUI puts a checkbox
   and two passphrase fields on the disk page, says that a forgotten

@@ -12,5 +12,5 @@ icon     = scissors
 depend   = glibc fonts libxkbcommon ffmpeg pipewire
 provides = cmd:videoedit
 
-file     = ${PALMFRAME_OUT}/bin/videoedit -> /usr/bin/videoedit mode 0755
-file     = ${PALMFRAME_ROOT}/distro/apps/desktop/videoedit.desktop -> /usr/share/applications/videoedit.desktop mode 0644
+file     = ${PALMY_OUT}/bin/videoedit -> /usr/bin/videoedit mode 0755
+file     = ${PALMY_ROOT}/distro/apps/desktop/videoedit.desktop -> /usr/share/applications/videoedit.desktop mode 0644

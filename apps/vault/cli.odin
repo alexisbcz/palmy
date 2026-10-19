@@ -357,7 +357,7 @@ surface :: proc() -> ^kit.Surface {
 	if g_surface.noun == "" {
 		g_surface = kit.Surface {
 			noun     = "vault",
-			summary  = "a password manager: a local encrypted file, or end-to-end encrypted identity vaults synced through the Palmframe cloud",
+			summary  = "a password manager: a local encrypted file, or end-to-end encrypted identity vaults synced through the Palmy cloud",
 			gui      = true,
 			selftest = selftest,
 			notes    = SURFACE_NOTES,

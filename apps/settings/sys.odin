@@ -544,7 +544,7 @@ Updates :: struct {
 	available:  bool, // palm is installed
 	installed:  int,
 	upgradable: []string, // "name 0.1.0-r0 → 0.1.1-r0"
-	system_ver: string, // the palmframe package's version
+	system_ver: string, // the palmy package's version
 	palm_ver:   string,
 	checked:    i64, // unix seconds of the newest cached index, 0 unknown
 }
@@ -582,7 +582,7 @@ read_updates :: proc(allocator := context.allocator) -> Updates {
 		for line in strings.split_lines_iterator(&rest) {
 			if name, ver, _, lok := parse_palm_line(line); lok {
 				u.installed += 1
-				if name == "palmframe" {
+				if name == "palmy" {
 					u.system_ver = strings.clone(ver, allocator)
 				}
 			}
@@ -681,7 +681,7 @@ read_about :: proc(allocator := context.allocator) -> About {
 		a.os_name, a.os_version = strings.clone(n, allocator), strings.clone(v, allocator)
 	}
 	if a.os_name == "" {
-		a.os_name = "Palmframe"
+		a.os_name = "Palmy"
 	}
 	a.hostname = strings.clone(file_line("/proc/sys/kernel/hostname"), allocator)
 	a.kernel = strings.clone(file_line("/proc/sys/kernel/osrelease"), allocator)

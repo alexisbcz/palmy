@@ -234,7 +234,7 @@ rail :: proc(st: ^St, ui: ^p.Ctx) {
 		p.icon(ui, II_PACKAGE, "size-5 text-primary-foreground")
 		p.end(ui)
 		p.col(ui, "gap-0")
-		txt(ui, "Palmframe", "text-base font-semibold text-foreground")
+		txt(ui, "Palmy", "text-base font-semibold text-foreground")
 		txt(ui, tr("Installer"), "text-xs text-muted-foreground")
 		p.end(ui)
 	}
@@ -316,7 +316,7 @@ page_subtitle :: proc(pg: Page) -> string {
 	case .Timezone:
 		return tr("Choose the city nearest to you. The clock shows the time there.")
 	case .Disk:
-		return tr("Choose the disk to install Palmframe on.")
+		return tr("Choose the disk to install Palmy on.")
 	case .Account:
 		return tr("This account can administer the computer.")
 	case .Summary:
@@ -332,7 +332,7 @@ page_subtitle :: proc(pg: Page) -> string {
 page_heading :: proc(pg: Page) -> string {
 	switch pg {
 	case .Language:
-		return tr("Welcome to Palmframe")
+		return tr("Welcome to Palmy")
 	case .Keyboard:
 		return tr("Keyboard layout")
 	case .Timezone:
@@ -344,7 +344,7 @@ page_heading :: proc(pg: Page) -> string {
 	case .Summary:
 		return tr("Ready to install")
 	case .Install:
-		return tr("Installing Palmframe")
+		return tr("Installing Palmy")
 	case .Done:
 		return ""
 	}

@@ -1,5 +1,5 @@
 #!/bin/sh
-# publish.sh -- put the Palmframe repository on the public internet.
+# publish.sh -- put the Palmy repository on the public internet.
 #
 #   distro/repo-publish/publish.sh [--dry-run] [--no-vercel] [--no-github]
 #
@@ -8,7 +8,7 @@
 #
 #   1. Vercel (primary): a static deployment of
 #        x86_64/PALMINDEX  x86_64/PALMINDEX.sig  x86_64/*.palm
-#        palmframe-release.pub  index.html
+#        palmy-release.pub  index.html
 #      at https://$VERCEL_PROJECT.vercel.app, replaced atomically.
 #   2. GitHub Releases (mirror): the same files as assets of release
 #      $GITHUB_TAG in $GITHUB_REPO, so the mirror line is
@@ -16,11 +16,11 @@
 #
 # What is published is exactly the index, its signature, the public key and
 # the packages. The private key is read from outside every checkout
-# ($PALMFRAME_RELEASE_KEY, default ~/.config/palmframe/keys/
-# palmframe-release.sec) and this script refuses to run if it sits under the
+# ($PALMY_RELEASE_KEY, default ~/.config/palmy/keys/
+# palmy-release.sec) and this script refuses to run if it sits under the
 # repository or anywhere it would be uploaded. Before anything is uploaded,
 # the staged repository is installed from (`palm update`) in a scratch root
-# that trusts nothing but distro/recipes/palm/palmframe-release.pub, and
+# that trusts nothing but distro/recipes/palm/palmy-release.pub, and
 # after the upload the same is done against each public URL.
 #
 # Order matters for clients reading during an upload: packages go up before
@@ -40,16 +40,16 @@ ROOT=$(dirname "$DISTRO")
 OUT=$DISTRO/out
 PALM=${PALM:-$OUT/bin/palm}
 SRC=${SRC:-$OUT/repo/x86_64}
-KEY=${PALMFRAME_RELEASE_KEY:-$HOME/.config/palmframe/keys/palmframe-release.sec}
-PUB=$DISTRO/recipes/palm/palmframe-release.pub
+KEY=${PALMY_RELEASE_KEY:-$HOME/.config/palmy/keys/palmy-release.sec}
+PUB=$DISTRO/recipes/palm/palmy-release.pub
 # The staging directory is outside every checkout on purpose: `vercel link`
 # run inside a git repository connects the project to that repository, and
 # Vercel then deploys the repository itself on every push -- which would
 # replace the package repository with a build of the source tree.
-STAGE=${STAGE:-${XDG_CACHE_HOME:-$HOME/.cache}/palmframe/publish}
-VERCEL_PROJECT=${VERCEL_PROJECT:-palmframe-packages}
+STAGE=${STAGE:-${XDG_CACHE_HOME:-$HOME/.cache}/palmy/publish}
+VERCEL_PROJECT=${VERCEL_PROJECT:-palmy-packages}
 VERCEL_URL=${VERCEL_URL:-https://$VERCEL_PROJECT.vercel.app}
-GITHUB_REPO=${GITHUB_REPO:-alexisbcz/palmframe-packages}
+GITHUB_REPO=${GITHUB_REPO:-alexisbcz/palmy-packages}
 GITHUB_TAG=${GITHUB_TAG:-x86_64}
 # Vercel takes files up to 100 MB per file through the CLI on the Hobby
 # plan; GitHub release assets up to 2 GiB.
@@ -84,7 +84,7 @@ say() { echo "publish: $*"; }
 [ -x "$PALM" ] || die "$PALM is missing (make -C distro repo)"
 [ -f "$PUB" ] || die "$PUB is missing"
 ls "$SRC"/*.palm >/dev/null 2>&1 || die "no packages in $SRC (make -C distro repo)"
-[ -f "$KEY" ] || die "no release key at $KEY (PALMFRAME_RELEASE_KEY); \`palm keygen\` one outside the checkout and put its .pub in $PUB"
+[ -f "$KEY" ] || die "no release key at $KEY (PALMY_RELEASE_KEY); \`palm keygen\` one outside the checkout and put its .pub in $PUB"
 key_abs=$(cd "$(dirname "$KEY")" && pwd)/$(basename "$KEY")
 case "$STAGE" in
 "$ROOT" | "$ROOT"/*) die "STAGE ($STAGE) is inside the checkout; see the comment at STAGE" ;;
@@ -108,24 +108,24 @@ mkdir -p "$site"
 find "$site" -mindepth 1 -maxdepth 1 ! -name .vercel -exec rm -rf {} +
 mkdir -p "$site/x86_64"
 cp "$SRC"/*.palm "$site/x86_64/"
-# palmframe-base carries /etc/palm/keys/palmframe.pub, which a checkout's
+# palmy-base carries /etc/palm/keys/palmy.pub, which a checkout's
 # build fills with its own throwaway build key. The public copy must not
 # trust a key that only ever signed one developer's local repository, so it
 # is rebuilt here with the release key in that place.
 keys_tmp=$(mktemp -d)
-cp "$PUB" "$keys_tmp/palmframe.pub"
-rm -f "$site"/x86_64/palmframe-base-*.palm
-PALMFRAME_ROOT=$ROOT PALMFRAME_OUT=$OUT PALMFRAME_KEYS=$keys_tmp SOURCE_DATE_EPOCH=0 \
-	"$PALM" build "$DISTRO/recipes/palmframe-base" -o "$site/x86_64" >/dev/null
+cp "$PUB" "$keys_tmp/palmy.pub"
+rm -f "$site"/x86_64/palmy-base-*.palm
+PALMY_ROOT=$ROOT PALMY_OUT=$OUT PALMY_KEYS=$keys_tmp SOURCE_DATE_EPOCH=0 \
+	"$PALM" build "$DISTRO/recipes/palmy-base" -o "$site/x86_64" >/dev/null
 rm -rf "$keys_tmp"
 # Dated now, whatever the environment says: clients refuse an older index.
 env -u SOURCE_DATE_EPOCH "$PALM" index "$site/x86_64" --key "$key_abs"
-cp "$PUB" "$site/palmframe-release.pub"
+cp "$PUB" "$site/palmy-release.pub"
 
 # Nothing but what should be public.
 for f in $(find "$site" -type f ! -path '*/.vercel/*'); do
 	case "$f" in
-	*/x86_64/PALMINDEX | */x86_64/PALMINDEX.sig | */x86_64/*.palm | */palmframe-release.pub) ;;
+	*/x86_64/PALMINDEX | */x86_64/PALMINDEX.sig | */x86_64/*.palm | */palmy-release.pub) ;;
 	*) die "unexpected file staged: $f" ;;
 	esac
 	if grep -qF "$(cat "$key_abs")" "$f" 2>/dev/null; then
@@ -143,7 +143,7 @@ total=$(du -sh "$site/x86_64" | cut -f1)
 	cat <<EOF
 <!doctype html>
 <html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Palmframe packages</title>
+<title>Palmy packages</title>
 <style>
 :root{color-scheme:light dark;--fg:#1c1917;--muted:#78716c;--bg:#fafaf9;--line:#e7e5e4}
 @media (prefers-color-scheme:dark){:root{--fg:#f5f5f4;--muted:#a8a29e;--bg:#1c1917;--line:#44403c}}
@@ -156,9 +156,9 @@ td,th{text-align:left;padding:6px 8px;border-bottom:1px solid var(--line);vertic
 th{color:var(--muted);font-weight:500}td.n{white-space:nowrap}
 .wrap{overflow-x:auto}
 </style></head><body><main>
-<h1>Palmframe packages</h1>
+<h1>Palmy packages</h1>
 <p>The x86_64 repository for <code>palm</code>: $count packages ($total), index signed with
-<a href="palmframe-release.pub"><code>palmframe-release.pub</code></a>. On a Palmframe system:
+<a href="palmy-release.pub"><code>palmy-release.pub</code></a>. On a Palmy system:
 <code>palm update &amp;&amp; palm upgrade</code>.</p>
 <div class="wrap"><table><thead><tr><th>package</th><th>version</th><th>description</th></tr></thead><tbody>
 EOF
@@ -180,7 +180,7 @@ cat >"$site/vercel.json" <<'EOF'
     { "source": "/x86_64/PALMINDEX", "headers": [{ "key": "Content-Type", "value": "text/plain; charset=utf-8" }, { "key": "Cache-Control", "value": "public, max-age=0, must-revalidate" }] },
     { "source": "/x86_64/PALMINDEX.sig", "headers": [{ "key": "Content-Type", "value": "text/plain; charset=utf-8" }, { "key": "Cache-Control", "value": "public, max-age=0, must-revalidate" }] },
     { "source": "/x86_64/(.*)\\.palm", "headers": [{ "key": "Content-Type", "value": "application/octet-stream" }] },
-    { "source": "/palmframe-release.pub", "headers": [{ "key": "Content-Type", "value": "text/plain; charset=utf-8" }] }
+    { "source": "/palmy-release.pub", "headers": [{ "key": "Content-Type", "value": "text/plain; charset=utf-8" }] }
   ]
 }
 EOF
@@ -238,18 +238,18 @@ if [ $do_github = 1 ]; then
 	if ! gh repo view "$GITHUB_REPO" >/dev/null 2>&1; then
 		say "creating $GITHUB_REPO"
 		gh repo create "$GITHUB_REPO" --public --add-readme \
-			--description "Palmframe package repository mirror (signed PALMINDEX and .palm packages as release assets)" >/dev/null
+			--description "Palmy package repository mirror (signed PALMINDEX and .palm packages as release assets)" >/dev/null
 	fi
 	if ! gh release view "$GITHUB_TAG" --repo "$GITHUB_REPO" >/dev/null 2>&1; then
-		gh release create "$GITHUB_TAG" --repo "$GITHUB_REPO" --title "Palmframe x86_64 repository" \
-			--notes "The x86_64 package repository. palm reads it as https://github.com/$GITHUB_REPO/releases/download/$GITHUB_TAG; the index is signed with palmframe-release.pub." >/dev/null
+		gh release create "$GITHUB_TAG" --repo "$GITHUB_REPO" --title "Palmy x86_64 repository" \
+			--notes "The x86_64 package repository. palm reads it as https://github.com/$GITHUB_REPO/releases/download/$GITHUB_TAG; the index is signed with palmy-release.pub." >/dev/null
 	fi
 	old_assets=$(gh release view "$GITHUB_TAG" --repo "$GITHUB_REPO" --json assets --jq '.assets[].name')
 	say "uploading $count packages to $GITHUB_REPO release $GITHUB_TAG"
-	gh release upload "$GITHUB_TAG" --repo "$GITHUB_REPO" --clobber "$site"/x86_64/*.palm "$site/palmframe-release.pub"
+	gh release upload "$GITHUB_TAG" --repo "$GITHUB_REPO" --clobber "$site"/x86_64/*.palm "$site/palmy-release.pub"
 	gh release upload "$GITHUB_TAG" --repo "$GITHUB_REPO" --clobber "$site/x86_64/PALMINDEX.sig" "$site/x86_64/PALMINDEX"
 	for a in $old_assets; do
-		case "$a" in PALMINDEX | PALMINDEX.sig | palmframe-release.pub) continue ;; esac
+		case "$a" in PALMINDEX | PALMINDEX.sig | palmy-release.pub) continue ;; esac
 		[ -f "$site/x86_64/$a" ] || gh release delete-asset "$GITHUB_TAG" "$a" --repo "$GITHUB_REPO" --yes
 	done
 	check_repo "https://github.com/$GITHUB_REPO/releases/download/$GITHUB_TAG" "GitHub"

@@ -219,7 +219,7 @@ kind_index :: proc(kind: string) -> int {
 err_text :: proc(e: ck.Error) -> string {
 	switch e.kind {
 	case .Unavailable:
-		return tr("The Palmframe server is not reachable. Check the address, or continue without an account.")
+		return tr("The Palmy server is not reachable. Check the address, or continue without an account.")
 	case .Unauthorized:
 		if e.code == "invalid_credentials" {
 			return tr("That email and password do not match.")

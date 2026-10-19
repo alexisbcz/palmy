@@ -18,7 +18,7 @@
 // works when the process happens to have permission (a seat session with the
 // device ACL, or root) and fails cleanly when it does not.
 //
-// On Palmframe the direct open *is* the path: there is no logind, and a
+// On Palmy the direct open *is* the path: there is no logind, and a
 // session user is in `input`. It has run inside QEMU (apps/wm/qemu-test.sh)
 // against virtio-keyboard, virtio-tablet — which needed the Abs_Pointer kind,
 // because it advertises BTN_TOUCH and was being taken for a touchpad — and the

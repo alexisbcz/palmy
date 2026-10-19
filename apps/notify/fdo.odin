@@ -1,6 +1,6 @@
 // org.freedesktop.Notifications, version 1.2, on the session bus.
 //
-// This is the door every program not written for Palmframe already knows:
+// This is the door every program not written for Palmy already knows:
 // libnotify's notify-send, Firefox and Chromium (web notifications),
 // Thunderbird, anything GTK or Qt. The server is the kit's D-Bus client
 // (apps/kit/dbus) used the other way round: it owns a well-known name,
@@ -70,7 +70,7 @@ FDO_INTROSPECT :: `<!DOCTYPE node PUBLIC "-//freedesktop//DTD D-BUS Object Intro
 
 // session_bus_address is $DBUS_SESSION_BUS_ADDRESS, or the per-user bus at
 // $XDG_RUNTIME_DIR/bus that libdbus and GLib also fall back to -- which is
-// where /etc/palm/session.d/45-dbus-session puts it on Palmframe.
+// where /etc/palm/session.d/45-dbus-session puts it on Palmy.
 session_bus_address :: proc() -> string {
 	if a := os.get_env("DBUS_SESSION_BUS_ADDRESS", context.temp_allocator); a != "" {
 		return a
@@ -107,7 +107,7 @@ bus_try :: proc(d: ^Daemon) {
 	}
 	d.bus = c
 	// DO_NOT_QUEUE (4), and REPLACE_EXISTING (2) only when asked: on a
-	// desktop that already runs a notification server, Palmframe's does not
+	// desktop that already runs a notification server, Palmy's does not
 	// take the name from under it unless told to.
 	flags := u32(4)
 	if os.get_env("PALM_NOTIFY_REPLACE", context.temp_allocator) != "" {
@@ -266,7 +266,7 @@ fdo_call :: proc(d: ^Daemon, m: ^dbus.Dbus_Msg) {
 			bus_reply(d, m, "as", args[:])
 			return
 		case "GetServerInformation":
-			args := [4]dbus.Dbus_Value{dbus.dbus_s("Palmframe Notifications"), dbus.dbus_s("Palmframe"), dbus.dbus_s("0.1.0"), dbus.dbus_s("1.2")}
+			args := [4]dbus.Dbus_Value{dbus.dbus_s("Palmy Notifications"), dbus.dbus_s("Palmy"), dbus.dbus_s("0.1.0"), dbus.dbus_s("1.2")}
 			bus_reply(d, m, "ssss", args[:])
 			return
 		case "Notify":

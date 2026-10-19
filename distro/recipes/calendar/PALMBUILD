@@ -13,5 +13,5 @@ details  = Your events by day, week and month, stored locally.
 depend   = glibc fonts libxkbcommon
 provides = cmd:calendar
 
-file     = ${PALMFRAME_OUT}/bin/calendar -> /usr/bin/calendar mode 0755
-file     = ${PALMFRAME_ROOT}/distro/apps/desktop/calendar.desktop -> /usr/share/applications/calendar.desktop mode 0644
+file     = ${PALMY_OUT}/bin/calendar -> /usr/bin/calendar mode 0755
+file     = ${PALMY_ROOT}/distro/apps/desktop/calendar.desktop -> /usr/share/applications/calendar.desktop mode 0644

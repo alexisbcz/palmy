@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Run palmy applications inside a root filesystem shaped like Palmframe's,
+# Run palmy applications inside a root filesystem shaped like Palmy's,
 # against a compositor that offers only the mandatory Wayland globals, and
 # keep a screenshot of each.
 #
@@ -7,7 +7,7 @@
 # in fonts.list, the binaries under test, an empty $HOME with no ~/.config, no
 # LANG, no fontconfig, no D-Bus. It is entered with a rootless user namespace
 # and chroot, so nothing on the host is visible to the application -- a font,
-# a library or a helper binary the app reaches for and Palmframe does not ship
+# a library or a helper binary the app reaches for and Palmy does not ship
 # shows up here as a failure rather than as a silent dependency on the build
 # machine. The compositor is stubwl.py; see its header for what it leaves out.
 #

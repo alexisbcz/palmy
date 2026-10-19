@@ -1,4 +1,4 @@
-// Software — Palmframe's app store.
+// Software — Palmy's app store.
 //
 // Discover applications by category, search as you type, see what is
 // installed and what can be updated, and read a package's page: its

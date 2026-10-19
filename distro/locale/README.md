@@ -37,8 +37,8 @@ name      = Français
 english   = French
 plural    = n > 1
 
-msgid "Install Palmframe"
-msgstr "Installer Palmframe"
+msgid "Install Palmy"
+msgstr "Installer Palmy"
 
 msgid "%d package"
 msgid_plural "%d packages"
@@ -109,7 +109,7 @@ them.
 
 The language named to `i18n_init` / `i18n_set_language`, or else the
 environment: `LANGUAGE` (a `:`-separated list), then the first of `LC_ALL`,
-`LC_MESSAGES`, `LANG`. On Palmframe `LANG` comes from `/etc/locale.conf`, which
+`LC_MESSAGES`, `LANG`. On Palmy `LANG` comes from `/etc/locale.conf`, which
 the installer writes; palm-init passes it to services and palm-login to the
 login screen and to every session.
 

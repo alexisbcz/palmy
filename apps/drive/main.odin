@@ -1,4 +1,4 @@
-// Drive — one Palmframe account's files, one identity at a time.
+// Drive — one Palmy account's files, one identity at a time.
 //
 // The window is the cloud view of an identity's drive: browse, preview with
 // the system's own apps, share with another identity, trash and restore,

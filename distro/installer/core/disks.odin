@@ -15,7 +15,7 @@ package install_core
 // validate() refuses it. Two ways to recognise it:
 //
 //   * it holds the mounted root filesystem (running palm-install from an
-//     installed Palmframe, or from a live system that mounted its medium), or
+//     installed Palmy, or from a live system that mounted its medium), or
 //   * it carries an ISO 9660 volume descriptor ("CD001" at byte 32769):
 //     the hybrid live ISO written to a USB stick. This one reads the device,
 //     so it is only checked when running as root, i.e. on the live system,

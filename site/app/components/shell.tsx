@@ -23,7 +23,7 @@ function Mark() {
       >
         P
       </span>
-      <span className="text-sm font-semibold tracking-tight">Palmframe</span>
+      <span className="text-sm font-semibold tracking-tight">Palmy</span>
     </Link>
   );
 }
@@ -325,7 +325,7 @@ export function SiteFooter() {
     <footer className="mt-8 border-t">
       <div className="mx-auto flex max-w-[1600px] flex-col gap-2 px-4 py-8 text-xs text-muted-foreground lg:flex-row lg:items-center lg:justify-between lg:px-6">
         <p>
-          Palmframe and palmy. The toolkit is built and measured; the
+          Palmy and palmy. The toolkit is built and measured; the
           distribution boots in QEMU and has never run on real hardware; the
           vision pages are a plan, and say so.
         </p>

@@ -61,7 +61,7 @@ interactive :: proc(a: ^Args) -> int {
 		return fail_code(EXIT_REFUSED, "installing to a disk needs root")
 	}
 	fmt.println()
-	fmt.println("Palmframe installer")
+	fmt.println("Palmy installer")
 	fmt.println("Each question shows its default in [brackets]; Enter takes it.")
 	fmt.println("Ctrl+D stops here, and nothing is changed until the last question.")
 	fmt.println()
@@ -87,7 +87,7 @@ interactive :: proc(a: ^Args) -> int {
 			}
 		}
 		if len(usable) == 0 {
-			return fail_code(EXIT_NOT_FOUND, "no disk can take Palmframe (at least 4 GiB, writable, not the running system)")
+			return fail_code(EXIT_NOT_FOUND, "no disk can take Palmy (at least 4 GiB, writable, not the running system)")
 		}
 		def := "1"
 		for d, i in usable {
@@ -250,7 +250,7 @@ interactive :: proc(a: ^Args) -> int {
 		}
 
 		if strings.has_prefix(p.language, "ja") {
-			p.packages = {"palmframe", "fonts-cjk"}
+			p.packages = {"palmy", "fonts-cjk"}
 		}
 
 		fmt.println()

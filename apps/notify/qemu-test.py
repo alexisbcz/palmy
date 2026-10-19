@@ -2,7 +2,7 @@
 session bus, a toast on the real window manager, quiet then a digest, a call
 breaking through, and the sound.
 
-    python3 -I apps/notify/qemu-test.py [--image distro/out/palmframe.img]
+    python3 -I apps/notify/qemu-test.py [--image distro/out/palmy.img]
 
 The image must have the notify package installed (it is in the default set
 once distro/apps/default.list names it). It reuses distro/image/test-boot.py's
@@ -28,7 +28,7 @@ spec.loader.exec_module(tb)
 
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument("--image", default=os.path.join(DISTRO, "out", "palmframe.img"))
+    ap.add_argument("--image", default=os.path.join(DISTRO, "out", "palmy.img"))
     ap.add_argument("--shots", default=os.path.join(DISTRO, "out", "shots"))
     ap.add_argument("--work", default=os.path.join(DISTRO, "build", "notify-qemu"))
     args = ap.parse_args()
@@ -40,8 +40,8 @@ def main():
 
     m = tb.Machine(img, args.work)
     try:
-        m.check("palm-init starts", m.expect(r"palm-init: Palmframe is starting", 90) is not None)
-        if not m.check("getty on ttyS0", m.expect(r"palmframe login: ", 90) is not None):
+        m.check("palm-init starts", m.expect(r"palm-init: Palmy is starting", 90) is not None)
+        if not m.check("getty on ttyS0", m.expect(r"palmy login: ", 90) is not None):
             return m.failures
         m.send("root")
         m.expect(r"Password: ", 10)
@@ -84,13 +84,13 @@ def main():
                 '"bus": "org.freedesktop.Notifications"' in out, out)
         out, st = palm(f"dbus-send --bus=unix:path={rt}/bus --print-reply --dest=org.freedesktop.Notifications "
                        "/org/freedesktop/Notifications org.freedesktop.Notifications.GetServerInformation")
-        m.check("a freedesktop client on the image reaches it (GetServerInformation)", "Palmframe" in out, out)
+        m.check("a freedesktop client on the image reaches it (GetServerInformation)", "Palmy" in out, out)
 
         # --- a toast on the real window manager -----------------------------------
         # The identity registry Accounts writes: names and colours.
         reg = ('[{"handle":"camille","name":"Personal","color":"teal"},'
                '{"handle":"camille.roux","name":"Northwind","color":"blue"}]')
-        m.run("mkdir -p /home/palm/.config/palmframe; printf '%s' '" + reg + "' > /home/palm/.config/palmframe/identities.json; "
+        m.run("mkdir -p /home/palm/.config/palmy; printf '%s' '" + reg + "' > /home/palm/.config/palmy/identities.json; "
               "chown -R palm /home/palm/.config")
         palm("notify quiet set --identity camille.roux 'calls break through'")
         out, st = palm("PALM_IDENTITY=camille notify send --app chat --class person 'Priya Shah' "

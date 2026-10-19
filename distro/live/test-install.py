@@ -6,21 +6,21 @@
 What a person does, driven over QMP the way a person at the keyboard would,
 with a screendump at every step into distro/out/shots/install-NN-<step>.png:
 
-GUI, on distro/out/palmframe-live.iso under OVMF with a blank 8 GiB virtio disk
+GUI, on distro/out/palmy-live.iso under OVMF with a blank 8 GiB virtio disk
     language   العربية first (the right-to-left rendering), then Français:
                the UI turns French
     keyboard   French is followed: /etc/palm/keyboard says fr, and the physical
                keys q w e r t y type "azerty" in the test field
     time zone  Europe/Paris (French's default)
     disk       the lone 8 GiB disk, erase confirmed in the dialog
-    account    Ada Lovelace / ada / analytical / palmframe, typed on AZERTY (the
+    account    Ada Lovelace / ada / analytical / palmy, typed on AZERTY (the
                physical keys a French layout needs, so the layout is proven
                again by what the summary shows)
     install    progress to the Done page; Restart ends the machine
 then the installed disk alone, same OVMF variable store
-    OVMF loads the "Palmframe" Boot#### entry (its serial line, and BootCurrent
+    OVMF loads the "Palmy" Boot#### entry (its serial line, and BootCurrent
     read back through efivarfs from the serial console), limine boots,
-    the greeter is French with Paris time, Ada is listed, ada/palmframe logs
+    the greeter is French with Paris time, Ada is listed, ada/palmy logs
     in to the desktop, term types AZERTY, date is CET/CEST, the host name is
     analytical, palm verify is clean, palm list shows the installed set, df
     shows the root filling the disk
@@ -168,7 +168,7 @@ def efi_entries(m):
         return
     num = f"Boot{cur.group(2).upper()}{cur.group(1).upper()}"
     m.check(f"the firmware booted {num}, first in BootOrder", cur.groups() == order.groups(), out)
-    m.check(f"{num} is the \"Palmframe\" entry", re.search(rf"^{num} .*Palmframe", out, re.M) is not None, out)
+    m.check(f"{num} is the \"Palmy\" entry", re.search(rf"^{num} .*Palmy", out, re.M) is not None, out)
 
 
 def wait_session(m, user):
@@ -246,17 +246,17 @@ def gui():
         time.sleep(0.4)
         m.key("tab")  # user name (follows the full name: ada)
         time.sleep(0.2)
-        m.key("tab")  # computer name, prefilled "palmframe"
+        m.key("tab")  # computer name, prefilled "palmy"
         time.sleep(0.2)
         for _ in range(16):
             m.key("backspace")
         m.type_on("fr", "analytical")
         m.key("tab")
         time.sleep(0.2)
-        m.type_on("fr", "palmframe")
+        m.type_on("fr", "palmy")
         m.key("tab")
         time.sleep(0.2)
-        m.type_on("fr", "palmframe")
+        m.type_on("fr", "palmy")
         time.sleep(0.8)
         m.shot(8, "account")
         m.key("ret")
@@ -289,7 +289,7 @@ def gui():
         log, _ = m.run("cat /var/log/palm-install.log", 30)
         with open(os.path.join(WORK, "gui-palm-install.log"), "w") as f:
             f.write(log)
-        m.check("the install log names the UEFI entry", re.search(r"UEFI: Boot[0-9A-F]{4} \"Palmframe \(analytical\)\"", log) is not None, log[-1500:])
+        m.check("the install log names the UEFI entry", re.search(r"UEFI: Boot[0-9A-F]{4} \"Palmy \(analytical\)\"", log) is not None, log[-1500:])
         if not finished:
             return False
         m.key("ret")  # Restart now, focused
@@ -301,12 +301,12 @@ def gui():
     t = Machine("gui-target", ["--disk", disk])
     try:
         m = t.expect(r'BdsDxe: (?:loading|starting) (Boot[0-9A-F]{4}) "([^"]*)"', 60)
-        t.check("OVMF starts the \"Palmframe\" boot entry", m is not None and m.group(2) == "Palmframe (analytical)",
+        t.check("OVMF starts the \"Palmy\" boot entry", m is not None and m.group(2) == "Palmy (analytical)",
                 m.group(0) if m else t.buf[-800:])
-        ok = t.expect(r"palm-init: Palmframe is starting", 90) is not None
+        ok = t.expect(r"palm-init: Palmy is starting", 90) is not None
         t.check("limine boots the kernel, palm-init starts", ok, t.buf[-1500:])
         if not t.check("serial getty on host analytical; root's password is the user's",
-                       t.login("root", "palmframe", "analytical"), t.buf[-1500:]):
+                       t.login("root", "palmy", "analytical"), t.buf[-1500:]):
             return False
         efi_entries(t)
         out, _ = t.run("cat /etc/hostname; date; date +%Z; cat /etc/locale.conf /etc/palm/keyboard; readlink /etc/localtime; "
@@ -323,7 +323,7 @@ def gui():
         t.check("palm verify is clean (exit 0)", "verify-exit=0" in out, out)
         out, _ = t.run("palm list --installed 2>/dev/null | wc -l; palm list --installed 2>/dev/null | tr '\\n' ' '", 30)
         print("        palm list --installed: " + out.strip()[:900])
-        t.check("palm list shows the installed set (palmframe and its dependencies)", "palmframe" in out and "palmframe-demo" not in out, out)
+        t.check("palm list shows the installed set (palmy and its dependencies)", "palmy" in out and "palmy-demo" not in out, out)
         # The medium carries the firmware parts live/build.sh's LIVE_FIRMWARE
         # names, and install_core adds what the repository has.
         t.check("the medium's firmware parts are installed (linux-firmware-intel, wireless-regdb)",
@@ -347,12 +347,12 @@ def gui():
         out, _ = t.run("date +%H:%M; date -u +%H:%M")
         print(f"        local / UTC time now: {out.strip()}  (the greeter's clock must show the first)")
         t.check("the greeter runs", greeter)
-        t.type_on("fr", "palmframe")
+        t.type_on("fr", "palmy")
         t.key("ret")
         ok = wait_session(t, "ada")
         time.sleep(4)
         t.shot(16, "installed-desktop")
-        t.check("ada/palmframe logs in through the greeter: wm --drm runs as ada", ok,
+        t.check("ada/palmy logs in through the greeter: wm --drm runs as ada", ok,
                 t.run("ps -o user,args | grep -v '\\['; tail -20 /var/log/palm-login.log")[0])
         if ok:
             t.key("meta_l", "ret")  # SUPER+Return: term
@@ -416,7 +416,7 @@ def cli():
     t = Machine("cli-target", ["--disk", disk])
     try:
         mm = t.expect(r'BdsDxe: (?:loading|starting) (Boot[0-9A-F]{4}) "([^"]*)"', 60)
-        t.check("OVMF starts the \"Palmframe\" boot entry", mm is not None and mm.group(2) == "Palmframe (cli-test)",
+        t.check("OVMF starts the \"Palmy\" boot entry", mm is not None and mm.group(2) == "Palmy (cli-test)",
                 mm.group(0) if mm else t.buf[-800:])
         if not t.check("serial getty on host cli-test", t.login("root", "gracehopper", "cli-test"), t.buf[-1500:]):
             return False
@@ -459,8 +459,8 @@ def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--only", choices=("gui", "cli"))
     args = ap.parse_args()
-    if not os.path.exists(os.path.join(OUT, "palmframe-live.iso")):
-        sys.exit("test-install: distro/out/palmframe-live.iso is missing (make -C distro iso)")
+    if not os.path.exists(os.path.join(OUT, "palmy-live.iso")):
+        sys.exit("test-install: distro/out/palmy-live.iso is missing (make -C distro iso)")
     os.makedirs(WORK, exist_ok=True)
     os.makedirs(SHOTS, exist_ok=True)
     if args.only in (None, "gui"):

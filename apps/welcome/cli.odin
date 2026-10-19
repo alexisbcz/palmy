@@ -24,7 +24,7 @@ COMMANDS := []kit.Command {
 			{name = "marker", kind = .String, help = "the file that says it was finished"},
 			{name = "signed_in", kind = .Bool},
 			{name = "email", kind = .String, opt = true},
-			{name = "url", kind = .String, help = "the Palmframe server"},
+			{name = "url", kind = .String, help = "the Palmy server"},
 			{name = "theme", kind = .String},
 			{
 				name = "identities",
@@ -63,7 +63,7 @@ COMMANDS := []kit.Command {
 		effect = .Mutate,
 		flags = {
 			{name = "local", kind = .Bool, help = "use this computer only: no account"},
-			{name = "url", kind = .String, help = "the Palmframe server (default: $PALM_CLOUD_URL, cloudkit's config, the local stack)"},
+			{name = "url", kind = .String, help = "the Palmy server (default: $PALM_CLOUD_URL, cloudkit's config, the local stack)"},
 			{name = "email", kind = .String},
 			{name = "password-file", kind = .Path, help = "the account password"},
 			{name = "create", kind = .Bool, help = "create the account rather than sign in"},
@@ -144,7 +144,7 @@ surface :: proc() -> ^kit.Surface {
 	if g_surface.noun == "" {
 		g_surface = kit.Surface {
 			noun     = "welcome",
-			summary  = "Palmframe's first run: account, identities, what syncs",
+			summary  = "Palmy's first run: account, identities, what syncs",
 			gui      = true,
 			selftest = selftest,
 			notes    = SURFACE_NOTES,

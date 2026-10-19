@@ -32,7 +32,7 @@ N :: proc "contextless" (msgid: string) -> string {
 
 // tr and trf mark a right-to-left translation as such. palmy gives each
 // paragraph the direction of its first strong character, so an Arabic
-// sentence that starts with "GPT", "Palmframe" or a %s would otherwise be
+// sentence that starts with "GPT", "Palmy" or a %s would otherwise be
 // laid out left to right, its full stop and guillemets landing on the wrong
 // side. A RIGHT-TO-LEFT MARK in front fixes the paragraph's direction and
 // draws nothing.

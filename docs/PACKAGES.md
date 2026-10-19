@@ -1,6 +1,6 @@
 # Packages
 
-Palmframe does not need a new package manager. It needs a declarative layer
+Palmy does not need a new package manager. It needs a declarative layer
 over the one that already works.
 
 This is a design. None of it is built.
@@ -19,7 +19,7 @@ entries in step with the snapshot list. The machine can already be returned to
 how it was before a change.
 
 So the gap is not the mechanism. It is that **pacman's interface is for a
-person at a terminal**, and Palmframe's premise is a machine an agent can
+person at a terminal**, and Palmy's premise is a machine an agent can
 operate.
 
 ## What is actually missing

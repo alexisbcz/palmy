@@ -1,8 +1,8 @@
 [Desktop Entry]
 Type=Application
 Name=Accounts
-GenericName=Palmframe account
-Comment=Your Palmframe account and its identities
+GenericName=Palmy account
+Comment=Your Palmy account and its identities
 Exec=accounts
 Icon=circle-user
 Terminal=false

@@ -118,7 +118,7 @@ usage :: proc() {
   mailcore palm login --email E --password P [--auth-port N]
   mailcore palm sync  [--jmap-port N] [--submit-port N]
   mailcore palm status | logout
-                 a Palmframe account: sign in, then sync every identity the
+                 a Palmy account: sign in, then sync every identity the
                  session can reach into its own Maildir. See palm.odin.
 
 Every network command refuses any host outside 127.0.0.0/8, and this program
@@ -655,7 +655,7 @@ cmd_send :: proc(args: []string) -> int {
 		return 1
 	}
 	if na.user != "" {
-		// A Palmframe submission server takes the access token as the
+		// A Palmy submission server takes the access token as the
 		// password (--token / --token-file).
 		secret := na.token != "" ? na.token : na.password
 		if err := smtp_auth_plain(&s, na.user, secret); err != "" {

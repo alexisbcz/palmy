@@ -1,6 +1,6 @@
 package main
 
-// Verifying a Palmframe account token.
+// Verifying a Palmy account token.
 //
 // Two signing schemes are in use, and the gateway accepts both:
 //

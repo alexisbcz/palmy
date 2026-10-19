@@ -5,13 +5,13 @@
 pkgname  = accounts
 pkgver   = 0.1.0
 pkgrel   = 0
-pkgdesc  = Your Palmframe account and its identities
+pkgdesc  = Your Palmy account and its identities
 license  = MIT
 category = System
 icon     = circle-user
-details  = Sign in to Palmframe, see the identities your account holds, switch the current one and the sessions this machine keeps for each.
+details  = Sign in to Palmy, see the identities your account holds, switch the current one and the sessions this machine keeps for each.
 depend   = glibc fonts libxkbcommon
 provides = cmd:accounts
 
-file     = ${PALMFRAME_OUT}/bin/accounts -> /usr/bin/accounts mode 0755
-file     = ${PALMFRAME_ROOT}/distro/apps/desktop/accounts.desktop -> /usr/share/applications/accounts.desktop mode 0644
+file     = ${PALMY_OUT}/bin/accounts -> /usr/bin/accounts mode 0755
+file     = ${PALMY_ROOT}/distro/apps/desktop/accounts.desktop -> /usr/share/applications/accounts.desktop mode 0644

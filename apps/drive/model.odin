@@ -534,7 +534,7 @@ local_copy :: proc(st: ^State, r: ^Row) -> (path: string, ok: bool) {
 	return dest, true
 }
 
-// open_file hands the file to the Palmframe app for its kind: Docs, Sheets,
+// open_file hands the file to the Palmy app for its kind: Docs, Sheets,
 // Slides, Image, Video, Reader. Anything else goes to xdg-open.
 open_file :: proc(st: ^State, r: ^Row) {
 	path, ok := local_copy(st, r)

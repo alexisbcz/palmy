@@ -179,10 +179,10 @@ def login(args):
     print("login: the greeter on screen, a wrong password, the right one, the session")
     m = Machine(args, "login", "console=ttyS0 rdinit=/sbin/init panic=-1")
     try:
-        if not m.check("palm-init starts", m.expect(r"palm-init: Palmframe is starting", 30) is not None):
+        if not m.check("palm-init starts", m.expect(r"palm-init: Palmy is starting", 30) is not None):
             return m.failures
         m.check("palm-login service started", m.expect(r"palm-init: started palm-login", 30) is not None)
-        if not m.check("getty on ttyS0", m.expect(r"palmframe login: ", 40) is not None):
+        if not m.check("getty on ttyS0", m.expect(r"palmy login: ", 40) is not None):
             return m.failures
         m.send("root")
         m.expect(r"Password: ", 10)
@@ -236,7 +236,7 @@ def login(args):
 
         out = m.run("tr '\\0' '\\n' < /proc/$(pidof wm)/environ | sort")
         for k in ("HOME=/home/palm", "USER=palm", "LOGNAME=palm", "SHELL=", "PATH=", "XDG_RUNTIME_DIR=/run/user/1000",
-                  "XDG_SESSION_TYPE=wayland", "XDG_CURRENT_DESKTOP=palmframe"):
+                  "XDG_SESSION_TYPE=wayland", "XDG_CURRENT_DESKTOP=palmy"):
             m.check(f"session env has {k}", k in out, out)
         out = m.run("ls -ldn /run/user/1000; grep -E '^(Uid|Gid|Groups)' /proc/$(pidof wm)/status")
         m.check("/run/user/1000 is 0700 1000:1000", re.search(r"drwx------\s+\d+\s+1000\s+1000", out) is not None, out)

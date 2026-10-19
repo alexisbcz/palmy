@@ -1,4 +1,4 @@
-# Present only on the Palmframe live system (package palmframe-live).
+# Present only on the Palmy live system (package palmy-live).
 # install_core and the installer may test for this file; the repository the
 # live medium carries for offline installs is below.
 repo = /usr/share/palm/repo

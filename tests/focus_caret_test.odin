@@ -1,8 +1,8 @@
 // Keyboard focus and where it leaves the caret.
 //
 // Tabbing into a prefilled field and typing must append, not prepend. The
-// installer's "Computer name" field holds `palmframe`; tabbing into it and
-// typing `analytical` gave `analyticalpalmframe`, because a field that had
+// installer's "Computer name" field holds `palmy`; tabbing into it and
+// typing `analytical` gave `analyticalpalmy`, because a field that had
 // never been clicked kept its caret at 0.
 package palmy_tests
 
@@ -20,7 +20,7 @@ test_tab_into_a_prefilled_field_puts_the_caret_at_the_end :: proc(t: ^testing.T)
 	defer delete(first)
 	defer delete(second)
 	defer delete(notes)
-	append(&second, "palmframe")
+	append(&second, "palmy")
 	append(&notes, "line one")
 
 	draw :: proc(off: ^p.Offscreen, a, b, c: ^[dynamic]u8) {
@@ -43,7 +43,7 @@ test_tab_into_a_prefilled_field_puts_the_caret_at_the_end :: proc(t: ^testing.T)
 	draw(off, &first, &second, &notes)
 	p.type_text(off, "-01")
 	draw(off, &first, &second, &notes)
-	testing.expect_value(t, string(second[:]), "palmframe-01")
+	testing.expect_value(t, string(second[:]), "palmy-01")
 	testing.expect_value(t, string(first[:]), "")
 
 	// Tab again: the multi-line field, also at its end.

@@ -1,4 +1,4 @@
-// Bookmark sync through the Palmframe account (apps/cloudkit).
+// Bookmark sync through the Palmy account (apps/cloudkit).
 //
 // One round is push, then pull:
 //

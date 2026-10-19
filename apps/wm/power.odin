@@ -480,9 +480,9 @@ power_draw :: proc(s: ^Server, app: ^p.App, cv: ^p.Canvas) {
 		case "logout":
 			append(&body, fmt.tprintf("You will be logged out in %d second%s.", secs, secs == 1 ? "" : "s"))
 		case "reboot":
-			append(&body, fmt.tprintf("Palmframe will restart in %d second%s.", secs, secs == 1 ? "" : "s"))
+			append(&body, fmt.tprintf("Palmy will restart in %d second%s.", secs, secs == 1 ? "" : "s"))
 		case:
-			append(&body, fmt.tprintf("Palmframe will shut down in %d second%s.", secs, secs == 1 ? "" : "s"))
+			append(&body, fmt.tprintf("Palmy will shut down in %d second%s.", secs, secs == 1 ? "" : "s"))
 		}
 		append(&body, "Open apps are asked to close first, so they can save your work.")
 	case .Password:

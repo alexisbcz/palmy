@@ -392,7 +392,7 @@ sources_checks :: proc(home: string) {
 		browser = fmt.aprintf("%s/browser", home),
 		track   = fmt.aprintf("%s/track", home),
 	}
-	write(fmt.tprintf("%s/palmframe.conf", p.mail), "[identity]\nid = 1\nhandle = camille\nname = Personal\nkind = personal\ncolor = teal\naddress = camille@palm.test\npath = camille@palm.test\n\n[identity]\nid = 2\nhandle = northwind\nname = Northwind\nkind = work\ncolor = blue\naddress = camille@northwind.coop\npath = camille@northwind.coop\n")
+	write(fmt.tprintf("%s/palmy.conf", p.mail), "[identity]\nid = 1\nhandle = camille\nname = Personal\nkind = personal\ncolor = teal\naddress = camille@palm.test\npath = camille@palm.test\n\n[identity]\nid = 2\nhandle = northwind\nname = Northwind\nkind = work\ncolor = blue\naddress = camille@northwind.coop\npath = camille@northwind.coop\n")
 	mb := fmt.tprintf("%s/camille@palm.test", p.mail)
 	// Fixed recent dates so "waiting" (14 days) holds whenever this runs.
 	now := time.to_unix_seconds(time.now())
@@ -422,7 +422,7 @@ sources_checks :: proc(home: string) {
 	d: feed.Daemon
 	err := feed.daemon_init(&d, p)
 	check(err == "", "the daemon starts on a scratch home (%s)", err)
-	check(len(d.ids) == 2, "two identities from palmframe.conf; the local notebook is not one (%d)", len(d.ids))
+	check(len(d.ids) == 2, "two identities from palmy.conf; the local notebook is not one (%d)", len(d.ids))
 	d.once = true
 	d.battery_at = feed.now_ms()
 	feed.daemon_run(&d)

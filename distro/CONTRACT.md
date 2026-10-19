@@ -1,4 +1,4 @@
-# Palmframe distribution — the contract
+# Palmy distribution — the contract
 
 Every piece of the distribution is built by a different hand. This file is the
 set of interfaces they agree on. Change it only by saying so in
@@ -119,7 +119,7 @@ for the greeter session.
 3. When the greeter session exits, palm-login starts `cmd` (default `["wm",
    "--drm"]`) as that user: `setgid`, `initgroups`, `setuid`, in `$HOME`, with
    `HOME USER LOGNAME SHELL PATH XDG_RUNTIME_DIR XDG_SESSION_TYPE=wayland
-   XDG_CURRENT_DESKTOP=palmframe` set.
+   XDG_CURRENT_DESKTOP=palmy` set.
 4. When the user session exits, back to 1.
 
 `palm.autologin=<user>` on the kernel command line skips 1–2.
@@ -149,7 +149,7 @@ The policy and its reasons are in `distro/notes/login.md`.
 
 - `--drm`: the bare-metal backend — KMS on `/dev/dri/card0` (dumb buffers,
   page flip), evdev input from `/dev/input/event*`, its own XKB keymap. When
-  logind is not running (Palmframe has none) it opens the devices directly; it
+  logind is not running (Palmy has none) it opens the devices directly; it
   needs only membership of `video` and `input`. Selected automatically when
   neither `WAYLAND_DISPLAY` nor `DISPLAY` is set and `/dev/dri/card0` exists.
 - `--exec <cmd>`: spawn that client once the Wayland socket is listening, with
@@ -209,7 +209,7 @@ Everything is under `distro/out/` (git-ignored); sources downloaded into
 | `distro/out/busybox` | `distro/busybox/build.sh` |
 | `distro/out/bin/<name>` | Odin binaries |
 | `distro/out/repo/x86_64/*.palm`, `PALMINDEX`, `PALMINDEX.sig` | `distro/recipes` |
-| `distro/out/palmframe.img` | the bootable disk: GPT, ESP with limine, ext4 root |
+| `distro/out/palmy.img` | the bootable disk: GPT, ESP with limine, ext4 root |
 
 Odin binaries are built with
 `odin build <dir> -o:speed -collection:palmy=palmy -collection:kit=apps/kit -collection:shadcn=shadcn`

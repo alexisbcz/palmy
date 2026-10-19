@@ -54,7 +54,7 @@ Plan :: struct {
 	password:       string,
 	root_password:  string, // empty = same as the user's
 	repo:           string, // empty = the core's default (the live medium's repository)
-	packages:       []string, // nil = the core's default ({"palmframe"})
+	packages:       []string, // nil = the core's default ({"palmy"})
 	efi_boot_entry: bool,
 	swap_bytes:     u64, // a swap file of this size on the new root; 0 = none
 }
@@ -105,7 +105,7 @@ disk_usable :: proc(d: Disk) -> (ok: bool, why: string) {
 		return false, N("This disk is read-only")
 	}
 	if d.size_bytes < MIN_DISK {
-		return false, N("Too small: Palmframe needs at least 4 GiB")
+		return false, N("Too small: Palmy needs at least 4 GiB")
 	}
 	return true, ""
 }

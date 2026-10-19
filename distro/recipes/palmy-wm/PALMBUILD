@@ -1,5 +1,5 @@
 # The window manager (apps/wm): a Wayland compositor that drives KMS and
-# evdev directly on Palmframe (`wm --drm`, no logind), and the nested
+# evdev directly on Palmy (`wm --drm`, no logind), and the nested
 # compositor it always was elsewhere.
 pkgname  = palmy-wm
 pkgver   = 0.1.0
@@ -12,4 +12,4 @@ details  = A tiling and floating Wayland compositor that drives the display and 
 depend   = glibc fonts
 provides = cmd:wm
 
-file     = ${PALMFRAME_OUT}/bin/wm -> /usr/bin/wm mode 0755
+file     = ${PALMY_OUT}/bin/wm -> /usr/bin/wm mode 0755

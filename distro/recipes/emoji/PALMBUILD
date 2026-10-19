@@ -13,5 +13,5 @@ details  = Browse and search every emoji by name. Pair it with fonts-emoji for c
 depend   = glibc fonts libxkbcommon wl-clipboard
 provides = cmd:emoji
 
-file     = ${PALMFRAME_OUT}/bin/emoji -> /usr/bin/emoji mode 0755
-file     = ${PALMFRAME_ROOT}/distro/apps/desktop/emoji.desktop -> /usr/share/applications/emoji.desktop mode 0644
+file     = ${PALMY_OUT}/bin/emoji -> /usr/bin/emoji mode 0755
+file     = ${PALMY_ROOT}/distro/apps/desktop/emoji.desktop -> /usr/share/applications/emoji.desktop mode 0644

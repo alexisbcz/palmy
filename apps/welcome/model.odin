@@ -425,7 +425,7 @@ read_sync_conf :: proc(allocator := context.temp_allocator) -> (sc: Sync_Conf, o
 RESERVED := [?]string {
 	"abuse", "admin", "administrator", "hostmaster", "info", "mailer-daemon",
 	"noc", "no-reply", "noreply", "postmaster", "root", "security", "support",
-	"webmaster", "www", "palm", "palmframe", "system", "help", "billing",
+	"webmaster", "www", "palm", "palmy", "system", "help", "billing",
 }
 
 // handle_problem is "" for a handle the server will take (unless someone

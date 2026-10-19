@@ -13,5 +13,5 @@ details  = Open PNG, JPEG and other images, zoom, and step through the rest of t
 depend   = glibc fonts libxkbcommon
 provides = cmd:image
 
-file     = ${PALMFRAME_OUT}/bin/image -> /usr/bin/image mode 0755
-file     = ${PALMFRAME_ROOT}/distro/apps/desktop/image.desktop -> /usr/share/applications/image.desktop mode 0644
+file     = ${PALMY_OUT}/bin/image -> /usr/bin/image mode 0755
+file     = ${PALMY_ROOT}/distro/apps/desktop/image.desktop -> /usr/share/applications/image.desktop mode 0644

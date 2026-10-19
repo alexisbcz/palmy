@@ -1,4 +1,4 @@
-# Integration — from the pieces to a bootable Palmframe
+# Integration — from the pieces to a bootable Palmy
 
 Owner: distro/recipes/, distro/image/, distro/Makefile, distro/run-qemu.sh,
 this file (and the one `distro` target in the root Makefile).
@@ -8,7 +8,7 @@ this file (and the one `distro` target in the root Makefile).
 ```
 make distro                      # = make -C distro: kernel/busybox if missing,
                                  #   Odin binaries, recipes, packages, signed
-                                 #   repository, distro/out/palmframe.img
+                                 #   repository, distro/out/palmy.img
 make -C distro run               # boot it in a QEMU window (UEFI)
 distro/run-qemu.sh --serial      # same, with the serial getty on this terminal
 make -C distro serve             # repository on :8080 for the guest's palm update
@@ -26,13 +26,13 @@ logs out (back to the greeter).
 2. Odin binaries into `distro/out/bin/`: palm, palm-init (static), palm-login,
    wm, and every application a recipe names (via `distro/apps/build.sh`).
    Rebuilt when their sources (or palmy/kit/shadcn) change.
-3. `distro/build/keys/palmframe.{sec,pub}`: `palm keygen`, once per checkout.
+3. `distro/build/keys/palmy.{sec,pub}`: `palm keygen`, once per checkout.
 4. `distro/recipes/generate.sh` rewrites the recipes whose contents live
    elsewhere (see below), then `palm build` every recipe into
    `distro/out/repo/x86_64/`, then `palm index --key` signs it.
 5. `distro/image/build.sh`: under one fakeroot session,
    `palm --root distro/out/rootfs --initdb --repo distro/out/repo/x86_64
-   --keys-dir distro/build/keys add palmframe`, then `mkfs.ext4 -d`. Then a
+   --keys-dir distro/build/keys add palmy`, then `mkfs.ext4 -d`. Then a
    GPT image: partition 1 a 128 MiB FAT ESP (limine BOOTX64.EFI,
    limine-bios.sys, `/boot/limine/limine.conf`, a copy of `/boot/vmlinuz`),
    partition 2 the ext4 root (`root=/dev/vda2`), partition 3 a 1 MiB BIOS
@@ -42,11 +42,11 @@ logs out (back to the greeter).
 The whole package + image step takes ~5 s; the image is 1.2 GB sparse
 (84 MB on disk).
 
-## Packages (36 in the repository, 31 installed by `palmframe`)
+## Packages (36 in the repository, 31 installed by `palmy`)
 
 | package | from | notes |
 | --- | --- | --- |
-| palmframe-base | generated from distro/base/root + distro/base/layout | merged-/usr symlinks, /etc, users, services, XDG dirs in /home/palm, the repository's public key in /etc/palm/keys |
+| palmy-base | generated from distro/base/root + distro/base/layout | merged-/usr symlinks, /etc, users, services, XDG dirs in /home/palm, the repository's public key in /etc/palm/keys |
 | linux | hand-written | /boot/vmlinuz, /boot/config |
 | busybox | generated from `busybox --list` | binary + one symlink per applet, minus `chat` (clashes with the chat app) |
 | glibc | generated, host files | libc.so.6, libm.so.6, ld-linux-x86-64.so.2 — the complete `ldd` set (`make check-libs`) |
@@ -58,9 +58,9 @@ The whole package + image step takes ~5 s; the image is 1.2 GB sparse
 | term launcher files editor notes calc sysmon image docs sheets slides calendar reader photoshop maps money torrent | generated from distro/apps/default.list | binary + .desktop |
 | prose | generated | docs depends on it (runs it as a subprocess) |
 | shop track pickdemo emoji | generated (EXTRA_APPS) | in the repository, not installed: what `palm add` has to choose from |
-| palmframe | generated | the meta-package |
+| palmy | generated | the meta-package |
 
-Every package depends (directly or through glibc) on palmframe-base, so palm
+Every package depends (directly or through glibc) on palmy-base, so palm
 installs it first and later owners resolve by name against its /etc/passwd.
 
 ## Verified (all inside QEMU, headless; screenshots in distro/out/shots/)
@@ -79,7 +79,7 @@ installs it first and later owners resolve by name against its /etc/passwd.
 - Serial root shell: `palm list --installed` = 31 packages; `palm verify`
   exit 0 (only `/etc/resolv.conf: modified (config)`, written by udhcpc);
   `palm update` from http://10.0.2.2:8080/x86_64 ("36 packages, signed by
-  palmframe.pub"); `palm add --yes shop` downloads and installs it;
+  palmy.pub"); `palm add --yes shop` downloads and installs it;
   verify still clean.
 - `poweroff` → "palm-init: powering off", QEMU exits.
 - Also booted: `run-qemu.sh --bios` (SeaBIOS → limine BIOS stages) and
@@ -117,7 +117,7 @@ installs it first and later owners resolve by name against its /etc/passwd.
 
 ```
 make -C distro                   # from scratch (kernel/busybox kept): 46 packages, image
-make -C distro iso               # distro/out/palmframe-live.iso
+make -C distro iso               # distro/out/palmy-live.iso
 make -C distro test-installer    # palm-install --selftest + installer --selftest (no disks)
 make -C distro test-install      # iso, then distro/live/test-install.py (QEMU only)
 python3 -I distro/live/test-install.py [--only gui|cli]
@@ -130,24 +130,24 @@ disks and serial transcripts in `distro/build/integrate/qemu/`:
 - **GUI** — live ISO under OVMF + blank 8 GiB virtio disk: Arabic (RTL shot),
   Français (UI French), keyboard fr followed live (physical `q w e r t y`
   types `azerty` in the test field), Europe/Paris, `/dev/vda` erase
-  confirmed, Ada Lovelace / ada / analytical / palmframe typed on AZERTY,
+  confirmed, Ada Lovelace / ada / analytical / palmy typed on AZERTY,
   install (≈4 s from the in-RAM repository), Done, Restart. Then the disk
   alone with the same OVMF variable store: OVMF prints
-  `BdsDxe: starting Boot0009 "Palmframe" from HD(1,GPT,...)/\EFI\palmframe\BOOTX64.EFI`,
+  `BdsDxe: starting Boot0009 "Palmy" from HD(1,GPT,...)/\EFI\palmy\BOOTX64.EFI`,
   BootCurrent = 0009 = first in BootOrder, limine, palm-init; the serial
   getty says `analytical login:` and root takes the user's password;
   `date` CEST, LANG fr_FR, layout fr, localtime -> Europe/Paris; ada uid
   1000 in wheel/audio/video/input; `palm verify` exit 0 (only soft config
-  lines); `palm list --installed` 33 packages, no palmframe-demo;
+  lines); `palm list --installed` 33 packages, no palmy-demo;
   `/dev/root` 7.3G (vda2 = 15724544 of 16777216 sectors); /home holds only
   `ada`; the greeter French with the Paris clock and "Ada Lovelace · ada";
-  `palmframe` typed on AZERTY logs ada in to `wm --drm`; in term physical
+  `palmy` typed on AZERTY logs ada in to `wm --drm`; in term physical
   `q w e r t y` gives `azerty`, `date` says CEST, `hostname` analytical.
 - **CLI** — a second live boot with two blank disks, from the serial root
   shell (busybox sh has no `<(...)`, so the password comes on stdin):
   `echo gracehopper | palm-install --disk /dev/vdb --language de_DE --keyboard de --timezone America/New_York --hostname cli-test --user grace --full-name 'Grace Hopper' --password-file - --yes`
   exits 0 in ~1 s. vdb booted alone (the live machine's OVMF vars copied
-  beside it): the Palmframe entry starts, `cli-test login:`, LANG de_DE,
+  beside it): the Palmy entry starts, `cli-test login:`, LANG de_DE,
   layout de, EDT, verify clean, the greeter in German with New York time,
   grace logs in, term types `qwertz` for physical `q w e r t y`.
 
@@ -155,16 +155,16 @@ Last full run: **all passed** (`distro/build/integrate/full-run.log`).
 
 ### Changes made for it
 
-- **/etc/skel and palmframe-demo** (requests in notes/installer-core.md):
-  palmframe-base no longer owns `/home/palm`; it ships `/etc/skel` (.profile
-  and the XDG dirs). A new hand-written package `palmframe-demo` makes
+- **/etc/skel and palmy-demo** (requests in notes/installer-core.md):
+  palmy-base no longer owns `/home/palm`; it ships `/etc/skel` (.profile
+  and the XDG dirs). A new hand-written package `palmy-demo` makes
   `/home/palm` from the same skeleton; `distro/image/build.sh` installs
-  `palmframe palmframe-demo`, the installer only `palmframe` (so `palm verify`
+  `palmy palmy-demo`, the installer only `palmy` (so `palm verify`
   on an installed disk is clean). `distro/base/apply-layout.sh` still creates
   /home/palm for the init/login boot tests.
 - **palm**: retargeted symlinks under /etc are configuration (notes/palm.md).
 - **palm-init**: `/etc/palm/services.off/<name>` masks a service
-  (notes/init.md); palmframe-live masks palm-login and getty-ttyS0 instead of
+  (notes/init.md); palmy-live masks palm-login and getty-ttyS0 instead of
   `distro/live/build.sh` deleting them. On the live system `palm verify` now
   reports only `/boot/vmlinuz: missing`, which build.sh leaves out of the
   initramfs on purpose (the kernel is on the ISO beside it);
@@ -177,8 +177,8 @@ Last full run: **all passed** (`distro/build/integrate/full-run.log`).
 ### Seen, not fixed (other owners)
 
 - **palmy**: a text field reached with Tab keeps its caret at 0, so tabbing
-  into the prefilled "Computer name" (`palmframe`) and typing gives
-  `analyticalpalmframe`. The first GUI run did exactly that; the test now
+  into the prefilled "Computer name" (`palmy`) and typing gives
+  `analyticalpalmy`. The first GUI run did exactly that; the test now
   presses End first. A person would hit it: palmy should put the caret at the
   end (or select all) when a field gains focus from the keyboard.
 - **installer/core**: the progress line under the step name is the core's

@@ -1,4 +1,4 @@
--- The identity contract. Every Palmframe cloud table is scoped to an identity,
+-- The identity contract. Every Palmy cloud table is scoped to an identity,
 -- and every policy goes through can_access_identity(). See cloud/CONTRACT.md.
 -- Later migrations may add columns and functions; they must not change what
 -- can_access_identity() means.

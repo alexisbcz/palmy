@@ -3,13 +3,13 @@ package main
 // JMAP: RFC 8620 (core) and the RFC 8621 mail subset, over the identity
 // schema.
 //
-// THE MAPPING. A JMAP *account* is a Palmframe *identity*. The session object
+// THE MAPPING. A JMAP *account* is a Palmy *identity*. The session object
 // lists, as accounts, exactly the identities the bearer token can reach — all
 // of a person's identities for an unscoped token, one for a token scoped with
 // `palm_identity` — because the list comes from `mail_identities()`, which
 // reads through RLS. `primaryAccounts` names the scoped identity, or else the
 // person's first personal identity. Each account has one JMAP Identity (RFC
-// 8621 6), the identity's own address; JMAP's word and Palmframe's coincide.
+// 8621 6), the identity's own address; JMAP's word and Palmy's coincide.
 //
 // Every method runs its queries through PostgREST with the caller's token, so
 // a request naming an accountId the token cannot reach finds nothing even
@@ -36,7 +36,7 @@ import "core:strings"
 JMAP_API_PATH :: "/jmap/api"
 JMAP_DOWNLOAD_PREFIX :: "/jmap/download/"
 JMAP_UPLOAD_PREFIX :: "/jmap/upload/"
-PALM_CAP :: "urn:palmframe:params:jmap:identity"
+PALM_CAP :: "urn:palmy:params:jmap:identity"
 MAX_OBJECTS :: 500
 
 Identity :: struct {
@@ -136,7 +136,7 @@ jmapd_auth :: proc(c: ^SConn, req: ^Http_Req) -> (x: Jctx, ok: bool) {
 
 jmapd_unauthorized :: proc(c: ^SConn, why: string) {
 	body := fmt.tprintf(`{{"type":"about:blank","status":401,"detail":%s}}`, jq(why))
-	httpd_respond(c, 401, "Unauthorized", "application/problem+json", transmute([]u8)body, false, "WWW-Authenticate: Bearer realm=\"palmframe\"\r\n")
+	httpd_respond(c, 401, "Unauthorized", "application/problem+json", transmute([]u8)body, false, "WWW-Authenticate: Bearer realm=\"palmy\"\r\n")
 }
 
 jmapd_route :: proc(c: ^SConn, req: ^Http_Req) {
@@ -190,7 +190,7 @@ jmapd_route :: proc(c: ^SConn, req: ^Http_Req) {
 		httpd_respond(c, status, status == 201 ? "Created" : "Error", "application/json", transmute([]u8)body)
 
 	case req.path == "/":
-		httpd_respond(c, 200, "OK", "text/plain; charset=utf-8", transmute([]u8)string("Palmframe mail. JMAP session discovery is at /.well-known/jmap\n"))
+		httpd_respond(c, 200, "OK", "text/plain; charset=utf-8", transmute([]u8)string("Palmy mail. JMAP session discovery is at /.well-known/jmap\n"))
 
 	case:
 		httpd_error(c, 404, "Not Found", fmt.tprintf("no handler for %s %s", req.method, req.path))

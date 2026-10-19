@@ -6,7 +6,7 @@ package install_core
 // pwrite on the opened device (O_EXCL, so a disk with a mounted filesystem
 // refuses to open), BLKRRPART asks the kernel to read the new table back,
 // and devtmpfs makes the partition nodes, which we wait for. Mounting is
-// mount(2) — there is no util-linux on Palmframe and busybox's mount would
+// mount(2) — there is no util-linux on Palmy and busybox's mount would
 // only add a process.
 //
 // With Options.disk_image the disk is a file on the build host. The same GPT
@@ -54,7 +54,7 @@ step_partition :: proc(c: ^Ctx) -> string {
 	}
 	logf(c, "%s: %d bytes, %d-byte sectors", c.p.disk, size, ss)
 
-	g, ok := gpt_layout_palmframe(size, ss, context.temp_allocator)
+	g, ok := gpt_layout_palmy(size, ss, context.temp_allocator)
 	if !ok {
 		linux.close(fd)
 		return "cannot lay out partitions on this disk"

@@ -1,14 +1,14 @@
 #!/usr/bin/env bash
-# Build the Palmframe kernel and its modules: Linux LTS, x86_64_defconfig +
+# Build the Palmy kernel and its modules: Linux LTS, x86_64_defconfig +
 # kvm_guest.config, then every driver family in modular.list as modules, then
-# palmframe.config over all of it (distro/notes/kernel.md says why).
+# palmy.config over all of it (distro/notes/kernel.md says why).
 #
 #	distro/kernel/build.sh           JOBS=8 distro/kernel/build.sh
 #
 # Output, all in distro/out:
 #	bzImage          the kernel
 #	kernel.config    its .config
-#	kernel.release   `make kernelrelease`, e.g. 6.18.56-palmframe
+#	kernel.release   `make kernelrelease`, e.g. 6.18.56-palmy
 #	modules/<rel>/   the modules (stripped, zstd) and depmod's indexes,
 #	                 which the linux package installs as /usr/lib/modules/<rel>
 set -euo pipefail
@@ -44,10 +44,10 @@ done | LC_ALL=C sort -u >"$modular"
 
 make -s x86_64_defconfig
 make -s kvm_guest.config
-scripts/kconfig/merge_config.sh -m .config "$modular" "$HERE/palmframe.config" >/dev/null
+scripts/kconfig/merge_config.sh -m .config "$modular" "$HERE/palmy.config" >/dev/null
 make -s olddefconfig
 
-# Every line of palmframe.config must have survived: a dependency that is
+# Every line of palmy.config must have survived: a dependency that is
 # not met makes Kconfig drop an option silently, which on real hardware
 # means a missing driver nobody notices until the machine has no disk.
 bad=0
@@ -59,10 +59,10 @@ while IFS= read -r line; do
 	esac
 	got="$(grep -E "^$sym=|^# $sym is not set" .config || true)"
 	if [ "$line" != "$got" ] && ! { [ "${line#*=}" = n ] && [ "$got" = "# $sym is not set" -o -z "$got" ]; }; then
-		echo "kernel: palmframe.config wants $line, got ${got:-nothing}" >&2
+		echo "kernel: palmy.config wants $line, got ${got:-nothing}" >&2
 		bad=1
 	fi
-done <"$HERE/palmframe.config"
+done <"$HERE/palmy.config"
 [ "$bad" = 0 ] || exit 1
 [ "${1:-}" = --config ] && { echo "kernel: $SRC/.config"; exit 0; }
 

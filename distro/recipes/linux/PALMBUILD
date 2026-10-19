@@ -14,19 +14,19 @@
 pkgname  = linux
 pkgver   = 6.18.56
 pkgrel   = 1
-pkgdesc  = The Linux kernel and its modules, Palmframe configuration
+pkgdesc  = The Linux kernel and its modules, Palmy configuration
 license  = GPL-2.0-only
 url      = https://kernel.org
 category = System
 icon     = server
-details  = Linux 6.18 LTS, configured for Palmframe on real hardware and in QEMU: storage, ext4, vfat and the firmware framebuffer are built in, so the system boots with no initramfs; graphics (amdgpu, i915, xe, nouveau), Wi-Fi, Ethernet, sound and laptop drivers are modules, loaded at boot for the devices the machine has.
+details  = Linux 6.18 LTS, configured for Palmy on real hardware and in QEMU: storage, ext4, vfat and the firmware framebuffer are built in, so the system boots with no initramfs; graphics (amdgpu, i915, xe, nouveau), Wi-Fi, Ethernet, sound and laptop drivers are modules, loaded at boot for the devices the machine has.
 details  = Upgrading it replaces /boot/efi/vmlinuz on the EFI system partition, which is what limine boots, so the new kernel runs after a restart. Most devices also need their firmware: install linux-firmware, or only the part for your hardware (linux-firmware-intel, linux-firmware-amdgpu, ...).
 provides = cmd:palm-modules
 
-file     = ${PALMFRAME_OUT}/bzImage -> /boot/vmlinuz mode 0644
-file     = ${PALMFRAME_OUT}/bzImage -> /boot/efi/vmlinuz mode 0700
-file     = ${PALMFRAME_OUT}/kernel.config -> /boot/config mode 0644
-tree     = ${PALMFRAME_OUT}/modules -> /usr/lib/modules
-file     = ${PALMFRAME_OUT}/bin/palm-modules -> /usr/bin/palm-modules mode 0755
+file     = ${PALMY_OUT}/bzImage -> /boot/vmlinuz mode 0644
+file     = ${PALMY_OUT}/bzImage -> /boot/efi/vmlinuz mode 0700
+file     = ${PALMY_OUT}/kernel.config -> /boot/config mode 0644
+tree     = ${PALMY_OUT}/modules -> /usr/lib/modules
+file     = ${PALMY_OUT}/bin/palm-modules -> /usr/bin/palm-modules mode 0755
 symlink  = /usr/bin/modprobe -> palm-modules
-file     = ${PALMFRAME_ROOT}/distro/kernel/10-modules -> /usr/lib/palm-init/early.d/10-modules mode 0755
+file     = ${PALMY_ROOT}/distro/kernel/10-modules -> /usr/lib/palm-init/early.d/10-modules mode 0755

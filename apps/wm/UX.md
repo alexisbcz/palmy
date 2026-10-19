@@ -1,6 +1,6 @@
 # The window manager's interaction model
 
-This is the spec for how Palmframe's window manager should feel under the
+This is the spec for how Palmy's window manager should feel under the
 hands. It starts from an audit of what `apps/wm` does today, booted with
 `wm --drm` in QEMU with three clients (term, gallery, counter) and driven over
 QMP, and then says what it should do instead, in priority order.
@@ -108,7 +108,7 @@ user meets them:
 
 18. **The bar is a debugging HUD.** "3 windows 3 clients 2 fps" and an F-key
     legend ("F1 spawn counter F2 spawn gallery ...") are developer
-    instrumentation. The brand reads "palmy wm" on a system called Palmframe.
+    instrumentation. The brand reads "palmy wm" on a system called Palmy.
     The fps counter reads 2 when idle, which is correct and alarming.
 19. **Focus is hard to see.** Focused and unfocused title bars are near
     identical dark greys; the only cue is a 1 px indigo outline and slightly
@@ -381,7 +381,7 @@ both windows' corners are rounded (pixel at frame corner = desktop colour).
 
 The minimized-window dock is removed. The bar becomes:
 
-    [◆ Palmframe] [▣ ▣ ▣ |] [1 2 3 … 9] [layout]  [▣ Terminal] [▣ gallery] [▢ counter]   … [tray] [kbd] [clock]
+    [◆ Palmy] [▣ ▣ ▣ |] [1 2 3 … 9] [layout]  [▣ Terminal] [▣ gallery] [▢ counter]   … [tray] [kbd] [clock]
 
 The brand is the start button (P1-12), and the icons after it are the apps
 pinned to the bar (`bar_pins = on`): click opens the app or brings its window
@@ -739,7 +739,7 @@ from the button: search first, then pinned apps, then recent ones.
 - **Pinned** is a 6-column grid of the person's pins
   (`~/.config/palmy/pinned`, ordered; a new account sees a default set of
   what is installed). **All apps ›** lists everything by category, demos
-  (`X-Palmframe-Demo=true`) last and badged.
+  (`X-Palmy-Demo=true`) last and badged.
 - **Recent** mixes the apps launched lately (the launcher's usage file, now
   with times) and the newest files in ~, Documents, Desktop, Downloads,
   Pictures…; a file opens with the app whose `MimeType=` claims it.

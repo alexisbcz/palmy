@@ -3,7 +3,7 @@
 Every identity (`cloud/CONTRACT.md`) has its own calendars and address books,
 served over CalDAV and CardDAV so that the clients people already use —
 Apple Calendar and Contacts, Thunderbird, DAVx5 on Android, GNOME/Evolution,
-khal and khard — work against them unchanged, and the Palmframe apps use the
+khal and khard — work against them unchanged, and the Palmy apps use the
 same protocol. Separation between identities is enforced by Postgres RLS, the
 same rule as everything else: a session scoped to one identity cannot read or
 write another's calendars, and crossing over is always an explicit row — a
@@ -65,7 +65,7 @@ Every row the server touches is touched under RLS. A bug in the server can
 show a client the wrong *view* of its own data; it cannot show it someone
 else's, because the database never returns it.
 
-### Why CalDAV for the Palmframe apps, not direct table access
+### Why CalDAV for the Palmy apps, not direct table access
 
 The apps could write `dav_objects` rows through PostgREST. They do not:
 iCalendar validation, the time-range index (computed in Odin, where the time
@@ -91,7 +91,7 @@ protocol honest: the apps exercise exactly what Apple and Thunderbird use.
 
 An identity gets a `default` calendar and address book, in the identity's
 colour, the first time it is seen. An unscoped session's principal lists
-every identity's home in `calendar-home-set`, which is how the Palmframe apps
+every identity's home in `calendar-home-set`, which is how the Palmy apps
 overlay identities; a stock client signed in with an app password sees one
 identity and nothing else.
 
@@ -132,7 +132,7 @@ identity cannot see her personal calendar.
   there is no window between check and write. When the server changes what it
   stores (stripping `METHOD`, stamping `SCHEDULE-STATUS`), the PUT response
   carries no ETag, as RFC 4791 5.3.4 asks, and the client refetches.
-- **Sync tokens** (RFC 6578): `https://palmframe.dev/ns/sync/<collection>/<seq>`.
+- **Sync tokens** (RFC 6578): `https://palmy.dev/ns/sync/<collection>/<seq>`.
   Every insert, update or delete of an object bumps the collection's
   `sync_seq` and appends to `dav_changes` (one trigger, security definer, so
   that a read-write grantee can write objects without being able to edit the
@@ -298,7 +298,7 @@ change.
 
 ### The apps
 
-Both apps sign in with the Palmframe account (cloudkit's session — the one
+Both apps sign in with the Palmy account (cloudkit's session — the one
 Accounts makes — or an in-app sheet), sync through davclient, work offline
 from the local copy, and carry a `kit.cli` command surface per
 `docs/PALM-CLI.md` (`--json`, `--yes` for destructive verbs, exit 5 when a
@@ -355,7 +355,7 @@ server, and runs the whole story with two people; its last run is
 
 ## Designed, not built
 
-### Invitations to people outside Palmframe (Resend)
+### Invitations to people outside Palmy (Resend)
 
 Rows with `status = 'not sent: outbound not enabled'` are the outbound queue.
 The transport is the one mail designs in `cloud/docs/mail.md`: Resend. A
@@ -387,7 +387,7 @@ Clients poll (sync-collection makes polling cheap). Push options, in order of
 value: WebDAV-Push (draft, used by DAVx5) driven by a trigger on
 `dav_changes` through Supabase Realtime or `pg_notify`; Apple's APNs-based
 push needs Apple credentials and is out of reach for a self-hosted server;
-the Palmframe apps can subscribe to Realtime on `dav_changes` directly (RLS
+the Palmy apps can subscribe to Realtime on `dav_changes` directly (RLS
 already filters it per identity).
 
 ### Free/busy across organisations
@@ -402,7 +402,7 @@ and already returns periods only.
 
 ### Smaller gaps
 
-- Editing a single instance of a recurring event in the Palmframe calendar
+- Editing a single instance of a recurring event in the Palmy calendar
   app (it can delete one; the server and stock clients handle overrides).
 - The apps sync on the window thread: instant against a local server, a
   visible pause against a slow one. A background sync thread is the fix.
@@ -411,7 +411,7 @@ and already returns periods only.
   to sit behind the gateway's terminator.
 - VALARM time-range queries; `limit-recurrence-set`; partial `calendar-data`.
 - Apple's sharing UI protocol (`CS:invite`); shares are created by the
-  Palmframe apps (a `dav_grants` row) and appear in stock clients as ordinary
+  Palmy apps (a `dav_grants` row) and appear in stock clients as ordinary
   calendars, read-only ones with read-only privileges.
 - A directory (principal search) — deliberately absent until there is a
   policy for which identities are discoverable by whom.

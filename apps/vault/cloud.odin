@@ -1,6 +1,6 @@
 package main
 
-// The account vault: identity vaults kept on the Palmframe cloud, end to end
+// The account vault: identity vaults kept on the Palmy cloud, end to end
 // encrypted, usable offline.
 //
 // Three layers, each knowing only the one below:

@@ -651,7 +651,7 @@ open_menu :: proc(st: ^State) {
 }
 
 // open_terminal starts a terminal in `dir`: the user's $TERMINAL when it is
-// set, else Palmframe's own `term`, else foot. $TERMINAL is a command, not a
+// set, else Palmy's own `term`, else foot. $TERMINAL is a command, not a
 // known program, so it gets no flags of its own; it is started from a shell
 // that has already changed into the folder, which every terminal honours.
 // `term` and foot are both told with `--working-directory`.

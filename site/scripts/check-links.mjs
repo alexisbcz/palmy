@@ -46,7 +46,7 @@ const generatedCount = (c) =>
 
 const EXPECT = {
   "/docs/": 17,
-  "/palmframe/": 9,
+  "/vision/": 9,
   "/components/": 61,
   // The synced pages: as many as scripts/sync-docs.mjs listed in its nav.
   "/distro/": generatedCount("distro"),
@@ -281,7 +281,7 @@ async function main() {
 
   // Crawling from the home page reaches everything, because the sidebar on
   // every docs page links every docs page and the indexes link their items.
-  await crawl(["/", "/docs", "/palmframe", "/components", "/apps"]);
+  await crawl(["/", "/docs", "/vision", "/components", "/apps"]);
 
   checkFragments();
   checkCounts();

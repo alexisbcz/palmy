@@ -4,19 +4,19 @@ index 90b187e..ab26326 100755
 +++ w/distro/image/build.sh
 @@ -131,17 +131,17 @@ default_entry: 1
  
- /Palmframe
+ /Palmy
      protocol: linux
 -    path: boot():/boot/vmlinuz
 +    path: boot():/vmlinuz
      cmdline: $CMDLINE
  
- /Palmframe (log in automatically as palm)
+ /Palmy (log in automatically as palm)
      protocol: linux
 -    path: boot():/boot/vmlinuz
 +    path: boot():/vmlinuz
      cmdline: $CMDLINE palm.autologin=palm
  
- /Palmframe (single user, root shell)
+ /Palmy (single user, root shell)
      protocol: linux
 -    path: boot():/boot/vmlinuz
 +    path: boot():/vmlinuz

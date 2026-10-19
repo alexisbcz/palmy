@@ -177,13 +177,13 @@ gpt_entry_sectors :: proc(sector_size: u64) -> u64 {
 	return (GPT_ENTRIES * GPT_ENTRY_SIZE + sector_size - 1) / sector_size
 }
 
-// gpt_layout_palmframe is the one layout the installer writes: a 512 MiB EFI
+// gpt_layout_palmy is the one layout the installer writes: a 512 MiB EFI
 // system partition at 1 MiB, a Linux root from there to the last whole MiB
 // before the backup table, and a BIOS boot partition in the otherwise unused
 // space before the first MiB, so the same disk starts under UEFI and under a
 // BIOS. Fresh random GUIDs every time, so two disks installed from the same
 // medium never share a PARTUUID.
-gpt_layout_palmframe :: proc(size_bytes: u64, sector_size: u64 = 512, allocator := context.allocator) -> (g: Gpt, ok: bool) {
+gpt_layout_palmy :: proc(size_bytes: u64, sector_size: u64 = 512, allocator := context.allocator) -> (g: Gpt, ok: bool) {
 	ss := sector_size
 	if ss < 512 || ss & (ss - 1) != 0 || ALIGN % ss != 0 {
 		return
@@ -225,7 +225,7 @@ gpt_layout_palmframe :: proc(size_bytes: u64, sector_size: u64 = 512, allocator 
 		part_guid = guid_random(),
 		first_lba = root_first,
 		last_lba  = root_end - 1,
-		name      = "Palmframe",
+		name      = "Palmy",
 	}
 	parts[2] = {
 		type_guid = must_guid(BIOS_BOOT_TYPE),

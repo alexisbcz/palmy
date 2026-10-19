@@ -12,7 +12,7 @@
 #      (the sum is pinned here too, so a changed file on the CDN fails);
 #   2. unpacks it to /usr/lib/firefox -- Mozilla's build as published, which
 #      bundles its own NSS, SQLite, codecs and certificate roots;
-#   3. copies the system libraries libxul.so needs that Palmframe does not
+#   3. copies the system libraries libxul.so needs that Palmy does not
 #      ship (GTK 3, GLib, Pango, cairo, HarfBuzz, the X11 client libraries
 #      GTK links even on Wayland, ...) from the build host into
 #      /usr/lib/firefox/syslib. The browser's Gecko host puts that directory on
@@ -32,7 +32,7 @@ FF_SHA256="9549b054ec4cf85f50f6a19d8c6fb79580312e71ebc4ec2cb217ec9af09dc12a"
 FF_URL="https://download-installer.cdn.mozilla.net/pub/firefox/releases/$FF_VERSION/linux-x86_64/en-US/firefox-$FF_VERSION.tar.xz"
 
 CACHE="${PALM_DOWNLOADS:-$DISTRO/build/downloads}"
-STAGE="${PALMFRAME_OUT:-$DISTRO/out}/firefox"
+STAGE="${PALMY_OUT:-$DISTRO/out}/firefox"
 mkdir -p "$CACHE"
 
 tarball="$CACHE/firefox-$FF_VERSION.tar.xz"
@@ -81,7 +81,7 @@ du -sh "$STAGE" "$STAGE/libxul.so" "$STAGE/syslib" | sed 's/^/  /'
 PALM="${PALM:-$DISTRO/out/bin/palm}"
 if [ -x "$PALM" ]; then
 	mkdir -p "$REPO"
-	PALMFRAME_OUT="$(dirname "$STAGE")" "$PALM" build "$HERE/package" -o "$REPO"
+	PALMY_OUT="$(dirname "$STAGE")" "$PALM" build "$HERE/package" -o "$REPO"
 	ls -l "$REPO"/firefox-*.palm
 else
 	echo "palm not built ($PALM); package not written"

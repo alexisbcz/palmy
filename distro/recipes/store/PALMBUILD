@@ -13,5 +13,5 @@ details  = Discover applications by category, search, install and remove them, a
 depend   = glibc fonts libxkbcommon palm palmd
 provides = cmd:store
 
-file     = ${PALMFRAME_OUT}/bin/store -> /usr/bin/store mode 0755
-file     = ${PALMFRAME_ROOT}/distro/apps/desktop/store.desktop -> /usr/share/applications/store.desktop mode 0644
+file     = ${PALMY_OUT}/bin/store -> /usr/bin/store mode 0755
+file     = ${PALMY_ROOT}/distro/apps/desktop/store.desktop -> /usr/share/applications/store.desktop mode 0644

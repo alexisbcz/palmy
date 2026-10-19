@@ -547,9 +547,9 @@ export function packages(root) {
       generated,
     });
   }
-  const meta = out.find((p) => p.name === "palmframe");
+  const meta = out.find((p) => p.name === "palmy");
   const inMeta = new Set(meta ? meta.depends : []);
-  return out.map((p) => ({ ...p, inPalmframe: inMeta.has(p.name) }));
+  return out.map((p) => ({ ...p, inPalmy: inMeta.has(p.name) }));
 }
 
 /** Tools a build script checks for with `for t in ...; do command -v`. */

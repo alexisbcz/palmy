@@ -11,9 +11,9 @@
 pkgname  = palm-install
 pkgver   = 0.1.0
 pkgrel   = 2
-pkgdesc  = Install Palmframe onto a disk (command line)
+pkgdesc  = Install Palmy onto a disk (command line)
 license  = MIT
 depend   = glibc palm e2fsprogs dosfstools limine tzdata
 provides = cmd:palm-install
 
-file     = ${PALMFRAME_OUT}/bin/palm-install -> /usr/bin/palm-install mode 0755
+file     = ${PALMY_OUT}/bin/palm-install -> /usr/bin/palm-install mode 0755

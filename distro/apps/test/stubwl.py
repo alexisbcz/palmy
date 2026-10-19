@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """A deliberately poor Wayland compositor, for testing palmy clients.
 
-Palmframe's window manager offers a rich set of globals; a minimal or broken
+Palmy's window manager offers a rich set of globals; a minimal or broken
 system may offer far fewer. This stub advertises only what the core protocol
 and xdg-shell make mandatory -- wl_compositor, wl_shm (XRGB8888 and ARGB8888,
 nothing else), xdg_wm_base and a wl_seat -- and none of the extras palmy uses

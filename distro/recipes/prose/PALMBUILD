@@ -13,4 +13,4 @@ details  = The engine behind the docs app's prose checker, as a command: it read
 depend   = glibc
 provides = cmd:prose
 
-file     = ${PALMFRAME_OUT}/bin/prose -> /usr/bin/prose mode 0755
+file     = ${PALMY_OUT}/bin/prose -> /usr/bin/prose mode 0755

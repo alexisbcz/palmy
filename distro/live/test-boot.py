@@ -1,4 +1,4 @@
-"""Boot distro/out/palmframe-live.iso headless and check the live system.
+"""Boot distro/out/palmy-live.iso headless and check the live system.
 
     python3 -I distro/live/test-boot.py [--bios] [--serial-only] [--expect installer|term]
 
@@ -116,7 +116,7 @@ def main():
             m.key("down")
             m.key("ret")
 
-        ok = m.expect(r"palm-init: Palmframe is starting", 90) is not None
+        ok = m.expect(r"palm-init: Palmy is starting", 90) is not None
         m.check("the kernel starts palm-init from the initramfs", ok)
         ok = m.expect(r"root@\S*?:.*?# ", 90) is not None
         m.check(f"root shell on ttyS0 without a password ({time.time() - t0:.1f} s)", ok, m.buf[-2000:])

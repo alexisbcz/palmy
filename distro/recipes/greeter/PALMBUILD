@@ -11,4 +11,4 @@ details  = The screen you log in on: the clock, the accounts, the session, and R
 depend   = glibc fonts libxkbcommon
 provides = cmd:greeter
 
-file     = ${PALMFRAME_OUT}/bin/greeter -> /usr/bin/greeter mode 0755
+file     = ${PALMY_OUT}/bin/greeter -> /usr/bin/greeter mode 0755

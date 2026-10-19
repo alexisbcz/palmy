@@ -4,7 +4,7 @@
 #   make test       run the headless test suite
 #   make run-todo   build and run one example
 #   make shots      render the documentation screenshots
-#   make distro     build the Palmframe distribution (see distro/Makefile)
+#   make distro     build the Palmy distribution (see distro/Makefile)
 
 ODIN ?= odin
 FLAGS ?= -o:speed

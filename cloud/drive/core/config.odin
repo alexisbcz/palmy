@@ -44,7 +44,7 @@ config_path :: proc() -> string {
 // is the hand-off.
 //
 // Without the file, and without $PALM_DRIVE_CONFIG, the configuration comes
-// from the Palmframe account instead (account.odin), which is the normal case
+// from the Palmy account instead (account.odin), which is the normal case
 // once someone has signed in with Accounts.
 load_config :: proc(path: string) -> (cfg: Config, err: string) {
 	data, rerr := os.read_entire_file(path, context.allocator)

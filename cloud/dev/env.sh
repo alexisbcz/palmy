@@ -12,7 +12,7 @@
 # Everything binds 127.0.0.1 and runs with network_mode: host (see README.md).
 
 PALM_PORT_BASE=${PALM_PORT_BASE:-54321}
-PALM_NAME=${PALM_NAME:-palmframe}
+PALM_NAME=${PALM_NAME:-palmy}
 PALM_ARGS=()
 while [ $# -gt 0 ]; do
 	case "$1" in

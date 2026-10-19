@@ -56,14 +56,14 @@ printf '# Garden plan\n\nTomatoes along the south fence.\n' >"$S/Garden plan.md"
 for f in app-files app-slides app-sheets app-maps; do
 	cp "$ROOT/site/public/shots/$f.png" "$S/${f#app-} mockup.png"
 done
-cp "$ROOT/site/public/film/palmframe-poster.jpg" "$S/palmframe-poster.jpg"
+cp "$ROOT/site/public/film/palmy-poster.jpg" "$S/palmy-poster.jpg"
 cp "$ROOT/site/public/shots/app-photoshop.png" "$S/Old logo.png"
 
 # --- alice.northwind (work) ----------------------------------------------------------------
 W() { PALM_IDENTITY=alice.northwind "$DRIVE" "$@" >/dev/null; }
 for f in "Board deck.pptx" "Budget 2026.xlsx" "Board memo.md" "Q3 results.pdf" "Draft memo v1.md"; do W upload "$S/$f" "Q3 Board pack"; done
 for f in "Northwind MSA.md" "Vendor list.csv"; do W upload "$S/$f" "Contracts"; done
-for f in "files mockup.png" "slides mockup.png" "sheets mockup.png" "maps mockup.png" "palmframe-poster.jpg" "Old logo.png"; do W upload "$S/$f" "Design"; done
+for f in "files mockup.png" "slides mockup.png" "sheets mockup.png" "maps mockup.png" "palmy-poster.jpg" "Old logo.png"; do W upload "$S/$f" "Design"; done
 W upload "$S/Onboarding.md" /
 W upload "$S/Team budget.csv" /
 W mkdir "Archive/2025"
@@ -83,7 +83,7 @@ W trash "Q3 Board pack/Draft memo v1.md"
 P() { PALM_IDENTITY=alice.martin "$DRIVE" "$@" >/dev/null; }
 cp "$ROOT/site/public/shots/app-maps.png" "$S/Lisbon map.png"
 cp "$ROOT/site/public/shots/app-video.png" "$S/Holiday video still.png"
-for f in "palmframe-poster.jpg" "Lisbon map.png" "Holiday video still.png"; do P upload "$S/$f" "Photos"; done
+for f in "palmy-poster.jpg" "Lisbon map.png" "Holiday video still.png"; do P upload "$S/$f" "Photos"; done
 for f in "Taxes 2025.csv" "Recipes.md" "Trip to Lisbon.md"; do P upload "$S/$f" /; done
 P star "Trip to Lisbon.md"
 

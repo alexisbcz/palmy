@@ -12,5 +12,5 @@ icon     = archive
 depend   = glibc fonts libxkbcommon libarchive
 provides = cmd:archive
 
-file     = ${PALMFRAME_OUT}/bin/archive -> /usr/bin/archive mode 0755
-file     = ${PALMFRAME_ROOT}/distro/apps/desktop/archive.desktop -> /usr/share/applications/archive.desktop mode 0644
+file     = ${PALMY_OUT}/bin/archive -> /usr/bin/archive mode 0755
+file     = ${PALMY_ROOT}/distro/apps/desktop/archive.desktop -> /usr/share/applications/archive.desktop mode 0644

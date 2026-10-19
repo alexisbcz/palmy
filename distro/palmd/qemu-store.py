@@ -1,4 +1,4 @@
-"""Drive a headless Palmframe VM one step at a time, for testing Software and palmd.
+"""Drive a headless Palmy VM one step at a time, for testing Software and palmd.
 
     python3 -I distro/palmd/qemu-store.py boot           copy the image, start QEMU (OVMF), log root in on serial
     python3 -I distro/palmd/qemu-store.py serve [PORT]   `make -C distro serve PORT=...` in the background (8091)
@@ -15,7 +15,7 @@ them, so a person (or an agent) can look at a screenshot before deciding
 where to click next. State lives in distro/build/store-qemu/; every socket,
 image and pid file there is prefixed store- so it cannot collide with another
 VM run from the same checkout. The image is a sparse copy, so the shipped
-distro/out/palmframe.img is never written.
+distro/out/palmy.img is never written.
 
 The serial console is a QEMU socket chardev that accepts one client at a
 time; each step connects, does its work and leaves, and the root shell it
@@ -198,7 +198,7 @@ def boot():
     if alive(QEMU_PID):
         print("qemu-store: already running; `stop` first")
         return 1
-    subprocess.run(["cp", "--sparse=always", os.path.join(DISTRO, "out", "palmframe.img"), IMG], check=True)
+    subprocess.run(["cp", "--sparse=always", os.path.join(DISTRO, "out", "palmy.img"), IMG], check=True)
     for p in (SERIAL, QMP):
         if os.path.exists(p):
             os.unlink(p)
@@ -209,7 +209,7 @@ def boot():
         stderr=open(os.path.join(WORK, "store-qemu.log"), "w"), start_new_session=True)
     open(QEMU_PID, "w").write(str(proc.pid))
     ser = Serial()
-    if not ser.expect(r"palmframe login: ", 120):
+    if not ser.expect(r"palmy login: ", 120):
         print("qemu-store: no login prompt on the serial console")
         return 1
     ser.shell()

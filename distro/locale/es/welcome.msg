@@ -1,4 +1,4 @@
-# Palmframe's first run (apps/welcome) — Spanish. 
+# Palmy's first run (apps/welcome) — Spanish. 
 # Format: distro/locale/README.md. Installed as
 # /usr/share/palm/locale/es/welcome.msg.
 #
@@ -9,17 +9,17 @@ name      = Español
 english   = Spanish
 plural    = n != 1
 
-msgid "Welcome to Palmframe"
-msgstr "Te damos la bienvenida a Palmframe"
+msgid "Welcome to Palmy"
+msgstr "Te damos la bienvenida a Palmy"
 
-msgid "Use Palmframe with an account?"
-msgstr "¿Usar Palmframe con una cuenta?"
+msgid "Use Palmy with an account?"
+msgstr "¿Usar Palmy con una cuenta?"
 
 msgid "You are signed in"
 msgstr "Has iniciado sesión"
 
-msgid "Create your Palmframe account"
-msgstr "Crea tu cuenta de Palmframe"
+msgid "Create your Palmy account"
+msgstr "Crea tu cuenta de Palmy"
 
 msgid "Sign in to your account"
 msgstr "Inicia sesión en tu cuenta"
@@ -51,8 +51,8 @@ msgstr "Unas pocas decisiones, todas opcionales. No se configura nada hasta que 
 msgid "Everything on this computer works without one. An account adds identities, and keeps each of them in sync across your devices."
 msgstr "En este ordenador todo funciona sin cuenta. Una cuenta añade identidades y mantiene cada una sincronizada entre tus dispositivos."
 
-msgid "Your email is how you sign in and how you get back in if you forget the password. Use an address outside Palmframe."
-msgstr "Tu correo es con lo que inicias sesión y con lo que recuperas el acceso si olvidas la contraseña. Usa una dirección ajena a Palmframe."
+msgid "Your email is how you sign in and how you get back in if you forget the password. Use an address outside Palmy."
+msgstr "Tu correo es con lo que inicias sesión y con lo que recuperas el acceso si olvidas la contraseña. Usa una dirección ajena a Palmy."
 
 msgid "One account, several selves: personal, work, public, a project. Each has its own address, its own data and its own colour, and nothing passes between them unless you carry it."
 msgstr "Una cuenta, varias facetas: personal, trabajo, pública, un proyecto. Cada una tiene su dirección, sus datos y su color, y nada pasa de una a otra a menos que tú lo lleves."
@@ -60,8 +60,8 @@ msgstr "Una cuenta, varias facetas: personal, trabajo, pública, un proyecto. Ca
 msgid "Choose per identity. Each one syncs on its own session, so what one identity holds is never visible to another."
 msgstr "Elige para cada identidad. Cada una se sincroniza con su propia sesión, así que lo que guarda una nunca es visible para otra."
 
-msgid "This is the only copy of your Secret Key outside this computer. Without it and your master password, nobody can open your vault: not Palmframe, and not you on a new computer."
-msgstr "Es la única copia de tu clave secreta fuera de este ordenador. Sin ella y sin tu contraseña maestra nadie puede abrir tu bóveda: ni Palmframe ni tú en un ordenador nuevo."
+msgid "This is the only copy of your Secret Key outside this computer. Without it and your master password, nobody can open your vault: not Palmy, and not you on a new computer."
+msgstr "Es la única copia de tu clave secreta fuera de este ordenador. Sin ella y sin tu contraseña maestra nadie puede abrir tu bóveda: ni Palmy ni tú en un ordenador nuevo."
 
 msgid "Passwords are encrypted on this computer before they leave it. Two things unlock them: a master password you remember, and a Secret Key this computer keeps."
 msgstr "Las contraseñas se cifran en este ordenador antes de salir de él. Dos cosas las desbloquean: una contraseña maestra que recuerdas y una clave secreta que guarda este ordenador."
@@ -147,11 +147,11 @@ msgstr "Escribe tu nombre."
 msgid "Your first identity is named after you. You can change it on the next page."
 msgstr "Tu primera identidad lleva tu nombre. Puedes cambiarlo en la página siguiente."
 
-msgid "Your recovery address. Mail at Palmframe addresses comes later, per identity."
-msgstr "Tu dirección de recuperación. El correo en direcciones de Palmframe viene después, por identidad."
+msgid "Your recovery address. Mail at Palmy addresses comes later, per identity."
+msgstr "Tu dirección de recuperación. El correo en direcciones de Palmy viene después, por identidad."
 
-msgid "This is a Palmframe address. If you lose that identity, you lose your way back in: an outside address is safer."
-msgstr "Es una dirección de Palmframe. Si pierdes esa identidad, pierdes el camino de vuelta: una dirección externa es más segura."
+msgid "This is a Palmy address. If you lose that identity, you lose your way back in: an outside address is safer."
+msgstr "Es una dirección de Palmy. Si pierdes esa identidad, pierdes el camino de vuelta: una dirección externa es más segura."
 
 msgid "Email"
 msgstr "Correo electrónico"
@@ -180,8 +180,8 @@ msgstr "Servidor"
 msgid "Change"
 msgstr "Cambiar"
 
-msgid "The address of a Palmframe server. Ask whoever runs yours."
-msgstr "La dirección de un servidor de Palmframe. Pregunta a quien gestione el tuyo."
+msgid "The address of a Palmy server. Ask whoever runs yours."
+msgstr "La dirección de un servidor de Palmy. Pregunta a quien gestione el tuyo."
 
 msgid "Use this server"
 msgstr "Usar este servidor"
@@ -321,8 +321,8 @@ msgstr "Una clave secreta y una contraseña maestra protegen toda la cuenta. Cad
 msgid "Chosen for:"
 msgstr "Elegido para:"
 
-msgid "Palmframe Emergency Kit"
-msgstr "Kit de emergencia de Palmframe"
+msgid "Palmy Emergency Kit"
+msgstr "Kit de emergencia de Palmy"
 
 msgid "Account"
 msgstr "Cuenta"
@@ -339,8 +339,8 @@ msgstr "Guardar kit de emergencia"
 msgid "I have saved my Emergency Kit somewhere safe"
 msgstr "He guardado mi kit de emergencia en un lugar seguro"
 
-msgid "Palmframe cannot recover your vault for you. That is what makes it yours."
-msgstr "Palmframe no puede recuperar tu bóveda por ti. Eso es lo que la hace tuya."
+msgid "Palmy cannot recover your vault for you. That is what makes it yours."
+msgstr "Palmy no puede recuperar tu bóveda por ti. Eso es lo que la hace tuya."
 
 msgid "A session for this identity on this computer"
 msgstr "Una sesión para esta identidad en este ordenador"
@@ -456,8 +456,8 @@ msgstr "Cerrar la ventana"
 msgid "Every shortcut"
 msgstr "Todos los atajos"
 
-msgid "Palmframe is ready"
-msgstr "Palmframe está listo"
+msgid "Palmy is ready"
+msgstr "Palmy está listo"
 
 msgid "Signed in as %s."
 msgstr "Sesión iniciada como %s."
@@ -465,8 +465,8 @@ msgstr "Sesión iniciada como %s."
 msgid "Everything stays on this computer. You can add an account whenever you like."
 msgstr "Todo se queda en este ordenador. Puedes añadir una cuenta cuando quieras."
 
-msgid "Start using Palmframe"
-msgstr "Empezar a usar Palmframe"
+msgid "Start using Palmy"
+msgstr "Empezar a usar Palmy"
 
 msgid "To see this again:"
 msgstr "Para volver a verlo:"
@@ -555,8 +555,8 @@ msgstr "Dos identidades no pueden tener el mismo identificador."
 msgid "Saved. Print it, or copy it somewhere only you can reach, then delete the files."
 msgstr "Guardado. Imprímelo o cópialo donde solo tú llegues, y luego borra los archivos."
 
-msgid "The Palmframe server is not reachable. Check the address, or continue without an account."
-msgstr "No se puede contactar con el servidor de Palmframe. Revisa la dirección o continúa sin cuenta."
+msgid "The Palmy server is not reachable. Check the address, or continue without an account."
+msgstr "No se puede contactar con el servidor de Palmy. Revisa la dirección o continúa sin cuenta."
 
 msgid "That email and password do not match."
 msgstr "Ese correo y esa contraseña no coinciden."
@@ -624,8 +624,8 @@ msgstr "Para abrir tu bóveda en un ordenador nuevo necesitas esta clave secreta
 msgid "Keep this page somewhere safe: a drawer, a safe, with your passport. Then delete this file."
 msgstr "Guarda esta página en un lugar seguro: un cajón, una caja fuerte, junto a tu pasaporte. Después borra este archivo."
 
-msgid "Palmframe cannot recover either of them for you."
-msgstr "Palmframe no puede recuperar ninguno de los dos por ti."
+msgid "Palmy cannot recover either of them for you."
+msgstr "Palmy no puede recuperar ninguno de los dos por ti."
 
 msgid "Choose a handle."
 msgstr "Elige un identificador."

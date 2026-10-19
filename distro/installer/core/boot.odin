@@ -8,9 +8,9 @@ package install_core
 //
 //   EFI/BOOT/BOOTX64.EFI        the removable-media fallback path: any UEFI
 //                               machine boots this disk with no NVRAM entry
-//   EFI/palmframe/BOOTX64.EFI   the same binary, where our Boot#### points,
+//   EFI/palmy/BOOTX64.EFI   the same binary, where our Boot#### points,
 //                               so another OS reinstalling the fallback path
-//                               cannot take Palmframe's entry with it
+//                               cannot take Palmy's entry with it
 //   boot/limine/limine.conf     limine looks next to itself first, then here;
 //                               both copies of the binary find this one,
 //                               and so does the BIOS stage
@@ -36,7 +36,7 @@ package install_core
 // not fail the installation: the fallback path still boots.
 //
 // Each installed disk gets an entry of its own. An existing entry is reused
-// only when it is ours (its description starts with "Palmframe") and it
+// only when it is ours (its description starts with "Palmy") and it
 // points at this disk: at the new ESP (a rerun), or at a partition of the
 // table this installation erased (a reinstall). An entry for another disk is
 // left alone, so a second disk installed in the same machine does not take
@@ -61,8 +61,8 @@ FS_IOC_SETFLAGS :: 0x40086602
 FS_IMMUTABLE_FL :: 0x10
 EFIVARFS_MAGIC :: 0xde5e81e4
 
-BOOT_ENTRY_NAME :: "Palmframe"
-BOOT_LOADER_PATH :: "\\EFI\\palmframe\\BOOTX64.EFI"
+BOOT_ENTRY_NAME :: "Palmy"
+BOOT_LOADER_PATH :: "\\EFI\\palmy\\BOOTX64.EFI"
 KERNEL_CMDLINE_TAIL :: "rw console=tty0 console=ttyS0,115200 quiet loglevel=3"
 // Where the kernel is on the ESP, as limine.conf names it (boot():/...) and
 // as the bootloader step copies it. One place to change when the linux
@@ -76,7 +76,7 @@ step_bootloader :: proc(c: ^Ctx) -> string {
 	}
 	esp := c.t.esp
 	if c.o.dry_run {
-		logf(c, "would install limine to %s/EFI/BOOT and %s/EFI/palmframe, copy the kernel, write limine.conf with root=PARTUUID=<root>", esp, esp)
+		logf(c, "would install limine to %s/EFI/BOOT and %s/EFI/palmy, copy the kernel, write limine.conf with root=PARTUUID=<root>", esp, esp)
 		if !c.o.no_bios_boot {
 			logf(c, "would run limine bios-install %s %d (BIOS boot code)", c.p.disk, BIOS_BOOT_NUMBER)
 		}
@@ -99,12 +99,12 @@ step_bootloader :: proc(c: ^Ctx) -> string {
 	}
 
 	progress(c, 0.1, msg(.Copying_Boot_Loader))
-	for d in ([]string{"EFI/BOOT", "EFI/palmframe", "boot/limine"}) {
+	for d in ([]string{"EFI/BOOT", "EFI/palmy", "boot/limine"}) {
 		if e := mkdir_p(join(esp, d)); e != nil {
 			return fmt.tprintf("mkdir %s: %v", join(esp, d), e)
 		}
 	}
-	for dst in ([]string{"EFI/BOOT/BOOTX64.EFI", "EFI/palmframe/BOOTX64.EFI"}) {
+	for dst in ([]string{"EFI/BOOT/BOOTX64.EFI", "EFI/palmy/BOOTX64.EFI"}) {
 		if e := os.copy_file(join(esp, dst), limine); e != nil {
 			return fmt.tprintf("copy %s: %v", dst, e)
 		}
@@ -179,7 +179,7 @@ install_bios_boot :: proc(c: ^Ctx) -> string {
 
 // boot_entry_description is the name the firmware's boot menu shows.
 boot_entry_description :: proc(hostname: string) -> string {
-	if hostname == "" || hostname == "palmframe" {
+	if hostname == "" || hostname == "palmy" {
 		return BOOT_ENTRY_NAME
 	}
 	return fmt.tprintf("%s (%s)", BOOT_ENTRY_NAME, hostname)
@@ -193,12 +193,12 @@ limine_conf :: proc(root_guid: Guid) -> string {
 timeout: 3
 default_entry: 1
 
-/Palmframe
+/Palmy
     protocol: linux
     path: boot():/%s
     cmdline: %s
 
-/Palmframe (single user, root shell)
+/Palmy (single user, root shell)
     protocol: linux
     path: boot():/%s
     cmdline: %s

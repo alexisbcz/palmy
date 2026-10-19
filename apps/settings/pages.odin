@@ -43,7 +43,7 @@ page_mouse :: proc(ui: ^p.Ctx, m: ^Model) {
 	card_close(ui)
 	p.end(ui)
 	if m.wm.ok && !m.wm.bare {
-		note(ui, "This session is nested in another desktop, whose own mouse settings apply; these take effect when Palmframe runs on the machine itself.")
+		note(ui, "This session is nested in another desktop, whose own mouse settings apply; these take effect when Palmy runs on the machine itself.")
 	} else {
 		note(ui, "These apply to every mouse and touchpad, the moment they change.")
 	}
@@ -56,7 +56,7 @@ page_mouse :: proc(ui: ^p.Ctx, m: ^Model) {
 page_sound :: proc(ui: ^p.Ctx, m: ^Model) {
 	s := &m.sound
 	if !s.available {
-		empty_state(ui, ai.ICON_VOLUME_2, "No sound server", "Sound on Palmframe is PipeWire with WirePlumber (packages pipewire, wireplumber), which are part of palmframe-runtime. Install them with Software to control volume and outputs here.")
+		empty_state(ui, ai.ICON_VOLUME_2, "No sound server", "Sound on Palmy is PipeWire with WirePlumber (packages pipewire, wireplumber), which are part of palmy-runtime. Install them with Software to control volume and outputs here.")
 		return
 	}
 	if !s.running {
@@ -208,7 +208,7 @@ page_datetime :: proc(ui: ^p.Ctx, m: ^Model) {
 	p.row(ui, "w-full items-center gap-4 px-5 py-4")
 	p.col(ui, "flex-1 min-w-0 gap-0.5")
 	p.text(ui, m.tz != "" ? m.tz : fmt.tprintf("%s (the system's)", m.sys_tz), "text-sm font-medium")
-	p.text(ui, m.tz != "" ? "Chosen here, for your sessions." : "Set when Palmframe was installed, in /etc/localtime.", "text-xs text-muted-foreground")
+	p.text(ui, m.tz != "" ? "Chosen here, for your sessions." : "Set when Palmy was installed, in /etc/localtime.", "text-xs text-muted-foreground")
 	p.end(ui)
 	if m.tz != "" {
 		if button(ui, fmt.tprintf("Use the system's (%s)", m.sys_tz), .Outline) && apply(m, "datetime.timezone", "") {
@@ -354,7 +354,7 @@ page_updates :: proc(ui: ^p.Ctx, m: ^Model) {
 	p.icon(ui, len(u.upgradable) > 0 ? ai.ICON_DOWNLOAD : ai.ICON_SHIELD_CHECK, "size-6 text-muted-foreground")
 	p.end(ui)
 	p.col(ui, "flex-1 min-w-0 gap-0.5")
-	p.text(ui, len(u.upgradable) == 0 ? "Palmframe is up to date" : fmt.tprintf("%d update%s available", len(u.upgradable), len(u.upgradable) == 1 ? "" : "s"), "text-base font-semibold")
+	p.text(ui, len(u.upgradable) == 0 ? "Palmy is up to date" : fmt.tprintf("%d update%s available", len(u.upgradable), len(u.upgradable) == 1 ? "" : "s"), "text-base font-semibold")
 	checked := "The package lists have not been fetched yet."
 	if u.checked > 0 {
 		t := time.unix(u.checked, 0)
@@ -369,7 +369,7 @@ page_updates :: proc(ui: ^p.Ctx, m: ^Model) {
 		}
 	}
 	p.end(ui)
-	kv(ui, "System", u.system_ver != "" ? fmt.tprintf("Palmframe %s", u.system_ver) : "")
+	kv(ui, "System", u.system_ver != "" ? fmt.tprintf("Palmy %s", u.system_ver) : "")
 	kv(ui, "Installed packages", fmt.tprintf("%d", u.installed))
 	kv(ui, "Package manager", u.palm_ver)
 	card_close(ui)

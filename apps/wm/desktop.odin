@@ -349,7 +349,7 @@ draw_welcome :: proc(s: ^Server, app: ^p.App, cv: ^p.Canvas, o: Ws_Output) {
 		wt:   p.Font_Weight,
 		col:  u32,
 	} {
-		{session.bare ? "Palmframe" : "A Wayland compositor, nested", 28, .Bold, pal.dark ? 0xe8e8ef : 0x18181b},
+		{session.bare ? "Palmy" : "A Wayland compositor, nested", 28, .Bold, pal.dark ? 0xe8e8ef : 0x18181b},
 		{hint, 14, .Medium, pal.dark ? 0xa5b4fc : pal.accent_text},
 		{more, 12.5, .Regular, pal.dark ? 0x8b8b93 : 0x52525b},
 		{s.cfg.loaded ? fmt.tprintf("configuration: %s", s.cfg.path) : fmt.tprintf("no %s — built-in defaults", s.cfg.path), 11.5, .Regular, pal.dark ? 0x5b5b66 : 0x71717a},

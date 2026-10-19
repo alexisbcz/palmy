@@ -1,9 +1,9 @@
 import { redirect } from "react-router";
 
 export function loader() {
-  return redirect("/palmframe/overview");
+  return redirect("/vision/overview");
 }
 
-export default function PalmframeIndex() {
+export default function PalmyIndex() {
   return null;
 }

@@ -83,7 +83,7 @@ decode_all :: proc(wire: string, step: int) -> (status: int, body: string, bad: 
 offline :: proc(t: ^T) {
 	u, uok := parse_url("http://127.0.0.1:54321")
 	check(t, uok && u.host == "127.0.0.1" && u.port == 54321 && !u.tls && u.base == "", "parse_url: host and port")
-	u, uok = parse_url("https://cloud.palmframe.org/base/")
+	u, uok = parse_url("https://cloud.palmy.org/base/")
 	check(t, uok && u.tls && u.port == 443 && u.base == "/base", "parse_url: https, default port, base path")
 	_, uok = parse_url("ftp://x")
 	check(t, !uok, "parse_url: refuses other schemes")

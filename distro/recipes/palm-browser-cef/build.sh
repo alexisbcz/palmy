@@ -13,7 +13,7 @@
 #   2. builds palm-browser-cef (apps/browser/engine/cef/host.c) against it;
 #   3. lays out /usr/lib/palm-browser/cef: the host, libcef.so (stripped),
 #      V8's snapshot, ICU data, resource packs, locales, SwiftShader;
-#   4. copies the shared libraries libcef.so needs that Palmframe does not
+#   4. copies the shared libraries libcef.so needs that Palmy does not
 #      ship (NSS, GLib, ATK, cups, X11 client libraries, ...) from the build
 #      host into the same directory -- the same "from the build host" rule as
 #      glibc and libxkbcommon, kept private to this package so nothing else on
@@ -35,7 +35,7 @@ CEF_URL="https://cef-builds.spotifycdn.com/${CEF_NAME//+/%2B}.tar.bz2"
 
 CACHE="${PALM_DOWNLOADS:-$DISTRO/build/downloads}"
 WORK="$DISTRO/build/palm-browser-cef"
-STAGE="${PALMFRAME_OUT:-$DISTRO/out}/palm-browser-cef"
+STAGE="${PALMY_OUT:-$DISTRO/out}/palm-browser-cef"
 mkdir -p "$CACHE" "$WORK"
 
 tarball="$CACHE/$CEF_NAME.tar.bz2"
@@ -51,9 +51,9 @@ fi
 
 rm -rf "$STAGE"
 "$ROOT/apps/browser/engine/cef/build.sh" "$WORK/$CEF_NAME" "$STAGE"
-rm -f "$STAGE/chrome-sandbox" # Palmframe's kernel has user namespaces; no setuid helper
+rm -f "$STAGE/chrome-sandbox" # Palmy's kernel has user namespaces; no setuid helper
 
-# The library closure, minus what Palmframe's glibc package provides.
+# The library closure, minus what Palmy's glibc package provides.
 provided=" libc.so.6 libm.so.6 ld-linux-x86-64.so.2 linux-vdso.so.1 "
 for bin in "$STAGE/libcef.so" "$STAGE/palm-browser-cef" "$STAGE/libvk_swiftshader.so"; do
 	ldd "$bin" | awk '/=> \// {print $1, $3}'
@@ -83,7 +83,7 @@ du -sh "$STAGE" "$STAGE/libcef.so" "$STAGE/locales" | sed 's/^/  /'
 PALM="${PALM:-$DISTRO/out/bin/palm}"
 if [ -x "$PALM" ]; then
 	mkdir -p "$REPO"
-	PALMFRAME_OUT="$(dirname "$STAGE")" "$PALM" build "$HERE/package" -o "$REPO"
+	PALMY_OUT="$(dirname "$STAGE")" "$PALM" build "$HERE/package" -o "$REPO"
 	ls -l "$REPO"/palm-browser-cef-*.palm
 else
 	echo "palm not built ($PALM); package not written"

@@ -12,5 +12,5 @@ icon     = bluetooth
 depend   = glibc fonts libxkbcommon bluez rfkill
 provides = cmd:bluetooth
 
-file     = ${PALMFRAME_OUT}/bin/bluetooth -> /usr/bin/bluetooth mode 0755
-file     = ${PALMFRAME_ROOT}/distro/apps/desktop/bluetooth.desktop -> /usr/share/applications/bluetooth.desktop mode 0644
+file     = ${PALMY_OUT}/bin/bluetooth -> /usr/bin/bluetooth mode 0755
+file     = ${PALMY_ROOT}/distro/apps/desktop/bluetooth.desktop -> /usr/share/applications/bluetooth.desktop mode 0644

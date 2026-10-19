@@ -1,8 +1,8 @@
 #!/bin/sh
 # The session bus, once per graphical session, as the user.
 #
-# Palmframe runs no session bus otherwise (distro/notes/runtime.md: the
-# system bus is for iwd and BlueZ). One is needed for the programs Palmframe
+# Palmy runs no session bus otherwise (distro/notes/runtime.md: the
+# system bus is for iwd and BlueZ). One is needed for the programs Palmy
 # did not write: libnotify, Firefox and Chromium send their notifications to
 # org.freedesktop.Notifications on it, which palm-notifyd serves
 # (60-notify). It listens at $XDG_RUNTIME_DIR/bus, the per-user address

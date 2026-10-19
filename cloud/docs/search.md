@@ -4,7 +4,7 @@ Search is where the incumbents are weakest (`research.md` §3): new Outlook
 has no local index, Teams loses the context, and Gmail's search is
 "remarkably awful" on anything older than last week. Linear and Superhuman
 are loved because they answer from local data before a key is released.
-Palmframe's answer is one index per identity, kept on the device and
+Palmy's answer is one index per identity, kept on the device and
 updated within a second of a change. Home, the shell and the assistant
 all read that index first.
 
@@ -223,12 +223,12 @@ running, Home starts it once.
 
 | source | where | what is indexed | key / change signal |
 | --- | --- | --- | --- |
-| mail | `palmframe.conf` maps identity → `<palmy-mail>/<address>/` (Maildir++) | subject, sender and recipients, the plain text (HTML only when no plain part; quoted history dropped), attachment names, text and office attachments under 5 MB; unread, flagged, sent, attachment, **waiting** | `.palm-ids` server id (a sync renames every file); signature = folder + flags + waiting |
+| mail | `palmy.conf` maps identity → `<palmy-mail>/<address>/` (Maildir++) | subject, sender and recipients, the plain text (HTML only when no plain part; quoted history dropped), attachment names, text and office attachments under 5 MB; unread, flagged, sent, attachment, **waiting** | `.palm-ids` server id (a sync renames every file); signature = folder + flags + waiting |
 | drive | `~/Drive/<handle>/` | name, folder, text of .md .txt .csv .html and other plain text, .docx .xlsx .pptx .odt .ods .odp (zip + XML), .pdf via `pdftotext` when installed | relative path; size + mtime |
 | notes | `~/Notes/<handle>/` (cloud/docs/notes.md) | title (first line), body without front matter, notebook, `Shared/<owner>` | relative path; size + mtime |
 | calendar | DAV cache `<handle>/calendar/<col>/*.ics` | events (recurrences expanded 30 days back and 120 ahead, re-expanded daily), VTODOs as tasks with their due date | file; size + mtime + day |
 | contacts | DAV cache `<handle>/addressbook/<col>/*.vcf` | name, emails, phones, organisation, title, note | file; size + mtime |
-| browser | `<palmframe/browser>/<handle>/` | bookmarks, and the newest visit of the 5,000 most recent pages; forgotten pages are skipped | id / URL |
+| browser | `<palmy/browser>/<handle>/` | bookmarks, and the newest visit of the 5,000 most recent pages; forgotten pages are skipped | id / URL |
 | tasks | `<palmy-track>/<handle>/*.md` | track issues: id, title, state, project, assignee, body | file; size + mtime |
 
 **Waiting on you** is computed from mail alone. A mail waits on you when it

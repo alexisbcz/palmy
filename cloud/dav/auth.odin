@@ -6,7 +6,7 @@ import "core:strings"
 import "core:sync"
 import web "web"
 
-REALM :: `Basic realm="Palmframe calendars and contacts", charset="UTF-8"`
+REALM :: `Basic realm="Palmy calendars and contacts", charset="UTF-8"`
 
 // authenticate fills c.token, c.user, c.scoped and c.idents, or answers 401.
 authenticate :: proc(c: ^Ctx) -> bool {

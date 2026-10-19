@@ -2,21 +2,21 @@
 # shutdown. Statically linked (distro/init/build.sh), so it starts even if a
 # broken glibc upgrade has left the dynamic loader unusable.
 #
-# The kernel looks for /sbin/init; /sbin -> usr/bin (palmframe-base), and
+# The kernel looks for /sbin/init; /sbin -> usr/bin (palmy-base), and
 # /usr/bin/init points at palm-init. It runs busybox's udhcpc, getty and
-# syslogd for the services palmframe-base ships.
+# syslogd for the services palmy-base ships.
 pkgname  = palm-init
 pkgver   = 0.1.0
 pkgrel   = 0
-pkgdesc  = Palmframe's init and service supervisor
+pkgdesc  = Palmy's init and service supervisor
 license  = MIT
 category = System
 icon     = activity
 details  = PID 1. It checks and mounts the filesystems in /etc/fstab, turns on swap in compressed memory, runs the early-boot hooks, sets device permissions at boot and on hotplug, starts the services in /etc/palm/services and restarts them when they exit or change, and shuts the machine down cleanly.
-depend   = palmframe-base busybox
+depend   = palmy-base busybox
 provides = cmd:init
 
-file     = ${PALMFRAME_OUT}/bin/palm-init -> /usr/bin/palm-init mode 0755
+file     = ${PALMY_OUT}/bin/palm-init -> /usr/bin/palm-init mode 0755
 symlink  = /usr/bin/init -> palm-init
 # Early-boot hooks that packages ship (a kernel's module loader, say): run in
 # name order, before devices, fstab and services (distro/notes/init.md).

@@ -48,8 +48,8 @@ import "core:strings"
 JMAP_CORE :: "urn:ietf:params:jmap:core"
 JMAP_MAIL :: "urn:ietf:params:jmap:mail"
 
-// One entry of the session's `accounts`. The Palmframe fields come from the
-// urn:palmframe:params:jmap:identity account capability, where a Palmframe
+// One entry of the session's `accounts`. The Palmy fields come from the
+// urn:palmy:params:jmap:identity account capability, where a Palmy
 // server describes the identity behind an account; they are empty against
 // any other server.
 Jmap_Account :: struct {
@@ -62,7 +62,7 @@ Jmap_Account :: struct {
 	address:      string,
 }
 
-JMAP_PALM :: "urn:palmframe:params:jmap:identity"
+JMAP_PALM :: "urn:palmy:params:jmap:identity"
 
 Jmap_Session :: struct {
 	accounts:             []Jmap_Account,
@@ -236,7 +236,7 @@ jmap_connect :: proc(
 }
 
 // jmap_connect_bearer authenticates with a bearer token (RFC 6750) instead of
-// Basic: a Palmframe server takes the Supabase access token this way.
+// Basic: a Palmy server takes the Supabase access token this way.
 jmap_connect_bearer :: proc(
 	j: ^JMAP,
 	host: string,
@@ -251,7 +251,7 @@ jmap_connect_bearer :: proc(
 }
 
 // jmap_use_account points every later call at one of the session's accounts,
-// named by id or by name (a Palmframe account's name is its address).
+// named by id or by name (a Palmy account's name is its address).
 jmap_use_account :: proc(j: ^JMAP, want: string) -> (err: string) {
 	for a in j.session.accounts {
 		if a.id == want || strings.equal_fold(a.name, want) {

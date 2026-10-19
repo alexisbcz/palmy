@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Start a local Palmframe cloud stack and apply cloud/supabase/migrations.
+# Start a local Palmy cloud stack and apply cloud/supabase/migrations.
 #
 #   ./up.sh [--port-base N] [--name X] [--reset]
 #

@@ -9,7 +9,7 @@ modelled on any existing recording, because this goes on a public website and
 
 Two cues:
 
-  A. **PALMFRAME SURF**, E minor, 144 BPM. Eight bars, i-III-IV-i-VI-VII-i-V
+  A. **PALMY SURF**, E minor, 144 BPM. Eight bars, i-III-IV-i-VI-VII-i-V
      (Em G A Em C D Em B7). The A major in bar three is the borrowed dorian
      fourth that the genre lives on, and the B7 at the end is a real dominant
      so the loop pulls rather than merely repeats. A second eight -- theme B,
@@ -482,7 +482,7 @@ def build_western() -> Track:
 
 def main():
     out = os.path.join(ROOT, "film", "score")
-    meta = Track("palmframe")
+    meta = Track("palmy")
     meta.time_signature(0, BEATS_PER_BAR, 2)
     meta.tempo(0, BPM)
     # A silent marker on the last bar line keeps every stem the same length,

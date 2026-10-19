@@ -13,5 +13,5 @@ details  = Every interface with its addresses, gateway and DNS, and the Wi-Fi ne
 depend   = glibc fonts libxkbcommon iwd dbus
 provides = cmd:network
 
-file     = ${PALMFRAME_OUT}/bin/network -> /usr/bin/network mode 0755
-file     = ${PALMFRAME_ROOT}/distro/apps/desktop/network.desktop -> /usr/share/applications/network.desktop mode 0644
+file     = ${PALMY_OUT}/bin/network -> /usr/bin/network mode 0755
+file     = ${PALMY_ROOT}/distro/apps/desktop/network.desktop -> /usr/share/applications/network.desktop mode 0644

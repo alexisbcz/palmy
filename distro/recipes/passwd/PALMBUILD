@@ -9,7 +9,7 @@ license  = MIT
 category = System
 icon     = lock
 details  = Asks for the current password, then the new one twice, and rewrites /etc/shadow atomically under the same locks busybox's and shadow-utils' tools take. Root can also set, lock, unlock and expire any account's password.
-depend   = palmframe-base glibc
+depend   = palmy-base glibc
 provides = cmd:passwd
 
-file     = ${PALMFRAME_OUT}/bin/passwd -> /usr/bin/passwd mode 4755
+file     = ${PALMY_OUT}/bin/passwd -> /usr/bin/passwd mode 4755

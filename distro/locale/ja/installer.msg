@@ -1,4 +1,4 @@
-# Palmframe installer (apps/installer) — Japanese. Needs a CJK font on the live system to render; the installer lists
+# Palmy installer (apps/installer) — Japanese. Needs a CJK font on the live system to render; the installer lists
 # 日本語 as unavailable when none is installed (distro/notes/installer-gui.md).
 # Format: distro/locale/README.md. Installed as
 # /usr/share/palm/locale/ja/installer.msg.
@@ -57,8 +57,8 @@ msgid "Step %d of %d"
 msgstr "ステップ %d / %d"
 
 # --- page headings -------------------------------------------------------------
-msgid "Welcome to Palmframe"
-msgstr "Palmframe へようこそ"
+msgid "Welcome to Palmy"
+msgstr "Palmy へようこそ"
 
 msgid "Choose the language for the installer and for the new system."
 msgstr "インストーラーと新しいシステムの言語を選んでください。"
@@ -75,8 +75,8 @@ msgstr "最寄りの都市を選んでください。時計にはその地域の
 msgid "Installation disk"
 msgstr "インストール先のディスク"
 
-msgid "Choose the disk to install Palmframe on."
-msgstr "Palmframe をインストールするディスクを選んでください。"
+msgid "Choose the disk to install Palmy on."
+msgstr "Palmy をインストールするディスクを選んでください。"
 
 msgid "Your account"
 msgstr "あなたのアカウント"
@@ -90,8 +90,8 @@ msgstr "インストールの準備ができました"
 msgid "Check your choices. Nothing has been changed yet."
 msgstr "選んだ内容を確認してください。まだ何も変更されていません。"
 
-msgid "Installing Palmframe"
-msgstr "Palmframe をインストールしています"
+msgid "Installing Palmy"
+msgstr "Palmy をインストールしています"
 
 msgid "This takes a few minutes. Every step is in the log."
 msgstr "数分かかります。各ステップはログに記録されます。"
@@ -235,8 +235,8 @@ msgstr "%d MiB"
 msgid "The whole disk will be used"
 msgstr "ディスク全体が使われます"
 
-msgid "Palmframe erases the disk you choose and creates a 512 MiB EFI system partition, a small BIOS boot partition so that older computers can start it too, and an ext4 root file system on the rest. Sharing a disk with another system is not supported."
-msgstr "Palmframe は選んだディスクを消去し、512 MiB の EFI システムパーティション、古いコンピューターでも起動できるようにする小さな BIOS ブートパーティション、残り全体の ext4 ルートファイルシステムを作成します。ほかのシステムとのディスクの共有には対応していません。"
+msgid "Palmy erases the disk you choose and creates a 512 MiB EFI system partition, a small BIOS boot partition so that older computers can start it too, and an ext4 root file system on the rest. Sharing a disk with another system is not supported."
+msgstr "Palmy は選んだディスクを消去し、512 MiB の EFI システムパーティション、古いコンピューターでも起動できるようにする小さな BIOS ブートパーティション、残り全体の ext4 ルートファイルシステムを作成します。ほかのシステムとのディスクの共有には対応していません。"
 
 msgid "No disks were found. Attach a disk and restart the installer."
 msgstr "ディスクが見つかりません。ディスクを接続してから、インストーラーを再起動してください。"
@@ -265,8 +265,8 @@ msgstr "ライブシステムがこのディスクから動作しています"
 msgid "This disk is read-only"
 msgstr "このディスクは読み取り専用です"
 
-msgid "Too small: Palmframe needs at least 4 GiB"
-msgstr "容量不足: Palmframe には 4 GiB 以上が必要です"
+msgid "Too small: Palmy needs at least 4 GiB"
+msgstr "容量不足: Palmy には 4 GiB 以上が必要です"
 
 # --- 4. disk — the erase confirmation ------------------------------------------
 msgid "Erase %s?"
@@ -436,8 +436,8 @@ msgid "Restart"
 msgstr "再起動"
 
 # --- 8. done -------------------------------------------------------------------
-msgid "Palmframe is installed"
-msgstr "Palmframe をインストールしました"
+msgid "Palmy is installed"
+msgstr "Palmy をインストールしました"
 
 msgid "Remove the installation medium, then restart the computer to start your new system."
 msgstr "インストールメディアを取り外してから、コンピューターを再起動すると新しいシステムが始まります。"

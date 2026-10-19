@@ -220,13 +220,13 @@ selftest :: proc(sock, user, password: string) -> int {
 		// The session list picks the palmy window manager when it is offered.
 		list := []Session {
 			{name = "Hyprland", exec = "start-hyprland", kind = .Wayland},
-			PALMFRAME_SESSION,
+			PALMY_SESSION,
 			{name = "Shell", exec = "bash -l", kind = .Shell},
 		}
-		check("sessions: Palmframe is the default", default_session(list) == 1, fmt.tprintf("%d", default_session(list)))
+		check("sessions: Palmy is the default", default_session(list) == 1, fmt.tprintf("%d", default_session(list)))
 		check(
-			"sessions: Palmframe starts wm --drm",
-			strings.join(session_cmd(PALMFRAME_SESSION, context.temp_allocator), " ", context.temp_allocator) == "wm --drm",
+			"sessions: Palmy starts wm --drm",
+			strings.join(session_cmd(PALMY_SESSION, context.temp_allocator), " ", context.temp_allocator) == "wm --drm",
 			"",
 		)
 		check("sessions: no wm, no default", default_session(list[:1]) == -1, "")

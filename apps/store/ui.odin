@@ -792,7 +792,7 @@ package_view :: proc(ui: ^p.Ctx, st: ^State) {
 // protected: the meta-package is the whole system. Removing it from a
 // window would take the window, palmd and palm with it, so Software does not
 // offer it; palm on the console still can.
-PROTECTED := [?]string{"palmframe", "palmframe-base", "palm", "palmd", "glibc", "busybox", "linux", "palm-init", "palm-login"}
+PROTECTED := [?]string{"palmy", "palmy-base", "palm", "palmd", "glibc", "busybox", "linux", "palm-init", "palm-login"}
 
 protected :: proc(pk: ^Package) -> bool {
 	for n in PROTECTED {

@@ -43,7 +43,7 @@ lock_shots :: proc(s: ^Server, app: ^p.App, cv: ^p.Canvas, off: ^p.Offscreen, di
 		_ = os.make_directory_all(path[:strings.last_index_byte(path, '/')])
 		_ = os.write_entire_file(path, transmute([]byte)text)
 	}
-	mk(fmt.tprintf("%s/config/palmframe/identities.json", tmp), `[{"handle":"northwind","display_name":"Northwind","color":"blue"}]`)
+	mk(fmt.tprintf("%s/config/palmy/identities.json", tmp), `[{"handle":"northwind","display_name":"Northwind","color":"blue"}]`)
 	mk(fmt.tprintf("%s/cloud/current", tmp), "northwind\n")
 	os.set_env("USER", "camille")
 	os.set_env("XDG_CONFIG_HOME", fmt.tprintf("%s/config", tmp))
@@ -73,7 +73,7 @@ lock_shots :: proc(s: ^Server, app: ^p.App, cv: ^p.Canvas, off: ^p.Offscreen, di
 		s.cfg.border_unfocus = light ? 0xd4d4d8 : 0x27272a
 		s.bg_w = -1
 		// The identity only in the dark set: the light one is a machine
-		// with no Palmframe account.
+		// with no Palmy account.
 		if light {
 			os.set_env("PALM_CLOUD_DIR", fmt.tprintf("%s/none", tmp))
 		} else {

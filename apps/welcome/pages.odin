@@ -9,14 +9,14 @@ import sc "shadcn:."
 page_heading :: proc(st: ^St) -> string {
 	switch st.step {
 	case .Welcome:
-		return tr("Welcome to Palmframe")
+		return tr("Welcome to Palmy")
 	case .Account:
-		return tr("Use Palmframe with an account?")
+		return tr("Use Palmy with an account?")
 	case .Sign_In:
 		if st.signed_in {
 			return tr("You are signed in")
 		}
-		return st.auth_tab == .Create ? tr("Create your Palmframe account") : tr("Sign in to your account")
+		return st.auth_tab == .Create ? tr("Create your Palmy account") : tr("Sign in to your account")
 	case .Identities:
 		return tr("Your identities")
 	case .Sync:
@@ -47,14 +47,14 @@ page_subtitle :: proc(st: ^St) -> string {
 		if st.signed_in {
 			return ""
 		}
-		return tr("Your email is how you sign in and how you get back in if you forget the password. Use an address outside Palmframe.")
+		return tr("Your email is how you sign in and how you get back in if you forget the password. Use an address outside Palmy.")
 	case .Identities:
 		return tr("One account, several selves: personal, work, public, a project. Each has its own address, its own data and its own colour, and nothing passes between them unless you carry it.")
 	case .Sync:
 		return tr("Choose per identity. Each one syncs on its own session, so what one identity holds is never visible to another.")
 	case .Passwords:
 		if st.vault_done && st.secret != "" {
-			return tr("This is the only copy of your Secret Key outside this computer. Without it and your master password, nobody can open your vault: not Palmframe, and not you on a new computer.")
+			return tr("This is the only copy of your Secret Key outside this computer. Without it and your master password, nobody can open your vault: not Palmy, and not you on a new computer.")
 		}
 		return tr("Passwords are encrypted on this computer before they leave it. Two things unlock them: a master password you remember, and a Secret Key this computer keeps.")
 	case .Setup:
@@ -299,9 +299,9 @@ page_sign_in :: proc(st: ^St, ui: ^p.Ctx) {
 	if st.auth_tab == .Create {
 		field(ui, st, &st.name_buf, tr("Your name"), tr("Camille Roux"), prob == N("Enter your name.") ? tr(prob) : "", tr("Your first identity is named after you. You can change it on the next page."), focus_first = true, disabled = disabled)
 	}
-	email_hint := tr("Your recovery address. Mail at Palmframe addresses comes later, per identity.")
+	email_hint := tr("Your recovery address. Mail at Palmy addresses comes later, per identity.")
 	if strings.has_suffix(strings.trim_space(string(st.email_buf[:])), fmt.tprintf("@%s", st.domain)) {
-		email_hint = tr("This is a Palmframe address. If you lose that identity, you lose your way back in: an outside address is safer.")
+		email_hint = tr("This is a Palmy address. If you lose that identity, you lose your way back in: an outside address is safer.")
 	}
 	field(ui, st, &st.email_buf, tr("Email"), "camille@example.org", prob == N("Enter a valid email address.") ? tr(prob) : "", email_hint, focus_first = st.auth_tab == .Sign_In, disabled = disabled)
 	pw_prob := ""
@@ -328,7 +328,7 @@ page_sign_in :: proc(st: ^St, ui: ^p.Ctx) {
 	if st.url_open {
 		p.row(ui, "w-full items-end gap-2")
 		p.col(ui, "flex-1 min-w-0")
-		field(ui, st, &st.url_buf, "", "https://cloud.example.org", hint = tr("The address of a Palmframe server. Ask whoever runs yours."), mono = true)
+		field(ui, st, &st.url_buf, "", "https://cloud.example.org", hint = tr("The address of a Palmy server. Ask whoever runs yours."), mono = true)
 		p.end(ui)
 		if button(ui, st, tr("Use this server"), nil, .Outline, size = .SM) {
 			use_server(st)
@@ -797,7 +797,7 @@ emergency_kit :: proc(st: ^St, ui: ^p.Ctx) {
 	p.div(ui, "size-7 rounded-md bg-[#18181b] items-center justify-center")
 	p.icon(ui, WI_PACKAGE, "size-4 text-white")
 	p.end(ui)
-	txt(ui, tr("Palmframe Emergency Kit"), "flex-1 text-base font-semibold text-[#18181b]")
+	txt(ui, tr("Palmy Emergency Kit"), "flex-1 text-base font-semibold text-[#18181b]")
 	p.end(ui)
 	kit_row(ui, tr("Account"), st.email)
 	kit_row(ui, tr("Server"), server_label(st))
@@ -841,7 +841,7 @@ emergency_kit :: proc(st: ^St, ui: ^p.Ctx) {
 	p.div(ui, "w-full pt-2")
 	p.end(ui)
 	n2 := p.node_count(ui)
-	checkbox(ui, &st.kit_ack, tr("I have saved my Emergency Kit somewhere safe"), tr("Palmframe cannot recover your vault for you. That is what makes it yours."))
+	checkbox(ui, &st.kit_ack, tr("I have saved my Emergency Kit somewhere safe"), tr("Palmy cannot recover your vault for you. That is what makes it yours."))
 	if st.kit_paths[0] != "" && !st.kit_ack {
 		focus_here(st, ui, n2)
 	}
@@ -1162,7 +1162,7 @@ page_done :: proc(st: ^St, ui: ^p.Ctx) {
 	p.icon(ui, WI_CHECK, "size-7 text-primary-foreground")
 	p.end(ui)
 	p.col(ui, "items-center gap-2 max-w-[560]")
-	text(ui, tr("Palmframe is ready"), "text-3xl font-semibold tracking-tight text-foreground text-center")
+	text(ui, tr("Palmy is ready"), "text-3xl font-semibold tracking-tight text-foreground text-center")
 	if st.mode == .Account && st.email != "" {
 		text(ui, trf("Signed in as %s.", st.email), "text-sm text-muted-foreground text-center")
 	} else {
@@ -1196,7 +1196,7 @@ page_done :: proc(st: ^St, ui: ^p.Ctx) {
 	}
 
 	n := p.node_count(ui)
-	if button(ui, st, tr("Start using Palmframe"), fwd_icon(), .Default, icon_after = true) {
+	if button(ui, st, tr("Start using Palmy"), fwd_icon(), .Default, icon_after = true) {
 		go_next(st)
 	}
 	focus_here(st, ui, n)

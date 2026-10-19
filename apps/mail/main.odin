@@ -144,10 +144,10 @@ print_usage :: proc() {
   mail --walkthrough=DIR  render the whole walkthrough as a PNG sequence
   mail --data-dir=PATH use another data directory (e.g. a demo account's)
   mail --palm-shots=DIR --data-dir=PATH
-                       sign in to a dev Palmframe stack offscreen and render
+                       sign in to a dev Palmy stack offscreen and render
                        the identity views (see cloud/mail/dev/demo.sh)
 
-Palmframe (one account, several identities, each its own mailbox):
+Palmy (one account, several identities, each its own mailbox):
 
   P  sign in, or the account card (S sync · O sign out)
   1-9  one identity      0  all identities
@@ -167,7 +167,7 @@ dropping it. Only the Discard button throws a draft away.
 
 This client has no network code. It reads a Maildir from disk; Send queues a
 message into the account's own local Outbox and transmits nothing (for a
-Palmframe identity, the next sync hands it to the server, which delivers to
+Palmy identity, the next sync hands it to the server, which delivers to
 local identities only). Signing in and syncing run mailcore. Saving an
 attachment writes the decoded bytes to a file you choose, and nowhere else.`,
 	)
@@ -243,7 +243,7 @@ init_state :: proc(st: ^State) {
 	}
 
 	reload_all(st)
-	// Signed in to Palmframe: open on the first identity, one mailbox at a
+	// Signed in to Palmy: open on the first identity, one mailbox at a
 	// time, which is the default view. 0 shows them all.
 	if first := palm_nth(st, 0); first >= 0 && !st.single_tree {
 		set_identity_view(st, first)

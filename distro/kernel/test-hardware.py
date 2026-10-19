@@ -1,10 +1,10 @@
-"""Boot the Palmframe kernel on emulated PC hardware and check the drivers bind.
+"""Boot the Palmy kernel on emulated PC hardware and check the drivers bind.
 
     python3 -I distro/kernel/test-hardware.py            both scenarios
     python3 -I distro/kernel/test-hardware.py nvme       one of them
     python3 -I distro/kernel/test-hardware.py esp
 
-Needs distro/out/palmframe.img (make -C distro image) and, for `esp`, the
+Needs distro/out/palmy.img (make -C distro image) and, for `esp`, the
 signing key in distro/build/keys and an older kernel to upgrade to, given as
 OLD_KERNEL=<bzImage> (default: the main checkout's, if this is a worktree).
 The image is copied first, so the one that ships is never changed.
@@ -181,7 +181,7 @@ def show(what, text):
 
 
 def copy_image(name):
-    src = os.path.join(OUT, "palmframe.img")
+    src = os.path.join(OUT, "palmy.img")
     dst = os.path.join(WORK, name, "disk.img")
     subprocess.run(["cp", "--sparse=always", src, dst], check=True)
     return dst
@@ -196,7 +196,7 @@ def scenario_nvme():
     m = Machine("nvme", [
         "-kernel", os.path.join(OUT, "bzImage"),
         "-append", "root=/dev/nvme0n1p2 rw console=ttyS0,115200 loglevel=4",
-        "-drive", f"if=none,id=n,file={disk},format=raw", "-device", "nvme,drive=n,serial=palmframe",
+        "-drive", f"if=none,id=n,file={disk},format=raw", "-device", "nvme,drive=n,serial=palmy",
         "-drive", f"if=none,id=a,file={blank},format=raw", "-device", "ide-hd,drive=a,bus=ide.1",
         "-device", "e1000e,netdev=net0", "-netdev", "user,id=net0",
         "-device", "intel-hda", "-device", "hda-duplex,audiodev=snd0", "-audiodev", "none,id=snd0",
@@ -294,13 +294,13 @@ def make_upgrade_repo(old_kernel):
     text = re.sub(r"^pkgrel\s*=.*$", "pkgrel   = 99", text, flags=re.M)
     text = re.sub(r"^tree\s*=.*modules.*$", "dir      = /usr/lib/modules", text, flags=re.M)
     open(os.path.join(recipe_dir, "PALMBUILD"), "w").write(text)
-    env = dict(os.environ, PALMFRAME_OUT=stage, PALMFRAME_ROOT=os.path.dirname(DISTRO),
-               PALMFRAME_KEYS=os.path.join(DISTRO, "build", "keys"), SOURCE_DATE_EPOCH="0")
+    env = dict(os.environ, PALMY_OUT=stage, PALMY_ROOT=os.path.dirname(DISTRO),
+               PALMY_KEYS=os.path.join(DISTRO, "build", "keys"), SOURCE_DATE_EPOCH="0")
     palm = os.path.join(OUT, "bin", "palm")
     subprocess.run([palm, "build", recipe_dir, "-o", os.path.join(repo, "x86_64")], env=env, check=True,
                    stdout=subprocess.DEVNULL)
     subprocess.run([palm, "index", os.path.join(repo, "x86_64"), "--key",
-                    os.path.join(DISTRO, "build", "keys", "palmframe.sec")], check=True, stdout=subprocess.DEVNULL)
+                    os.path.join(DISTRO, "build", "keys", "palmy.sec")], check=True, stdout=subprocess.DEVNULL)
     # Firmware as Arch ships it, zstd-compressed: the regulatory database
     # cfg80211 asks the firmware loader for when it starts.
     fw = os.path.join(repo, "firmware")
@@ -380,8 +380,8 @@ def scenario_esp():
 
 def main():
     names = sys.argv[1:] or ["nvme", "esp"]
-    if not os.path.isfile(os.path.join(OUT, "palmframe.img")):
-        sys.exit("test-hardware: distro/out/palmframe.img is missing (make -C distro image)")
+    if not os.path.isfile(os.path.join(OUT, "palmy.img")):
+        sys.exit("test-hardware: distro/out/palmy.img is missing (make -C distro image)")
     for n in names:
         os.makedirs(os.path.join(WORK, n), exist_ok=True)
         {"nvme": scenario_nvme, "esp": scenario_esp}[n]()

@@ -1,6 +1,6 @@
 package palm
 
-// palm -- the Palmframe package manager.
+// palm -- the Palmy package manager.
 //
 //	palm add <pkg>...         install, and record in world
 //	palm del <pkg>...         remove, drop from world, and remove orphans
@@ -29,7 +29,7 @@ package palm
 // install.odin for why that is the point rather than a missing feature.
 //
 // `palm` is also the name of the command surface (apps/palm: `palm notes
-// list`, `palm schema`, ...). On a Palmframe system that binary lives at
+// list`, `palm schema`, ...). On a Palmy system that binary lives at
 // /usr/lib/palm/palm-surface, and any first word that is not one of the verbs
 // above is handed to it, argv untouched, by exec. So both work:
 //
@@ -84,7 +84,7 @@ is_verb :: proc(s: string) -> bool {
 	return false
 }
 
-USAGE :: `palm -- the Palmframe package manager
+USAGE :: `palm -- the Palmy package manager
 
   palm add <pkg>...         install (and record in world); a ./file.palm needs --allow-untrusted
   palm del <pkg>...         remove (and drop from world), and orphans

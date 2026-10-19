@@ -13,5 +13,5 @@ details  = A calculator that shows the whole expression as you type it, and keep
 depend   = glibc fonts libxkbcommon
 provides = cmd:calc
 
-file     = ${PALMFRAME_OUT}/bin/calc -> /usr/bin/calc mode 0755
-file     = ${PALMFRAME_ROOT}/distro/apps/desktop/calc.desktop -> /usr/share/applications/calc.desktop mode 0644
+file     = ${PALMY_OUT}/bin/calc -> /usr/bin/calc mode 0755
+file     = ${PALMY_ROOT}/distro/apps/desktop/calc.desktop -> /usr/share/applications/calc.desktop mode 0644

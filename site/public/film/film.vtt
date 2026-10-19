@@ -9,7 +9,7 @@ Four applications live in a window manager that is itself written in the toolkit
 
 2
 00:00:06.667 --> 00:00:10.000
-PALMFRAME — a UI toolkit with a three-line dependency list.
+PALMY — a UI toolkit with a three-line dependency list.
 
 3
 00:00:10.000 --> 00:00:13.333
@@ -105,7 +105,7 @@ And still wrong: no GPOS, so the vowel marks sit on the advance instead of on th
 
 26
 00:01:48.333 --> 00:01:51.667
-Palmframe, the distribution: a plan, not a shipped thing.
+Palmy, the distribution: a plan, not a shipped thing.
 
 27
 00:01:51.667 --> 00:01:55.000
@@ -117,4 +117,4 @@ The numbers, measured and not measured. No frame of this film is camera footage;
 
 29
 00:02:11.667 --> 00:02:13.333
-Palmframe. The toolkit is real. The rest is on the record.
+Palmy. The toolkit is real. The rest is on the record.

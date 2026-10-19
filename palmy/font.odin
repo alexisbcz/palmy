@@ -438,7 +438,7 @@ fill_weight_gaps :: proc(f: ^Fonts) {
 // and that is load-bearing: the slice literals in a returned value live in the
 // callee's stack frame, so every slice the caller indexed was dangling. It
 // never showed on a desktop, where every weight has its own file and the
-// table is not consulted; on a system with one sans file (Palmframe's
+// table is not consulted; on a system with one sans file (Palmy's
 // minimal image ships DejaVuSans alone before the kit pins Geist) the first
 // missing weight read freed stack and every application died in fonts_init.
 @(private)

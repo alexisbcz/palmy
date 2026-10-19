@@ -71,7 +71,7 @@ expect "greeter runs as 900 with video+input"   grep -q "uid=900 gid=900 groups=
 expect "greeter gets GREETD_SOCK and PALM_LOGIN" grep -q "sock=/run/palm-login.sock palm_login=1" /run/test/greeter-runs.txt
 expect "wrong password is auth_error"           grep -q "auth_error" /run/test/greeter-runs.txt
 expect "session runs as palm with its groups"   grep -q "uid=1000.*groups=1000.*,10,39,63,97" /run/test/user-session.txt
-expect "session env from the contract"          grep -q "XDG_CURRENT_DESKTOP=palmframe" /run/test/user-session.txt
+expect "session env from the contract"          grep -q "XDG_CURRENT_DESKTOP=palmy" /run/test/user-session.txt
 expect "start_session env is passed"            grep -q "FROM_GREETER=yes" /run/test/user-session.txt
 expect "XDG_RUNTIME_DIR is 0700, the user's"    sh -c 'ls -ldn /run/user/1000 | grep -q "^drwx------ [0-9]* 1000 1000"'
 expect "session output is in its log"           grep -q to-the-log /var/log/session-palm.log

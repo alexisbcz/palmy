@@ -13,7 +13,7 @@ package palm
 // for every package it reached and silent about the rest.
 //
 // --initdb creates both in an empty root, which is how the image builder
-// starts: `palm --root build/rootfs --initdb add palmframe-base ...`.
+// starts: `palm --root build/rootfs --initdb add palmy-base ...`.
 
 import "core:fmt"
 import "core:os"

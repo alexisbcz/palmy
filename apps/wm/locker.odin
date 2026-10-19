@@ -1,7 +1,7 @@
 // locker.odin — the screen lock, drawn by the compositor itself.
 //
 // lock.odin is the protocol a client locker (swaylock) uses; this is the
-// lock Palmframe ships, and it needs no client at all:
+// lock Palmy ships, and it needs no client at all:
 //
 //   - The compositor owns every key and every click while it is up: no
 //     client has keyboard focus (set_kbd_focus refuses anything but a lock
@@ -478,5 +478,5 @@ locker_hostname :: proc() -> string {
 			return h
 		}
 	}
-	return "palmframe"
+	return "palmy"
 }

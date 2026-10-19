@@ -5,7 +5,7 @@
 //
 //	1. the cloud: the person's own (unscoped) session lists them
 //	   (cloudkit.identities), cached in <index root>/<handle>/identity
-//	2. mailcore's palmframe.conf, which `mailcore palm sync` writes with each
+//	2. mailcore's palmy.conf, which `mailcore palm sync` writes with each
 //	   identity's id, handle, name, kind, colour and address
 //	3. what an earlier run cached in <index root>/<handle>/identity
 //	4. local data folders named by handle (~/Drive/<h>, ~/Notes/<h>, the
@@ -27,7 +27,7 @@ import ic "../core"
 
 Paths :: struct {
 	index:   string, // the index root
-	mail:    string, // mailcore's Maildir root (palmframe.conf lives here)
+	mail:    string, // mailcore's Maildir root (palmy.conf lives here)
 	drive:   string, // the parent of ~/Drive/<handle>
 	notes:   string, // the parent of ~/Notes/<handle>
 	dav:     string, // the DAV cache: <dav>/<handle>/{calendar,addressbook}
@@ -57,7 +57,7 @@ paths_default :: proc() -> Paths {
 		drive   = env_or("PALM_DRIVE_DIR", fmt.aprintf("%s/Drive", home)),
 		notes   = env_or("PALM_NOTES_ROOT", fmt.aprintf("%s/Notes", home)),
 		dav     = env_or("PALM_DAV_CACHE", fmt.aprintf("%s/palm/dav", data)),
-		browser = env_or("PALM_BROWSER_HOME", fmt.aprintf("%s/palmframe/browser", data)),
+		browser = env_or("PALM_BROWSER_HOME", fmt.aprintf("%s/palmy/browser", data)),
 		track   = env_or("PALM_TRACK_ROOT", fmt.aprintf("%s/palmy-track", data)),
 	}
 }
@@ -92,9 +92,9 @@ fill :: proc(dst: ^Ident, src: ic.Identity) {
 	if dst.address == "" {dst.address = src.address}
 }
 
-// read_palmframe_conf parses mailcore's identity blocks.
-read_palmframe_conf :: proc(mail_root: string, out: ^[dynamic]Ident) {
-	data, err := os.read_entire_file_from_path(fmt.tprintf("%s/palmframe.conf", mail_root), context.temp_allocator)
+// read_palmy_conf parses mailcore's identity blocks.
+read_palmy_conf :: proc(mail_root: string, out: ^[dynamic]Ident) {
+	data, err := os.read_entire_file_from_path(fmt.tprintf("%s/palmy.conf", mail_root), context.temp_allocator)
 	if err != nil {
 		return
 	}
@@ -261,7 +261,7 @@ discover :: proc(p: Paths, scope := "", cloud: []ic.Identity = nil) -> [dynamic]
 		}
 		append(&out, Ident{info = c, source = "cloud"})
 	}
-	read_palmframe_conf(p.mail, &out)
+	read_palmy_conf(p.mail, &out)
 	read_cached(p.index, &out)
 	known := len(out) > 0
 	locals := make([dynamic]string, context.temp_allocator)

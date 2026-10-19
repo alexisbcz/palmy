@@ -100,7 +100,7 @@ go_back :: proc(st: ^St) {
 }
 
 // skip: Account and Sign in fall back to using this computer alone, which is
-// a first-class way to use Palmframe and not a lesser one. The rest move on
+// a first-class way to use Palmy and not a lesser one. The rest move on
 // without doing anything.
 skip :: proc(st: ^St) {
 	if !can_skip(st) {

@@ -2,8 +2,8 @@ package install_core
 
 // Step 5: turn a freshly installed root into this person's system.
 //
-// palm has just installed palmframe-base, whose /etc is the demo machine's:
-// host name "palmframe", users root and palm with the password "palm", US
+// palm has just installed palmy-base, whose /etc is the demo machine's:
+// host name "palmy", users root and palm with the password "palm", US
 // keyboard, UTC. This step rewrites exactly the files that carry those
 // choices and nothing else, so `palm verify` afterwards reports them as
 // "modified (config)" — /etc files the user owns now — and every other file
@@ -395,7 +395,7 @@ write_swapfile :: proc(c: ^Ctx, root: string, size: u64) -> string {
 	return ""
 }
 
-// The installed system keeps palmframe-base's network repository unless the
+// The installed system keeps palmy-base's network repository unless the
 // installation itself came from one: the live medium's local repository is
 // not on the new disk, so pointing there would leave `palm update` nowhere.
 @(private)

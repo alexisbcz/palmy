@@ -1,4 +1,4 @@
-// A CRDT for collaborative documents, written for Palmframe's office suite.
+// A CRDT for collaborative documents, written for Palmy's office suite.
 //
 // One `Doc` holds three kinds of shared state, all addressed by plain byte
 // keys rather than by object handles:

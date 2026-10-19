@@ -2,7 +2,7 @@
 # https://supabase.com/docs/guides/local-development/cli/config
 # A string used to distinguish different Supabase projects on the same host. Defaults to the
 # working directory name when running `supabase init`.
-project_id = "palmframe"
+project_id = "palmy"
 
 [api]
 enabled = true
@@ -280,7 +280,7 @@ max_frequency = "5s"
 # uri = "pg-functions://postgres/auth/before-user-created-hook"
 
 # This hook runs before a token is issued and allows you to add additional claims based on the authentication method used.
-# Palmframe: a session minted by mint_scoped_session acts for one identity;
+# Palmy: a session minted by mint_scoped_session acts for one identity;
 # this hook puts that identity in its tokens as `palm_identity`. See
 # migrations/20261019110000_accounts.sql and cloud/docs/accounts.md.
 [auth.hook.custom_access_token]

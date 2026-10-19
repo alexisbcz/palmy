@@ -2,7 +2,7 @@
 
 Sequenced milestones, what to build and what to integrate, and the risks
 stated plainly. "Credible" has a concrete meaning here: **a person can move
-one real identity onto Palmframe, live in it for a month, and leave again
+one real identity onto Palmy, live in it for a month, and leave again
 with everything.** Each milestone ends in a test of that kind, not a feature
 list.
 
@@ -31,7 +31,7 @@ expensive.
 
 ## M1. Two identities, real mail
 
-*A person uses Palmframe for their Personal and Public mail, with their own
+*A person uses Palmy for their Personal and Public mail, with their own
 domain, on one laptop.*
 
 | build | integrate |
@@ -94,7 +94,7 @@ index, not only against fixtures.
 
 ## M4. Files and documents
 
-*A person moves their Drive into Palmframe.*
+*A person moves their Drive into Palmy.*
 
 | build | integrate |
 | --- | --- |
@@ -161,7 +161,7 @@ promising. Touch is not a mouse.
 
 ## M8. Organisations
 
-*Northwind, the company, adopts Palmframe for its people.*
+*Northwind, the company, adopts Palmy for its people.*
 
 - A work identity may be attached to an organisation that can set domain,
   retention, device rules and assistant policy *for that identity only*,

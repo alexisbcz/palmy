@@ -445,13 +445,13 @@ api_compare :: proc(req: ^Request, handle, name: string) -> int {
 // identity_card fetches a handle and display name for commit authorship.
 identity_card :: proc(c: ^Caller, id: string) -> (handle, display: string) {
 	if id == "" {
-		return "palmforge", "Palmframe forge"
+		return "palmforge", "Palmy forge"
 	}
 	r := wire.rpc(cfg.supa, c.bearer, "forge_identity_card", fmt.tprintf(`{{"who":%s}}`, wire.q(id)))
 	if row, ok := wire.first(r.value); ok {
 		return wire.str(row, "handle"), wire.str(row, "display_name")
 	}
-	return "palmforge", "Palmframe forge"
+	return "palmforge", "Palmy forge"
 }
 
 api_init :: proc(req: ^Request, handle, name: string) -> int {
@@ -467,7 +467,7 @@ api_init :: proc(req: ^Request, handle, name: string) -> int {
 	// An initial commit with a README, written straight into the bare
 	// repository: blob, tree, commit, ref.
 	h, display := identity_card(&c, repo.acting)
-	readme := fmt.tprintf("# %s\n\n%s\n", repo.name, "A repository on the Palmframe forge.")
+	readme := fmt.tprintf("# %s\n\n%s\n", repo.name, "A repository on the Palmy forge.")
 	blob := git(repo.path, {"hash-object", "-w", "--stdin"}, transmute([]u8)readme)
 	tree := git(repo.path, {"mktree"}, transmute([]u8)fmt.tprintf("100644 blob %s\tREADME.md\n", strings.trim_space(string(blob.out))))
 	env := author_env(h, display)

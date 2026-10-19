@@ -1,6 +1,6 @@
 package main
 
-// Device permissions: the part of udev Palmframe needs.
+// Device permissions: the part of udev Palmy needs.
 //
 // devtmpfs already creates every device node, as root:root 0600 (or 0666 for
 // the handful the kernel knows are public). What it cannot know is that the

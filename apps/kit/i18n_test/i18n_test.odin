@@ -75,8 +75,8 @@ parse_format :: proc(t: ^testing.T) {
 plural = n > 1
 name = Français
 
-msgid "Install Palmframe"
-msgstr "Installer Palmframe"
+msgid "Install Palmy"
+msgstr "Installer Palmy"
 
 msgid "%d package"
 msgid_plural "%d packages"
@@ -100,8 +100,8 @@ msgstr "a = b, mais en français"
 	testing.expect_value(t, err, "")
 	testing.expect_value(t, c.plural, "n > 1")
 	testing.expect_value(t, c.header["name"], "Français")
-	s, ok := kit.i18n_lookup(&c, "Install Palmframe")
-	testing.expect(t, ok && s == "Installer Palmframe")
+	s, ok := kit.i18n_lookup(&c, "Install Palmy")
+	testing.expect(t, ok && s == "Installer Palmy")
 	forms := c.msgs["%d package"]
 	testing.expect(t, len(forms) == 2 && forms[0] == "%d paquet" && forms[1] == "%d paquets")
 	s, ok = kit.i18n_lookup(&c, "Two lines")

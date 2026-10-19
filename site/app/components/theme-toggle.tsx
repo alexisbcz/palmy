@@ -2,7 +2,7 @@ import { useCallback, useEffect, useState } from "react";
 import { MoonIcon, SunIcon } from "lucide-react";
 import { cn } from "~/lib/utils";
 
-const KEY = "palmframe-theme";
+const KEY = "palmy-theme";
 
 /**
  * Inlined into <head> so the first paint is already the right theme. Without

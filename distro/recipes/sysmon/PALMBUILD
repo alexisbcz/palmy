@@ -13,5 +13,5 @@ details  = CPU, memory, disks and processes, read straight from /proc and /sys, 
 depend   = glibc fonts libxkbcommon
 provides = cmd:sysmon
 
-file     = ${PALMFRAME_OUT}/bin/sysmon -> /usr/bin/sysmon mode 0755
-file     = ${PALMFRAME_ROOT}/distro/apps/desktop/sysmon.desktop -> /usr/share/applications/sysmon.desktop mode 0644
+file     = ${PALMY_OUT}/bin/sysmon -> /usr/bin/sysmon mode 0755
+file     = ${PALMY_ROOT}/distro/apps/desktop/sysmon.desktop -> /usr/share/applications/sysmon.desktop mode 0644

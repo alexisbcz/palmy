@@ -12,24 +12,24 @@
 # is in distro/notes/palm.md). A system bundle at
 # /etc/ssl/certs/ca-certificates.crt, if a package ever installs one, wins.
 #
-# palmframe-release.pub is the key the public repository is signed with
-# (distro/repo-publish). The build key in /etc/palm/keys/palmframe.pub
-# (palmframe-base) still signs the repository a checkout builds for itself; a
+# palmy-release.pub is the key the public repository is signed with
+# (distro/repo-publish). The build key in /etc/palm/keys/palmy.pub
+# (palmy-base) still signs the repository a checkout builds for itself; a
 # system trusts both.
 pkgname  = palm
 pkgver   = 0.2.0
 pkgrel   = 0
-pkgdesc  = The Palmframe package manager
+pkgdesc  = The Palmy package manager
 license  = MIT
 category = System
 icon     = package
 details  = palm installs, removes and upgrades packages from signed repositories, modelled on Alpine's apk: a world file that states what was asked for, every change a fresh resolution of it, and no install scripts of any kind.
 details  = Software is a window onto it; everything it shows comes from palm --json.
-depend   = palmframe-base glibc
+depend   = palmy-base glibc
 provides = cmd:palm
 
-file     = ${PALMFRAME_OUT}/bin/palm -> /usr/bin/palm mode 0755
-file     = ${PALMFRAME_OUT}/bin/palm-apps -> /usr/lib/palm/palm-surface mode 0755
+file     = ${PALMY_OUT}/bin/palm -> /usr/bin/palm mode 0755
+file     = ${PALMY_OUT}/bin/palm-apps -> /usr/lib/palm/palm-surface mode 0755
 file     = ca-certificates.crt -> /usr/share/palm/ca-certificates.crt mode 0644
-file     = palmframe-release.pub -> /etc/palm/keys/palmframe-release.pub mode 0644
+file     = palmy-release.pub -> /etc/palm/keys/palmy-release.pub mode 0644
 dir      = /var/cache/palm

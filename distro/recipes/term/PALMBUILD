@@ -13,5 +13,5 @@ details  = A terminal with tabs. It runs your shell, follows the system theme, a
 depend   = glibc fonts libxkbcommon busybox
 provides = cmd:term
 
-file     = ${PALMFRAME_OUT}/bin/term -> /usr/bin/term mode 0755
-file     = ${PALMFRAME_ROOT}/distro/apps/desktop/term.desktop -> /usr/share/applications/term.desktop mode 0644
+file     = ${PALMY_OUT}/bin/term -> /usr/bin/term mode 0755
+file     = ${PALMY_ROOT}/distro/apps/desktop/term.desktop -> /usr/share/applications/term.desktop mode 0644

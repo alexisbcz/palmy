@@ -16,10 +16,10 @@ depend   = dbus glibc readline
 provides = cmd:iwctl cmd:iwmon cmd:resolvconf
 
 dir      = /var/lib/iwd mode 0700
-file     = ${PALMFRAME_ROOT}/distro/recipes/runtime/files/iwd/etc/iwd/main.conf -> /etc/iwd/main.conf mode 0644
-file     = ${PALMFRAME_ROOT}/distro/recipes/runtime/files/iwd/etc/palm/services/iwd -> /etc/palm/services/iwd mode 0644
-file     = ${PALMFRAME_OUT}/src/iwd/usr/bin/iwctl -> /usr/bin/iwctl mode 0755
-file     = ${PALMFRAME_OUT}/src/iwd/usr/bin/iwmon -> /usr/bin/iwmon mode 0755
-file     = ${PALMFRAME_ROOT}/distro/recipes/runtime/files/iwd/usr/bin/resolvconf -> /usr/bin/resolvconf mode 0755
-file     = ${PALMFRAME_OUT}/src/iwd/usr/lib/iwd/iwd -> /usr/lib/iwd/iwd mode 0755
-file     = ${PALMFRAME_OUT}/src/iwd/usr/share/dbus-1/system.d/iwd-dbus.conf -> /usr/share/dbus-1/system.d/iwd-dbus.conf mode 0644
+file     = ${PALMY_ROOT}/distro/recipes/runtime/files/iwd/etc/iwd/main.conf -> /etc/iwd/main.conf mode 0644
+file     = ${PALMY_ROOT}/distro/recipes/runtime/files/iwd/etc/palm/services/iwd -> /etc/palm/services/iwd mode 0644
+file     = ${PALMY_OUT}/src/iwd/usr/bin/iwctl -> /usr/bin/iwctl mode 0755
+file     = ${PALMY_OUT}/src/iwd/usr/bin/iwmon -> /usr/bin/iwmon mode 0755
+file     = ${PALMY_ROOT}/distro/recipes/runtime/files/iwd/usr/bin/resolvconf -> /usr/bin/resolvconf mode 0755
+file     = ${PALMY_OUT}/src/iwd/usr/lib/iwd/iwd -> /usr/lib/iwd/iwd mode 0755
+file     = ${PALMY_OUT}/src/iwd/usr/share/dbus-1/system.d/iwd-dbus.conf -> /usr/share/dbus-1/system.d/iwd-dbus.conf mode 0644

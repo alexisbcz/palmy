@@ -1,7 +1,7 @@
-# The parts of the palmframe-base filesystem that are not plain files in
+# The parts of the palmy-base filesystem that are not plain files in
 # distro/base/root: directories with special modes, the merged-/usr symlinks,
 # and the owners that differ from root:root. The image builder (and the
-# palmframe-base PALMBUILD recipe) applies these on top of copying root/.
+# palmy-base PALMBUILD recipe) applies these on top of copying root/.
 #
 #	dir     <path> <mode> [owner:group]
 #	symlink <path> <target>
@@ -39,7 +39,7 @@ dir     root            0700
 dir     home            0755
 # What a new user's home starts as. The installer copies /etc/skel into the
 # account it creates; the disk image's demo user `palm` gets the same tree
-# from the palmframe-demo package, so palmframe-base owns nothing under /home
+# from the palmy-demo package, so palmy-base owns nothing under /home
 # and an installed system (where `palm` is removed) still verifies clean.
 # The XDG directories applications expect to find: several create their data
 # directory with a plain (non-recursive) mkdir of ~/.local/share/<app>, and
@@ -69,7 +69,7 @@ symlink etc/localtime   ../usr/share/zoneinfo/UTC
 
 mode    etc/shadow      0600
 mode    usr/share/udhcpc/default.script 0755
-mode    usr/lib/palmframe/syslog 0755
+mode    usr/lib/palmy/syslog 0755
 dir     etc/palm/keys   0755
 # The administrator's early-boot hooks (distro/notes/init.md); packages put
 # theirs in /usr/lib/palm-init/early.d, which palm-init owns.

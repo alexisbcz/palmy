@@ -1,6 +1,6 @@
-NAME="Palmframe"
-PRETTY_NAME="Palmframe"
-ID=palmframe
+NAME="Palmy"
+PRETTY_NAME="Palmy"
+ID=palmy
 ID_LIKE=alpine
 VERSION_ID=0.1
 VERSION="0.1"

@@ -1,7 +1,7 @@
 # Notifications
 
 One notification service for the whole system, so that no app has to invent
-its own: `palm-notifyd` per session, `kit.notify` for Palmframe's apps,
+its own: `palm-notifyd` per session, `kit.notify` for Palmy's apps,
 `org.freedesktop.Notifications` for everything else, toasts and a center that
 say whose a notification is, and a policy per identity written as a sentence
 (product.md §8: "Northwind: quiet after 18:00").
@@ -10,7 +10,7 @@ What is built and verified, and what is only designed, is said in each
 section; the short version is at the end ([Status](#status)).
 
 ```
- Palmframe apps                    third-party apps (libnotify, Firefox, Chromium)
+ Palmy apps                    third-party apps (libnotify, Firefox, Chromium)
  kit.notify({...})                 Notify(app, replaces_id, ..., hints)
       │ unix socket, one JSON           │ session bus
       │ object per line                 │ org.freedesktop.Notifications 1.2
@@ -30,7 +30,7 @@ section; the short version is at the end ([Status](#status)).
 
 ## Why it is shaped this way
 
-**A socket for our own apps, the bus for everyone else.** Palmframe ships no
+**A socket for our own apps, the bus for everyone else.** Palmy ships no
 session bus by default (distro/notes/runtime.md: the system bus exists for
 iwd and BlueZ), and a palmy app saying "you have mail" should not need one.
 The socket gives the daemon the sender's pid through `SO_PEERCRED`, and with
@@ -223,7 +223,7 @@ means the daemon is not running.
 | `$XDG_STATE_HOME/palm/notify/history.json` | notifications (≤ 400, read ones go after 14 days), tombstones |
 | `$XDG_CONFIG_HOME/palm/notify/policies.json` | the policies, structured, with each sentence |
 | `$XDG_RUNTIME_DIR/palm/notify.state` | for the bar: `unread N`, `showing N`, `dnd 0/1`, then `identity <handle>\t<none/quiet/dnd>\t<unread>\t<sentence>` per identity; rewritten only when it changes |
-| `$XDG_CONFIG_HOME/palmframe/identities.json` | read, not written: `[{"handle","name","color"}]`, the seam apps/browser also reads; colour is a palette name or `#rrggbb` |
+| `$XDG_CONFIG_HOME/palmy/identities.json` | read, not written: `[{"handle","name","color"}]`, the seam apps/browser also reads; colour is a palette name or `#rrggbb` |
 
 Socket requests, one JSON object per line, one reply per line: `send`,
 `withdraw`, `read`, `dismiss`, `hide`, `invoke`, `clear`, `list`, `policies`,
@@ -374,7 +374,7 @@ expires. Never put a secret in a notification.
 Web notifications already work without the browser doing anything: Chromium
 and Firefox send them over `org.freedesktop.Notifications`, and the daemon
 recovers the identity from the engine's profile path
-(`…/palmframe/browser/<identity>/cef|gecko`) because Chromium overwrites its
+(`…/palmy/browser/<identity>/cef|gecko`) because Chromium overwrites its
 own environment block. Keep that layout. If apps/browser hosts the engine
 itself (CEF), pass the site's `tag` as the hint `x-palm-key` (`web:<origin>:<tag>`)
 and `x-palm-identity`, so a site's repeated notification is delivered once.
@@ -385,7 +385,7 @@ and `x-palm-identity`, so a site's repeated notification is delivered once.
 until tomorrow 08:00" is `notify quiet add --identity camille.roux "quiet"`.
 Today's count is `notify list --unread --json`.
 
-**accounts / settings** — write `$XDG_CONFIG_HOME/palmframe/identities.json`
+**accounts / settings** — write `$XDG_CONFIG_HOME/palmy/identities.json`
 (`handle`, `name`, `color`) when identities change: it is how the toasts know
 "Northwind" and its blue.
 
@@ -439,7 +439,7 @@ tables with their tests.
 | command | result |
 | --- | --- |
 | `notify --selftest` | 93 passed: grammar round-trips, every branch of the decision, dedupe, tombstones, digests, markup, spoken text, scope |
-| `apps/notify/e2e.sh --shots DIR` | 60 passed, on the host with a private session bus and a headless sway: sentences stored and refused, scope refused by the kit and again by the daemon, dedupe across apps, quiet hours held then one digest at 08:01 and the daily one at 17:00, a call breaking through only with "Calls break through", do not disturb, the demo client (kit.notify, notify_listen, withdraw), notify-send (identity from PALM_IDENTITY, replace, low urgency, actions and ActionInvoked heard by notify-send itself), the toasts, the keyboard (notify focus, ↓, Delete), the center (Escape closes it), and Chromium 152 on Wayland: a page's `new Notification(...)` arrives labelled Northwind (from the profile path) and clicking it in Palmframe runs the page's `onclick` |
+| `apps/notify/e2e.sh --shots DIR` | 60 passed, on the host with a private session bus and a headless sway: sentences stored and refused, scope refused by the kit and again by the daemon, dedupe across apps, quiet hours held then one digest at 08:01 and the daily one at 17:00, a call breaking through only with "Calls break through", do not disturb, the demo client (kit.notify, notify_listen, withdraw), notify-send (identity from PALM_IDENTITY, replace, low urgency, actions and ActionInvoked heard by notify-send itself), the toasts, the keyboard (notify focus, ↓, Delete), the center (Escape closes it), and Chromium 152 on Wayland: a page's `new Notification(...)` arrives labelled Northwind (from the profile path) and clicking it in Palmy runs the page's `onclick` |
 | `cloud/dev/up.sh --name notify --port-base 50521` then `cloud/dev/test.sh --name notify --port-base 50521` | the whole suite 609/609, `notify_once.sql` 24/24 |
 | `python3 -I apps/notify/qemu-test.py` | on the disk image (notify added to the default set locally): session.d starts the session bus and palm-notifyd as palm; the daemon owns `org.freedesktop.Notifications`; a toast on wm --drm under its bar; a chime through PipeWire (`pw-play`); the keyboard; quiet holding a person while a call breaks through, then the digest; the center; the bar's state file — 20 passed |
 | `python3 -I distro/image/test-boot.py` | all passed (27) on the same image |

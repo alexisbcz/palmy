@@ -5,7 +5,7 @@ import { collectionPages, collectionSidebar } from "~/lib/generated-nav";
 import { seo } from "~/lib/seo";
 
 export function meta({ loaderData: data, location }: Route.MetaArgs) {
-  if (!data) return [{ title: "Not found — Palmframe" }];
+  if (!data) return [{ title: "Not found — Palmy" }];
   return seo({ title: data.title, description: data.description, path: location.pathname });
 }
 

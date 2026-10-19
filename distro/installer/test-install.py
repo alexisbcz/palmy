@@ -1,4 +1,4 @@
-"""Install Palmframe onto a blank disk inside QEMU with palm-install, then boot it.
+"""Install Palmy onto a blank disk inside QEMU with palm-install, then boot it.
 
     python3 -I distro/installer/test-install.py [--keep] [--work DIR]
 
@@ -6,7 +6,7 @@ Everything happens inside throwaway virtual machines; on the host this
 script only copies files and builds image files (no root, no loop devices,
 no host block devices, no host firmware variables):
 
-  1. A copy of distro/out/palmframe.img (the shipped system) is booted under
+  1. A copy of distro/out/palmy.img (the shipped system) is booted under
      OVMF with two more virtio disks: a blank 8 GiB qcow2 (the target, which
      the guest sees as /dev/vdb) and a small ext4 "tools" disk (/dev/vdc)
      carrying the palm-install just built, the host's mkfs.fat and mkfs.ext4
@@ -254,14 +254,14 @@ def main():
     args = ap.parse_args()
     work = args.work
     os.makedirs(work, exist_ok=True)
-    for f in ("palmframe.img", os.path.join("bin", "palm-install"), os.path.join("repo", "x86_64", "PALMINDEX")):
+    for f in ("palmy.img", os.path.join("bin", "palm-install"), os.path.join("repo", "x86_64", "PALMINDEX")):
         if not os.path.exists(os.path.join(OUT, f)):
             sys.exit(f"test-install: distro/out/{f} is missing")
 
     live = os.path.join(work, "live.img")
     target = os.path.join(work, "target.qcow2")
     vars_fd = os.path.join(work, "OVMF_VARS.fd")
-    subprocess.run(["cp", "--sparse=always", os.path.join(OUT, "palmframe.img"), live], check=True)
+    subprocess.run(["cp", "--sparse=always", os.path.join(OUT, "palmy.img"), live], check=True)
     if os.path.exists(target):
         os.unlink(target)
     subprocess.run(["qemu-img", "create", "-q", "-f", "qcow2", target, "8G"], check=True)
@@ -275,7 +275,7 @@ def main():
                                   f"file={target},if=virtio,format=qcow2",
                                   f"file={tools},if=virtio,format=raw,readonly=on"], vars_fd)
     try:
-        if not check("root shell on the serial console", m.login("root", "palm", "palmframe")):
+        if not check("root shell on the serial console", m.login("root", "palm", "palmy")):
             return
         out, rc = m.run("mkdir -p /tools && mount -o ro /dev/vdc /tools && "
                         "export PATH=/tools/bin:$PATH LD_LIBRARY_PATH=/tools/lib && echo ok")
@@ -309,7 +309,7 @@ def main():
             f.write(log)
         check("the log has the GPT, the mkfs runs and BLKRRPART's partitions",
               "GPT written" in log and "partition nodes: /dev/vdb1 /dev/vdb2" in log and "mkfs.ext4" in log, log[-3000:])
-        check("the UEFI entry was written", re.search(r"UEFI: Boot[0-9A-F]{4} \"Palmframe\"", log) is not None, log[-3000:])
+        check("the UEFI entry was written", re.search(r"UEFI: Boot[0-9A-F]{4} \"Palmy\"", log) is not None, log[-3000:])
 
         out, rc = m.run("mkdir -p /mnt/check && mount /dev/vdb2 /mnt/check && mount /dev/vdb1 /mnt/check/boot/efi && echo mounted")
         check("the new partitions mount", "mounted" in out, out)
@@ -325,7 +325,7 @@ def main():
               and re.search(r"drwx------\s+\d+\s+1000\s+1000 .*alex", out) is not None, out)
         check("shadow is root-only", re.search(r"-rw------- .* root .*shadow", out) is not None, out)
         check("ESP holds both limine copies, limine.conf and the kernel",
-              all(p in out for p in ("/EFI/BOOT/BOOTX64.EFI", "/EFI/palmframe/BOOTX64.EFI", "/boot/limine/limine.conf", "/mnt/check/boot/efi/vmlinuz")), out)
+              all(p in out for p in ("/EFI/BOOT/BOOTX64.EFI", "/EFI/palmy/BOOTX64.EFI", "/boot/limine/limine.conf", "/mnt/check/boot/efi/vmlinuz")), out)
         out, _ = m.run("palm --root /mnt/check verify 2>&1 | tail -20")
         print("    palm verify on the new disk:\n    " + out.strip().replace("\n", "\n    "))
         m.run("umount /mnt/check/boot/efi; umount /mnt/check; sync")
@@ -358,7 +358,7 @@ def main():
         if cur and order:
             num = f"Boot{cur.group(2).upper()}{cur.group(1).upper()}"
             check(f"booted through BootCurrent = {num}, first in BootOrder", cur.groups() == order.groups(), out)
-            check(f"{num} is the Palmframe entry", re.search(rf"{num} .*Palmframe", out) is not None, out)
+            check(f"{num} is the Palmy entry", re.search(rf"{num} .*Palmy", out) is not None, out)
         else:
             check("BootCurrent/BootOrder readable", False, out)
 

@@ -11,10 +11,10 @@ import { APPS } from "~/content/apps";
 
 export function meta() {
   return seo({
-    title: "Palmframe — a Linux distribution with its own UI toolkit",
+    title: "Palmy — a Linux distribution with its own UI toolkit",
     fullTitle: true,
     description:
-      "palmy is a UI toolkit written from scratch in Odin: Wayland and X11 hand-rolled, a software rasterizer, flexbox, and Tailwind class strings. Palmframe is a small Linux distribution built on it, which boots in QEMU.",
+      "palmy is a UI toolkit written from scratch in Odin: Wayland and X11 hand-rolled, a software rasterizer, flexbox, and Tailwind class strings. Palmy is a small Linux distribution built on it, which boots in QEMU.",
     path: "/",
   });
 }
@@ -92,7 +92,7 @@ export default function Home() {
                 class strings.
               </p>
               <p className="mt-4 text-base leading-7 text-muted-foreground">
-                <strong className="text-foreground">Palmframe</strong> is the
+                <strong className="text-foreground">Palmy</strong> is the
                 Linux distribution built on it: an init, a login daemon and a
                 package manager written in Odin, booting in QEMU to a greeter
                 and the window manager, with a graphical installer. It has never
@@ -304,7 +304,7 @@ export default function Home() {
           </div>
         </section>
 
-        {/* Palmframe ------------------------------------------------------- */}
+        {/* Palmy ------------------------------------------------------- */}
         <section className="border-t bg-muted/30">
           <div className="mx-auto max-w-[1600px] px-4 py-16 lg:px-6">
             <div className="flex flex-wrap items-center gap-3">
@@ -322,7 +322,7 @@ export default function Home() {
             <div className="mt-6 grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
               <Feature
                 title="AI as part of the system"
-                to="/palmframe/ai-in-the-system"
+                to="/vision/ai-in-the-system"
               >
                 A model running locally, as a user process, with the
                 system&rsquo;s own applications built to be addressed by it. Two
@@ -330,13 +330,13 @@ export default function Home() {
               </Feature>
               <Feature
                 title="One account, several identities"
-                to="/palmframe/identities"
+                to="/vision/identities"
               >
                 Sub-identities with their own mail, files, credentials and
                 assistant scope — where the useful version of the claim is the
                 one with an assertion behind it.
               </Feature>
-              <Feature title="One command surface" to="/palmframe/palm-cli">
+              <Feature title="One command surface" to="/vision/palm-cli">
                 Every application fully operable from the command line, with a
                 machine-readable schema, declared side-effect classes, and a
                 scope rule that can only narrow.

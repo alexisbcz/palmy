@@ -33,7 +33,7 @@ Account :: struct {
 	root_confirm:  string,
 }
 
-// RESERVED are names that already exist on a Palmframe system (CONTRACT.md,
+// RESERVED are names that already exist on a Palmy system (CONTRACT.md,
 // "Users") or are system groups the new user is put in. `palm` is absent on
 // purpose: the install removes the demo user, so the name is free.
 RESERVED := [?]string {

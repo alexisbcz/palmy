@@ -1,6 +1,6 @@
-# Palmframe installer (apps/installer) — Arabic (Modern Standard). The installer has no plural strings, but the rule is
+# Palmy installer (apps/installer) — Arabic (Modern Standard). The installer has no plural strings, but the rule is
 # gettext's for Arabic so a later plural entry needs only its six msgstr[].
-# Device paths, sizes and Palmframe stay in Latin script; palmy's bidi orders them.
+# Device paths, sizes and Palmy stay in Latin script; palmy's bidi orders them.
 # Format: distro/locale/README.md. Installed as
 # /usr/share/palm/locale/ar/installer.msg.
 #
@@ -59,8 +59,8 @@ msgid "Step %d of %d"
 msgstr "الخطوة %d من %d"
 
 # --- page headings -------------------------------------------------------------
-msgid "Welcome to Palmframe"
-msgstr "مرحبًا بك في Palmframe"
+msgid "Welcome to Palmy"
+msgstr "مرحبًا بك في Palmy"
 
 msgid "Choose the language for the installer and for the new system."
 msgstr "اختر لغة المثبِّت والنظام الجديد."
@@ -77,8 +77,8 @@ msgstr "اختر أقرب مدينة إليك. تعرض الساعة الوقت 
 msgid "Installation disk"
 msgstr "قرص التثبيت"
 
-msgid "Choose the disk to install Palmframe on."
-msgstr "اختر القرص الذي سيُثبَّت عليه Palmframe."
+msgid "Choose the disk to install Palmy on."
+msgstr "اختر القرص الذي سيُثبَّت عليه Palmy."
 
 msgid "Your account"
 msgstr "حسابك"
@@ -92,8 +92,8 @@ msgstr "جاهز للتثبيت"
 msgid "Check your choices. Nothing has been changed yet."
 msgstr "راجع اختياراتك. لم يُغيَّر أي شيء بعد."
 
-msgid "Installing Palmframe"
-msgstr "جارٍ تثبيت Palmframe"
+msgid "Installing Palmy"
+msgstr "جارٍ تثبيت Palmy"
 
 msgid "This takes a few minutes. Every step is in the log."
 msgstr "يستغرق ذلك بضع دقائق. كل خطوة مسجَّلة في السجل."
@@ -237,8 +237,8 @@ msgstr "%d MiB"
 msgid "The whole disk will be used"
 msgstr "سيُستخدم القرص بأكمله"
 
-msgid "Palmframe erases the disk you choose and creates a 512 MiB EFI system partition, a small BIOS boot partition so that older computers can start it too, and an ext4 root file system on the rest. Sharing a disk with another system is not supported."
-msgstr "يمسح Palmframe القرص الذي تختاره وينشئ قسم نظام EFI بحجم 512 ميبيبايت، وقسم إقلاع BIOS صغيرًا لتتمكن الحواسيب الأقدم من تشغيله أيضًا، ونظام ملفات جذر ext4 على المساحة المتبقية. مشاركة القرص مع نظام آخر غير مدعومة."
+msgid "Palmy erases the disk you choose and creates a 512 MiB EFI system partition, a small BIOS boot partition so that older computers can start it too, and an ext4 root file system on the rest. Sharing a disk with another system is not supported."
+msgstr "يمسح Palmy القرص الذي تختاره وينشئ قسم نظام EFI بحجم 512 ميبيبايت، وقسم إقلاع BIOS صغيرًا لتتمكن الحواسيب الأقدم من تشغيله أيضًا، ونظام ملفات جذر ext4 على المساحة المتبقية. مشاركة القرص مع نظام آخر غير مدعومة."
 
 msgid "No disks were found. Attach a disk and restart the installer."
 msgstr "لم يُعثر على أي قرص. صِل قرصًا ثم أعد تشغيل المثبِّت."
@@ -267,8 +267,8 @@ msgstr "النظام الحي يعمل من هذا القرص"
 msgid "This disk is read-only"
 msgstr "هذا القرص للقراءة فقط"
 
-msgid "Too small: Palmframe needs at least 4 GiB"
-msgstr "صغير جدًا: يحتاج Palmframe إلى 4 GiB على الأقل"
+msgid "Too small: Palmy needs at least 4 GiB"
+msgstr "صغير جدًا: يحتاج Palmy إلى 4 GiB على الأقل"
 
 # --- 4. disk — the erase confirmation ------------------------------------------
 msgid "Erase %s?"
@@ -438,8 +438,8 @@ msgid "Restart"
 msgstr "إعادة التشغيل"
 
 # --- 8. done -------------------------------------------------------------------
-msgid "Palmframe is installed"
-msgstr "تم تثبيت Palmframe"
+msgid "Palmy is installed"
+msgstr "تم تثبيت Palmy"
 
 msgid "Remove the installation medium, then restart the computer to start your new system."
 msgstr "أزل وسيط التثبيت، ثم أعد تشغيل الحاسوب لبدء استخدام نظامك الجديد."

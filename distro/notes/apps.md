@@ -1,4 +1,4 @@
-# Applications on Palmframe — notes from the apps side
+# Applications on Palmy — notes from the apps side
 
 Owner of this file: the agent that owns palmy/ and distro/apps/ (making palmy
 clients run on the minimal system, and building the application set).
@@ -58,7 +58,7 @@ runs empty.
   `/usr/share/fonts/geist` first in kit itself. The same path is copied into
   every app's `shot.odin` and into `videoedit` (`TITLE_FONT`, `MEDIA_DIR`).
 - **apps/files**: "Open terminal here" launches `foot`
-  (`apps/files/main.odin:615`); on Palmframe it should be `term`.
+  (`apps/files/main.odin:615`); on Palmy it should be `term`.
 - **apps/launcher**: the terminal list it uses for `Terminal=true` entries and
   Ctrl+Enter (`main.odin:751`) knows foot/alacritty/kitty, not `term`.
 - **apps/notes**: `store_dir` should use `make_directory_all` (see above).
@@ -67,7 +67,7 @@ runs empty.
   (verified against the stub). The kiosk session must still offer
   `zwlr_layer_shell_v1`.
 - **Clipboard**: palmy has no native `wl_data_device` support, so every copy
-  action in the apps goes through `wl-copy`/`wl-paste`, which Palmframe does
+  action in the apps goes through `wl-copy`/`wl-paste`, which Palmy does
   not ship. In-app text fields work; copying out of an app does not. This is
   the biggest functional gap in the default set and belongs to palmy (future
   work, not attempted here).

@@ -99,8 +99,8 @@ selftest :: proc() -> int {
 		name, ver, _, pok = parse_palm_line("palm-browser-cef-120.1.0-r0 [installed]")
 		check(&pass, &fail, pok && name == "palm-browser-cef" && ver == "120.1.0-r0", "names with dashes")
 
-		on, ov := parse_os_release("NAME=\"Palmframe\"\nVERSION_ID=0.1.0\n")
-		check(&pass, &fail, on == "Palmframe" && ov == "0.1.0", "os-release")
+		on, ov := parse_os_release("NAME=\"Palmy\"\nVERSION_ID=0.1.0\n")
+		check(&pass, &fail, on == "Palmy" && ov == "0.1.0", "os-release")
 		cm, cc := parse_cpuinfo("processor\t: 0\nmodel name\t: Test CPU\nprocessor\t: 1\nmodel name\t: Test CPU\n")
 		check(&pass, &fail, cm == "Test CPU" && cc == 2, "cpuinfo")
 		check(&pass, &fail, parse_meminfo_total("MemTotal:       16384000 kB\nMemFree: 1 kB\n") == 16384000, "meminfo")

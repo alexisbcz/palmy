@@ -1,6 +1,6 @@
 # Chat and calls
 
-Team chat and multi-party calls for Palmframe: spaces with public and private
+Team chat and multi-party calls for Palmy: spaces with public and private
 channels, DMs, threads, reactions, attachments, search, read receipts, and
 calls of up to sixteen people through our own SFU with end-to-end encrypted
 media. It is one account speaking as one identity at a time, and the identity
@@ -175,10 +175,10 @@ and bots in those spaces. That is a product decision, listed below.
 | decision | why |
 | --- | --- |
 | **Our own gateway, not Supabase Realtime, for fan-out** | Realtime Broadcast has no delivery or ordering guarantee; `postgres_changes` is ordered but authorises every event per subscriber and degrades sharply with RLS at scale; private-channel authorisation is cached until the JWT refreshes, so revocation lags; and a native client would have to speak Phoenix channels anyway. The gateway gets commit order from `pg_notify`, revocation within the transaction that revoked, and a protocol the clients already speak. Realtime stays useful for things that are hints, not history. |
-| **A native media protocol, not WebRTC, between Palmframe apps** | No SDP, no DTLS handshake, a fixed small header, and a few thousand lines of Odin instead of libwebrtc. What it gives up is browser interop and libwebrtc's years of tuning (NetEQ, GCC, AEC). |
+| **A native media protocol, not WebRTC, between Palmy apps** | No SDP, no DTLS handshake, a fixed small header, and a few thousand lines of Odin instead of libwebrtc. What it gives up is browser interop and libwebrtc's years of tuning (NetEQ, GCC, AEC). |
 | **E2EE at the frame, independent of transport** | So a later WebRTC bridge for the browser can pass frames through unchanged: browsers can be full E2EE participants through Encoded Transform (RTCRtpScriptTransform), as Jitsi and Discord do. |
 | **Slack-style threads, kept** | v1 already had first-class threads with a strong ordering guarantee. Zulip's required topics are the better model for busy async teams; it is listed as an open decision rather than half-done. |
-| **Echo cancellation through PipeWire** | The realistic path is PipeWire's `module-echo-cancel` (WebRTC AEC3 underneath), loaded by Palmframe's PipeWire config, with the call app targeting its nodes (`--echo-cancel`); speexdsp is markedly worse, and AEC3 in-process needs a C++ shim. The module is not loaded on this machine, so only the routing is tested. |
+| **Echo cancellation through PipeWire** | The realistic path is PipeWire's `module-echo-cancel` (WebRTC AEC3 underneath), loaded by Palmy's PipeWire config, with the call app targeting its nodes (`--echo-cancel`); speexdsp is markedly worse, and AEC3 in-process needs a C++ shim. The module is not loaded on this machine, so only the routing is tested. |
 
 ## Built, and not built
 

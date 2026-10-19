@@ -27,7 +27,7 @@ RT_MARK="from the runtime manifest (distro/recipes/runtime)"
 RT_SRC_OUT="$DISTRO/out/src"
 
 # Build what is missing or out of date (a no-op when every stamp matches).
-if [ "${PALMFRAME_SKIP_SRC:-0}" != 1 ]; then
+if [ "${PALMY_SKIP_SRC:-0}" != 1 ]; then
 	"$RT/src/build.sh"
 fi
 
@@ -73,7 +73,7 @@ host_pkg wl-clipboard "wl-clipboard"
 # whatever else a runtime package links (libmount, libsmartcols, pulled in).
 host_pkg util-linux-libs "util-linux-libs" '^/usr/lib/lib(blkid|uuid)\.so|/licenses/'
 # ollama, for ai and chatbot. Optional: 66 MB without a model, and not in
-# palmframe-runtime. CPU backends only (the host has no GPU ones installed).
+# palmy-runtime. CPU backends only (the host has no GPU ones installed).
 host_pkg ollama "ollama"
 
 declare -A RT_DIRS RT_HOSTFILES
@@ -312,8 +312,8 @@ for p in "${RT_PKGS[@]}"; do
 			else
 				s="${e#f|}"; m="${s##*|}"; s="${s%|*}"
 				case "$s" in
-				"$RT_SRC_OUT"/*) s="\${PALMFRAME_OUT}/src/${s#"$RT_SRC_OUT"/}" ;;
-				"$ROOT"/*) s="\${PALMFRAME_ROOT}/${s#"$ROOT"/}" ;;
+				"$RT_SRC_OUT"/*) s="\${PALMY_OUT}/src/${s#"$RT_SRC_OUT"/}" ;;
+				"$ROOT"/*) s="\${PALMY_ROOT}/${s#"$ROOT"/}" ;;
 				esac
 				printf 'file     = %s -> %s mode %04o\n' "$s" "$d" "0$m"
 			fi
@@ -360,7 +360,7 @@ for app in $(printf '%s\n' "${!RT_APP_DEPS[@]}" | LC_ALL=C sort); do
 	RT_APPS+=("$app")
 	desktop=""
 	if [ -f "$DISTRO/apps/desktop/$app.desktop" ]; then
-		desktop="\${PALMFRAME_ROOT}/distro/apps/desktop/$app.desktop"
+		desktop="\${PALMY_ROOT}/distro/apps/desktop/$app.desktop"
 	fi
 	{
 		header " $RT_MARK"
@@ -377,7 +377,7 @@ icon     = ${RT_APP_ICON[$app]}
 depend   = glibc fonts libxkbcommon ${RT_APP_DEPS[$app]}
 provides = cmd:$app
 
-file     = \${PALMFRAME_OUT}/bin/$app -> /usr/bin/$app mode 0755
+file     = \${PALMY_OUT}/bin/$app -> /usr/bin/$app mode 0755
 EOF
 		if [ -n "$desktop" ]; then
 			echo "file     = $desktop -> /usr/share/applications/$app.desktop mode 0644"
@@ -385,7 +385,7 @@ EOF
 	} | emit "$app"
 done
 
-# --- palmframe-runtime: the services a desktop expects --------------------------------
+# --- palmy-runtime: the services a desktop expects --------------------------------
 {
 	header " $RT_MARK"
 	cat <<EOF
@@ -393,7 +393,7 @@ done
 # The system bus, Wi-Fi, sound, Bluetooth, media, TLS and archives: what the
 # applications beyond the default set run. Not the applications themselves,
 # and not ollama.
-pkgname  = palmframe-runtime
+pkgname  = palmy-runtime
 pkgver   = $OWN_VER
 pkgrel   = 0
 pkgdesc  = System services and runtime libraries: D-Bus, iwd, PipeWire, BlueZ, FFmpeg, OpenSSL
@@ -404,12 +404,12 @@ details  = Installs and starts the system bus, Wi-Fi (iwd), Bluetooth (bluetooth
 depend   = dbus iwd bluez rfkill pipewire wireplumber pipewire-pulse
 depend   = ffmpeg opus openssl ca-certificates libarchive wl-clipboard
 EOF
-} | emit palmframe-runtime
+} | emit palmy-runtime
 
 # A package this manifest no longer produces (a plugin dropped, a library no
 # longer linked) loses its recipe, so the repository does not keep it.
 declare -A RT_WROTE
-for p in "${RT_PKGS[@]}" "${RT_APPS[@]}" palmframe-runtime; do RT_WROTE[$p]=1; done
+for p in "${RT_PKGS[@]}" "${RT_APPS[@]}" palmy-runtime; do RT_WROTE[$p]=1; done
 for r in "$HERE"/*/PALMBUILD; do
 	grep -q "$RT_MARK" "$r" || continue
 	p="$(basename "$(dirname "$r")")"

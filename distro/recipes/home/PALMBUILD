@@ -13,5 +13,5 @@ details  = A prototype of the hub that shows today across every identity: mail, 
 depend   = glibc fonts libxkbcommon
 provides = cmd:home
 
-file     = ${PALMFRAME_OUT}/bin/home -> /usr/bin/home mode 0755
-file     = ${PALMFRAME_ROOT}/distro/apps/desktop/home.desktop -> /usr/share/applications/home.desktop mode 0644
+file     = ${PALMY_OUT}/bin/home -> /usr/bin/home mode 0755
+file     = ${PALMY_ROOT}/distro/apps/desktop/home.desktop -> /usr/share/applications/home.desktop mode 0644

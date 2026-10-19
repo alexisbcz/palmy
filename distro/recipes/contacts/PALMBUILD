@@ -9,9 +9,9 @@ pkgdesc  = Address book
 license  = MIT
 category = Office
 icon     = contact
-details  = People and how to reach them, kept per identity and synced with your Palmframe account.
+details  = People and how to reach them, kept per identity and synced with your Palmy account.
 depend   = glibc fonts libxkbcommon
 provides = cmd:contacts
 
-file     = ${PALMFRAME_OUT}/bin/contacts -> /usr/bin/contacts mode 0755
-file     = ${PALMFRAME_ROOT}/distro/apps/desktop/contacts.desktop -> /usr/share/applications/contacts.desktop mode 0644
+file     = ${PALMY_OUT}/bin/contacts -> /usr/bin/contacts mode 0755
+file     = ${PALMY_ROOT}/distro/apps/desktop/contacts.desktop -> /usr/share/applications/contacts.desktop mode 0644

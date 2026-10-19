@@ -1,4 +1,4 @@
-# The fonts Palmframe ships, and where they go on the target.
+# The fonts Palmy ships, and where they go on the target.
 #
 # One file per line: <source> <destination> <set>, whitespace separated.
 # A relative source is relative to the repository root; an absolute one is a

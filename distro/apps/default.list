@@ -1,4 +1,4 @@
-# The applications in Palmframe's default install: works_minimal = yes (or
+# The applications in Palmy's default install: works_minimal = yes (or
 # partial, where what works is worth having) in apps.tsv. One binary name per
 # line; each is distro/out/bin/<name> -> /usr/bin/<name>, with
 # distro/apps/desktop/<name>.desktop -> /usr/share/applications/ where one

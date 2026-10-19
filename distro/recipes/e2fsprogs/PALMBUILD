@@ -3,7 +3,7 @@
 #
 # mkfs.ext4 is mke2fs under the name that selects ext4 (mke2fs looks at
 # argv[0]); /etc/mke2fs.conf carries the host's feature defaults, which the
-# Palmframe kernel supports in full.
+# Palmy kernel supports in full.
 pkgname  = e2fsprogs
 pkgver   = 1.47.4
 pkgrel   = 0

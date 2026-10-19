@@ -7,7 +7,7 @@ package main
 // device in RAM whose pages are compressed (zstd typically gets 3:1 on
 // desktop memory), used as swap with a higher priority than any disk swap.
 // It is what Fedora, ChromeOS and Android do by default. palm-init sets it
-// up from /etc/palm/zram, which palmframe-base ships:
+// up from /etc/palm/zram, which palmy-base ships:
 //
 //	size      = 50%     # of MemTotal, or an amount: 512M, 2G; 0 turns it off
 //	max       = 4G      # upper bound when size is a percentage

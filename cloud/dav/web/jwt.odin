@@ -20,7 +20,7 @@ mint_jwt :: proc(secret: string, sub, identity: string, ttl_secs: i64, extra_cla
 	pb := strings.builder_make(context.temp_allocator)
 	strings.write_string(&pb, `{"sub":`)
 	json_string(&pb, sub)
-	strings.write_string(&pb, `,"role":"authenticated","aud":"authenticated","iss":"palmframe-dav","palm_identity":`)
+	strings.write_string(&pb, `,"role":"authenticated","aud":"authenticated","iss":"palmy-dav","palm_identity":`)
 	json_string(&pb, identity)
 	strings.write_string(&pb, `,"iat":`)
 	strings.write_i64(&pb, now)

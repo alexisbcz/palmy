@@ -13,7 +13,7 @@ Linux 6.18.56, built by `distro/kernel/build.sh` in three layers:
    Bluetooth, HID, sound, laptop platform drivers, Thunderbolt, USB-C) of
    which every tristate option becomes `=m`. Naming directories rather than
    drivers is what keeps a new laptop's Wi-Fi chip from being forgotten.
-3. `distro/kernel/palmframe.config`, which wins over both. build.sh fails if
+3. `distro/kernel/palmy.config`, which wins over both. build.sh fails if
    any of its lines does not survive `olddefconfig`, so a dropped dependency
    is a build error, not a machine without a disk.
 
@@ -191,7 +191,7 @@ Its outputs are committed, so until then they are simply as current as the
 host was when they were written.
 
 **Who installs it** (decided in the integration round, as suggested here).
-`palmframe` does not depend on firmware, so the QEMU image is unchanged.
+`palmy` does not depend on firmware, so the QEMU image is unchanged.
 The live ISO embeds its repository in an initramfs held in RAM, so all
 440 MB there (twice: installed and as packages) is not reasonable. So:
 
@@ -211,7 +211,7 @@ The live ISO embeds its repository in an initramfs held in RAM, so all
 ## What was verified
 
 Sizes: `bzImage` 13.5 MB (it was 14.6 MB with i915 built in), 996 modules
-in 35 MB (zstd) under `/usr/lib/modules/6.18.56-palmframe`, the linux
+in 35 MB (zstd) under `/usr/lib/modules/6.18.56-palmy`, the linux
 package 59 MB. A full kernel and modules build took about 35 minutes at
 `JOBS=8` on a shared 16-core host; a config change rebuilds incrementally.
 

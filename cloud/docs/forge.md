@@ -1,8 +1,8 @@
-# Palmframe forge
+# Palmy forge
 
 A git forge whose repositories belong to **identities**, not to accounts. Ada's
 personal repositories, her work identity's repositories and anything shared
-between them follow the same rule as the rest of the Palmframe cloud: rows in
+between them follow the same rule as the rest of the Palmy cloud: rows in
 Postgres, separated by row-level security through `can_access_identity()`
 (`cloud/CONTRACT.md`). The forge server never decides who may see what; it
 forwards each request's credentials to PostgREST and Storage, and the
@@ -199,7 +199,7 @@ How Forgejo maps the same thing, for comparison: Basic auth with a password or
 a token (`services/auth/basic.go`), OAuth2, and scoped tokens with per-area
 scopes; repository access from units and team permissions computed in Go. The
 difference here is where the decision lives — in the database, behind the
-same function every other Palmframe table uses.
+same function every other Palmy table uses.
 
 The client side is cloudkit's: `forge` reads the person's session, or the
 scoped session for `PALM_IDENTITY` / `--identity` (never falling back from a

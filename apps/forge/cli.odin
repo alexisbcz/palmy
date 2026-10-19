@@ -504,7 +504,7 @@ surface :: proc() -> ^kit.Surface {
 	if g_surface.noun == "" {
 		g_surface = kit.Surface {
 			noun     = "forge",
-			summary  = "the Palmframe forge: repositories, issues and pull requests owned by identities",
+			summary  = "the Palmy forge: repositories, issues and pull requests owned by identities",
 			gui      = true,
 			selftest = selftest,
 			commands = COMMANDS,

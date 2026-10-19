@@ -1,4 +1,4 @@
-# Palmframe login screen (apps/greeter) — Japanese.
+# Palmy login screen (apps/greeter) — Japanese.
 # Format: distro/locale/README.md. Installed as
 # /usr/share/palm/locale/ja/greeter.msg.
 #

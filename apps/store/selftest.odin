@@ -48,9 +48,9 @@ selftest :: proc() -> int {
 // What `palm list --json` prints, store fields and all, for three packages.
 LIST_JSON :: `[
 {"name":"calc","version":"0.1.0-r0","description":"Calculator","license":"MIT","url":"","size":931416,"csize":402598,"category":"Accessories","icon":"calculator","details":"First paragraph.\nSecond.","depends":["glibc","fonts"],"provides":["cmd:calc"],"installed":"0.1.0-r0","installed_size":931416,"explicit":false},
-{"name":"glibc","version":"2.44-r0","description":"GNU C Library runtime","license":"LGPL-2.1-or-later","url":"https://www.gnu.org/software/libc","size":3746560,"csize":1781430,"category":"System","icon":"binary","details":"","depends":["palmframe-base"],"provides":["so:libc.so.6"],"installed":"2.44-r0","installed_size":3746560,"explicit":false},
+{"name":"glibc","version":"2.44-r0","description":"GNU C Library runtime","license":"LGPL-2.1-or-later","url":"https://www.gnu.org/software/libc","size":3746560,"csize":1781430,"category":"System","icon":"binary","details":"","depends":["palmy-base"],"provides":["so:libc.so.6"],"installed":"2.44-r0","installed_size":3746560,"explicit":false},
 {"name":"track","version":"0.1.0-r0","description":"Time tracker","license":"MIT","url":"","size":890880,"csize":400000,"category":"Development","icon":"flag","details":"Issues as files.","depends":["glibc"],"provides":["cmd:track"],"installed":null,"explicit":false},
-{"name":"palmframe","version":"0.1.0-r0","description":"The system","license":"MIT","url":"","size":0,"csize":900,"category":"System","icon":"monitor","details":"","depends":["glibc","calc"],"provides":[],"installed":"0.1.0-r0","installed_size":0,"explicit":true}
+{"name":"palmy","version":"0.1.0-r0","description":"The system","license":"MIT","url":"","size":0,"csize":900,"category":"System","icon":"monitor","details":"","depends":["glibc","calc"],"provides":[],"installed":"0.1.0-r0","installed_size":0,"explicit":true}
 ]`
 
 // What an older palm printed: no category, icon, details, csize or explicit.
@@ -113,10 +113,10 @@ test_catalog :: proc() {
 
 	calc := find(&cat, "calc")
 	rd := rdeps_local(&cat, calc)
-	check(len(rd) == 1 && rd[0] == "palmframe", "calc is required by palmframe (%v)", rd)
+	check(len(rd) == 1 && rd[0] == "palmy", "calc is required by palmy (%v)", rd)
 	glibc := find(&cat, "glibc")
 	rd = rdeps_local(&cat, glibc)
-	check(len(rd) == 2, "glibc is required by calc and palmframe (%v)", rd)
+	check(len(rd) == 2, "glibc is required by calc and palmy (%v)", rd)
 	feat := featured(&cat, 3)
 	check(len(feat) >= 1 && feat[0].name == "track", "Featured prefers what is not installed")
 	check(is_dir_entry("/usr/bin", {"/usr", "/usr/bin", "/usr/bin/calc"}) && !is_dir_entry("/usr/bin/calc", {"/usr/bin/calc"}), "parent directories are told from files")
@@ -217,7 +217,7 @@ test_demo :: proc() {
 	e := find(cat, "emoji")
 	check(e.installed != "" && e.explicit, "after the commit emoji is installed, by you")
 	term := find(cat, "term")
-	check(len(term.required_by) == 1 && term.required_by[0] == "palmframe", "term is part of palmframe")
+	check(len(term.required_by) == 1 && term.required_by[0] == "palmy", "term is part of palmy")
 }
 
 // test_draw renders every view and every dialog stage once, offscreen.

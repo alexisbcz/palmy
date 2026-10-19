@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Build a static busybox: the base userland (sh, coreutils, mount, ...) that
-# sits beside Palmframe's own Odin init and package manager.
+# sits beside Palmy's own Odin init and package manager.
 # Output: distro/out/busybox
 set -euo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
@@ -15,7 +15,7 @@ fi
 cd "$SRC"
 make -s defconfig
 # Static, and without the applets that do not build against current headers
-# (tc) or that Palmframe replaces with its own (init, which is palm-init).
+# (tc) or that Palmy replaces with its own (init, which is palm-init).
 sed -i \
 	-e 's/^# CONFIG_STATIC is not set/CONFIG_STATIC=y/' \
 	-e 's/^CONFIG_TC=y/# CONFIG_TC is not set/' \

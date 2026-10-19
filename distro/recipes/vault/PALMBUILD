@@ -12,5 +12,5 @@ icon     = key-round
 depend   = glibc fonts libxkbcommon wl-clipboard
 provides = cmd:vault
 
-file     = ${PALMFRAME_OUT}/bin/vault -> /usr/bin/vault mode 0755
-file     = ${PALMFRAME_ROOT}/distro/apps/desktop/vault.desktop -> /usr/share/applications/vault.desktop mode 0644
+file     = ${PALMY_OUT}/bin/vault -> /usr/bin/vault mode 0755
+file     = ${PALMY_ROOT}/distro/apps/desktop/vault.desktop -> /usr/share/applications/vault.desktop mode 0644

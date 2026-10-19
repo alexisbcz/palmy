@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Boot distro/out/palmframe.img in QEMU.
+# Boot distro/out/palmy.img in QEMU.
 #
 #	distro/run-qemu.sh                 a window (gtk), UEFI firmware, the serial
 #	                                   console logged to distro/out/serial.log
@@ -14,7 +14,7 @@
 #	                                   with the kernel from the image's build
 #	distro/run-qemu.sh --bios          legacy BIOS (SeaBIOS) instead of OVMF
 #	distro/run-qemu.sh --iso           boot the live installer
-#	                                   (distro/out/palmframe-live.iso) as a CD,
+#	                                   (distro/out/palmy-live.iso) as a CD,
 #	                                   with a blank target disk on virtio;
 #	                                   distro/out/target.qcow2 (8G) is created
 #	                                   when missing
@@ -39,7 +39,7 @@
 set -euo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
 OUT="$HERE/out"
-IMG="${IMG:-$OUT/palmframe.img}"
+IMG="${IMG:-$OUT/palmy.img}"
 OVMF_DIR="${OVMF_DIR:-$HOME/.local/opt/qemu/usr/share/edk2/x64}"
 [ -d "$OVMF_DIR" ] || OVMF_DIR=/usr/share/edk2/x64
 
@@ -61,7 +61,7 @@ while [ $# -gt 0 ]; do
 		display=(-display none -qmp "unix:$2,server=on,wait=off"); shift ;;
 	--direct) direct=1 ;;
 	--bios) firmware=bios ;;
-	--iso) iso="$OUT/palmframe-live.iso" ;;
+	--iso) iso="$OUT/palmy-live.iso" ;;
 	--disk) disk="$2"; shift ;;
 	--) shift; extra=("$@"); break ;;
 	-h | --help) sed -n '2,38p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;

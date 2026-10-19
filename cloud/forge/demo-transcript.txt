@@ -467,7 +467,7 @@ $ git clone -q http://127.0.0.1:58580/ada6832/field-guide.git /tmp/forge-demo-wo
 $ cat /tmp/forge-demo-work.NzqW2C/public/README.md 
 # field-guide
 
-A repository on the Palmframe forge.
+A repository on the Palmy forge.
 [exit 0]
 
 ### ok   anonymous push is refused
