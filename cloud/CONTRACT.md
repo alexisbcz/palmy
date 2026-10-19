@@ -16,6 +16,7 @@ cloud/
   forge/               the git forge server (owned by forge)
   dav/                 the CalDAV/CardDAV server (owned by calendar & contacts)
   rtc/                 the call SFU and realtime services (owned by chat & calls)
+  collab/              document sync for collaborative editing (owned by office)
   docs/                product and design notes (owned by product)
 apps/accounts/         sign-in, identities, switcher (owned by accounts)
 apps/cloudkit/         Odin client for Supabase: auth, PostgREST, Storage (owned by accounts)
@@ -26,6 +27,7 @@ apps/forge/            the forge client (owned by forge)
 apps/calendar/         calendar, synced per identity (owned by calendar & contacts)
 apps/contacts/         contacts (owned by calendar & contacts)
 apps/chat/, apps/call/ chat and calls (owned by chat & calls)
+apps/docs/, sheets/, slides/  the office suite (owned by office)
 ```
 
 Migration file names are `<timestamp>_<name>.sql`. The ranges are:
@@ -40,6 +42,7 @@ Migration file names are `<timestamp>_<name>.sql`. The ranges are:
 | forge    | `20261019500000`–`20261019599999` | `forge_`    |
 | dav      | `20261019600000`–`20261019699999` | `dav_`      |
 | rtc      | `20261019700000`–`20261019799999` | `rtc_`      |
+| collab   | `20261019800000`–`20261019899999` | `collab_`   |
 
 ## Identities
 
