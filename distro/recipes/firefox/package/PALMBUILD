@@ -1,0 +1,18 @@
+# Built by distro/recipes/firefox/build.sh, not by `make -C distro`: its
+# input is Mozilla's release tarball. The recipe sits one directory down so
+# the image build's recipes/*/PALMBUILD glob does not try to pack it.
+pkgname  = firefox
+pkgver   = 158.0
+pkgrel   = 0
+pkgdesc  = Mozilla Firefox (the browser app's Gecko engine)
+license  = MPL-2.0
+url      = https://www.mozilla.org/firefox/
+category = Internet
+icon     = flame
+details  = Mozilla's own Firefox build, unmodified. The browser app runs it as its Gecko engine: Firefox draws into a private compositor inside the browser's window and is steered over WebDriver BiDi, Firefox's standard remote protocol.
+details  = The system libraries Firefox needs that Palmframe does not otherwise ship (GTK 3, GLib, Pango, cairo, HarfBuzz, the X11 client libraries) are copied from the build host into /usr/lib/firefox/syslib.
+depend   = glibc fonts libxkbcommon xkeyboard-config
+provides = cmd:firefox palm-browser-engine
+
+tree     = ${PALMFRAME_OUT}/firefox -> /usr/lib/firefox
+symlink  = /usr/bin/firefox -> ../lib/firefox/firefox

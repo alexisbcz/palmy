@@ -185,12 +185,22 @@ start_firefox :: proc() -> bool {
 		switch {
 		case strings.has_prefix(e, "WAYLAND_DISPLAY="), strings.has_prefix(e, "DISPLAY="), strings.has_prefix(e, "WAYLAND_SOCKET="),
 		     strings.has_prefix(e, "DBUS_SESSION_BUS_ADDRESS="), strings.has_prefix(e, "GDK_BACKEND="),
-		     strings.has_prefix(e, "MOZ_"):
+		     strings.has_prefix(e, "MOZ_"), strings.has_prefix(e, "LD_LIBRARY_PATH="):
 			continue
 		}
 		append(&env, e)
 	}
 	append(&env, fmt.tprintf("WAYLAND_DISPLAY=%s", h.wl_path))
+	// the firefox package carries the system libraries Palmframe does not
+	// ship in syslib/, and a fontconfig file for a system without /etc/fonts
+	ffdir := h.ff_bin[:max(strings.last_index_byte(h.ff_bin, '/'), 0)]
+	if os.exists(fmt.tprintf("%s/syslib", ffdir)) {
+		prev := os.get_env("LD_LIBRARY_PATH", context.temp_allocator)
+		append(&env, fmt.tprintf("LD_LIBRARY_PATH=%s/syslib%s%s", ffdir, prev != "" ? ":" : "", prev))
+	}
+	if !os.exists("/etc/fonts/fonts.conf") && os.exists(fmt.tprintf("%s/fonts.conf", ffdir)) && os.get_env("FONTCONFIG_FILE", context.temp_allocator) == "" {
+		append(&env, fmt.tprintf("FONTCONFIG_FILE=%s/fonts.conf", ffdir))
+	}
 	append(&env, "GDK_BACKEND=wayland")
 	append(&env, "MOZ_ENABLE_WAYLAND=1")
 	append(&env, "MOZ_CRASHREPORTER_DISABLE=1")

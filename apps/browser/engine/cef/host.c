@@ -1702,6 +1702,16 @@ int main(int argc, char** argv) {
 	 * (MPRIS media keys, notifications). */
 	if (!getenv("PALM_BROWSER_KEEP_DBUS")) unsetenv("DBUS_SESSION_BUS_ADDRESS");
 
+	/* Without a system fontconfig, use the package's own (a Palmframe image
+	 * has fonts but, so far, no /etc/fonts). */
+	if (access("/etc/fonts/fonts.conf", R_OK) != 0 && !getenv("FONTCONFIG_FILE")) {
+		char* d = exe_dir();
+		char fc[PATH_MAX];
+		snprintf(fc, sizeof fc, "%s/fonts.conf", d);
+		if (access(fc, R_OK) == 0) setenv("FONTCONFIG_FILE", fc, 1);
+		free(d);
+	}
+
 	/* A parent may start us with stdin closed. Then our socket would be fd 0,
 	 * and Chromium, which points the standard descriptors at /dev/null during
 	 * startup, would quietly replace it. Fill 0..2 first. */

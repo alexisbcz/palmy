@@ -16,12 +16,14 @@ HERE="$(cd "$(dirname "$0")" && pwd)"
 [ -f "$CEF/include/capi/cef_app_capi.h" ] || { echo "not a CEF distribution: $CEF" >&2; exit 1; }
 mkdir -p "$OUT"
 
+# DT_RPATH, not RUNPATH: it also covers the dependencies of the libraries the
+# package bundles beside libcef.so (GLib's on PCRE, and so on).
 # CEF_API_VERSION pins the C API this file was written against; CEF refuses
 # to start if the library does not offer it.
 cc -O2 -g0 -Wall -Wextra -Wno-unused-parameter -Wno-missing-field-initializers \
 	-DCEF_API_VERSION=15200 -I"$CEF" \
 	"$HERE/host.c" -o "$OUT/palm-browser-cef" \
-	-L"$CEF/Release" -lcef -lpthread -lm -Wl,-rpath,'$ORIGIN'
+	-L"$CEF/Release" -lcef -lpthread -lm -Wl,--disable-new-dtags,-rpath,'$ORIGIN'
 
 # Runtime files: the library (stripped -- the distribution ships it with
 # symbols, 1.4 GB), V8's snapshot, SwiftShader for WebGL without a GPU, the

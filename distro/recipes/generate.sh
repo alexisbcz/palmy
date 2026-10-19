@@ -332,6 +332,18 @@ declare -A DETAILS=(
 	[prose]="The engine behind the docs app's prose checker, as a command: it reads text and suggests plainer wording."
 	[store]="Discover applications by category, search, install and remove them, and keep the system up to date. Changes go through palmd and are shown as a plan before anything happens."
 )
+# --- browser (apps/browser) ----------------------------------------------------
+# The browser's chrome is small and installable like any application; the
+# engines it draws pages with are not in this set. They are optional
+# packages built by their own scripts (distro/recipes/palm-browser-cef and
+# distro/recipes/firefox, see cloud/docs/browser.md), because each is a
+# few hundred megabytes fetched from upstream.
+EXTRA_APPS="$EXTRA_APPS browser"
+DESC[browser]="Web browser"
+CATEGORY[browser]=Internet
+ICON[browser]=globe
+DETAILS[browser]="A web browser whose tabs, address bar, bookmarks and settings are Palmframe's own, with pages drawn by the engine you choose per identity: Chromium (palm-browser-cef) or Firefox (firefox). One profile per identity, so cookies never cross between them."
+# --- end browser ---------------------------------------------------------------
 apps="$(grep -v '^#' "$DISTRO/apps/default.list" | grep -vx -e wm -e greeter -e '') $EXTRA_APPS"
 for app in $apps; do
 	deps="glibc fonts libxkbcommon"
