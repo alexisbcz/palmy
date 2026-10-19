@@ -22,6 +22,7 @@ import "core:crypto"
 import "core:fmt"
 import "core:os"
 import "core:strings"
+import "core:sys/linux"
 
 VAULT_EXT :: "pvz"
 VAULT_DIR_NAME :: "palmy-vault"
@@ -29,14 +30,60 @@ VAULT_FILE_NAME :: "default.pvz"
 
 // data_dir is $XDG_DATA_HOME/palmy-vault, or ~/.local/share/palmy-vault.
 data_dir :: proc(allocator := context.temp_allocator) -> string {
+	d, _ := data_dir_explained(allocator)
+	return d
+}
+
+// data_dir_explained also says which source chose the directory.
+//
+// The QEMU image showed why this needs saying: the GUI, launched by a
+// process that had kept root's environment, failed with "could not create
+// /root/.local/share/palmy-vault" while the shell it was started from said
+// HOME=/home/palm. A password manager must never write a vault into a
+// directory that belongs to someone else, and it must not trust an inherited
+// $HOME that does not belong to the user it runs as. So: $XDG_DATA_HOME
+// first, as the spec says; then $HOME *if the user running this owns it*;
+// otherwise the home directory /etc/passwd gives this uid. `vault where`
+// prints the answer and the reason.
+data_dir_explained :: proc(allocator := context.temp_allocator) -> (dir: string, why: string) {
 	if x := os.get_env("XDG_DATA_HOME", context.temp_allocator); x != "" {
-		return fmt.aprintf("%s/%s", x, VAULT_DIR_NAME, allocator = allocator)
+		return fmt.aprintf("%s/%s", x, VAULT_DIR_NAME, allocator = allocator), "$XDG_DATA_HOME"
 	}
+	uid := linux.getuid()
 	home := os.get_env("HOME", context.temp_allocator)
+	if home != "" && owned_by(home, u32(uid)) {
+		return fmt.aprintf("%s/.local/share/%s", home, VAULT_DIR_NAME, allocator = allocator), "$HOME"
+	}
+	if pw := passwd_home(u32(uid)); pw != "" {
+		reason := home == "" ? "/etc/passwd (HOME is unset)" : fmt.tprintf("/etc/passwd (HOME=%s is not owned by uid %d)", home, uid)
+		return fmt.aprintf("%s/.local/share/%s", pw, VAULT_DIR_NAME, allocator = allocator), reason
+	}
 	if home == "" {
 		home = "."
 	}
-	return fmt.aprintf("%s/.local/share/%s", home, VAULT_DIR_NAME, allocator = allocator)
+	return fmt.aprintf("%s/.local/share/%s", home, VAULT_DIR_NAME, allocator = allocator), "$HOME (unverified)"
+}
+
+owned_by :: proc(path: string, uid: u32) -> bool {
+	st: linux.Stat
+	if linux.stat(strings.clone_to_cstring(path, context.temp_allocator), &st) != .NONE {
+		return false
+	}
+	return u32(st.uid) == uid
+}
+
+passwd_home :: proc(uid: u32) -> string {
+	data, err := os.read_entire_file_from_path("/etc/passwd", context.temp_allocator)
+	if err != nil {
+		return ""
+	}
+	for line in strings.split_lines(string(data), context.temp_allocator) {
+		f := strings.split(line, ":", context.temp_allocator)
+		if len(f) >= 6 && f[2] == fmt.tprintf("%d", uid) {
+			return f[5]
+		}
+	}
+	return ""
 }
 
 default_vault_path :: proc(allocator := context.temp_allocator) -> string {

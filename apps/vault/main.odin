@@ -142,6 +142,14 @@ main :: proc() {
 	clip := f64(CLIP_CLEAR_DEFAULT)
 	path := ""
 
+	// The command line first (cli.odin). The window's own flags (--idle=,
+	// --shot, ...) are not verbs, so they skip straight past it.
+	if len(os.args) > 1 && !is_gui_flag(os.args[1]) {
+		if code, handled := kit.cli(surface()); handled {
+			os.exit(code)
+		}
+	}
+
 	for a in os.args[1:] {
 		switch {
 		case a == "--selftest" || a == "-selftest":
@@ -236,6 +244,15 @@ main :: proc() {
 	// and every plaintext string go with it.
 	lock(&g, "")
 	shutdown(&g)
+}
+
+is_gui_flag :: proc(a: string) -> bool {
+	for p in ([?]string{"--idle=", "--clip=", "--vault=", "--shot", "--make-demo-vault=", "--local", "--theme="}) {
+		if strings.has_prefix(a, p) {
+			return true
+		}
+	}
+	return false
 }
 
 // frame is the whole per-frame body, factored out so the headless self-test
