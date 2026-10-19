@@ -1,11 +1,18 @@
 # What this protects against, and what it does not
 
-This is a password manager written for a UI toolkit demo. The cryptography is
-real, built out of `core:crypto` primitives and checked against the published
-test vectors for every algorithm it uses. The threat model below is the honest
-one. Read it before trusting it with anything you would miss.
+This is a password manager with two vaults behind one window. On a machine
+that is not enrolled in a Palmframe account it opens **the local vault**: one
+encrypted file, no network code reachable from the window. On an enrolled
+machine it opens **the account vault**: each identity's vaults, encrypted on
+the device and synced through the Palmframe cloud, which stores ciphertext it
+cannot open (`cloud/docs/vault.md` has the whole design).
 
-## The construction
+The cryptography is real, built out of `core:crypto` primitives and checked
+against the published test vectors for every algorithm it uses. The threat
+model below is the honest one. Read it before trusting it with anything you
+would miss.
+
+## The local vault file
 
 ```
 master password
@@ -32,7 +39,7 @@ The plaintext inside the AEAD is padded to a 4 KiB boundary. The ciphertext
 length is visible to anyone holding the file, and without padding it would say
 to within a few bytes how many accounts you have.
 
-### Why these KDF parameters
+### Why these KDF parameters (both vaults)
 
 Measured on the machine this was written on, best of three per run across a
 dozen runs: **433–561 ms per derivation**, and a full unlock (read the file,
@@ -109,12 +116,45 @@ random string of that shape — "Summer2024!" scores 72 bits by that measure and
 is cracked instantly. The UI says so rather than implying the number means more
 than it does.
 
+## The account vault
+
+```
+master password ──Argon2id (the parameters above)──┐
+Secret Key (128 bits, on the device) ──HKDF────────┴─HKDF─► account unlock key
+   account unlock key ─wraps─► account key ─wraps─► each identity's keys
+   identity keys (X25519 + ML-KEM-768, Ed25519) ─seal─► vault keys
+   vault key ─wraps─► item keys ─encrypt─► items (every field, padded to 512 bytes)
+```
+
+Every symmetric layer is XChaCha20-Poly1305 with a random 192-bit nonce and a
+context string naming the row it belongs to as associated data; every key
+sealed to an identity uses X25519 and ML-KEM-768 together. Shares are signed
+with the sharing identity's Ed25519 key over every field of the share row.
+
+**The Secret Key** is generated on the first device, kept in
+`account/device.json` (0600) on each enrolled device, printed once for an
+emergency kit, and never sent to the server. It is what makes a copy of the
+database worthless to someone who also guesses the master password: they need
+128 more bits they do not have. It does **not** protect this disk from a
+thief: the Secret Key sits next to the cache, so a stolen, powered-off laptop
+is protected by the master password and Argon2id alone, exactly like the
+local vault file. (1Password makes the same trade.)
+
+**What the server sees** is listed in `cloud/docs/vault.md` ("What the server
+sees"): ids, which identity owns how many items, revisions and timestamps,
+padded sizes, public keys, KDF parameters, and who shares with whom. Titles,
+URLs, usernames, passwords, notes, tags, item types and vault names are all
+inside the encryption. A `pg_dump` of the vault tables after the end-to-end
+demo is searched for 20 known strings; none appear.
+
 ---
 
 ## What it protects against
 
-**An attacker who has the vault file and not the master password.** This is the
-case the design is for: a stolen laptop, a backup on someone else's disk, a
+**An attacker who has the vault file and not the master password** (local
+vault), **or the whole server database** (account vault). The account vault
+adds the Secret Key: the server's copy cannot be attacked by guessing the
+password at all. For the local file, this is the case the design is for: a stolen laptop, a backup on someone else's disk, a
 synced folder, a file recovered from a wiped drive. They get a 64-byte header,
 a tag, and padded ciphertext. Breaking it means guessing the master password at
 256 MiB and half a second per attempt, or breaking ChaCha20-Poly1305.
@@ -130,14 +170,42 @@ created `0700` and the file `0600`.
 an idle timeout (default 300 s, `--idle=`) and on demand with Ctrl L, dropping
 the key and freeing every decrypted string. It locks on exit.
 
-**A secret left on the clipboard.** A copy arms a timer (default 20 s,
-`--clip=`) and the UI shows it counting down. When it expires the selection is
+**A secret left on the clipboard.** Copies go through palmy's own clipboard
+client, served from this process's memory, so the secret never passes through
+another program. A copy arms a timer (default 20 s, `--clip=`) and the UI
+shows it counting down. When it expires the selection is
 cleared — but only if it is still *ours*, compared in constant time against what
 was put there, so a clear never destroys something you copied in the meantime.
 The clipboard is also cleared when the vault locks, idles, or exits.
 
-**Your secrets leaving the machine.** There is no network code in this program.
-No socket, no DNS, no breach check, no sync, no telemetry, no update check.
+**The server reading or changing your vault.** It holds ciphertext under keys
+it never sees. It cannot add an item to a vault (it has no vault key), cannot
+swap a share's key for one of its own (the share is signed and the signature
+checked before anything opens), cannot move an item's ciphertext to another
+row or rewrite its revision (the associated data binds both), and cannot hand
+a device an older revision of an item it has already seen (refused, and
+reported). Its write path refuses an item key wrapped under a vault key that
+was rotated after a revocation.
+
+**Another identity, another person, or an assistant reading what is not
+theirs.** Row-level security on every vault table (pgTAP:
+`cloud/supabase/tests/vault_*.sql`), and for anyone outside the account the
+cryptography as well. An assistant's delegated session receives nothing at
+all from the vault tables, not even ciphertext, and the CLI refuses to run
+under one.
+
+**Your secrets leaving the machine, beyond sync.** The local vault has no
+network code reachable from it: no socket, no DNS, no breach check, no
+telemetry, no update check. The account vault talks to the Palmframe cloud
+and nothing else, and sends only ciphertext. The breach check is off by
+default and, when the person runs it, sends five hex digits of each
+password's SHA-1 to Have I Been Pwned and nothing more.
+
+**A web vault serving you hostile code.** There is no web vault. The client is
+this binary; the server delivers data, never code, so a compromised server
+cannot ship a version of the app that leaks the master password -- the
+attack that makes a browser-based vault only as trustworthy as its server on
+the day you load it.
 
 ---
 
@@ -181,20 +249,63 @@ size still bounds how much is in it.
 **Clipboard history managers.** When this app puts a password on the Wayland
 selection, anything watching the clipboard can capture it. This app's sibling
 `apps/clipboard` deliberately skips selections that advertise a
-password-manager hint; most clipboard managers do not. The secret is handed to
-`wl-copy` over a **pipe**, not as a command-line argument — `wl-copy -- <secret>`
-would put the password in `/proc/<pid>/cmdline` for every process on the machine
-to read for as long as wl-copy held the selection — but once the selection
-exists it is readable by any Wayland client with data-device access.
+password-manager hint; palmy's clipboard client does not yet offer that hint
+(`x-kde-passwordManagerHint`), which is a gap in palmy, not something this app
+can add from outside. Once the selection exists it is readable by any Wayland
+client with data-device access. When there is no window to serve from, the
+fallback is `wl-copy`, given the secret over a **pipe**, never as an argument
+(`wl-copy -- <secret>` would put it in `/proc/<pid>/cmdline`).
 
 **A forgotten master password.** There is no recovery, no reset, no escrow and
-no second copy of the key. Forgetting it means the entries are gone. That is a
-property of the design, not an oversight.
+no second copy of the key. Forgetting it means the entries are gone. In the
+account vault, losing every device *and* the emergency kit's Secret Key is
+the same. Recovery codes and a recovery contact are designed
+(`cloud/docs/vault.md`, "Recovery") and not built; each would be one more way
+in, which is why they are the person's choice.
 
-**Rollback.** Nothing here authenticates *which version* of your vault you are
-being handed. An attacker who kept a copy of yesterday's file can put it back,
-and it will open: the tag is still valid, because it was valid yesterday. There
-is no counter, no chaining and no external anchor to notice with.
+**What a revoked grantee already read.** Revoking a share stops the rows
+reaching them and the client rotates the keys, so nothing written afterwards
+opens under the keys they had. What they decrypted before, they may have
+kept. The vault flags those items "exposed" and password health tells you to
+change them at the site; that is the only real remedy.
+
+**A device you lost while it was unlocked, or that was compromised.** It holds
+the Secret Key and, while unlocked, every key. Revoking its session stops it
+syncing; it cannot take back what it holds. Change the master password, and
+treat its items as exposed.
+
+**What the server can still see or do.** It sees the metadata in the table in
+`cloud/docs/vault.md`: how many items each identity has, when they change, and
+who shares with whom. It can withhold or delete your ciphertext (other
+devices and an export are the backup). It can refuse to deliver a revocation
+to a grantee's device, which only matters for what that device already had.
+
+**Separation between your own identities against your own devices.** One
+account key wraps every identity's keys, so a device that knows the master
+password and the Secret Key could derive all of them if it had their rows.
+Between your identities, the separation is the database's (a device scoped to
+"work" never receives "personal"'s rows); against everyone else, it is
+cryptographic.
+
+**Autofill against programs running as you.** The socket checks the peer's
+user, pairs only with the person's approval and asks before every fill, but a
+program running as you can read the browser's profile (and its pairing key),
+ptrace the browser or this process, or replace the browser binary. Pairing
+and confirmation make that visible; they are not a sandbox.
+
+**Post-quantum, partly.** Keys sealed to identities use ML-KEM-768 alongside
+X25519, so recorded ciphertext is not opened by a future quantum computer
+breaking X25519 alone. Signatures (Ed25519) and the one-time device enrolment
+box (X25519 only) are not post-quantum; a forged signature needs a quantum
+computer *at the time of the attack*, and the enrolment box carries the Secret
+Key, which is useless without the master password.
+
+**Rollback.** For the local file, nothing authenticates *which version* you
+are being handed: yesterday's copy, put back, opens. For the account vault, a
+device refuses an older revision of any item it has already seen, but a
+**new** device has no history to compare with, and a server could still hold
+back a newer revision (withholding, not rollback, and indistinguishable from
+the network being slow).
 
 **Side channels beyond the ones named.** Secrets are compared with
 `crypto.compare_constant_time`, never `==` on bytes. The search, the sort and
@@ -212,6 +323,11 @@ already read the memory could learn.
 | Directory | `~/.local/share/palmy-vault/`, mode 0700 |
 | Honours | `$XDG_DATA_HOME` |
 | Another vault | `--vault=<path>`, or Ctrl O and pick one |
+| Account vault cache | `~/.local/share/palmy-vault/account/cache.json` (ciphertext only), 0600 |
+| Secret Key, device key | `~/.local/share/palmy-vault/account/device.json`, 0600 |
+| Autofill socket | `$XDG_RUNTIME_DIR/palm-vault/autofill.sock`, directory 0700, socket 0600 |
+| Autofill pairings | `~/.local/share/palmy-vault/autofill-pairs.json`, 0600 |
+| Which directory, and why | `vault where`: `$XDG_DATA_HOME`, else `$HOME` only if this user owns it, else `/etc/passwd`'s home for this uid |
 
 This app opens exactly two kinds of file: a vault it created, and a file you
 explicitly chose in the dialog (whose magic it checks first). It does not read
@@ -241,16 +357,31 @@ rather than generated by this code:
 | HOTP | RFC 4226 appendix D, counters 0–9 |
 | TOTP | RFC 6238 appendix B, SHA-1/256/512 at six timestamps |
 | base32 | RFC 4648 §10 |
+| X25519 | RFC 7748 §6.1 |
+| HKDF-SHA-256 | RFC 5869 A.1 |
+| Ed25519 | RFC 8032 §7.1, test 1 |
+| XChaCha20-Poly1305 | draft-irtf-cfrg-xchacha-03 A.3.1 |
+| Argon2d (KeePass imports) | RFC 9106 §5.1 |
 
 Round-tripping proves nothing: a vault sealed and opened by the same wrong
 implementation opens perfectly. The published ciphertexts are the reason to
 believe this is the algorithm it claims to be.
 
-583 assertions in total, backed by 600,000 generated characters, 120,000
-`rand_index` draws, 256 consecutive saves checked for a repeated nonce, and
-every one of a real vault's 4,176 bytes flipped in turn. The run redirects
-`XDG_DATA_HOME` to a scratch directory and stubs the clipboard, so it never
-reads, writes or clears anything of yours.
+4,865 assertions in total, backed by 600,000 generated characters, 120,000
+`rand_index` draws, 256 consecutive saves checked for a repeated nonce, every
+one of a real vault's bytes flipped in turn, every byte of a wrap and every
+seventh byte of a sealed key flipped in turn, an offline two-device account
+with swapped, rewritten and substituted rows, KeePass files written by an
+independent implementation, and the autofill protocol over a real socket. The
+run redirects `XDG_DATA_HOME` to a scratch directory and stubs the clipboard,
+so it never reads, writes or clears anything of yours, and makes no network
+call. The KDF's cost is asserted on this thread's CPU time, not wall time, so
+a loaded machine no longer fails it.
+
+Against a live stack, `apps/vault/e2e.sh` runs the account vault end to end
+(two devices, a conflict, sharing across identities and accounts,
+revocation and rotation, an assistant's token, import, autofill, and a
+`pg_dump` searched for plaintext): 87 checks.
 
 There is also `vault --shot <dir>`, which renders every screen through palmy's
 offscreen renderer against the same throwaway fixture — useful for checking a

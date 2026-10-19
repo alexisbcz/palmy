@@ -172,6 +172,13 @@ acct_pull :: proc(a: ^Acct, rep: ^Sync_Report) -> string {
 		for r in ck.array(rows) {
 			row := i_from(a, r)
 			if have := item_row(a, row.id); have != nil {
+				// Rollback: a server handing back an older revision of an
+				// item this device has already seen (yesterday's ciphertext,
+				// still validly encrypted) is refused, and said so.
+				if row.revision < have.revision {
+					note_problem(a, fmt.tprintf("the server offered an older revision of an item (%d after %d): kept this device's copy", row.revision, have.revision))
+					continue
+				}
 				have^ = row
 			} else {
 				append(&a.cache.items, row)
