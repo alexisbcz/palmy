@@ -436,6 +436,17 @@ begin
 	if not public.vault_session_ok() then
 		raise exception 'the vault is not available to this session' using errcode = '42501';
 	end if;
+	-- A live item's key must be wrapped under the vault's current key. After
+	-- a rotation (a share revoked), a device that was offline still holds the
+	-- old vault key; its write is refused here so it re-wraps instead of
+	-- publishing a key the revoked grantee could still open.
+	if not coalesce(p_deleted, false) and p_key_version is distinct from
+	   (select v.key_version from public.vault_vaults v where v.id = p_vault) then
+		if exists (select 1 from public.vault_vaults v where v.id = p_vault) then
+			raise exception 'the vault key has been rotated; re-wrap the item'
+				using errcode = '40001', hint = 'vault_key_stale';
+		end if;
+	end if;
 	select * into cur from public.vault_items where id = p_id;
 	if not found then
 		if p_base <> 0 then

@@ -12,7 +12,7 @@
 begin;
 create extension if not exists pgtap with schema extensions;
 set search_path = public, extensions;
-select plan(41);
+select plan(44);
 
 insert into auth.users (id, email, aud, role) values
 	('a0000000-0000-4000-8000-0000000000a2', 'alice@share-test.invalid', 'authenticated', 'authenticated'),
@@ -151,22 +151,39 @@ select is((select vault_shared_role('0a000000-1111-4000-8000-00000000000a', '1a0
 select is((select count(*)::int from vault_shares where revoked_at is not null), 1,
 	'bob still sees that the share existed and was revoked, which is how his client knows to drop its copy');
 
--- Rotation: alice re-encrypts the login under a new item key (key_version 2).
--- Re-sharing to bob later is a new share at the new version, with a new signature.
+-- Rotation, item share: alice re-encrypts the login under a fresh item key
+-- (revision 2; the vault key is unchanged, so key_version stays 1).
+-- Re-sharing to bob later is a new row, with a new signature.
 select set_config('request.jwt.claims',
 	'{"sub":"a0000000-0000-4000-8000-0000000000a2","role":"authenticated","palm_identity":"aaaaaaaa-1111-4000-8000-00000000000a"}', true);
 select results_eq($q$ select revision, key_version from vault_put_item('1a000000-1111-4000-8000-000000000001',
-	'aaaaaaaa-1111-4000-8000-00000000000a', '0a000000-1111-4000-8000-00000000000a', 1, 2,
-	(select w73 from k), (select blob from k)) $q$, $q$ values (2::bigint, 2) $q$,
-	'on revoke the owner rotates: revision 2 under item key version 2');
+	'aaaaaaaa-1111-4000-8000-00000000000a', '0a000000-1111-4000-8000-00000000000a', 1, 1,
+	(select w73 from k), (select blob from k)) $q$, $q$ values (2::bigint, 1) $q$,
+	'on revoke the owner rotates the item key: revision 2');
 select lives_ok($$ insert into vault_shares (id, identity_id, vault_id, item_id, grantee_identity, role, key_version, wrapped_key, signature)
 	select '5a000000-1111-4000-8000-000000000002', 'aaaaaaaa-1111-4000-8000-00000000000a', '0a000000-1111-4000-8000-00000000000a',
-	       '1a000000-1111-4000-8000-000000000001', 'bbbbbbbb-1111-4000-8000-00000000000a', 'read', 2, blob, sig from k $$,
-	'sharing again is a new row at the new key version');
+	       '1a000000-1111-4000-8000-000000000001', 'bbbbbbbb-1111-4000-8000-00000000000a', 'read', 1, blob, sig from k $$,
+	'sharing again is a new row');
 select set_config('request.jwt.claims',
 	'{"sub":"b0000000-0000-4000-8000-0000000000b2","role":"authenticated","palm_identity":"bbbbbbbb-1111-4000-8000-00000000000a"}', true);
 select is((select count(*)::int from vault_items), 1, 'the new share reaches bob again');
-select is((select key_version from vault_shares where revoked_at is null), 2, 'carrying the rotated key''s version');
+select is((select count(*)::int from vault_shares where revoked_at is null), 1, 'through exactly one live share');
+
+-- Rotation, vault key: alice-work rotates its vault key to version 2. A
+-- device still holding version 1 is refused rather than publishing an item
+-- key wrapped under the key a revoked member may hold.
+select set_config('request.jwt.claims',
+	'{"sub":"a0000000-0000-4000-8000-0000000000a2","role":"authenticated","palm_identity":"aaaaaaaa-1111-4000-8000-00000000000b"}', true);
+select results_eq($q$ update vault_vaults set key_version = 2, key_wrap = (select blob from k)
+	where id = '0b000000-1111-4000-8000-00000000000b' returning key_version $q$, $q$ values (2) $q$,
+	'alice-work rotates its vault key');
+select throws_ok($$ select vault_put_item('1b000000-1111-4000-8000-000000000001', 'aaaaaaaa-1111-4000-8000-00000000000b',
+	'0b000000-1111-4000-8000-00000000000b', 2, 1, (select w73 from k), (select blob from k)) $$,
+	'40001', null, 'a write wrapped under the old vault key is refused as stale');
+select results_eq($q$ select revision, key_version from vault_put_item('1b000000-1111-4000-8000-000000000001',
+	'aaaaaaaa-1111-4000-8000-00000000000b', '0b000000-1111-4000-8000-00000000000b', 2, 2,
+	(select w73 from k), (select blob from k)) $q$, $q$ values (3::bigint, 2) $q$,
+	're-wrapped under version 2, the same write goes through');
 
 -- Revoking the vault share between alice's identities.
 select set_config('request.jwt.claims',
