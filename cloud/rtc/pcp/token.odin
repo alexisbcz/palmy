@@ -146,6 +146,44 @@ token_verify :: proc(
 	return j, .None
 }
 
+// token_peek decodes a token's claims *without* checking the MAC. A client
+// uses it to read its own token (its call id and display name); nothing that
+// grants access may ever call it.
+token_peek :: proc(token: string, allocator := context.allocator) -> (j: Join, ok: bool) {
+	dot := strings.last_index_byte(token, '.')
+	if dot <= 0 {
+		return {}, false
+	}
+	raw, ok2 := b64url_decode(token[:dot], context.temp_allocator)
+	if !ok2 {
+		return {}, false
+	}
+	v, perr := json.parse(raw, allocator = context.temp_allocator)
+	if perr != nil {
+		return {}, false
+	}
+	o, is_obj := v.(json.Object)
+	if !is_obj {
+		return {}, false
+	}
+	get :: proc(o: json.Object, k: string) -> string {
+		if s, ok := o[k].(json.String); ok {
+			return string(s)
+		}
+		return ""
+	}
+	j.call = strings.clone(get(o, "call"), allocator)
+	j.ch = strings.clone(get(o, "ch"), allocator)
+	j.id = strings.clone(get(o, "id"), allocator)
+	j.handle = strings.clone(get(o, "handle"), allocator)
+	j.name = strings.clone(get(o, "name"), allocator)
+	j.color = strings.clone(get(o, "color"), allocator)
+	if b, is_b := o["e2ee"].(json.Boolean); is_b {
+		j.e2ee = bool(b)
+	}
+	return j, j.call != ""
+}
+
 // sfu_hello_mac authenticates the SFU's control link to the gateway:
 // hex(HMAC-SHA256(secret, "sfu-hello:" + ts)). The gateway refuses a ts more
 // than 30 s away from its own clock.
