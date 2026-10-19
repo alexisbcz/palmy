@@ -2258,6 +2258,13 @@ drm_init :: proc(opt: Drm_Options = {}) -> (ok: bool, err: string) {
 			drm_close_card(card)
 			continue
 		}
+		// PALMY_WM_DRM_NOFLIP=1 takes the path a card that refuses page flip
+		// takes (SETCRTC + DIRTYFB) from the first frame, so that path can be
+		// tested on hardware that does flip. qemu-test.sh --noflip sets it.
+		if os.get_env("PALMY_WM_DRM_NOFLIP", context.temp_allocator) == "1" {
+			card.no_flip = true
+			drm_log("%s: page flip disabled by PALMY_WM_DRM_NOFLIP; presenting with SETCRTC + DIRTYFB", card.path)
+		}
 		append(&drm_state.cards, card)
 	}
 	if len(drm_state.cards) == 0 {

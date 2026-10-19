@@ -46,6 +46,7 @@ import "core:fmt"
 import "core:os"
 import "core:strings"
 import "core:sys/linux"
+import p "palmy:."
 
 KBD_CONF_DEFAULT :: "/etc/palm/keyboard"
 
@@ -1027,6 +1028,171 @@ kbd_selftest :: proc() -> int {
 			pop(&s.clients)
 			linux.close(s.keymap_fd)
 		}
+	}
+
+	fmt.println("real presses and releases (bare metal), over a fake client")
+	{
+		s := new(Server)
+		defer free(s)
+		write(conf, "layout = us\n")
+		kbd_load(s, kbd_choose())
+		xkb_state_reset()
+		saved_bare := session.bare
+		session.bare = true
+		kbd_wire = {}
+		defer {
+			session.bare = saved_bare
+			xkb_state_reset()
+			kbd_wire = {}
+		}
+
+		pair: [2]linux.Fd
+		kbd_check(linux.socketpair(.UNIX, .STREAM, linux.Protocol(0), &pair) == .NONE, "a socketpair for the fake client")
+		c := new(Client)
+		c.fd = pair[0]
+		c.objs = make(map[u32]Object)
+		append(&c.keyboards, 7)
+		append(&s.clients, c)
+		surf := new(Surface)
+		surf.client = c
+		s.kbd_surf = surf
+		app := new(p.App)
+		defer free(app)
+		dev := new(Ev_Device)
+		dev.synthetic = true
+		dev.kinds = {.Keyboard}
+		defer free(dev)
+
+		// Every wl_keyboard event since the last call, decoded: key events as
+		// (code, state), modifiers as (depressed, locked).
+		Msg :: struct {
+			op:   u32,
+			args: [6]u32,
+		}
+		drain :: proc(c: ^Client, fd: linux.Fd) -> [dynamic]Msg {
+			client_flush(c)
+			out := make([dynamic]Msg, context.temp_allocator)
+			bytes := make([dynamic]u8, context.temp_allocator)
+			for {
+				buf: [8192]u8
+				n, err := linux.recv(fd, buf[:], {.DONTWAIT})
+				if err != .NONE || n <= 0 {
+					break
+				}
+				append(&bytes, ..buf[:n])
+			}
+			for off := 0; off + 8 <= len(bytes); {
+				hdr := (^u32)(&bytes[off + 4])^
+				size := max(int(hdr >> 16), 8)
+				m := Msg{op = hdr & 0xffff}
+				for i in 0 ..< min((size - 8) / 4, 6) {
+					m.args[i] = (^u32)(&bytes[off + 8 + i * 4])^
+				}
+				append(&out, m)
+				off += size
+			}
+			return out
+		}
+		keys_of :: proc(msgs: [dynamic]Msg) -> [dynamic][2]u32 {
+			out := make([dynamic][2]u32, context.temp_allocator)
+			for m in msgs {
+				if m.op == 3 {
+					append(&out, [2]u32{m.args[2], m.args[3]}) // serial, time, key, state
+				}
+			}
+			return out
+		}
+		key :: proc(s: ^Server, app: ^p.App, d: ^Ev_Device, code: u16, value: i32, t: u32) {
+			ev_key_event(d, Ev_Input_Event{type = EV_KEY, code = code, value = value}, t)
+			ev_apply_to_input(&app.win.input)
+			handle_keys(s, app)
+		}
+
+		// Shift down, A down, held past the repeat delay, A up, Shift up.
+		key(s, app, dev, EV_KEY_LEFTSHIFT, 1, 1000)
+		key(s, app, dev, EV_KEY_A, 1, 1010)
+		ev_tick(1010 + u32(ev_cfg.repeat_delay) + 200)
+		ev_apply_to_input(&app.win.input)
+		kbd_check(len(key_evs) >= 3, "the compositor still generates repeats for itself: %d", len(key_evs))
+		handle_keys(s, app)
+		key(s, app, dev, EV_KEY_A, 0, 2000)
+		key(s, app, dev, EV_KEY_LEFTSHIFT, 0, 2010)
+		ev_repeat.active = false
+		msgs := drain(c, pair[1])
+		ks := keys_of(msgs)
+		kbd_check(len(ks) == 4, "four key events, no repeats on the wire: %v", ks[:])
+		if len(ks) == 4 {
+			kbd_check(ks[0] == {42, 1} && ks[1] == {30, 1}, "Shift then A pressed: %v %v", ks[0], ks[1])
+			kbd_check(ks[2] == {30, 0} && ks[3] == {42, 0}, "A then Shift released: %v %v", ks[2], ks[3])
+		}
+		mods := make([dynamic]u32, context.temp_allocator)
+		for m in msgs {
+			if m.op == 4 {
+				append(&mods, m.args[1])
+			}
+		}
+		shift := mod_bit(s.kt.m_shift)
+		kbd_check(len(mods) == 2 && mods[0] == shift && mods[1] == 0, "the real xkb state follows Shift: %v (Shift is 0x%x)", mods[:], shift)
+		kbd_check(len(msgs) > 0 && msgs[0].op == 3 && msgs[1].op == 4, "and each modifiers event comes after its key")
+		kbd_check(kbd_wire.presses == 2 && kbd_wire.releases == 2, "counters: %d presses, %d releases", kbd_wire.presses, kbd_wire.releases)
+
+		// A chord the compositor takes: Ctrl and Alt reach the client, Q
+		// does not, neither its press nor its release.
+		key(s, app, dev, EV_KEY_LEFTCTRL, 1, 3000)
+		key(s, app, dev, EV_KEY_LEFTALT, 1, 3010)
+		key(s, app, dev, EV_KEY_Q, 1, 3020)
+		kbd_check(app.quit, "Ctrl+Alt+Q reached the compositor")
+		key(s, app, dev, EV_KEY_Q, 0, 3030)
+		key(s, app, dev, EV_KEY_LEFTALT, 0, 3040)
+		key(s, app, dev, EV_KEY_LEFTCTRL, 0, 3050)
+		ks = keys_of(drain(c, pair[1]))
+		saw_q := false
+		for k in ks {
+			if k[0] == EV_KEY_Q {
+				saw_q = true
+			}
+		}
+		kbd_check(!saw_q && len(ks) == 4, "a taken key is swallowed whole, the modifiers are not: %v", ks[:])
+		app.quit = false
+
+		// A key held across a focus change: the old client is left, the new
+		// one never sees a release for a press it did not get.
+		key(s, app, dev, EV_KEY_A, 1, 4000)
+		surf2 := new(Surface)
+		defer free(surf2)
+		surf2.client = c
+		set_kbd_focus(s, surf2)
+		key(s, app, dev, EV_KEY_A, 0, 4100)
+		msgs = drain(c, pair[1])
+		ks = keys_of(msgs)
+		kbd_check(len(ks) == 1 && ks[0] == {30, 1}, "press before the focus change only: %v", ks[:])
+		saw_enter_mods := false
+		for m, i in msgs {
+			if m.op == 1 && i + 1 < len(msgs) && msgs[i + 1].op == 4 {
+				saw_enter_mods = true
+			}
+		}
+		kbd_check(saw_enter_mods, "enter is followed by the real modifier state")
+
+		// Unplugging a keyboard with a key down releases it.
+		dev2 := new(Ev_Device)
+		dev2.path = strings.clone("/dev/input/event-test")
+		dev2.synthetic = true
+		dev2.kinds = {.Keyboard}
+		append(&ev_devices, dev2)
+		key(s, app, dev2, EV_KEY_M, 1, 5000)
+		ev_device_remove(dev2)
+		ev_apply_to_input(&app.win.input)
+		handle_keys(s, app)
+		ks = keys_of(drain(c, pair[1]))
+		kbd_check(len(ks) == 2 && ks[0] == {50, 1} && ks[1] == {50, 0}, "an unplugged keyboard's held key is released: %v", ks[:])
+		kbd_check(len(ev_devices) == 0, "and the device is forgotten")
+
+		linux.close(pair[0])
+		linux.close(pair[1])
+		pop(&s.clients)
+		s.kbd_surf = nil
+		linux.close(s.keymap_fd)
 	}
 
 	fmt.println()

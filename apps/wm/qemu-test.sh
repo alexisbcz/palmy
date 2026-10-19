@@ -39,6 +39,9 @@
 #                                        the display device(s) instead of
 #                                        -device virtio-vga ("-vga std" is
 #                                        bochs-drm)
+#   apps/wm/qemu-test.sh --env "K=V ..."  more environment for wm
+#   apps/wm/qemu-test.sh --noflip        PALMY_WM_DRM_NOFLIP=1: present with
+#                                        SETCRTC + DIRTYFB, never page flip
 #   apps/wm/qemu-test.sh --qemu-args "-device qemu-xhci,id=xhci"
 #                                        more QEMU arguments (a USB bus to
 #                                        hotplug a keyboard onto over QMP)
@@ -78,6 +81,7 @@ build=1
 vt=""
 gpu="-device virtio-vga"
 qemu_args=""
+extra_env=""
 while [ $# -gt 0 ]; do
 	case "$1" in
 	--out) OUT=$(mkdir -p "$2" && cd "$2" && pwd); shift ;;
@@ -91,6 +95,8 @@ while [ $# -gt 0 ]; do
 	--vt) vt=$2; shift ;;
 	--gpu) gpu=$2; shift ;;
 	--qemu-args) qemu_args=$2; shift ;;
+	--env) extra_env="$extra_env $2"; shift ;;
+	--noflip) extra_env="$extra_env PALMY_WM_DRM_NOFLIP=1" ;;
 	--root) as_user=0 ;;
 	--kiosk) kiosk=1 ;;
 	--no-xkb) xkb=0 ;;
@@ -228,6 +234,16 @@ echo "init: waiting for /dev/dri/card0"
 i=0; while [ ! -e /dev/dri/card0 ] && [ \$i -lt 50 ]; do sleep 0.1; i=\$((i+1)); done
 chown root:video /dev/dri/*; chmod 0660 /dev/dri/*
 chown root:input /dev/input/event*; chmod 0660 /dev/input/event*
+# palm-init's hotplug half (distro/init/devices.odin): a device plugged in
+# later is given to the input group from its uevent.
+cat > /tmp/uevent.sh <<'UEV'
+#!/bin/sh
+case "\$ACTION:\$DEVNAME" in
+add:input/event*) chown root:input /dev/\$DEVNAME; chmod 0660 /dev/\$DEVNAME ;;
+esac
+UEV
+chmod 0755 /tmp/uevent.sh
+uevent /tmp/uevent.sh &
 ls -l /dev/dri /dev/input
 for d in /sys/class/input/event*; do
 	echo "input: \$d \$(cat \$d/device/name) ev=\$(cat \$d/device/capabilities/ev) key=\$(cat \$d/device/capabilities/key) abs=\$(cat \$d/device/capabilities/abs) rel=\$(cat \$d/device/capabilities/rel) prop=\$(cat \$d/device/properties)"
@@ -235,7 +251,7 @@ done
 mkdir -p /run/user/1000 /run/user/0
 chown palm:palm /run/user/1000 /home/palm; chmod 0700 /run/user/1000 /run/user/0
 $GUEST_SCRIPT_RUN
-ENVS="HOME=/home/palm USER=palm SHELL=/bin/sh PATH=/usr/bin XDG_RUNTIME_DIR=/run/user/1000 XDG_SESSION_TYPE=wayland PALMY_WM_DRM_DEBUG=1"
+ENVS="HOME=/home/palm USER=palm SHELL=/bin/sh PATH=/usr/bin XDG_RUNTIME_DIR=/run/user/1000 XDG_SESSION_TYPE=wayland PALMY_WM_DRM_DEBUG=1 $extra_env"
 VT="$vt"
 if [ -n "\$VT" ]; then
 	# What a login manager without logind does for the session's VT: give
@@ -255,7 +271,7 @@ if [ $as_user = 1 ]; then
 	fi
 else
 	echo "init: starting wm $WMARGS as root"
-	env HOME=/root SHELL=/bin/sh XDG_RUNTIME_DIR=/run/user/0 wm $WMARGS &
+	env HOME=/root SHELL=/bin/sh XDG_RUNTIME_DIR=/run/user/0 PALMY_WM_DRM_DEBUG=1 $extra_env wm $WMARGS &
 	WM=\$!
 	if [ $sigterm_after -gt 0 ]; then
 		sleep $sigterm_after

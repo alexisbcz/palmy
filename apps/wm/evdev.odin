@@ -498,6 +498,7 @@ Ev_Device :: struct {
 	paused:       bool,
 	synthetic:    bool,
 	gone:         bool, // read() said ENODEV: unplugged, waiting to be removed
+	typed:        bool, // a key has come from it (logged once)
 	kinds:        Ev_Kinds,
 	caps:         Ev_Caps,
 	bus:          u16,
@@ -1282,6 +1283,10 @@ ev_key_event :: proc(d: ^Ev_Device, e: Ev_Input_Event, t: u32) {
 		return
 	}
 	down := e.value == 1
+	if down && !d.typed && !d.synthetic {
+		d.typed = true
+		fmt.printfln("wm: input: first key from %s (%s)", d.path, d.name)
+	}
 	if int(code) <= EV_KEY_MAX {
 		if down {ev_set_bit(d.keys_down[:], int(code))} else {ev_clear_bit(d.keys_down[:], int(code))}
 	}

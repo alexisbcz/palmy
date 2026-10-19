@@ -21,6 +21,10 @@
 #                             (hold:alt key:tab key:tab release:alt)
 #   until:<s>:<file>:<text>   wait up to <s> seconds until <file> contains <text>
 #   burst:<n>:<ms>:<prefix>   n screendumps <ms> apart, <prefix>-NN.png
+#   qmp:<command>[:<json>]    any QMP command, e.g.
+#                             qmp:device_add:{"driver":"usb-kbd","id":"k2"}
+#   dev:<id>                  send the following input events to the device
+#                             with this QOM id (dev: alone: QEMU's choice)
 #
 # The absolute axis is 0..0x7fff across the output whatever its mode, so a
 # pixel position needs the output size: --size WxH (default 1280x800).
@@ -69,7 +73,11 @@ class Qmp:
             print(f"qmp: {name}: {r['error']}", file=sys.stderr)
         return r
 
+    device = ""
+
     def events(self, evs):
+        if self.device:
+            return self.cmd("input-send-event", device=self.device, events=evs)
         return self.cmd("input-send-event", events=evs)
 
 
@@ -198,6 +206,12 @@ def main():
                 if left > 0:
                     time.sleep(left)
             print(f"burst {prefix} x{n_s}", flush=True)
+        elif kind == "qmp":
+            name, _, js = rest.partition(":")
+            r = q.cmd(name, **(json.loads(js) if js else {}))
+            print(f"qmp {name}: {json.dumps(r)[:200]}", flush=True)
+        elif kind == "dev":
+            q.device = rest
         elif kind == "until":
             limit_s, path, text = rest.split(":", 2)
             limit = float(limit_s)
