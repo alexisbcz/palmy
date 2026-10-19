@@ -688,7 +688,7 @@ overlay_pointer :: proc(s: ^Server, app: ^p.App, mp: [2]int) -> bool {
 			ptr_button(s, btn.c, false)
 		}
 	}
-	if in_.scroll != {0, 0} {
+	if scroll_pending(in_) {
 		ptr_axis(s, in_.scroll.x, in_.scroll.y)
 	}
 	return true

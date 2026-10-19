@@ -973,7 +973,7 @@ set_ptr_focus :: proc(s: ^Server, surf: ^Surface, lx, ly: int) {
 	if old := s.ptr_surf; old != nil && old.client != nil && !old.client.dead {
 		for ptr in old.client.pointers {
 			event(old.client, ptr, 1, next_serial(s), old.id)
-			event(old.client, ptr, 5)
+			ptr_frame(old.client, ptr)
 		}
 	}
 	s.ptr_surf = surf
@@ -981,7 +981,7 @@ set_ptr_focus :: proc(s: ^Server, surf: ^Surface, lx, ly: int) {
 	if surf != nil && surf.client != nil && !surf.client.dead {
 		for ptr in surf.client.pointers {
 			event(surf.client, ptr, 0, next_serial(s), surf.id, fixed(f32(lx)), fixed(f32(ly)))
-			event(surf.client, ptr, 5)
+			ptr_frame(surf.client, ptr)
 		}
 	}
 }
@@ -993,7 +993,7 @@ ptr_motion :: proc(s: ^Server, lx, ly: int) {
 	}
 	for ptr in surf.client.pointers {
 		event(surf.client, ptr, 2, now_ms(), fixed(f32(lx)), fixed(f32(ly)))
-		event(surf.client, ptr, 5)
+		ptr_frame(surf.client, ptr)
 	}
 }
 
@@ -1004,24 +1004,81 @@ ptr_button :: proc(s: ^Server, btn: u32, pressed: bool) {
 	}
 	for ptr in surf.client.pointers {
 		event(surf.client, ptr, 3, next_serial(s), now_ms(), btn, pressed ? u32(1) : u32(0))
-		event(surf.client, ptr, 5)
+		ptr_frame(surf.client, ptr)
 	}
 }
 
+// Scroll detail for this frame, beyond the pixel amount p.Input carries: the
+// wheel's own 120ths per detent, where the scroll came from, and whether a
+// finger scroll just ended. evdev.odin fills it on bare metal; nested it
+// stays zero and the wheel is assumed.
+Axis_Detail :: struct {
+	v120:   [2]i32, // vertical, horizontal
+	stop:   [2]bool,
+	source: u32, // wl_pointer.axis_source: 0 wheel, 1 finger, 2 continuous
+}
+
+axis_detail: Axis_Detail
+
+// scroll_pending says whether ptr_axis has anything to send this frame.
+scroll_pending :: proc(in_: ^p.Input) -> bool {
+	return in_.scroll != {0, 0} || axis_detail.stop[0] || axis_detail.stop[1]
+}
+
+// ptr_frame ends a group of pointer events; wl_pointer.frame is version 5.
+ptr_frame :: proc(c: ^Client, ptr: u32) {
+	if o, ok := obj_get(c, ptr); ok && o.ver >= 5 {
+		event(c, ptr, 5)
+	}
+}
+
+// ptr_axis sends a scroll, at the detail the client's wl_pointer version
+// understands: axis_source, then per axis axis_value120 (v8) or
+// axis_discrete (v5-7) before the pixel amount, axis_stop when a finger
+// lifts, and frame.
 ptr_axis :: proc(s: ^Server, dx, dy: f32) {
 	surf := s.ptr_surf
 	if surf == nil || surf.client == nil || surf.client.dead {
 		return
 	}
-	for ptr in surf.client.pointers {
-		event(surf.client, ptr, 6, u32(0)) // axis_source(wheel)
-		if dy != 0 {
-			event(surf.client, ptr, 4, now_ms(), u32(0), fixed(dy))
+	c := surf.client
+	t := now_ms()
+	d := axis_detail
+	for ptr in c.pointers {
+		ver := u32(1)
+		if o, ok := obj_get(c, ptr); ok {
+			ver = o.ver
 		}
-		if dx != 0 {
-			event(surf.client, ptr, 4, now_ms(), u32(1), fixed(dx))
+		if ver >= 5 {
+			event(c, ptr, 6, d.source)
 		}
-		event(surf.client, ptr, 5)
+		for a in 0 ..< 2 {
+			v := a == 0 ? dy : dx
+			if v != 0 {
+				n := d.v120[a]
+				if n == 0 && d.source == 0 && !session.bare {
+					// Nested: the host's wheel arrives as pixels only. One
+					// detent per 15 px is what the host scales them to.
+					n = i32(v / 15 * 120)
+				}
+				if n != 0 && d.source == 0 {
+					if ver >= 8 {
+						event(c, ptr, 9, u32(a), n) // axis_value120
+					} else if ver >= 5 {
+						steps := n / 120
+						if steps == 0 {
+							steps = n > 0 ? 1 : -1
+						}
+						event(c, ptr, 8, u32(a), steps) // axis_discrete
+					}
+				}
+				event(c, ptr, 4, t, u32(a), fixed(v))
+			}
+			if d.stop[a] && ver >= 5 {
+				event(c, ptr, 7, t, u32(a)) // axis_stop
+			}
+		}
+		ptr_frame(c, ptr)
 	}
 }
 

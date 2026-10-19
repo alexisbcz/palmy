@@ -269,7 +269,7 @@ Global :: struct {
 GLOBALS := [?]Global {
 	{1, "wl_compositor", 5},
 	{2, "wl_shm", 1},
-	{3, "wl_seat", 5},
+	{3, "wl_seat", 8},
 	{5, "xdg_wm_base", 3},
 	{6, "wl_subcompositor", 1},
 	{7, "zxdg_decoration_manager_v1", 1},

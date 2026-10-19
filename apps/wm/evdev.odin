@@ -1681,8 +1681,11 @@ ev_frame :: proc(d: ^Ev_Device, t: u32) {
 			if d.wheel_hi[ax] == 0 {
 				continue
 			}
-			frac := f64(d.wheel_hi[ax]) / 120.0
-			ev_emit_axis(d, kind, frac * ev_cfg.scroll_factor, d.wheel_hi[ax], .Wheel, t)
+			// Positive upwards like REL_WHEEL, so the vertical axis flips.
+			hi := d.wheel_hi[ax]
+			if ax == 0 {hi = -hi}
+			frac := f64(hi) / 120.0
+			ev_emit_axis(d, kind, frac * ev_cfg.scroll_factor, hi, .Wheel, t)
 		} else if d.wheel[ax] != 0 {
 			// The kernel's REL_WHEEL is positive upwards; Wayland's vertical
 			// axis is positive downwards.
@@ -2094,6 +2097,7 @@ ev_apply_to_input :: proc(in_: ^p.Input, scale: f32 = 1) {
 	clear(&in_.keys)
 	clear(&key_codes)
 	clear(&key_evs)
+	axis_detail = {}
 	in_.over_surface = true
 	in_.focused = true
 
@@ -2140,12 +2144,28 @@ ev_apply_to_input :: proc(in_: ^p.Input, scale: f32 = 1) {
 				in_.released[b] = true
 			}
 		case .Axis:
+			ai := 0
 			if e.axis == .Vertical {
 				in_.scroll.y += f32(e.value)
 			} else {
 				in_.scroll.x += f32(e.value)
+				ai = 1
 			}
-		case .Axis_Stop, .Touch_Down, .Touch_Motion, .Touch_Up,
+			axis_detail.v120[ai] += e.v120
+			switch e.source {
+			case .Wheel:
+				axis_detail.source = 0
+			case .Finger:
+				axis_detail.source = 1
+			case .Continuous:
+				axis_detail.source = 2
+			}
+		case .Axis_Stop:
+			// A finger lifted off a two-finger scroll: kinetic scrolling in
+			// the client starts from here.
+			axis_detail.stop = {true, true}
+			axis_detail.source = 1
+		case .Touch_Down, .Touch_Motion, .Touch_Up,
 		     .Gesture_Begin, .Gesture_Update, .Gesture_End,
 		     .Device_Added, .Device_Removed:
 		// Not representable in p.Input; the keycode-level consumer takes these.
@@ -2563,15 +2583,17 @@ ev_selftest :: proc() -> int {
 		ev_play(m, both[:])
 		ev_check(ev_count(.Axis) == 1, "one axis event per detent, got %d", ev_count(.Axis))
 		a, _ := ev_first(.Axis)
-		ev_check(a.v120 == -120, "v120 is -120 for one notch down... up, got %d", a.v120)
+		// The kernel counts the wheel positive upwards; Wayland's vertical
+		// axis is positive downwards. -1 / -120 is one notch down: +120.
+		ev_check(a.v120 == 120, "v120 is +120 for one notch down, got %d", a.v120)
 		ev_check(a.source == .Wheel, "the source is a wheel")
 
 		ev_q_reset()
 		part := [?]Ev_Rec{{EV_REL, EV_REL_WHEEL_HI_RES, 30, 6100}, {EV_SYN, EV_SYN_REPORT, 0, 6100}}
 		ev_play(m, part[:])
 		p1, _ := ev_first(.Axis)
-		ev_check(p1.v120 == 30, "a quarter notch survives as v120 30, got %d", p1.v120)
-		ev_check(ev_near(p1.value, ev_cfg.scroll_factor / 4, 0.001), "and as a quarter of a detent in pixels, got %v", p1.value)
+		ev_check(p1.v120 == -30, "a quarter notch up survives as v120 -30, got %d", p1.v120)
+		ev_check(ev_near(p1.value, -ev_cfg.scroll_factor / 4, 0.001), "and as a quarter of a detent in pixels, got %v", p1.value)
 
 		ev_q_reset()
 		lo := [?]Ev_Rec{{EV_REL, EV_REL_WHEEL, 1, 6200}, {EV_SYN, EV_SYN_REPORT, 0, 6200}}

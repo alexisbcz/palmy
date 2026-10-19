@@ -2385,6 +2385,46 @@ ws_selftest :: proc() -> int {
 		free(sc)
 	}
 	{
+		// Scrolling at the detail each wl_pointer version understands.
+		ws_test_reset(s)
+		sc := ws_test_client(s)
+		surf := new(Surface)
+		surf.client = sc
+		defer free(surf)
+		sc.objs[40] = Object{kind = .Pointer, ver = 8}
+		sc.objs[41] = Object{kind = .Pointer, ver = 5}
+		append(&sc.pointers, 40, 41)
+		s.ptr_surf = surf
+		saved_bare := session.bare
+		session.bare = true
+		axis_detail = {v120 = {240, 0}, source = 0}
+		ptr_axis(s, 0, 30)
+		axis_detail = {stop = {true, true}, source = 1}
+		ptr_axis(s, 0, 0)
+		axis_detail = {}
+		session.bare = saved_bare
+		ops := make([dynamic][2]u32, context.temp_allocator) // object, opcode
+		for off := 0; off + 8 <= len(sc.out); {
+			hdr := (^u32)(&sc.out[off + 4])^
+			append(&ops, [2]u32{(^u32)(&sc.out[off])^, hdr & 0xffff})
+			off += max(int(hdr >> 16), 8)
+		}
+		has :: proc(ops: [dynamic][2]u32, obj, op: u32) -> bool {
+			for o in ops {
+				if o == {obj, op} {return true}
+			}
+			return false
+		}
+		ws_check(has(ops, 40, 6) && has(ops, 40, 9) && has(ops, 40, 4) && has(ops, 40, 5), "v8: axis_source, axis_value120, axis, frame: %v", ops[:])
+		ws_check(!has(ops, 40, 8), "v8 gets no axis_discrete")
+		ws_check(has(ops, 41, 8) && !has(ops, 41, 9), "v5: axis_discrete instead of axis_value120")
+		ws_check(has(ops, 40, 7) && has(ops, 41, 7), "a finger lifting sends axis_stop")
+		s.ptr_surf = nil
+		pop(&s.clients)
+		delete(sc.out)
+		free(sc)
+	}
+	{
 		// A surface that maps at zero, and one that maps absurdly large.
 		ws_test_reset(s)
 		z := ws_test_win(s, c, "zero", "app", 0, 0)

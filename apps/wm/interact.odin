@@ -848,7 +848,7 @@ handle_pointer :: proc(s: ^Server, app: ^p.App, scale: f32) {
 		case .Edge:
 		}
 	}
-	if in_.scroll != {0, 0} && region == .Content {
+	if scroll_pending(in_) && region == .Content {
 		ptr_axis(s, in_.scroll.x, in_.scroll.y)
 	}
 }
@@ -897,7 +897,7 @@ ix_grab_frame :: proc(s: ^Server, in_: ^p.Input, mp: [2]int) {
 			ptr_button(s, pair.c, false)
 		}
 	}
-	if in_.scroll != {0, 0} {
+	if scroll_pending(in_) {
 		ptr_axis(s, in_.scroll.x, in_.scroll.y)
 	}
 	if !(in_.down[.Left] || in_.down[.Right] || in_.down[.Middle]) {
