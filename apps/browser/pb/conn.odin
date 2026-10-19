@@ -23,10 +23,23 @@ Conn :: struct {
 	closed: bool,
 }
 
+// send_secret sends a message that carries a password, then wipes its bytes.
+send_secret :: proc(c: ^Conn, m: ^Msg) -> bool {
+	bytes := msg_bytes(m)
+	ok := send_bytes(c, bytes)
+	wipe(bytes)
+	delete(m.b)
+	return ok
+}
+
 // send writes one finished message; it is safe from any thread.
 send :: proc(c: ^Conn, m: ^Msg, fd: linux.Fd = -1) -> bool {
 	bytes := msg_bytes(m)
 	defer delete(m.b)
+	return send_bytes(c, bytes, fd)
+}
+
+send_bytes :: proc(c: ^Conn, bytes: []u8, fd: linux.Fd = -1) -> bool {
 	sync.mutex_lock(&c.wlock)
 	defer sync.mutex_unlock(&c.wlock)
 	if c.closed {
@@ -86,8 +99,13 @@ recv_one :: proc(c: ^Conn, allocator := context.allocator) -> (raw: []u8, fd: in
 			if len(c.rx) >= size {
 				raw = make([]u8, size, allocator)
 				copy(raw, c.rx[:size])
+				before := len(c.rx)
 				remove_range(&c.rx, 0, size)
 				op := Op((^u16)(&raw[4])^)
+				if op == .Form_Submit || op == .Fill {
+					// what slid down left its old tail behind
+					wipe(([^]u8)(raw_data(c.rx))[len(c.rx):before])
+				}
 				if op == .Buffer && len(c.rx_fds) > 0 {
 					fd = int(c.rx_fds[0])
 					ordered_remove(&c.rx_fds, 0)

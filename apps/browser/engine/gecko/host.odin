@@ -53,6 +53,8 @@ Pending_Kind :: enum {
 	Get_Tree,
 	Create,
 	Has_Focus,
+	Fill_Tree,
+	Fill_Call,
 	Other,
 }
 
@@ -83,7 +85,29 @@ Host :: struct {
 	started_at:  time.Tick,
 	next_dl:     u32,
 	dl_ctx:      map[string]u32, // download navigation id -> our id
-	clients:     [dynamic]^Client
+	clients:     [dynamic]^Client,
+	test_certs:  bool,
+	fill:        Fill_Pending,
+}
+
+// One fill at a time: the chrome sends FILL only after the person picked a
+// login, and the host first asks Firefox where the view is now.
+Fill_Pending :: struct {
+	active:   bool,
+	view:     int,
+	origin:   string,
+	username: string,
+	password: string,
+	otp:      string,
+}
+
+fill_clear :: proc(f: ^Fill_Pending) {
+	for s in ([]string{f.username, f.password, f.otp}) {
+		pb.wipe(transmute([]u8)s)
+		delete(s)
+	}
+	delete(f.origin)
+	f^ = {}
 }
 
 h: Host
@@ -143,7 +167,20 @@ user_pref("app.update.auto", false);
 user_pref("app.update.checkInstallTime", false);
 user_pref("browser.translations.automaticallyPopup", false);
 user_pref("extensions.pocket.enabled", false);
+// Passwords live in the vault and nowhere else (cloud/docs/vault.md): no
+// saving, no filling, no generation, no breach alerts from Firefox's own
+// password manager; no form history (it keeps what was typed into text
+// fields, usernames included), no address or card autofill; and no form
+// contents in the session store.
 user_pref("signon.rememberSignons", false);
+user_pref("signon.autofillForms", false);
+user_pref("signon.generation.enabled", false);
+user_pref("signon.management.page.breach-alerts.enabled", false);
+user_pref("signon.firefoxRelay.feature", "disabled");
+user_pref("browser.formfill.enable", false);
+user_pref("extensions.formautofill.addresses.enabled", false);
+user_pref("extensions.formautofill.creditCards.enabled", false);
+user_pref("browser.sessionstore.privacy_level", 2);
 // the address bar is hidden in kiosk mode; it must never pop up suggestions
 user_pref("browser.urlbar.suggest.searches", false);
 user_pref("browser.urlbar.suggest.history", false);
@@ -233,7 +270,8 @@ bidi :: proc(method: string, params: string, kind := Pending_Kind.Other, view :=
 	id := h.next_cmd
 	h.pending[id] = {kind, view}
 	if TRACE {
-		logf("bidi %d %s %s", id, method, len(params) > 200 ? params[:200] : params)
+		// a fill carries a password: its arguments are never logged
+		logf("bidi %d %s %s", id, method, kind == .Fill_Call ? "(the fill's arguments)" : len(params) > 200 ? params[:200] : params)
 	}
 	msg := strings.concatenate({`{"id":`, fmt.tprintf("%d", id), `,"method":`, jq(method), `,"params":`, params, "}"}, context.temp_allocator)
 	ws_send(&h.ws, msg)
@@ -287,7 +325,22 @@ PRELOAD :: `(ch) => {
   document.addEventListener('selectionchange', () => send({t: 'sel', text: String(getSelection())}));
 }`
 
+// The page half of autofill (engine/autofill.js, the file the CEF host
+// embeds too), installed in a sandbox realm: page script shares the DOM with
+// it but none of its globals, so `fill` and the channel are out of reach.
+AUTOFILL_JS :: #load("../autofill.js", string)
+AUTOFILL_SANDBOX :: "palm-autofill"
+AUTOFILL_PRELOAD :: "(ch) => {\n  if (window.top !== window) return;\n  const fill = " + AUTOFILL_JS + "((...a) => { try { ch(JSON.stringify(a)); } catch (e) {} });\n  if (fill) globalThis.palmAutofillFill = fill;\n}"
+AUTOFILL_CALL :: "(o, u, p, t) => typeof globalThis.palmAutofillFill === 'function' ? globalThis.palmAutofillFill(o, u, p, t) : 4"
+
 on_ws_open :: proc() {
+	if h.test_certs {
+		// PALM_BROWSER_TEST_CERTS=1, for the autofill tests' local HTTPS
+		// servers. BiDi has no per-host switch, so this is the whole session.
+		logf("TEST MODE: certificate errors are accepted (PALM_BROWSER_TEST_CERTS=1)")
+		bidi("session.new", `{"capabilities":{"alwaysMatch":{"acceptInsecureCerts":true,"unhandledPromptBehavior":{"default":"ignore"}}}}`, .Session_New)
+		return
+	}
 	bidi("session.new", `{"capabilities":{"alwaysMatch":{"unhandledPromptBehavior":{"default":"ignore"}}}}`, .Session_New)
 }
 
@@ -380,6 +433,9 @@ on_bidi :: proc(text: string) {
 		id := int(jnum(v, "id"))
 		p, ok := h.pending[id]
 		if !ok {
+			if typ == "error" {
+				logf("BiDi error for no command of ours: %s %s", jstr(v, "error"), jstr(v, "message"))
+			}
 			return
 		}
 		delete_key(&h.pending, id)
@@ -392,6 +448,17 @@ on_bidi :: proc(text: string) {
 			}
 		}
 		#partial switch p.kind {
+		case .Fill_Tree:
+			fill_checked(v, typ == "success")
+		case .Fill_Call:
+			status := pb.Fill_Status.Failed
+			if typ == "success" && jstr(v, "result", "type") == "success" {
+				n := int(jnum(v, "result", "result", "value"))
+				if n >= 0 && n <= int(pb.Fill_Status.Failed) {
+					status = pb.Fill_Status(n)
+				}
+			}
+			send_ev(pb.ev_fill_result(p.view, status))
 		case .Has_Focus:
 			if typ == "success" && jstr(v, "result", "type") == "success" {
 				if !jbool(v, "result", "result", "value") && g.focused && p.view == g.view && g_client != nil {
@@ -403,6 +470,7 @@ on_bidi :: proc(text: string) {
 		case .Session_New:
 			bidi("session.subscribe", `{"events":["browsingContext","script.message"]}`, .Subscribe)
 			bidi("script.addPreloadScript", J(`{"functionDeclaration":%s,"arguments":[{"type":"channel","value":{"channel":"palm"}}]}`, jq(PRELOAD)), .Preload)
+			bidi("script.addPreloadScript", J(`{"functionDeclaration":%s,"sandbox":%s,"arguments":[{"type":"channel","value":{"channel":"palm-af"}}]}`, jq(AUTOFILL_PRELOAD), jq(AUTOFILL_SANDBOX)), .Preload)
 			bidi("browsingContext.getTree", `{"maxDepth":0}`, .Get_Tree)
 		case .Get_Tree:
 			if ctxs, cok := jget(v, "result", "contexts").(json.Array); cok && len(ctxs) > 0 {
@@ -502,6 +570,12 @@ on_bidi :: proc(text: string) {
 		}
 		send_ev(pb.ev_download(view != nil ? view.id : g.view, id, status == "complete" ? .Done : .Cancelled, size, size, jstr(params, "url"), path, ""))
 	case "script.message":
+		if jstr(params, "channel") == "palm-af" {
+			autofill_message(params)
+			// the message may have carried a submitted password
+			pb.wipe(transmute([]u8)text)
+			return
+		}
 		if jstr(params, "channel") != "palm" {
 			return
 		}
@@ -555,6 +629,140 @@ page_message :: proc(v: ^View, m: json.Value) {
 		pb.w_u32(&mm, 0) // no engine items: the chrome's own menu is complete
 		send_ev(mm)
 	}
+}
+
+// ---------------------------------------------------------------------------
+// Autofill
+// ---------------------------------------------------------------------------
+
+// view_origin is the top-level origin of a view as this host knows it: the
+// URL BiDi last reported for the top-level context.
+view_origin :: proc(v: ^View) -> string {
+	if v == nil || len(v.hist) == 0 || v.idx >= len(v.hist) {
+		return ""
+	}
+	return pb.origin_of(v.hist[v.idx])
+}
+
+// autofill_message is a report from autofill.js in the palm-autofill
+// sandbox. It counts only from a top-level context the chrome owns (an
+// iframe has a context of its own, which matches no view), and only when the
+// page's location.origin agrees with the URL BiDi reported for that context.
+autofill_message :: proc(params: json.Value) {
+	v := view_of_ctx(jstr(params, "source", "context"))
+	if v == nil {
+		return
+	}
+	raw := jstr(params, "data", "value")
+	m, err := json.parse_string(raw, allocator = context.temp_allocator)
+	if err != nil {
+		return
+	}
+	a, ok := m.(json.Array)
+	if !ok || len(a) < 1 {
+		return
+	}
+	str :: proc(a: json.Array, i: int) -> string {
+		if i < len(a) {
+			if s, ok := a[i].(json.String); ok {
+				return string(s)
+			}
+		}
+		return ""
+	}
+	num :: proc(a: json.Array, i: int) -> f32 {
+		if i < len(a) {
+			#partial switch x in a[i] {
+			case json.Float:
+				return f32(x)
+			case json.Integer:
+				return f32(x)
+			}
+		}
+		return 0
+	}
+	top := view_origin(v)
+	z := v.zoom > 0 ? v.zoom : 1
+	switch str(a, 0) {
+	case "focus":
+		said := str(a, 6)
+		if top == "" || said != top {
+			if TRACE {logf("autofill: focus report from %s on a view at %s dropped", said, top)}
+			return
+		}
+		k := int(num(a, 1))
+		kind := k >= 0 && k <= int(pb.Field_Kind.Otp) ? pb.Field_Kind(k) : .None
+		send_ev(pb.ev_field_focus(v.id, kind, num(a, 2) * z, num(a, 3) * z, num(a, 4) * z, num(a, 5) * z, top))
+	case "submit":
+		said := str(a, 1)
+		pass := str(a, 3)
+		if top == "" || said != top || pass == "" {
+			return
+		}
+		m := pb.ev_form_submit(v.id, top, str(a, 2), pass, str(a, 4))
+		pb.send_secret(&h.chrome, &m)
+	}
+	pb.wipe(transmute([]u8)raw)
+}
+
+// fill_start asks Firefox where the view's top-level context is now; the
+// answer (fill_checked) decides whether the fill runs.
+fill_start :: proc(q: pb.Request) {
+	if h.fill.active {
+		fill_clear(&h.fill)
+	}
+	v := h.views[q.view] or_else nil
+	if v == nil || v.ctx == "" {
+		send_ev(pb.ev_fill_result(q.view, .Failed))
+		return
+	}
+	h.fill = Fill_Pending {
+		active   = true,
+		view     = q.view,
+		origin   = strings.clone(q.str),
+		username = strings.clone(q.str2),
+		password = strings.clone(q.str3),
+		otp      = strings.clone(q.str4),
+	}
+	bidi("browsingContext.getTree", J(`{"root":%s,"maxDepth":0}`, jq(v.ctx)), .Fill_Tree, q.view)
+}
+
+fill_checked :: proc(resp: json.Value, ok: bool) {
+	f := &h.fill
+	if !f.active {
+		return
+	}
+	defer fill_clear(f)
+	v := h.views[f.view] or_else nil
+	url := ""
+	if ok {
+		if ctxs, cok := jget(resp, "result", "contexts").(json.Array); cok && len(ctxs) > 0 {
+			url = jstr(ctxs[0], "url")
+		}
+	}
+	now := pb.origin_of(url)
+	if v == nil || v.ctx == "" || now == "" || now != f.origin {
+		logf("autofill: dropped a fill for %s: the view is at %s", f.origin, now != "" ? now : "a non-web page")
+		send_ev(pb.ev_fill_result(f.view, .Origin_Changed))
+		return
+	}
+	// The values travel as BiDi arguments -- serialized by the protocol into
+	// the sandbox, never spliced into source -- and autofill.js checks the
+	// origin once more, in the page, as it fills.
+	sb := strings.builder_make(context.temp_allocator)
+	// (built by concatenation: fmt reads braces as its own)
+	for part in ([]string{`{"functionDeclaration":`, jq(AUTOFILL_CALL), `,"target":{"context":`, jq(v.ctx), `,"sandbox":`, jq(AUTOFILL_SANDBOX), `},"awaitPromise":false,"arguments":[`}) {
+		strings.write_string(&sb, part)
+	}
+	for s, i in ([]string{f.origin, f.username, f.password, f.otp}) {
+		strings.write_string(&sb, i > 0 ? `,{"type":"string","value":` : `{"type":"string","value":`)
+		strings.write_string(&sb, jq(s))
+		strings.write_string(&sb, "}")
+	}
+	strings.write_string(&sb, "]}")
+	params := strings.to_string(sb)
+	bidi("script.callFunction", params, .Fill_Call, f.view)
+	pb.wipe(sb.buf[:])
 }
 
 // ---------------------------------------------------------------------------
@@ -708,6 +916,9 @@ on_request :: proc(raw: []u8) {
 				eval_in(v, fmt.tprintf("document.execCommand('insertText', false, %s)", jq(q.str)))
 			}
 		}
+	case .Fill:
+		fill_start(q)
+		pb.wipe(raw)
 	case .Quit:
 		quit()
 	}
@@ -809,6 +1020,7 @@ host_main :: proc() {
 	}
 	h.dark = -1
 	TRACE = os.get_env("PALM_GECKO_TRACE", context.temp_allocator) != ""
+	h.test_certs = os.get_env("PALM_BROWSER_TEST_CERTS", context.temp_allocator) == "1"
 	if len(os.args) > 1 && os.args[1] == "--version" {
 		fmt.println("browser --gecko-host", h.ff_bin != "" ? firefox_version(h.ff_bin) : "")
 		return
@@ -889,7 +1101,11 @@ host_main :: proc() {
 				}
 				msg := make([]u8, size, context.temp_allocator)
 				copy(msg, h.crx[:size])
+				before := len(h.crx)
 				remove_range(&h.crx, 0, size)
+				if pb.Op((^u16)(&msg[4])^) == .Fill {
+					pb.wipe(([^]u8)(raw_data(h.crx))[len(h.crx):before])
+				}
 				on_request(msg)
 			}
 		}

@@ -44,6 +44,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <sys/mman.h>
+#include <sys/random.h>
 #include <sys/socket.h>
 #include <sys/stat.h>
 #include <sys/un.h>
@@ -63,10 +64,14 @@
 #include "include/capi/cef_life_span_handler_capi.h"
 #include "include/capi/cef_load_handler_capi.h"
 #include "include/capi/cef_menu_model_capi.h"
+#include "include/capi/cef_preference_capi.h"
+#include "include/capi/cef_process_message_capi.h"
 #include "include/capi/cef_render_handler_capi.h"
+#include "include/capi/cef_render_process_handler_capi.h"
 #include "include/capi/cef_request_context_capi.h"
 #include "include/capi/cef_request_handler_capi.h"
 #include "include/capi/cef_task_capi.h"
+#include "include/capi/cef_v8_capi.h"
 #include "include/capi/cef_values_capi.h"
 #include "include/cef_api_hash.h"
 #include "include/cef_version.h"
@@ -126,6 +131,60 @@ static void set16(cef_string_t* dst, const char* s) {
 	cef_string_utf8_to_utf16(s, strlen(s), dst);
 }
 
+/* Secrets (a filled or submitted password) are zeroed before their memory
+ * goes back to the allocator. Best effort: V8's heap and Chromium's IPC
+ * buffers keep their own copies, which this process cannot reach. */
+static void free_secret(char* s) {
+	if (s) explicit_bzero(s, strlen(s));
+	free(s);
+}
+static void clear_secret16(cef_string_t* s) {
+	if (s && s->str) explicit_bzero(s->str, s->length * sizeof(s->str[0]));
+	cef_string_clear(s);
+}
+static char* ustr8_secret(cef_string_userfree_t s) {
+	char* r = str8(s);
+	if (s) {
+		if (s->str) explicit_bzero(s->str, s->length * sizeof(s->str[0]));
+		cef_string_userfree_free(s);
+	}
+	return r;
+}
+
+/* The origin of an http(s) URL as a page's location.origin spells it:
+ * scheme://host[:port], without a default port. "" for anything else --
+ * autofill exists only for http and https pages. Chromium hands over
+ * canonical URLs (lowercase scheme and host), so this is a cut, not a parse. */
+static char* origin_of(const char* url) {
+	const char* rest = NULL;
+	int https = 0;
+	if (strncmp(url, "https://", 8) == 0) {
+		rest = url + 8;
+		https = 1;
+	} else if (strncmp(url, "http://", 7) == 0) {
+		rest = url + 7;
+	}
+	if (!rest || !rest[0]) return strdup("");
+	size_t n = strcspn(rest, "/?#");
+	if (memchr(rest, '@', n)) return strdup(""); /* credentials in the URL: never */
+	char host[512];
+	if (n == 0 || n >= sizeof host) return strdup("");
+	memcpy(host, rest, n);
+	host[n] = 0;
+	size_t hl = strlen(host);
+	if (https && hl > 4 && strcmp(host + hl - 4, ":443") == 0) host[hl - 4] = 0;
+	if (!https && hl > 3 && strcmp(host + hl - 3, ":80") == 0) host[hl - 3] = 0;
+	char out[600];
+	snprintf(out, sizeof out, "%s://%s", https ? "https" : "http", host);
+	return strdup(out);
+}
+
+/* The page half of autofill, the same file the Gecko host loads. */
+static const char AUTOFILL_JS[] = {
+#embed "../autofill.js"
+	, 0
+};
+
 /* ------------------------------------------------------------------------
  * the socket
  * ---------------------------------------------------------------------- */
@@ -142,7 +201,14 @@ static void buf_need(Buf* m, size_t more) {
 	if (m->n + more <= m->cap) return;
 	size_t c = m->cap ? m->cap * 2 : 256;
 	while (c < m->n + more) c *= 2;
-	m->b = realloc(m->b, c);
+	/* grow by copy, zeroing the old block: a message may carry a password */
+	uint8_t* nb = malloc(c);
+	if (m->n) memcpy(nb, m->b, m->n);
+	if (m->b) {
+		explicit_bzero(m->b, m->cap);
+		free(m->b);
+	}
+	m->b = nb;
 	m->cap = c;
 }
 static void put(Buf* m, const void* p, size_t n) { buf_need(m, n); memcpy(m->b + m->n, p, n); m->n += n; }
@@ -211,6 +277,19 @@ static void msg_send_fd(Buf* m, int fd) {
 	m->b = NULL;
 }
 static void msg_send(Buf* m) { msg_send_fd(m, -1); }
+/* a message carrying a password: its buffer is zeroed, not just freed (it
+ * was built by appending, so the copies left by realloc are zeroed too: see
+ * buf_need) */
+static void msg_send_secret(Buf* m) {
+	uint32_t size = (uint32_t)m->n;
+	memcpy(m->b, &size, 4);
+	pthread_mutex_lock(&g_wlock);
+	if (g_sock >= 0) write_all(g_sock, m->b, m->n);
+	pthread_mutex_unlock(&g_wlock);
+	explicit_bzero(m->b, m->cap);
+	free(m->b);
+	m->b = NULL;
+}
 
 static void send_str(uint16_t op, int view, const char* s) {
 	Buf m = msg_begin(op, (uint16_t)view);
@@ -269,6 +348,7 @@ struct View {
 
 	int w, h;     /* logical */
 	float scale;
+	float zoom; /* the page zoom factor, 1 = 100%: CSS pixels times this are view pixels */
 	int visible;
 	int focused;
 
@@ -741,6 +821,29 @@ static void CEF_CALLBACK lh_on_loading_state_change(cef_load_handler_t* self, ce
 	msg_send(&m);
 	rel(b);
 }
+/* Blink creates a document's script context lazily, when the page first
+ * runs script, and a login page with no script of its own never gets one --
+ * so never gets autofill.js. Running an empty statement in the top-level
+ * frame as it starts loading creates the context; OnContextCreated installs
+ * autofill.js there, which also looks at the field already focused (an
+ * autofocus that happened first). */
+static void CEF_CALLBACK lh_on_load_start(cef_load_handler_t* self, cef_browser_t* b, cef_frame_t* f, cef_transition_type_t t) {
+	(void)self; (void)t;
+	if (f->is_main(f)) {
+		cef_string_t code = {0}, url = {0};
+		set16(&code, "void 0");
+		set16(&url, "palm-autofill:");
+		f->execute_java_script(f, &code, &url, 0);
+		cef_string_clear(&code);
+		cef_string_clear(&url);
+	}
+	rel(f);
+	rel(b);
+}
+static void CEF_CALLBACK lh_on_load_end(cef_load_handler_t* self, cef_browser_t* b, cef_frame_t* f, int status) {
+	(void)status;
+	lh_on_load_start(self, b, f, 0);
+}
 static void CEF_CALLBACK lh_on_load_error(cef_load_handler_t* self, cef_browser_t* b, cef_frame_t* f, cef_errorcode_t code,
                                           const cef_string_t* text, const cef_string_t* url) {
 	View* v = VIEW_OF(Load, self);
@@ -1132,12 +1235,107 @@ CLIENT_GET(get_context_menu_handler, menu, cef_context_menu_handler_t)
 CLIENT_GET(get_request_handler, request, cef_request_handler_t)
 CLIENT_GET(get_find_handler, find, cef_find_handler_t)
 
+/* ------------------------------------------------------------------------
+ * autofill, browser side: what the renderer reports, checked against what
+ * this process knows about the view
+ * ---------------------------------------------------------------------- */
+
+/* the view's top-level origin, as the browser process knows it */
+static char* top_origin(cef_browser_t* b) {
+	cef_frame_t* main = b->get_main_frame(b);
+	if (!main) return strdup("");
+	char* url = ustr8(main->get_url(main));
+	char* o = origin_of(url);
+	free(url);
+	rel(main);
+	return o;
+}
+
+static char* list_str(cef_list_value_t* l, size_t i) {
+	if (l->get_type(l, i) != VTYPE_STRING) return strdup("");
+	return ustr8_secret(l->get_string(l, i));
+}
+static double list_num(cef_list_value_t* l, size_t i) {
+	cef_value_type_t t = l->get_type(l, i);
+	if (t == VTYPE_DOUBLE) return l->get_double(l, i);
+	if (t == VTYPE_INT) return l->get_int(l, i);
+	return 0;
+}
+
+static int CEF_CALLBACK cl_on_process_message_received(cef_client_t* self, cef_browser_t* b, cef_frame_t* f,
+                                                       cef_process_id_t src, cef_process_message_t* msg) {
+	View* v = ((Client*)self)->v;
+	char* name = ustr8(msg->get_name(msg));
+	cef_list_value_t* args = msg->get_argument_list(msg);
+	int handled = 0;
+	/* Only the top-level frame's script is ever installed, but the frame that
+	 * sent this is the browser process's own record, not the renderer's
+	 * word: a report from any other frame is dropped here as well. */
+	int main = f && f->is_main(f);
+	if (src == PID_RENDERER && strcmp(name, "palm-af") == 0 && main && args && args->get_size(args) >= 1) {
+		handled = 1;
+		char* kind = list_str(args, 0);
+		char* top = top_origin(b);
+		if (strcmp(kind, "focus") == 0 && args->get_size(args) >= 7) {
+			char* said = list_str(args, 6);
+			/* the page's location.origin and the browser's must agree */
+			if (top[0] && strcmp(said, top) == 0) {
+				float z = v->zoom > 0 ? v->zoom : 1;
+				Buf m = msg_begin(PB_FIELD_FOCUS, (uint16_t)v->id);
+				int k = (int)list_num(args, 1);
+				put_u8(&m, (uint8_t)(k >= 0 && k <= PB_FIELD_OTP ? k : 0));
+				put_f32(&m, (float)list_num(args, 2) * z);
+				put_f32(&m, (float)list_num(args, 3) * z);
+				put_f32(&m, (float)list_num(args, 4) * z);
+				put_f32(&m, (float)list_num(args, 5) * z);
+				put_str(&m, top);
+				msg_send(&m);
+			} else {
+				VLOG("autofill: focus report from %s on a view at %s dropped", said, top);
+			}
+			free(said);
+		} else if (strcmp(kind, "submit") == 0 && args->get_size(args) >= 5) {
+			char* said = list_str(args, 1);
+			char* user = list_str(args, 2);
+			char* pass = list_str(args, 3);
+			char* old = list_str(args, 4);
+			if (top[0] && strcmp(said, top) == 0 && pass[0]) {
+				Buf m = msg_begin(PB_FORM_SUBMIT, (uint16_t)v->id);
+				put_str(&m, top);
+				put_str(&m, user);
+				put_str(&m, pass);
+				put_str(&m, old);
+				msg_send_secret(&m);
+			}
+			free(said);
+			free_secret(user);
+			free_secret(pass);
+			free_secret(old);
+		}
+		free(top);
+		free(kind);
+	} else if (src == PID_RENDERER && strcmp(name, "palm-af-result") == 0 && args && args->get_size(args) >= 1) {
+		handled = 1;
+		Buf m = msg_begin(PB_FILL_RESULT, (uint16_t)v->id);
+		put_u8(&m, (uint8_t)list_num(args, 0));
+		msg_send(&m);
+	}
+	rel(args);
+	free(name);
+	rel(msg);
+	rel(f);
+	rel(b);
+	return handled;
+}
+
+
 static View* view_new(int id) {
 	View* v = calloc(1, sizeof *v);
 	v->id = id;
 	v->alive = 1;
 	v->shm_fd = -1;
 	v->scale = 1;
+	v->zoom = 1;
 	v->visible = 1;
 
 	v->client.v = v;
@@ -1151,6 +1349,7 @@ static View* view_new(int id) {
 	v->client.client.get_context_menu_handler = cl_get_context_menu_handler;
 	v->client.client.get_request_handler = cl_get_request_handler;
 	v->client.client.get_find_handler = cl_get_find_handler;
+	v->client.client.on_process_message_received = cl_on_process_message_received;
 
 	v->render.v = v;
 	init_static(&v->render.h.base, sizeof(cef_render_handler_t));
@@ -1176,6 +1375,8 @@ static View* view_new(int id) {
 	init_static(&v->load.h.base, sizeof(cef_load_handler_t));
 	v->load.h.on_loading_state_change = lh_on_loading_state_change;
 	v->load.h.on_load_error = lh_on_load_error;
+	v->load.h.on_load_start = lh_on_load_start;
+	v->load.h.on_load_end = lh_on_load_end;
 
 	v->life.v = v;
 	init_static(&v->life.h.base, sizeof(cef_life_span_handler_t));
@@ -1419,6 +1620,7 @@ static void handle(uint16_t op, uint16_t view, Rd* r) {
 			h = host_of(v);
 			/* Chromium's zoom level is log base 1.2 of the factor */
 			h->set_zoom_level(h, log((double)f) / log(1.2));
+			v->zoom = f;
 		}
 		break;
 	}
@@ -1509,6 +1711,52 @@ static void handle(uint16_t op, uint16_t view, Rd* r) {
 			if (g_views[i]) apply_theme(g_views[i]);
 		break;
 	}
+	case PB_FILL: {
+		char* want = rd_str(r);
+		char* user = rd_str(r);
+		char* pass = rd_str(r);
+		char* otp = rd_str(r);
+		uint8_t status = PB_FILL_FAILED;
+		if (v && v->browser && !r->bad) {
+			/* The person chose this login for `want`. If the view is
+			 * somewhere else now -- it navigated while the vault asked --
+			 * the fill is dropped here, before anything reaches a renderer. */
+			char* top = top_origin(v->browser);
+			if (!top[0] || strcmp(top, want) != 0) {
+				status = PB_FILL_ORIGIN_CHANGED;
+				logf_("autofill: dropped a fill for %s: the view is at %s", want, top[0] ? top : "a non-web page");
+			} else {
+				cef_frame_t* f = v->browser->get_main_frame(v->browser);
+				cef_string_t n = {0};
+				set16(&n, "palm-af-fill");
+				cef_process_message_t* m = cef_process_message_create(&n);
+				cef_string_clear(&n);
+				cef_list_value_t* l = m->get_argument_list(m);
+				const char* vals[4] = {want, user, pass, otp};
+				for (int i = 0; i < 4; i++) {
+					cef_string_t s16 = {0};
+					set16(&s16, vals[i]);
+					l->set_string(l, (size_t)i, &s16);
+					clear_secret16(&s16);
+				}
+				rel(l);
+				f->send_process_message(f, PID_RENDERER, m); /* takes our reference */
+				rel(f);
+				status = 255; /* the renderer answers */
+			}
+			free(top);
+		}
+		if (status != 255) {
+			Buf m = msg_begin(PB_FILL_RESULT, (uint16_t)view);
+			put_u8(&m, status);
+			msg_send(&m);
+		}
+		free(want);
+		free_secret(user);
+		free_secret(pass);
+		free_secret(otp);
+		break;
+	}
 	case PB_QUIT:
 		close_all();
 		break;
@@ -1545,6 +1793,7 @@ static void CEF_CALLBACK task_execute(cef_task_t* self) {
 	Rd r = {t->data + 8, t->size - 8, 0, 0};
 	handle(op, view, &r);
 	if (r.bad) logf_("message %u for view %u was short", op, view);
+	if (op == PB_FILL) explicit_bzero(t->data, t->size); /* it carried a password */
 }
 static void post(uint8_t* data, uint32_t size) {
 	Task* t = calloc(1, sizeof *t);
@@ -1565,6 +1814,286 @@ static void post(uint8_t* data, uint32_t size) {
  * ---------------------------------------------------------------------- */
 
 static cef_app_t g_app;
+
+/* ------------------------------------------------------------------------
+ * autofill, renderer side. This code runs in the renderer processes (this
+ * binary, re-executed with --type=renderer, inside Chromium's sandbox).
+ *
+ * When a top-level frame's V8 context is created -- before any page script
+ * runs -- autofill.js is evaluated and called with a native `report`
+ * function and the name of a wake-up event, 128 random bits chosen here.
+ * Nothing is put on a global, and no reference to the page's script world is
+ * kept: holding one stalls the next same-site navigation of the frame
+ * (found the hard way; the old document never finished unloading).
+ *
+ * A fill ("palm-af-fill" from the browser process) is parked in this
+ * process, the origin checked once more against the frame's URL, and the
+ * wake-up event dispatched; the listener autofill.js registered asks
+ * `report('pull')` for the parked values -- they travel from here to the
+ * listener as V8 strings returned by a native function, never as source
+ * text -- fills, and answers with `report('result', status)`. The parked
+ * values are wiped as soon as they are pulled, and in any case when the
+ * dispatch returns, so a page that learns the event's name (by replacing
+ * dispatchEvent, say) can wake the listener whenever it likes and get
+ * nothing: there is nothing parked.
+ * ---------------------------------------------------------------------- */
+
+typedef struct {
+	int browser;
+	char wake[48]; /* the wake-up event's name */
+	char* parked[4]; /* origin, username, password, otp: only during a fill */
+	int status;
+} AfSlot;
+static AfSlot g_af[64];
+
+static AfSlot* af_slot(int browser) {
+	for (int i = 0; i < 64; i++)
+		if (g_af[i].wake[0] && g_af[i].browser == browser) return &g_af[i];
+	return NULL;
+}
+static void af_unpark(AfSlot* s) {
+	for (int i = 0; i < 4; i++) {
+		free_secret(s->parked[i]);
+		s->parked[i] = NULL;
+	}
+}
+
+static AfSlot* af_slot_of_current(void) {
+	cef_v8_context_t* c = cef_v8_context_get_current_context();
+	if (!c) return NULL;
+	cef_browser_t* b = c->get_browser(c);
+	AfSlot* s = b ? af_slot(b->get_identifier(b)) : NULL;
+	rel(b);
+	rel(c);
+	return s;
+}
+
+static int CEF_CALLBACK af_report(cef_v8_handler_t* self, const cef_string_t* name, cef_v8_value_t* object,
+                                  size_t argc, cef_v8_value_t* const* argv, cef_v8_value_t** retval,
+                                  cef_string_t* exception) {
+	(void)self; (void)name; (void)exception;
+	char* kind = NULL;
+	if (argc >= 1 && argv[0]->is_string(argv[0])) kind = ustr8(argv[0]->get_string_value(argv[0]));
+	if (kind && strcmp(kind, "pull") == 0) {
+		/* the parked fill, once */
+		AfSlot* s = af_slot_of_current();
+		if (s && s->parked[0]) {
+			cef_v8_value_t* arr = cef_v8_value_create_array(4);
+			for (int i = 0; i < 4; i++) {
+				cef_string_t v = {0};
+				set16(&v, s->parked[i] ? s->parked[i] : "");
+				arr->set_value_byindex(arr, i, cef_v8_value_create_string(&v));
+				clear_secret16(&v);
+			}
+			*retval = arr;
+			af_unpark(s);
+		}
+	} else if (kind && strcmp(kind, "result") == 0) {
+		AfSlot* s = af_slot_of_current();
+		if (s && argc >= 2 && (argv[1]->is_int(argv[1]) || argv[1]->is_double(argv[1]))) s->status = (int)argv[1]->get_double_value(argv[1]);
+	} else if (kind) {
+		/* "focus" and "submit": to the browser process, which checks them */
+		cef_v8_context_t* c = cef_v8_context_get_current_context();
+		cef_frame_t* f = c ? c->get_frame(c) : NULL;
+		if (f && f->is_main(f) && argc <= 8) {
+			cef_string_t n = {0};
+			set16(&n, "palm-af");
+			cef_process_message_t* m = cef_process_message_create(&n);
+			cef_string_clear(&n);
+			cef_list_value_t* l = m->get_argument_list(m);
+			for (size_t i = 0; i < argc; i++) {
+				cef_v8_value_t* a = argv[i];
+				if (a->is_string(a)) {
+					cef_string_userfree_t s = a->get_string_value(a);
+					l->set_string(l, i, s);
+					if (s) {
+						if (s->str) explicit_bzero(s->str, s->length * sizeof(s->str[0]));
+						cef_string_userfree_free(s);
+					}
+				} else if (a->is_int(a) || a->is_double(a)) {
+					l->set_double(l, i, a->get_double_value(a));
+				} else {
+					l->set_null(l, i);
+				}
+			}
+			rel(l);
+			f->send_process_message(f, PID_BROWSER, m);
+		}
+		rel(f);
+		rel(c);
+	}
+	free(kind);
+	for (size_t i = 0; i < argc; i++) rel(argv[i]);
+	rel(object);
+	return 1;
+}
+static cef_v8_handler_t g_af_report;
+
+static void CEF_CALLBACK rp_on_context_created(cef_render_process_handler_t* self, cef_browser_t* b, cef_frame_t* f,
+                                               cef_v8_context_t* ctx) {
+	(void)self;
+	if (f->is_main(f)) {
+		int id = b->get_identifier(b);
+		AfSlot* s = af_slot(id);
+		if (!s) {
+			/* a free slot, or the oldest: a slot outlives its browser here
+			 * (CEF reports browsers going away in processes that still hold
+			 * their next document), so slots are recycled, not freed */
+			static int next;
+			for (int i = 0; i < 64 && !s; i++)
+				if (!g_af[i].wake[0]) s = &g_af[i];
+			if (!s) s = &g_af[next++ % 64];
+		}
+		if (s) {
+			af_unpark(s);
+			memset(s, 0, sizeof *s);
+			s->browser = id;
+			unsigned char rnd[16];
+			if (getrandom(rnd, sizeof rnd, 0) != (ssize_t)sizeof rnd) memset(rnd, 0, sizeof rnd);
+			char* w = s->wake + sprintf(s->wake, "palm-af-");
+			for (int i = 0; i < 16; i++) w += sprintf(w, "%02x", rnd[i]);
+			cef_string_t code = {0}, url = {0}, fname = {0}, wake = {0};
+			set16(&code, AUTOFILL_JS);
+			set16(&url, "palm-autofill.js");
+			cef_v8_value_t* init = NULL;
+			cef_v8_exception_t* ex = NULL;
+			int evok = ctx->eval(ctx, &code, &url, 1, &init, &ex);
+			if (evok && init && init->is_function(init)) {
+				ctx->enter(ctx);
+				set16(&fname, "report");
+				set16(&wake, s->wake);
+				cef_v8_value_t* args[2] = {cef_v8_value_create_function(&fname, &g_af_report), cef_v8_value_create_string(&wake)};
+				cef_v8_value_t* fill = init->execute_function(init, NULL, 2, args);
+				ctx->exit(ctx);
+				rel(fill);
+			}
+			rel(ex);
+			rel(init);
+			cef_string_clear(&code);
+			cef_string_clear(&url);
+			cef_string_clear(&fname);
+			cef_string_clear(&wake);
+		}
+	}
+	rel(ctx);
+	rel(f);
+	rel(b);
+}
+
+static void af_answer(cef_frame_t* f, int status) {
+	cef_string_t n = {0};
+	set16(&n, "palm-af-result");
+	cef_process_message_t* m = cef_process_message_create(&n);
+	cef_string_clear(&n);
+	cef_list_value_t* l = m->get_argument_list(m);
+	l->set_int(l, 0, status);
+	rel(l);
+	f->send_process_message(f, PID_BROWSER, m);
+}
+
+static int CEF_CALLBACK rp_on_process_message_received(cef_render_process_handler_t* self, cef_browser_t* b,
+                                                       cef_frame_t* f, cef_process_id_t src, cef_process_message_t* msg) {
+	(void)self;
+	char* name = ustr8(msg->get_name(msg));
+	int handled = 0;
+	if (src == PID_BROWSER && strcmp(name, "palm-af-fill") == 0) {
+		handled = 1;
+		cef_list_value_t* l = msg->get_argument_list(msg);
+		AfSlot* s = af_slot(b->get_identifier(b));
+		int status = PB_FILL_FAILED;
+		char* url = ustr8(f->get_url(f));
+		char* here = origin_of(url);
+		char* want = l->get_size(l) >= 4 ? list_str(l, 0) : strdup("");
+		if (!f->is_main(f) || !here[0] || strcmp(here, want) != 0) {
+			/* the second check, in the renderer that would run it */
+			status = PB_FILL_ORIGIN_CHANGED;
+		} else if (s && l->get_size(l) >= 4) {
+			af_unpark(s);
+			for (int i = 0; i < 4; i++) s->parked[i] = list_str(l, (size_t)i);
+			s->status = PB_FILL_FAILED;
+			cef_v8_context_t* ctx = f->get_v8_context(f);
+			if (ctx && ctx->is_valid(ctx)) {
+				char js[160];
+				snprintf(js, sizeof js, "dispatchEvent(new Event('%s'))", s->wake);
+				cef_string_t code = {0}, src_url = {0};
+				set16(&code, js);
+				set16(&src_url, "palm-autofill:");
+				cef_v8_value_t* ret = NULL;
+				cef_v8_exception_t* ex = NULL;
+				ctx->eval(ctx, &code, &src_url, 1, &ret, &ex);
+				rel(ret);
+				rel(ex);
+				cef_string_clear(&code);
+				cef_string_clear(&src_url);
+				status = s->status;
+			}
+			rel(ctx);
+			af_unpark(s);
+		}
+		af_answer(f, status);
+		free(url);
+		free(here);
+		free(want);
+		rel(l);
+	}
+	free(name);
+	rel(msg);
+	rel(f);
+	rel(b);
+	return handled;
+}
+
+static cef_render_process_handler_t g_rph;
+static cef_render_process_handler_t* CEF_CALLBACK app_get_render_process_handler(cef_app_t* self) {
+	(void)self;
+	return &g_rph;
+}
+static void init_render_side(void) {
+	init_static(&g_af_report.base, sizeof g_af_report);
+	g_af_report.execute = af_report;
+	init_static(&g_rph.base, sizeof g_rph);
+	g_rph.on_context_created = rp_on_context_created;
+	g_rph.on_process_message_received = rp_on_process_message_received;
+}
+
+/* Chromium's own password manager and form autofill are off: the vault is
+ * the only place a password is kept. These are the profile preferences
+ * Chromium's PasswordManagerClient and autofill read (not just the UI), set
+ * on the global request context, which persists them in the profile's
+ * Preferences file. The tests grep the profile afterwards for every
+ * credential they used. */
+static void disable_password_storage(void) {
+	cef_request_context_t* rc = cef_request_context_get_global_context();
+	if (!rc) return;
+	cef_preference_manager_t* pm = &rc->base;
+	const char* names[] = {
+		"credentials_enable_service",     /* the password manager saves and fills */
+		"credentials_enable_autosignin",  /* ... and signs in on its own */
+		"profile.password_manager_enabled",
+		"autofill.profile_enabled",       /* addresses, and the single-field form history */
+		"autofill.credit_card_enabled",
+	};
+	for (size_t i = 0; i < sizeof names / sizeof names[0]; i++) {
+		cef_string_t n = {0}, err = {0};
+		set16(&n, names[i]);
+		if (pm->has_preference(pm, &n) && pm->can_set_preference(pm, &n)) {
+			cef_value_t* val = cef_value_create();
+			val->set_bool(val, 0);
+			if (!pm->set_preference(pm, &n, val, &err)) {
+				char* e = str8(&err);
+				logf_("could not turn off %s: %s", names[i], e);
+				free(e);
+			} else {
+				VLOG("turned off %s", names[i]);
+			}
+		} else {
+			VLOG("preference %s is not here", names[i]);
+		}
+		cef_string_clear(&n);
+		cef_string_clear(&err);
+	}
+	pm->base.release(&pm->base);
+}
 
 static void add_switch(cef_command_line_t* cl, const char* name, const char* value) {
 	cef_string_t n = {0};
@@ -1587,9 +2116,19 @@ static void CEF_CALLBACK app_on_before_command_line_processing(cef_app_t* self, 
 		const char* oz = getenv("PALM_BROWSER_OZONE");
 		if (!oz) oz = "headless";
 		if (oz[0]) add_switch(cl, "ozone-platform", oz);
-		/* No GNOME keyring or KWallet on Palmframe; passwords stay in the
-		 * profile, encrypted with a fixed key (Chromium's "basic" store). */
+		/* Chromium's password manager is off (disable_password_storage) and
+		 * the vault keeps passwords. "basic" keeps Chromium from looking for a
+		 * GNOME keyring or KWallet for anything else it would encrypt (the
+		 * cookie key): Palmframe has neither. */
 		add_switch(cl, "password-store", "basic");
+		/* Test mode for the autofill tests' local HTTPS site: trust exactly
+		 * the certificate whose public key hash is named (base64 SHA-256 of
+		 * its SubjectPublicKeyInfo), nothing else. */
+		const char* spki = getenv("PALM_BROWSER_TEST_SPKI");
+		if (spki && spki[0]) {
+			logf_("TEST MODE: trusting the certificate with SPKI hash %s (PALM_BROWSER_TEST_SPKI)", spki);
+			add_switch(cl, "ignore-certificate-errors-spki-list", spki);
+		}
 		/* On a new profile Chromium's first-run code shows an EULA dialog and
 		 * waits for it in a nested message loop; with no window system that
 		 * dialog never appears and cef_initialize() never returns. Found with
@@ -1729,6 +2268,8 @@ int main(int argc, char** argv) {
 	memset(&g_app, 0, sizeof g_app);
 	init_static(&g_app.base, sizeof g_app);
 	g_app.on_before_command_line_processing = app_on_before_command_line_processing;
+	g_app.get_render_process_handler = app_get_render_process_handler;
+	init_render_side();
 
 	cef_main_args_t args = {argc, argv};
 	int code = cef_execute_process(&args, &g_app, NULL);
@@ -1803,6 +2344,7 @@ int main(int argc, char** argv) {
 	}
 
 	VLOG("initialized; socket fd %d", g_sock);
+	disable_password_storage();
 	Buf hello = msg_begin(PB_HELLO, 0);
 	put_str(&hello, "chromium");
 	char ver[128];

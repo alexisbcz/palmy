@@ -33,6 +33,7 @@ Op :: enum u16 {
 	Menu_Reply      = 20,
 	Edit            = 21,
 	Theme           = 22,
+	Fill            = 23,
 	// host -> chrome
 	Hello           = 100,
 	Buffer          = 101,
@@ -55,6 +56,23 @@ Op :: enum u16 {
 	Load_Error      = 118,
 	Menu            = 119,
 	Selection       = 120,
+	Field_Focus     = 121,
+	Form_Submit     = 122,
+	Fill_Result     = 123,
+}
+
+Field_Kind :: enum u8 {
+	None     = 0,
+	Username = 1,
+	Password = 2,
+	Otp      = 3,
+}
+Fill_Status :: enum u8 {
+	Ok             = 0,
+	Origin_Changed = 1,
+	No_Field       = 2,
+	Form_Action    = 3,
+	Failed         = 4,
 }
 
 Mouse_Kind :: enum u8 {
@@ -269,6 +287,12 @@ Event :: struct {
 	src:         string,
 	editable:    bool,
 	items:       []Menu_Item,
+	field:       Field_Kind, // Field_Focus
+	fw, fh:      f32, // Field_Focus: the field's size (x, y: its corner)
+	username:    string, // Form_Submit
+	password:    string, // Form_Submit; event_free wipes it
+	old_password: string, // Form_Submit
+	fill:        Fill_Status, // Fill_Result
 }
 
 // decode_event parses one host->chrome message. `raw` must hold exactly one
@@ -354,12 +378,38 @@ decode_event :: proc(raw: []u8, fd := -1, allocator := context.allocator) -> (e:
 			e.items[i].enabled = r_u8(&r) != 0
 			e.items[i].label = r_str(&r)
 		}
+	case .Field_Focus:
+		e.field = Field_Kind(r_u8(&r))
+		e.x = r_f32(&r)
+		e.y = r_f32(&r)
+		e.fw = r_f32(&r)
+		e.fh = r_f32(&r)
+		e.str = r_str(&r)
+	case .Form_Submit:
+		e.str = r_str(&r)
+		e.username = r_str(&r)
+		e.password = r_str(&r)
+		e.old_password = r_str(&r)
+	case .Fill_Result:
+		e.fill = Fill_Status(r_u8(&r))
 	case .Ready, .Closed:
 	}
 	return e, !r.bad
 }
 
+// wipe zeroes bytes that held a secret before they are freed.
+wipe :: proc(b: []u8) {
+	if len(b) > 0 {
+		mem.zero_explicit(raw_data(b), len(b))
+	}
+}
+
 event_free :: proc(e: ^Event) {
+	// a submitted form's password lives in `raw`; never hand it back to the
+	// allocator readable
+	if e.op == .Form_Submit || e.op == .Fill {
+		wipe(e.raw)
+	}
 	delete(e.raw)
 	delete(e.rects)
 	delete(e.items)
@@ -395,6 +445,7 @@ Request :: struct {
 	factor:     f32,
 	edit:       Edit_Action,
 	version:    u32,
+	str4:       string, // Fill: otp
 }
 
 decode_request :: proc(raw: []u8) -> (q: Request, ok: bool) {
@@ -465,6 +516,11 @@ decode_request :: proc(raw: []u8) -> (q: Request, ok: bool) {
 	case .Edit:
 		q.edit = Edit_Action(r_u8(&r))
 		q.str = r_str(&r)
+	case .Fill:
+		q.str = r_str(&r) // origin
+		q.str2 = r_str(&r) // username
+		q.str3 = r_str(&r) // password
+		q.str4 = r_str(&r) // otp
 	case .Close, .Stop, .Frame_Ack, .Quit:
 	}
 	return q, !r.bad
@@ -575,6 +631,20 @@ req_edit :: proc(view: int, action: Edit_Action, text := "") -> Msg {
 	w_str(&m, text)
 	return m
 }
+// req_fill carries a password: the caller wipes the message bytes after
+// sending (send_secret does).
+req_fill :: proc(view: int, origin, username, password, otp: string) -> Msg {
+	// sized up front, so no reallocation leaves a copy of the password behind
+	m := Msg{b = make([dynamic]u8, 0, 8 + 16 + len(origin) + len(username) + len(password) + len(otp))}
+	w_u32(&m, 0)
+	w_u16(&m, u16(Op.Fill))
+	w_u16(&m, u16(view))
+	w_str(&m, origin)
+	w_str(&m, username)
+	w_str(&m, password)
+	w_str(&m, otp)
+	return m
+}
 req_u32 :: proc(op: Op, view: int, v: u32) -> Msg {
 	m := msg_begin(op, view)
 	w_u32(&m, v)
@@ -667,6 +737,32 @@ ev_load_error :: proc(view: int, code: i32, text, url: string) -> Msg {
 	w_str(&m, url)
 	return m
 }
+ev_field_focus :: proc(view: int, kind: Field_Kind, x, y, w, h: f32, origin: string) -> Msg {
+	m := msg_begin(.Field_Focus, view)
+	w_u8(&m, u8(kind))
+	w_f32(&m, x)
+	w_f32(&m, y)
+	w_f32(&m, w)
+	w_f32(&m, h)
+	w_str(&m, origin)
+	return m
+}
+ev_form_submit :: proc(view: int, origin, username, password, old_password: string) -> Msg {
+	m := Msg{b = make([dynamic]u8, 0, 8 + 16 + len(origin) + len(username) + len(password) + len(old_password))}
+	w_u32(&m, 0)
+	w_u16(&m, u16(Op.Form_Submit))
+	w_u16(&m, u16(view))
+	w_str(&m, origin)
+	w_str(&m, username)
+	w_str(&m, password)
+	w_str(&m, old_password)
+	return m
+}
+ev_fill_result :: proc(view: int, status: Fill_Status) -> Msg {
+	m := msg_begin(.Fill_Result, view)
+	w_u8(&m, u8(status))
+	return m
+}
 ev_find_result :: proc(view: int, count, active: i32) -> Msg {
 	m := msg_begin(.Find_Result, view)
 	w_i32(&m, count)
@@ -699,5 +795,70 @@ rune_keysym :: proc(r: rune) -> u32 {
 		return 0xff08
 	}
 	return 0x01000000 + u32(r)
+}
+
+// origin_of is the origin of an http(s) URL as a page's location.origin
+// spells it -- scheme://host[:port], lowercase, no default port -- and ""
+// for anything else: autofill exists only for http and https pages, and
+// never for a URL carrying credentials. The Gecko host and the chrome use
+// this one function; the CEF host's origin_of (host.c) is its C twin.
+origin_of :: proc(url: string, allocator := context.temp_allocator) -> string {
+	rest: string
+	https := false
+	switch {
+	case len(url) >= 8 && ascii_lower_eq(url[:8], "https://"):
+		rest = url[8:]
+		https = true
+	case len(url) >= 7 && ascii_lower_eq(url[:7], "http://"):
+		rest = url[7:]
+	case:
+		return ""
+	}
+	n := len(rest)
+	for i in 0 ..< len(rest) {
+		c := rest[i]
+		if c == '/' || c == '?' || c == '#' {
+			n = i
+			break
+		}
+	}
+	host := rest[:n]
+	if host == "" || len(host) > 500 {
+		return ""
+	}
+	for i in 0 ..< len(host) {
+		if host[i] == '@' {
+			return ""
+		}
+	}
+	if https && len(host) > 4 && host[len(host) - 4:] == ":443" {
+		host = host[:len(host) - 4]
+	} else if !https && len(host) > 3 && host[len(host) - 3:] == ":80" {
+		host = host[:len(host) - 3]
+	}
+	pre := https ? "https://" : "http://"
+	out := make([]u8, len(pre) + len(host), allocator)
+	copy(out, pre)
+	for i in 0 ..< len(host) {
+		c := host[i]
+		out[len(pre) + i] = c >= 'A' && c <= 'Z' ? c + 32 : c
+	}
+	return string(out)
+}
+
+ascii_lower_eq :: proc(a, b: string) -> bool {
+	if len(a) != len(b) {
+		return false
+	}
+	for i in 0 ..< len(a) {
+		c := a[i]
+		if c >= 'A' && c <= 'Z' {
+			c += 32
+		}
+		if c != b[i] {
+			return false
+		}
+	}
+	return true
 }
 

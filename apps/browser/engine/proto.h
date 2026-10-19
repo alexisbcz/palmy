@@ -63,6 +63,10 @@ enum {
 	PB_MENU_REPLY = 20,    /* u32 id, i32 command (-1 dismissed) */
 	PB_EDIT = 21,          /* u8 action (PB_EDIT_*), str text (for INSERT) */
 	PB_THEME = 22,         /* u8 dark: what prefers-color-scheme answers */
+	PB_FILL = 23,          /* str origin, str username, str password, str otp:
+	                          fill the login field that has (or last had) focus,
+	                          only if the view's top-level origin still equals
+	                          `origin`. Answered with FILL_RESULT. */
 };
 
 /* host -> chrome */
@@ -89,6 +93,27 @@ enum {
 	PB_MENU = 119,         /* u32 id, f32 x, f32 y, str link, str selection, str src, u8 editable,
 	                          u32 n, n x (i32 command, u8 kind, u8 enabled, str label) */
 	PB_SELECTION = 120,    /* str: the page's current text selection */
+	PB_FIELD_FOCUS = 121,  /* u8 kind (PB_FIELD_*), f32 x, f32 y, f32 w, f32 h, str origin:
+	                          a login field in the top-level document took focus
+	                          (kind 0: focus left login fields). The rectangle is
+	                          the field, in the view's logical pixels; origin is
+	                          the top-level origin as the host knows it, never a
+	                          frame's. Fields inside iframes are never reported. */
+	PB_FORM_SUBMIT = 122,  /* str origin, str username, str password, str old_password:
+	                          a trusted submit of a top-level form that carried a
+	                          password; old_password is the current-password field
+	                          of a change-password form, else empty. */
+	PB_FILL_RESULT = 123,  /* u8 PB_FILL_*, the answer to one FILL */
+};
+
+enum { PB_FIELD_NONE = 0, PB_FIELD_USERNAME = 1, PB_FIELD_PASSWORD = 2, PB_FIELD_OTP = 3 };
+/* why a FILL did or did not happen */
+enum {
+	PB_FILL_OK = 0,
+	PB_FILL_ORIGIN_CHANGED = 1,  /* the page navigated (or never was `origin`): dropped */
+	PB_FILL_NO_FIELD = 2,        /* nothing to fill in the top-level document */
+	PB_FILL_FORM_ACTION = 3,     /* the form posts to another origin: refused */
+	PB_FILL_FAILED = 4,          /* the engine could not run the fill */
 };
 
 enum { PB_MOUSE_MOVE = 0, PB_MOUSE_DOWN = 1, PB_MOUSE_UP = 2, PB_MOUSE_LEAVE = 3 };
