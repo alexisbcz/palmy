@@ -81,6 +81,9 @@ Widget :: struct {
 	// Last frame's `Node.text_want`, which tells `measure` whether the
 	// text was squeezed narrower than it wanted.
 	text_want: f32,
+	// Focus arrived from the keyboard (Tab) and the text widget holding it
+	// has not acted on that yet. See `cycle_focus`.
+	tab_in:    bool,
 	drag:      [2]f32,
 	seen:      u64,
 }

@@ -350,6 +350,12 @@ text_field :: proc(
 		has_focus = true
 	}
 
+	if w.tab_in {
+		// Reached with Tab: the caret goes to the end, where typing appends.
+		w.tab_in = false
+		w.cursor = len(buf)
+		w.affinity = .Upstream
+	}
 	w.cursor = clamp(w.cursor, 0, len(buf))
 
 	// One direction for the whole field, resolved from everything in it, so
@@ -917,6 +923,13 @@ text_area :: proc(
 		has_focus = true
 	}
 
+	if w.tab_in {
+		// Reached with Tab: the caret at the end, nothing selected.
+		w.tab_in = false
+		w.cursor, w.sel = len(buf), len(buf)
+		w.affinity = .Upstream
+		ac.have = false
+	}
 	w.cursor = clamp(w.cursor, 0, len(buf))
 	w.sel = clamp(w.sel, 0, len(buf))
 

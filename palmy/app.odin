@@ -725,6 +725,11 @@ cycle_focus :: proc(ctx: ^Ctx, backwards: bool) {
 	step := backwards ? -1 : 1
 	next := at < 0 ? (backwards ? len(order) - 1 : 0) : (at + step + len(order)) % len(order)
 	ctx.focus = order[next]
+	// A text field reached with Tab puts its caret at the end, not wherever
+	// it was last -- 0 for a field that was never clicked. Tabbing into a
+	// prefilled "Computer name" and typing used to prepend. The field reads
+	// and clears the flag the next time it is built.
+	widget_of(ctx, ctx.focus).tab_in = true
 }
 
 // ---------------------------------------------------------------------------
