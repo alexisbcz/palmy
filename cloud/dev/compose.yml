@@ -132,6 +132,10 @@ services:
       KONG_NGINX_PROXY_PROXY_BUFFERS: 64 160k
       KONG_NGINX_HTTP_CLIENT_MAX_BODY_SIZE: 60m
       KONG_PREFIX: /tmp/kong
+      # Storage answers a refused upload before reading its body; a pooled
+      # upstream connection then carries the unread rest into the next
+      # request, which hangs until the 60 s proxy timeout. No pooling.
+      KONG_UPSTREAM_KEEPALIVE_POOL_SIZE: "0"
     volumes:
       - ${PALM_STATE_DIR}/kong.yml:/home/kong/kong.yml:ro
 
