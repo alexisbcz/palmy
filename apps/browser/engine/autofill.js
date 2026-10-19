@@ -6,9 +6,10 @@
  *
  *   Chromium  palm-browser-cef runs it in the top-level frame's main world
  *             from OnContextCreated, before any page script exists; `report`
- *             is a native V8 function, and the returned `fill` is held by the
- *             renderer and called with V8 string arguments. Neither is ever
- *             put on a global, so page script cannot call or replace them.
+ *             is a native V8 function and `wake` the name of an event (128
+ *             random bits) that makes `fill` pull the parked values from
+ *             report('pull'). Nothing is put on a global, so page script
+ *             cannot call or replace either.
  *   Firefox   the Gecko host installs it as a BiDi preload script in a
  *             sandbox ("palm-autofill"): a separate realm that sees the DOM
  *             through Xray wrappers. `report` is a BiDi channel; `fill` lives
