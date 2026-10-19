@@ -107,11 +107,16 @@ Pin :: struct {
 	sign_pub:    string,
 }
 
-// An edit not yet on the server: the row as it will be written, and the
-// revision it was made against.
+// An edit not yet on the server: the row as it will be written, the
+// revision it was made against, and that revision's row itself -- the merge
+// base. The base is kept here rather than looked up in `items`, because a
+// pull replaces `items` with the server's newer row before the push finds
+// out it conflicts, and a merge against the wrong base silently drops the
+// other side's changes.
 Pending :: struct {
-	row:  I_Row,
-	base: i64,
+	row:      I_Row,
+	base:     i64,
+	base_row: I_Row, // empty for a new item
 }
 
 Cache :: struct {
@@ -488,7 +493,7 @@ cache_from_json :: proc(a: ^Acct, text: string) {
 			cs(a, js(r, "enc_pub")), cs(a, js(r, "kem_pub")), cs(a, js(r, "sign_pub"))})
 	}
 	for r in ck.array(ck.get(v, "pending")) {
-		append(&c.pending, Pending{row = i_from(a, ck.get(r, "row")), base = ck.get_int(r, "base")})
+		append(&c.pending, Pending{row = i_from(a, ck.get(r, "row")), base = ck.get_int(r, "base"), base_row = i_from(a, ck.get(r, "base_row"))})
 	}
 	a.have_cache = true
 }
@@ -551,6 +556,8 @@ cache_save :: proc(a: ^Acct) -> string {
 	for r, i in c.pending {
 		fmt.sbprintf(&sb, "%s{{\"base\":%d,\"row\":", i > 0 ? ",\n" : "", r.base)
 		i_json(&sb, r.row)
+		strings.write_string(&sb, ",\"base_row\":")
+		i_json(&sb, r.base_row)
 		strings.write_string(&sb, "}")
 	}
 	strings.write_string(&sb, "]}\n")
@@ -1210,7 +1217,11 @@ acct_put :: proc(a: ^Acct, e: ^Entry, vault_id: string, deleted := false, new_it
 	if p := pending_of(a, e.id); p != nil {
 		p.row = row
 	} else {
-		append(&a.cache.pending, Pending{row = row, base = base})
+		np := Pending{row = row, base = base}
+		if cur != nil {
+			np.base_row = cur^
+		}
+		append(&a.cache.pending, np)
 	}
 	return cache_save(a)
 }

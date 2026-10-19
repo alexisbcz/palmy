@@ -310,7 +310,10 @@ resolve_conflict :: proc(a: ^Acct, p: ^Pending) -> (merged: bool, conflicted: bo
 		return false, false, ck_err("fetching the item that conflicted", e)
 	}
 	server := i_from(a, ck.array(rows)[0])
-	base_row := item_row(a, p.row.id)
+	base_row: ^I_Row = nil
+	if p.base_row.id != "" {
+		base_row = &p.base_row
+	}
 
 	ours, _, _, ook := decrypt_row(a, &p.row)
 	if !ook {
@@ -323,9 +326,7 @@ resolve_conflict :: proc(a: ^Acct, p: ^Pending) -> (merged: bool, conflicted: bo
 		// item on top of the tombstone. Losing an edit is worse than undoing
 		// a delete.
 		p.base = server.revision
-		if base_row != nil {
-			base_row^ = server
-		}
+		upsert_item(a, server)
 		e2 := ours
 		return true, true, put_pending(a, p, &e2, server.revision)
 	}
@@ -348,11 +349,12 @@ resolve_conflict :: proc(a: ^Acct, p: ^Pending) -> (merged: bool, conflicted: bo
 
 	out, c := merge3(&base, &ours, &theirs)
 	defer entry_free(&out)
-	if base_row != nil {
-		base_row^ = server
-	} else {
-		append(&a.cache.items, server)
+	upsert_item(a, server)
+	// The merged edit is now relative to the server's row: that is its new base.
+	if q := pending_of(a, p.row.id); q != nil {
+		q.base_row = server
 	}
+	p.base_row = server
 	return true, c, put_pending(a, p, &out, server.revision)
 }
 
@@ -369,6 +371,14 @@ put_pending :: proc(a: ^Acct, p: ^Pending, e: ^Entry, base: i64) -> string {
 		p^ = q^
 	}
 	return ""
+}
+
+upsert_item :: proc(a: ^Acct, row: I_Row) {
+	if have := item_row(a, row.id); have != nil {
+		have^ = row
+	} else {
+		append(&a.cache.items, row)
+	}
 }
 
 refresh_vault :: proc(a: ^Acct, vault_id: string) -> string {
