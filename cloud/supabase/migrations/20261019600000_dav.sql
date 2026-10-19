@@ -315,40 +315,24 @@ create table public.dav_itip (
 create index dav_itip_recipient on public.dav_itip (recipient_identity, created_at);
 create index dav_itip_sender on public.dav_itip (identity_id, created_at);
 
--- The domain local addresses live in. The mail area owns the real setting;
--- until there is one, 'palm.test' as in cloud/CONTRACT.md.
+-- The domain local addresses live in. The mail area owns it (mail_domains);
+-- a calendar user address is the identity's mail address, so addressing is
+-- defined once, there.
 create function public.dav_mail_domain() returns text
 language sql stable
 as $$
-	select coalesce(nullif(current_setting('app.mail_domain', true), ''), 'palm.test')
+	select coalesce(public.mail_default_domain(), 'palm.test')
 $$;
 
 -- The identity behind a calendar user address (mailto:handle@domain), or
--- null when the address is not a local identity. Security definer because
--- the sender cannot see other people's identities; it reveals only whether
--- a handle exists, which the mail address already does.
+-- null when the address is not a local identity. mail_resolve is security
+-- definer because the sender cannot see other people's identities; it
+-- reveals only whether a handle exists, which the mail address already does.
 create function public.dav_resolve_address(address text) returns uuid
-language plpgsql stable security definer
+language sql stable security definer
 set search_path = ''
 as $$
-declare
-	a      text := lower(trim(address));
-	local  text;
-	domain text;
-	found  uuid;
-begin
-	if a like 'mailto:%' then
-		a := substr(a, 8);
-	end if;
-	local := split_part(a, '@', 1);
-	domain := split_part(a, '@', 2);
-	if domain <> public.dav_mail_domain() then
-		return null;
-	end if;
-	select i.id into found from public.identities i
-	 where i.handle = local and i.archived_at is null;
-	return found;
-end
+	select public.mail_resolve(regexp_replace(lower(trim(address)), '^mailto:', ''))
 $$;
 
 -- The handle of an identity the caller may know about: its own, or one that
@@ -468,7 +452,7 @@ declare
 	u text := lower(trim(username));
 begin
 	if position('@' in u) > 0 then
-		if split_part(u, '@', 2) <> public.dav_mail_domain() then
+		if not public.mail_is_local(u) then
 			return;
 		end if;
 		u := split_part(u, '@', 1);
