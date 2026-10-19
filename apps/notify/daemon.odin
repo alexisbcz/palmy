@@ -27,6 +27,7 @@ package main
 import "base:intrinsics"
 import "core:c/libc"
 import "core:encoding/json"
+import "base:runtime"
 import "core:fmt"
 import "core:os"
 import "core:strings"
@@ -438,11 +439,44 @@ wm_identity :: proc(pid: i32) -> string {
 	return ""
 }
 
+// profile_identity reads the identity out of a browser engine's command
+// line. apps/browser starts one engine per identity with its profile under
+// .../palmframe/browser/<identity>/ (cef/ for Chromium, gecko/ for Firefox),
+// and that path is the one thing about the process an engine does not
+// rewrite: Chromium overwrites its own environment block when it sets its
+// process title, so its /proc/<pid>/environ no longer has PALM_IDENTITY.
+profile_identity :: proc(pid: i32) -> string {
+	MARK :: "/palmframe/browser/"
+	p := pid
+	for _ in 0 ..< 6 {
+		if p <= 1 {
+			break
+		}
+		data, err := os.read_entire_file(fmt.tprintf("/proc/%d/cmdline", p), context.temp_allocator)
+		if err == nil {
+			for arg in strings.split(string(data), "\x00", context.temp_allocator) {
+				if i := strings.index(arg, MARK); i >= 0 {
+					rest := arg[i + len(MARK):]
+					if j := strings.index_byte(rest, '/'); j > 0 {
+						return rest[:j]
+					}
+				}
+			}
+		}
+		p = proc_ppid(p)
+	}
+	return ""
+}
+
 // sender_identity is who a notification belongs to when it did not say:
-// the sender's own PALM_IDENTITY, then the window manager's view.
+// the sender's own PALM_IDENTITY, then a browser profile's, then the window
+// manager's view.
 sender_identity :: proc(pid: i32, scope: string) -> string {
 	if scope != "" {
 		return scope
+	}
+	if id := profile_identity(pid); id != "" {
+		return id
 	}
 	return wm_identity(pid)
 }
@@ -694,6 +728,7 @@ toast_ms :: proc(n: ^Note) -> int {
 // same once-a-second check it does for its config file. Rewritten only when
 // something in it changed.
 write_state :: proc(d: ^Daemon, now: i64) {
+	context.allocator = runtime.default_allocator() // the store\'s memory, whoever calls
 	s := &d.store
 	sb := strings.builder_make(context.temp_allocator)
 	unread, showing := 0, 0
@@ -996,6 +1031,7 @@ which :: proc(name: string) -> string {
 }
 
 sound_play :: proc(d: ^Daemon, n: ^Note) {
+	context.allocator = runtime.default_allocator() // the store\'s memory, whoever calls
 	if os.get_env("PALM_NOTIFY_SOUND", context.temp_allocator) == "off" {
 		return
 	}

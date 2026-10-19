@@ -406,6 +406,7 @@ fdo_notify :: proc(d: ^Daemon, m: ^dbus.Dbus_Msg) -> u32 {
 	// a work notification.
 	pid := sender_pid(d, m.sender)
 	scope := proc_env(pid, "PALM_IDENTITY")
+	fmt.eprintfln("palm-notifyd: fdo Notify from %s (pid %d%s)", m.sender, pid, scope != "" ? fmt.tprintf(", PALM_IDENTITY=%s", scope) : "")
 	n.identity = sender_identity(pid, scope)
 	if v, ok := dbus.dbus_dict_get(hints, "x-palm-identity"); ok && in_scope(scope, v.str) {
 		n.identity = v.str
@@ -419,7 +420,9 @@ fdo_notify :: proc(d: ^Daemon, m: ^dbus.Dbus_Msg) -> u32 {
 	}
 
 	if replaces != 0 {
-		if old, _ := store_find_id(&d.store, replaces); old != nil && old.fdo_sender == m.sender {
+		// Any connection may replace: notify-send -r runs as a new process
+		// with a new bus name every time.
+		if old, _ := store_find_id(&d.store, replaces); old != nil && old.source == .Fdo {
 			n.key = old.key
 		}
 	}

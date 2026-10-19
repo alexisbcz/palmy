@@ -13,6 +13,7 @@
 package main
 
 import "core:encoding/json"
+import "base:runtime"
 import "core:fmt"
 import "core:os"
 import "core:strings"
@@ -35,6 +36,7 @@ identities_path :: proc() -> string {
 }
 
 identities_reload :: proc() {
+	context.allocator = runtime.default_allocator() // the store\'s memory, whoever calls
 	for x in g_idents {
 		delete(x.handle)
 		delete(x.name)
@@ -68,6 +70,7 @@ identities_reload :: proc() {
 // identities_set replaces the registry in memory (the screenshots and the
 // self-test use invented identities and must not read the user's).
 identities_set :: proc(xs: []Ident) {
+	context.allocator = runtime.default_allocator() // the store\'s memory, whoever calls
 	for x in g_idents {
 		delete(x.handle)
 		delete(x.name)
