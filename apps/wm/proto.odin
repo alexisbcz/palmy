@@ -218,6 +218,10 @@ Toplevel :: struct {
 	resizing:           bool,
 	last_cfg_w:         int,
 	last_cfg_h:         int,
+
+	// xdg_toplevel.set_parent: a dialog, a file chooser, an about box. It
+	// floats, opens centred over its parent and stays above it.
+	parent:             ^Toplevel,
 }
 
 Client :: struct {
@@ -1306,6 +1310,19 @@ xdg_commit :: proc(s: ^Server, x: ^Xdg_Surface) {
 // The surface is drawn offset so the geometry lands there, and clipped to it,
 // so the client's shadow does not double the wm's.
 
+// top_parent_gone forgets a toplevel that is going away as anybody's parent.
+top_parent_gone :: proc(s: ^Server, t: ^Toplevel) {
+	for c in s.clients {
+		for _, o in c.objs {
+			if o.kind == .Toplevel && o.p != nil {
+				if w := (^Toplevel)(o.p); w.parent == t {
+					w.parent = nil
+				}
+			}
+		}
+	}
+}
+
 // top_geom_size is the size the client committed, as window geometry.
 top_geom_size :: proc(t: ^Toplevel) -> (w, h: int) {
 	x := t.xdg
@@ -1344,12 +1361,34 @@ req_toplevel :: proc(s: ^Server, c: ^Client, o: Object, id: u32, op: u16, r: ^Re
 		if t.xdg != nil {
 			t.xdg.top = nil
 		}
+		top_parent_gone(s, t)
 		obj_drop(c, id)
 		delete(t.title)
 		delete(t.app_id)
 		free(t)
 	case 1:
-		r_u32(r)
+		// set_parent(parent): null clears it.
+		pid := r_u32(r)
+		t.parent = nil
+		if pid != 0 {
+			if po, ok := obj_get(c, pid); ok && po.kind == .Toplevel && po.p != nil {
+				par := (^Toplevel)(po.p)
+				// Refuse a loop: the parent must not descend from t.
+				q := par
+				loop := false
+				for i := 0; i < 64 && q != nil; i += 1 {
+					if q == t {
+						loop = true
+						break
+					}
+					q = q.parent
+				}
+				if !loop {
+					t.parent = par
+				}
+			}
+		}
+		s.dirty = true
 	case 2:
 		title := r_string(r)
 		delete(t.title)

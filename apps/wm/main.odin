@@ -192,6 +192,7 @@ client_free :: proc(s: ^Server, c: ^Client) {
 	for _, o in c.objs {
 		if o.kind == .Toplevel {
 			t := (^Toplevel)(o.p)
+			top_parent_gone(s, t)
 			unmap_window(s, t)
 			delete(t.title)
 			delete(t.app_id)
@@ -415,6 +416,15 @@ place_new_window :: proc(s: ^Server, t: ^Toplevel) {
 	s.cur_out = ws_output_at(s, s_pointer.x, s_pointer.y)
 	ws_apply_rules(s, t)
 	m := ws_win(t)
+	// A window with a parent is a dialog: it floats over its parent rather
+	// than taking a cell in the layout.
+	par := t.parent
+	if par != nil && (!par.mapped || par.minimized) {
+		par = nil
+	}
+	if par != nil {
+		m.floating = true
+	}
 
 	oi := s.cur_out
 	if r, ok := rule_output(s, t); ok {
@@ -505,6 +515,11 @@ place_new_window :: proc(s: ^Server, t: ^Toplevel) {
 			}
 		}
 	}
+	if par != nil {
+		pfr := frame_rect(par)
+		fx = int(pfr.x) + (int(pfr.w) - fw) / 2
+		fy = int(pfr.y) + (int(pfr.h) - fh) / 2
+	}
 	fx = clamp(fx, wa.x, max(wa.x, wa.x + wa.w - fw))
 	fy = clamp(fy, wa.y, max(wa.y, wa.y + wa.h - fh))
 	t.x = fx + bw
@@ -546,6 +561,21 @@ raise_window :: proc(s: ^Server, t: ^Toplevel) {
 		}
 		inject_at(&s.stack, pos, t)
 		s.dirty = true
+		// Its dialogs come up with it, and stay above it.
+		@(static) depth: int
+		if depth < 16 {
+			depth += 1
+			kids := make([dynamic]^Toplevel, context.temp_allocator)
+			for w in s.stack {
+				if w.parent == t && w != t {
+					append(&kids, w)
+				}
+			}
+			for w in kids {
+				raise_window(s, w)
+			}
+			depth -= 1
+		}
 		return
 	}
 }

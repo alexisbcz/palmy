@@ -2292,6 +2292,37 @@ ws_selftest :: proc() -> int {
 		ws_check(s.kbd_surf == nil, "and the keyboard focus with it")
 	}
 	{
+		// xdg_toplevel.set_parent: a dialog floats, centred over its parent,
+		// and comes up with it.
+		ws_test_reset(s)
+		par := ws_test_win(s, c, "editor", "app", 900, 600)
+		place_new_window(s, par)
+		par.mapped = true
+		append(&s.stack, par)
+		dlg := ws_test_win(s, c, "Save as", "app", 300, 200)
+		dlg.parent = par
+		place_new_window(s, dlg)
+		dlg.mapped = true
+		append(&s.stack, dlg)
+		ws_check(ws_floating(dlg), "a dialog floats instead of taking a cell")
+		pc := par.x + par.w / 2
+		dc := dlg.x + dlg.w / 2
+		ws_check(abs(pc - dc) <= 2, "and opens centred over its parent: %d vs %d", dc, pc)
+		other := ws_test_win(s, c, "other", "app", 400, 300)
+		ws_win(other).floating = true
+		other.mapped = true
+		append(&s.stack, other)
+		raise_window(s, par)
+		di, pi := -1, -1
+		for w, i in s.stack {
+			if w == dlg {di = i}
+			if w == par {pi = i}
+		}
+		ws_check(di > pi, "raising the parent keeps the dialog above it (%d over %d)", di, pi)
+		top_parent_gone(s, par)
+		ws_check(dlg.parent == nil, "a parent that goes away is forgotten")
+	}
+	{
 		// A surface that maps at zero, and one that maps absurdly large.
 		ws_test_reset(s)
 		z := ws_test_win(s, c, "zero", "app", 0, 0)
