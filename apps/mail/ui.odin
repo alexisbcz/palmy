@@ -177,6 +177,9 @@ frame :: proc(ui: ^p.Ctx, st: ^State) {
 	if st.confirm_purge {
 		purge_confirm(ui, st)
 	}
+	if st.signin.open {
+		signin_sheet(ui, st)
+	}
 	toast(ui, st)
 	// The file dialog is drawn last, over everything, because while it is up
 	// it owns the keyboard and nothing behind it is live.
@@ -604,13 +607,21 @@ sidebar :: proc(ui: ^p.Ctx, st: ^State, drawer: bool) {
 	)
 	defer p.end(ui)
 
+	identity_strip(ui, st)
+
 	list := p.col(ui, "flex-1 min-h-0 w-full px-2 py-2 gap-px overflow-scroll")
 	st.side_id = p.node_id(ui, list)
 	for row, i in st.side_rows {
 		cursor := st.pane == .Sidebar && i == st.side_sel
 		switch row.kind {
+		case .Unified:
+			unified_row(ui, st, cursor, i)
 		case .Account:
-			account_header(ui, st, row.account, cursor, i)
+			if st.accounts[row.account].palm {
+				palm_account_header(ui, st, row.account, cursor, i)
+			} else {
+				account_header(ui, st, row.account, cursor, i)
+			}
 		case .Folder:
 			folder_row(ui, st, row.folder, cursor, i)
 			if !has_server_folders(st.accounts[row.account].protocol) {
@@ -631,6 +642,12 @@ sidebar :: proc(ui: ^p.Ctx, st: ^State, drawer: bool) {
 	hint(ui, "E M D", "archive · move · trash")
 	hint(ui, "Z", "undo a move")
 	hint(ui, "/", "search")
+	if palm_identities(st) > 0 {
+		hint(ui, "1-9 0", "identity · all")
+		hint(ui, "⇧I", "unified inbox (prototype)")
+	} else {
+		hint(ui, "P", "sign in to Palmframe")
+	}
 	p.end(ui)
 }
 
@@ -782,6 +799,9 @@ list_pane :: proc(ui: ^p.Ctx, st: ^State) {
 	defer p.end(ui)
 
 	list_header(ui, st)
+	if palm_outbox(st) {
+		outbox_banner(ui, st)
+	}
 
 	if len(st.rows) == 0 {
 		if st.searching {
@@ -866,7 +886,7 @@ list_header :: proc(ui: ^p.Ctx, st: ^State) {
 	p.row(ui, "h-[34] shrink-0 w-full items-center gap-2 px-3 border-b border-border bg-background")
 	defer p.end(ui)
 
-	title := "Search results"
+	title := st.searching ? "Search results" : "Mail"
 	sub := ""
 	if st.searching {
 		sub = tfmt(
@@ -876,6 +896,9 @@ list_header :: proc(ui: ^p.Ctx, st: ^State) {
 			len(st.threads),
 			plural(len(st.threads)),
 		)
+	} else if st.unified {
+		title = "All inboxes"
+		sub = tfmt("%d conversation%s · %d identities", len(st.threads), plural(len(st.threads)), palm_identities(st))
 	} else if st.folder_sel >= 0 && st.folder_sel < len(st.folders) {
 		f := st.folders[st.folder_sel]
 		title = f.name
@@ -1023,6 +1046,11 @@ thread_row :: proc(ui: ^p.Ctx, st: ^State, row: Row, i: int, sel, focused: bool)
 	// Line three: the snippet, and where it came from when searching across
 	// folders, because a hit with no context is a hit you cannot act on.
 	p.row(ui, "items-center gap-1.5 w-full min-w-0")
+	if st.unified && !st.searching && m.account >= 0 && m.account < len(st.accounts) {
+		// Which identity this came to. In a merged list it is the one fact
+		// that must never be in doubt.
+		identity_chip(ui, st.accounts[m.account], hl)
+	}
 	if st.searching && m.folder >= 0 && m.folder < len(st.folders) {
 		f := st.folders[m.folder]
 		a := st.accounts[f.account]

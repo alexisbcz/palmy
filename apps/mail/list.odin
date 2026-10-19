@@ -25,7 +25,15 @@ note :: proc(st: ^State, msg: string) {
 
 rebuild_sidebar :: proc(st: ^State) {
 	clear(&st.side_rows)
+	// The prototype "All inboxes" view sits above the identities while its
+	// toggle is on, and only when there is more than one identity to merge.
+	if st.unified_on && st.id_view == 0 && palm_identities(st) >= 2 {
+		append(&st.side_rows, Side_Row{kind = .Unified, account = -1, folder = -1})
+	}
 	for a, ai in st.accounts {
+		if !account_visible(st, ai) {
+			continue
+		}
 		append(&st.side_rows, Side_Row{kind = .Account, account = ai, folder = -1})
 		if a.collapsed {
 			continue
@@ -59,6 +67,7 @@ select_folder :: proc(st: ^State, fi: int) {
 		return
 	}
 	st.folder_sel = fi
+	st.unified = false
 	st.searching = false
 	le_clear(&st.query)
 	st.row_sel = 0
@@ -82,6 +91,8 @@ rebuild_list :: proc(st: ^State) {
 				append(&set, i)
 			}
 		}
+	} else if st.unified {
+		unified_set(st, &set)
 	} else {
 		for m, i in st.messages {
 			if msg_hidden(st, m) {

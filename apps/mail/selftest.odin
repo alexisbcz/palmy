@@ -68,6 +68,7 @@ run_selftest :: proc() -> int {
 	test_drafts()
 	test_multiselect()
 	test_autocomplete()
+	test_palmframe()
 	test_fixtures_and_threading()
 
 	fmt.printfln("")

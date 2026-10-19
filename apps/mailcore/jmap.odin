@@ -48,7 +48,24 @@ import "core:strings"
 JMAP_CORE :: "urn:ietf:params:jmap:core"
 JMAP_MAIL :: "urn:ietf:params:jmap:mail"
 
+// One entry of the session's `accounts`. The Palmframe fields come from the
+// urn:palmframe:params:jmap:identity account capability, where a Palmframe
+// server describes the identity behind an account; they are empty against
+// any other server.
+Jmap_Account :: struct {
+	id:           string,
+	name:         string,
+	handle:       string,
+	display_name: string,
+	kind:         string, // personal, work, public, project
+	color:        string,
+	address:      string,
+}
+
+JMAP_PALM :: "urn:palmframe:params:jmap:identity"
+
 Jmap_Session :: struct {
+	accounts:             []Jmap_Account,
 	username:             string,
 	api_url:              string,
 	download_url:         string, // a URI template
@@ -215,12 +232,52 @@ jmap_connect :: proc(
 ) -> (
 	err: string,
 ) {
+	return jmap_connect_auth(j, host, port, http_basic_auth(user, password, allocator), opts, allocator)
+}
+
+// jmap_connect_bearer authenticates with a bearer token (RFC 6750) instead of
+// Basic: a Palmframe server takes the Supabase access token this way.
+jmap_connect_bearer :: proc(
+	j: ^JMAP,
+	host: string,
+	port: int,
+	token: string,
+	opts: Dial_Opts = {},
+	allocator := context.allocator,
+) -> (
+	err: string,
+) {
+	return jmap_connect_auth(j, host, port, strings.concatenate({"Bearer ", token}, allocator), opts, allocator)
+}
+
+// jmap_use_account points every later call at one of the session's accounts,
+// named by id or by name (a Palmframe account's name is its address).
+jmap_use_account :: proc(j: ^JMAP, want: string) -> (err: string) {
+	for a in j.session.accounts {
+		if a.id == want || strings.equal_fold(a.name, want) {
+			j.session.primary_mail_account = a.id
+			return ""
+		}
+	}
+	return fmt.aprintf("the JMAP session has no account %q", want)
+}
+
+jmap_connect_auth :: proc(
+	j: ^JMAP,
+	host: string,
+	port: int,
+	auth: string,
+	opts: Dial_Opts = {},
+	allocator := context.allocator,
+) -> (
+	err: string,
+) {
 	j.host = strings.clone(host, allocator)
 	j.port = port
 	j.alloc = allocator
 	j.trace = opts.trace
 	j.opts = opts
-	j.auth = http_basic_auth(user, password, allocator)
+	j.auth = auth
 	j.parsed = make([dynamic]json.Value, 0, 8, allocator)
 
 	if e := jmap_open_conn(j); e != "" {
@@ -308,6 +365,28 @@ jmap_parse_session :: proc(j: ^JMAP, body: []u8) -> (err: string) {
 	// primaryAccounts maps a capability URI to the account id to use for it.
 	if pa, ok := jv_get(v, "primaryAccounts"); ok {
 		s.primary_mail_account = strings.clone(jv_str(pa, JMAP_MAIL), j.alloc)
+	}
+	if accts, ok := jv_get(v, "accounts"); ok {
+		if o, is := accts.(json.Object); is {
+			list := make([dynamic]Jmap_Account, 0, len(o), j.alloc)
+			for k, av in o {
+				a := Jmap_Account {
+					id   = strings.clone(k, j.alloc),
+					name = strings.clone(jv_str(av, "name"), j.alloc),
+				}
+				if caps, cok := jv_get(av, "accountCapabilities"); cok {
+					if pc, pok := jv_get(caps, JMAP_PALM); pok {
+						a.handle = strings.clone(jv_str(pc, "handle"), j.alloc)
+						a.display_name = strings.clone(jv_str(pc, "displayName"), j.alloc)
+						a.kind = strings.clone(jv_str(pc, "kind"), j.alloc)
+						a.color = strings.clone(jv_str(pc, "color"), j.alloc)
+						a.address = strings.clone(jv_str(pc, "address"), j.alloc)
+					}
+				}
+				append(&list, a)
+			}
+			s.accounts = list[:]
+		}
 	}
 	if s.primary_mail_account == "" {
 		// Fall back to the first account that has the mail capability.

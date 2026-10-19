@@ -87,6 +87,8 @@ main :: proc() {
 		os.exit(cmd_fetch(args[1:]))
 	case "send":
 		os.exit(cmd_send(args[1:]))
+	case "palm":
+		os.exit(cmd_palm(args[1:]))
 	case "-h", "--help":
 		usage()
 		os.exit(0)
@@ -112,6 +114,12 @@ usage :: proc() {
   mailcore send  --port N --user U --password P --to ADDR
                  [--host 127.0.0.1] [--subject S] [--text T] [--attach FILE]
                  [--tls none|verify|insecure] [--ca FILE] [--trace]
+  (fetch --proto jmap also takes --token T | --token-file F, and --account ID|NAME)
+  mailcore palm login --email E --password P [--auth-port N]
+  mailcore palm sync  [--jmap-port N] [--submit-port N]
+  mailcore palm status | logout
+                 a Palmframe account: sign in, then sync every identity the
+                 session can reach into its own Maildir. See palm.odin.
 
 Every network command refuses any host outside 127.0.0.0/8, and this program
 never resolves a name.`,
@@ -429,6 +437,8 @@ Net_Args :: struct {
 	subject:  string,
 	text:     string,
 	attach:   string,
+	token:    string, // a bearer token instead of --user/--password (JMAP)
+	account:  string, // which JMAP account, by id or name
 }
 
 parse_net_args :: proc(args: []string) -> (na: Net_Args, err: string) {
@@ -464,6 +474,17 @@ parse_net_args :: proc(args: []string) -> (na: Net_Args, err: string) {
 			na.text = next(args, &i)
 		case "--attach":
 			na.attach = next(args, &i)
+		case "--token":
+			na.token = next(args, &i)
+		case "--token-file":
+			path := next(args, &i)
+			data, rerr := os.read_entire_file_from_path(path, context.allocator)
+			if rerr != nil {
+				return na, fmt.aprintf("cannot read %s", path)
+			}
+			na.token = strings.trim_space(string(data))
+		case "--account":
+			na.account = next(args, &i)
 		case "--trace":
 			na.trace = true
 		case "--tls":
@@ -565,8 +586,16 @@ cmd_fetch :: proc(args: []string) -> int {
 
 	case "jmap":
 		j: JMAP
-		if err := jmap_connect(&j, na.host, na.port, na.user, na.password, opts, context.allocator);
-		   err != "" {
+		err: string
+		if na.token != "" {
+			err = jmap_connect_bearer(&j, na.host, na.port, na.token, opts, context.allocator)
+		} else {
+			err = jmap_connect(&j, na.host, na.port, na.user, na.password, opts, context.allocator)
+		}
+		if err == "" && na.account != "" {
+			err = jmap_use_account(&j, na.account)
+		}
+		if err != "" {
 			fmt.eprintfln("mailcore: %s", err)
 			return 1
 		}
@@ -626,7 +655,10 @@ cmd_send :: proc(args: []string) -> int {
 		return 1
 	}
 	if na.user != "" {
-		if err := smtp_auth_plain(&s, na.user, na.password); err != "" {
+		// A Palmframe submission server takes the access token as the
+		// password (--token / --token-file).
+		secret := na.token != "" ? na.token : na.password
+		if err := smtp_auth_plain(&s, na.user, secret); err != "" {
 			fmt.eprintfln("mailcore: %s", err)
 			return 1
 		}

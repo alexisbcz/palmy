@@ -91,6 +91,15 @@ Account :: struct {
 	// wrote that nothing points at yet. Its protocol is genuinely unknown, so
 	// the UI says "Maildir" instead of guessing one.
 	discovered:  bool,
+
+	// A Palmframe identity, read from palmframe.conf (see palm.odin). Each
+	// identity of the signed-in account is its own account here, with its
+	// own Maildir, because it is its own mailbox on the server.
+	palm:        bool,
+	identity_id: string,
+	handle:      string,
+	kind:        string, // personal, work, public, project
+	color:       string, // a Tailwind hue: indigo, emerald...
 }
 
 // LOOPBACK_HOSTS is the whole allow-list. A config naming anything else is
@@ -533,6 +542,16 @@ State :: struct {
 	att_box_id:   u64,
 	att_chip_ids: [24]u64,
 	att_chip_n:   int,
+
+	// Palmframe. `id_view` is the identity being looked at: 1 + an index into
+	// `accounts`, or 0 for all of them (so a zeroed State shows everything).
+	// `unified_on` is the prototype toggle
+	// that adds the "All inboxes" view; `unified` is that view being shown.
+	palm_email:  string, // the signed-in account, from palmframe.conf
+	id_view:     int,
+	unified_on:  bool,
+	unified:     bool,
+	signin:      Signin,
 }
 
 // Side_Row flattens the sidebar the same way Row flattens the list, so one
@@ -540,6 +559,7 @@ State :: struct {
 Side_Row_Kind :: enum {
 	Account,
 	Folder,
+	Unified, // "All inboxes": every identity's inbox, the prototype view
 }
 
 Side_Row :: struct {
@@ -605,6 +625,7 @@ path = lists
 // messages, deletes them and saves an attachment cannot touch the mailbox
 // somebody is actually reading.
 data_dir_override: string
+data_dir_explicit: bool // --data-dir= was given
 
 default_data_dir :: proc(allocator := context.allocator) -> string {
 	if data_dir_override != "" {
@@ -629,8 +650,14 @@ load_config :: proc(st: ^State) {
 	text := DEFAULT_CONFIG
 	if ok && len(raw) > 0 {
 		text = string(raw)
+	} else if data_dir_explicit || os.exists(palm_conf_path(st.data_dir, context.temp_allocator)) {
+		// Signed in to Palmframe and nothing else configured, or a data
+		// directory named on the command line: the identities are the
+		// accounts, and the built-in test accounts would only be noise.
+		text = ""
 	}
 	parse_config(st, text)
+	load_palmframe(st)
 }
 
 parse_config :: proc(st: ^State, text: string) {

@@ -74,6 +74,17 @@ main :: proc() {
 				}
 			}
 			os.exit(shots(dir))
+		case strings.has_prefix(arg, "--palm-shots"):
+			dir := "palm-shots"
+			if eq := strings.index_byte(arg, '='); eq > 0 {
+				dir = arg[eq + 1:]
+			}
+			for a in os.args[1:] {
+				if strings.has_prefix(a, "--data-dir=") {
+					data_dir_override = strings.clone(a[len("--data-dir="):])
+				}
+			}
+			os.exit(palm_shots(dir))
 		case arg == "--help" || arg == "-h":
 			print_usage()
 			os.exit(0)
@@ -131,6 +142,16 @@ print_usage :: proc() {
   mail --shots DIR     render the interface offscreen into PNGs
   mail --uitest=DIR    render the interface offscreen into PNGs and exit
   mail --walkthrough=DIR  render the whole walkthrough as a PNG sequence
+  mail --data-dir=PATH use another data directory (e.g. a demo account's)
+  mail --palm-shots=DIR --data-dir=PATH
+                       sign in to a dev Palmframe stack offscreen and render
+                       the identity views (see cloud/mail/dev/demo.sh)
+
+Palmframe (one account, several identities, each its own mailbox):
+
+  P  sign in, or the account card (S sync · O sign out)
+  1-9  one identity      0  all identities
+  Shift+I  the unified inbox, a prototype: every identity's inbox in one list
 
 Keys, all unmodified so the keyboard alone is enough:
 
@@ -145,12 +166,22 @@ starting another composition files the unfinished one in Drafts rather than
 dropping it. Only the Discard button throws a draft away.
 
 This client has no network code. It reads a Maildir from disk; Send queues a
-message into the account's own local Outbox and transmits nothing. Saving an
+message into the account's own local Outbox and transmits nothing (for a
+Palmframe identity, the next sync hands it to the server, which delivers to
+local identities only). Signing in and syncing run mailcore. Saving an
 attachment writes the decoded bytes to a file you choose, and nowhere else.`,
 	)
 }
 
 init_state :: proc(st: ^State) {
+	// `--data-dir=PATH` points the whole app at another data directory — a
+	// demo account's synced identities, say — instead of the default one.
+	for arg in os.args[1:] {
+		if strings.has_prefix(arg, "--data-dir=") {
+			data_dir_override = strings.clone(arg[len("--data-dir="):])
+			data_dir_explicit = true
+		}
+	}
 	st.data_dir = default_data_dir()
 	st.tz_offset = local_offset()
 	st.now = time.now()
@@ -201,7 +232,9 @@ init_state :: proc(st: ^State) {
 			break
 		}
 	}
-	if !any_mail && override == "" {
+	// Not when the directory was named: an empty account is what a person
+	// who has not signed in yet should see, not somebody else's fixtures.
+	if !any_mail && override == "" && !data_dir_explicit {
 		write_fixtures(st.data_dir)
 		clear(&st.accounts)
 		load_config(st)
@@ -210,6 +243,11 @@ init_state :: proc(st: ^State) {
 	}
 
 	reload_all(st)
+	// Signed in to Palmframe: open on the first identity, one mailbox at a
+	// time, which is the default view. 0 shows them all.
+	if first := palm_nth(st, 0); first >= 0 && !st.single_tree {
+		set_identity_view(st, first)
+	}
 
 	// A draft left behind by the last run. The composer does not open by
 	// itself — walking into half a message is startling — but the status bar
@@ -405,6 +443,10 @@ handle_keys :: proc(ui: ^p.Ctx, st: ^State, app: ^p.App) {
 		move_keys(ui, st)
 		return
 	}
+	if st.signin.open {
+		signin_keys(ui, st)
+		return
+	}
 
 	// The composer owns the keyboard while it is open: unmodified letters are
 	// text there, not commands.
@@ -415,6 +457,12 @@ handle_keys :: proc(ui: ^p.Ctx, st: ^State, app: ^p.App) {
 
 	if p.shortcut(ui, 'f', {.Ctrl}) {
 		focus_search(st)
+		return
+	}
+
+	// The identity keys (P, 0-9, Shift+I) work from the list and the sidebar;
+	// in the search field they are text.
+	if st.pane != .Search && palm_keys(ui, st) {
 		return
 	}
 
@@ -540,6 +588,11 @@ sidebar_keys :: proc(ui: ^p.Ctx, st: ^State) {
 			rebuild_sidebar(st)
 		case .Folder:
 			select_folder(st, row.folder)
+			st.pane = .List
+		case .Unified:
+			st.unified = true
+			st.row_sel = 0
+			rebuild_list(st)
 			st.pane = .List
 		}
 	}
