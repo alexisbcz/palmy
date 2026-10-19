@@ -163,9 +163,13 @@ handle_keys_bare :: proc(s: ^Server, app: ^p.App) {
 		if vt_switch_key(ke.code, k.mods) {
 			taken = true
 		} else if lock_active() {
-			// The lock screen has the keyboard; only the escape hatch stays.
-			if .Alt in k.mods && .Ctrl in k.mods && (k.sym == 'q' || k.sym == 'Q') {
-				p.quit_app(app)
+			// The lock screen has the keyboard. The compositor's own takes
+			// every key; a client locker's surface gets them as usual. The
+			// nested escape hatch (Ctrl+Alt+Q) is not here: on a real
+			// session it would let whoever is at the keyboard end the
+			// locked person's session.
+			if locker_internal() {
+				locker_key(s, k)
 				taken = true
 			}
 		} else {
@@ -466,6 +470,9 @@ super_tap_fire :: proc(s: ^Server) {
 
 // overlays_key gives each open overlay the key, topmost first.
 overlays_key :: proc(s: ^Server, app: ^p.App, k: p.Key_Event, code: u32) -> bool {
+	if power_key(s, k) {
+		return true
+	}
 	if menu_key(s, app, k) {
 		return true
 	}

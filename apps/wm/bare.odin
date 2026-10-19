@@ -881,6 +881,10 @@ bare_main :: proc(display, conf: string) -> int {
 		if vfd := vt_poll_fd(); vfd >= 0 {
 			append(&pfds, linux.Poll_Fd{fd = vfd, events = {.IN}})
 		}
+		if lfd := login_poll_fd(); lfd >= 0 {
+			// palm-login's answer (an unlock, a power request) wakes us.
+			append(&pfds, linux.Poll_Fd{fd = lfd, events = {.IN}})
+		}
 
 		// A second is the longest anything waits: the bar's clock, a status
 		// note expiring, children reaped. A pending frame with every head
@@ -984,6 +988,7 @@ bare_main :: proc(display, conf: string) -> int {
 			want_frame = true
 		}
 		ev_apply_to_input(&app.win.input)
+		login_pump(s)
 		handle_keys(s, app)
 		if kbd_wire.took {
 			// The compositor acted on a key: anything may have changed.
@@ -991,6 +996,8 @@ bare_main :: proc(display, conf: string) -> int {
 			damage_all()
 		}
 		bare_pointer(s, app)
+		locker_tick(s, app)
+		power_tick(s)
 
 		if now := wall_now(); now - s.cfg_check_at > 1.0 {
 			s.cfg_check_at = now

@@ -96,37 +96,10 @@ lock_draw :: proc(s: ^Server, app: ^p.App, cv: ^p.Canvas) {
 	if drew {
 		return
 	}
-	lock_draw_fallback(s, app, cv)
-}
-
-// lock_draw_fallback is what the user sees when there is no locker to show.
-// It must never be a way through: it has no input of its own.
-lock_draw_fallback :: proc(s: ^Server, app: ^p.App, cv: ^p.Canvas) {
-	f := &app.fonts
-	W, H := f32(cv.w), f32(cv.h)
-	p.fill_rect_paint(cv, {0, 0, W, H}, p.gradient(p.hex(0x0a0a14), p.hex(0x05050a), true))
-
-	cx, cy := W / 2, H / 2
-	p.fill_round_rect(cv, {cx - 190, cy - 70, 380, 140}, {16, 16, 16, 16}, p.hexa(0x12121cdd))
-	p.stroke_round_rect(cv, {cx - 190, cy - 70, 380, 140}, {16, 16, 16, 16}, 1, p.hex(0x27272a))
-
-	// A padlock, drawn rather than fetched: this screen must not depend on an
-	// icon file being present.
-	bx, by := cx, cy - 22
-	p.fill_round_rect(cv, {bx - 13, by - 2, 26, 20}, {4, 4, 4, 4}, p.hex(0xa5b4fc))
-	p.stroke_round_rect(cv, {bx - 8, by - 14, 16, 18}, {8, 8, 0, 0}, 2.5, p.hex(0xa5b4fc))
-	p.fill_rect(cv, {bx - 1, by + 5, 2, 7}, p.hex(0x1e1b4b))
-
-	head := lock_abandoned ? "Session locked" : "Locked"
-	hw := p.text_width(f, head, 18, .Sans, .Semibold)
-	p.draw_text(cv, f, head, cx - hw / 2, cy + 22, 18, p.hex(0xe4e4e7), .Sans, .Semibold)
-
-	sub :=
-		lock_abandoned \
-		? "the locker exited without unlocking; the session stays locked" \
-		: "waiting for the lock screen to draw"
-	sw := p.text_width(f, sub, 12, .Sans)
-	p.draw_text(cv, f, sub, cx - sw / 2, cy + 46, 12, p.hex(0x8b8b93), .Sans)
+	// No client lock surface on screen (the compositor locked the session
+	// itself, or a client locker has not drawn yet or died): the
+	// compositor's own lock screen, which takes the password (locker.odin).
+	locker_draw(s, app, cv)
 }
 
 // ---------------------------------------------------------------------------
@@ -401,6 +374,7 @@ lock_clear :: proc(s: ^Server) {
 	lock_state = .Unlocked
 	lock_abandoned = false
 	lock_session = nil
+	locker_forget()
 	if s.focus != nil && s.focus.xdg != nil {
 		set_kbd_focus(s, s.focus.xdg.surf)
 	}

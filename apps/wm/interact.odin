@@ -587,7 +587,7 @@ handle_pointer :: proc(s: ^Server, app: ^p.App, scale: f32) {
 	}
 
 	// The compositor's overlays take the pointer while they are open.
-	if menu_pointer(s, app, in_, mp) || start_pointer(s, app, in_, mp) || cheat_pointer(s, app, in_, mp) || switcher_pointer(s, app, in_, mp) || overview_pointer(s, app, in_, mp) {
+	if power_pointer(s, app, in_, mp) || menu_pointer(s, app, in_, mp) || start_pointer(s, app, in_, mp) || cheat_pointer(s, app, in_, mp) || switcher_pointer(s, app, in_, mp) || overview_pointer(s, app, in_, mp) {
 		set_ptr_focus(s, nil, 0, 0)
 		s.hover_t = nil
 		s.hover_btn = 0

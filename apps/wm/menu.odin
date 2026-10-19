@@ -52,7 +52,8 @@ Menu_Act :: enum u8 {
 	Start_File_Open, // arg: recent file
 	Start_File_Folder, // arg: recent file
 	Logout,
-	Power_Intent, // arg: 0 restart, 1 shut down (nested: logged, never run)
+	Power_Intent, // arg: 0 restart, 1 shut down (power.odin; nested without palm-login: logged, never run)
+	Lock_Screen,
 	Spawn_Settings_Page, // arg: SETTINGS_PAGES index
 	Spawn_Files_Here,
 	Start_Menu,
@@ -481,10 +482,17 @@ menu_do :: proc(s: ^Server, it: Menu_Item) {
 		start_open_folder(s, it.arg)
 	case .Logout:
 		start_close(s)
-		session_end(s, "logout")
+		if session.bare {
+			power_open(s, "logout") // confirm, close the windows, then leave
+		} else {
+			session_end(s, "logout")
+		}
 	case .Power_Intent:
 		start_close(s)
 		session_end(s, it.arg == 0 ? "reboot" : "poweroff")
+	case .Lock_Screen:
+		start_close(s)
+		locker_lock(s, "menu")
 	case .Spawn_Settings_Page:
 		if it.arg >= 0 && it.arg < len(SETTINGS_PAGES) {
 			spawn(s, {"settings", SETTINGS_PAGES[it.arg].page})

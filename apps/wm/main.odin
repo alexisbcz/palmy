@@ -715,7 +715,14 @@ map_focus :: proc(s: ^Server, t: ^Toplevel) {
 	s.dirty = true
 }
 
-set_kbd_focus :: proc(s: ^Server, surf: ^Surface) {
+set_kbd_focus :: proc(s: ^Server, surf_in: ^Surface) {
+	surf := surf_in
+	// While the session is locked no client but the locker's own surfaces
+	// may have the keyboard, whoever asks: a window mapping, an activation
+	// request, a click that slipped through (locker.odin).
+	if surf != nil && lock_active() && surf.role != .Lock {
+		surf = nil
+	}
 	if s.kbd_surf == surf {
 		return
 	}
@@ -978,7 +985,11 @@ pick_surface :: proc(surf: ^Surface, ox, oy, mx, my: int) -> (^Surface, int, int
 	return nil, 0, 0
 }
 
-set_ptr_focus :: proc(s: ^Server, surf: ^Surface, lx, ly: int) {
+set_ptr_focus :: proc(s: ^Server, surf_in: ^Surface, lx, ly: int) {
+	surf := surf_in
+	if surf != nil && lock_active() && surf.role != .Lock {
+		surf = nil
+	}
 	if s.ptr_surf == surf {
 		return
 	}
@@ -1297,15 +1308,33 @@ wm_do :: proc(s: ^Server, app: ^p.App, b: Cfg_Bind) {
 // session_end carries out a session action from a binding, the start menu's
 // power button or anywhere else. On bare metal this compositor *is* the
 // session, and ending it is how the user gets back to the greeter: palm-login
-// is waiting on our exit. Power actions stay intent-only — they belong to the
-// greeter, which runs them through palm-login's privileges. Nested, every one
-// is an intent: this compositor is a guest on a live desktop.
+// is waiting on our exit. Lock is the compositor's own (locker.odin); Restart
+// and Shut down go through the confirmation and palm-login's session socket
+// (power.odin) when palm-login started this session. Nested, the rest are
+// intents: this compositor is a guest on a live desktop.
 session_end :: proc(s: ^Server, name: string, app: ^p.App = nil) {
 	a := app != nil ? app : menu_app
 	if session.bare && (name == "exit" || name == "logout") && a != nil {
 		fmt.printfln("wm: session %q — leaving", name)
 		p.quit_app(a)
 		return
+	}
+	switch name {
+	case "lock":
+		locker_lock(s, "key")
+		return
+	case "suspend":
+		// The screen locks before a suspend, so the machine wakes locked.
+		// There is no suspend path yet (palm-init has none): lock, and say so.
+		if locker_lock(s, "suspend") {
+			log_line("session intent \"suspend\": locked; suspend itself is not available")
+			return
+		}
+	case "reboot", "poweroff":
+		if power_offered() {
+			power_open(s, name)
+			return
+		}
 	}
 	fmt.printfln("wm: session intent %q — logged, not executed", name)
 	log_line("session intent %q (not executed)", name)
@@ -1884,8 +1913,11 @@ main :: proc() {
 		ws_sync_host(s, cv.w, cv.h)
 		server_poll(s)
 		data_pump(s)
+		login_pump(s)
 		handle_keys(s, app)
 		handle_pointer(s, app, cv.scale)
+		locker_tick(s, app)
+		power_tick(s)
 
 		// Live reload: one stat a second, which is cheap enough to leave on
 		// and the difference between editing the config and restarting.

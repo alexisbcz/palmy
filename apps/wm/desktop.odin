@@ -209,6 +209,7 @@ draw :: proc(s: ^Server, app: ^p.App, cv: ^p.Canvas) {
 	cheat_draw(s, app, cv)
 	start_draw(s, app, cv)
 	draw_menu(s, app, cv)
+	power_draw(s, app, cv)
 	if text, r, ok := ix_tooltip(s); ok {
 		draw_tooltip(s, app, cv, text, r)
 	}

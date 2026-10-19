@@ -205,6 +205,9 @@ Cfg :: struct {
 	drag_mod_set:    bool,
 	hot_corner:      bool,
 	super_tap:       bool, // a lone tap of Super opens the overview
+	// Seconds without input before the screen locks itself (locker.odin);
+	// 0 never.
+	lock_after:      int,
 	wallpaper:       string,
 	wallpaper_mode:  Cfg_Wall_Mode,
 	wallpaper_color: u32,
@@ -289,6 +292,11 @@ animations          = on
 super_tap           = on
 hot_corner          = on
 
+# Lock the screen after this long without input: 90s, 5m, 1h, a number of
+# seconds, or off. SUPER+L locks at once. A window that inhibits idle (a
+# video playing) holds it off.
+lock_after          = 10m
+
 # The look of the bar, the title bars and the menus -- dark or light -- and
 # the accent that marks the current workspace, the focused window and
 # selections. Settings writes these.
@@ -366,7 +374,10 @@ bind = $mod,       Slash,  cheatsheet
 bind = $mod,       H,      movefocus left
 bind = $mod,       J,      movefocus down
 bind = $mod,       K,      movefocus up
-bind = $mod,       L,      movefocus right
+# SUPER+L locks the screen, as on every other desktop, so the H/J/K/L
+# row has no "right": SUPER+Right snaps instead. Rebind it here if you
+# want it back: bind = $mod, L, movefocus right
+bind = $mod,       L,      lock
 bind = $mod SHIFT, H,      movewindow left
 bind = $mod SHIFT, J,      movewindow down
 bind = $mod SHIFT, K,      movewindow up
@@ -527,6 +538,7 @@ cfg_scalars :: proc(c: ^Cfg) {
 	c.drag_mod_set = false
 	c.hot_corner = true
 	c.super_tap = true
+	c.lock_after = LOCK_AFTER_DEFAULT
 	c.wallpaper_mode = .Fill
 	c.wallpaper_color = 0
 	c.wallpaper_flat = false
@@ -862,6 +874,13 @@ cfg_set :: proc(c: ^Cfg, name, val, src: string, n: int) {
 		c.drag_mod_set = true
 	case "hot_corner":
 		c.hot_corner = cfg_bool(val, c.hot_corner)
+	case "lock_after", "lock_idle":
+		secs, ok := cfg_duration(val)
+		if !ok {
+			cfg_err(c, src, n, "lock_after is a time (90s, 5m, 1h, a number of seconds) or off, not %q", val)
+			return
+		}
+		c.lock_after = secs
 	case "super_tap":
 		// on/menu: the start menu; overview: the overview, as it was; off.
 		switch strings.to_lower(strings.trim_space(val), context.temp_allocator) {
@@ -1251,6 +1270,32 @@ cfg_action :: proc(c: ^Cfg, bind: ^Cfg_Bind, s, src: string, n: int) -> bool {
 		return false
 	}
 	return true
+}
+
+LOCK_AFTER_DEFAULT :: 600
+
+// cfg_duration reads "90s", "5m", "1h", "300" (seconds) or off/never/0.
+cfg_duration :: proc(s: string) -> (secs: int, ok: bool) {
+	t := strings.to_lower(strings.trim_space(s), context.temp_allocator)
+	switch t {
+	case "off", "never", "no", "false", "0":
+		return 0, true
+	}
+	mul := 1
+	if strings.has_suffix(t, "s") {
+		t = t[:len(t) - 1]
+	} else if strings.has_suffix(t, "m") || strings.has_suffix(t, "min") {
+		t = strings.trim_suffix(strings.trim_suffix(t, "in"), "m")
+		mul = 60
+	} else if strings.has_suffix(t, "h") {
+		t = t[:len(t) - 1]
+		mul = 3600
+	}
+	v, vok := strconv.parse_int(strings.trim_space(t))
+	if !vok || v < 0 || v > 7 * 24 * 3600 {
+		return 0, false
+	}
+	return v * mul, true
 }
 
 cfg_signed :: proc(s: string, def: int) -> int {

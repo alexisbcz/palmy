@@ -2536,6 +2536,9 @@ ws_selftest :: proc() -> int {
 	// --- the start menu, the shell's look, the shared app index -----------
 	start_selftest(s)
 
+	// --- the lock screen and the power dialog (locker_test.odin) -------------
+	locker_selftest(s)
+
 	fmt.printfln("wm --selftest: %d passed, %d failed", ws_test_pass, ws_test_fail)
 	return ws_test_fail == 0 ? 0 : 1
 }

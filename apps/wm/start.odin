@@ -456,25 +456,36 @@ start_context :: proc(s: ^Server, h: Start_Hit, x, y: int) {
 }
 
 // start_power_menu is the power button's menu. Only what works on this
-// machine is offered (UX.md P1-3): a bare-metal session can end itself, which
-// hands the seat back to the login screen; restarting and shutting down need
-// root, which palm-login holds and the greeter asks it for, so those wait on
-// the login screen until the session has a path of its own to them.
+// machine is offered (UX.md P1-3). Lock, Restart and Shut down need
+// palm-login (it checks the lock's password, and only root may power the
+// machine off): a session it started has PALM_SESSION_SOCK, and gets all
+// three (locker.odin, power.odin). Without it, a bare-metal session can still
+// end itself, which hands the seat back to the login screen.
 start_power_menu :: proc(s: ^Server, anchor: p.Rect) {
 	menu_close(s)
-	it := &menu.items
-	menu_add(it, "Log out", .Logout)
-	if session.bare {
-		menu_add_sep(it)
-		menu_add(it, "Restart or shut down from the login screen", .None, disabled = true)
-	} else {
-		menu_add(it, "Restart", .Power_Intent, arg = 0)
-		menu_add(it, "Shut down", .Power_Intent, arg = 1)
-	}
+	start_power_items(s, &menu.items)
 	h := menu_height(menu.items[:])
 	w := menu_width(menu_app, menu.items[:])
 	menu_place(s, int(anchor.x + anchor.w - w), int(anchor.y - h - 6))
 	menu.hover = 0
+}
+
+start_power_items :: proc(s: ^Server, it: ^[dynamic]Menu_Item) {
+	if power_offered() {
+		menu_add(it, "Lock", .Lock_Screen, key_for_act(s, .Session, cfg_session_id("lock")))
+		menu_add_sep(it)
+		menu_add(it, "Log out…", .Logout)
+		menu_add(it, "Restart…", .Power_Intent, arg = 0)
+		menu_add(it, "Shut down…", .Power_Intent, arg = 1)
+	} else if session.bare {
+		menu_add(it, "Log out", .Logout)
+		menu_add_sep(it)
+		menu_add(it, "Restart or shut down from the login screen", .None, disabled = true)
+	} else {
+		menu_add(it, "Log out", .Logout)
+		menu_add(it, "Restart", .Power_Intent, arg = 0)
+		menu_add(it, "Shut down", .Power_Intent, arg = 1)
+	}
 }
 
 // ---------------------------------------------------------------------------

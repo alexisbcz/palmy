@@ -656,6 +656,9 @@ overlay_pointer :: proc(s: ^Server, app: ^p.App, mp: [2]int) -> bool {
 	if surf == nil {
 		if locked {
 			set_ptr_focus(s, nil, 0, 0)
+			if locker_internal() {
+				locker_pointer(s, app, mp)
+			}
 			return true
 		}
 		return false
@@ -707,6 +710,10 @@ overlay_keys :: proc(s: ^Server, app: ^p.App) -> bool {
 	for k in in_.keys {
 		if .Alt in k.mods && .Ctrl in k.mods && (k.sym == 'q' || k.sym == 'Q') {
 			p.quit_app(app)
+			continue
+		}
+		if locker_internal() {
+			locker_key(s, k) // the compositor's own lock screen
 			continue
 		}
 		forward_key(s, k)

@@ -126,6 +126,8 @@ shots :: proc(dir: string) -> int {
 	gallery.x, gallery.y, gallery.w, gallery.h = gallery.saved[0], gallery.saved[1], gallery.saved[2], gallery.saved[3]
 	repaint(gallery, paint_gallery)
 	shell_shots(s, app, cv, off, dir, &n)
+	// The lock screen and the power dialog (locker_shot.odin).
+	lock_shots(s, app, cv, off, dir, &n)
 
 	// And the empty desktop, which is what a nested compositor shows before
 	// anything has connected to it.
