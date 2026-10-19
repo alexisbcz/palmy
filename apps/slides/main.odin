@@ -21,6 +21,7 @@ import "core:os"
 import "core:strings"
 import kit "kit:."
 import p "palmy:."
+import collabui "../../cloud/collab/ui"
 
 tprintf :: fmt.tprintf
 
@@ -149,10 +150,13 @@ St :: struct {
 	moved:        bool,
 	started:      bool,
 	quit:         bool,
+
+	collab_args:  collabui.Args,
 }
 
 main :: proc() {
-	args := os.args[1:]
+	ca, rest_args := collabui.parse_args(os.args[1:])
+	args := rest_args[:]
 	exe_dir := exe_directory()
 
 	// Headless modes first: they need fonts but no compositor.
@@ -261,6 +265,13 @@ main :: proc() {
 		os.exit(shots(export_dir != "" ? export_dir : "slides-shots"))
 	}
 
+	if ca.doc != "" {
+		st.collab_args = ca
+		if ca.script != "" {
+			os.exit(run_script(st, ca))
+		}
+	}
+
 	// The editor and the projector are two surfaces, opened one at a time in
 	// this one process: palmy is one window per process, and a layer-shell
 	// overlay cannot be a child of a toplevel.
@@ -310,6 +321,14 @@ run_editor :: proc(st: ^St) {
 	st.toast = ""
 
 	st.fonts = &app.fonts
+	if st.collab_args.doc != "" && !collab.on {
+		if e := collab_start(st, app, st.collab_args); e != "" {
+			fmt.eprintfln("slides: %s", e)
+			os.exit(1)
+		}
+	} else if collab.on && collab.ui.sess != nil {
+		collab.ui.sess.cfg.wake_ctx = app
+	}
 	for i in 0 ..< MAX_THUMBS {
 		st.thumbs[i] = {st, i}
 	}
@@ -324,6 +343,7 @@ run_editor :: proc(st: ^St) {
 
 		clamp_state(st)
 		handle_keys(ui, app, st)
+		collab_tick(ui, st)
 		clamp_state(st)
 		build(ui, st)
 		mouse_edit(ui, st)

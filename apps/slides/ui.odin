@@ -12,6 +12,7 @@ package main
 import "core:math"
 import "core:strings"
 import p "palmy:."
+import collabui "../../cloud/collab/ui"
 import sc "shadcn:."
 
 TOP_H :: 44
@@ -33,6 +34,7 @@ build :: proc(ui: ^p.Ctx, st: ^St) {
 	st.sorter_vis = max(1, int((body_h - 36) / (st.thumb_w * 9 / 16 + 18)))
 	sorter_follow(st)
 
+	collabui.band(ui, &collab.ui)
 	top_bar(ui, st)
 
 	p.row(ui, "w-full flex-1 min-h-0 items-stretch")
@@ -43,7 +45,11 @@ build :: proc(ui: ^p.Ctx, st: ^St) {
 		notes_pane(ui, st)
 	}
 	p.end(ui)
-	inspector(ui, st)
+	if collab.on && collab.ui.panel != .None {
+		collab_panel(ui, st)
+	} else {
+		inspector(ui, st)
+	}
 	p.end(ui)
 
 	status_bar(ui, st)
@@ -88,7 +94,16 @@ top_bar :: proc(ui: ^p.Ctx, st: ^St) {
 	)
 	p.end(ui)
 
+	collabui.chip(ui, &collab.ui)
 	p.spacer(ui)
+
+	if collab.on {
+		collabui.presence(ui, &collab.ui)
+		if collabui.share_button(ui, &collab.ui) {
+			collab.ui.panel = collab.ui.panel == .Share ? .None : .Share
+			if collab.ui.panel == .Share {collabui.load_people(&collab.ui)}
+		}
+	}
 
 	p.row(ui, "shrink-0 items-center gap-2")
 	if !st.snap {
@@ -253,6 +268,9 @@ canvas_draw :: proc(c: ^p.Canvas, r: p.Rect, st: ^St) {
 			total = len(st.deck.slides),
 		},
 	)
+	if collab.on {
+		draw_peer_marks(c, slide, st)
+	}
 	// A hairline so a white slide still has an edge against the workspace.
 	p.stroke_round_rect(c, p.rect_inset(slide, -0.5), {2, 2, 2, 2}, max(1, c.scale), p.hexa(0xffffff1c))
 }

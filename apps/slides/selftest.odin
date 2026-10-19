@@ -46,7 +46,14 @@ selftest :: proc(exe_dir: string) -> int {
 	t: Checks
 	fonts: p.Fonts
 	fonts_headless(&fonts)
-	imgs := img_cache_make(exe_dir)
+	// The fixture's pictures sit beside the binary when it is built into
+	// apps/slides, and in the source tree otherwise; a binary built anywhere
+	// else used to fail eight picture checks for want of them.
+	asset_root := exe_dir
+	if !os.exists(fmt.tprintf("%s/assets/vista.png", exe_dir)) {
+		asset_root = #directory
+	}
+	imgs := img_cache_make(asset_root)
 
 	tmp := os.get_env("TMPDIR", context.temp_allocator)
 	if tmp == "" {
@@ -291,6 +298,9 @@ selftest :: proc(exe_dir: string) -> int {
 
 	// --- the interchange formats ----------------------------------------
 	t_export_formats(&t, &fonts, &imgs)
+
+	// --- collaboration -----------------------------------------------------
+	t_collab(&t)
 
 	fmt.printfln("%d checks, %d passed, %d failed", t.ok + t.fail, t.ok, t.fail)
 	return t.fail == 0 ? 0 : 1

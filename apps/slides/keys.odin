@@ -165,6 +165,7 @@ cmd_mutates :: proc(cmd: Cmd) -> bool {
 // push_history snapshots the deck. `coalesce` folds a burst of the same small
 // edit — a held arrow key — into one undo step instead of thirty.
 push_history :: proc(st: ^St, ui: ^p.Ctx, coalesce := false) {
+	collab_note_edit()
 	// A live text edit points the element at the editor's buffer, so it has to
 	// be made a real string before anything copies it.
 	if st.mode == .Text {
@@ -195,6 +196,12 @@ push_history :: proc(st: ^St, ui: ^p.Ctx, coalesce := false) {
 }
 
 undo_step :: proc(st: ^St, ui: ^p.Ctx, forward: bool) {
+	if collab.on {
+		// shared: this window's own last change, never a collaborator's
+		ok := collab_undo(st, forward)
+		toast(st, ui, ok ? (forward ? "Redone" : "Undone") : (forward ? "Nothing to redo" : "Nothing to undo"))
+		return
+	}
 	from := forward ? &st.redo : &st.undo
 	to := forward ? &st.undo : &st.redo
 	if from == nil || len(from^) == 0 {
@@ -221,6 +228,9 @@ undo_step :: proc(st: ^St, ui: ^p.Ctx, forward: bool) {
 // ---------------------------------------------------------------------------
 
 handle_keys :: proc(ui: ^p.Ctx, app: ^p.App, st: ^St) {
+	if st.mode == .Browse && collab_keys(ui, st) {
+		return
+	}
 	switch st.mode {
 	case .Help:
 		if len(ui.input.keys) > 0 {

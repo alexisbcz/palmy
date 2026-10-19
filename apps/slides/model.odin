@@ -101,6 +101,9 @@ Element :: struct {
 
 	// Image
 	src:      string, // path, relative to the asset root when not absolute
+
+	// Identity for collaboration (collab.odin); not part of the file.
+	uid:      u64 `json:"-"`,
 }
 
 Layout :: enum u8 {
@@ -125,6 +128,7 @@ Slide :: struct {
 	layout: Layout,
 	notes:  string,
 	elems:  [dynamic]Element,
+	uid:    u64 `json:"-"`, // identity for collaboration; not part of the file
 }
 
 Theme :: struct {
