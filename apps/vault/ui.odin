@@ -1878,6 +1878,8 @@ autofill_overlay :: proc(ui: ^p.Ctx, st: ^St) {
 		p.textf(ui, "text-base font-semibold truncate", "Fill %s?", pr.title)
 	case .Save:
 		p.text(ui, "Save this login?", "text-base font-semibold truncate")
+	case .Update:
+		p.textf(ui, "text-base font-semibold truncate", "Update the password of %s?", pr.title)
 	}
 	p.textf(ui, "text-[11] text-muted-foreground truncate", "%s · pid %d", pr.exe, pr.pid)
 	p.end(ui)
@@ -1891,7 +1893,7 @@ autofill_overlay :: proc(ui: ^p.Ctx, st: ^St) {
 		p.text(ui, pr.code, "text-3xl font-mono font-semibold tracking-widest whitespace-nowrap")
 		p.end(ui)
 		p.text(ui, "Paired programs still ask before every fill, and see only titles and usernames until you allow one.", "w-full text-[11] text-muted-foreground whitespace-normal")
-	case .Fill, .Save:
+	case .Fill, .Save, .Update:
 		p.col(ui, "w-full shrink-0 gap-0 rounded-xl border border-border overflow-hidden")
 		kv :: proc(ui: ^p.Ctx, k, v: string, first: bool) {
 			p.row(ui, p.concat(ui, "w-full shrink-0 items-center gap-3 h-10 px-4", first ? "" : " border-t border-border"))
@@ -1905,6 +1907,9 @@ autofill_overlay :: proc(ui: ^p.Ctx, st: ^St) {
 			kv(ui, "Identity", pr.identity, false)
 		}
 		p.end(ui)
+		if pr.kind == .Update {
+			p.text(ui, "The browser saw a new password submitted on this site for this login. The old one stays in the item's history.", "w-full text-[11] text-muted-foreground whitespace-normal")
+		}
 		if pr.kind == .Fill {
 			p.text(ui, "The browser will type the username and password into this page's focused form. It has named the page's top-level origin; the vault only offers logins saved for it.", "w-full text-[11] text-muted-foreground whitespace-normal")
 		}
@@ -1912,7 +1917,7 @@ autofill_overlay :: proc(ui: ^p.Ctx, st: ^St) {
 
 	p.row(ui, "w-full shrink-0 items-center gap-2")
 	p.spacer(ui)
-	hbtn(ui, st, IC_X, pr.kind == .Save ? "Not now" : "Deny", proc(st: ^St, ui: ^p.Ctx) {af_decide(&st.af, &st.bk, .Deny)})
+	hbtn(ui, st, IC_X, pr.kind == .Save || pr.kind == .Update ? "Not now" : "Deny", proc(st: ^St, ui: ^p.Ctx) {af_decide(&st.af, &st.bk, .Deny)})
 	if pr.kind == .Fill {
 		hbtn(ui, st, IC_CHECK, "Always on this site", proc(st: ^St, ui: ^p.Ctx) {af_decide(&st.af, &st.bk, .Always)})
 	}
@@ -1921,8 +1926,15 @@ autofill_overlay :: proc(ui: ^p.Ctx, st: ^St) {
 		label = "Pair"
 	} else if pr.kind == .Save {
 		label = "Save"
+	} else if pr.kind == .Update {
+		label = "Update"
 	}
-	pbtn(ui, IC_CHECK, label, "afallow", proc(st: ^St, ui: ^p.Ctx) {af_decide(&st.af, &st.bk, .Once)}, st)
+	pbtn(ui, IC_CHECK, label, "afallow", proc(st: ^St, ui: ^p.Ctx) {
+		saving := st.af.prompt.kind == .Save || st.af.prompt.kind == .Update
+		af_decide(&st.af, &st.bk, .Once)
+		// a login saved or updated from the browser goes to the other devices now
+		if saving && st.mode == .Account {st.busy = .Syncing}
+	}, st)
 	p.end(ui)
 }
 

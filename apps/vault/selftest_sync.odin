@@ -1067,6 +1067,29 @@ t_autofill :: proc() {
 	}
 	check(found, "the saved login is not in the vault")
 
+	// Updating a login the browser saw a new password for: the same origin
+	// and identity bindings as a fill, the person decides, the old password
+	// goes to the history.
+	t.policy = .Deny
+	ud := call(&cl, &t, af_req("op", "save", "id", forge_id, "origin", "https://forge.example.net", "identity", "", "username", "fx", "password", "changed-on-the-site-2"))
+	check(strings.contains(ud, "denied"), "a declined update answered: %s", ud)
+	uw := call(&cl, &t, af_req("op", "save", "id", forge_id, "origin", "https://elsewhere.example", "identity", "", "username", "fx", "password", "changed-on-the-site-2"))
+	check(strings.contains(uw, "not for this origin"), "an update from another origin: %s", uw)
+	un := call(&cl, &t, af_req("op", "save", "id", forge_id, "origin", "https://forge.example.net", "identity", "", "username", "fx", "password", ""))
+	check(strings.contains(un, "no password"), "an update without a password: %s", un)
+	t.policy = .Once
+	uo := call(&cl, &t, af_req("op", "save", "id", forge_id, "origin", "https://forge.example.net", "identity", "", "username", "fx", "password", "changed-on-the-site-2"))
+	check(strings.contains(uo, "\"updated\": true"), "update: %s", uo)
+	updated := false
+	for &x in b.v.entries {
+		if x.id == forge_id {
+			updated = x.password == "changed-on-the-site-2" && x.username == "fx" && len(x.history) > 0 && x.history[len(x.history) - 1].password == "af-fixture-pass"
+		}
+	}
+	check(updated, "the updated password (or the old one in the history) is not in the vault")
+	ux := call(&cl, &t, af_req("op", "save", "id", "no-such-id", "origin", "https://forge.example.net", "identity", "", "password", "x"))
+	check(strings.contains(ux, "no such login"), "an update of an unknown id: %s", ux)
+
 	// Locked: candidates are empty and fills are refused, without a word
 	// about what is inside.
 	vault_free(&b.v)

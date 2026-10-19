@@ -47,6 +47,7 @@ import "core:fmt"
 import "core:os"
 import "core:strings"
 import "core:sys/linux"
+import "core:time"
 import kit "kit:."
 
 AF_VERSION :: 1
@@ -80,6 +81,7 @@ Af_Prompt_Kind :: enum u8 {
 	Pair,
 	Fill,
 	Save,
+	Update, // save with an id: a new password for a login the vault has
 }
 
 // A question for the person, raised by a request and answered in the window
@@ -213,6 +215,11 @@ af_start :: proc(s: ^Af_Server, path := "") -> string {
 	s.path = strings.clone(path != "" ? path : af_socket_path(context.temp_allocator))
 	if s.pairs_path == "" {
 		s.pairs_path = strings.clone(fmt.tprintf("%s/autofill-pairs.json", data_dir(context.temp_allocator)))
+	}
+	// A vault opened from --vault-file elsewhere may never have created the
+	// data directory; without it a pairing would be approved and then lost.
+	if pdir := s.pairs_path[:max(strings.last_index_byte(s.pairs_path, '/'), 0)]; pdir != "" && !os.exists(pdir) {
+		os.make_directory_all(pdir, os.perm(0o700))
 	}
 	af_pairs_load(s)
 	dir := s.path[:strings.last_index_byte(s.path, '/')]
@@ -697,6 +704,41 @@ af_handle :: proc(s: ^Af_Server, b: ^Book, r: Af_Req) -> string {
 			return af_err("busy: another request is waiting for an answer")
 		}
 		p := af_pair(s, c.pair)
+		if id := js(o, "id"); id != "" {
+			// An update: the browser saw a new password submitted for a login
+			// it filled or matched. The same bindings as a fill -- the item's
+			// origin and identity -- and the person decides.
+			for &e in b.v.entries {
+				if e.id != id {
+					continue
+				}
+				if _, ok := entry_origin_match(&e, origin); !ok {
+					return af_err("that login is not for this origin")
+				}
+				if !af_identity_ok(b, &e, identity) {
+					return af_err("that login belongs to another identity")
+				}
+				if js(o, "password") == "" {
+					return af_err("no password")
+				}
+				user := js(o, "username")
+				s.prompt = Af_Prompt {
+					kind     = .Update,
+					conn     = r.conn,
+					client   = strings.clone(p.name),
+					exe      = strings.clone(c.exe),
+					pid      = c.pid,
+					origin   = strings.clone(origin),
+					identity = strings.clone(identity),
+					item_id  = strings.clone(e.id),
+					title    = strings.clone(e.title),
+					username = strings.clone(user != "" ? user : e.username),
+					password = strings.clone(js(o, "password")),
+				}
+				return ""
+			}
+			return af_err("no such login")
+		}
 		s.prompt = Af_Prompt {
 			kind     = .Save,
 			conn     = r.conn,
@@ -741,7 +783,9 @@ af_decide :: proc(s: ^Af_Server, b: ^Book, d: Af_Decision) {
 			p := Af_Pair{id = new_uuid(), name = strings.clone(pr.client != "" ? pr.client : "a program"), always = make([dynamic]string)}
 			p.key = pr.key
 			append(&s.pairs, p)
-			af_pairs_save(s)
+			if err := af_pairs_save(s); err != "" {
+				fmt.eprintfln("vault: the pairing holds until this process exits; it could not be kept: %s", err)
+			}
 			resp = fmt.tprintf("{{\"ok\": true, \"pair_id\": \"%s\"}}", p.id)
 		}
 	case .Fill:
@@ -779,6 +823,25 @@ af_decide :: proc(s: ^Af_Server, b: ^Book, d: Af_Decision) {
 				resp = "{\"ok\": true, \"saved\": true}"
 			} else {
 				resp = af_err(err)
+			}
+		}
+	case .Update:
+		if d != .Deny {
+			resp = af_err("no such login")
+			for &e, i in b.v.entries {
+				if e.id != pr.item_id {
+					continue
+				}
+				entry_set_password(&e, pr.password)
+				if pr.username != "" && pr.username != e.username {
+					replace_string(&e.username, pr.username)
+				}
+				if err := book_commit(b, i); err == "" {
+					resp = "{\"ok\": true, \"saved\": true, \"updated\": true}"
+				} else {
+					resp = af_err(err)
+				}
+				break
 			}
 		}
 	}
@@ -905,13 +968,19 @@ af_proof :: proc(key: []byte, challenge_b64: string) -> string {
 cmd_autofill :: proc(c: ^kit.Call) -> int {
 	b: Book
 	defer close_book(&b)
-	if code := open_book(c, &b); code != kit.EXIT_OK {
+	// --locked serves a vault nobody has unlocked: what the browser sees
+	// while the window sits at its lock screen.
+	locked := kit.cli_bool(c, "locked")
+	if code := open_book(c, &b, !locked); code != kit.EXIT_OK {
 		return code
 	}
 	policy := kit.cli_str(c, "allow") == "once" ? Af_Decision.Once : Af_Decision.Deny
 	if policy == .Once {
 		kit.cli_note(c, "vault: --allow once answers every pairing and fill with yes, with nobody asked. For tests and demos only.")
 	}
+	// --delay holds each question open that long before answering, the way a
+	// person takes a moment: the browser's waiting states can be seen.
+	delay_ms := kit.cli_int(c, "delay", 0)
 	s: Af_Server
 	if err := af_start(&s, kit.cli_str(c, "socket")); err != "" {
 		return kit.cli_fail(c, kit.EXIT_UNAVAILABLE, err)
@@ -920,22 +989,38 @@ cmd_autofill :: proc(c: ^kit.Call) -> int {
 	kit.cli_note(c, "vault: autofill listening on %s", s.path)
 	limit := kit.cli_int(c, "max-requests", 0)
 	handled := 0
-	for limit == 0 || handled < limit {
-		before := len(s.queue)
-		af_service(&s, 200)
-		got := len(s.queue) - before
-		for len(s.queue) > 0 {
+	asked: time.Tick
+	offline := kit.cli_bool(c, "offline")
+	// what was saved or updated goes to the server at once, as the window does
+	decide :: proc(s: ^Af_Server, b: ^Book, policy: Af_Decision, offline: bool) {
+		saving := s.prompt.kind == .Save || s.prompt.kind == .Update
+		af_decide(s, b, policy)
+		if saving && policy != .Deny && b.mode == .Account && !offline {
+			if _, err := book_sync(b); err != "" {
+				fmt.eprintfln("vault: saved on this device; not yet synced (%s)", err)
+			}
+		}
+	}
+	for limit == 0 || handled < limit || s.prompt.kind != .None {
+		af_service(&s, s.prompt.kind != .None ? 20 : 200)
+		if s.prompt.kind != .None && time.duration_milliseconds(time.tick_since(asked)) >= f64(delay_ms) {
+			decide(&s, &b, policy, offline)
+		}
+		for len(s.queue) > 0 && s.prompt.kind == .None {
 			r := pop_front(&s.queue)
 			resp := af_handle(&s, &b, r)
+			zero_bytes(transmute([]u8)r.line)
 			delete(r.line)
 			if resp != "" {
 				af_send(&s, r.conn, resp)
 			} else if s.prompt.kind != .None {
-				af_decide(&s, &b, policy)
+				asked = time.tick_now()
+				if delay_ms <= 0 {
+					decide(&s, &b, policy, offline)
+				}
 			}
 			handled += 1
 		}
-		_ = got
 		free_all(context.temp_allocator)
 	}
 	kit.jset_int(c.out, "served", s.served)
