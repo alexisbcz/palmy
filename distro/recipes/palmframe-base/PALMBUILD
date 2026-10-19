@@ -62,5 +62,6 @@ symlink  = /etc/mtab -> ../proc/self/mounts
 symlink  = /etc/localtime -> ../usr/share/zoneinfo/UTC
 mode     = /etc/shadow 0600
 mode     = /usr/share/udhcpc/default.script 0755
+mode     = /usr/lib/palmframe/syslog 0755
 dir      = /etc/palm/keys mode 0755
 dir      = /etc/palm/early.d mode 0755

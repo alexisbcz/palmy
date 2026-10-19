@@ -5,6 +5,10 @@ node_modules/
 # documented odin build command.
 *.bin
 bin/
+# ...except the hand-written scripts packages install into /usr/bin, which
+# are source (iwd's resolvconf shim was silently left out by the line above).
+!distro/recipes/runtime/files/*/usr/bin/
+!distro/base/root/usr/bin/
 .scratch/
 *.log
 

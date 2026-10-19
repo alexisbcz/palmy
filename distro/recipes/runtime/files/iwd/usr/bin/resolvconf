@@ -1,0 +1,20 @@
+#!/bin/sh
+# The subset of resolvconf(8) iwd uses: `resolvconf -a IFACE` reads resolv.conf
+# lines on stdin, `resolvconf -d IFACE` forgets them. Each interface's lines
+# are kept in /run/resolvconf/IFACE and /etc/resolv.conf is rewritten from
+# all of them. With none left, /etc/resolv.conf is left as it is (udhcpc on
+# eth0 writes it directly).
+dir=/run/resolvconf
+mkdir -p "$dir"
+case "$1" in
+-a) [ -n "$2" ] || exit 1; cat >"$dir/$2" ;;
+-d) [ -n "$2" ] || exit 1; rm -f "$dir/$2" ;;
+-u) ;;
+*) echo "usage: resolvconf -a IFACE < lines | -d IFACE | -u" >&2; exit 1 ;;
+esac
+set -- "$dir"/*
+[ -e "$1" ] || exit 0
+{
+	echo "# written by resolvconf from $dir"
+	cat "$@" | grep -E '^(nameserver|search|domain|options) ' | awk '!seen[$0]++'
+} >/etc/resolv.conf.new && mv /etc/resolv.conf.new /etc/resolv.conf
