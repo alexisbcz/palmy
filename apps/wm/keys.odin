@@ -149,7 +149,11 @@ handle_keys_bare :: proc(s: ^Server, app: ^p.App) {
 			// The client repeats keys itself. A repeat only matters here when
 			// the compositor owns the key: a held binding or an arrow key in
 			// an open overlay.
-			if w.swallowed[code] && !lock_active() {
+			if w.swallowed[code] && locker_internal() {
+				// Held Backspace in the lock's field.
+				w.took = true
+				locker_key(s, k)
+			} else if w.swallowed[code] && !lock_active() {
 				w.took = true
 				if !overlays_key(s, app, k, ke.code) {
 					wm_shortcut(s, app, k, ke.code)
