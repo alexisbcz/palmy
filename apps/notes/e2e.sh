@@ -22,7 +22,8 @@
 #      reaches Camille; a share to read refuses Bob's edit; revoking removes
 #      Bob's copy at his next sync
 #   6. carry: a work note carried into personal; an independent copy, a log
-#      row on both sides, the scoped work session cannot see the copy
+#      row on both sides, the scoped work session cannot see the copy; an
+#      attachment uploaded from the laptop arrives on the phone
 #   7. isolation: a process scoped to northwind sees only northwind's notes,
 #      on disk and in the database; asking for camille exits 5
 set -uo pipefail
@@ -231,6 +232,17 @@ check "independent: editing the original leaves the copy alone" bash -c "! grep 
 check "the copy reached the phone's personal folder" test -f "$P/camille/packing-list.md"
 code=0; PALM_IDENTITY=northwind laptop carry "Packing list" --to camille --json >/dev/null 2>&1 || code=$?
 check "a process scoped to northwind cannot carry (exit 5)" test "$code" = 5
+
+# ---------------------------------------------------------------- 6b
+step "6b. an attachment travels with its note"
+python3 -c "import sys; sys.stdout.buffer.write(b'\x89PNG\r\n\x1a\n' + bytes(range(256)) * 8)" >"$T/map.png"
+show 'laptop: notes attach "Lisbon trip" map.png'
+laptop attach "Lisbon trip" "$T/map.png" --json | jq_ '"  linked as %s" % d["link"]'
+laptop sync >/dev/null 2>&1; phone sync --json | jq_ '"  phone: %s" % "; ".join(e for i in d["identities"] for e in i["events"])'
+SHA=$(sha256sum "$T/map.png" | cut -c1-12)
+check "the phone fetched the attachment into attachments/" test -f "$P/camille/attachments/$SHA-map.png"
+check "byte for byte" cmp -s "$T/map.png" "$P/camille/attachments/$SHA-map.png"
+check "and the note links it" grep -q "attachments/$SHA-map.png" "$(one_file "$P/camille" "lisbon-trip.md")"
 
 # ---------------------------------------------------------------- 7
 step "7. isolation"
