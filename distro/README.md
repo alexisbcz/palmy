@@ -774,6 +774,17 @@ and `--bios` and `--direct` both reached palm-init and the serial login.
 Logging out and Restart were tested by the login agent in its own initramfs,
 not in this image.
 
+The integration round (2026-10-19) rebuilt the kernel, the image and the
+ISO from its branch and ran, in QEMU: `image/test-boot.py` (all passed),
+`live/test-boot.py` (all passed, firmware installed and carried),
+`live/test-install.py` (all passed; the installed disks have the medium's
+firmware parts) and `recipes/runtime/test-runtime.py` on the shipped kernel
+(24/24: dbus as `dbus`, iwd and BlueZ on the bus, Wi-Fi over
+mac80211_hwsim, PipeWire from palm-login's session hook, ended at logout).
+By hand on the image: Ctrl+Alt+F2/F1 switch VTs under wm, a key held 2 s in
+term types 40 characters, the wheel scrolls term the right way, `network`
+shows iwd's view, and its radio switch only logs an intent.
+
 Each component also has its own tests: `palm --selftest`, `palm-init
 --selftest`, `palm-login --selftest`, `init/test-boot.sh`,
 `login/test-boot.sh`, `login/e2e/run.sh`, `apps/wm/qemu-test.sh` and
