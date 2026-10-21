@@ -44,8 +44,11 @@ MONO_FONTS :: [?]string {
 }
 
 main :: proc() {
-	// The modes that need no window, handled before one is opened.
+	// The window-only modes keep their own spellings and are handled first;
+	// everything else is the command line declared in cli.odin, where
+	// `--selftest`, `--help`, `--export` and `--check=<feed>` now live.
 	import_arg := ""
+	legacy := false
 	args := os.args[1:]
 	for arg, i in args {
 		switch {
@@ -62,15 +65,6 @@ main :: proc() {
 				os.exit(2)
 			}
 			os.exit(run_shots(dir))
-		case arg == "--selftest":
-			os.exit(run_selftest())
-		case arg == "--help" || arg == "-h":
-			usage()
-			os.exit(0)
-		case arg == "--export":
-			os.exit(run_export())
-		case strings.has_prefix(arg, "--check="):
-			os.exit(run_check(arg[len("--check="):]))
 		case strings.has_prefix(arg, "--walkthrough"):
 			dir := "/tmp/palmy-shop-walkthrough"
 			if eq := strings.index_byte(arg, '='); eq > 0 {
@@ -85,12 +79,23 @@ main :: proc() {
 			os.exit(run_uitest(dir))
 		case strings.has_prefix(arg, "--import="):
 			import_arg = arg[len("--import="):]
-		case strings.has_prefix(arg, "-"):
-			fmt.eprintfln("shop: option inconnue %q", arg)
-			usage()
-			os.exit(2)
-		case:
-			import_arg = arg
+			legacy = true
+		}
+	}
+
+	if !legacy {
+		if code, handled := kit.cli(surface()); handled {
+			os.exit(code)
+		}
+		// Not a command: no arguments, or a bare feed path for the window.
+		// A word that is neither a command nor a file is a typo, and the
+		// answer to a typo is not a window that never returns to its caller.
+		if len(args) > 0 {
+			if !os.exists(args[0]) {
+				fmt.eprintfln("shop: %q is neither a command nor a feed file (shop --help)", args[0])
+				os.exit(2)
+			}
+			import_arg = args[0]
 		}
 	}
 
@@ -139,73 +144,4 @@ main :: proc() {
 		// tree, measured rather than guessed. Painting is palmy's half.
 		st.frame_ms = f64(time.diff(start, time.now())) / 1e6
 	}
-}
-
-usage :: proc() {
-	fmt.println(
-		`shop — comparateur de prix (France), sur palmy
-
-  shop                      ouvre la fenêtre avec le catalogue généré
-  shop <fichier>            importe un flux produits et l'ouvre
-  shop --import=<fichier>   idem
-  shop --export             écrit le catalogue en flux Merchant (XML + CSV)
-  shop --check=<fichier>    lit un flux et dit ce qu'il contient et ce qu'il refuse
-  shop --selftest           vérifie les calculs, sans fenêtre
-  shop --shots <dossier>    rend quelques vues hors écran en PNG
-  shop --uitest[=dossier]   rend l'interface hors écran en PNG
-  shop --walkthrough[=dir]  filme la visite image par image (20 i/s)
-
-Formats d'import: Google Merchant Center RSS 2.0 (namespace g:) et sa variante
-CSV/TSV. Aucun accès réseau: rien n'est téléchargé ni collecté en ligne, et le
-catalogue livré est généré localement — ce ne sont pas des prix réels.`,
-	)
-}
-
-// run_check reads a feed and reports what it found and what it refused,
-// without opening a window. It is how a feed is diagnosed before it is
-// imported, and it is the shortest demonstration that bad input is refused
-// rather than swallowed.
-run_check :: proc(path: string) -> int {
-	res := import_feed(path)
-	defer feed_result_destroy(&res)
-
-	fmt.printfln("%s", path)
-	if res.title != "" {
-		fmt.printfln("  flux: %s", res.title)
-	}
-	if res.fatal != "" {
-		fmt.printfln("  REFUSÉ: %s", res.fatal)
-		return 1
-	}
-	fmt.printfln("  %d produits lus, %d refusés", len(res.products), len(res.errors))
-	for e in res.errors {
-		fmt.printfln("    refusé %-16s %s", e.item, e.reason)
-	}
-	shown := min(5, len(res.products))
-	for i in 0 ..< shown {
-		p := res.products[i]
-		fmt.printfln(
-			"    %-12s %-44s %10s  %12s  %s",
-			retailer_name(p.retailer),
-			utf8_truncate(p.title, 44, context.temp_allocator),
-			fmt_money(p.price, context.temp_allocator),
-			p.has_unit ? fmt_unit_price(p.price, p.qty, context.temp_allocator) : "—",
-			p.nutri.grade != .None ? nutri_letter(p.nutri.grade) : "",
-		)
-	}
-	return len(res.errors) > 0 ? 0 : 0
-}
-
-run_export :: proc() -> int {
-	st := new(State)
-	state_init(st)
-	xp, cp, good := export_fixture(st)
-	if !good {
-		fmt.eprintfln("shop: écriture impossible dans %s", st.data_dir)
-		return 1
-	}
-	fmt.printfln("%d produits écrits:", len(st.cat.products))
-	fmt.printfln("  %s", xp)
-	fmt.printfln("  %s", cp)
-	return 0
 }

@@ -217,7 +217,13 @@ state_init :: proc(st: ^State, seed: u64 = 0x5107) {
 
 // data_dir is the one place this application writes. Nothing else on the disk
 // is created, modified or scanned.
+//
+// $PALMY_SHOP_DIR moves it, which is how the command-line self-test runs
+// against a scratch basket rather than the one the window is using.
 data_dir :: proc(allocator := context.allocator) -> string {
+	if over := os.get_env("PALMY_SHOP_DIR", context.temp_allocator); over != "" {
+		return strings.clone(over, allocator)
+	}
 	home := os.get_env("HOME", context.temp_allocator)
 	if home == "" {
 		home = "/tmp"

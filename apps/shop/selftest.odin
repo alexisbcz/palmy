@@ -21,6 +21,7 @@
 package main
 
 import "core:fmt"
+import kit "kit:."
 import "core:os"
 import "core:strings"
 import "core:time"
@@ -111,6 +112,7 @@ run_selftest :: proc() -> int {
 	test_round_trip()
 	test_persistence()
 	test_performance()
+	test_cli()
 
 	fmt.println("")
 	if failures == 0 {
@@ -1626,4 +1628,173 @@ test_performance :: proc() {
 	delete(st.colors)
 	delete(st.data_dir)
 	fmt.println("")
+}
+
+// ---------------------------------------------------------------------------
+// The command line
+//
+// The binary is run again as a child, against a scratch data directory, so
+// the assertions are about what a caller actually receives: the document on
+// stdout, the exit code, and the state file the window reads afterwards.
+// ---------------------------------------------------------------------------
+
+@(private = "file")
+cli_run :: proc(dir: string, args: ..string) -> (out: string, code: int) {
+	self, err := os.get_executable_path(context.temp_allocator)
+	if err != nil {
+		self = os.args[0]
+	}
+	line := strings.builder_make(context.temp_allocator)
+	strings.write_string(&line, "WAYLAND_DISPLAY= DISPLAY= ")
+	strings.write_string(&line, fmt.tprintf("PALMY_SHOP_DIR=%q PALM_AUDIT=%q %q", dir, fmt.tprintf("%s/audit.jsonl", dir), self))
+	for a in args {
+		strings.write_string(&line, fmt.tprintf(" %q", a))
+	}
+	state, sout, _, perr := os.process_exec({command = {"sh", "-c", strings.to_string(line)}}, context.temp_allocator)
+	if perr != nil {
+		return "", -1
+	}
+	return string(sout), state.exit_code
+}
+
+@(private = "file")
+schema_ok :: proc(out: string, fields: []kit.Field, what: string) {
+	problems := kit.cli_validate_output(out, fields, context.temp_allocator)
+	ok(len(problems) == 0, "%s matches its declared schema%s", what, len(problems) > 0 ? fmt.tprintf(" (%s)", problems[0]) : "")
+}
+
+@(private = "file")
+test_cli :: proc() {
+	dir := fmt.tprintf("/tmp/palmy-shop-cli-%d", os.get_pid())
+	os.make_directory_all(dir)
+	defer os.remove_all(dir)
+
+	sf := surface()
+	ok(sf.noun == "shop", "the surface is named shop")
+	for cmd in sf.commands {
+		ok(cmd.run != nil && cmd.summary != "" && len(cmd.out) > 0 && len(cmd.examples) > 0, "%s is declared whole", cmd.verb)
+		for ex in cmd.examples {
+			words := kit.cli_split_example(ex, context.temp_allocator)
+			ok(len(words) > 0 && words[0] == "shop", "the example %q starts with the binary", ex)
+			args := make([dynamic]string, context.temp_allocator)
+			for w in words[1:] {
+				append(&args, w)
+			}
+			append(&args, "--parse-only")
+			_, code := cli_run(dir, ..args[:])
+			eq_int(i64(code), 0, fmt.tprintf("the example %q parses", ex))
+		}
+	}
+
+	// Reads on an empty state: documents, not errors.
+	{
+		out, code := cli_run(dir, "basket", "--json")
+		eq_int(i64(code), 0, "basket on an empty state exits 0")
+		schema_ok(out, BASKET_FIELDS, "basket")
+		out, code = cli_run(dir, "list", "--json")
+		schema_ok(out, LIST_FIELDS, "list")
+		out, code = cli_run(dir, "alerts", "--json")
+		schema_ok(out, ALERTS_FIELDS, "alerts")
+	}
+
+	// Search goes through the window's refilter: the same query and facet
+	// give the same count in process.
+	{
+		out, code := cli_run(dir, "search", "lait", "--retailer", "Leclerc", "--limit", "0", "--json")
+		eq_int(i64(code), 0, "search exits 0")
+		schema_ok(out, SEARCH_FIELDS, "search")
+		st := new(State)
+		state_init(st)
+		append(&st.query, "lait")
+		st.filter.retailers[.Leclerc] = true
+		refilter(st)
+		ok(strings.contains(out, fmt.tprintf(`"matched": %d`, len(st.vis))), "and finds what the window's search finds (%d)", len(st.vis))
+		ok(len(st.vis) > 0, "which is something")
+	}
+	{
+		out, code := cli_run(dir, "search", "--retailer", "Nowhere", "--json")
+		eq_int(i64(code), 2, "an unknown chain is a usage error")
+		ok(strings.contains(out, `"error": "usage"`), "with the documented error object")
+	}
+	{
+		out, code := cli_run(dir, "show", "LEC-0000-0", "--json")
+		eq_int(i64(code), 0, "show exits 0")
+		schema_ok(out, SHOW_FIELDS, "show")
+		out, code = cli_run(dir, "show", "E.Leclerc:LEC-0000-0", "--json")
+		eq_int(i64(code), 0, "a product is found as Retailer:id too")
+		out, code = cli_run(dir, "show", "NOPE-1", "--json")
+		eq_int(i64(code), 3, "an unknown product exits 3")
+		ok(strings.contains(out, `"error": "not found"`), "with the documented error object")
+		out, code = cli_run(dir, "compare", "LEC-0000-0", "--json")
+		schema_ok(out, COMPARE_FIELDS, "compare")
+		ok(strings.count(out, `"retailer": "Carrefour"`) > 0, "and the comparison spans chains")
+	}
+
+	// Changes land in the file the window loads.
+	{
+		out, code := cli_run(dir, "basket-add", "LEC-0000-0", "--qty", "2", "--json")
+		eq_int(i64(code), 0, "basket-add exits 0")
+		schema_ok(out, CHANGED_FIELDS, "basket-add")
+		_, _ = cli_run(dir, "list-add", "CRF-0000-1", "--json")
+		_, _ = cli_run(dir, "list-check", "CRF-0000-1", "--json")
+		out, code = cli_run(dir, "list-check", "CRF-0000-1", "--json")
+		ok(strings.contains(out, `"changed": false`), "list-check is safe to repeat")
+		_, _ = cli_run(dir, "alert-set", "LEC-0000-0", "--below", "1,10", "--json")
+		_, _ = cli_run(dir, "basket-add", "ITM-0000-0", "--dry-run", "--json")
+
+		st := new(State)
+		st.compare_of = -1
+		st.query = make([dynamic]u8)
+		st.vis = make([dynamic]int)
+		st.basket = make([dynamic]Basket_Line)
+		st.list = make([dynamic]List_Item)
+		st.alerts = make([dynamic]Alert)
+		st.brands = make([dynamic]string)
+		st.colors = make([dynamic]string)
+		st.data_dir = strings.clone(dir)
+		fixture_build(&st.cat)
+		load_state(st)
+		eq_int(i64(len(st.basket)), 1, "the window's load_state sees one basket line (the dry run wrote nothing)")
+		if len(st.basket) == 1 {
+			eq_str(st.cat.products[st.basket[0].product].id, "LEC-0000-0", "the line the CLI added")
+			eq_int(i64(st.basket[0].qty), 2, "with its quantity")
+		}
+		eq_int(i64(len(st.list)), 1, "and one list item")
+		ok(len(st.list) == 1 && st.list[0].done, "ticked")
+		eq_int(i64(len(st.alerts)), 1, "and one alert")
+		if len(st.alerts) == 1 {
+			eq_money(st.alerts[0].threshold, 110, "at the threshold given")
+		}
+
+		out, code = cli_run(dir, "basket", "--json")
+		schema_ok(out, BASKET_FIELDS, "basket with a line in it")
+		ok(strings.contains(out, `"ttc_cents": 238`), "and its total is two litres of milk")
+		out, code = cli_run(dir, "alerts", "--json")
+		schema_ok(out, ALERTS_FIELDS, "alerts with one armed")
+		out, code = cli_run(dir, "list-clear-done", "--json")
+		ok(strings.contains(out, `"removed": 1`), "list-clear-done drops the ticked item")
+	}
+
+	// Export and check close the loop on the feed formats.
+	{
+		out, code := cli_run(dir, "export", "--json")
+		eq_int(i64(code), 0, "export exits 0")
+		schema_ok(out, EXPORT_FIELDS, "export")
+		feed := fmt.tprintf("%s/catalogue-demo.xml", dir)
+		ok(os.exists(feed), "and the feed is in the application's directory")
+		out, code = cli_run(dir, "check", feed, "--json")
+		eq_int(i64(code), 0, "check reads it back")
+		schema_ok(out, CHECK_FIELDS, "check")
+		out, code = cli_run(dir, fmt.tprintf("--check=%s", feed))
+		eq_int(i64(code), 0, "the old --check=<feed> spelling still works")
+		_, code = cli_run(dir, "check", fmt.tprintf("%s/missing.xml", dir), "--json")
+		eq_int(i64(code), 3, "a feed that is not there exits 3")
+	}
+
+	// The audit log records changes and not reads.
+	{
+		audit, _ := os.read_entire_file(fmt.tprintf("%s/audit.jsonl", dir), context.temp_allocator)
+		ok(strings.contains(string(audit), `"verb":"basket-add"`), "a change leaves an audit record")
+		ok(!strings.contains(string(audit), `"verb":"basket"`) && !strings.contains(string(audit), `"verb":"search"`), "a read does not")
+	}
 }
