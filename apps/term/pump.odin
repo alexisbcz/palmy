@@ -1,8 +1,8 @@
 package main
 
 import "core:sync"
-import "core:sys/linux"
 import "core:thread"
+import pal "palmy:."
 import vt "./vt"
 
 // ---------------------------------------------------------------------------
@@ -29,21 +29,24 @@ import vt "./vt"
 Pump :: struct {
 	mu:      sync.Mutex,
 	sess:    ^Session,
-	wake_r:  linux.Fd,
-	wake_w:  linux.Fd,
+	wake_r:  Fd,
+	wake_w:  Fd,
 	th:      ^thread.Thread,
 	running: bool,
 	// Set by the reader when a terminal changed, read and cleared by the
 	// frame loop. Both are under the mutex.
 	dirty:   bool,
+	// The window, for sys_wake_loop on macOS, where there is no display
+	// descriptor beside the pipe to poll and the reader wakes palmy instead.
+	app:     ^pal.App,
 }
 
 pump_start :: proc(p: ^Pump, s: ^Session) -> bool {
-	fds: [2]linux.Fd
-	if linux.pipe2(&fds, {.NONBLOCK, .CLOEXEC}) != .NONE {
+	r, w, ok := sys_pipe()
+	if !ok {
 		return false
 	}
-	p.wake_r, p.wake_w = fds[0], fds[1]
+	p.wake_r, p.wake_w = r, w
 	p.sess = s
 	p.running = true
 	p.th = thread.create_and_start_with_poly_data(p, pump_loop)
@@ -63,26 +66,19 @@ pump_stop :: proc(p: ^Pump) {
 		thread.destroy(p.th)
 		p.th = nil
 	}
-	linux.close(p.wake_r)
-	linux.close(p.wake_w)
+	sys_close(p.wake_r)
+	sys_close(p.wake_w)
 }
 
 // pump_signal makes the frame loop's poll() return. Writes are coalesced by
 // the drain on the other side, and a full pipe means a wakeup is already
 // pending, so the EAGAIN is the right answer rather than an error.
 pump_signal :: proc(p: ^Pump) {
-	b := [1]u8{1}
-	linux.write(p.wake_w, b[:])
+	sys_wake_loop(p)
 }
 
 pump_drain :: proc(p: ^Pump) {
-	buf: [256]u8
-	for {
-		n, err := linux.read(p.wake_r, buf[:])
-		if err != .NONE || n <= 0 {
-			return
-		}
-	}
+	sys_drain(p.wake_r)
 }
 
 @(private = "file")
@@ -90,8 +86,10 @@ pump_loop :: proc(p: ^Pump) {
 	// 64 KB at a time: big enough that the syscall overhead disappears,
 	// small enough that the frame loop never waits long for the mutex.
 	buf: [64 * 1024]u8
-	pfds := make([dynamic]linux.Poll_Fd)
+	pfds := make([dynamic]Fd)
 	defer delete(pfds)
+	ready := make([dynamic]bool)
+	defer delete(ready)
 	tabs := make([dynamic]^Pane)
 	defer delete(tabs)
 
@@ -106,7 +104,7 @@ pump_loop :: proc(p: ^Pump) {
 		for t in p.sess.panes {
 			if !t.dead && t.pty.master > 0 {
 				append(&tabs, t)
-				append(&pfds, linux.Poll_Fd{fd = t.pty.master, events = {.IN}})
+				append(&pfds, t.pty.master)
 			}
 		}
 		sync.unlock(&p.mu)
@@ -114,13 +112,16 @@ pump_loop :: proc(p: ^Pump) {
 		if len(pfds) == 0 {
 			// Nothing to read from. Wait a little rather than spinning; a
 			// new tab will be along shortly or the app is shutting down.
-			ts := linux.Time_Spec{0, 20 * 1000 * 1000}
-			linux.nanosleep(&ts, nil)
+			sys_nap_20ms()
 			continue
 		}
 
-		n, perr := linux.poll(pfds[:], 50)
-		if perr != .NONE && perr != .EINTR {
+		resize(&ready, len(pfds))
+		for &r in ready {
+			r = false
+		}
+		n, fatal := sys_poll_in(pfds[:], ready[:], 50)
+		if fatal {
 			return
 		}
 		if n <= 0 {
@@ -128,8 +129,8 @@ pump_loop :: proc(p: ^Pump) {
 		}
 
 		changed := false
-		for pf, i in pfds {
-			if .IN not_in pf.revents && .HUP not_in pf.revents && .ERR not_in pf.revents {
+		for i in 0 ..< len(pfds) {
+			if !ready[i] {
 				continue
 			}
 			t := tabs[i]

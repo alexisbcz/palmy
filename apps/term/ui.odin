@@ -3,9 +3,8 @@ package main
 import "core:fmt"
 import "core:strings"
 import "core:sync"
-import "core:sys/linux"
 
-os_fd :: linux.Fd
+os_fd :: Fd
 import "core:time"
 import kit "kit:."
 import p "palmy:."
@@ -85,20 +84,10 @@ note :: proc(a: ^Term_App, s: string) {
 // only thing that changes is this procedure.
 // ---------------------------------------------------------------------------
 
-wait_for_work :: proc(a: ^Term_App, timeout_ms: int) {
-	// A held key repeats on palmy's clock, not on any descriptor, so the
-	// wait ends when the next repeat is due.
-	timeout_ms := timeout_ms
-	if r := p.key_repeat_timeout(a.app); r >= 0 && (timeout_ms < 0 || r < timeout_ms) {
-		timeout_ms = r
-	}
-	pfds := [2]linux.Poll_Fd {
-		{fd = a.pump.wake_r, events = {.IN}},
-		{fd = a.app.win.conn.fd, events = {.IN}},
-	}
-	p.poll_fds(pfds[:], timeout_ms) // -1 must mean forever on arm64 too
-	pump_drain(&a.pump)
-}
+// wait_for_work itself is in sys_linux.odin and sys_darwin.odin. On macOS
+// there is no display descriptor to poll beside the reader's pipe, so there
+// it is the other way round: the reader thread calls palmy.wake(app), the
+// frame loop is not kept animating, and the timeout becomes a wake_after.
 
 // ---------------------------------------------------------------------------
 // Layout
@@ -153,8 +142,11 @@ repaint_all :: proc(a: ^Term_App) {
 // ---------------------------------------------------------------------------
 
 frame :: proc(a: ^Term_App, ui: ^p.Ctx) {
-	// Keep the loop turning; the blocking happens in wait_for_work.
-	ui.animating = true
+	// Keep the loop turning; the blocking happens in wait_for_work. (Not on
+	// macOS: there palmy's own loop blocks; see sys_darwin.odin.)
+	if LOOP_ANIMATES {
+		ui.animating = true
+	}
 
 	sync.lock(&a.pump.mu)
 	defer sync.unlock(&a.pump.mu)

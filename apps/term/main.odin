@@ -181,6 +181,7 @@ run_window :: proc(opt: Options, always_tabs: bool) {
 		fmt.eprintfln("term: %s", e)
 		os.exit(1)
 	}
+	ta.pump.app = app
 	if !pump_start(&ta.pump, &ta.sess) {
 		fmt.eprintln("term: cannot start the reader thread")
 		os.exit(1)

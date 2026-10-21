@@ -3,7 +3,6 @@ package main
 import "core:fmt"
 import "core:os"
 import "core:strings"
-import "core:sys/linux"
 
 // ---------------------------------------------------------------------------
 // What a Kitty file transfer may read.
@@ -51,20 +50,20 @@ kitty_read_file :: proc(path_in: string, medium: u8, offset, size, limit: int) -
 	}
 
 	cpath := strings.clone_to_cstring(path, context.temp_allocator)
-	fd, oerr := linux.open(cpath, {.NOCTTY, .NONBLOCK, .CLOEXEC})
-	if oerr != .NONE {
+	fd, ook := sys_open_nb(cpath)
+	if !ook {
 		return nil, "EBADF:the file cannot be opened"
 	}
-	defer linux.close(fd)
+	defer sys_close(fd)
 
-	st: linux.Stat
-	if linux.fstat(fd, &st) != .NONE {
+	regular, file_size, sok := sys_regular_size(fd)
+	if !sok {
 		return nil, "EBADF:the file cannot be read"
 	}
-	if st.mode & linux.S_IFMT != linux.S_IFREG {
+	if !regular {
 		return nil, "EBADF:not a regular file"
 	}
-	real := real_path(fd)
+	real := sys_real_path(fd)
 	if real == "" {
 		return nil, "EBADF:the file cannot be read"
 	}
@@ -78,7 +77,7 @@ kitty_read_file :: proc(path_in: string, medium: u8, offset, size, limit: int) -
 		return nil, "EPERM:not in /dev/shm"
 	}
 
-	total := int(st.size)
+	total := file_size
 	off := max(offset, 0)
 	if off > total {
 		return nil, "EINVAL:the offset is past the end of the file"
@@ -91,37 +90,26 @@ kitty_read_file :: proc(path_in: string, medium: u8, offset, size, limit: int) -
 		return nil, "EFBIG:the file is larger than the image budget"
 	}
 	if off > 0 {
-		if _, serr := linux.lseek(fd, i64(off), .SET); serr != .NONE {
+		if !sys_seek(fd, off) {
 			return nil, "EBADF:the file cannot be read"
 		}
 	}
 	buf := make([]u8, n)
 	got := 0
 	for got < n {
-		k, rerr := linux.read(fd, buf[got:])
-		if rerr == .EINTR {
+		k, rerr := sys_read(fd, buf[got:])
+		if rerr == .Intr {
 			continue
 		}
-		if rerr != .NONE || k <= 0 {
+		if rerr != .None || k <= 0 {
 			break
 		}
 		got += k
 	}
 	if medium == 't' || medium == 's' {
-		linux.unlink(cpath)
+		sys_unlink(cpath)
 	}
 	return buf[:got], ""
-}
-
-@(private = "file")
-real_path :: proc(fd: linux.Fd) -> string {
-	link := fmt.ctprintf("/proc/self/fd/%d", fd)
-	buf := make([]u8, 4096, context.temp_allocator)
-	n, err := linux.readlink(link, buf)
-	if err != .NONE || n <= 0 {
-		return ""
-	}
-	return string(buf[:n])
 }
 
 @(private = "file")

@@ -859,7 +859,7 @@ test_pty :: proc() {
 	defer vt.terminal_destroy(&t)
 
 	env := child_env("xterm-256color", nil)
-	argv := []string{"/bin/sh", "-c", "printf 'hello from a pty\\n'; printf 'cols=%s\\n' \"$(tput cols 2>/dev/null || echo ?)\""}
+	argv := []string{"/bin/sh", "-c", "printf 'hello from a pty\\n'; printf 'cols=%s\\n' \"$(stty size 2>/dev/null | cut -d' ' -f2)\""}
 	pty, err := pty_spawn({argv = argv, env = env, cols = 40, rows = 6})
 	if err != "" {
 		check(false, "spawning a pty: %s", err)
@@ -890,7 +890,7 @@ test_pty :: proc() {
 	t2: vt.Terminal
 	vt.terminal_init(&t2, 40, 6, 100)
 	defer vt.terminal_destroy(&t2)
-	argv2 := []string{"/bin/sh", "-c", "sleep 0.25; printf 'cols=%s\\n' \"$(tput cols 2>/dev/null || echo ?)\""}
+	argv2 := []string{"/bin/sh", "-c", "sleep 0.25; printf 'cols=%s\\n' \"$(stty size 2>/dev/null | cut -d' ' -f2)\""}
 	pty2, err2 := pty_spawn({argv = argv2, env = env, cols = 40, rows = 6})
 	if err2 != "" {
 		check(false, "spawning the resize pty: %s", err2)

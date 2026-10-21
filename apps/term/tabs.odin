@@ -4,7 +4,6 @@ import "core:fmt"
 import "core:os"
 import "core:slice"
 import "core:strings"
-import "core:sys/linux"
 import "core:time"
 import vt "./vt"
 
@@ -384,20 +383,14 @@ pane_cwd :: proc(p: ^Pane) -> string {
 	buf: [4096]u8
 	pids: [2]i32
 	if p.pty.master > 0 {
-		pgrp: i32
-		if linux.ioctl(p.pty.master, 0x540F, uintptr(&pgrp)) == 0 && pgrp > 0 {
-			pids[0] = pgrp
-		}
+		pids[0] = sys_foreground_pgrp(p.pty.master)
 	}
 	pids[1] = i32(p.pty.pid)
 	for pid in pids {
 		if pid <= 0 {
 			continue
 		}
-		link := fmt.ctprintf("/proc/%d/cwd", pid)
-		n, err := linux.readlink(link, buf[:])
-		if err == .NONE && n > 0 {
-			dir := strings.clone(string(buf[:n]), context.temp_allocator)
+		if dir := sys_process_cwd(pid, buf[:]); dir != "" {
 			if os.is_dir(dir) {
 				return dir
 			}
@@ -412,17 +405,7 @@ foreground_name :: proc(p: ^Pty) -> string {
 	if p.master <= 0 {
 		return ""
 	}
-	pgrp: i32
-	// TIOCGPGRP
-	if linux.ioctl(p.master, 0x540F, uintptr(&pgrp)) != 0 || pgrp <= 0 {
-		return ""
-	}
-	path := fmt.tprintf("/proc/%d/comm", pgrp)
-	data, rerr := os.read_entire_file(path, context.temp_allocator)
-	if rerr != nil || len(data) == 0 {
-		return ""
-	}
-	return strings.trim_space(string(data))
+	return sys_foreground_name(p.master)
 }
 
 // ---------------------------------------------------------------------------
@@ -586,7 +569,7 @@ session_write :: proc(s: ^Session, data: []u8) {
 
 // session_fds collects the pty descriptors so the frame loop can wait on them
 // alongside the display connection.
-session_fds :: proc(s: ^Session, out: ^[dynamic]linux.Fd) {
+session_fds :: proc(s: ^Session, out: ^[dynamic]Fd) {
 	clear(out)
 	for p in s.panes {
 		if !p.dead && p.pty.master > 0 {

@@ -3,7 +3,6 @@ package main
 import "core:fmt"
 import "core:os"
 import "core:strings"
-import "core:sys/linux"
 import "core:time"
 import p "palmy:."
 import vt "./vt"
@@ -499,11 +498,13 @@ test_kitty_files :: proc() {
 	eq_s(take(&t), "\x1b_Gi=1;EBADF:file transfer is not allowed here\x1b\\", "with no loader, files are refused")
 
 	t.gfx.load_file = kitty_read_file
-	dir := os.get_env("TMPDIR", context.temp_allocator)
+	// macOS's TMPDIR ends in a slash; "T//name" is not a file directly in
+	// the temporary directory, which is what the policy checks.
+	dir := strings.trim_right(os.get_env("TMPDIR", context.temp_allocator), "/")
 	if dir == "" {
 		dir = "/tmp"
 	}
-	pid := linux.getpid()
+	pid := sys_getpid()
 	plain := fmt.tprintf("%s/term-selftest-%d.png", dir, pid)
 	temp := fmt.tprintf("%s/term-selftest-%d-tty-graphics-protocol.png", dir, pid)
 	_ = os.write_entire_file(plain, GRADIENT_PNG)
@@ -532,11 +533,14 @@ test_kitty_files :: proc() {
 	link := fmt.tprintf("%s/term-selftest-%d-link.png", dir, pid)
 	os.remove(link)
 	clink := strings.clone_to_cstring(link, context.temp_allocator)
-	linux.symlink("/proc/self/status", clink)
 	defer os.remove(link)
-	feed(&t, kitty("a=t,t=f,i=6,f=100", b64(transmute([]u8)link)))
-	r = take(&t)
-	check(strings.contains(r, "EPERM"), "not even through a symlink: %q", r)
+	// macOS has no /proc and no regular file under /dev to point at.
+	if SYMLINK_PROBE != "" {
+		sys_symlink(SYMLINK_PROBE, clink)
+		feed(&t, kitty("a=t,t=f,i=6,f=100", b64(transmute([]u8)link)))
+		r = take(&t)
+		check(strings.contains(r, "EPERM"), "not even through a symlink: %q", r)
+	}
 	feed(&t, kitty("a=t,t=f,i=7,f=100", b64(transmute([]u8)dir)))
 	r = take(&t)
 	check(strings.contains(r, "EBADF"), "a directory is not a regular file: %q", r)
@@ -546,7 +550,7 @@ test_kitty_files :: proc() {
 	fifo := fmt.tprintf("%s/term-selftest-%d.fifo", dir, pid)
 	os.remove(fifo)
 	cfifo := strings.clone_to_cstring(fifo, context.temp_allocator)
-	linux.mknod(cfifo, linux.S_IFIFO | {.IRUSR, .IWUSR}, 0)
+	sys_mkfifo(cfifo)
 	defer os.remove(fifo)
 	start := time.now()
 	feed(&t, kitty("a=t,t=f,i=9,f=100", b64(transmute([]u8)fifo)))
