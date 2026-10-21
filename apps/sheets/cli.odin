@@ -268,14 +268,30 @@ surface :: proc() -> ^kit.Surface {
 			summary    = "a spreadsheet, and the formula engine underneath it",
 			gui        = true,
 			// `sheets book.csv` opens the file, which is why a bare word that
-			// is not a verb is handed to the window rather than refused.
+			// is not a verb is handed to the window rather than refused —
+			// but only a word that names something to open, so a mistyped
+			// verb is a usage error rather than a window.
 			takes_path = true,
+			takes_word = sheets_takes_word,
 			selftest   = selftest,
 			notes      = SURFACE_NOTES,
 			commands   = COMMANDS,
 		}
 	}
 	return &g_surface
+}
+
+// sheets_takes_word is `kit.cli_word_is_path`, plus the one path that is
+// not on disk and still opens: `book.csv` whose several-sheet export,
+// `book-<Sheet>.csv`, is (see `csv_read_book`).
+sheets_takes_word :: proc(word: string) -> bool {
+	if kit.cli_word_is_path(word) {
+		return true
+	}
+	if strings.has_suffix(word, ".csv") || strings.has_suffix(word, ".tsv") {
+		return len(csv_book_files(word)) > 0
+	}
+	return false
 }
 
 @(private = "file")

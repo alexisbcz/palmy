@@ -148,6 +148,12 @@ t_csv_book :: proc(tc: ^TC) {
 		ok_mark(tc, os.exists(fmt.tprintf("%s/cli-Sales.csv", dir)) && os.exists(fmt.tprintf("%s/cli-Summary.csv", dir)), "and writes both sheets")
 		out, code = cli_run("info", fmt.tprintf("%s/cli.csv", dir), "--json")
 		ok_mark(tc, code == 0 && strings.contains(out, `"Summary"`) && strings.contains(out, `"Sales"`), fmt.tprintf("info on the exported path reads both sheets back (%d)", code))
+		// A bare word opens the window only when it names something to open.
+		ok_mark(tc, sheets_takes_word(fmt.tprintf("%s/cli.csv", dir)), "the exported set's path counts as a file to open")
+		ok_mark(tc, sheets_takes_word(fmt.tprintf("%s/cli-Sales.csv", dir)), "and so does one of its files")
+		ok_mark(tc, !sheets_takes_word(fmt.tprintf("%s/none.csv", dir)) && !sheets_takes_word("infoo"), "a missing file or a mistyped verb does not")
+		out, code = cli_run("infoo", "--json")
+		ok_mark(tc, code == 2 && strings.contains(out, "neither a command nor a file"), fmt.tprintf("so `sheets infoo` is a usage error, not a window (%d)", code))
 		out, code = cli_run("get", "Summary!B8", fmt.tprintf("%s/cli.csv", dir), "--json")
 		ok_mark(tc, code == 0 && strings.contains(out, `"number": 2781.05`), fmt.tprintf("with the summary's values in it, as numbers (%s)", out))
 		out, code = cli_run("export", fmt.tprintf("%s/one.csv", dir), "--sheet", "summary", "--json")

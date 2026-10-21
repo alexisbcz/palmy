@@ -1619,12 +1619,15 @@ t_cli :: proc(tc: ^TC) {
 	{
 		_, code := cli_run("--transpose")
 		ok_mark(tc, code == kit.EXIT_USAGE, "an unknown flag exits 2")
-		// But a bare word is a file name for the window, which is what
+		// A bare word that names a file is the window's, which is what
 		// takes_path declares, so it is not the CLI's to refuse. (With no
 		// display it cannot open one here, so this says only that the
-		// dispatcher let it past.)
-		_, bare := cli_run("transpose")
-		ok_mark(tc, bare != kit.EXIT_USAGE, "a bare word is handed to the window, not refused")
+		// dispatcher let it past.) One that names nothing — a mistyped verb —
+		// is refused: takes_word.
+		_, bare := cli_run(cli_self_exe())
+		ok_mark(tc, bare != kit.EXIT_USAGE, "a bare word naming a file is handed to the window, not refused")
+		_, typo := cli_run("transpose")
+		ok_mark(tc, typo == kit.EXIT_USAGE, "a bare word naming nothing is a usage error")
 	}
 	{
 		_, code := cli_run("get")
