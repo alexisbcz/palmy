@@ -351,6 +351,7 @@ surface :: proc() -> ^kit.Surface {
 			summary    = "price comparison across six French chains, on a generated catalogue",
 			gui        = true,
 			takes_path = true, // `shop feed.xml` imports a feed and opens the window
+			takes_word = kit.cli_word_is_path, // and `shop lsit` is a usage error
 			selftest   = run_selftest,
 			notes      = SURFACE_NOTES,
 			commands   = COMMANDS,

@@ -87,14 +87,9 @@ main :: proc() {
 		if code, handled := kit.cli(surface()); handled {
 			os.exit(code)
 		}
-		// Not a command: no arguments, or a bare feed path for the window.
-		// A word that is neither a command nor a file is a typo, and the
-		// answer to a typo is not a window that never returns to its caller.
+		// Not a command: no arguments, or a bare feed path for the window
+		// (the kit refused a word that is neither).
 		if len(args) > 0 {
-			if !os.exists(args[0]) {
-				fmt.eprintfln("shop: %q is neither a command nor a feed file (shop --help)", args[0])
-				os.exit(2)
-			}
 			import_arg = args[0]
 		}
 	}
