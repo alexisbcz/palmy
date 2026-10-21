@@ -80,9 +80,11 @@ switches still type-check against.
   fonts differs between the two machines. The same panel with Geist pinned
   is byte-identical.
 - **Idle CPU over 15 s:** 0.00 s for counter, notes and the parity
-  showcase; 0.01 s for sheets and term. colorpick costs 4.7% of a core
-  (`-o:speed`) because its focused field's caret blinks, which repaints
-  the whole Retina window in software. The same cost exists on Linux.
+  showcase, and 0.01 s for sheets. term, built from a local port, used
+  0.01–0.26 s. While colorpick's window is visible it costs 4.7% of a core
+  (`-o:speed`), because the caret in its focused field blinks and each
+  blink repaints the whole Retina window in software. Linux has the same
+  cost. While the window is hidden, colorpick costs 0.
 
 ## Not done
 
