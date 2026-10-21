@@ -380,6 +380,16 @@ tick :: proc(app: ^App) {
 // that, so it pays nothing — no frame runs twice — and an app that wakes
 // itself every frame cannot turn a hidden window into a busy loop. A window
 // that has been hidden for longer than that runs a due wake immediately.
+//
+// A compositor that throttles a hidden surface's callbacks instead of
+// withholding them needs nothing extra: each callback is a ready server, so
+// the window paints at whatever rate the compositor chose and logic frames
+// fill the gaps. In practice the two named for it do not throttle. KWin 6.3.6
+// (minimised, or on another virtual desktop) and Hyprland 0.56.2 (another
+// workspace, or a special one) send a hidden window no callback at all, the
+// way sway does: measured with an animating window (0 frames hidden, 0.0-0.3%
+// of a core, a 2 s timer firing every time, the owed frame on return), KWin
+// in a container, Hyprland in a QEMU guest on virtio-gpu, 2026-10-21.
 // ---------------------------------------------------------------------------
 
 @(private)
