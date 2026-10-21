@@ -230,6 +230,57 @@ test_collab :: proc(fonts: ^p.Fonts) -> (checks, fails: int) {
 		}
 	}
 
+	// --- 6b. a merge travels, and grows with a row a collaborator inserts
+	// inside it at the same time
+	{
+		a := editor(fonts, 0xa1, "alice")
+		b := editor(fonts, 0xb2, "bob")
+		defer editor_free(a)
+		defer editor_free(b)
+		load(a, "| A | B | C |\n| --- | --- | --- |\n| 1 | 2 | 3 |\n| 4 | 5 | 6 |\n| 7 | 8 | 9 |", b)
+		ti := -1
+		for &pa, i in a.doc.paras {if pa.kind == .Table {ti = i}}
+		c_ok(ti >= 0, "the table is there")
+		if ti >= 0 {
+			spans :: proc(st: ^State, ti: int) -> string {
+				t := st.doc.paras[ti].table
+				out := ""
+				for &row, r in t.rows {
+					for &cl, c in row.cells {
+						if cell_is_merged(&cl) {
+							out = fmt.tprintf("%s%d,%d %dx%d;", out, r, c, cell_rspan(&cl), cell_cspan(&cl))
+						}
+					}
+				}
+				return out
+			}
+			a.anchor = Pos{para = ti, row = 1, col = 1}
+			a.caret = Pos{para = ti, row = 3, col = 2}
+			table_merge_cmd(a)
+			exchange(a, b)
+			c_eq(spans(b, ti), "1,1 3x2;", "Bob sees Alice's merge")
+			c_eq(cell_text(table_cell(b.doc.paras[ti].table, 1, 1), context.temp_allocator), "2 3 5 6 8 9", "with the merged text")
+			// Alice inserts a row inside the merge while Bob types in it.
+			a.caret = Pos{para = ti, row = 1, col = 0}
+			a.anchor = a.caret
+			table_row_cmd(a, true)
+			b.caret = Pos{para = ti, row = 1, col = 1, off = 0}
+			b.anchor = b.caret
+			type_text(b, ">")
+			exchange(a, b)
+			c_eq(plain(a), plain(b), "converges")
+			c_eq(spans(a, ti), "1,1 4x2;", "the merge grew by the inserted row on Alice's side")
+			c_eq(spans(b, ti), "1,1 4x2;", "and on Bob's")
+			// Bob splits it; Alice sees the split.
+			b.caret = Pos{para = ti, row = 1, col = 1}
+			b.anchor = b.caret
+			table_split_cmd(b)
+			exchange(a, b)
+			c_eq(spans(a, ti), "", "a split travels too")
+			c_eq(cell_text(table_cell(a.doc.paras[ti].table, 1, 1), context.temp_allocator), ">2 3 5 6 8 9", "and the text stays in the anchor")
+		}
+	}
+
 	// --- 7. undo is per person
 	{
 		a := editor(fonts, 0xa1, "alice")
