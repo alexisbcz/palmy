@@ -1156,8 +1156,15 @@ scrub_json :: proc(v: ^Json, secrets: []string) {
 // redacted example still parses as one word.
 cli_redact_example :: proc(s: ^Surface, cmd: ^Command, line: string, allocator := context.allocator) -> string {
 	words := cli_split_example(line, context.temp_allocator)
+	// An example starts with the noun; cli_redact_argv expects the verb first.
+	lead := 0
+	if s != nil && len(words) > 0 && words[0] == s.noun {
+		lead = 1
+	}
+	red := make([]string, len(words), context.temp_allocator)
+	copy(red[:lead], words[:lead])
+	copy(red[lead:], cli_redact_argv(s, cmd, words[lead:], nil, context.temp_allocator))
 	any_secret := false
-	red := cli_redact_argv(s, cmd, words, nil, context.temp_allocator)
 	for w, i in red {
 		if w != words[i] {
 			any_secret = true

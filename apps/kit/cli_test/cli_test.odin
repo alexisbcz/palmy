@@ -453,6 +453,23 @@ secret_flags :: proc(t: ^testing.T) {
 	testing.expect_value(t, words[5], kit.CLI_REDACTED)
 	_, bind := kit.cli_bind(surface(), words[1:])
 	testing.expect_value(t, bind, kit.EXIT_OK)
+
+	// A private_args example keeps its noun and verb; only the text goes.
+	for &c in COMMANDS {
+		if c.verb != "clip" {
+			continue
+		}
+		pex := kit.cli_redact_example(surface(), &c, "tool clip hello world --kind note")
+		pw := kit.cli_split_example(pex)
+		testing.expect_value(t, len(pw), 6)
+		testing.expect_value(t, pw[0], "tool")
+		testing.expect_value(t, pw[1], "clip")
+		testing.expect_value(t, pw[2], kit.CLI_REDACTED)
+		testing.expect_value(t, pw[3], kit.CLI_REDACTED)
+		testing.expect_value(t, pw[5], "note")
+		_, pbind := kit.cli_bind(surface(), pw[1:])
+		testing.expect_value(t, pbind, kit.EXIT_OK)
+	}
 }
 
 // ---------------------------------------------------------------------------
