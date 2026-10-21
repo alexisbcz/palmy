@@ -1007,11 +1007,13 @@ test_dispatcher :: proc(scratch: string) {
 	}
 
 	// An application that is not on the convention is unavailable, and is
-	// never spawned to find that out.
+	// never spawned to find that out. Every noun is on it now, so the probe is
+	// a made-up noun pointing at a real binary: if route started it, `notes
+	// path` would answer 0 instead of 6.
 	{
-		out, code := palm("files", "list", "--json")
-		eq_i(code, kit.EXIT_UNAVAILABLE, "an unconverted application exits 6")
-		check(strings.contains(out, "not yet on the shared convention"), "and says why")
+		probe := Noun{"unconverted-probe", "notes", "a noun that is not on the convention", false, ""}
+		code := route(probe, {"path"})
+		eq_i(code, kit.EXIT_UNAVAILABLE, "an unconverted application exits 6 without being started")
 	}
 
 	// The verbs that must not exist are refused by the dispatcher, before any
