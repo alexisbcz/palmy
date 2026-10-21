@@ -104,6 +104,7 @@ run_selftest :: proc() {
 
 	test_events()
 	test_cloud()
+	test_password_secret()
 
 	if failures == 0 {
 		fmt.printfln("calendar selftest: %d checks passed", checks)

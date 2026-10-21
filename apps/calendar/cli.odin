@@ -65,7 +65,7 @@ COMMANDS := []kit.Command {
 		effect = .Mutate,
 		args = {{name = "email", kind = .String, required = true}},
 		flags = {
-			{name = "password", kind = .String, help = "development stacks only; prefer --password-file"},
+			{name = "password", kind = .String, secret = true, help = "development stacks only; prefer --password-file"},
 			{name = "password-file", kind = .Path},
 		},
 		out = {{name = "email", kind = .String}},
