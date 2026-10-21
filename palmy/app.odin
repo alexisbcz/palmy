@@ -301,7 +301,7 @@ report_loop_end :: proc(app: ^App) {
 		return
 	}
 	app.reported = true
-	fmt.eprintfln("palmy: %s: the window's event loop stopped: %s", app.cfg.app_id, app.win.conn.fatal)
+	fmt.eprintfln("palmy: the event loop of window %q stopped: %s", app.cfg.title, app.win.conn.fatal)
 }
 
 // direct_frames is the no-UI loop: it hands you the window's pixel buffer each
