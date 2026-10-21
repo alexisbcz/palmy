@@ -196,6 +196,11 @@ X11_State :: struct {
 	// VisibilityNotify said FullyObscured: another window covers all of this
 	// one. Under a compositing manager the server never says so.
 	obscured:         bool,
+	// _NET_WM_STATE_HIDDEN: the window manager has minimised the window but,
+	// as compositing managers do (KWin, xfwm4, Mutter on X11) to keep a
+	// thumbnail, left it mapped. Unmapping is what told palmy before, and
+	// without it a minimised animating window kept painting at full rate.
+	wm_hidden:        bool,
 
 	// Interned atoms.
 	a_wm_protocols:   u32,
@@ -206,6 +211,7 @@ X11_State :: struct {
 	a_fullscreen:     u32,
 	a_max_vert:       u32,
 	a_max_horz:       u32,
+	a_hidden:         u32,
 	a_net_wm_pid:     u32,
 
 	// MIT-SHM.
@@ -1038,6 +1044,8 @@ x_refresh_wm_state :: proc(w: ^Window) {
 	n := int(xr32(reply, 16))
 	w.maximized, w.fullscreen = false, false
 	vert, horz := false, false
+	was_hidden := w.x.wm_hidden
+	w.x.wm_hidden = false
 	for i in 0 ..< n {
 		a := xr32(reply, 32 + i * 4)
 		switch a {
@@ -1047,9 +1055,14 @@ x_refresh_wm_state :: proc(w: ^Window) {
 			vert = true
 		case w.x.a_max_horz:
 			horz = true
+		case w.x.a_hidden:
+			w.x.wm_hidden = w.x.a_hidden != 0
 		}
 	}
 	w.maximized = vert && horz
+	if was_hidden != w.x.wm_hidden {
+		x_debug(w, "_NET_WM_STATE_HIDDEN %v", w.x.wm_hidden)
+	}
 	w.input_dirty = true
 }
 
@@ -1216,6 +1229,7 @@ x_open :: proc(w: ^Window, decorate: bool) -> (err: string) {
 	x.a_fullscreen = x_intern(w, "_NET_WM_STATE_FULLSCREEN")
 	x.a_max_vert = x_intern(w, "_NET_WM_STATE_MAXIMIZED_VERT")
 	x.a_max_horz = x_intern(w, "_NET_WM_STATE_MAXIMIZED_HORZ")
+	x.a_hidden = x_intern(w, "_NET_WM_STATE_HIDDEN")
 	x.a_net_wm_pid = x_intern(w, "_NET_WM_PID")
 	x_clip_init(w)
 

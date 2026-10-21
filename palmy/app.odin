@@ -476,7 +476,7 @@ frame_step :: proc(app: ^App) -> Frame_Step {
 // Always true on Wayland, where the compositor decides.
 @(private)
 x11_visible :: proc(w: ^Window) -> bool {
-	return w.backend != .X11 || (w.x.mapped && !w.x.obscured)
+	return w.backend != .X11 || (w.x.mapped && !w.x.obscured && !w.x.wm_hidden)
 }
 
 @(private)
