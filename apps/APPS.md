@@ -13,13 +13,21 @@ the shadcn widget layer in `../shadcn`.
 
 ## Building
 
+From the root of whichever checkout (or worktree) you mean to build — the
+collection paths are relative to the current directory, so the binary always
+measures the tree you are standing in:
+
 ```sh
 odin build apps/<name> \
-  -collection:palmy=/home/alex/Work/palmy/palmy \
-  -collection:shadcn=/home/alex/Work/palmy/shadcn \
-  -collection:kit=/home/alex/Work/palmy/apps/kit \
+  -collection:palmy=palmy \
+  -collection:shadcn=shadcn \
+  -collection:kit=apps/kit \
   -o:speed -out:apps/<name>/<name>.bin
 ```
+
+Three applications need one more collection each: `drive` takes
+`-collection:drive=cloud/drive`, `forge` takes `-collection:forge=cloud/forge`,
+and `installer` takes `-collection:install=distro/installer`.
 
 ## The kit
 
