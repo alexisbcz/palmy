@@ -396,6 +396,31 @@ snapshot_step :: proc(op: string, targets: []string, allocator := context.alloca
 	return Step{what = "snapshot", argv = argv[:], needs_root = true}
 }
 
+// PACMAN_NOCONFIRM goes on the install and remove steps, and only on those.
+//
+// Found by the first real run (apps/pkg/integration, an Arch Linux ARM
+// container): pacman asks "Proceed with installation? [Y/n]" on its own, and
+// with no terminal on stdin -- which is exactly how an agent runs
+// `pkg install cowsay --yes` -- it reads end-of-file, takes that as "no", and
+// exits 1. The snapshot had already been taken, so the whole verb failed with
+// exit 7 after changing the machine anyway. The fake pacman in the self-test
+// never asked, which is why 698 assertions could not see it.
+//
+// --yes is this program's confirmation: it is the thing remove refuses
+// without, and `carry_out` will not exec a mutating plan unless it was given.
+// Asking a second time underneath it is not a second safety check, it is a
+// hang or a silent "no". So the confirmed steps say --noconfirm, which makes
+// pacman take each question's default: proceed with the transaction, but
+// "Remove <conflicting package>? [y/N]" is a no and aborts it, so a conflict
+// still stops the run rather than being resolved for the person. Removal of a
+// package that another one needs fails in pacman whatever the flag says.
+//
+// `upgrade` deliberately does not get it: it runs only with a person at the
+// terminal, and the questions a full upgrade asks (a replacement, a keyring
+// import) are what that person is there to answer. The AUR step does not get
+// it either; building from source is not unattended (see plan_install).
+PACMAN_NOCONFIRM :: "--noconfirm"
+
 // ---------------------------------------------------------------------------
 // install
 // ---------------------------------------------------------------------------
@@ -502,8 +527,9 @@ plan_install :: proc(
 	if len(todo) > 0 {
 		argv := make([dynamic]string, allocator)
 		// No -y. `--needed` makes a repeat run a no-op, which is what makes
-		// install idempotent and safe for `sync` to call.
-		append(&argv, "sudo", "pacman", "-S", "--needed", "--")
+		// install idempotent and safe for `sync` to call. `--noconfirm`: see
+		// PACMAN_NOCONFIRM.
+		append(&argv, "sudo", "pacman", "-S", "--needed", PACMAN_NOCONFIRM, "--")
 		append(&argv, ..todo[:])
 		append(&steps, Step{what = "install", argv = argv[:], needs_root = true})
 	}
@@ -646,7 +672,7 @@ plan_remove :: proc(
 		append(&steps, snapshot_step("remove", sorted, allocator))
 	}
 	argv := make([dynamic]string, allocator)
-	append(&argv, "sudo", "pacman", o.recursive ? "-Rs" : "-R", "--")
+	append(&argv, "sudo", "pacman", o.recursive ? "-Rs" : "-R", PACMAN_NOCONFIRM, "--")
 	append(&argv, ..sorted)
 	append(&steps, Step{what = "remove", argv = argv[:], needs_root = true})
 

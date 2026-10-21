@@ -169,6 +169,7 @@ selftest :: proc() {
 	test_argv()
 	test_diff_and_sync()
 	test_upgrade_and_rollback()
+	test_noconfirm()
 	test_scope()
 	test_surface()
 	test_nothing_executes()
@@ -758,11 +759,11 @@ test_argv :: proc() {
 	)
 	eq_argv(
 		step_argv(&p, 1),
-		{"sudo", "pacman", "-S", "--needed", "--", "fd", "ripgrep"},
+		{"sudo", "pacman", "-S", "--needed", "--noconfirm", "--", "fd", "ripgrep"},
 		"the install argv",
 	)
 	check(!slice.contains(step_argv(&p, 1), "-Sy"), "no -Sy anywhere in it")
-	check(!slice.contains(step_argv(&p, 1), "--noconfirm"), "and no --noconfirm: pacman still asks")
+	check(slice.contains(step_argv(&p, 1), "--noconfirm"), "and --noconfirm: --yes already confirmed it, and pacman's own question reads no answer as no")
 
 	// Already installed: nothing to do, and no snapshot taken for nothing.
 	p2, _ := plan_install(&w, {"git"}, Install_Opts{snapshot = true})
@@ -789,7 +790,7 @@ test_argv :: proc() {
 	eq_i(len(p4.steps), 3, "snapshot, pacman, yay")
 	eq_argv(
 		step_argv(&p4, 1),
-		{"sudo", "pacman", "-S", "--needed", "--", "ripgrep"},
+		{"sudo", "pacman", "-S", "--needed", "--noconfirm", "--", "ripgrep"},
 		"the repo half",
 	)
 	eq_argv(step_argv(&p4, 2), {"yay", "-S", "--needed", "--", "only-in-the-aur"}, "the AUR half")
@@ -821,12 +822,12 @@ test_argv :: proc() {
 		},
 		"the removal snapshot argv",
 	)
-	eq_argv(step_argv(&p6, 1), {"sudo", "pacman", "-R", "--", "orphanpkg"}, "the removal argv")
+	eq_argv(step_argv(&p6, 1), {"sudo", "pacman", "-R", "--noconfirm", "--", "orphanpkg"}, "the removal argv")
 
 	p7, _ := plan_remove(&w, {"orphanpkg"}, Remove_Opts{yes = true, recursive = true, snapshot = true})
 	eq_argv(
 		step_argv(&p7, 1),
-		{"sudo", "pacman", "-Rs", "--", "orphanpkg"},
+		{"sudo", "pacman", "-Rs", "--noconfirm", "--", "orphanpkg"},
 		"--recursive is -Rs and nothing more",
 	)
 
@@ -864,7 +865,7 @@ test_diff_and_sync :: proc() {
 	p, ref := plan_sync(&w, df, Sync_Opts{snapshot = true, sources = sources})
 	check(!ref.refused, "sync plans")
 	eq_i(len(p.steps), 2, "a snapshot and one install")
-	eq_argv(step_argv(&p, 1), {"sudo", "pacman", "-S", "--needed", "--", "fd", "ripgrep"}, "sync's install argv")
+	eq_argv(step_argv(&p, 1), {"sudo", "pacman", "-S", "--needed", "--noconfirm", "--", "fd", "ripgrep"}, "sync's install argv")
 	eq_s(p.class, "mutate", "install-only sync is a mutation, not a destruction")
 	pruneable := false
 	for n in p.notes {
@@ -899,6 +900,57 @@ test_diff_and_sync :: proc() {
 	p4, _ := plan_sync(&w2, df3, Sync_Opts{snapshot = true, sources = sources2})
 	eq_i(len(p4.steps), 0, "a converged machine plans no steps")
 	eq_s(p4.class, "idempotent", "and sync is idempotent")
+}
+
+// test_noconfirm pins the one thing the first real pacman run changed: the
+// steps --yes confirmed carry --noconfirm, ahead of the `--` fence, and the
+// steps a person is meant to answer (upgrade, the AUR build) do not.
+test_noconfirm :: proc() {
+	section("--yes is the confirmation: pacman is not asked again")
+
+	has_before_fence :: proc(argv: []string, flag: string) -> bool {
+		for a in argv {
+			if a == "--" {
+				return false
+			}
+			if a == flag {
+				return true
+			}
+		}
+		return false
+	}
+
+	w := canned_world()
+	pi, ri := plan_install(&w, {"ripgrep"}, Install_Opts{snapshot = true})
+	check(!ri.refused, "install plans")
+	check(has_before_fence(step_argv(&pi, 1), "--noconfirm"), "the install step says --noconfirm, before the fence")
+	check(!slice.contains(step_argv(&pi, 0), "--noconfirm"), "the snapshot step has nothing to confirm")
+
+	pr, rr := plan_remove(&w, {"orphanpkg"}, Remove_Opts{yes = true, snapshot = true})
+	check(!rr.refused, "remove plans")
+	check(has_before_fence(step_argv(&pr, 1), "--noconfirm"), "the remove step says --noconfirm, before the fence")
+	prs, _ := plan_remove(&w, {"orphanpkg"}, Remove_Opts{yes = true, recursive = true})
+	check(has_before_fence(step_argv(&prs, 0), "--noconfirm"), "and so does -Rs")
+
+	// Without --yes there is no plan to carry the flag at all.
+	_, rn := plan_remove(&w, {"orphanpkg"}, Remove_Opts{yes = false})
+	eq_s(rn.reason, "needs-yes", "remove without --yes is still refused before any argv exists")
+
+	pu, _ := plan_upgrade(Upgrade_Opts{interactive = true, aur = true, snapshot = true})
+	for s in pu.steps {
+		check(!slice.contains(s.argv, "--noconfirm"), "the upgrade's %s step leaves the questions to the person", s.what)
+	}
+
+	w2 := canned_world()
+	srcs := make(map[string]Source, context.temp_allocator)
+	srcs["only-in-the-aur"] = .Aur
+	pa, _ := plan_install(&w2, {"only-in-the-aur"}, Install_Opts{sources = srcs})
+	check(len(pa.steps) == 1 && !slice.contains(step_argv(&pa, 0), "--noconfirm"), "the AUR build is not silenced")
+
+	// --noconfirm is a long flag; it must not upset the partial-upgrade rule
+	// in either direction.
+	check(!argv_is_partial_upgrade({"sudo", "pacman", "-S", "--needed", "--noconfirm", "--", "git"}), "install with --noconfirm is not a partial upgrade")
+	check(argv_is_partial_upgrade({"sudo", "pacman", "-Sy", "--noconfirm", "--", "git"}), "and -Sy with --noconfirm still is")
 }
 
 test_upgrade_and_rollback :: proc() {
@@ -1134,9 +1186,28 @@ esac
 	// sudo records and stops. It deliberately does not exec the rest of the
 	// command line, so the real pacman cannot be reached even if the fake
 	// pacman were missing.
+	//
+	// It also answers for pacman the way the real one did in the first real
+	// run (apps/pkg/integration): a transaction without --noconfirm asks
+	// "Proceed with installation? [Y/n]", and with nobody on stdin it reads
+	// end-of-file as a no and exits 1. An upgrade is exempt here because the
+	// self-test drives it as a person who is present and says yes.
 	put(
 		fmt.tprintf("%s/sudo", f.bin),
-		fmt.tprintf("#!/bin/sh\nprintf 'sudo %%s\\n' \"$*\" >> %s\nexit 0\n", f.fired),
+		fmt.tprintf(
+			`#!/bin/sh
+printf 'sudo %%s\n' "$*" >> %s
+if [ "$1" = pacman ]; then
+  case " $* " in *" --noconfirm "*) exit 0 ;; esac
+  case "$2" in
+    -Syu) exit 0 ;;
+    -S*|-R*) echo ':: Proceed with installation? [Y/n] error: no answer on stdin' >&2; exit 1 ;;
+  esac
+fi
+exit 0
+`,
+			f.fired,
+		),
 		os.Permissions_All,
 	)
 	put(
@@ -1220,6 +1291,13 @@ spring_the_trap :: proc(f: ^Fakes) -> bool {
 	q := read_lines(f.queries)
 	check(len(q) == 1 && strings.has_prefix(q[0], "pacman -Qq"), "a read-only query is logged separately")
 	eq_i(len(read_lines(f.fired)), 1, "and does not land in the mutation sentinel")
+
+	// The fake answers pacman's question the way the real pacman did with no
+	// terminal on stdin, or the --yes section below proves nothing about it.
+	st1, _, _, _ := os.process_exec({command = {"sudo", "pacman", "-S", "--", "nothing"}}, context.temp_allocator)
+	check(st1.exit_code == 1, "an unconfirmed pacman transaction with nobody on stdin fails, as the real one does (exit %d)", st1.exit_code)
+	st2, _, _, _ := os.process_exec({command = {"sudo", "pacman", "-S", "--noconfirm", "--", "nothing"}}, context.temp_allocator)
+	check(st2.exit_code == 0, "and the same transaction with --noconfirm goes through (exit %d)", st2.exit_code)
 
 	os.remove(f.fired)
 	os.remove(f.queries)
@@ -1354,7 +1432,7 @@ test_nothing_executes :: proc() {
 	// The dry runs print the argv, which is the whole point of them.
 	_, dry := drive({"install", "ripgrep", "--dry-run", "--yes", "--json"})
 	check(
-		strings.contains(dry, "\"argv\":[\"sudo\",\"pacman\",\"-S\",\"--needed\",\"--\",\"ripgrep\"]"),
+		strings.contains(dry, "\"argv\":[\"sudo\",\"pacman\",\"-S\",\"--needed\",\"--noconfirm\",\"--\",\"ripgrep\"]"),
 		"a dry run prints the exact install argv (%s)",
 		strings.trim_space(dry),
 	)
@@ -1375,8 +1453,8 @@ test_nothing_executes :: proc() {
 	// itself execs its plan directly, after --yes, so the guard does not stand
 	// in its way -- the sentinel section below proves that argv still lands.
 	for argv in ([?][]string {
-			{"sudo", "pacman", "-S", "--needed", "--", "ripgrep"},
-			{"sudo", "pacman", "-R", "--", "htop"},
+			{"sudo", "pacman", "-S", "--needed", "--noconfirm", "--", "ripgrep"},
+			{"sudo", "pacman", "-R", "--noconfirm", "--", "htop"},
 			{"sudo", "snapper", "-c", "root", "create", "--description", "palm: install ripgrep"},
 			{"snapper", "-c", "root", "create"},
 			{"pacman", "-Syu"},
@@ -1422,7 +1500,7 @@ test_argv_that_runs :: proc() {
 			"sudo snapper --config root create --type single --cleanup-algorithm number --description palm pkg install hello --print-number",
 			"the snapshot ran first, named for the operation",
 		)
-		eq_s(fired[1], "sudo pacman -S --needed -- hello", "then exactly the planned install")
+		eq_s(fired[1], "sudo pacman -S --needed --noconfirm -- hello", "then exactly the planned install")
 	}
 
 	// remove
@@ -1437,7 +1515,7 @@ test_argv_that_runs :: proc() {
 			"sudo snapper --config root create --type single --cleanup-algorithm number --description palm pkg remove orphanpkg --print-number",
 			"the removal snapshot ran first",
 		)
-		eq_s(fired2[1], "sudo pacman -R -- orphanpkg", "then exactly the planned removal")
+		eq_s(fired2[1], "sudo pacman -R --noconfirm -- orphanpkg", "then exactly the planned removal")
 	}
 
 	// sync: the declaration asks for git, ripgrep and fd; git is installed.
@@ -1447,7 +1525,7 @@ test_argv_that_runs :: proc() {
 	fired3 := read_lines(f.fired)
 	eq_i(len(fired3), 2, "sync ran a snapshot and one install")
 	if len(fired3) == 2 {
-		eq_s(fired3[1], "sudo pacman -S --needed -- fd ripgrep", "converging installed exactly what was missing")
+		eq_s(fired3[1], "sudo pacman -S --needed --noconfirm -- fd ripgrep", "converging installed exactly what was missing")
 	}
 
 	// upgrade, with a person declared present.
@@ -1475,7 +1553,15 @@ test_argv_that_runs :: proc() {
 			"nothing that ran was a partial upgrade: %s",
 			line,
 		)
-		check(!strings.contains(line, "--noconfirm"), "and nothing silenced pacman: %s", line)
+		// --noconfirm is on the steps --yes confirmed, and never on the
+		// upgrade, whose questions are what the person is there for.
+		f := strings.fields(line, context.temp_allocator)
+		confirmed := len(f) > 2 && f[1] == "pacman" && (f[2] == "-S" || f[2] == "-R" || f[2] == "-Rs")
+		check(
+			strings.contains(line, "--noconfirm") == confirmed,
+			"--noconfirm exactly on the install and remove steps: %s",
+			line,
+		)
 		check(strings.has_prefix(line, "sudo "), "and everything that changed the machine went through sudo: %s", line)
 	}
 	check(len(all) == 8, "eight commands ran in total across the four verbs (%d)", len(all))
