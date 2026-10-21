@@ -1,5 +1,6 @@
 package palmy_tests
 
+import "base:runtime"
 import "core:math"
 import "core:mem"
 import "core:fmt"
@@ -352,14 +353,29 @@ test_text_measurement :: proc(t: ^testing.T) {
 // Design tokens, icons and weights — added for the shadcn parity work
 // ---------------------------------------------------------------------------
 
-@(test)
-test_theme_tokens :: proc(t: ^testing.T) {
-	// The token table is process-wide, like a Tailwind config, and the test
-	// runner is parallel — so these names are unique to this test rather than
-	// resetting shared state out from under another one.
+// The tokens these two tests read, registered once at startup.
+//
+// The token table is process-wide, like a Tailwind config, and every rendering
+// test reads it through `parse_color` while the runner runs them in parallel.
+// These used to be registered inside the tests themselves, which wrote the
+// shared maps (and, for whichever test ran first, created them with that
+// test's tracking allocator) while other tests were reading them: bad frees
+// and a segfault in seven full-suite runs. From `@(init)` they are written
+// before the runner spawns a thread and never again, as tests/widgets_test.odin
+// does for its field tokens. The names stay unique to these tests.
+@(init)
+register_token_test_tokens :: proc "contextless" () {
+	// Contextless, and registering allocates: give it the process default
+	// context so the keys belong to no test's tracking allocator.
+	context = runtime.default_context()
 	p.register_color("tok-primary", p.hex(0x171717))
 	p.register_radius("toklg", 10)
+	p.register_color("tok-other", p.hex(0x171717))
+}
 
+@(test)
+test_theme_tokens :: proc(t: ^testing.T) {
+	// "tok-primary" and "toklg" are registered in register_token_test_tokens.
 	c, ok := p.parse_color("tok-primary")
 	testing.expect(t, ok, "a registered token resolves as a colour")
 	testing.expect_value(t, c, p.Color{0x17, 0x17, 0x17, 255})
@@ -383,7 +399,11 @@ test_theme_tokens :: proc(t: ^testing.T) {
 
 @(test)
 test_token_does_not_shadow_palette :: proc(t: ^testing.T) {
-	p.register_color("tok-other", p.hex(0x171717))
+	// "tok-other" is registered in register_token_test_tokens; it must not
+	// stop the palette from resolving, and must itself resolve.
+	o, ook := p.parse_color("tok-other")
+	testing.expect(t, ook, "the token registered at startup resolves")
+	testing.expect_value(t, o, p.Color{0x17, 0x17, 0x17, 255})
 
 	// Registering tokens must leave the built-in Tailwind palette alone.
 	c, ok := p.parse_color("slate-900")
