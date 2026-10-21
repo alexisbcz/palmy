@@ -92,7 +92,7 @@ NOUNS := []Noun {
 	{"docs", "docs", "a word processor with a headless converter", true, ""},
 	{"slides", "slides", "a presentation editor", true, ""},
 	{"money", "money", "accounts, imports and budgets", true, ""},
-	{"files", "files", "a file browser", false, ""},
+	{"files", "files", "a file browser", true, ""},
 	{"reader", "reader", "an e-book reader", true, ""},
 	{"maps", "maps", "a map viewer", true, ""},
 	{"shop", "shop", "shopping: search, compare, a basket, lists and price alerts", true, ""},

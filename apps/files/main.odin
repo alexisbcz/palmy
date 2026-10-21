@@ -40,16 +40,31 @@ run_cmd :: proc(argv: []string) -> (string, bool) {
 }
 
 main :: proc() {
-	// `--shots <dir>` renders the browser offscreen and writes PNGs. It never
-	// opens a window and never reads the real home directory; see shot.odin.
-	args := os.args[1:]
-	for a, i in args {
-		if a == "--selftest" {
-			os.exit(selftest())
-		}
-		if a == "--shots" {
-			dir := i + 1 < len(args) ? args[i + 1] : "shots"
-			os.exit(shots(dir))
+	// The command line is the other front end over the same core (fs.odin):
+	// see cli.odin for the declaration. `--selftest` and `--shots <dir>` are
+	// routed by it too, as they always were. With no command there is a
+	// window; a bare folder path opens the window there.
+	if code, handled := kit.cli(surface()); handled {
+		os.exit(code)
+	}
+	start := ""
+	select_name_at_start := ""
+	if len(os.args) > 1 {
+		// takes_path hands over any word that is not a verb (C3: the kit does
+		// not check it is a path). A typo must not open a window, so only an
+		// existing path does: a folder opens there, a file opens its folder
+		// with it selected.
+		arg := absolute(os.args[1])
+		switch {
+		case is_dir_path(arg):
+			start = arg
+		case exists_nofollow(arg):
+			start = parent_of(arg)
+			select_name_at_start = base_of(arg)
+		case:
+			fmt.eprintfln("files: %q is not a command or a path that exists", os.args[1])
+			fmt.eprint(kit.cli_help_text(surface()))
+			os.exit(kit.EXIT_USAGE)
 		}
 	}
 
@@ -82,11 +97,13 @@ main :: proc() {
 		home = "/"
 	}
 	// `files /some/path` opens there, the way every other browser does.
-	start := home
-	if len(os.args) > 1 && is_dir_path(os.args[1]) {
-		start = os.args[1]
+	if start == "" {
+		start = home
 	}
 	go_to(&st, start)
+	if select_name_at_start != "" {
+		select_name(&st, select_name_at_start)
+	}
 	sync_place(&st)
 	st.pane = .Files
 
@@ -207,6 +224,12 @@ handle_keys :: proc(ui: ^p.Ctx, st: ^State, app: ^p.App) {
 		return
 	}
 
+	// So does the name prompt for Rename… and New Folder.
+	if st.ask != .None {
+		ask_keys(ui, st)
+		return
+	}
+
 	// The context menu owns the keyboard while it is open.
 	if st.menu_open {
 		items := menu_items(st)
@@ -259,6 +282,22 @@ handle_keys :: proc(ui: ^p.Ctx, st: ^State, app: ^p.App) {
 	}
 	if p.shortcut(ui, 'c', {.Ctrl}) {
 		do_menu(st, .Copy_Path)
+	}
+	// Changing things: each goes through the core (fs.odin), the same
+	// procedures `files mkdir|rename|duplicate|trash` run.
+	if p.shortcut(ui, 'n', {.Ctrl, .Shift}) || p.shortcut(ui, 'N', {.Ctrl, .Shift}) {
+		act_new_folder(st)
+		return
+	}
+	if p.shortcut(ui, 'd', {.Ctrl}) {
+		act_duplicate(st)
+	}
+	if !typing && plain(ui, p.KEY_F2) {
+		act_rename(st)
+		return
+	}
+	if !typing && (plain(ui, p.KEY_DELETE) || p.shortcut(ui, p.KEY_BACKSPACE, {.Ctrl})) {
+		act_trash(st)
 	}
 	if plain(ui, p.KEY_F5) || p.shortcut(ui, 'r', {.Ctrl}) || (!typing && plain(ui, 'r')) {
 		reload(st)
@@ -489,6 +528,10 @@ Menu_Action :: enum {
 	Paste,
 	Share,
 	Copy_Link,
+	New_Folder,
+	Rename,
+	Duplicate,
+	Trash,
 }
 
 Menu_Item :: struct {
@@ -556,6 +599,19 @@ menu_items :: proc(st: ^State) -> []Menu_Item {
 			disabled = st.drive.cut == "",
 		},
 	)
+	append(
+		&out,
+		Menu_Item {
+			label = "New Folder",
+			shortcut = "Ctrl Shift N",
+			icon = ICON_FOLDER,
+			action = .New_Folder,
+			rule = true,
+		},
+	)
+	append(&out, Menu_Item{label = "Rename…", shortcut = "F2", icon = ICON_PENCIL, action = .Rename, disabled = !has})
+	append(&out, Menu_Item{label = "Duplicate", shortcut = "Ctrl D", icon = ICON_COPY, action = .Duplicate, disabled = !has})
+	append(&out, Menu_Item{label = "Move to Trash", shortcut = "Delete", icon = ICON_TRASH, action = .Trash, disabled = !has})
 	append(
 		&out,
 		Menu_Item {
@@ -731,6 +787,18 @@ do_menu :: proc(st: ^State, a: Menu_Action) {
 		if has {
 			drive_copy_link(st, e.path)
 		}
+	case .New_Folder:
+		st.menu_open = false
+		act_new_folder(st)
+		return
+	case .Rename:
+		st.menu_open = false
+		act_rename(st)
+		return
+	case .Duplicate:
+		act_duplicate(st)
+	case .Trash:
+		act_trash(st)
 	}
 	st.menu_open = false
 }
@@ -777,6 +845,9 @@ frame :: proc(ui: ^p.Ctx, st: ^State) {
 	}
 	if st.drive.share_open {
 		drive_share_dialog(ui, st)
+	}
+	if st.ask != .None {
+		ask_dialog(ui, st)
 	}
 	toast(ui, st)
 }

@@ -5,7 +5,6 @@ package main
 
 import "core:fmt"
 import "core:os"
-import "core:slice"
 import "core:strings"
 import "core:time"
 import p "palmy:."
@@ -14,31 +13,21 @@ import p "palmy:."
 // Entries
 // ---------------------------------------------------------------------------
 
+// Entry is the core's Fs_Entry (fs.odin) plus what a row needs to draw.
 Entry :: struct {
-	name:      string,
-	path:      string,
-	is_dir:    bool,
-	is_link:   bool,
-	hidden:    bool,
-	size:      i64,
-	mtime:     time.Time,
+	using fs:  Fs_Entry,
 
 	// Precomputed for the row renderer, so a frame does no formatting.
-	kind:      string,
 	size_text: string,
 	date_text: string,
 	icon:      p.Icon,
 	tint:      string,
-	lower:     string, // name, folded, for the filter
 }
 
 entry_free :: proc(e: Entry) {
-	delete(e.name)
-	delete(e.path)
-	delete(e.kind)
+	fs_entry_free(e.fs)
 	delete(e.size_text)
 	delete(e.date_text)
-	delete(e.lower)
 }
 
 // ---------------------------------------------------------------------------
@@ -54,13 +43,6 @@ Pane :: enum {
 	Files,
 	Sidebar,
 	Search,
-}
-
-Sort_Key :: enum {
-	Name,
-	Kind,
-	Size,
-	Date,
 }
 
 Place :: struct {
@@ -112,104 +94,58 @@ State :: struct {
 	now:        time.Time,
 
 	drive:      Drive, // palm-drive's folders, badges, Share… (drive.odin)
+
+	// The name prompt for Rename… and New Folder (actions.odin).
+	ask:        Ask,
+	ask_path:   string,
+	ask_text:   [dynamic]u8,
+	ask_fresh:  bool, // the name is still the suggested one: typing replaces it
 }
 
 // ---------------------------------------------------------------------------
 // Classification
 // ---------------------------------------------------------------------------
 
-extension :: proc(name: string) -> string {
-	dot := strings.last_index_byte(name, '.')
-	if dot <= 0 || dot == len(name) - 1 {
-		return ""
-	}
-	return strings.to_lower(name[dot + 1:], context.temp_allocator)
-}
-
-in_set :: proc(needle: string, set: []string) -> bool {
-	for s in set {
-		if s == needle {
-			return true
-		}
-	}
-	return false
-}
-
-IMAGE_EXT :: []string {
-	"png", "jpg", "jpeg", "gif", "webp", "bmp", "svg", "ico", "tif", "tiff",
-	"avif", "heic", "jxl", "ppm", "psd", "xcf",
-}
-VIDEO_EXT :: []string{"mp4", "mkv", "webm", "mov", "avi", "m4v", "wmv", "flv", "mpg", "mpeg", "ogv"}
-AUDIO_EXT :: []string{"mp3", "flac", "wav", "ogg", "oga", "m4a", "opus", "aac", "wma", "mid"}
-ARCHIVE_EXT :: []string {
-	"zip", "tar", "gz", "tgz", "xz", "bz2", "7z", "rar", "zst", "lz4", "deb",
-	"rpm", "pkg", "jar", "iso", "dmg",
-}
-CODE_EXT :: []string {
-	"odin", "c", "h", "cc", "cpp", "hpp", "cxx", "rs", "go", "py", "js", "mjs",
-	"cjs", "ts", "tsx", "jsx", "java", "rb", "php", "swift", "kt", "sh", "bash",
-	"zsh", "fish", "lua", "sql", "vim", "el", "hs", "ml", "scm", "clj", "ex",
-	"zig", "nim", "pl", "r", "dart", "scala", "asm", "s", "m", "mm", "css",
-	"scss", "html", "htm", "vue", "svelte",
-}
-DATA_EXT :: []string {
-	"json", "yaml", "yml", "toml", "xml", "ini", "conf", "cfg", "env", "lock",
-	"plist", "properties",
-}
-TEXT_EXT :: []string{"txt", "md", "markdown", "rst", "log", "nfo", "text", "org", "tex"}
-SHEET_EXT :: []string{"csv", "tsv", "xls", "xlsx", "ods", "numbers"}
-SLIDE_EXT :: []string{"ppt", "pptx", "odp", "key"}
-DOC_EXT :: []string{"doc", "docx", "odt", "rtf", "pages", "epub", "mobi"}
-FONT_EXT :: []string{"ttf", "otf", "woff", "woff2", "pfb", "bdf"}
-BIN_EXT :: []string{"bin", "exe", "so", "a", "o", "appimage", "dll", "dylib", "wasm", "elf"}
-DB_EXT :: []string{"db", "sqlite", "sqlite3", "mdb", "parquet"}
-
-// classify picks the icon, the tint and the Finder-style "Kind" label from the
-// name alone, which is what every file manager does for the common case.
+// classify picks the icon and the tint for the kind the core named (fs.odin's
+// kind_of), so the Kind column and `files list --json` say the same thing.
 classify :: proc(name: string, is_dir, is_link: bool) -> (icon: p.Icon, tint: string, kind: string) {
-	if is_dir {
-		return ICON_FOLDER, "text-sky-500", "Folder"
+	class, label := kind_of(name, is_dir)
+	switch class {
+	case .Folder:
+		return ICON_FOLDER, "text-sky-500", label
+	case .Document:
+		return ICON_FILE, "text-neutral-400", label
+	case .Pdf:
+		return ICON_BOOK, "text-rose-500", label
+	case .Image:
+		return ICON_IMAGE, "text-violet-500", label
+	case .Video:
+		return ICON_FILE_PLAY, "text-fuchsia-500", label
+	case .Audio:
+		return ICON_MUSIC, "text-amber-500", label
+	case .Archive:
+		return ICON_FILE_ARCHIVE, "text-orange-500", label
+	case .Code:
+		return ICON_FILE_CODE, "text-emerald-500", label
+	case .Data:
+		return ICON_FILE_BRACES, "text-teal-500", label
+	case .Sheet:
+		return ICON_FILE_SPREADSHEET, "text-green-600", label
+	case .Slides:
+		return ICON_PRESENTATION, "text-orange-600", label
+	case .Doc:
+		return ICON_FILE_TEXT, "text-blue-500", label
+	case .Text:
+		return ICON_FILE_TEXT, "text-neutral-500", label
+	case .Font:
+		return ICON_TYPE, "text-indigo-500", label
+	case .Database:
+		return ICON_DATABASE, "text-cyan-600", label
+	case .Binary:
+		return ICON_PACKAGE, "text-neutral-500", label
+	case .Other:
 	}
-	ext := extension(name)
-	up := strings.to_upper(ext, context.temp_allocator)
-
-	switch {
-	case ext == "":
-		return ICON_FILE, "text-neutral-400", "Document"
-	case ext == "pdf":
-		return ICON_BOOK, "text-rose-500", "PDF document"
-	case in_set(ext, IMAGE_EXT):
-		return ICON_IMAGE, "text-violet-500", tfmt("%s image", up)
-	case in_set(ext, VIDEO_EXT):
-		return ICON_FILE_PLAY, "text-fuchsia-500", tfmt("%s video", up)
-	case in_set(ext, AUDIO_EXT):
-		return ICON_MUSIC, "text-amber-500", tfmt("%s audio", up)
-	case in_set(ext, ARCHIVE_EXT):
-		return ICON_FILE_ARCHIVE, "text-orange-500", tfmt("%s archive", up)
-	case in_set(ext, CODE_EXT):
-		return ICON_FILE_CODE, "text-emerald-500", tfmt("%s source", up)
-	case in_set(ext, DATA_EXT):
-		return ICON_FILE_BRACES, "text-teal-500", tfmt("%s data", up)
-	case in_set(ext, SHEET_EXT):
-		return ICON_FILE_SPREADSHEET, "text-green-600", tfmt("%s spreadsheet", up)
-	case in_set(ext, SLIDE_EXT):
-		return ICON_PRESENTATION, "text-orange-600", tfmt("%s presentation", up)
-	case in_set(ext, DOC_EXT):
-		return ICON_FILE_TEXT, "text-blue-500", tfmt("%s document", up)
-	case in_set(ext, TEXT_EXT):
-		return ICON_FILE_TEXT, "text-neutral-500", ext == "md" ? "Markdown text" : "Plain text"
-	case in_set(ext, FONT_EXT):
-		return ICON_TYPE, "text-indigo-500", tfmt("%s font", up)
-	case in_set(ext, DB_EXT):
-		return ICON_DATABASE, "text-cyan-600", tfmt("%s database", up)
-	case in_set(ext, BIN_EXT):
-		return ICON_PACKAGE, "text-neutral-500", tfmt("%s binary", up)
-	}
-	return ICON_FILE, "text-neutral-400", tfmt("%s file", up)
-}
-
-tfmt :: proc(format: string, args: ..any) -> string {
-	return fmt.tprintf(format, ..args)
+	return ICON_FILE, "text-neutral-400", label
 }
 
 // ---------------------------------------------------------------------------
@@ -265,23 +201,12 @@ human_date :: proc(t: time.Time, now: time.Time, offset: i64, allocator := conte
 	return fmt.aprintf("%d %s %d", d, name, y, allocator = allocator)
 }
 
-// local_offset asks the system what the UTC offset is, so the dates in the
-// list agree with the clock on the wall. os.File_Info times are UTC.
-local_offset :: proc() -> i64 {
-	out, ok := run_cmd({"date", "+%z"})
-	if !ok || len(out) < 5 {
-		return 0
-	}
-	sign: i64 = out[0] == '-' ? -1 : 1
-	hh := i64(out[1] - '0') * 10 + i64(out[2] - '0')
-	mm := i64(out[3] - '0') * 10 + i64(out[4] - '0')
-	return sign * (hh * 3600 + mm * 60)
-}
-
 // ---------------------------------------------------------------------------
 // Reading a directory
 // ---------------------------------------------------------------------------
 
+// load_dir reads a folder through the core and decorates each entry for the
+// row renderer.
 load_dir :: proc(st: ^State, path: string) {
 	for e in st.entries {
 		entry_free(e)
@@ -290,111 +215,40 @@ load_dir :: proc(st: ^State, path: string) {
 	st.err = ""
 	st.now = time.now()
 
-	f, oerr := os.open(path)
-	if oerr != nil {
-		st.err = "This folder cannot be opened."
+	listed, err := fs_list(path)
+	defer delete(listed)
+	if err != "" {
+		st.err = err
 		rebuild(st)
 		return
 	}
-	infos, rerr := os.read_dir(f, -1, context.allocator)
-	os.close(f)
-	if rerr != nil && len(infos) == 0 {
-		st.err = "This folder cannot be read."
-		rebuild(st)
-		return
+	for fe in listed {
+		icon, tint, _ := classify(fe.name, fe.is_dir, fe.is_link)
+		append(
+			&st.entries,
+			Entry {
+				fs = fe,
+				icon = icon,
+				tint = tint,
+				size_text = fe.is_dir ? strings.clone("--") : human_size(fe.size),
+				date_text = human_date(fe.mtime, st.now, st.tz_offset),
+			},
+		)
 	}
-
-	for fi in infos {
-		is_dir := fi.type == .Directory
-		is_link := fi.type == .Symlink
-		if is_link {
-			// Follow the link once, so a link to a folder sorts and opens as
-			// a folder, the way it does everywhere else.
-			if target, terr := os.stat(fi.fullpath, context.temp_allocator); terr == nil {
-				is_dir = target.type == .Directory
-			}
-		}
-		icon, tint, kind := classify(fi.name, is_dir, is_link)
-		e := Entry {
-			name      = strings.clone(fi.name),
-			path      = strings.clone(fi.fullpath),
-			is_dir    = is_dir,
-			is_link   = is_link,
-			hidden    = len(fi.name) > 0 && fi.name[0] == '.',
-			size      = fi.size,
-			mtime     = fi.modification_time,
-			kind      = kind,
-			icon      = icon,
-			tint      = tint,
-			lower     = strings.to_lower(fi.name),
-		}
-		e.kind = strings.clone(kind) // classify returns temp storage
-		e.size_text = is_dir ? strings.clone("--") : human_size(fi.size)
-		e.date_text = human_date(fi.modification_time, st.now, st.tz_offset)
-		append(&st.entries, e)
-	}
-	for fi in infos {
-		os.file_info_delete(fi, context.allocator)
-	}
-	delete(infos)
 	rebuild(st)
 }
 
-// The comparator needs the sort key, and Odin has no closures, so the key
-// rides on a file-scoped variable for the duration of the sort.
-@(private = "file")
-sort_key: Sort_Key
-@(private = "file")
-sort_desc: bool
-
-entry_less :: proc(a, b: Entry) -> bool {
-	// Directories always come before files, in both directions, which is what
-	// Finder and every other browser does.
-	if a.is_dir != b.is_dir {
-		return a.is_dir
-	}
-	r := false
-	switch sort_key {
-	case .Name:
-		r = a.lower < b.lower
-	case .Kind:
-		if a.kind != b.kind {
-			r = a.kind < b.kind
-		} else {
-			r = a.lower < b.lower
-		}
-	case .Size:
-		if a.size != b.size {
-			r = a.size > b.size // biggest first reads better by default
-		} else {
-			r = a.lower < b.lower
-		}
-	case .Date:
-		if a.mtime._nsec != b.mtime._nsec {
-			r = a.mtime._nsec > b.mtime._nsec
-		} else {
-			r = a.lower < b.lower
-		}
-	}
-	return sort_desc ? !r : r
-}
-
-// rebuild applies the sort, then the filter, and clamps the selection.
+// rebuild applies the sort, then the filter, and clamps the selection — the
+// same two rules `files list` applies (fs.odin).
 rebuild :: proc(st: ^State) {
-	sort_key = st.sort
-	sort_desc = st.descending
-	slice.sort_by(st.entries[:], entry_less)
+	fs_sort(st.entries[:], st.sort, st.descending)
 
 	clear(&st.vis)
 	needle := strings.to_lower(string(st.filter[:]), context.temp_allocator)
 	for e, i in st.entries {
-		if e.hidden && !st.show_hidden {
-			continue
+		if fs_shown(e.fs, needle, st.show_hidden) {
+			append(&st.vis, i)
 		}
-		if needle != "" && !strings.contains(e.lower, needle) {
-			continue
-		}
-		append(&st.vis, i)
 	}
 	st.sel = clamp(st.sel, 0, max(0, len(st.vis) - 1))
 }
@@ -488,42 +342,6 @@ go_up :: proc(st: ^State) -> bool {
 	return true
 }
 
-normalize :: proc(path: string, allocator := context.temp_allocator) -> string {
-	if path == "" {
-		return "/"
-	}
-	if len(path) > 1 && strings.has_suffix(path, "/") {
-		return path[:len(path) - 1]
-	}
-	return path
-}
-
-parent_of :: proc(path: string, allocator := context.temp_allocator) -> string {
-	slash := strings.last_index_byte(path, '/')
-	if slash <= 0 {
-		return "/"
-	}
-	return path[:slash]
-}
-
-base_of :: proc(path: string) -> string {
-	if path == "/" {
-		return "/"
-	}
-	slash := strings.last_index_byte(path, '/')
-	if slash < 0 {
-		return path
-	}
-	return path[slash + 1:]
-}
-
-join_path :: proc(dir, name: string, allocator := context.temp_allocator) -> string {
-	if dir == "/" {
-		return fmt.tprintf("/%s", name)
-	}
-	return fmt.tprintf("%s/%s", dir, name)
-}
-
 // ---------------------------------------------------------------------------
 // Places
 // ---------------------------------------------------------------------------
@@ -568,9 +386,4 @@ build_places :: proc(st: ^State) {
 	}
 	add(st, "Filesystem", "/", ICON_HARD_DRIVE, "text-neutral-500", "Locations")
 	delete(home)
-}
-
-is_dir_path :: proc(path: string) -> bool {
-	fi, err := os.stat(path, context.temp_allocator)
-	return err == nil && fi.type == .Directory
 }

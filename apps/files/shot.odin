@@ -26,11 +26,11 @@ SHOT_ROOT :: "/tmp/palmy-shot-fixtures/files"
 shots :: proc(dir: string) -> int {
 	if err := os.make_directory_all(dir, os.perm(0o700)); err != nil && !os.exists(dir) {
 		fmt.eprintfln("files: could not create %s", dir)
-		return 1
+		return -1
 	}
 	home := shot_tree()
 	if home == "" {
-		return 1
+		return -1
 	}
 	_ = os.set_env("HOME", home)
 
@@ -75,7 +75,7 @@ shots :: proc(dir: string) -> int {
 		out := fmt.tprintf("%s/%s.png", dir, name)
 		if p.offscreen_write_png(off, out) {
 			n^ += 1
-			fmt.printfln("  %s", out)
+			fmt.eprintfln("  %s", out)
 		}
 	}
 
@@ -162,8 +162,22 @@ shots :: proc(dir: string) -> int {
 		st.menu_open = false
 	}
 
-	fmt.printfln("files --shots: %d PNGs in %s", n, dir)
-	return 0
+	// Rename…, the name prompt every change of name goes through (actions.odin).
+	go_to(&st, strings.clone(fmt.tprintf("%s/Documents", home)))
+	sync_place(&st)
+	st.sel = 3
+	if e, ok := selected(&st); ok {
+		ask_open(&st, .Rename, e.path)
+		st.swallow = false
+		p.type_text(off, "-final")
+	}
+	step(off, app, &st)
+	step(off, app, &st)
+	shot(off, dir, "07-files-rename", &n)
+	st.ask = .None
+
+	fmt.eprintfln("files --shots: %d PNGs in %s", n, dir)
+	return n
 }
 
 // ---------------------------------------------------------------------------

@@ -8,10 +8,8 @@ import "core:fmt"
 import "core:os"
 import "core:strings"
 
-@(private = "file")
 g_checks, g_fails: int
 
-@(private = "file")
 check :: proc(ok: bool, what: string, args: ..any) {
 	g_checks += 1
 	if !ok {
@@ -101,6 +99,12 @@ selftest :: proc() -> int {
 	drive_paste(st)
 	check(os.exists(fmt.tprintf("%s/sub/a.txt", a)) && !os.exists(fmt.tprintf("%s/a.txt", a)), "paste: inside one drive it moves (%q)", st.toast)
 	_ = os.remove_all(base)
+
+	// The core, with no window, and the command line over it (selftest_fs.odin).
+	fmt.println("files self-test (core)")
+	selftest_core()
+	fmt.println("files self-test (command line)")
+	selftest_cli()
 
 	fmt.printfln("%d checks, %d failed", g_checks, g_fails)
 	return g_fails == 0 ? 0 : 1

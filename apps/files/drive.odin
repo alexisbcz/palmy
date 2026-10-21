@@ -66,14 +66,7 @@ Drive :: struct {
 // drive_init reads the identities once, at start, and adds them as places.
 drive_init :: proc(st: ^State, app: ^p.App) {
 	st.drive.app = app
-	if !on_path("palm-drive") {
-		return
-	}
-	out, ok := kit.run({"palm-drive", "identities", "--json"}, context.temp_allocator)
-	if !ok {
-		return
-	}
-	st.drive.ids = drive_parse_identities(out)
+	st.drive.ids = drive_identities()
 	for id in st.drive.ids {
 		if !is_dir_path(id.root) {
 			continue
@@ -81,6 +74,20 @@ drive_init :: proc(st: ^State, app: ^p.App) {
 		label := id.name != "" ? id.name : id.handle
 		append(&st.places, Place{strings.clone(label), strings.clone(id.root), ICON_CLOUD, drive_tint(id.kind), "Drive"})
 	}
+}
+
+// drive_identities asks palm-drive which identities have a folder here. No
+// palm-drive, or no session, is no identities — and none of Drive shows. The
+// browser and `files move` both read them through this.
+drive_identities :: proc() -> [dynamic]Drive_Id {
+	if !on_path("palm-drive") {
+		return make([dynamic]Drive_Id)
+	}
+	out, ok := kit.run({"palm-drive", "identities", "--json"}, context.temp_allocator)
+	if !ok {
+		return make([dynamic]Drive_Id)
+	}
+	return drive_parse_identities(out)
 }
 
 // drive_tint is the colour of an identity's kind, the same everywhere the
@@ -346,20 +353,13 @@ drive_paste :: proc(st: ^State) {
 		note(st, why)
 		return
 	}
-	dst := join_path(st.cwd, base_of(d.cut))
-	switch {
-	case dst == d.cut:
-		note(st, "It is already here")
-		return
-	case os.exists(dst):
-		note(st, fmt.tprintf("Not moved: %s already exists here", base_of(d.cut)))
-		return
-	case strings.has_prefix(st.cwd, d.cut) && (len(st.cwd) == len(d.cut) || st.cwd[len(d.cut)] == '/'):
-		note(st, "Not moved: a folder cannot go inside itself")
-		return
-	}
-	if err := os.rename(d.cut, dst); err != nil {
-		note(st, fmt.tprintf("Not moved: %v", err))
+	// The move itself is the core's (fs.odin), the same one `files move` runs.
+	if _, fail, why := fs_move(d.cut, st.cwd); fail != .None {
+		if fail == .Refused && why == "it is already here" {
+			note(st, "It is already here")
+		} else {
+			note(st, fmt.tprintf("Not moved: %s", why))
+		}
 		return
 	}
 	note(st, fmt.tprintf("Moved %s here", base_of(d.cut)))
