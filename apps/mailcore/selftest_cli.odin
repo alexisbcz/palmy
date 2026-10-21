@@ -275,7 +275,7 @@ test_cli :: proc(t: ^T) {
 		teq_int(t, "login --dry-run exits 0 without dialling", code, 0)
 		valid(t, "and matches its declared schema", out, "login")
 		log, _ := os.read_entire_file_from_path(audit, context.temp_allocator)
-		tcheck(t, "the login is in the audit log", strings.contains(string(log), `"verb":"login"`))
+		tcheck(t, "the login is in the audit log", strings.contains(string(log), `"verb": "login"`))
 		tcheck(t, "but its password is not", !strings.contains(string(log), "synthetic-secret-42"))
 		tcheck(t, "only a placeholder", strings.contains(string(log), kit.CLI_REDACTED))
 		out, code = run_self(env, "login", "--email", "ada@example.test", "--password=synthetic-secret-43", "--nope", "--json")

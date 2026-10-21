@@ -161,7 +161,7 @@ test_password_secret :: proc() {
 	_, out, _ := kit.cli_capture(surface(), {"signin", "a@b.test", "--password", "hunter2-7319", "--dry-run", "--json"})
 	raw, _ := os.read_entire_file_from_path(audit, context.temp_allocator)
 	log := string(raw)
-	check(strings.contains(log, `"verb":"signin"`), "signin is audited")
+	check(strings.contains(log, `"verb": "signin"`), "signin is audited")
 	check(!strings.contains(log, "hunter2-7319") && strings.contains(log, "<redacted>"), "but its --password is not: <redacted> in its place")
 	check(!strings.contains(out, "hunter2-7319"), "nor is it in what signin prints")
 }

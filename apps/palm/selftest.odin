@@ -1034,9 +1034,9 @@ test_dispatcher :: proc(scratch: string) {
 		check(!os.exists(audit) || !strings.contains(read_text(audit), `"verb": "path"`), "a read leaves no audit record")
 		_, _ = palm("notes", "new", "Audited", "--json")
 		text := read_text(audit)
-		check(strings.contains(text, `"verb":"new"`), "a mutating command leaves one")
-		check(strings.contains(text, `"effect":"mutate"`), "with its side-effect class")
-		check(strings.contains(text, `"identity":"unscoped"`), "and the identity it ran under")
+		check(strings.contains(text, `"verb": "new"`), "a mutating command leaves one")
+		check(strings.contains(text, `"effect": "mutate"`), "with its side-effect class")
+		check(strings.contains(text, `"identity": "unscoped"`), "and the identity it ran under")
 
 		out, code := palm("audit", "--json")
 		eq_i(code, 0, "palm audit exits 0")

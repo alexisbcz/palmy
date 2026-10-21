@@ -117,10 +117,17 @@ The rest of what you need:
   refusals, `cli_note`, `--help` and the schema's examples show
   `<redacted>`; `cli_str` still returns the value), `repeat` (`cli_all(c,
   name)` is every value, in order; `cli_str` stays the last), or `unless =
-  {"password-file"}` (required unless one of those was given). A surface's
-  `flags` are taken by every command and published in each command's schema
-  (`mail --data-dir`). An output `Field` with `keyed = true` is an object
-  whose keys are data; `of` is the shape of each value.
+  {"password-file"}` (required unless one of those has a value: `--magnet
+  ""` is not given). `aliases = {"x"}` gives a flag other long spellings
+  (`--x 4` is `--left 4`, read under `left`), and `confirm = "makes network
+  requests to …"` makes a flag ask for `--yes` on any command, a read
+  included (`vault health --breach`): exit 4 before the command runs, naming
+  the flag. A surface's `flags` are taken by every command, before or after
+  the verb (`mail --data-dir X list`), and published in each command's schema;
+  a line of nothing but them is handed to the window, which reads them with
+  `kit.cli_surface_flag(surface(), os.args[1:], "maildir")`. An output
+  `Field` with `keyed = true` is an object whose keys are data; `of` is the
+  shape of each value.
   A positional declared `free` takes a word starting with `-` that names no
   flag (a word with a space, like `"- One"`, or a negative number always
   does). A command with `private_args = true` has every positional replaced
@@ -136,7 +143,10 @@ The rest of what you need:
 - **A bare word under `takes_path`** opens the window. Set `takes_word =
   kit.cli_word_is_path` to open it only for something on disk or a URI, and
   make anything else (a mistyped verb) a usage error; a surface whose window
-  takes other words (`settings network`) passes its own predicate.
+  takes other words (`settings network`) passes its own predicate. Every
+  bare word on the line is asked, not only the first (`sheets book.csv
+  tabel` is a typo); the word after an option the kit does not know is
+  taken as that option's value and not asked about.
 - **Stdout is the result and nothing else.** Progress and warnings go through
   `cli_note` (or `cli_trace`, `--verbose` only), which write to stderr.
   `cli_progress(c, done, total)` reports progress there too, as one JSON
@@ -145,6 +155,9 @@ The rest of what you need:
   `cli_jobs`) in `$XDG_RUNTIME_DIR/palm/jobs` (`$PALM_JOBS`). Text tables
   pad by display width, so `é`, `€` and CJK line up; a successful dry run
   says so on stderr in text mode and as `"dry_run": true` under `--json`.
+  A command printing its own lines pads with `kit.cli_pad(s, width)` (or
+  `cli_pad_left`) instead of `%-Ns`, or lays rows out with
+  `kit.cli_table(rows)`.
 - **Nothing prompts.** The kit never reads stdin.
 - **Intent commands** (`effect = .Intent`, anything that would power off, log
   out, disconnect) are written as `return kit.cli_intent(c, "systemctl
@@ -165,8 +178,10 @@ The rest of what you need:
   printed instead of printing it, and `kit.cli_capture_json` adds `--json`
   and parses it. `kit.cli_validate_output(text, FIELDS)` checks printed JSON
   against the declared `out`. Set `$PALM_AUDIT` so a self-test never writes
-  the real audit log (`$XDG_STATE_HOME/palm/audit.jsonl`: compact JSONL, one
-  record per line, with the `--json` refusal's `error` token on a failure).
+  the real audit log (`$XDG_STATE_HOME/palm/audit.jsonl`: JSONL, one record
+  per line, spaced as `--json` spaces it — `"verb": "purge"` greps both —
+  with the `--json` refusal's `error` token on a failure; `kit.cli_json_line`
+  writes that format).
   The convention's own tests: `odin test apps/kit/cli_test
   -collection:palmy=palmy -collection:kit=apps/kit -collection:shadcn=shadcn`.
 - **`palm`** finds the application only once its noun's `on_convention` flag

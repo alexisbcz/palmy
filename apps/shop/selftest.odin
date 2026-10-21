@@ -1794,7 +1794,7 @@ test_cli :: proc() {
 	// The audit log records changes and not reads.
 	{
 		audit, _ := os.read_entire_file(fmt.tprintf("%s/audit.jsonl", dir), context.temp_allocator)
-		ok(strings.contains(string(audit), `"verb":"basket-add"`), "a change leaves an audit record")
-		ok(!strings.contains(string(audit), `"verb":"basket"`) && !strings.contains(string(audit), `"verb":"search"`), "a read does not")
+		ok(strings.contains(string(audit), `"verb": "basket-add"`), "a change leaves an audit record")
+		ok(!strings.contains(string(audit), `"verb": "basket"`) && !strings.contains(string(audit), `"verb": "search"`), "a read does not")
 	}
 }

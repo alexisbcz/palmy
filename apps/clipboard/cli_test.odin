@@ -384,9 +384,9 @@ test_cli :: proc() {
 	{
 		raw, _ := os.read_entire_file_from_path(fmt.tprintf("%s/audit.jsonl", SCRATCH_HOME), context.temp_allocator)
 		log := string(raw)
-		tcheck(strings.contains(log, `"verb":"clear"`) && strings.contains(log, `"verb":"pin"`), "the edits are in the audit log")
-		tcheck(!strings.contains(log, `"verb":"list"`), "the reads are not")
-		tcheck(strings.contains(log, `"verb":"add"`), "add is audited")
+		tcheck(strings.contains(log, `"verb": "clear"`) && strings.contains(log, `"verb": "pin"`), "the edits are in the audit log")
+		tcheck(!strings.contains(log, `"verb": "list"`), "the reads are not")
+		tcheck(strings.contains(log, `"verb": "add"`), "add is audited")
 		tcheck(!strings.contains(log, "hunter") && !strings.contains(log, "SELECT id"), "but what was added — copied text, a refused secret — is not in the audit log")
 	}
 	{
@@ -402,7 +402,7 @@ test_cli :: proc() {
 		raw, _ := os.read_entire_file_from_path(audit, context.temp_allocator)
 		log := string(raw)
 		tcheck(c1 == 0 && c2 == 0 && c3 == 0 && c4 == 0, "add after a flag, after --, starting with a dash, and under --parse-only all succeed (%d %d %d %d)", c1, c2, c3, c4)
-		tcheck(strings.count(log, `"verb":"add"`) == 3 && strings.contains(log, "<redacted>"), "the three adds are audited, with <redacted> in the text's place")
+		tcheck(strings.count(log, `"verb": "add"`) == 3 && strings.contains(log, "<redacted>"), "the three adds are audited, with <redacted> in the text's place")
 		tcheck(!strings.contains(po, "7319") && strings.contains(po, "<redacted>"), "--parse-only echoes <redacted> too")
 		tcheck(!strings.contains(log, "7319"), "grepping the audit log for the added text finds nothing")
 		list, _ := run("list", "--json")

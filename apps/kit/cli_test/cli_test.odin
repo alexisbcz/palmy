@@ -154,6 +154,42 @@ COMMANDS := []kit.Command {
 		out = {{name = "rows", kind = .Array}},
 		run = cmd_wide,
 	},
+	{
+		verb = "place",
+		summary = "long aliases",
+		effect = .Mutate,
+		flags = {
+			{name = "left", kind = .Int, aliases = {"x"}},
+			{name = "top", kind = .Int, aliases = {"y"}},
+			{name = "width", kind = .Int, aliases = {"w"}},
+			{name = "height", kind = .Int, aliases = {"h"}},
+			{name = "token", kind = .String, secret = true, aliases = {"key"}},
+		},
+		out = {{name = "left", kind = .Int}, {name = "top", kind = .Int}, {name = "width", kind = .Int}, {name = "height", kind = .Int}},
+		examples = {"tool place --x 4 --y=5 --w 6 --height 7"},
+		run = cmd_place,
+	},
+	{
+		verb = "peek",
+		summary = "a read with a flag that asks for --yes",
+		effect = .Read,
+		flags = {{name = "remote", kind = .Bool, confirm = "asks a server somewhere else"}, {name = "depth", kind = .Int}},
+		out = {{name = "remote", kind = .Bool}},
+		examples = {"tool peek --remote --yes"},
+		run = cmd_peek,
+	},
+}
+
+cmd_place :: proc(c: ^kit.Call) -> int {
+	for k in ([?]string{"left", "top", "width", "height"}) {
+		kit.jset_int(c.out, k, kit.cli_int(c, k))
+	}
+	return kit.EXIT_OK
+}
+
+cmd_peek :: proc(c: ^kit.Call) -> int {
+	kit.jset_bool(c.out, "remote", kit.cli_bool(c, "remote"))
+	return kit.EXIT_OK
 }
 
 cmd_clip :: proc(c: ^kit.Call) -> int {
@@ -497,7 +533,7 @@ owned_memory :: proc(t: ^testing.T) {
 	testing.expect(t, strings.contains(text, "the-word-that-must-survive"), "the result printed after the free")
 
 	log := read_file(audit)
-	testing.expect(t, strings.contains(log, `"argv":["churn","the-word-that-must-survive","--json"]`), "the audit record, written after the free, holds the argv intact")
+	testing.expect(t, strings.contains(log, `"argv": ["churn", "the-word-that-must-survive", "--json"]`), "the audit record, written after the free, holds the argv intact")
 }
 
 // ---------------------------------------------------------------------------
@@ -650,7 +686,7 @@ destructive_reason :: proc(t: ^testing.T) {
 	testing.expect(t, strings.contains(str(doc, "detail"), "destructive"), "without a hook, the generic reason")
 
 	log := read_file(audit)
-	testing.expect(t, strings.contains(log, `"error":"needs --yes"`), "the refusal is audited with its token")
+	testing.expect(t, strings.contains(log, `"error": "needs --yes"`), "the refusal is audited with its token")
 }
 
 // ---------------------------------------------------------------------------
@@ -828,9 +864,14 @@ audit_format :: proc(t: ^testing.T) {
 	for l in lines {
 		_, err := json.parse_string(l, json.DEFAULT_SPECIFICATION, true, context.temp_allocator)
 		testing.expectf(t, err == nil, "each line is one JSON document: %q", l)
-		testing.expect(t, strings.has_prefix(l, `{"at":"`), "compact, as applications' self-tests grep it")
+		testing.expect(t, strings.has_prefix(l, `{"at": "`), "one line, spaced as --json spaces it")
 	}
-	testing.expect(t, strings.contains(lines[1], `"error":"needs --yes"`), "a refusal carries the --json token")
+	testing.expect(t, strings.contains(lines[1], `"error": "needs --yes"`), "a refusal carries the --json token")
+	// The same text greps both: what --json prints for a field is what the
+	// log holds for it.
+	_, _, refusal := run("wipe")
+	testing.expect(t, strings.contains(refusal, `"error": "needs --yes"`) && strings.contains(lines[1], `"error": "needs --yes"`), "the refusal and its record match the same grep")
+	testing.expect(t, strings.contains(lines[0], `"argv": ["sync", "--profile", "a", "--json"]`), "an array is spaced too")
 	testing.expect(t, !strings.contains(lines[0], `"error"`), "a success does not")
 }
 
@@ -920,7 +961,7 @@ private_positionals :: proc(t: ^testing.T) {
 	for leak in ([?]string{"copied-text-one", "copied text two", "-dash-text", "my-pass-phrase-9"}) {
 		testing.expectf(t, !strings.contains(log, leak), "the audit log does not hold %q", leak)
 	}
-	testing.expect(t, strings.contains(log, `"argv":["clip","<redacted>","--kind","plain","<redacted>","<redacted>","--json"]`), "the verb and the flags are kept; each positional is a placeholder")
+	testing.expect(t, strings.contains(log, `"argv": ["clip", "<redacted>", "--kind", "plain", "<redacted>", "<redacted>", "--json"]`), "the verb and the flags are kept; each positional is a placeholder")
 }
 
 @(test)
@@ -965,4 +1006,237 @@ dashes_and_aliases :: proc(t: ^testing.T) {
 	// A table of more than eight columns is still a table.
 	_, text, _ := kit.cli_capture(surface(), {"wide"})
 	testing.expect(t, strings.contains(text, "c0   c1   c2"), "ten columns side by side")
+}
+
+// ---------------------------------------------------------------------------
+// The third round: surface flags first, empty alternatives, long aliases,
+// padding, every bare word, a read that asks for --yes
+// ---------------------------------------------------------------------------
+
+@(private = "file")
+g_flag_window: kit.Surface
+
+// A package variable: a slice literal inside a procedure would live on its
+// stack frame and dangle once flag_window returned.
+@(private = "file")
+WINDOW_FLAGS := []kit.Param{{name = "data-dir", kind = .Path, def = "/var/lib/tool"}, {name = "quiet", kind = .Bool}}
+
+// flag_window is a GUI surface with a surface-wide flag, like mail's
+// --maildir.
+@(private = "file")
+flag_window :: proc() -> ^kit.Surface {
+	if g_flag_window.noun == "" {
+		g_flag_window = kit.Surface {
+			noun     = "box",
+			summary  = "a window with surface flags",
+			commands = COMMANDS,
+			flags    = WINDOW_FLAGS,
+			gui      = true,
+		}
+	}
+	return &g_flag_window
+}
+
+@(test)
+surface_flags_first :: proc(t: ^testing.T) {
+	sync.mutex_lock(&g_lock)
+	defer sync.mutex_unlock(&g_lock)
+	arena: virtual.Arena
+	_ = virtual.arena_init_growing(&arena)
+	context.allocator = virtual.arena_allocator(&arena)
+	defer virtual.arena_destroy(&arena)
+	audit := fresh_audit("lead")
+
+	code, doc, _ := run("--data-dir", "/srv/a", "sync")
+	testing.expect_value(t, code, kit.EXIT_OK)
+	testing.expect_value(t, str(doc, "data_dir"), "/srv/a")
+	code, doc, _ = run("--data-dir=/srv/b", "sync", "--profile", "p")
+	testing.expect_value(t, code, kit.EXIT_OK)
+	testing.expect_value(t, str(doc, "data_dir"), "/srv/b")
+	code, doc, _ = run("--data-dir", "/srv/c", "sync", "--data-dir", "/srv/d")
+	testing.expect_value(t, str(doc, "data_dir"), "/srv/d") // the later one wins, as anywhere
+	code, doc, _ = run("--data-dir", "/srv/e", "--schema")
+	testing.expect_value(t, code, kit.EXIT_OK)
+	testing.expect(t, strings.contains(kit.cli_help_text(surface(), "sync"), "--data-dir"), "help still lists it")
+
+	// The audit record is the command's, verb first.
+	testing.expect(t, strings.contains(read_file(audit), `"argv": ["sync", "--data-dir", "/srv/a", "--json"]`), "the record holds the line with the verb first")
+
+	// Nothing but surface flags: the window's line where there is a window,
+	// a usage error where there is not.
+	code2, handled := kit.cli_args(flag_window(), {"--data-dir=/srv/x"})
+	testing.expect(t, !handled, "a line of surface flags opens the window")
+	_, handled = kit.cli_args(flag_window(), {"--data-dir", "/srv/x", "--quiet"})
+	testing.expect(t, !handled, "in either spelling, with a Bool among them")
+	code2, handled = kit.cli_args(surface(), {"--data-dir=/srv/x"})
+	testing.expect(t, handled && code2 == kit.EXIT_USAGE, "without a window it is a usage error")
+	code2, handled = kit.cli_args(surface(), {"--data-dir"})
+	testing.expect(t, handled && code2 == kit.EXIT_USAGE, "a surface flag with no value is a usage error")
+	code2, handled = kit.cli_args(flag_window(), {"--data-dir", "/srv/x", "tabel"})
+	testing.expect(t, handled && code2 == kit.EXIT_USAGE, "a surface flag then a typo is still a typo")
+
+	// The window reads them the way a command does.
+	v, ok := kit.cli_surface_flag(flag_window(), {"--data-dir", "/srv/y", "--quiet"}, "data-dir")
+	testing.expect(t, ok && v == "/srv/y", "cli_surface_flag reads the spaced spelling")
+	v, ok = kit.cli_surface_flag(flag_window(), {"--data-dir=/srv/z"}, "data-dir")
+	testing.expect(t, ok && v == "/srv/z", "and the = spelling")
+	v, ok = kit.cli_surface_flag(flag_window(), {"--quiet"}, "quiet")
+	testing.expect(t, ok && v == "true", "a Bool is true")
+	v, ok = kit.cli_surface_flag(flag_window(), {"--no-quiet"}, "quiet")
+	testing.expect(t, ok && v == "false", "and --no- turns it off")
+	_, ok = kit.cli_surface_flag(flag_window(), {"--quiet"}, "data-dir")
+	testing.expect(t, !ok, "a flag not on the line is not there")
+}
+
+@(test)
+empty_alternatives :: proc(t: ^testing.T) {
+	sync.mutex_lock(&g_lock)
+	defer sync.mutex_unlock(&g_lock)
+	arena: virtual.Arena
+	_ = virtual.arena_init_growing(&arena)
+	context.allocator = virtual.arena_allocator(&arena)
+	defer virtual.arena_destroy(&arena)
+	fresh_audit("unless")
+
+	code, doc, _ := run("login", "--user", "ada", "--password-file", "")
+	testing.expect_value(t, code, kit.EXIT_USAGE)
+	testing.expect_value(t, str(doc, "missing"), "password")
+	code, doc, _ = run("login", "--user", "ada", "--password-file=")
+	testing.expect_value(t, code, kit.EXIT_USAGE)
+	code, doc, _ = run("login", "--user", "ada", "--password", "", "--password-file", "")
+	testing.expect_value(t, code, kit.EXIT_USAGE)
+	code, _, _ = run("login", "--user", "ada", "--password-file", "/dev/null")
+	testing.expect_value(t, code, kit.EXIT_OK)
+}
+
+@(test)
+long_aliases :: proc(t: ^testing.T) {
+	sync.mutex_lock(&g_lock)
+	defer sync.mutex_unlock(&g_lock)
+	arena: virtual.Arena
+	_ = virtual.arena_init_growing(&arena)
+	context.allocator = virtual.arena_allocator(&arena)
+	defer virtual.arena_destroy(&arena)
+	audit := fresh_audit("alias")
+
+	code, doc, _ := run("place", "--x", "4", "--y=5", "--w", "6", "--height", "7")
+	testing.expect_value(t, code, kit.EXIT_OK)
+	o := obj(doc)
+	l, _ := o["left"].(json.Integer)
+	tp, _ := o["top"].(json.Integer)
+	w, _ := o["width"].(json.Integer)
+	h, _ := o["height"].(json.Integer)
+	testing.expect(t, l == 4 && tp == 5 && w == 6 && h == 7, "each alias is read under the flag's name")
+	// `--h` is the command's alias here, not --help; `-h` too.
+	code, doc, _ = run("place", "-h", "9")
+	h, _ = obj(doc)["height"].(json.Integer)
+	testing.expect(t, code == kit.EXIT_OK && h == 9, "a one-letter alias wins over the base -h")
+	code, _, _ = run("place", "--z", "1")
+	testing.expect_value(t, code, kit.EXIT_USAGE)
+
+	// A secret's alias is a secret.
+	run("place", "--key", "alias-secret-value-1")
+	testing.expect(t, !strings.contains(read_file(audit), "alias-secret-value-1"), "a secret given by its alias is redacted")
+
+	schema := kit.json_text(kit.cli_schema_json(surface()), 0, context.temp_allocator)
+	testing.expect(t, strings.contains(schema, `"name":"left","type":"int","required":false,"aliases":["x"]`), "the schema lists a flag's aliases")
+	help := kit.cli_help_text(surface(), "place")
+	testing.expect(t, strings.contains(help, "(also --x)"), "and so does --help")
+	c, bc := kit.cli_bind(surface(), {"place", "--x", "1", "--left", "2"})
+	testing.expect(t, bc == kit.EXIT_OK && kit.cli_int(&c, "left") == 2, "the name and the alias are one flag: the last wins")
+}
+
+@(test)
+padding :: proc(t: ^testing.T) {
+	sync.mutex_lock(&g_lock)
+	defer sync.mutex_unlock(&g_lock)
+
+	testing.expect_value(t, kit.cli_pad("abc", 5), "abc  ")
+	testing.expect_value(t, kit.cli_pad("café", 6), "café  ")
+	testing.expect_value(t, kit.cli_pad("東京", 6), "東京  ")
+	testing.expect_value(t, kit.cli_pad("toolong", 3), "toolong") // never cut
+	testing.expect_value(t, kit.cli_pad_left("€5", 4), "  €5")
+	// What %-Ns does, for contrast: a wide character counts as one column.
+	testing.expect(t, fmt.tprintf("%-6s|", "東京") != fmt.tprintf("%s|", kit.cli_pad("東京", 6)), "printf does not pad by display width")
+
+	table := kit.cli_table({{"name", "kind", "end"}, {"Épicerie générale", "x", "|"}, {"東京", "yy", "|"}, {"a"}})
+	lines := strings.split_lines(strings.trim_right(table, "\n"), context.temp_allocator)
+	testing.expect_value(t, len(lines), 4)
+	col := -1
+	for l in lines[:3] {
+		i := strings.index_byte(l, '|')
+		if i < 0 {
+			i = strings.index(l, "end")
+		}
+		w := kit.cli_display_width(l[:i])
+		if col < 0 {
+			col = w
+		}
+		testing.expectf(t, w == col, "the last column starts at display column %d in every row: %q", col, l)
+		testing.expect(t, !strings.has_suffix(l, " "), "no line ends in spaces")
+	}
+	testing.expect_value(t, lines[3], "a")
+}
+
+@(test)
+every_bare_word :: proc(t: ^testing.T) {
+	sync.mutex_lock(&g_lock)
+	defer sync.mutex_unlock(&g_lock)
+	arena: virtual.Arena
+	_ = virtual.arena_init_growing(&arena)
+	context.allocator = virtual.arena_allocator(&arena)
+	defer virtual.arena_destroy(&arena)
+	fresh_audit("words")
+
+	file := fmt.tprintf("%s/doc.txt", scratch())
+	_ = os.write_entire_file(file, transmute([]u8)string("x"))
+
+	code, out, handled := kit.cli_capture(window(true), {file, "tabel", "--json"})
+	testing.expect(t, handled && code == kit.EXIT_USAGE, "a typo after a file is a usage error, not a window")
+	testing.expect(t, strings.contains(out, `"given": "tabel"`), "and names the word")
+	_, handled = kit.cli_args(window(true), {file, file})
+	testing.expect(t, !handled, "two files open the window")
+	_, handled = kit.cli_args(window(true), {file, "--zoom", "2"})
+	testing.expect(t, !handled, "an option's value is not asked about")
+	_, handled = kit.cli_args(window(true), {file, "--", "https://example.org/x"})
+	testing.expect(t, !handled, "a URI after -- is a word like any other")
+	code, handled = kit.cli_args(window(true), {file, "--", "tabel"})
+	testing.expect(t, handled && code == kit.EXIT_USAGE, "and a typo after -- is still a typo")
+	_, handled = kit.cli_args(window(false), {file, "tabel"})
+	testing.expect(t, !handled, "without takes_word every word still opens the window, as before")
+}
+
+@(test)
+read_that_confirms :: proc(t: ^testing.T) {
+	sync.mutex_lock(&g_lock)
+	defer sync.mutex_unlock(&g_lock)
+	arena: virtual.Arena
+	_ = virtual.arena_init_growing(&arena)
+	context.allocator = virtual.arena_allocator(&arena)
+	defer virtual.arena_destroy(&arena)
+	fresh_audit("confirm")
+
+	code, doc, _ := run("peek")
+	testing.expect_value(t, code, kit.EXIT_OK)
+	code, doc, _ = run("peek", "--remote")
+	testing.expect_value(t, code, kit.EXIT_NEEDS_YES)
+	testing.expect_value(t, str(doc, "error"), kit.ERR_NEEDS_YES)
+	testing.expect_value(t, str(doc, "flag"), "remote")
+	testing.expect_value(t, str(doc, "pass"), "--yes")
+	testing.expect_value(t, str(doc, "effect"), "read")
+	testing.expect_value(t, str(doc, "detail"), "--remote asks a server somewhere else; add --yes to allow it")
+	code, _, _ = run("peek", "--remote", "--dry-run")
+	testing.expect_value(t, code, kit.EXIT_NEEDS_YES) // a dry run is no excuse
+	code, doc, _ = run("peek", "--remote", "--yes")
+	testing.expect_value(t, code, kit.EXIT_OK)
+	code, _, _ = run("peek", "--no-remote")
+	testing.expect_value(t, code, kit.EXIT_OK)
+	code, _, _ = run("peek", "--remote=false")
+	testing.expect_value(t, code, kit.EXIT_OK)
+	code, _, _ = run("peek", "--remote", "--parse-only")
+	testing.expect_value(t, code, kit.EXIT_NEEDS_YES)
+
+	schema := kit.json_text(kit.cli_schema_json(surface()), 2, context.temp_allocator)
+	testing.expect(t, strings.contains(schema, `"confirm": "asks a server somewhere else"`), "the schema says which flag asks")
+	testing.expect(t, strings.contains(kit.cli_help_text(surface(), "peek"), "needs --yes"), "and so does --help")
 }

@@ -431,6 +431,6 @@ test_cli :: proc() {
 		_, code = run(dir, "rendr")
 		check(code == kit.EXIT_USAGE, "cli: a mistyped verb is a usage error, not a window")
 		audit, _ := os.read_entire_file_from_path(at(dir, "audit.jsonl"), context.temp_allocator)
-		check(strings.contains(string(audit), `"verb":"thumbnail"`) && !strings.contains(string(audit), `"verb":"info"`), "cli: writes are audited, reads are not")
+		check(strings.contains(string(audit), `"verb": "thumbnail"`) && !strings.contains(string(audit), `"verb": "info"`), "cli: writes are audited, reads are not")
 	}
 }

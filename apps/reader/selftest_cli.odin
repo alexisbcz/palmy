@@ -266,8 +266,8 @@ test_cli :: proc(t: ^T, png: []u8) {
 	{
 		data, err := read_file(fmt.tprintf("%s.audit.jsonl", home), context.temp_allocator)
 		text := string(data)
-		ck(t, err == "" && strings.contains(text, `"verb":"seek"`), "a mutation leaves an audit record")
-		ck(t, !strings.contains(text, `"verb":"library"`), "and a read does not")
+		ck(t, err == "" && strings.contains(text, `"verb": "seek"`), "a mutation leaves an audit record")
+		ck(t, !strings.contains(text, `"verb": "library"`), "and a read does not")
 	}
 	_ = os.remove(fmt.tprintf("%s.audit.jsonl", home))
 }

@@ -413,7 +413,7 @@ t_cli :: proc(t: ^Checks) {
 	{
 		raw, _ := os.read_entire_file_from_path(fmt.tprintf("%s/audit.jsonl", g_cli_dir), context.temp_allocator)
 		log := string(raw)
-		check(t, strings.contains(log, `"verb":"duplicate"`) && strings.contains(log, `"verb":"delete"`), "edits are in the audit log")
-		check(t, !strings.contains(log, `"verb":"info"`), "reads are not")
+		check(t, strings.contains(log, `"verb": "duplicate"`) && strings.contains(log, `"verb": "delete"`), "edits are in the audit log")
+		check(t, !strings.contains(log, `"verb": "info"`), "reads are not")
 	}
 }

@@ -1911,8 +1911,8 @@ test_cli :: proc() {
 	}
 	{
 		audit, _ := os.read_entire_file_from_path(fmt.tprintf("%s/audit.jsonl", dir), context.temp_allocator)
-		check(strings.contains(string(audit), `"verb":"split"`), "a mutation leaves an audit record")
-		check(!strings.contains(string(audit), `"verb":"info"`), "and a read does not")
+		check(strings.contains(string(audit), `"verb": "split"`), "a mutation leaves an audit record")
+		check(!strings.contains(string(audit), `"verb": "info"`), "and a read does not")
 	}
 }
 

@@ -242,6 +242,34 @@ Param :: struct {
 	// already is, having a space; `-draft` needs this). Words with a space
 	// and negative numbers are always values, free or not.
 	free:     bool,
+	// aliases are other long spellings of a flag: `{name = "left", aliases =
+	// {"x"}}` takes `--x 4` as `--left 4`. The value is always read under
+	// `name`; --help and the schema list the aliases beside it.
+	aliases:  []string,
+	// confirm makes a flag ask for --yes when it is given, whatever the
+	// command's effect: `vault health` is a read, but `--breach` sends
+	// something off the machine. It is the reason, as a phrase following the
+	// flag's name ("makes network requests to …"). Without --yes the kit
+	// refuses with exit 4 before the command runs, and names the flag; a dry
+	// run is no excuse, since a read has nothing to leave out.
+	confirm:  string,
+}
+
+// cli_param_named says whether `name` (without its dashes) spells this
+// parameter: its name, its short alias or one of its long ones.
+cli_param_named :: proc(p: ^Param, name: string) -> bool {
+	if name == "" {
+		return false
+	}
+	if p.name == name || p.short == name {
+		return true
+	}
+	for a in p.aliases {
+		if a == name {
+			return true
+		}
+	}
+	return false
 }
 
 // Schema_Kind describes the shape of a field in a command's output.
@@ -911,10 +939,13 @@ audit_append :: proc(rec: ^Json) {
 			}
 		}
 	}
-	// Compact, one record per line. The keys and tokens are the ones --json
-	// prints; the spacing is not, deliberately: applications' self-tests grep
-	// this file for `"verb":"purge"`, and a log format is a contract.
-	line := fmt.tprintf("%s\n", json_text(rec, 0, context.temp_allocator))
+	// One record per line, spaced the way --json spaces a document: `"verb":
+	// "purge"` is the same text in a command's --json and in this log, so a
+	// test or a person grepping for one finds the other. It was compact
+	// (`"verb":"purge"`) until October 2026, which made every grep written
+	// against --json miss the log, silently — a negative check passed for
+	// the wrong reason.
+	line := fmt.tprintf("%s\n", cli_json_line(rec, context.temp_allocator))
 	f, oerr := os.open(path, {.Write, .Create, .Append}, os.perm(0o600))
 	if oerr != nil {
 		return
@@ -928,6 +959,47 @@ audit_append :: proc(rec: ^Json) {
 			break
 		}
 		off += n
+	}
+}
+
+// cli_json_line is a document on one line, spaced as --json spaces it:
+// `{"verb": "new", "argv": ["new", "x"]}`. It is the audit log's format, and
+// any JSONL a command writes should use it too.
+cli_json_line :: proc(v: ^Json, allocator := context.temp_allocator) -> string {
+	sb := strings.builder_make(allocator)
+	json_line_write(&sb, v)
+	return strings.to_string(sb)
+}
+
+@(private = "file")
+json_line_write :: proc(sb: ^strings.Builder, v: ^Json) {
+	if v == nil {
+		strings.write_string(sb, "null")
+		return
+	}
+	#partial switch v.kind {
+	case .Array:
+		strings.write_byte(sb, '[')
+		for it, i in v.items {
+			if i > 0 {
+				strings.write_string(sb, ", ")
+			}
+			json_line_write(sb, it)
+		}
+		strings.write_byte(sb, ']')
+	case .Object:
+		strings.write_byte(sb, '{')
+		for it, i in v.items {
+			if i > 0 {
+				strings.write_string(sb, ", ")
+			}
+			json_escape(sb, v.keys[i])
+			strings.write_string(sb, ": ")
+			json_line_write(sb, it)
+		}
+		strings.write_byte(sb, '}')
+	case:
+		json_write(sb, v, 0)
 	}
 }
 
@@ -996,8 +1068,8 @@ g_secrets: []string
 // a line that failed to bind is redacted by every name it could have meant.
 cli_is_secret :: proc(s: ^Surface, cmd: ^Command, name: string) -> bool {
 	check :: proc(ps: []Param, name: string) -> bool {
-		for p in ps {
-			if p.secret && (p.name == name || (p.short != "" && p.short == name)) {
+		for &p in ps {
+			if p.secret && cli_param_named(&p, name) {
 				return true
 			}
 		}
@@ -1258,13 +1330,13 @@ find_command :: proc(s: ^Surface, token: string) -> ^Command {
 @(private = "file")
 find_flag :: proc(s: ^Surface, cmd: ^Command, name: string) -> ^Param {
 	for &f in cmd.flags {
-		if f.name == name || (f.short != "" && f.short == name) {
+		if cli_param_named(&f, name) {
 			return &f
 		}
 	}
 	if s != nil {
 		for &f in s.flags {
-			if f.name == name || (f.short != "" && f.short == name) {
+			if cli_param_named(&f, name) {
 				return &f
 			}
 		}
@@ -1624,10 +1696,13 @@ cli_bind :: proc(s: ^Surface, argv_in: []string) -> (c: Call, code: int) {
 	}
 
 	// Required things. `unless` relaxes either kind: the parameter is needed
-	// only when none of the named alternatives was given.
+	// only when none of the named alternatives has a value. An alternative
+	// given empty (`--magnet ""`) is not one: it used to count as given, and
+	// every command that relied on `unless` had to check its body for the
+	// line that named neither.
 	excused :: proc(c: ^Call, p: Param) -> bool {
 		for alt in p.unless {
-			if c.seen[alt] || (c.vals[alt] != "" && c.vals[alt] != "false") {
+			if v := c.vals[alt]; v != "" && v != "false" {
 				return true
 			}
 		}
@@ -1682,6 +1757,25 @@ cli_bind :: proc(s: ^Surface, argv_in: []string) -> (c: Call, code: int) {
 		cli_err_field(&c, "effect", "destructive")
 		cli_err_field(&c, "pass", "--yes")
 		return c, code
+	}
+	// The same refusal for a flag that asks for confirmation on a command
+	// that otherwise would not (`vault health --breach`).
+	if !c.yes {
+		for ps in ([2][]Param{c.cmd.flags, s.flags}) {
+			for p in ps {
+				if p.confirm == "" || !c.seen[p.name] {
+					continue
+				}
+				if v := c.vals[p.name]; v == "" || v == "false" {
+					continue
+				}
+				code = cli_fail(&c, EXIT_NEEDS_YES, fmt.tprintf("--%s %s; add --yes to allow it", p.name, p.confirm))
+				cli_err_field(&c, "effect", effect_name(c.cmd.effect))
+				cli_err_field(&c, "flag", p.name)
+				cli_err_field(&c, "pass", "--yes")
+				return c, code
+			}
+		}
 	}
 
 	return c, EXIT_OK
@@ -1796,6 +1890,75 @@ cli_display_width :: proc(s: string) -> int {
 		w += rune_width(r)
 	}
 	return w
+}
+
+// cli_pad is `s` followed by enough spaces to fill `width` terminal columns —
+// what `%-Ns` does by bytes, done by display width, so a column after
+// "Épicerie" or "東京" starts where it does after "Bread". A string already as
+// wide or wider comes back unchanged: it is never cut.
+//
+//	fmt.printfln("%s %s", kit.cli_pad(name, 24), kind)
+cli_pad :: proc(s: string, width: int, allocator := context.temp_allocator) -> string {
+	n := width - cli_display_width(s)
+	if n <= 0 {
+		return s
+	}
+	sb := strings.builder_make(0, len(s) + n, allocator)
+	strings.write_string(&sb, s)
+	for _ in 0 ..< n {
+		strings.write_byte(&sb, ' ')
+	}
+	return strings.to_string(sb)
+}
+
+// cli_pad_left is cli_pad on the other side, for a right-aligned column of
+// numbers or sizes (`%8s`).
+cli_pad_left :: proc(s: string, width: int, allocator := context.temp_allocator) -> string {
+	n := width - cli_display_width(s)
+	if n <= 0 {
+		return s
+	}
+	sb := strings.builder_make(0, len(s) + n, allocator)
+	for _ in 0 ..< n {
+		strings.write_byte(&sb, ' ')
+	}
+	strings.write_string(&sb, s)
+	return strings.to_string(sb)
+}
+
+// cli_table lays rows of cells out in columns, each as wide as its widest
+// cell by display width, separated by `gap` spaces. The last cell of a row is
+// never padded, so no line ends in spaces; rows may have different lengths.
+// Each line ends in a newline. It is the layout the kit's own text rendering
+// gives an array of objects, for an application that prints its own table.
+cli_table :: proc(rows: [][]string, gap := 2, allocator := context.temp_allocator) -> string {
+	cols := 0
+	for r in rows {
+		cols = max(cols, len(r))
+	}
+	w := make([]int, cols, context.temp_allocator)
+	for r in rows {
+		for cell, i in r {
+			if i < len(r) - 1 {
+				w[i] = max(w[i], cli_display_width(cell))
+			}
+		}
+	}
+	sb := strings.builder_make(allocator)
+	for r in rows {
+		for cell, i in r {
+			if i == len(r) - 1 {
+				strings.write_string(&sb, cell)
+				break
+			}
+			strings.write_string(&sb, cell)
+			for _ in 0 ..< w[i] - cli_display_width(cell) + gap {
+				strings.write_byte(&sb, ' ')
+			}
+		}
+		strings.write_byte(&sb, '\n')
+	}
+	return strings.to_string(sb)
 }
 
 @(private = "file")
@@ -2170,7 +2333,7 @@ cli_help_text :: proc(s: ^Surface, verb := "", allocator := context.temp_allocat
 			for a in cmd.args {
 				strings.write_string(
 					&sb,
-					fmt.tprintf("  %-18s %s (%s)\n", a.name, a.help, val_kind_name(a.kind)),
+					fmt.tprintf("  %s %s (%s)\n", cli_pad(a.name, 18), a.help, val_kind_name(a.kind)),
 				)
 			}
 		}
@@ -2194,13 +2357,23 @@ cli_help_text :: proc(s: ^Surface, verb := "", allocator := context.temp_allocat
 				if f.repeat {
 					extra = fmt.tprintf("%s (may repeat)", extra)
 				}
+				if f.confirm != "" {
+					extra = fmt.tprintf("%s (needs --yes: %s)", extra, f.confirm)
+				}
+				if len(f.aliases) > 0 {
+					alts := make([dynamic]string, context.temp_allocator)
+					for a in f.aliases {
+						append(&alts, fmt.tprintf("--%s", a))
+					}
+					extra = fmt.tprintf("%s (also %s)", extra, strings.join(alts[:], ", ", context.temp_allocator))
+				}
 				if f.secret {
 					extra = fmt.tprintf("%s (secret: never echoed or logged)", extra)
 				}
 				if common {
 					extra = fmt.tprintf("%s (every command)", extra)
 				}
-				strings.write_string(sb, fmt.tprintf("  --%-16s %s%s\n", f.name, f.help, extra))
+				strings.write_string(sb, fmt.tprintf("  --%s %s%s\n", cli_pad(f.name, 16), f.help, extra))
 			}
 			for f in cmd.flags {
 				option(&sb, f, false)
@@ -2218,7 +2391,7 @@ cli_help_text :: proc(s: ^Surface, verb := "", allocator := context.temp_allocat
 			for f in cmd.out {
 				strings.write_string(
 					&sb,
-					fmt.tprintf("  %-18s %s  %s\n", f.name, schema_kind_name(f.kind), f.help),
+					fmt.tprintf("  %s %s  %s\n", cli_pad(f.name, 18), schema_kind_name(f.kind), f.help),
 				)
 			}
 		}
@@ -2239,7 +2412,7 @@ cli_help_text :: proc(s: ^Surface, verb := "", allocator := context.temp_allocat
 	w := 0
 	for cmd in s.commands {
 		if !cmd.hidden {
-			w = max(w, len(cmd.verb))
+			w = max(w, cli_display_width(cmd.verb))
 		}
 	}
 	for cmd in s.commands {
@@ -2248,7 +2421,7 @@ cli_help_text :: proc(s: ^Surface, verb := "", allocator := context.temp_allocat
 		}
 		strings.write_string(
 			&sb,
-			fmt.tprintf("  %-*s  %-52s [%s]\n", w, cmd.verb, cmd.summary, effect_name(cmd.effect)),
+			fmt.tprintf("  %s  %s [%s]\n", cli_pad(cmd.verb, w), cli_pad(cmd.summary, 52), effect_name(cmd.effect)),
 		)
 	}
 	strings.write_string(&sb, "\n")
@@ -2275,6 +2448,16 @@ param_json :: proc(p: Param, positional: bool) -> ^Json {
 		jset_bool(o, "variadic", p.variadic)
 	} else if p.short != "" {
 		jset_str(o, "short", p.short)
+	}
+	if p.confirm != "" {
+		jset_str(o, "confirm", p.confirm)
+	}
+	if len(p.aliases) > 0 {
+		al := jarr()
+		for a in p.aliases {
+			jpush(al, jstr(a))
+		}
+		jset(o, "aliases", al)
 	}
 	if len(p.values) > 0 {
 		vs := jarr()
@@ -2428,7 +2611,8 @@ cli :: proc(s: ^Surface) -> (code: int, handled: bool) {
 
 // cli_args is `cli` with the arguments supplied, which is what makes the
 // convention itself testable.
-cli_args :: proc(s: ^Surface, argv: []string) -> (code: int, handled: bool) {
+cli_args :: proc(s: ^Surface, argv_in: []string) -> (code: int, handled: bool) {
+	argv := argv_in
 	if len(argv) == 0 {
 		return 0, false
 	}
@@ -2451,6 +2635,33 @@ cli_args :: proc(s: ^Surface, argv: []string) -> (code: int, handled: bool) {
 	if argv[0] == "-t" && s.selftest != nil {
 		return s.selftest(), true
 	}
+
+	// Surface flags may come before the verb: `mail --data-dir X list` is
+	// `mail list --data-dir X`. A line of nothing but surface flags is the
+	// window's (`mail --maildir=X`), where there is one; the window reads
+	// them with cli_surface_flag.
+	if lead, missing := surface_lead(s, argv); missing != "" {
+		c, _ := cli_bind(s, nil)
+		code = cli_fail(&c, EXIT_USAGE, fmt.tprintf("--%s needs a value", missing))
+		cli_err_field(&c, "given", missing)
+		report(&c, code)
+		return code, true
+	} else if lead > 0 {
+		if lead == len(argv) {
+			if s.gui {
+				return 0, false
+			}
+			c, _ := cli_bind(s, nil)
+			report(&c, EXIT_USAGE)
+			return EXIT_USAGE, true
+		}
+		moved := make([]string, len(argv), cli_mem())
+		moved[0] = argv[lead]
+		copy(moved[1:], argv[:lead])
+		copy(moved[lead + 1:], argv[lead + 1:])
+		argv = moved
+	}
+
 	if argv[0] == "--schema" {
 		say(json_text(cli_schema_json(s), 2, context.temp_allocator))
 		say("\n")
@@ -2479,12 +2690,23 @@ cli_args :: proc(s: ^Surface, argv: []string) -> (code: int, handled: bool) {
 		}
 		if !inline_alias {
 			if s.gui && s.takes_path && !strings.has_prefix(head, "-") {
-				if s.takes_word == nil || s.takes_word(head) {
+				// Every bare word is asked, not only the first: `sheets
+				// book.csv tabel` is as much a typo as `sheets tabel`.
+				bad := ""
+				if s.takes_word != nil {
+					for w in window_words(s, argv, context.temp_allocator) {
+						if !s.takes_word(w) {
+							bad = w
+							break
+						}
+					}
+				}
+				if bad == "" {
 					return 0, false
 				}
 				c, _ := cli_bind(s, argv)
-				code = cli_fail(&c, EXIT_USAGE, fmt.tprintf("%q is neither a command nor a file", head))
-				cli_err_field(&c, "given", head)
+				code = cli_fail(&c, EXIT_USAGE, fmt.tprintf("%q is neither a command nor a file", bad))
+				cli_err_field(&c, "given", bad)
 				report(&c, code)
 				return code, true
 			}
@@ -2601,6 +2823,128 @@ cli_args :: proc(s: ^Surface, argv: []string) -> (code: int, handled: bool) {
 	}
 	audit_call(&c, code)
 	return code, true
+}
+
+// surface_lead counts the words at the start of argv that are surface flags
+// and their values. `missing` names a value-taking surface flag that ended
+// the line without one.
+@(private = "file")
+surface_lead :: proc(s: ^Surface, argv: []string) -> (n: int, missing: string) {
+	i := 0
+	for i < len(argv) {
+		a := argv[i]
+		if !strings.has_prefix(a, "-") || a == "-" || a == "--" {
+			break
+		}
+		p, has_val := surface_flag_of(s, a)
+		if p == nil {
+			break
+		}
+		i += 1
+		if p.kind != .Bool && !has_val {
+			if i >= len(argv) {
+				return 0, p.name
+			}
+			i += 1
+		}
+	}
+	return i, ""
+}
+
+// surface_flag_of is the surface flag a dash word spells, `--name`,
+// `--name=value` or `--no-name` for a Bool, and whether it carried its value.
+@(private = "file")
+surface_flag_of :: proc(s: ^Surface, word: string) -> (p: ^Param, has_val: bool) {
+	name := strings.trim_left(word, "-")
+	if eq := strings.index_byte(name, '='); eq >= 0 {
+		name = name[:eq]
+		has_val = true
+	}
+	for &f in s.flags {
+		if cli_param_named(&f, name) {
+			return &f, has_val
+		}
+		if f.kind == .Bool && strings.has_prefix(name, "no-") && cli_param_named(&f, name[3:]) {
+			return &f, true
+		}
+	}
+	return nil, false
+}
+
+// window_words are the bare words of a line meant for the window: what
+// `takes_word` is asked about. The value after a surface flag is not one, and
+// neither is the word after a dash word the kit does not know, since that
+// may be the window's own option's value (`--start-dir X`).
+@(private = "file")
+window_words :: proc(s: ^Surface, argv: []string, allocator := context.temp_allocator) -> []string {
+	out := make([dynamic]string, allocator)
+	no_more_flags := false
+	for i := 0; i < len(argv); i += 1 {
+		a := argv[i]
+		if no_more_flags || !strings.has_prefix(a, "-") || a == "-" {
+			append(&out, a)
+			continue
+		}
+		if a == "--" {
+			no_more_flags = true
+			continue
+		}
+		if strings.contains_rune(a, '=') {
+			continue
+		}
+		if p, _ := surface_flag_of(s, a); p != nil {
+			if p.kind != .Bool {
+				i += 1
+			}
+			continue
+		}
+		if is_base_flag(strings.trim_left(a, "-")) && a != "--identity" {
+			continue
+		}
+		i += 1
+	}
+	return out[:]
+}
+
+// cli_surface_flag reads a surface flag off a line the window was handed, in
+// either spelling (`--maildir X`, `--maildir=X`), so the window and the
+// commands read the same line the same way. The last one wins, as for a
+// command. A Bool flag's value is "true" or "false".
+cli_surface_flag :: proc(s: ^Surface, argv: []string, name: string) -> (value: string, ok: bool) {
+	for i := 0; i < len(argv); i += 1 {
+		a := argv[i]
+		if a == "--" {
+			break
+		}
+		if !strings.has_prefix(a, "-") || a == "-" {
+			continue
+		}
+		p, has_val := surface_flag_of(s, a)
+		if p == nil {
+			continue
+		}
+		val := ""
+		if p.kind == .Bool {
+			bare := strings.trim_left(a, "-")
+			if eq := strings.index_byte(bare, '='); eq >= 0 {
+				v := bare[eq + 1:]
+				val = v == "true" || v == "yes" || v == "1" ? "true" : "false"
+			} else {
+				val = strings.has_prefix(bare, "no-") && !cli_param_named(p, bare) ? "false" : "true"
+			}
+		} else if has_val {
+			val = a[strings.index_byte(a, '=') + 1:]
+		} else if i + 1 < len(argv) {
+			i += 1
+			val = argv[i]
+		} else {
+			continue
+		}
+		if p.name == name {
+			value, ok = val, true
+		}
+	}
+	return
 }
 
 // cli_capture runs a command line in process, as cli_args does, and returns

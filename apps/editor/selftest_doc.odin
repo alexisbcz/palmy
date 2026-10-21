@@ -278,7 +278,7 @@ test_cli :: proc() {
 		check(code == 0 && strings.has_prefix(slurp(src), "// top\r\npackage"), "cli: an edit keeps the file's CRLF")
 
 		audit := slurp(fmt.tprintf("%s/audit.jsonl", dir))
-		check(strings.contains(audit, `"verb":"replace"`) && !strings.contains(audit, `"verb":"info"`), "cli: changes are audited, reads are not")
+		check(strings.contains(audit, `"verb": "replace"`) && !strings.contains(audit, `"verb": "info"`), "cli: changes are audited, reads are not")
 	}
 
 	test_cli_carets(dir)

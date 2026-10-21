@@ -438,7 +438,7 @@ selftest_cli :: proc() {
 		selftest_open_for_real(env, root, docs)
 
 		audit := read(fmt.tprintf("%s/audit.jsonl", root))
-		check(strings.contains(audit, `"verb":"trash"`) && !strings.contains(audit, `"verb":"list"`), "cli: changes are audited, reads are not")
+		check(strings.contains(audit, `"verb": "trash"`) && !strings.contains(audit, `"verb": "list"`), "cli: changes are audited, reads are not")
 	}
 
 	// --- the old command line still works -----------------------------------------

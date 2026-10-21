@@ -260,8 +260,8 @@ test_cli :: proc() {
 	}
 	{
 		audit, _ := read_file(fmt.tprintf("%s/audit.jsonl", scratch), context.temp_allocator)
-		ok(strings.contains(string(audit), `"verb":"purge"`), "the purge left an audit record")
-		ok(!strings.contains(string(audit), `"verb":"read"`), "and a read did not")
+		ok(strings.contains(string(audit), `"verb": "purge"`), "the purge left an audit record")
+		ok(!strings.contains(string(audit), `"verb": "read"`), "and a read did not")
 	}
 
 	// --- a read never writes ---------------------------------------------
