@@ -151,6 +151,13 @@ main :: proc() {
 	if code, handled := kit.cli(surface()); handled {
 		os.exit(code)
 	}
+	// A bare word the CLI did not claim is a book for the window — unless no
+	// such file exists, in which case it is a typo, and the answer to a typo
+	// is not a window that never returns to its caller.
+	if len(args) > 0 && !strings.has_prefix(args[0], "-") && !os.exists(args[0]) {
+		fmt.eprintfln("reader: %q is neither a command nor a file (reader --help)", args[0])
+		os.exit(2)
+	}
 
 	r := new(Reader)
 	defer free(r)
