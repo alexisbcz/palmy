@@ -18,9 +18,9 @@ package main
 // See gen-chars.py; nothing in chars.odin was written from memory.
 
 import "core:fmt"
-import "core:math"
 import "core:os"
 import "core:strings"
+import "core:time"
 import kit "kit:."
 import p "palmy:."
 import sc "shadcn:."
@@ -53,7 +53,7 @@ St :: struct {
 	vis:     int,
 
 	toast:   string,
-	toast_t: f64,
+	toast_until: time.Tick, // on a real monotonic clock; see the frame loop
 	have_wl: bool,
 	glyphs:  bool, // the glyph face actually loaded
 }
@@ -121,11 +121,22 @@ main :: proc() {
 		handle_keys(ui, app, &st)
 		build(ui, &st)
 
+		// The toast expires on a real clock with one wake at its deadline.
+		// `ui.now` is clamped per frame and cannot time anything, and asking
+		// for a redraw every frame to watch it held the loop at vsync.
 		if st.toast != "" {
-			if ui.now > st.toast_t {
+			left := time.tick_diff(time.tick_now(), st.toast_until)
+			if left <= 0 {
+				// This frame still drew the toast. Two more take it off the
+				// screen: measured on headless sway, the first frame after a
+				// clear is presented and the toast stays visible (palmy's
+				// damage tracking; PALMY_DAMAGE=off needs only one).
+				delete(st.toast)
 				st.toast = ""
-			} else {
 				p.redraw(ui)
+				p.wake_after(ui, 50 * time.Millisecond)
+			} else {
+				p.wake_after(ui, left + time.Millisecond)
 			}
 		}
 	}
@@ -445,7 +456,7 @@ toast :: proc(st: ^St, ui: ^p.Ctx, msg: string) {
 		delete(st.toast)
 	}
 	st.toast = strings.clone(msg)
-	st.toast_t = ui.now + 3.5
+	st.toast_until = time.tick_add(time.tick_now(), 3500 * time.Millisecond)
 }
 
 // quit is nil-safe so the headless self-test can drive `handle_keys` with no
@@ -596,11 +607,10 @@ header :: proc(ui: ^p.Ctx, st: ^St) {
 	p.style(ui).shrink = 0
 
 	// The caret is the only animation in the app, and it only blinks while the
-	// window has focus — an unfocused palmy window should cost nothing.
-	if ui.input.focused {
-		ui.animating = true
-	}
-	if ui.input.focused && math.mod_f32(f32(ui.now), 1.1) < 0.62 {
+	// window has focus. palmy's caret_on wakes the loop once per blink edge on
+	// a real clock, where `animating = true` held the window at vsync -- 37% of
+	// a core on a headless compositor -- for as long as it had focus.
+	if ui.input.focused && p.caret_on(ui) {
 		w := p.text_width(ui.fonts, txt[:clamp(st.caret, 0, len(txt))], 16, .Sans, .Regular)
 		car := p.div(ui, "absolute w-[2] rounded-full bg-foreground")
 		cs := p.style(ui, car)
