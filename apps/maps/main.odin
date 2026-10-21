@@ -33,23 +33,47 @@ import kit "kit:."
 import p "palmy:."
 
 usage :: proc() {
-	fmt.println("maps — a desktop map, rendered from GeoJSON or OSM XML")
-	fmt.println("")
-	fmt.println("  maps [file.geojson | file.osm]")
-	fmt.println("  maps --selftest                 the headless assertions")
-	fmt.println("  maps --gen <path>               write the generated city as GeoJSON")
-	fmt.println("  maps --regen                    regenerate the city in the data directory")
-	fmt.println("  maps --shot <out.png> [zoom]    render one frame offscreen")
-	fmt.println("  maps --sheet <dir>              render a frame at every interesting zoom")
-	fmt.println("  maps --bench                    frame times while panning, at three zooms")
-	fmt.println("")
-	fmt.println("Keys: drag or arrows to pan, wheel or +/- to zoom, / to search,")
-	fmt.println("      m marker, r route, d measure, t time/distance, l labels,")
-	fmt.println("      b buildings, c clear, f fit, Ctrl-O open, h help.")
+	fmt.print(LEGACY_USAGE)
 }
+
+LEGACY_USAGE :: `maps — a desktop map, rendered from GeoJSON or OSM XML
+
+  maps [file.geojson | file.osm]
+  maps --selftest                 the headless assertions
+  maps --gen <path>               write the generated city as GeoJSON
+  maps --regen                    regenerate the city in the data directory
+  maps --shot <out.png> [zoom]    render one frame offscreen
+  maps --sheet <dir>              render a frame at every interesting zoom
+  maps --bench                    frame times while panning, at three zooms
+
+Keys: drag or arrows to pan, wheel or +/- to zoom, / to search,
+      m marker, r route, d measure, t time/distance, l labels,
+      b buildings, c clear, f fit, Ctrl-O open, h help.
+`
+
+// LEGACY_FLAGS are the options this program took before the shared command
+// line existed. A line carrying any of them is handled exactly as it always
+// was, by the loop below; everything else goes to the declared surface in
+// cli.odin, which is also what a bare file or no argument at all falls through
+// to the window from.
+LEGACY_FLAGS :: [?]string{"--gen", "--regen", "--shot", "--sheet", "--bench", "-selftest"}
 
 main :: proc() {
 	args := os.args[1:]
+
+	legacy := false
+	for a in args {
+		for l in LEGACY_FLAGS {
+			if a == l {
+				legacy = true
+			}
+		}
+	}
+	if !legacy {
+		if code, handled := kit.cli(surface()); handled {
+			os.exit(code)
+		}
+	}
 
 	// Two passes over the command line. The first collects the file to open,
 	// because an option that acts immediately — `--shot`, `--sheet`, `--bench`
@@ -93,20 +117,17 @@ main :: proc() {
 				fmt.eprintln("maps: --gen needs a path")
 				os.exit(2)
 			}
-			m: Map
-			map_init(&m)
-			defer map_destroy(&m)
-			generate_city(&m)
-			if !write_geojson(&m, args[i + 1]) {
+			g, ok := write_generated(args[i + 1])
+			if !ok {
 				fmt.eprintfln("maps: cannot write %s", args[i + 1])
 				os.exit(1)
 			}
 			fmt.printfln(
 				"maps: wrote %d features (%d points, %d lines, %d polygons) to %s",
-				len(m.features),
-				m.n_points,
-				m.n_lines,
-				m.n_polys,
+				g.features,
+				g.points,
+				g.lines,
+				g.polys,
 				args[i + 1],
 			)
 			return
@@ -174,8 +195,15 @@ main :: proc() {
 		a.status = strings.clone(note != "" ? note : msg)
 		a.status_until = 8
 	} else {
-		a.status = strings.clone(note == "" ? "no map data — press Ctrl-O to open a file" : note)
-		a.status_until = 60
+		// The data directory could not be written. The generated city is still
+		// the right thing to show, held in memory instead of on disk.
+		if ok, msg := load_generated(a); ok {
+			a.status = strings.clone(note != "" ? fmt.tprintf("%s — %s", note, msg) : msg)
+			a.status_until = 8
+		} else {
+			a.status = strings.clone(note == "" ? "no map data — press Ctrl-O to open a file" : note)
+			a.status_until = 60
+		}
 	}
 
 	for ui in p.frames(app) {

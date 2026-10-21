@@ -345,7 +345,7 @@ map_click :: proc(a: ^Maps, ui: ^p.Ctx, w: World_Pt) {
 	case .Pan:
 		// A click with no tool selected identifies what is there, which is
 		// what a map should answer first.
-		if id, d := graph_nearest(&a.g, w); id >= 0 && d < 120 {
+		if _, d, on_road := identify_at(a, w); on_road {
 			say(a, now, fmt.tprintf("%s from the nearest road", format_distance(d)))
 		} else {
 			lon, lat := world_to_lonlat(w)
@@ -370,13 +370,9 @@ map_click :: proc(a: ^Maps, ui: ^p.Ctx, w: World_Pt) {
 		// Snapped to a road you could actually drive down, not merely to the
 		// nearest vertex: a service yard or a footpath stub is often closer
 		// and routing from one is a dead end.
-		id, d := graph_nearest(&a.g, w, true)
+		id, why := snap_endpoint(a, w)
 		if id < 0 {
-			say(a, now, "no road network loaded")
-			return
-		}
-		if d > 400 {
-			say(a, now, "no road near there")
+			say(a, now, why)
 			return
 		}
 		if a.from_node < 0 || a.to_node >= 0 {
@@ -391,6 +387,82 @@ map_click :: proc(a: ^Maps, ui: ^p.Ctx, w: World_Pt) {
 		sync_route_markers(a)
 	}
 	p.redraw(ui)
+}
+
+// ---------------------------------------------------------------------------
+// The entry points the window and the command line share
+//
+// A click with the Pan tool, a click with the Route tool and `maps nearest` /
+// `maps route` are the same questions asked two ways, so they are answered by
+// the same procedures: the window calls them from map_click, cli.odin calls
+// them on a headless Maps. Keep the thresholds here and nowhere else.
+// ---------------------------------------------------------------------------
+
+// IDENTIFY_ROAD_M is how close a click has to be to a road to be "on" it.
+IDENTIFY_ROAD_M :: 120
+// SNAP_ROAD_M is how far a route endpoint may be snapped to reach a road.
+SNAP_ROAD_M :: 400
+
+// identify_at is what a click with no tool means: the nearest graph node and
+// whether the point is close enough to a road to say so.
+identify_at :: proc(a: ^Maps, w: World_Pt) -> (node: i32, dist_m: f64, on_road: bool) {
+	id, d := graph_nearest(&a.g, w)
+	return id, d, id >= 0 && d < IDENTIFY_ROAD_M
+}
+
+// snap_endpoint puts a route endpoint on a road you could actually drive down,
+// not merely the nearest vertex: a service yard or a footpath stub is often
+// closer and routing from one is a dead end.
+snap_endpoint :: proc(a: ^Maps, w: World_Pt) -> (node: i32, why: string) {
+	id, d := graph_nearest(&a.g, w, true)
+	if id < 0 {
+		return -1, "no road network loaded"
+	}
+	if d > SNAP_ROAD_M {
+		return -1, "no road near there"
+	}
+	return id, ""
+}
+
+// route_between is the Route tool's two clicks in one call: snap both ends,
+// set them as the endpoints, and route with the current cost mode.
+route_between :: proc(a: ^Maps, from, to: World_Pt) -> (ok: bool, why: string) {
+	s, why_s := snap_endpoint(a, from)
+	if s < 0 {
+		return false, fmt.tprintf("start: %s", why_s)
+	}
+	t, why_t := snap_endpoint(a, to)
+	if t < 0 {
+		return false, fmt.tprintf("destination: %s", why_t)
+	}
+	a.from_node, a.to_node = s, t
+	sync_route_markers(a)
+	recompute_route(a, nil)
+	if !a.route.ok {
+		return false, a.route.why
+	}
+	return true, ""
+}
+
+// load_generated puts the generated city into the model without writing it
+// anywhere. The window falls back to it when the data directory cannot be
+// written; the command line uses it so that a read never creates a file.
+load_generated :: proc(a: ^Maps, fit := true) -> (ok: bool, msg: string) {
+	t0 := time.now()
+	map_clear(&a.m)
+	route_clear(&a.route)
+	a.from_node, a.to_node = -1, -1
+	clear(&a.sc.markers)
+	clear(&a.sc.measure)
+	generate_city(&a.m)
+	rebuild(a)
+	delete(a.path)
+	a.path = ""
+	if fit {
+		view_fit(&a.view, a.m.bbox.min, a.m.bbox.max)
+	}
+	a.load_ms = time.duration_milliseconds(time.since(t0))
+	return len(a.m.features) > 0, fmt.tprintf("the generated city — %d features, in memory", len(a.m.features))
 }
 
 measure_total :: proc(a: ^Maps) -> f64 {

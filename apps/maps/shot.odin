@@ -71,11 +71,15 @@ shot_state :: proc(a: ^Maps, off: ^p.Offscreen, file: string) -> bool {
 		path, note = startup_file()
 	}
 	_ = note
+	ok: bool
+	msg: string
 	if path == "" {
-		fmt.eprintln("maps: no data to render")
-		return false
+		// The data directory could not be written: render the generated
+		// city from memory, as the window does.
+		ok, msg = load_generated(a)
+	} else {
+		ok, msg = load_file(a, path)
 	}
-	ok, msg := load_file(a, path)
 	if !ok {
 		fmt.eprintfln("maps: %s", msg)
 		return false
@@ -103,10 +107,39 @@ shot :: proc(out_path: string, zoom: f64, file: string) -> int {
 
 	// Centre on the city and compute a route across it, so the screenshot
 	// shows the features rather than an empty grid.
-	a.view.center = lonlat_to_world(CITY_LON, CITY_LAT)
+	setup_demo(a)
+	r := render_frame(a, off, out_path, zoom, lonlat_to_world(CITY_LON, CITY_LAT))
+	fmt.printfln(
+		"shot: %s (%v) — z%.2f, %d features drawn, %d labels of %d tried, %.2f ms (%.2f in labels)",
+		out_path,
+		r.ok,
+		zoom,
+		r.drawn,
+		r.placed,
+		r.tried,
+		r.ms,
+		r.ms_labels,
+	)
+	return r.ok ? 0 : 1
+}
+
+Render_Info :: struct {
+	ok:            bool,
+	drawn:         int,
+	placed, tried: int,
+	ms, ms_labels: f64,
+}
+
+// render_frame draws whatever the model holds through the real interface into
+// an offscreen and writes it as a PNG. It prints nothing: `--shot` and
+// `maps render` each report it their own way, and under --json stdout belongs
+// to the document. The model must already be loaded, with its fonts pointed
+// at the offscreen's.
+render_frame :: proc(a: ^Maps, off: ^p.Offscreen, out_path: string, zoom: f64, center: World_Pt) -> Render_Info {
+	w, h := off.width, off.height
+	a.view.center = center
 	a.view.zoom = zoom
 	a.view.w, a.view.h = f64(w - SIDE_W), f64(h - 19 - 48 - 28)
-	setup_demo(a)
 
 	// Two frames: the first establishes the panel's rectangle from the layout,
 	// which the second one's input and chrome read.
@@ -121,19 +154,14 @@ shot :: proc(out_path: string, zoom: f64, file: string) -> int {
 		p.offscreen_end(off)
 	}
 
-	ok := p.offscreen_write_png(off, out_path)
-	fmt.printfln(
-		"shot: %s (%v) — z%.2f, %d features drawn, %d labels of %d tried, %.2f ms (%.2f in labels)",
-		out_path,
-		ok,
-		zoom,
-		a.sc.n_drawn,
-		a.sc.lab.n_placed,
-		a.sc.lab.n_tried,
-		a.sc.ms_total,
-		a.sc.ms_labels,
-	)
-	return ok ? 0 : 1
+	return Render_Info {
+		ok = p.offscreen_write_png(off, out_path),
+		drawn = a.sc.n_drawn,
+		placed = a.sc.lab.n_placed,
+		tried = a.sc.lab.n_tried,
+		ms = a.sc.ms_total,
+		ms_labels = a.sc.ms_labels,
+	}
 }
 
 // setup_demo computes the route and search that the screenshots and the

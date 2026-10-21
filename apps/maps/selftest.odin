@@ -82,6 +82,7 @@ selftest :: proc() -> int {
 	test_labels()
 	test_interaction()
 	test_format()
+	test_cli()
 
 	fmt.printf("\n%d assertions, %d failures\n", checks, failures)
 	return failures == 0 ? 0 : 1

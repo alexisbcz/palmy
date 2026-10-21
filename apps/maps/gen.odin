@@ -732,12 +732,24 @@ ensure_city :: proc(force := false) -> (path: string, made: bool, err: string) {
 	if !force && os.is_file(p) {
 		return strings.clone(p), false, ""
 	}
+	if _, ok := write_generated(p); !ok {
+		return "", false, fmt.tprintf("cannot write %s", p)
+	}
+	return strings.clone(p), true, ""
+}
+
+Gen_Counts :: struct {
+	features, points, lines, polys: int,
+}
+
+// write_generated generates the city and writes it as GeoJSON. `--gen`,
+// `--regen`, `maps gen`, `maps regen` and the window's first launch all write
+// the city through this one procedure.
+write_generated :: proc(path: string) -> (counts: Gen_Counts, ok: bool) {
 	m: Map
 	map_init(&m)
 	defer map_destroy(&m)
 	generate_city(&m)
-	if !write_geojson(&m, p) {
-		return "", false, fmt.tprintf("cannot write %s", p)
-	}
-	return strings.clone(p), true, ""
+	counts = {len(m.features), m.n_points, m.n_lines, m.n_polys}
+	return counts, write_geojson(&m, path)
 }
