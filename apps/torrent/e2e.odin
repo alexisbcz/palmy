@@ -226,6 +226,7 @@ run_e2e :: proc(t: ^T) -> bool {
 		time.sleep(100 * time.Millisecond)
 	}
 	elapsed := now_s() - start
+	done_at := time.now()
 
 	if !tcheck(
 		t,
@@ -254,8 +255,11 @@ run_e2e :: proc(t: ^T) -> bool {
 	tcheck(t, "it was connected to at least one peer", peers_seen >= 1, asprint("%d", peers_seen))
 	teq(t, "the leecher's info-hash is the torrent's", lst.info_hash, hash20_hex(m.info_hash, context.temp_allocator))
 
-	// The seeder's side of the story.
-	sst2 := read_status(e.seed_status, context.temp_allocator)
+	// The seeder's side of the story. Its status file is rewritten every
+	// 0.2 s of its own loop, so the copy on disk when the leecher finished
+	// can predate the last blocks it sent: read one written after that.
+	sst2, fresh2 := read_status_after(e.seed_status, done_at, STATUS_FRESH_LIMIT, context.temp_allocator)
+	tcheck(t, "the seeder wrote its status after the leecher finished", fresh2)
 	tcheck(
 		t,
 		"the seeder uploaded at least the payload",
@@ -507,6 +511,7 @@ run_e2e :: proc(t: ^T) -> bool {
 				time.sleep(50 * time.Millisecond)
 			}
 			up_elapsed = now_s() - ustart
+			udone_at := time.now()
 			rate := f64(total) / max(up_elapsed, 0.001)
 			fmt.printfln(
 				"  rate-limited transfer finished in %.2fs (%s average) against an unlimited %.2fs (%s)",
@@ -534,7 +539,11 @@ run_e2e :: proc(t: ^T) -> bool {
 					up_elapsed > elapsed,
 					asprint("%.2fs limited against %.2fs unlimited", up_elapsed, elapsed),
 				)
-				ust := read_status(e.seed_status2, context.temp_allocator)
+				// The same race as above, and the one that failed about one
+				// run in six under load: read a status written after the
+				// leecher finished, not whatever was on disk then.
+				ust, ufresh := read_status_after(e.seed_status2, udone_at, STATUS_FRESH_LIMIT, context.temp_allocator)
+				tcheck(t, "...the seeder wrote its status after the leecher finished", ufresh)
 				tcheck(
 					t,
 					"...while the seeder still uploaded the whole payload",
@@ -793,6 +802,40 @@ Status :: struct {
 	info_hash:  string,
 	error:      string,
 	elapsed:    f64,
+}
+
+// A client rewrites its status file every 0.2 s of its own loop; five
+// seconds is twenty-five of those, on a machine loaded enough to stretch them.
+STATUS_FRESH_LIMIT :: 5 * time.Second
+
+// read_status_after waits for a status file written after `since` and reads
+// that one. A status file is a periodic snapshot, so the copy on disk at any
+// moment may be up to one period (plus a loaded scheduler's delay) old: a
+// counter checked against an event the test has just observed elsewhere must
+// come from a snapshot taken after that event, or the check races the writer.
+// `fresh` is false if no such snapshot appeared within `limit`; the stale one
+// is returned then, so the failure shows what it held.
+read_status_after :: proc(
+	path: string,
+	since: time.Time,
+	limit: time.Duration,
+	allocator := context.allocator,
+) -> (
+	s: Status,
+	fresh: bool,
+) {
+	deadline := time.tick_add(time.tick_now(), limit)
+	for {
+		if fi, err := os.stat(path, context.temp_allocator); err == nil {
+			if time.diff(since, fi.modification_time) > 0 {
+				return read_status(path, allocator), true
+			}
+		}
+		if time.tick_since(deadline) >= 0 {
+			return read_status(path, allocator), false
+		}
+		time.sleep(25 * time.Millisecond)
+	}
 }
 
 read_status :: proc(path: string, allocator := context.allocator) -> (s: Status) {

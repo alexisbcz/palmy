@@ -16,6 +16,7 @@ package main
 // wrong both halves are.
 
 import "core:fmt"
+import "core:os"
 import "core:slice"
 import "core:strings"
 
@@ -2279,7 +2280,7 @@ test_urls :: proc(t: ^T) {
 test_storage :: proc(t: ^T) {
 	tsection(t, "storage: pieces across file boundaries, verify-then-write")
 
-	root := asprint("/tmp/palmy-torrent-selftest-%d", unix_now())
+	root := asprint("/tmp/palmy-torrent-selftest-%d-%d", os.get_pid(), unix_now())
 	rm_rf(root)
 	defer rm_rf(root)
 
@@ -2439,7 +2440,7 @@ test_storage :: proc(t: ^T) {
 test_create_torrent :: proc(t: ^T) {
 	tsection(t, "creating a torrent from a tree")
 
-	root := asprint("/tmp/palmy-torrent-create-%d", unix_now())
+	root := asprint("/tmp/palmy-torrent-create-%d-%d", os.get_pid(), unix_now())
 	rm_rf(root)
 	defer rm_rf(root)
 
