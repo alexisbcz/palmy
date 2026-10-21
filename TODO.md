@@ -55,7 +55,7 @@ apply.
   render against stand-ins (the committed `.json` files plus a baseline's own
   renders, via `PARITY_WEB`) and byte-compare the renders to that baseline.
 - **The unit tests must pass**: `odin test tests -collection:shadcn=$PWD/shadcn`
-  — **152 tests**. Note that `tests/` imports `"../palmy"` by *relative path*,
+  — **154 tests**. Note that `tests/` imports `"../palmy"` by *relative path*,
   not as a collection, so `-collection:palmy=` is silently ignored and the
   suite always measures the `palmy/` sitting beside it.
 - **Rebuild every app** after touching shared code: `for d in apps/*/`.
@@ -104,39 +104,38 @@ any prompt they touch:**
 | a client's keyboard re-bind is asynchronous | editor, mail, vault | fixed in the recorder, still a latent toolkit issue — see *Known-unfixed* |
 
 The clipboard offer API is done (`clipboard_watch`, `clipboard_next_offer`,
-`clipboard_offer_read`; `tests/clipboard_offer_test.odin`). `apps/clipboard`
-has not adopted it yet — that belongs with its C2 conversion. The order of
-operations is in the comment above `clipboard_watch`. Its edges are untested:
+`clipboard_offer_read`; `tests/clipboard_offer_test.odin`), and `apps/clipboard`
+captures through it, falling back to `wl-paste` only without data control. Its
+edges are untested:
 `ext_data_control_v1` (only wlroots' older protocol has run), the `.Focused`
 fallback on a compositor without data control, X11 reads larger than one
 request, and X11 owners other than palmy.
 
 ## K4 — frame-loop follow-ups
 
-No application holds the loop at vsync any more except `term`, deliberately
-(it blocks in `wait_for_work`), and spinners while real work runs. palmy's
-`poll_fds` replaced `core:sys/linux.poll`, whose arm64/riscv64 build turns an
-infinite timeout into EINVAL — that had every idle palmy app quitting silently
-on arm64. A due wake now runs a logic-only frame while the compositor withholds
-frame callbacks, so timers fire in hidden windows. What is left:
+The loop is verified on X11 (Xvfb + openbox), weston, mutter, gnome-shell,
+kwin 5.27, cage and sway, all in the arm64 VM: idle apps at ~0% CPU, carets
+blink, vault's clipboard clear and idle lock fire within 2–13 ms of their
+deadlines while minimised, covered or on another workspace. A hidden or covered
+X11 window no longer repaints. Every wait outside palmy now goes through
+`poll_fds` or `epoll_pwait` (notify's toasts and center used to quit within
+43–286 ms on arm64). The 50 ms toast workaround is gone everywhere: the stale
+toast did not reproduce in 648 runs. `PALMY_TRACE_LOOP=1` prints each loop
+decision. What is left:
 
-- **Poll sites outside palmy** may pass a negative timeout or use
-  `linux.epoll_wait`, which on arm64 passes a pointer where the kernel expects
-  milliseconds: vault's autofill thread (`epoll_wait(-1)`), and possibly
-  notify, term, wm, `kit/notify.odin`, torrent, browser, index's feed, mail
-  and greeter. Each should use `palmy.poll_fds`. Check on arm64, where it bites.
-- **A cleared toast that stayed on screen** was seen once in `archive` and not
-  reproduced in 13 later runs; a buffer-reuse bug in the same path was fixed
-  (a frame now presents the buffer it was painted into). `archive`, `emoji`,
-  `clipboard`, `slides` and `chat` still ask for one extra frame 50 ms after a
-  toast clears. Remove those once someone has seen the clear hold without them.
-- **The loop exits 0 when the connection dies**; it now says why on stderr and
-  through `window_error(app)`, but no application checks it.
+- **A compositor that throttles hidden windows** rather than withholding frame
+  callbacks (KWin 6, Hyprland) — none was installable in the VM.
+- **Real GPU drivers**, and a full palmy run on amd64 or riscv64 (it compiles
+  for both; only a `poll_fds` harness ran there, under Rosetta and qemu-user).
+- **mutter and gnome-shell in the VM do not pace frames** (a visible animating
+  window runs at 300–500 fps); `weston-simple-shm` does the same, so it is the
+  VM's software path, not palmy — but worth a look on real hardware.
+- **X11 window managers that keep minimised windows mapped** would see no
+  saving from the covered-window rule.
+- **The loop exits 0 when the connection dies**; it says why on stderr and in
+  `window_error(app)`, but no application checks it.
 - **A caret blink repaints the whole window in software** — most of the 2–8%
   of a core a focused field still costs.
-- **Unverified**: the new loop on a real X11 server, on a GPU compositor that
-  throttles covered windows rather than withholding callbacks, and a full
-  palmy build on amd64 or riscv64 (only `poll_fds` was run there).
 
 ---
 
@@ -275,76 +274,34 @@ the areas' notes name.
 # The command surface
 
 The design is `docs/PALM-CLI.md`, the convention `apps/kit/cli.odin` (documented
-in `apps/APPS.md` under `kit.cli`), the dispatcher `apps/palm`. **34 of 39 nouns
-are on it**; the `NOUNS` table in `apps/palm/main.odin` is the source of truth and
-`palm --selftest` holds it honest. `mail` routes to the cloud's `palm-mail`; the
-desktop client `apps/mail` has a full CLI but no noun yet — `mailbox` is the
-proposed one.
+in `apps/APPS.md` under `kit.cli`), the dispatcher `apps/palm`. **All 39 nouns are
+on it**; the `NOUNS` table in `apps/palm/main.odin` is the source of truth and
+`palm --selftest` holds it honest (it now runs every child with a private home
+and a 30 s timeout). `mail` routes to the cloud's `palm-mail`; the desktop
+client `apps/mail` has a full CLI but no noun yet — `mailbox` is the proposed
+one. `colorpick`, `emoji`, `photoshop` and `archive` have no noun and no CLI.
 
-## C2 — the last five
+## C3 — what is left in `kit.cli`
 
-`slides`, `files`, `editor`, `image`, `clipboard` (and, with no noun yet,
-`colorpick`, `emoji`, `photoshop`, `archive`). UI-shaped: each needs its core
-lifted out of the window, which is the real work and worth doing for its own
-sake — it is what makes them testable headlessly. One agent per two or three
-directories. `clipboard` should adopt palmy's offer API at the same time (see
-K3).
+Secret flags and private arguments, an owned argv arena, repeatable flags,
+`unless`, surface-wide flags, `takes_word`, `on_refuse`, display-width tables
+(16 columns), the widened guard, `cli_capture`, `cli_partial`, progress and jobs
+are all in. Left:
 
-> **Prompt** (C2). Bring `<list the directories>` up to the `palm` CLI
-> convention. Those directories are yours; nothing
-> else.
->
-> Read `docs/PALM-CLI.md`, then `apps/kit/cli.odin`'s declaration API, then one
-> converted exemplar — `apps/notes/cli.odin` is the smallest, `apps/sheets` the
-> richest, `apps/power` the one whose actions must stay intent-class.
->
-> **Flip your nouns' `on_convention` flag in `apps/palm`'s `NOUNS` table**, or
-> `palm` keeps reporting your application unavailable. `palm --selftest` asserts
-> that flag is honest: a noun marked converted that does not answer `--schema`
-> fails.
->
-> A thing is done when **the GUI uses the same entry points the CLI does**. If
-> `palm notes write` goes through a different path than typing in the window,
-> the two will diverge and the CLI will be the one that rots. For these that
-> means genuinely separating the core from the UI, which is the point.
->
-> Two Odin facts that each cost a debugging cycle, documented at the top of
-> `apps/kit/cli.odin`: a slice literal written inside a procedure lives on that
-> procedure's stack frame, so the command table must be a package variable; and
-> package initialisers run in declaration order, so a package slice pointing at
-> another is captured empty. A silently-empty `out` is a schema that lies.
->
-> Keep every existing self-test passing and report the counts before and after.
-> Keep each command-line path argument working — the CLI is an addition. Report
-> which applications you converted fully, which partially, and what each still
-> cannot do headlessly.
-
-
-## C3 — gaps in `kit.cli`, each worked around inside an application
-
-- **No secret flags**: the audit log records `--password` in clear. `mailcore`
-  swaps the value out before the kit sees argv.
-- **The parsed argv lives in the temp allocator**, so a command that frees it
-  crashes the kit after printing (exit 133). `torrent` uses its own allocator.
-- **No repeatable flags** (the last value wins; `pkg` re-reads raw argv), no
-  "required unless", no flag every command takes (`mail` strips `--data-dir`, so
-  the schema omits it), `cli_err_field` takes only strings, and
-  `cli_scope_require` checks a single owner.
-- **`takes_path` opens a window on any unrecognised bare word**; six apps now
-  guard against it themselves. The kit could check the file exists.
-- **Destructive refusal happens before the app runs**, so `pkg remove` without
-  `--yes` can no longer name the dependants (only `--dry-run` does).
-- **Text tables pad by bytes**, so accented labels and `€` misalign; a
-  successful dry run always prints `dry_run: true`, even in text mode.
-- No partial results on failure; no in-process "run and give me the JSON" for
-  self-tests; no shared background-job helper or progress reporting; an output
-  shape with varying keys cannot be declared; the audit log is compact JSON
-  while `--json` is indented.
-- **The CLI guard does not cover pacman, sudo, yay or snapper**; `pkg`'s planner
-  is the only protection there.
-- `palm` expects `apps/prose/prose.bin`, which nothing builds by default
-  (`odin build apps/prose/cli … -out:apps/prose/prose.bin`), and its example
-  checker treats a shell redirect as part of the command.
+- **Surface flags are not accepted before the verb**, and a line of only
+  surface flags is not handed to the window (`mail` keeps a small pre-check).
+- **`unless` counts an alternative given with an empty value** as given
+  (torrent and notes keep a body check).
+- **No long aliases on a `Param`**, so slides, sheets and image use
+  `--left/--top/--width/--height` where `x/y/w/h` would read better.
+- **No public padding helper**: settings, accounts, welcome, index, drive and
+  prose still pad tables by bytes with `%-Ns`.
+- **`takes_word` checks only the first word**, and sheets, docs, torrent,
+  audio, browser and money could set it but do not.
+- **vault's `health --breach`** asks for `--yes` itself on a read; `on_refuse`
+  only covers destructive commands.
+- The audit log is compact JSON while `--json` is indented; several self-tests
+  match its exact text, so changing that is a coordinated edit.
 
 ---
 
@@ -407,6 +364,13 @@ headless" section, and did so before any of this session's work.
 **`archive`** — 7z and rar (not installed), password-protected archives.
 **`image`/`video`/`audio`** — no hardware decode, no chapters, spectrum capped at
 4 kHz by the 8 kHz decode.
+**`files`** — Drive sync badges need the drive server; `open` is tested only
+under `--dry-run`.
+**`editor`** — multi-caret editing and auto-closing brackets have no CLI form.
+**`image`** — a copy saved with Ctrl-S does not appear in the thumbnail strip
+until the folder is reopened.
+**`clipboard`** — the `.Focused` fallback is untested (headless sway always
+offers data control).
 **`term`** — Sixel, the Kitty graphics protocol, and splits, all deliberately
 absent. The tab strip is a seam: a split is a tab holding two terminals.
 **`track`** — the dependency graph's crossing count is quadratic in the edges
@@ -435,6 +399,10 @@ between adjacent layers and has only been laid out at 20 nodes.
   standing rules) and Playwright's Chromium download returns 403 from the build
   VM. Re-capturing needs the pinned Chromium on a machine that can fetch it, or
   the old captures copied in from the Arch host.
+- **`torrent`'s end-to-end check** ("seeder still uploaded the whole payload")
+  fails about 1 run in 6 under full CPU load, on main as on branches.
+- **The VM's `bluetoothctl` never returns** (no bluetoothd); `palm --selftest`
+  now times it out as unavailable, but anything else calling it blind hangs.
 - **`apps/APPS.md`'s *Building* section** still hardcodes
   `/home/alex/Work/palmy` in its build command.
 - **Self-tests with known, environment-free failures**: `docs` segfaults on the
