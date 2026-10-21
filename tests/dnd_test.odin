@@ -1,3 +1,4 @@
+#+build linux
 // Drag and drop on Wayland, both ends, against a fake compositor: the requests
 // palmy sends are decoded and checked, and the bytes really travel through
 // pipes passed over SCM_RIGHTS. The live run (two palmy windows on headless

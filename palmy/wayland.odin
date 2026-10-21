@@ -165,6 +165,9 @@ Wl_State :: struct {
 	held:               [16]u32,
 	held_n:             int,
 	sync_cb:            u32,
+
+	// The window's real popups (popup_wayland.odin).
+	pop:                [dynamic]Wl_Popup,
 	sync_done:          bool,
 
 	// Shared memory.

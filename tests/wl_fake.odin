@@ -1,3 +1,4 @@
+#+build linux
 // A compositor's end of a Wayland connection, for tests that drive palmy's
 // Wayland backend without a compositor.
 //

@@ -172,9 +172,6 @@ Window :: struct {
 	// What changed since the last frame sent (damage.odin). Wayland only.
 	damage:            Damage_State,
 
-	// The window's real popups (popup.odin). Wayland only.
-	pop:               [dynamic]Wl_Popup,
-
 	// Set whenever an event arrives that should produce a new frame. Frame
 	// callbacks deliberately do not set it, so an idle window stays idle.
 	input_dirty:       bool,

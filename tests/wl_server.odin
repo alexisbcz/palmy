@@ -1,3 +1,4 @@
+#+build linux
 // A small Wayland compositor for tests: enough of wl_compositor, wl_shm,
 // xdg_shell and wl_seat for `palmy.create` to open a real App on it, and for
 // popups to be created, configured, painted and dismissed. It runs on its own

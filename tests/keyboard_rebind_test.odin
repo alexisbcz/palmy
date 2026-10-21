@@ -1,3 +1,4 @@
+#+build linux
 // A keyboard that appears holding a key: the re-bind race on a seat whose
 // keyboard capability comes and goes (headless sway with wtype, an on-screen
 // keyboard, remote input). See "A keyboard that arrives holding a key" in
