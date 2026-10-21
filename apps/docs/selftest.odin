@@ -125,6 +125,7 @@ run_selftest :: proc() -> bool {
 	test_export(&fonts)
 	test_rtf_import(&fonts)
 	test_cell_image(&fonts)
+	test_merged_cells(&fonts)
 	test_prose(&fonts)
 	test_cli()
 	{
@@ -5352,5 +5353,475 @@ test_cli :: proc() {
 		cli_schema_ok("lint", out)
 	} else {
 		ok(strings.contains(out, `"error":"unavailable"`), "with the documented token")
+	}
+}
+
+// ---------------------------------------------------------------------------
+// Merged cells: the table model, the layout's row heights and pagination, the
+// window's commands, the command line, every exporter and importer, and
+// LibreOffice as the oracle for the formats it reads and writes.
+// ---------------------------------------------------------------------------
+
+@(private = "file")
+M_DIR :: "/tmp/palmy-docs-selftest/merge"
+
+@(private = "file")
+M_LO_PROFILE :: "-env:UserInstallation=file:///tmp/palmy-lo-docs2"
+
+// A 4x4 grid with every cell named for where it is, so a moved word says
+// where it came from.
+@(private = "file")
+GRID_MD :: "Before\n\n| A1 | B1 | C1 | D1 |\n| --- | --- | --- | --- |\n| A2 | B2 | C2 | D2 |\n| A3 | B3 | C3 | D3 |\n| A4 | B4 | C4 | D4 |\n\nAfter"
+
+@(private = "file")
+m_state :: proc(st: ^State, fonts: ^p.Fonts, md: string) -> (ti: int) {
+	state_init(st, fonts)
+	st.view = {0, 0, 1280, 900}
+	replace_document(st, doc_from_markdown(md))
+	relayout(st)
+	ti = -1
+	for &pa, i in st.doc.paras {
+		if pa.kind == .Table && ti < 0 {
+			ti = i
+		}
+	}
+	return
+}
+
+@(private = "file")
+m_text :: proc(t: ^Table, r, c: int) -> string {
+	return cell_text(table_cell(t, r, c), context.temp_allocator)
+}
+
+// m_spans lists every merge as "r,c rxc" in reading order — the one string
+// two tables must agree on to have the same merges.
+@(private = "file")
+m_spans :: proc(t: ^Table) -> string {
+	b := strings.builder_make(context.temp_allocator)
+	for &row, r in t.rows {
+		for &cl, c in row.cells {
+			if cell_is_merged(&cl) {
+				fmt.sbprintf(&b, "%d,%d %dx%d;", r, c, cell_rspan(&cl), cell_cspan(&cl))
+			}
+		}
+	}
+	return strings.to_string(b)
+}
+
+@(private = "file")
+m_first_table :: proc(d: ^Doc) -> ^Table {
+	for &pa in d.paras {
+		if pa.kind == .Table && pa.table != nil {
+			return pa.table
+		}
+	}
+	return nil
+}
+
+@(private = "file")
+m_have :: proc(name: string) -> bool {
+	_, found := kit.run({"sh", "-c", fmt.tprintf("command -v %s >/dev/null 2>&1", name)})
+	return found
+}
+
+// m_boxes finds the layout's boxes for one table cell.
+@(private = "file")
+m_box :: proc(lay: ^Layout, para, row, col: int, repeat := false) -> (Cell_Box, bool) {
+	for cb in lay.cells {
+		if cb.para == para && cb.row == row && cb.col == col && cb.repeat == repeat {
+			return cb, true
+		}
+	}
+	return {}, false
+}
+
+test_merged_cells :: proc(fonts: ^p.Fonts) {
+	section("tables: merged cells — model, layout, commands, formats")
+	kit.run({"mkdir", "-p", M_DIR})
+
+	// --- 1. the model
+	{
+		st := State{}
+		ti := m_state(&st, fonts, GRID_MD)
+		defer state_destroy(&st)
+		t := st.doc.paras[ti].table
+		blocks_before := len(doc_blocks(&st.doc))
+
+		ok(table_merge(t, 0, 1, 0, 2), "B1:C1 merges")
+		a := table_cell(t, 0, 1)
+		eq_int(cell_cspan(a), 2, "the anchor spans two columns")
+		eq_int(cell_rspan(a), 1, "and one row")
+		ok(table_cell(t, 0, 2).covered, "C1 is covered")
+		eq_str(m_text(t, 0, 1), "B1 C1", "the merged cell holds both texts, in reading order")
+		ok(cell_blank(table_cell(t, 0, 2)), "and the covered cell holds nothing")
+		ar, ac := table_anchor(t, 0, 2)
+		ok(ar == 0 && ac == 1, "C1's anchor is B1 (%d,%d)", ar, ac)
+		eq_int(len(doc_blocks(&st.doc)), blocks_before, "a covered cell is not a block (B1 gained the paragraph C1 lost)")
+		nr, nc, stepped := table_step_cell(t, 0, 1, 1)
+		ok(stepped && nr == 0 && nc == 3, "Tab from B1 skips the covered C1 to D1 (%d,%d)", nr, nc)
+		nr, nc, stepped = table_step_cell(t, 0, 3, -1)
+		ok(stepped && nr == 0 && nc == 1, "Shift+Tab from D1 lands on B1 (%d,%d)", nr, nc)
+		q := pos_clamp(&st.doc, Pos{para = ti, row = 0, col = 2, off = 3})
+		ok(q.row == 0 && q.col == 1 && q.off == 0, "a position on a covered cell is moved to its anchor")
+		ok(!table_merge(t, 2, 2, 2, 2), "a single cell is not a merge")
+
+		// The rectangle grows to take in any merge it cuts through.
+		ok(table_merge(t, 1, 3, 2, 3), "D2:D3 merges")
+		r0, c0, r1, c1 := table_merge_rect(t, 1, 2, 1, 3)
+		ok(r0 == 1 && c0 == 2 && r1 == 2 && c1 == 3, "C2:D2 grows to C2:D3 around the D2:D3 merge (%d,%d %d,%d)", r0, c0, r1, c1)
+		r0, c0, r1, c1 = table_merge_rect(t, 0, 0, 0, 1)
+		ok(r0 == 0 && c0 == 0 && r1 == 0 && c1 == 2, "A1:B1 grows to A1:C1 (%d,%d %d,%d)", r0, c0, r1, c1)
+
+		// Split: the text stays in the anchor, the hidden cells come back empty.
+		ok(table_split(t, 2, 3), "splitting from a covered cell of D2:D3 works")
+		ok(!cell_is_merged(table_cell(t, 1, 3)) && !table_cell(t, 2, 3).covered, "D2:D3 is two cells again")
+		eq_str(m_text(t, 1, 3), "D2 D3", "with the text left in D2")
+		ok(cell_blank(table_cell(t, 2, 3)), "and D3 empty")
+		ok(!table_split(t, 3, 3), "splitting a cell that is not merged changes nothing")
+	}
+
+	// --- 2. normalising what a file can say
+	{
+		t := table_make(3, 3)
+		defer table_destroy(&t)
+		t.rows[0].cells[1].rspan = 2 // B1:B2
+		t.rows[1].cells[0].cspan = 2 // A2:B2 — collides with B1:B2 at B2
+		t.rows[2].cells[2].cspan = 9 // runs off the grid
+		table_normalise(&t)
+		eq_str(m_spans(&t), "0,1 2x1;", "an overlap shrinks the later merge, and one off the grid is clipped to nothing")
+		ok(table_cell(&t, 1, 1).covered && !table_cell(&t, 1, 0).covered, "B2 belongs to B1:B2, A2 is a cell again")
+
+		u := table_make(2, 2)
+		defer table_destroy(&u)
+		cl := table_cell(&u, 1, 1)
+		md := doc_from_markdown("stray")
+		para_destroy(&cl.paras[0])
+		cl.paras[0] = para_clone(&md.paras[0])
+		doc_destroy(&md)
+		table_cell(&u, 0, 0).rspan = 2
+		table_cell(&u, 0, 0).cspan = 2
+		table_normalise(&u)
+		eq_str(m_text(&u, 0, 0), "stray", "text found in a covered cell is moved into the anchor, not lost")
+	}
+
+	// --- 3. rows and columns inserted and deleted around a merge
+	{
+		st := State{}
+		ti := m_state(&st, fonts, GRID_MD)
+		defer state_destroy(&st)
+		t := st.doc.paras[ti].table
+		table_merge(t, 1, 1, 2, 2) // B2:C3
+		table_insert_row(t, 2)
+		eq_str(m_spans(t), "1,1 3x2;", "a row inserted inside the merge grows it to three rows")
+		table_insert_row(t, 1)
+		eq_str(m_spans(t), "2,1 3x2;", "a row inserted above it moves it down")
+		table_insert_col(t, 2)
+		eq_str(m_spans(t), "2,1 3x3;", "a column inserted inside it grows it")
+		table_delete_col(t, 1)
+		eq_str(m_spans(t), "2,1 3x2;", "deleting the anchor's column hands the merge to the next column")
+		eq_str(m_text(t, 2, 1), "B2 C2 B3 C3", "with its text")
+		table_delete_row(t, 2)
+		eq_str(m_spans(t), "2,1 2x2;", "deleting the anchor's row hands it down")
+		eq_str(m_text(t, 2, 1), "B2 C2 B3 C3", "text and all")
+		table_delete_row(t, 3)
+		eq_str(m_spans(t), "2,1 1x2;", "deleting a row from under it shrinks it")
+		table_delete_col(t, 2)
+		eq_str(m_spans(t), "", "and one column fewer leaves a single cell, which is no merge")
+		eq_int(table_cols(t), 3, "three columns left")
+	}
+
+	// --- 4. layout: widths, heights, boxes
+	{
+		LONG :: "Slipped by a week because the vendor was late with the parts, and the second batch came in short of what was ordered."
+		st := State{}
+		ti := m_state(&st, fonts, fmt.tprintf("| Q | Plan | Actual | Notes |\n| --- | --- | --- | --- |\n| Q1 | 10 | 9 | %s |\n| Q2 | 12 | 13 | |\n| Q3 | 14 | 11 | wide wide wide wide wide wide wide wide wide wide wide wide wide wide |\n| Q4 | 16 | 17 | |", LONG))
+		defer state_destroy(&st)
+		t := st.doc.paras[ti].table
+		table_merge(t, 1, 3, 2, 3) // the long note down two rows
+		table_merge(t, 3, 1, 3, 3) // a cell across three columns
+		relayout(&st)
+		lay := &st.lay
+
+		a, has_a := m_box(lay, ti, 1, 3)
+		r1, _ := m_box(lay, ti, 1, 0)
+		r2, _ := m_box(lay, ti, 2, 0)
+		ok(has_a, "the merged cell has a box")
+		ok(abs(a.h - (r1.h + r2.h)) < 0.5, "as tall as the two rows it spans (%.1f vs %.1f + %.1f)", a.h, r1.h, r2.h)
+		ok(abs(r1.h - r2.h) < 0.5, "and the shortfall is shared evenly between them (%.1f, %.1f)", r1.h, r2.h)
+		ok(r1.h > TABLE_MIN_ROW_H + 10, "which grew for it (%.1f)", r1.h)
+		// The text fits the box it was given.
+		bottom := f32(0)
+		for l in lay.lines {
+			if l.para == ti && l.row == 1 && l.col == 3 {
+				bottom = max(bottom, l.y + l.h)
+			}
+		}
+		ok(bottom > 0 && bottom <= a.y + a.h - CELL_PAD + 0.5, "the merged cell's text ends inside it (%.1f <= %.1f)", bottom, a.y + a.h - CELL_PAD)
+		_, covered_box := m_box(lay, ti, 2, 3)
+		ok(!covered_box, "a covered cell has no box of its own")
+
+		w, has_w := m_box(lay, ti, 3, 1)
+		ok(has_w && abs(w.w - (table_width(t, 1) + table_width(t, 2) + table_width(t, 3))) < 0.5, "a cell across three columns is as wide as the three (%.1f)", w.w)
+		widest := f32(0)
+		for l in lay.lines {
+			if l.para == ti && l.row == 3 && l.col == 1 {
+				widest = max(widest, l.w)
+			}
+		}
+		ok(widest > table_width(t, 1) * 1.5, "and its text wraps to that width (%.1f px line)", widest)
+	}
+
+	// --- 5. pagination: a vertical merge is never cut by a page break, and
+	// the header repeats with any row merged into it
+	{
+		b := strings.builder_make(context.temp_allocator)
+		strings.write_string(&b, "| H1 | H2 |\n| --- | --- |\n")
+		for i in 0 ..< 60 {
+			fmt.sbprintf(&b, "| r%d | a cell of some height %d |\n", i, i)
+		}
+		st := State{}
+		ti := m_state(&st, fonts, strings.to_string(b))
+		defer state_destroy(&st)
+		t := st.doc.paras[ti].table
+		t.header = true
+		relayout(&st)
+		// The first row on page 1, unmerged.
+		brk := -1
+		for cb in st.lay.cells {
+			if cb.para == ti && cb.page == 1 && !cb.repeat {
+				brk = cb.row
+				break
+			}
+		}
+		ok(brk > 1, "the long table breaks onto a second page (row %d)", brk)
+		if brk > 1 {
+			table_merge(t, brk - 1, 0, brk, 0)
+			relayout(&st)
+			a, _ := m_box(&st.lay, ti, brk - 1, 0)
+			below, _ := m_box(&st.lay, ti, brk, 1)
+			eq_int(a.page, below.page, "the merge across the old break moved whole onto one page")
+			eq_int(a.page, 1, "the next one")
+			ok(a.y + a.h <= CONTENT_H + 0.5, "and fits on it")
+		}
+		table_merge(t, 0, 0, 1, 0) // the header's first cell joined to row 1
+		relayout(&st)
+		_, rep0 := m_box(&st.lay, ti, 0, 0, true)
+		_, rep1 := m_box(&st.lay, ti, 1, 1, true)
+		ok(rep0 && rep1, "a header merged into row 1 repeats with row 1 on the next page")
+		eq_int(table_head_end(t), 1, "the header is rows 0 and 1")
+	}
+
+	// --- 6. the window's commands, undo, and the pointer
+	{
+		st := State{}
+		ti := m_state(&st, fonts, GRID_MD)
+		defer state_destroy(&st)
+		st.anchor = Pos{para = ti, row = 1, col = 1}
+		st.caret = Pos{para = ti, row = 1, col = 1, off = 2}
+		table_merge_cmd(&st)
+		eq_str(m_spans(st.doc.paras[ti].table), "", "Merge with the selection inside one cell does nothing")
+		st.anchor = Pos{para = ti, row = 2, col = 2, off = 1}
+		st.caret = Pos{para = ti, row = 1, col = 1}
+		table_merge_cmd(&st)
+		relayout(&st)
+		eq_str(m_spans(st.doc.paras[ti].table), "1,1 2x2;", "a selection from C3 back to B2 merges B2:C3")
+		ok(st.caret.row == 1 && st.caret.col == 1, "the caret lands in the merged cell")
+		do_undo(&st)
+		relayout(&st)
+		eq_str(m_spans(st.doc.paras[ti].table), "", "undo unmerges")
+		eq_str(m_text(st.doc.paras[ti].table, 2, 2), "C3", "and puts the text back where it was")
+		do_redo(&st)
+		relayout(&st)
+		eq_str(m_spans(st.doc.paras[ti].table), "1,1 2x2;", "redo merges again")
+
+		// A click in the lower half of the merged cell lands in it.
+		a, _ := m_box(&st.lay, ti, 1, 1)
+		pr := page_view_rect(&st, a.page)
+		z := st.zoom
+		vx := pr.x + (MARGIN + a.x + a.w - 10) * z
+		vy := pr.y + (MARGIN + a.y + a.h - 6) * z
+		q := pos_at_view(&st, vx, vy)
+		ok(q.para == ti && q.row == 1 && q.col == 1, "a click near the merged cell's bottom-right corner is in it (%d,%d)", q.row, q.col)
+		c3, _ := m_box(&st.lay, ti, 2, 3)
+		q = pos_at_view(&st, pr.x + (MARGIN + c3.x + 10) * z, pr.y + (MARGIN + c3.y + 6) * z)
+		ok(q.row == 2 && q.col == 3, "a click in D3 is in D3, not in the first cell at that height (%d,%d)", q.row, q.col)
+
+		st.caret = Pos{para = ti, row = 2, col = 2}
+		st.caret = pos_clamp(&st.doc, st.caret)
+		st.anchor = st.caret
+		table_split_cmd(&st)
+		eq_str(m_spans(st.doc.paras[ti].table), "", "Split from the merged cell splits it")
+		table_split_cmd(&st)
+		eq_str(m_spans(st.doc.paras[ti].table), "", "and a second Split is a no-op")
+	}
+
+	// --- 7. every format: the markup, and the round trip
+	{
+		st := State{}
+		ti := m_state(&st, fonts, GRID_MD)
+		defer state_destroy(&st)
+		st.doc.paras[ti].table.header = true
+		t := st.doc.paras[ti].table
+		table_merge(t, 0, 1, 0, 2) // B1:C1, across, in the header
+		table_merge(t, 1, 3, 3, 3) // D2:D4, down
+		table_merge(t, 2, 0, 3, 1) // A3:B4, both ways
+		relayout(&st)
+		want := m_spans(t)
+		eq_str(want, "0,1 1x2;1,3 3x1;2,0 2x2;", "the fixture has a merge across, one down and one both ways")
+
+		base := fmt.tprintf("%s/m", M_DIR)
+		for f in ([?]Doc_Format{.Json, .Docx, .Odt, .Rtf, .Html, .Markdown}) {
+			ext := FORMAT_NAMES[f] == "markdown" ? "md" : FORMAT_NAMES[f]
+			path := fmt.tprintf("%s.%s", base, ext)
+			ok(doc_export(&st, path, f, "Merged"), "wrote %s", path)
+		}
+		read :: proc(path, part: string) -> string {
+			data, err := os.read_entire_file(path, context.temp_allocator)
+			if err != nil {
+				return ""
+			}
+			if part == "" {
+				return string(data)
+			}
+			x, _ := zip_read_entry(data, part, context.temp_allocator)
+			return string(x)
+		}
+		docx := read(fmt.tprintf("%s.docx", base), "word/document.xml")
+		ok(strings.contains(docx, `<w:gridSpan w:val="2"/>`), "docx: gridSpan for a merge across")
+		eq_int(strings.count(docx, `<w:vMerge w:val="restart"/>`), 2, "docx: vMerge restart on both vertical anchors")
+		eq_int(strings.count(docx, `<w:vMerge/>`), 3, "docx: a bare vMerge on each of the three continuation rows")
+		odt := read(fmt.tprintf("%s.odt", base), "content.xml")
+		eq_int(strings.count(odt, `table:number-columns-spanned="2"`), 2, "odt: number-columns-spanned on the two merges across")
+		eq_int(strings.count(odt, `table:number-rows-spanned="`), 2, "odt: number-rows-spanned on the two merges down")
+		eq_int(strings.count(odt, "<table:covered-table-cell/>"), 6, "odt: a covered-table-cell for every hidden cell")
+		rtf := read(fmt.tprintf("%s.rtf", base), "")
+		eq_int(strings.count(rtf, "\\clmgf"), 3, "rtf: \\clmgf on the first cell of each row of a merge across")
+		eq_int(strings.count(rtf, "\\clmrg"), 3, "rtf: \\clmrg on the cells continuing them")
+		eq_int(strings.count(rtf, "\\clvmgf"), 3, "rtf: \\clvmgf on the top row of a merge down")
+		eq_int(strings.count(rtf, "\\clvmrg"), 4, "rtf: \\clvmrg below it")
+		html := read(fmt.tprintf("%s.html", base), "")
+		ok(strings.contains(html, `<th colspan="2">B1<br>C1</th>`), "html: colspan on the header cell, which holds both texts")
+		ok(strings.contains(html, `<td rowspan="3">`) && strings.contains(html, `<td colspan="2" rowspan="2">`), "html: rowspan, and both on a merge both ways")
+		eq_int(strings.count(html, "<td") + strings.count(html, "<th") - strings.count(html, "<thead"), 16 - 6, "html: a hidden cell is not written at all")
+		md := read(fmt.tprintf("%s.md", base), "")
+		ok(strings.contains(md, "| A1 | B1 C1 |  | D1 |"), "markdown: flattened — the text once, in the anchor, and the covered cell empty")
+		eq_int(strings.count(md, "D3"), 1, "markdown: no text is written twice")
+		js := read(fmt.tprintf("%s.json", base), "")
+		ok(strings.contains(js, `"merges": [{"row": 0, "col": 1, "rows": 1, "cols": 2}`), "json: the merges, beside the grid")
+
+		for ext in ([?]string{"json", "docx", "odt", "rtf"}) {
+			back, got := doc_read(fmt.tprintf("%s.%s", base, ext))
+			ok(got, "%s reads back", ext)
+			if !got {
+				continue
+			}
+			bt := m_first_table(&back)
+			ok(bt != nil, "%s: with its table", ext)
+			if bt != nil {
+				eq_str(m_spans(bt), want, "%s: every merge survives the round trip", ext)
+				eq_str(m_text(bt, 1, 3), "D2 D3 D4", "%s: and the merged text", ext)
+				eq_str(m_text(bt, 2, 0), "A3 B3 A4 B4", "%s: in reading order", ext)
+			}
+			doc_destroy(&back)
+		}
+		{
+			back, _ := doc_read(fmt.tprintf("%s.md", base))
+			bt := m_first_table(&back)
+			ok(bt != nil && m_spans(bt) == "" && m_text(bt, 1, 3) == "D2 D3 D4", "markdown reads back unmerged, with the text where the anchor was")
+			doc_destroy(&back)
+		}
+
+		// The RTF Word and LibreOffice write for a merge across: one wider
+		// cell, so the row has fewer \cellx edges than the grid.
+		{
+			src := "{\\rtf1\\ansi{\\fonttbl{\\f0 Arial;}}" +
+				"\\trowd\\cellx3000\\cellx6000\\cellx9000\\pard\\intbl a\\cell b\\cell c\\cell\\row" +
+				"\\trowd\\cellx6000\\cellx9000\\pard\\intbl wide\\cell d\\cell\\row" +
+				"\\trowd\\cellx3000\\clvmgf\\cellx6000\\cellx9000\\pard\\intbl e\\cell tall\\cell f\\cell\\row" +
+				"\\trowd\\cellx3000\\clvmrg\\cellx6000\\cellx9000\\pard\\intbl g\\cell\\cell h\\cell\\row\\pard\\par}"
+			d := doc_from_rtf(src)
+			bt := m_first_table(&d)
+			ok(bt != nil && table_cols(bt) == 3, "rtf: rows of different widths land on one 3-column grid")
+			if bt != nil {
+				eq_str(m_spans(bt), "1,0 1x2;2,1 2x1;", "rtf: a wider cell is a merge across, and \\clvmgf/\\clvmrg a merge down")
+				eq_str(m_text(bt, 1, 2), "d", "rtf: the cell after the wide one is in the last column")
+			}
+			doc_destroy(&d)
+		}
+
+		// --- LibreOffice, the oracle: it reads our files with the spans, and
+		// our importers read the files it writes.
+		if !m_have("soffice") {
+			ok(false, "SKIPPED: LibreOffice is not installed, so merged cells were not checked against it")
+		} else {
+			lo := fmt.tprintf("%s/lo", M_DIR)
+			kit.run({"mkdir", "-p", lo})
+			for ext in ([?]string{"docx", "odt", "rtf", "html"}) {
+				// One input per run: each lands on m.odt.
+				_, ran := kit.run({"soffice", "--headless", M_LO_PROFILE, "--convert-to", "odt:writer8", "--outdir", lo, fmt.tprintf("%s.%s", base, ext)})
+				back, got := import_odt(fmt.tprintf("%s/m.odt", lo))
+				ok(ran && got, "LibreOffice converted our .%s to .odt", ext)
+				if got {
+					bt := m_first_table(&back)
+					eq_str(bt == nil ? "" : m_spans(bt), want, "LibreOffice reads every merge out of our .%s", ext)
+					if ext != "html" {
+						// HTML's <br> comes back as a line break inside one
+						// paragraph, so only the spans are compared there.
+						eq_str(bt == nil ? "" : m_text(bt, 2, 0), "A3 B3 A4 B4", "with the merged text, out of .%s", ext)
+					}
+					doc_destroy(&back)
+				}
+				if ext == "docx" {
+					// Keep LibreOffice's own ODF of our .docx, to have it
+					// write .docx and .rtf in its own way next.
+					kit.run({"cp", fmt.tprintf("%s/m.odt", lo), fmt.tprintf("%s/lo.odt", lo)})
+				}
+			}
+			for ext in ([?]string{"docx", "rtf"}) {
+				_, ran := kit.run({"soffice", "--headless", M_LO_PROFILE, "--convert-to", ext, "--outdir", lo, fmt.tprintf("%s/lo.odt", lo)})
+				back, got := doc_read(fmt.tprintf("%s/lo.%s", lo, ext))
+				ok(ran && got, "LibreOffice wrote a .%s of its own", ext)
+				if got {
+					bt := m_first_table(&back)
+					eq_str(bt == nil ? "" : m_spans(bt), want, "our .%s importer reads every merge out of LibreOffice's .%s", ext, ext)
+					doc_destroy(&back)
+				}
+			}
+		}
+	}
+
+	// --- 8. the command line
+	{
+		s := surface()
+		src := fmt.tprintf("%s/cli.json", M_DIR)
+		{
+			st := State{}
+			m_state(&st, fonts, GRID_MD)
+			doc_export(&st, src, .Json, "cli")
+			state_destroy(&st)
+		}
+		code, out, _ := kit.cli_capture(s, {"merge", src, "B2:C3", "--json"}, context.temp_allocator)
+		eq_int(code, kit.EXIT_OK, "docs merge exits 0")
+		ok(strings.contains(out, `"range": "B2:C3"`) && strings.contains(out, `"merges": 1`), "and reports the range: %s", out)
+		back, _ := doc_read(src)
+		bt := m_first_table(&back)
+		eq_str(bt == nil ? "" : m_spans(bt), "1,1 2x2;", "the file now holds the merge")
+		doc_destroy(&back)
+		code, out, _ = kit.cli_capture(s, {"merge", src, "C2:D2", "--dry-run", "--json"}, context.temp_allocator)
+		ok(code == kit.EXIT_OK && strings.contains(out, `"range": "B2:D3"`), "a range that cuts a merge grows around it: %s", out)
+		code, _, _ = kit.cli_capture(s, {"merge", src, "A1:A1", "--json"}, context.temp_allocator)
+		eq_int(code, kit.EXIT_USAGE, "one cell is a usage error")
+		code, _, _ = kit.cli_capture(s, {"merge", src, "A1:Q9", "--json"}, context.temp_allocator)
+		eq_int(code, kit.EXIT_USAGE, "so is a range off the table")
+		code, _, _ = kit.cli_capture(s, {"merge", src, "A1:B1", "--table", "2", "--json"}, context.temp_allocator)
+		eq_int(code, kit.EXIT_USAGE, "and a table that is not there")
+		code, _, _ = kit.cli_capture(s, {"split", src, "A1", "--json"}, context.temp_allocator)
+		eq_int(code, kit.EXIT_USAGE, "split on a cell that is not merged is a usage error")
+		code, out, _ = kit.cli_capture(s, {"split", src, "C3", "--json"}, context.temp_allocator)
+		ok(code == kit.EXIT_OK && strings.contains(out, `"merges": 0`), "split from any cell of the merge: %s", out)
+		back, _ = doc_read(src)
+		bt = m_first_table(&back)
+		eq_str(bt == nil ? "?" : m_spans(bt), "", "and the file is unmerged")
+		doc_destroy(&back)
 	}
 }
