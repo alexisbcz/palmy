@@ -205,23 +205,32 @@ segment_accuracy_report :: proc(path := "") -> int {
 	fmt.println("  which compares against vale's own segmenter on a separate corpus.")
 
 	if path != "" {
-		data, err := os.read_entire_file_from_path(path, context.allocator)
-		if err != nil {
+		n, ok := segment_file_sentences(path)
+		if !ok {
 			fmt.eprintfln("prose: cannot read %s", path)
 			return 3
-		}
-		defer delete(data)
-		m := mask(string(data))
-		defer mask_destroy(&m)
-		n := 0
-		for b in m.blocks {
-			if b.kind != .None {
-				n += len(sentences(m.text, b.from, b.to, context.temp_allocator))
-			}
 		}
 		fmt.printfln("  %s: %d sentences", path, n)
 	}
 	return 0
+}
+
+// segment_file_sentences counts the sentences the segmenter finds in a file's
+// prose blocks. It is what `prose segment FILE` reports, in either form.
+segment_file_sentences :: proc(path: string) -> (n: int, ok: bool) {
+	data, err := os.read_entire_file_from_path(path, context.allocator)
+	if err != nil {
+		return 0, false
+	}
+	defer delete(data)
+	m := mask(string(data))
+	defer mask_destroy(&m)
+	for b in m.blocks {
+		if b.kind != .None {
+			n += len(sentences(m.text, b.from, b.to, context.temp_allocator))
+		}
+	}
+	return n, true
 }
 
 // ---------------------------------------------------------------------------
@@ -330,13 +339,39 @@ ipa_syllables :: proc(ipa: string) -> int {
 	return n
 }
 
-// syllable_error_report samples a word list, asks espeak-ng for each word's
-// pronunciation in one batch, and prints how often the estimator disagrees.
-syllable_error_report :: proc(list_path: string, want: int) -> int {
+// Syl_Disagreement is one word the estimator and espeak-ng count differently.
+Syl_Disagreement :: struct {
+	word:   string,
+	mine:   int,
+	espeak: int,
+	ipa:    string,
+}
+
+// Syl_Oracle is the measurement `prose syllables` reports, in either form.
+Syl_Oracle :: struct {
+	list:          string,
+	words:         int,
+	agree:         int,
+	off_by_one:    int,
+	over:          int,
+	under:         int,
+	disagreements: [dynamic]Syl_Disagreement, // the first 25
+}
+
+// Why the oracle could not run, as the exit code the command line reports:
+// 3 the word list is not there, 6 espeak-ng is not, 7 anything else.
+SYL_NOT_FOUND :: 3
+SYL_UNAVAILABLE :: 6
+SYL_FAILED :: 7
+
+// syllable_oracle samples a word list, asks espeak-ng for each word's
+// pronunciation in one batch, and counts how often the estimator disagrees.
+syllable_oracle :: proc(list_path: string, want: int, allocator := context.allocator) -> (r: Syl_Oracle, code: int, why: string) {
+	r.list = list_path
+	r.disagreements = make([dynamic]Syl_Disagreement, allocator)
 	data, err := os.read_entire_file_from_path(list_path, context.allocator)
 	if err != nil {
-		fmt.eprintfln("prose: cannot read %s", list_path)
-		return 3
+		return r, SYL_NOT_FOUND, fmt.tprintf("cannot read %s", list_path)
 	}
 	defer delete(data)
 
@@ -362,8 +397,7 @@ syllable_error_report :: proc(list_path: string, want: int) -> int {
 		}
 	}
 	if len(all) == 0 {
-		fmt.eprintfln("prose: no usable words in %s", list_path)
-		return 7
+		return r, SYL_FAILED, fmt.tprintf("no usable words in %s", list_path)
 	}
 	step := max(1, len(all) / max(1, want))
 	sample := make([dynamic]string, 0, want, context.allocator)
@@ -381,8 +415,7 @@ syllable_error_report :: proc(list_path: string, want: int) -> int {
 		strings.write_string(&sb, ".\n")
 	}
 	if werr := os.write_entire_file(tmp, transmute([]u8)strings.to_string(sb)); werr != nil {
-		fmt.eprintln("prose: cannot write the word file")
-		return 7
+		return r, SYL_FAILED, "cannot write the word file"
 	}
 	defer os.remove(tmp)
 
@@ -391,21 +424,11 @@ syllable_error_report :: proc(list_path: string, want: int) -> int {
 		context.allocator,
 	)
 	if perr != nil || state.exit_code != 0 {
-		fmt.println("syllable oracle: espeak-ng is not available on this machine.")
-		fmt.println("  No pronunciation dictionary was found either (hunspell has no")
-		fmt.println("  dictionaries installed, and /usr/share/dict holds only a password")
-		fmt.println("  list). The counter is therefore validated only against the")
-		fmt.println("  hand-checked table in syllable.odin, which the selftest asserts.")
-		return 7
+		return r, SYL_UNAVAILABLE, "espeak-ng is not available on this machine"
 	}
 	defer delete(sout)
 
 	lines := strings.split_lines(string(sout), context.temp_allocator)
-	n, agree := 0, 0
-	off_by_one := 0
-	over, under := 0, 0
-	shown := 0
-	fmt.println("disagreements (first 25):")
 	for w, i in sample {
 		if i >= len(lines) {
 			break
@@ -419,35 +442,58 @@ syllable_error_report :: proc(list_path: string, want: int) -> int {
 			continue
 		}
 		mine := syllables(w)
-		n += 1
+		r.words += 1
 		if mine == truth {
-			agree += 1
+			r.agree += 1
 			continue
 		}
 		if mine > truth {
-			over += 1
+			r.over += 1
 		} else {
-			under += 1
+			r.under += 1
 		}
 		if abs(mine - truth) == 1 {
-			off_by_one += 1
+			r.off_by_one += 1
 		}
-		if shown < 25 {
-			fmt.printfln("  %-16s mine %d  espeak %d  %s", w, mine, truth, ipa)
-			shown += 1
+		if len(r.disagreements) < 25 {
+			append(&r.disagreements, Syl_Disagreement{strings.clone(w, allocator), mine, truth, strings.clone(ipa, allocator)})
 		}
 	}
-	if n == 0 {
-		fmt.println("prose: the oracle returned nothing usable")
-		return 7
+	if r.words == 0 {
+		return r, SYL_FAILED, "the oracle returned nothing usable"
+	}
+	return r, 0, ""
+}
+
+// syllable_error_report is syllable_oracle, printed for a person.
+syllable_error_report :: proc(list_path: string, want: int) -> int {
+	r, code, why := syllable_oracle(list_path, want)
+	defer delete(r.disagreements)
+	switch code {
+	case 0:
+	case SYL_UNAVAILABLE:
+		fmt.println("syllable oracle: espeak-ng is not available on this machine.")
+		fmt.println("  No pronunciation dictionary was found either (hunspell has no")
+		fmt.println("  dictionaries installed, and /usr/share/dict holds only a password")
+		fmt.println("  list). The counter is therefore validated only against the")
+		fmt.println("  hand-checked table in syllable.odin, which the selftest asserts.")
+		return SYL_FAILED
+	case:
+		fmt.eprintfln("prose: %s", why)
+		return code
+	}
+	n := r.words
+	fmt.println("disagreements (first 25):")
+	for d in r.disagreements {
+		fmt.printfln("  %-16s mine %d  espeak %d  %s", d.word, d.mine, d.espeak, d.ipa)
 	}
 	fmt.println()
 	fmt.printfln("syllable counting against espeak-ng, %d words from %s", n, list_path)
-	fmt.printfln("  exact agreement   %d  (%.1f%%)", agree, f64(agree) / f64(n) * 100)
-	fmt.printfln("  error rate        %.1f%%", f64(n - agree) / f64(n) * 100)
-	fmt.printfln("  off by one        %d  (%.1f%% of all words)", off_by_one, f64(off_by_one) / f64(n) * 100)
-	fmt.printfln("  overcounted       %d", over)
-	fmt.printfln("  undercounted      %d", under)
+	fmt.printfln("  exact agreement   %d  (%.1f%%)", r.agree, f64(r.agree) / f64(n) * 100)
+	fmt.printfln("  error rate        %.1f%%", f64(n - r.agree) / f64(n) * 100)
+	fmt.printfln("  off by one        %d  (%.1f%% of all words)", r.off_by_one, f64(r.off_by_one) / f64(n) * 100)
+	fmt.printfln("  overcounted       %d", r.over)
+	fmt.printfln("  undercounted      %d", r.under)
 	fmt.println()
 	fmt.println("  espeak-ng is an oracle, not the truth: it is a letter-to-sound")
 	fmt.println("  ruleset with an exception dictionary, and disagrees with a human")

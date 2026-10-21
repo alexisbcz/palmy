@@ -7,194 +7,135 @@ package main
 //	prose report FILE [--style NAME] [--json]
 //	prose explain RULE [--style NAME]
 //	prose fix    FILE [--style NAME]   print the file with every suggestion taken
+//	prose segment [FILE]               segmentation accuracy on the corpus
+//	prose syllables [FILE] [--n N]     syllable error rate against espeak-ng
+//	prose bench FILE                   per-keystroke and full-pass timings
 //	prose --selftest [--verbose]
-//	prose --segment [FILE]             segmentation accuracy on the corpus
-//	prose --syllables [FILE] [--n N]   syllable error rate against espeak-ng
-//	prose --bench FILE                 per-keystroke and full-pass timings
+//
+// The command line is declared in cli.odin and parsed by the shared
+// convention in apps/kit/cli.odin, so `--json`, `--help`, `--schema` and the
+// exit codes are the ones every other application has. The older spellings
+// `--segment`, `--syllables` and `--bench` are aliases of the verbs.
+//
+// Every command is a read. Each prints the same thing it always printed for a
+// person, and under --json a document of the declared shape instead; both are
+// built from the same library calls the notes application makes.
 //
 // The same code the notes application runs. Nothing here reaches the network,
 // and the only files it opens are the ones named on the command line.
 //
 // `vale` appears nowhere in this program. It is used by
 // `apps/prose/oracle.sh`, which is a test, and the comparison is reported as
-// agreement counts rather than asserted.
+// agreement counts rather than asserted. `lint --vale` prints vale's own JSON
+// shape for that comparison.
 
 import "core:fmt"
 import "core:os"
 import "core:slice"
-import "core:strconv"
 import "core:strings"
 import "core:time"
+import kit "kit:."
 import prose ".."
 
-EXIT_OK :: 0
-EXIT_USAGE :: 2
-EXIT_NOTFOUND :: 3
-EXIT_FAILED :: 7
-
 main :: proc() {
-	args := os.args[1:]
-	if len(args) == 0 {
-		usage()
-		os.exit(EXIT_USAGE)
+	if code, handled := kit.cli(surface()); handled {
+		os.exit(code)
 	}
-	switch args[0] {
-	case "--selftest":
-		os.exit(prose.selftest(has(args, "--verbose")) == 0 ? EXIT_OK : EXIT_FAILED)
-	case "--segment":
-		os.exit(cmd_segment(args[1:]))
-	case "--syllables":
-		os.exit(cmd_syllables(args[1:]))
-	case "--bench":
-		os.exit(cmd_bench(args[1:]))
-	case "styles":
-		os.exit(cmd_styles(args[1:]))
-	case "lint":
-		os.exit(cmd_lint(args[1:]))
-	case "report":
-		os.exit(cmd_report(args[1:]))
-	case "explain":
-		os.exit(cmd_explain(args[1:]))
-	case "fix":
-		os.exit(cmd_fix(args[1:]))
-	case "-h", "--help":
-		usage()
-		os.exit(EXIT_OK)
-	}
-	fmt.eprintfln("prose: unknown command %q", args[0])
-	usage()
-	os.exit(EXIT_USAGE)
+	// No arguments: there is no window to open, so the answer is the help.
+	fmt.eprint(kit.cli_help_text(surface()))
+	os.exit(kit.EXIT_USAGE)
 }
 
-usage :: proc() {
-	fmt.eprintln(
-		`prose — a native Vale-compatible prose linter, and the engine behind
-the writing report in apps/notes.
-
-  prose styles [--styles-path DIR]
-  prose lint   FILE [--style NAME] [--level suggestion|warning|error]
-                    [--json] [--styles-path DIR] [--front-matter]
-  prose report FILE [--style NAME] [--json]
-  prose explain RULE [--style NAME]
-  prose fix    FILE [--style NAME]
-  prose --selftest [--verbose]
-  prose --segment [FILE]
-  prose --syllables [WORDLIST] [--n N]
-  prose --bench FILE
-
-Style packs ship inside the binary and work with no network and no
-`+"`vale sync`"+`. --styles-path adds a Vale StylesPath from disk.`,
-	)
-}
-
-has :: proc(args: []string, flag: string) -> bool {
-	for a in args {
-		if a == flag {
-			return true
-		}
-	}
-	return false
-}
-
-opt :: proc(args: []string, flag: string, def := "") -> string {
-	for a, i in args {
-		if a == flag && i + 1 < len(args) {
-			return args[i + 1]
-		}
-		if strings.has_prefix(a, flag) && len(a) > len(flag) && a[len(flag)] == '=' {
-			return a[len(flag) + 1:]
-		}
-	}
-	return def
-}
-
-first_positional :: proc(args: []string) -> string {
-	skip := false
-	for a in args {
-		if skip {
-			skip = false
-			continue
-		}
-		if strings.has_prefix(a, "--") {
-			if !strings.contains(a, "=") &&
-			   (a == "--style" || a == "--level" || a == "--styles-path" || a == "--n") {
-				skip = true
-			}
-			continue
-		}
-		return a
-	}
-	return ""
-}
+// ---------------------------------------------------------------------------
+// Shared steps
+// ---------------------------------------------------------------------------
 
 // build_engine loads the embedded packs, plus a StylesPath if one was named.
-build_engine :: proc(args: []string) -> prose.Engine {
+build_engine :: proc(c: ^kit.Call) -> prose.Engine {
 	e := prose.engine_builtin()
-	if p := opt(args, "--styles-path"); p != "" {
+	if p := kit.cli_str(c, "styles-path"); p != "" {
 		n, err := prose.engine_load_dir(&e, p)
 		if err != "" {
-			fmt.eprintfln("prose: %s", err)
+			kit.cli_note(c, "prose: %s", err)
 		} else {
-			fmt.eprintfln("prose: loaded %d style(s) from %s", n, p)
+			kit.cli_note(c, "prose: loaded %d style(s) from %s", n, p)
 		}
 	}
 	for err in e.errors {
-		fmt.eprintfln("prose: %s", err)
+		kit.cli_note(c, "prose: %s", err)
 	}
 	return e
 }
 
-pick_pack :: proc(e: ^prose.Engine, name: string) -> int {
+// pick_pack resolves --style. An unknown name is "not found", with the names
+// that do exist beside the refusal.
+pick_pack :: proc(c: ^kit.Call, e: ^prose.Engine) -> (idx: int, code: int) {
+	name := kit.cli_str(c, "style")
 	if name == "" {
-		return 0
+		return 0, kit.EXIT_OK
 	}
 	i := prose.pack_index(e, name)
 	if i < 0 {
-		fmt.eprintfln("prose: no style named %q", name)
-		fmt.eprint("prose: available:")
+		names := make([dynamic]string, context.temp_allocator)
 		for p in e.packs {
-			fmt.eprintf(" %s", p.name)
+			append(&names, p.name)
 		}
-		fmt.eprintln()
-		os.exit(EXIT_NOTFOUND)
+		code = kit.cli_failf(c, kit.EXIT_NOT_FOUND, "no style named %q", name)
+		kit.cli_err_field(c, "available", strings.join(names[:], ",", context.temp_allocator))
+		return 0, code
 	}
-	return i
+	return i, kit.EXIT_OK
 }
 
-read_file :: proc(path: string) -> string {
-	if path == "" {
-		fmt.eprintln("prose: no file given")
-		os.exit(EXIT_USAGE)
-	}
+read_file :: proc(c: ^kit.Call, path: string) -> (text: string, code: int) {
 	data, err := os.read_entire_file_from_path(path, context.allocator)
 	if err != nil {
-		fmt.eprintfln("prose: cannot read %s", path)
-		os.exit(EXIT_NOTFOUND)
+		return "", kit.cli_failf(c, kit.EXIT_NOT_FOUND, "cannot read %s", path)
 	}
-	return string(data)
+	return string(data), kit.EXIT_OK
+}
+
+level_of :: proc(s: string) -> prose.Severity {
+	switch s {
+	case "error":
+		return .Error
+	case "warning":
+		return .Warning
+	}
+	return .Suggestion
 }
 
 // ---------------------------------------------------------------------------
+// styles
+// ---------------------------------------------------------------------------
 
-cmd_styles :: proc(args: []string) -> int {
-	e := build_engine(args)
+cmd_styles :: proc(c: ^kit.Call) -> int {
+	e := build_engine(c)
 	defer prose.engine_destroy(&e)
-	if has(args, "--json") {
-		fmt.print("[")
-		for p, i in e.packs {
-			if i > 0 {
-				fmt.print(",")
+	if c.json {
+		arr := kit.jarr()
+		for p in e.packs {
+			o := kit.jobj()
+			kit.jset_str(o, "name", p.name)
+			kit.jset_str(o, "about", p.about)
+			kit.jset_int(o, "rules", len(p.rules))
+			kit.jset_str(o, "source", p.source)
+			kinds := kit.jobj()
+			counts: [prose.Rule_Kind]int
+			for r in p.rules {
+				counts[r.kind] += 1
 			}
-			fmt.printf(
-				"\n  {{\"name\":%q,\"about\":%q,\"rules\":%d,\"source\":%q}}",
-				p.name,
-				p.about,
-				len(p.rules),
-				p.source,
-			)
+			for k in prose.Rule_Kind {
+				if counts[k] > 0 {
+					kit.jset_int(kinds, prose.RULE_KIND_NAME[k], counts[k])
+				}
+			}
+			kit.jset(o, "kinds", kinds)
+			kit.jpush(arr, o)
 		}
-		fmt.println("\n]")
-		return EXIT_OK
+		kit.jset(c.out, "styles", arr)
+		kit.jset_int(c.out, "skipped_spelling", e.skipped_spelling)
+		return kit.EXIT_OK
 	}
 	for p in e.packs {
 		fmt.printfln("%-14s %d rules", p.name, len(p.rules))
@@ -224,35 +165,74 @@ cmd_styles :: proc(args: []string) -> int {
 			e.skipped_spelling,
 		)
 	}
-	return EXIT_OK
+	return kit.EXIT_OK
 }
 
-level_of :: proc(s: string) -> prose.Severity {
-	switch s {
-	case "error":
-		return .Error
-	case "warning":
-		return .Warning
-	}
-	return .Suggestion
+// ---------------------------------------------------------------------------
+// lint
+// ---------------------------------------------------------------------------
+
+// alert_json is one alert in vale's own field names, so anything that already
+// reads vale's output reads these.
+alert_json :: proc(a: prose.Alert) -> ^kit.Json {
+	o := kit.jobj()
+	kit.jset_int(o, "Line", a.line)
+	span := kit.jarr()
+	kit.jpush(span, kit.jint(a.col))
+	kit.jpush(span, kit.jint(a.end_col))
+	kit.jset(o, "Span", span)
+	kit.jset_str(o, "Check", a.rule)
+	kit.jset_str(o, "Severity", prose.SEVERITY_NAME[a.sev])
+	kit.jset_str(o, "Match", a.match)
+	kit.jset_str(o, "Message", a.message)
+	kit.jset_str(o, "Fix", a.fix)
+	return o
 }
 
-cmd_lint :: proc(args: []string) -> int {
-	e := build_engine(args)
+cmd_lint :: proc(c: ^kit.Call) -> int {
+	e := build_engine(c)
 	defer prose.engine_destroy(&e)
-	path := first_positional(args)
-	src := read_file(path)
+	path := kit.cli_str(c, "file")
+	src, rc := read_file(c, path)
+	if rc != kit.EXIT_OK {
+		return rc
+	}
+	pack, pc := pick_pack(c, &e)
+	if pc != kit.EXIT_OK {
+		return pc
+	}
 	o := prose.Opts {
-		pack              = pick_pack(&e, opt(args, "--style")),
-		min_sev           = level_of(opt(args, "--level", "suggestion")),
-		lint_front_matter = has(args, "--front-matter"),
+		pack              = pack,
+		min_sev           = level_of(kit.cli_str(c, "level")),
+		lint_front_matter = kit.cli_bool(c, "front-matter"),
 	}
 	res := prose.lint(&e, src, o)
 	defer prose.result_destroy(&res)
 
-	if has(args, "--json") {
-		print_json(path, res.alerts)
-		return len(res.alerts) == 0 ? EXIT_OK : EXIT_OK
+	if kit.cli_bool(c, "vale") {
+		// vale's shape: one key, the file, holding its alerts. It has no
+		// fixed field names, so it is an alternative to the declared document
+		// rather than a form of it, and is only ever JSON.
+		c.json = true
+		arr := kit.jarr()
+		for a in res.alerts {
+			kit.jpush(arr, alert_json(a))
+		}
+		c.out = kit.jobj()
+		kit.jset(c.out, path, arr)
+		return kit.EXIT_OK
+	}
+	if c.json {
+		kit.jset_str(c.out, "file", path)
+		kit.jset_str(c.out, "style", e.packs[o.pack].name)
+		kit.jset_int(c.out, "words", res.counts.words)
+		kit.jset_int(c.out, "count", len(res.alerts))
+		arr := kit.jarr()
+		for a in res.alerts {
+			kit.jpush(arr, alert_json(a))
+		}
+		kit.jset(c.out, "alerts", arr)
+		return kit.EXIT_OK
 	}
 	for a in res.alerts {
 		fmt.printfln(
@@ -274,75 +254,57 @@ cmd_lint :: proc(args: []string) -> int {
 		e.packs[o.pack].name,
 		res.counts.words,
 	)
-	return EXIT_OK
+	return kit.EXIT_OK
 }
 
-print_json :: proc(path: string, alerts: []prose.Alert) {
-	fmt.printf("{{\n  %q: [", path)
-	for a, i in alerts {
-		if i > 0 {
-			fmt.print(",")
-		}
-		fmt.printf(
-			"\n    {{\"Line\":%d,\"Span\":[%d,%d],\"Check\":%q,\"Severity\":%q,\"Match\":%q,\"Message\":%q,\"Fix\":%q}}",
-			a.line,
-			a.col,
-			a.end_col,
-			a.rule,
-			prose.SEVERITY_NAME[a.sev],
-			a.match,
-			a.message,
-			a.fix,
-		)
-	}
-	fmt.println("\n  ]\n}")
-}
+// ---------------------------------------------------------------------------
+// report
+// ---------------------------------------------------------------------------
 
-cmd_report :: proc(args: []string) -> int {
-	e := build_engine(args)
+cmd_report :: proc(c: ^kit.Call) -> int {
+	e := build_engine(c)
 	defer prose.engine_destroy(&e)
-	path := first_positional(args)
-	src := read_file(path)
+	path := kit.cli_str(c, "file")
+	src, rc := read_file(c, path)
+	if rc != kit.EXIT_OK {
+		return rc
+	}
+	pack, pc := pick_pack(c, &e)
+	if pc != kit.EXIT_OK {
+		return pc
+	}
 	o := prose.Opts {
-		pack = pick_pack(&e, opt(args, "--style")),
+		pack = pack,
 	}
 	res := prose.lint(&e, src, o)
 	defer prose.result_destroy(&res)
 	rp := prose.report_of(&res)
 	defer prose.report_destroy(&rp)
 
-	if has(args, "--json") {
-		fmt.printf(
-			"{{\"words\":%d,\"sentences\":%d,\"paragraphs\":%d,\"minutes\":%.2f,\"grade_mean\":%.2f,\"ease\":%.2f,\"sd\":%.2f,\"caveat\":%q,\"metrics\":{{",
-			rp.words,
-			rp.sentences,
-			rp.paragraphs,
-			rp.minutes,
-			rp.grade_mean,
-			rp.ease,
-			rp.len_sd,
-			rp.caveat,
-		)
-		for g, i in rp.grades {
-			if i > 0 {
-				fmt.print(",")
-			}
-			fmt.printf("%q:", prose.METRIC_NAME[g.metric])
-			if g.ok {
-				fmt.printf("%.2f", g.value)
-			} else {
-				fmt.print("null")
-			}
+	if c.json {
+		// The same keys this command has always printed under --json.
+		kit.jset_int(c.out, "words", rp.words)
+		kit.jset_int(c.out, "sentences", rp.sentences)
+		kit.jset_int(c.out, "paragraphs", rp.paragraphs)
+		kit.jset_num(c.out, "minutes", rp.minutes)
+		kit.jset_num(c.out, "grade_mean", rp.grade_mean)
+		kit.jset_num(c.out, "ease", rp.ease)
+		kit.jset_num(c.out, "sd", rp.len_sd)
+		kit.jset_str(c.out, "caveat", rp.caveat)
+		metrics := kit.jobj()
+		for g in rp.grades {
+			kit.jset(metrics, prose.METRIC_NAME[g.metric], g.ok ? kit.jnum(g.value) : kit.jnull())
 		}
-		fmt.print("},\"issues\":[")
-		for t, i in rp.issues {
-			if i > 0 {
-				fmt.print(",")
-			}
-			fmt.printf("{{\"rule\":%q,\"n\":%d}}", t.rule, t.n)
+		kit.jset(c.out, "metrics", metrics)
+		issues := kit.jarr()
+		for t in rp.issues {
+			it := kit.jobj()
+			kit.jset_str(it, "rule", t.rule)
+			kit.jset_int(it, "n", t.n)
+			kit.jpush(issues, it)
 		}
-		fmt.println("]}")
-		return EXIT_OK
+		kit.jset(c.out, "issues", issues)
+		return kit.EXIT_OK
 	}
 
 	fmt.printfln("%s — %s", path, e.packs[o.pack].name)
@@ -411,24 +373,42 @@ cmd_report :: proc(args: []string) -> int {
 	}
 	fmt.println()
 	fmt.printfln("  %s", rp.caveat)
-	return EXIT_OK
+	return kit.EXIT_OK
 }
 
-cmd_explain :: proc(args: []string) -> int {
-	e := build_engine(args)
+// ---------------------------------------------------------------------------
+// explain
+// ---------------------------------------------------------------------------
+
+cmd_explain :: proc(c: ^kit.Call) -> int {
+	e := build_engine(c)
 	defer prose.engine_destroy(&e)
-	want := first_positional(args)
-	if want == "" {
-		fmt.eprintln("prose explain RULE")
-		return EXIT_USAGE
-	}
+	want := kit.cli_str(c, "rule")
+	only := kit.cli_str(c, "style")
+	lw := strings.to_lower(want, context.temp_allocator)
+	rules := kit.jarr()
 	found := 0
 	for p in e.packs {
+		if only != "" && p.name != only {
+			continue
+		}
 		for r in p.rules {
-			if !strings.contains(strings.to_lower(r.name, context.temp_allocator), strings.to_lower(want, context.temp_allocator)) {
+			if !strings.contains(strings.to_lower(r.name, context.temp_allocator), lw) {
 				continue
 			}
 			found += 1
+			if c.json {
+				o := kit.jobj()
+				kit.jset_str(o, "name", r.name)
+				kit.jset_str(o, "style", p.name)
+				kit.jset_str(o, "kind", prose.RULE_KIND_NAME[r.kind])
+				kit.jset_str(o, "severity", prose.SEVERITY_NAME[r.sev])
+				kit.jset_str(o, "message", r.message)
+				kit.jset_str(o, "description", r.desc)
+				kit.jset_str(o, "link", r.link)
+				kit.jpush(rules, o)
+				continue
+			}
 			fmt.printfln("%s  (%s, %s)", r.name, prose.RULE_KIND_NAME[r.kind], prose.SEVERITY_NAME[r.sev])
 			if r.message != "" {
 				fmt.printfln("  says: %s", r.message)
@@ -446,31 +426,25 @@ cmd_explain :: proc(args: []string) -> int {
 		}
 	}
 	if found == 0 {
-		fmt.eprintfln("prose: no rule matching %q", want)
-		return EXIT_NOTFOUND
+		return kit.cli_failf(c, kit.EXIT_NOT_FOUND, "no rule matching %q", want)
 	}
-	return EXIT_OK
+	if c.json {
+		kit.jset_str(c.out, "query", want)
+		kit.jset(c.out, "rules", rules)
+	}
+	return kit.EXIT_OK
 }
 
-cmd_fix :: proc(args: []string) -> int {
-	e := build_engine(args)
-	defer prose.engine_destroy(&e)
-	path := first_positional(args)
-	src := read_file(path)
-	o := prose.Opts {
-		pack = pick_pack(&e, opt(args, "--style")),
-	}
-	res := prose.lint(&e, src, o)
-	defer prose.result_destroy(&res)
+// ---------------------------------------------------------------------------
+// fix
+// ---------------------------------------------------------------------------
 
-	// Applied back to front, so an earlier edit cannot move a later span.
-	sb := strings.builder_make()
-	defer strings.builder_destroy(&sb)
-	strings.write_string(&sb, src)
-	out := strings.to_string(sb)
-	n := 0
-	for i := len(res.alerts) - 1; i >= 0; i -= 1 {
-		a := res.alerts[i]
+// fixed_text is the file with every offered rewrite taken, applied back to
+// front so an earlier edit cannot move a later span.
+fixed_text :: proc(src: string, alerts: []prose.Alert) -> (out: string, applied: int) {
+	out = src
+	for i := len(alerts) - 1; i >= 0; i -= 1 {
+		a := alerts[i]
 		if !a.has_fix || a.fix == "" {
 			continue
 		}
@@ -478,39 +452,130 @@ cmd_fix :: proc(args: []string) -> int {
 			continue
 		}
 		out = strings.concatenate({out[:a.from], a.fix, out[a.to:]}, context.temp_allocator)
-		n += 1
+		applied += 1
+	}
+	return
+}
+
+cmd_fix :: proc(c: ^kit.Call) -> int {
+	e := build_engine(c)
+	defer prose.engine_destroy(&e)
+	path := kit.cli_str(c, "file")
+	src, rc := read_file(c, path)
+	if rc != kit.EXIT_OK {
+		return rc
+	}
+	pack, pc := pick_pack(c, &e)
+	if pc != kit.EXIT_OK {
+		return pc
+	}
+	res := prose.lint(&e, src, prose.Opts{pack = pack})
+	defer prose.result_destroy(&res)
+
+	out, n := fixed_text(src, res.alerts[:])
+	if c.json {
+		kit.jset_str(c.out, "file", path)
+		kit.jset_int(c.out, "applied", n)
+		kit.jset_int(c.out, "alerts", len(res.alerts))
+		kit.jset_str(c.out, "text", out)
+		return kit.EXIT_OK
 	}
 	fmt.print(out)
-	fmt.eprintfln("prose: applied %d of %d suggestion(s)", n, len(res.alerts))
-	return EXIT_OK
+	kit.cli_note(c, "prose: applied %d of %d suggestion(s)", n, len(res.alerts))
+	return kit.EXIT_OK
 }
 
 // ---------------------------------------------------------------------------
+// segment, syllables, bench: the measurements
+// ---------------------------------------------------------------------------
 
-cmd_segment :: proc(args: []string) -> int {
-	return prose.segment_accuracy_report(first_positional(args))
-}
-
-cmd_syllables :: proc(args: []string) -> int {
-	n := 2000
-	if s := opt(args, "--n"); s != "" {
-		if v, ok := strconv.parse_int(s); ok {
-			n = v
+cmd_segment :: proc(c: ^kit.Call) -> int {
+	path := kit.cli_str(c, "file")
+	if !c.json {
+		code := prose.segment_accuracy_report(path)
+		if code == kit.EXIT_NOT_FOUND {
+			return kit.cli_failf(c, code, "cannot read %s", path)
 		}
+		return code
 	}
-	list := first_positional(args)
-	if list == "" {
-		list = "/usr/share/dict/cracklib-small"
+	sc := prose.segment_score(false)
+	prec := sc.predicted > 0 ? f64(sc.hits) / f64(sc.predicted) * 100 : 0
+	rec := sc.expected > 0 ? f64(sc.hits) / f64(sc.expected) * 100 : 0
+	f1 := (prec + rec) > 0 ? 2 * prec * rec / (prec + rec) : 0
+	kit.jset_int(c.out, "cases", sc.cases)
+	kit.jset_int(c.out, "boundaries", sc.expected)
+	kit.jset_int(c.out, "found", sc.predicted)
+	kit.jset_int(c.out, "correct", sc.hits)
+	kit.jset_int(c.out, "exact", sc.exact)
+	kit.jset_num(c.out, "precision", prec)
+	kit.jset_num(c.out, "recall", rec)
+	kit.jset_num(c.out, "f1", f1)
+	if path != "" {
+		n, ok := prose.segment_file_sentences(path)
+		if !ok {
+			return kit.cli_failf(c, kit.EXIT_NOT_FOUND, "cannot read %s", path)
+		}
+		kit.jset_str(c.out, "file", path)
+		kit.jset_int(c.out, "file_sentences", n)
 	}
-	return prose.syllable_error_report(list, n)
+	return kit.EXIT_OK
 }
 
-cmd_bench :: proc(args: []string) -> int {
-	e := build_engine(args)
+DEFAULT_WORDLIST :: "/usr/share/dict/cracklib-small"
+
+cmd_syllables :: proc(c: ^kit.Call) -> int {
+	list := kit.cli_str(c, "wordlist")
+	if list == "" {
+		list = DEFAULT_WORDLIST
+	}
+	n := kit.cli_int(c, "n", 2000)
+	if !c.json {
+		code := prose.syllable_error_report(list, n)
+		if code == prose.SYL_NOT_FOUND {
+			return kit.cli_failf(c, code, "cannot read %s", list)
+		}
+		return code
+	}
+	r, code, why := prose.syllable_oracle(list, n)
+	defer delete(r.disagreements)
+	if code != 0 {
+		return kit.cli_fail(c, code, why)
+	}
+	kit.jset_str(c.out, "list", list)
+	kit.jset_int(c.out, "words", r.words)
+	kit.jset_int(c.out, "agree", r.agree)
+	kit.jset_num(c.out, "error_rate", f64(r.words - r.agree) / f64(r.words) * 100)
+	kit.jset_int(c.out, "off_by_one", r.off_by_one)
+	kit.jset_int(c.out, "over", r.over)
+	kit.jset_int(c.out, "under", r.under)
+	ds := kit.jarr()
+	for d in r.disagreements {
+		o := kit.jobj()
+		kit.jset_str(o, "word", d.word)
+		kit.jset_int(o, "mine", d.mine)
+		kit.jset_int(o, "espeak", d.espeak)
+		kit.jset_str(o, "ipa", d.ipa)
+		kit.jpush(ds, o)
+	}
+	kit.jset(c.out, "disagreements", ds)
+	return kit.EXIT_OK
+}
+
+cmd_bench :: proc(c: ^kit.Call) -> int {
+	e := build_engine(c)
 	defer prose.engine_destroy(&e)
-	path := first_positional(args)
-	src := read_file(path)
-	o := prose.Opts{pack = pick_pack(&e, opt(args, "--style"))}
+	path := kit.cli_str(c, "file")
+	src, rc := read_file(c, path)
+	if rc != kit.EXIT_OK {
+		return rc
+	}
+	pack, pc := pick_pack(c, &e)
+	if pc != kit.EXIT_OK {
+		return pc
+	}
+	o := prose.Opts {
+		pack = pack,
+	}
 
 	// The minimum of many runs, not the mean. This machine runs other builds
 	// while these are measured and the mean swung by a factor of two between
@@ -523,6 +588,8 @@ cmd_bench :: proc(args: []string) -> int {
 
 	// Not the temp allocator: the loop below calls `free_all` on it, which
 	// would free the array being written into. That bug printed 0.000 ms.
+	// For the same reason nothing the result needs may live there: the
+	// figures are copied out before the loops run.
 	full := make([]f64, 40)
 	defer delete(full)
 	for k in 0 ..< len(full) {
@@ -556,6 +623,18 @@ cmd_bench :: proc(args: []string) -> int {
 	win_lo, win_mid := stat(win)
 
 	rules := len(e.packs[o.pack].rules)
+	if c.json {
+		kit.jset_str(c.out, "file", path)
+		kit.jset_int(c.out, "bytes", len(src))
+		kit.jset_str(c.out, "style", e.packs[o.pack].name)
+		kit.jset_int(c.out, "rules", rules)
+		kit.jset_num(c.out, "full_min_ms", full_lo)
+		kit.jset_num(c.out, "full_median_ms", full_mid)
+		kit.jset_num(c.out, "paragraph_min_ms", win_lo)
+		kit.jset_num(c.out, "paragraph_median_ms", win_mid)
+		kit.jset_int(c.out, "paragraph_bytes", to - from)
+		return kit.EXIT_OK
+	}
 	fmt.printfln("%s  %d bytes, %s, %d rules", path, len(src), e.packs[o.pack].name, rules)
 	// Odin's `fmt` pads numbers with zeros, not spaces, so the columns are
 	// built as strings.
@@ -570,5 +649,5 @@ cmd_bench :: proc(args: []string) -> int {
 		fmt.tprintf("%.3f", win_mid),
 		to - from,
 	)
-	return EXIT_OK
+	return kit.EXIT_OK
 }

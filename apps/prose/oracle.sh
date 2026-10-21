@@ -4,7 +4,7 @@
 #   ./apps/prose/oracle.sh [--keep]
 #
 # For every rule type the engine implements, this writes the Vale YAML, runs
-# vale 3.x and `prose lint --json` over the same generated corpus, and prints
+# vale 3.x and `prose lint --vale` (vale's own JSON shape) over the same generated corpus, and prints
 # how many alerts the two agree on — same rule, same line, same span, same
 # severity. It prints counts, not a verdict, and it exits non-zero only if
 # vale itself fails to run.
@@ -31,7 +31,8 @@ command -v vale >/dev/null || { echo "oracle: vale is not installed"; exit 1; }
 echo "oracle: $(vale --version)"
 
 PROSE="$WORK/prose.bin"
-odin build "$ROOT/apps/prose/cli" -o:speed -out:"$PROSE" || exit 1
+odin build "$ROOT/apps/prose/cli" -o:speed -collection:palmy="$ROOT/palmy" -collection:shadcn="$ROOT/shadcn" \
+  -collection:kit="$ROOT/apps/kit" -out:"$PROSE" || exit 1
 
 mkdir -p "$WORK/styles/Oracle"
 cat > "$WORK/.vale.ini" <<'EOF'
@@ -283,7 +284,7 @@ done
 
 # prose: the same StylesPath, with front matter linted the way vale does.
 for f in corpus/*.md; do
-  "$PROSE" lint "$f" --styles-path "$WORK/styles" --style Oracle --front-matter --json \
+  "$PROSE" lint "$f" --styles-path "$WORK/styles" --style Oracle --front-matter --vale \
     > "prose-$(basename "$f").json" 2>"prose-$(basename "$f").err"
 done
 
@@ -413,7 +414,7 @@ EOF
 
 for f in corpus/*.md; do
   vale --no-exit --output=JSON "$f" > "vsent-$(basename "$f").json" 2>/dev/null
-  "$PROSE" lint "$f" --styles-path "$WORK/styles" --style Oracle --front-matter --json \
+  "$PROSE" lint "$f" --styles-path "$WORK/styles" --style Oracle --front-matter --vale \
     > "psent-$(basename "$f").json" 2>/dev/null
 done
 
