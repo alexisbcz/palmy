@@ -4,7 +4,13 @@ A single CLI through which a coding agent can operate every part of Palmy:
 the window manager, the applications, the system state, and eventually the
 identity and cloud layer. Humans use it too, but they are the second audience.
 
-This is a design, not a shipped thing. Nothing below exists yet.
+This is the design, and part of it has shipped. The convention is
+`apps/kit/cli.odin` (`kit.cli`, documented for application authors in
+`apps/APPS.md`); the dispatcher is `apps/palm`; and 17 of the 37 nouns in its
+`NOUNS` table are converted — see *Where it stands* below for which. The rest of
+this document is the design those follow and the remaining applications are
+being brought up to; where the code and this text disagree, the code is what
+runs.
 
 ## The principle
 
@@ -204,7 +210,7 @@ not:
 
 ## The shared convention
 
-One implementation, in `apps/kit`, so forty applications cannot each invent
+One implementation, in `apps/kit/cli.odin`, so forty applications cannot each invent
 their own. An app declares its commands; the kit parses, validates, generates
 `--help`, emits `--json`, honours `--dry-run`, and produces the exit codes
 above. `palm schema` then introspects the same declarations, which is what
@@ -271,4 +277,5 @@ the two will diverge, and the CLI will be the one that rots.
   or one binary with subcommands.** Separate binaries keep each app
   independently runnable and testable, which is worth a lot here; the
   dispatcher then exists for discovery and scope enforcement rather than for
-  routing alone.
+  routing alone. *(Answered by what was built: `apps/palm` is a dispatcher of
+  separate binaries, each of which answers `--schema` itself.)*

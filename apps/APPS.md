@@ -34,6 +34,92 @@ lines, _ := kit.run_lines({"bluetoothctl", "devices"})
 kit.launch({"foot"})   // detached, does not block the UI
 ```
 
+## The command line: `kit.cli`
+
+An application on the `palm` convention does not parse its own arguments: it
+*declares* its commands and hands the declaration to `kit.cli`
+(`kit/cli.odin`). From that one declaration the kit parses and validates,
+generates `--help`, prints `--schema` (what `palm schema` reads), emits
+`--json`, refuses a destructive command without `--yes`, narrows the identity
+scope, writes the audit log and returns the documented exit codes. The design
+is `docs/PALM-CLI.md`; `apps/notes/cli.odin` is the smallest real example.
+
+```odin
+@(private = "file")
+COMMANDS := []kit.Command {               // a package variable — see trap 1
+	{
+		verb     = "list",
+		summary  = "every note, newest first",
+		effect   = .Read,                  // .Read .Idempotent .Mutate .Destructive .Intent
+		args     = {{name = "notebook", kind = .String}},
+		flags    = {{name = "limit", kind = .Int, def = "50"}},
+		out      = {{name = "notes", kind = .Array, of = {{name = "title", kind = .String}}}},
+		examples = {"notes list --json"},
+		run      = cmd_list,
+	},
+}
+
+@(private = "file")
+g_surface: kit.Surface
+
+surface :: proc() -> ^kit.Surface {       // a procedure — see trap 2
+	if g_surface.noun == "" {
+		g_surface = kit.Surface{noun = "notes", summary = "a notebook", gui = true,
+			selftest = cli_selftest, commands = COMMANDS}
+	}
+	return &g_surface
+}
+
+cmd_list :: proc(c: ^kit.Call) -> int {
+	n := kit.cli_int(c, "limit", 50)       // also cli_str, cli_f64, cli_bool, cli_has, cli_rest
+	if c.dry_run { ... }                   // the kit only marks the result; honouring it is yours
+	kit.jset(c.out, "notes", kit.jarr())   // c.out is the object --json prints
+	return kit.EXIT_OK                     // or kit.cli_fail(c, kit.EXIT_NOT_FOUND, "no such note")
+}
+
+main :: proc() {
+	if code, handled := kit.cli(surface()); handled {
+		os.exit(code)
+	}
+	// not handled: no arguments (or, with takes_path, a bare file) — open the window
+}
+```
+
+**Two Odin traps, both silent.** (1) `COMMANDS` must be a *package*
+variable: a slice literal written inside a procedure lives on that procedure's
+stack frame and is gone when it returns. (2) `surface` must be a *procedure*:
+package initialisers run in declaration order, so a package-level `Surface`
+pointing at a field list declared further down captures it empty — a schema
+that lies. Keep each command's field lists self-contained literals and the
+order stops mattering.
+
+The rest of what you need:
+
+- **Base flags**, never redeclared: `--json --dry-run --yes --identity NAME
+  --verbose/-v --help/-h --schema --parse-only --selftest`.
+- **Exit codes**: `EXIT_OK` 0, `EXIT_USAGE` 2, `EXIT_NOT_FOUND` 3,
+  `EXIT_NEEDS_YES` 4, `EXIT_OUT_OF_SCOPE` 5, `EXIT_UNAVAILABLE` 6,
+  `EXIT_FAILED` 7. `cli_fail`/`cli_failf` record the refusal and return the
+  code; `cli_err_field` adds a machine-readable key to it.
+- **Stdout is the result and nothing else.** Progress and warnings go through
+  `cli_note` (or `cli_trace`, `--verbose` only), which write to stderr.
+- **Nothing prompts.** The kit never reads stdin.
+- **Intent commands** (`effect = .Intent`, anything that would power off, log
+  out, disconnect) are written as `return kit.cli_intent(c, "systemctl
+  poweroff", "power off")`: it logs and runs nothing, and while any command
+  runs the guard makes `kit.run`/`run_lines`/`launch` refuse the project's
+  denylist.
+- **Scope**: `kit.cli_scope()` is `$PALM_IDENTITY`; `c.identity` is that,
+  narrowed by `--identity`; `cli_scope_require(c, owner)` refuses anything
+  outside it.
+- **Testing**: `kit.cli_args(surface(), argv)` runs a command line in-process,
+  and `kit.cli_validate_output(text, FIELDS)` checks printed JSON against the
+  declared `out`. Set `$PALM_AUDIT` so a self-test never writes the real
+  audit log (`$XDG_STATE_HOME/palm/audit.jsonl`).
+- **`palm`** finds the application only once its noun's `on_convention` flag
+  is flipped in `apps/palm/main.odin`'s `NOUNS`; `palm --selftest` then holds
+  it to the whole convention.
+
 ## What you have to build with
 
 - **palmy** — read `/home/alex/Work/palmy/README.md` for the full class
