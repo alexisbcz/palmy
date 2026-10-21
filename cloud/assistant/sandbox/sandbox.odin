@@ -72,8 +72,7 @@ Report :: struct {
 
 @(private) SYS_LANDLOCK_CREATE_RULESET :: 444
 @(private) SYS_LANDLOCK_ADD_RULE :: 445
-@(private) SYS_LANDLOCK_RESTRICT_SELF :: 446
-@(private) SYS_SECCOMP :: 317
+@(private) SYS_LANDLOCK_RESTRICT_SELF :: 446 // the same on every architecture
 
 @(private) LANDLOCK_CREATE_RULESET_VERSION :: 1
 @(private) LANDLOCK_RULE_PATH_BENEATH :: 1
@@ -148,11 +147,14 @@ landlock_abi :: proc() -> int {
 O_PATH :: 0o10000000
 @(private)
 O_CLOEXEC :: 0o2000000
+// openat with this resolves a relative path as open would. There is no
+// SYS_open on arm64 (nor riscv64): every open in this package is an openat.
+AT_FDCWD :: ~uintptr(99) // -100
 
 @(private)
 add_path :: proc(ruleset: int, path: string, want: u64, abi: int, rep: ^Report) -> string {
 	cpath := strings.clone_to_cstring(path, context.temp_allocator)
-	fd := int(intrinsics.syscall(linux.SYS_open, uintptr(rawptr(cpath)), O_PATH | O_CLOEXEC, 0))
+	fd := int(intrinsics.syscall(linux.SYS_openat, AT_FDCWD, uintptr(rawptr(cpath)), O_PATH | O_CLOEXEC, 0))
 	if fd < 0 {
 		append(&rep.skipped, strings.clone(path))
 		return ""
@@ -200,6 +202,18 @@ Sock_Fprog :: struct {
 @(private) SECCOMP_RET_ERRNO :: 0x00050000
 @(private) SECCOMP_RET_KILL_PROCESS :: 0x80000000
 @(private) AUDIT_ARCH_X86_64 :: 0xc000003e
+@(private) AUDIT_ARCH_AARCH64 :: 0xc00000b7
+
+// AUDIT_ARCH is the one architecture the filter lets through. The syscall
+// numbers below come from core:sys/linux, which defines them per
+// architecture, so the same list means the same calls on both.
+when ODIN_ARCH == .amd64 {
+	@(private) AUDIT_ARCH :: AUDIT_ARCH_X86_64
+} else when ODIN_ARCH == .arm64 {
+	@(private) AUDIT_ARCH :: AUDIT_ARCH_AARCH64
+} else {
+	@(private) AUDIT_ARCH :: 0 // enter refuses before the filter is built
+}
 @(private) EPERM :: 1
 
 // Offsets into struct seccomp_data.
@@ -212,39 +226,40 @@ Sock_Fprog :: struct {
 // degrades instead of dying.
 @(private)
 DENIED := [?]u32 {
-	101, // ptrace
-	310, // process_vm_readv
-	311, // process_vm_writev
-	298, // perf_event_open
-	321, // bpf
-	323, // userfaultfd
-	248, // add_key
-	249, // request_key
-	250, // keyctl
-	272, // unshare
-	308, // setns
-	165, // mount
-	166, // umount2
-	155, // pivot_root
-	161, // chroot
-	425, // io_uring_setup
-	426, // io_uring_enter
-	427, // io_uring_register
-	428, // open_tree
-	429, // move_mount
-	430, // fsopen
-	432, // fsmount
-	246, // kexec_load
-	320, // kexec_file_load
-	175, // init_module
-	313, // finit_module
-	435, // clone3: it takes its flags in a struct this filter cannot read, so
-	     // a new user namespace could hide there. glibc falls back to clone.
+	u32(linux.SYS_ptrace),
+	u32(linux.SYS_process_vm_readv),
+	u32(linux.SYS_process_vm_writev),
+	u32(linux.SYS_perf_event_open),
+	u32(linux.SYS_bpf),
+	u32(linux.SYS_userfaultfd),
+	u32(linux.SYS_add_key),
+	u32(linux.SYS_request_key),
+	u32(linux.SYS_keyctl),
+	u32(linux.SYS_unshare),
+	u32(linux.SYS_setns),
+	u32(linux.SYS_mount),
+	u32(linux.SYS_umount2),
+	u32(linux.SYS_pivot_root),
+	u32(linux.SYS_chroot),
+	u32(linux.SYS_io_uring_setup),
+	u32(linux.SYS_io_uring_enter),
+	u32(linux.SYS_io_uring_register),
+	u32(linux.SYS_open_tree),
+	u32(linux.SYS_move_mount),
+	u32(linux.SYS_fsopen),
+	u32(linux.SYS_fsmount),
+	u32(linux.SYS_kexec_load),
+	u32(linux.SYS_kexec_file_load),
+	u32(linux.SYS_init_module),
+	u32(linux.SYS_finit_module),
+	u32(linux.SYS_clone3), // it takes its flags in a struct this filter cannot
+	                       // read, so a new user namespace could hide there.
+	                       // glibc falls back to clone.
 }
 
-@(private) SYS_SOCKET :: 41
-@(private) SYS_CLONE :: 56
-@(private) SYS_IOCTL :: 16
+@(private) SYS_SOCKET :: u32(linux.SYS_socket)
+@(private) SYS_CLONE :: u32(linux.SYS_clone)
+@(private) SYS_IOCTL :: u32(linux.SYS_ioctl)
 @(private) AF_INET :: 2
 @(private) AF_INET6 :: 10
 @(private) SOCK_STREAM :: 1
@@ -269,12 +284,14 @@ seccomp_program :: proc(allocator := context.temp_allocator) -> [dynamic]Sock_Fi
 	f := make([dynamic]Sock_Filter, allocator)
 	deny := u32(SECCOMP_RET_ERRNO | EPERM)
 
-	// Anything not x86-64 (an i386 syscall through int 0x80 has other
-	// numbers) is killed rather than mis-filtered.
+	// Anything not this program's architecture (an i386 syscall through
+	// int 0x80 on x86-64, an AArch32 one on arm64: other numbers) is killed
+	// rather than mis-filtered.
 	append(&f, stmt(BPF_LD_W_ABS, OFF_ARCH))
-	append(&f, jump(BPF_JEQ_K, AUDIT_ARCH_X86_64, 1, 0))
+	append(&f, jump(BPF_JEQ_K, AUDIT_ARCH, 1, 0))
 	append(&f, stmt(BPF_RET_K, SECCOMP_RET_KILL_PROCESS))
-	// The x32 ABI sets bit 30 of the number; refuse it too.
+	// The x32 ABI sets bit 30 of the number; refuse it too. (No arm64
+	// syscall has it set, so there the check costs two instructions.)
 	append(&f, stmt(BPF_LD_W_ABS, OFF_NR))
 	append(&f, jump(BPF_JSET_K, 0x40000000, 0, 1))
 	append(&f, stmt(BPF_RET_K, deny))
@@ -333,8 +350,8 @@ MIN_ABI :: 4
 // state and must exit.
 enter :: proc(p: Policy) -> (rep: Report, err: string) {
 	rep.skipped = make([dynamic]string)
-	if ODIN_OS != .Linux || ODIN_ARCH != .amd64 {
-		return rep, "the sandbox is implemented for Linux on x86-64 only"
+	if ODIN_OS != .Linux || (ODIN_ARCH != .amd64 && ODIN_ARCH != .arm64) {
+		return rep, "the sandbox is implemented for Linux on x86-64 and arm64 only"
 	}
 	abi := landlock_abi()
 	rep.abi = abi
@@ -395,7 +412,7 @@ enter :: proc(p: Policy) -> (rep: Report, err: string) {
 
 	prog := seccomp_program()
 	fprog := Sock_Fprog{len = u16(len(prog)), filter = raw_data(prog)}
-	if r := int(intrinsics.syscall(SYS_SECCOMP, SECCOMP_SET_MODE_FILTER, SECCOMP_FILTER_FLAG_TSYNC, uintptr(&fprog))); r != 0 {
+	if r := int(intrinsics.syscall(linux.SYS_seccomp, SECCOMP_SET_MODE_FILTER, SECCOMP_FILTER_FLAG_TSYNC, uintptr(&fprog))); r != 0 {
 		return rep, fmt.tprintf("seccomp: errno %d", -r)
 	}
 	rep.seccomp = true
@@ -452,7 +469,14 @@ SYSTEM_READ := [?]string {
 
 // The program loader, which the kernel opens with exec rights to start any
 // dynamically linked binary.
-SYSTEM_EXEC := [?]string{"/usr/lib64/ld-linux-x86-64.so.2", "/usr/lib/ld-linux-x86-64.so.2"}
+// A path that does not exist is skipped (and reported), so both
+// architectures' loaders are listed.
+SYSTEM_EXEC := [?]string {
+	"/usr/lib64/ld-linux-x86-64.so.2",
+	"/usr/lib/ld-linux-x86-64.so.2",
+	"/lib/ld-linux-aarch64.so.1",
+	"/usr/lib/ld-linux-aarch64.so.1",
+}
 
 SYSTEM_DEVICES := [?]string{"/dev/null", "/dev/urandom", "/dev/zero"}
 

@@ -93,7 +93,7 @@ main :: proc() {
 	// The child reports through a pipe: one line per probe, "pass worked errno".
 	fds: [2]i32
 	intrinsics.syscall(linux.SYS_pipe2, uintptr(&fds[0]), 0)
-	pid := int(intrinsics.syscall(linux.SYS_fork))
+	pid := int(intrinsics.syscall(linux.SYS_clone, 17, 0, 0, 0, 0)) // fork; arm64 has no SYS_fork
 	if pid == 0 {
 		intrinsics.syscall(linux.SYS_close, uintptr(fds[0]))
 		pol := sb.policy_for(op, {tools}, {open_port})

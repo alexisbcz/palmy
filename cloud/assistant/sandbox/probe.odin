@@ -49,7 +49,16 @@ Probe_Result :: struct {
 @(private) O_WRONLY :: 1
 @(private) O_CREAT :: 0o100
 @(private) O_TRUNC :: 0o1000
-@(private) O_DIRECTORY :: 0o200000
+// O_DIRECTORY is the one open flag here whose value differs between x86-64
+// and arm64 (core:sys/linux asserts both values in bits.odin).
+when ODIN_ARCH == .arm64 {
+	@(private) O_DIRECTORY :: 0o40000
+} else {
+	@(private) O_DIRECTORY :: 0o200000
+}
+// SIGCHLD as clone's exit signal: clone(SIGCHLD, 0, ...) is fork, and it
+// exists on every architecture (arm64 has no fork syscall).
+@(private) CLONE_AS_FORK :: 17
 
 @(private)
 sys :: proc(nr: uintptr, args: ..uintptr) -> int {
@@ -62,8 +71,10 @@ sys :: proc(nr: uintptr, args: ..uintptr) -> int {
 		return int(intrinsics.syscall(nr, args[0], args[1]))
 	case 3:
 		return int(intrinsics.syscall(nr, args[0], args[1], args[2]))
-	case:
+	case 4:
 		return int(intrinsics.syscall(nr, args[0], args[1], args[2], args[3]))
+	case:
+		return int(intrinsics.syscall(nr, args[0], args[1], args[2], args[3], args[4]))
 	}
 }
 
@@ -104,26 +115,26 @@ parse_ip :: proc(s: string) -> (ip: [4]u8, ok: bool) {
 try :: proc(p: Probe) -> (worked: bool, errno: int) {
 	switch p.kind {
 	case .Read:
-		fd := sys(linux.SYS_open, cstr(p.path), O_RDONLY, 0)
+		fd := sys(linux.SYS_openat, AT_FDCWD, cstr(p.path), O_RDONLY, 0)
 		if fd < 0 {return false, -fd}
 		defer sys(linux.SYS_close, uintptr(fd))
 		b: [1]u8
 		n := sys(linux.SYS_read, uintptr(fd), uintptr(&b[0]), 1)
 		return n >= 0, n < 0 ? -n : 0
 	case .Write:
-		fd := sys(linux.SYS_open, cstr(p.path), O_WRONLY | O_CREAT | O_TRUNC, 0o600)
+		fd := sys(linux.SYS_openat, AT_FDCWD, cstr(p.path), O_WRONLY | O_CREAT | O_TRUNC, 0o600)
 		if fd < 0 {return false, -fd}
 		defer sys(linux.SYS_close, uintptr(fd))
 		b := [1]u8{'x'}
 		n := sys(linux.SYS_write, uintptr(fd), uintptr(&b[0]), 1)
 		return n == 1, n < 0 ? -n : 0
 	case .List:
-		fd := sys(linux.SYS_open, cstr(p.path), O_RDONLY | O_DIRECTORY, 0)
+		fd := sys(linux.SYS_openat, AT_FDCWD, cstr(p.path), O_RDONLY | O_DIRECTORY, 0)
 		if fd < 0 {return false, -fd}
 		sys(linux.SYS_close, uintptr(fd))
 		return true, 0
 	case .Exec:
-		pid := sys(linux.SYS_fork)
+		pid := sys(linux.SYS_clone, CLONE_AS_FORK, 0, 0, 0)
 		if pid < 0 {return false, -pid}
 		if pid == 0 {
 			argv := [2]uintptr{cstr(p.path), 0}
@@ -160,20 +171,20 @@ try :: proc(p: Probe) -> (worked: bool, errno: int) {
 		sys(linux.SYS_close, uintptr(fd))
 		return true, 0
 	case .Ptrace:
-		r := sys(101, 16, uintptr(p.pid), 0, 0) // PTRACE_ATTACH
+		r := sys(linux.SYS_ptrace, 16, uintptr(p.pid), 0, 0) // PTRACE_ATTACH
 		if r == 0 {
-			sys(101, 17, uintptr(p.pid), 0, 0) // PTRACE_DETACH
+			sys(linux.SYS_ptrace, 17, uintptr(p.pid), 0, 0) // PTRACE_DETACH
 		}
 		return r == 0, r < 0 ? -r : 0
 	case .Signal:
 		r := sys(linux.SYS_kill, uintptr(p.pid), 0)
 		return r == 0, r < 0 ? -r : 0
 	case .Userns:
-		r := sys(272, 0x10000000)
+		r := sys(linux.SYS_unshare, 0x10000000)
 		return r == 0, r < 0 ? -r : 0
 	case .Io_Uring:
 		params: [120]u8
-		r := sys(425, 4, uintptr(&params[0]))
+		r := sys(linux.SYS_io_uring_setup, 4, uintptr(&params[0]))
 		if r >= 0 {sys(linux.SYS_close, uintptr(r))}
 		return r >= 0, r < 0 ? -r : 0
 	}
