@@ -4729,6 +4729,19 @@ test_regex :: proc(fonts: ^p.Fonts) {
 		free(rx)
 	}
 
+	// A greedy repeat across a long paragraph. The matcher used to recurse once
+	// per repetition and gave up at 20 000 deep (after running the default
+	// 8 MB stack out on the pattern above); its choice points are on the heap
+	// now, so length is bounded only by the step budget.
+	{
+		rx, _ := rx_compile("x.*z", false)
+		hay := strings.concatenate({strings.repeat("x", 30_000, context.temp_allocator), "z"}, context.temp_allocator)
+		lo, hi, _, hit := rx_search(rx, hay, 0)
+		ok(hit && lo == 0 && hi == len(hay), "a greedy repeat over 30 000 characters still matches (%v %d..%d)", hit, lo, hi)
+		rx_destroy(rx)
+		free(rx)
+	}
+
 	// --- through the find box
 	st := State{}
 	state_init(&st, fonts)

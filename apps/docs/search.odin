@@ -290,12 +290,13 @@ search_plain :: proc(
 // The regular expression engine
 // ---------------------------------------------------------------------------
 
-// The two bail-outs, so that a pathological pattern cannot hang a frame or
-// run the stack out. Depth grows with the number of repetitions a greedy
-// quantifier has taken, so it has to be comfortably more than the longest
-// paragraph anyone will search; steps bound the total work.
+// The bail-out, so that a pathological pattern cannot hang a frame: steps
+// bound the total work of one search. There is no depth limit because the
+// matcher does not recurse — its choice points live on a heap stack (see
+// `rx_exec`), and every push costs a step, so the stack is bounded by this
+// too. It used to recurse once per greedy repetition, which at 20 000 frames
+// deep ran the default 8 MB thread stack out on `(a*)*b`.
 RX_MAX_STEPS :: 200_000
-RX_MAX_DEPTH :: 20_000
 RX_GROUPS :: 10
 
 Rx_Op :: enum {
@@ -838,100 +839,127 @@ upper_simple :: proc(r: rune) -> rune {
 
 Rx_Caps :: [RX_GROUPS * 2]int
 
+// A choice point the matcher can come back to. `.Branch` resumes at (pc, sp);
+// `.Restore` puts a capture slot back the way it was before a `.Save` that a
+// failed branch went through. Popping until a `.Branch` therefore undoes
+// exactly the captures the abandoned path made, which is what the recursive
+// version did with its saved copies.
+@(private = "file")
+Rx_Back :: struct {
+	restore: bool,
+	pc, sp:  int, // .Branch: where to resume; .Restore: pc = slot, sp = old value
+}
+
 @(private = "file")
 Rx_Run :: struct {
 	rx:    ^Rx,
 	hay:   string,
 	steps: int,
-	depth: int,
+	stack: [dynamic]Rx_Back,
 }
 
-// rx_match_at runs the program at one starting offset.
+// rx_exec runs the program at one starting offset: a backtracking matcher
+// with an explicit stack, leftmost-first (a `.Split` tries `x` before `y`).
 @(private = "file")
 rx_exec :: proc(run: ^Rx_Run, pc_in, sp_in: int, caps: ^Rx_Caps) -> (end: int, ok: bool) {
-	run.depth += 1
-	defer run.depth -= 1
-	if run.depth > RX_MAX_DEPTH {
-		run.steps = RX_MAX_STEPS + 1 // stop the whole search, not just this branch
-		return 0, false
-	}
+	clear(&run.stack)
 	pc, sp := pc_in, sp_in
 	for {
+		fail := false
 		run.steps += 1
 		if run.steps > RX_MAX_STEPS {
 			return 0, false
 		}
 		if pc < 0 || pc >= len(run.rx.prog) {
-			return 0, false
+			fail = true
+		} else {
+			in_ := run.rx.prog[pc]
+			switch in_.op {
+			case .Match:
+				return sp, true
+			case .Char:
+				if sp >= len(run.hay) {
+					fail = true
+					break
+				}
+				r, w := utf8.decode_rune_in_string(run.hay[sp:])
+				if run.rx.fold {
+					r = fold_simple(r)
+				}
+				if r != in_.ch {
+					fail = true
+					break
+				}
+				sp += max(1, w)
+				pc += 1
+			case .Any:
+				if sp >= len(run.hay) {
+					fail = true
+					break
+				}
+				_, w := utf8.decode_rune_in_string(run.hay[sp:])
+				sp += max(1, w)
+				pc += 1
+			case .Class:
+				if sp >= len(run.hay) {
+					fail = true
+					break
+				}
+				r, w := utf8.decode_rune_in_string(run.hay[sp:])
+				if !class_has(run.rx, in_.x, r) {
+					fail = true
+					break
+				}
+				sp += max(1, w)
+				pc += 1
+			case .Bol:
+				if sp != 0 {
+					fail = true
+					break
+				}
+				pc += 1
+			case .Eol:
+				if sp != len(run.hay) {
+					fail = true
+					break
+				}
+				pc += 1
+			case .Word_B, .Not_Word_B:
+				before := is_word_rune(rune_ending_at(run.hay, sp))
+				after := is_word_rune(rune_at_off(run.hay, sp))
+				at_b := before != after
+				if (in_.op == .Word_B) != at_b {
+					fail = true
+					break
+				}
+				pc += 1
+			case .Jmp:
+				pc = in_.x
+			case .Split:
+				append(&run.stack, Rx_Back{pc = in_.y, sp = sp})
+				pc = in_.x
+			case .Save:
+				append(&run.stack, Rx_Back{restore = true, pc = in_.x, sp = caps[in_.x]})
+				caps[in_.x] = sp
+				pc += 1
+			}
 		}
-		in_ := run.rx.prog[pc]
-		switch in_.op {
-		case .Match:
-			return sp, true
-		case .Char:
-			if sp >= len(run.hay) {
-				return 0, false
+		if !fail {
+			continue
+		}
+		// Backtrack: undo captures down to the newest branch and take it.
+		resumed := false
+		for len(run.stack) > 0 {
+			b := pop(&run.stack)
+			if b.restore {
+				caps[b.pc] = b.sp
+				continue
 			}
-			r, w := utf8.decode_rune_in_string(run.hay[sp:])
-			if run.rx.fold {
-				r = fold_simple(r)
-			}
-			if r != in_.ch {
-				return 0, false
-			}
-			sp += max(1, w)
-			pc += 1
-		case .Any:
-			if sp >= len(run.hay) {
-				return 0, false
-			}
-			_, w := utf8.decode_rune_in_string(run.hay[sp:])
-			sp += max(1, w)
-			pc += 1
-		case .Class:
-			if sp >= len(run.hay) {
-				return 0, false
-			}
-			r, w := utf8.decode_rune_in_string(run.hay[sp:])
-			if !class_has(run.rx, in_.x, r) {
-				return 0, false
-			}
-			sp += max(1, w)
-			pc += 1
-		case .Bol:
-			if sp != 0 {
-				return 0, false
-			}
-			pc += 1
-		case .Eol:
-			if sp != len(run.hay) {
-				return 0, false
-			}
-			pc += 1
-		case .Word_B, .Not_Word_B:
-			before := is_word_rune(rune_ending_at(run.hay, sp))
-			after := is_word_rune(rune_at_off(run.hay, sp))
-			at_b := before != after
-			if (in_.op == .Word_B) != at_b {
-				return 0, false
-			}
-			pc += 1
-		case .Jmp:
-			pc = in_.x
-		case .Split:
-			saved := caps^
-			if e, hit := rx_exec(run, in_.x, sp, caps); hit {
-				return e, true
-			}
-			caps^ = saved
-			pc = in_.y
-		case .Save:
-			old := caps[in_.x]
-			caps[in_.x] = sp
-			if e, hit := rx_exec(run, pc + 1, sp, caps); hit {
-				return e, true
-			}
-			caps[in_.x] = old
+			pc, sp = b.pc, b.sp
+			resumed = true
+			break
+		}
+		if !resumed {
 			return 0, false
 		}
 	}
@@ -947,6 +975,7 @@ rx_search :: proc(rx: ^Rx, hay: string, from: int) -> (lo, hi: int, caps: Rx_Cap
 		rx  = rx,
 		hay = hay,
 	}
+	defer delete(run.stack)
 	start := clamp(from, 0, len(hay))
 	for at := start; at <= len(hay); {
 		c: Rx_Caps
