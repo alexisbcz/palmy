@@ -17,7 +17,7 @@ Each run starts from a fresh copy of the official ALARM rootfs.
 
 ## Result (2026-10-21, branch agent/pkg-real)
 
-**175 passed, 0 failed.** The run used ALARM aarch64 (rootfs
+**175 passed, 0 failed** (run 3, after rebasing onto main; `last-run.log`). The run used ALARM aarch64 (rootfs
 2026-10, 76 packages behind the mirror), pacman 7.1.0, sudo 1.9.17p2,
 snapper 0.13.2, and limine-snapper-sync 1.32.1 built from the AUR.
 
