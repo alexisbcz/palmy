@@ -15,12 +15,16 @@ package main
 // --self-test are the kit's, and --aur --recursive --prune --refresh
 // --explicit --profile --file --allow-protected are declared on the verbs
 // they mean something to. `--profile` and `--allow-protected` may be given
-// more than once, as before.
+// more than once, as before: they are declared `repeat`, and kit.cli_all
+// hands over every value.
 //
 // SAFETY. Nothing here changes how a plan reaches the machine: carry_out and
 // exec_plan are untouched, a mutating verb still refuses without --yes, and
 // --dry-run still prints the argv and runs nothing. The kit's execution guard
-// does not know pacman or sudo -- pkg's own planner is the fence, as it was.
+// now refuses sudo and every mutating pacman, yay and snapper argv for any
+// application that reaches them through kit.run; pkg does not -- exec_plan
+// starts its plan itself, after --yes -- so the planner is pkg's fence and
+// the guard is everyone else's.
 
 import "core:strings"
 import kit "kit:."
@@ -97,7 +101,7 @@ COMMANDS := []kit.Command {
 		summary = "how the machine differs from the declaration",
 		effect = .Read,
 		flags = {
-			{name = "profile", kind = .String, help = "only these profiles, comma-separated; may repeat"},
+			{name = "profile", kind = .String, repeat = true, help = "only these profiles, comma-separated; may repeat"},
 			{name = "file", kind = .Path, help = "the declaration file, instead of the identity's"},
 		},
 		out = {
@@ -150,7 +154,7 @@ COMMANDS := []kit.Command {
 		flags = {
 			{name = "aur", kind = .Bool, help = "allow the AUR, through yay"},
 			{name = "refresh", kind = .Bool, help = "asks for -Sy, which is always refused: a partial upgrade"},
-			{name = "profile", kind = .String, help = "profiles whose sources apply"},
+			{name = "profile", kind = .String, repeat = true, help = "profiles whose sources apply"},
 			{name = "file", kind = .Path, help = "the declaration file, instead of the identity's"},
 		},
 		out = PLAN_FIELDS,
@@ -168,12 +172,14 @@ COMMANDS := []kit.Command {
 				name = "allow-protected",
 				kind = .Enum,
 				values = PROTECTED_CLASSES,
+				repeat = true,
 				help = "a protected class this removal may cross; may repeat",
 			},
 		},
 		out = PLAN_FIELDS,
 		examples = {"pkg remove htop --yes --json", "pkg remove htop --dry-run --json"},
 		run = run_remove,
+		on_refuse = refuse_remove,
 	},
 	{
 		verb = "sync",
@@ -182,9 +188,9 @@ COMMANDS := []kit.Command {
 		flags = {
 			{name = "prune", kind = .Bool, help = "also remove what is installed and not declared"},
 			{name = "aur", kind = .Bool, help = "allow the AUR, through yay"},
-			{name = "profile", kind = .String, help = "only these profiles, comma-separated; may repeat"},
+			{name = "profile", kind = .String, repeat = true, help = "only these profiles, comma-separated; may repeat"},
 			{name = "file", kind = .Path, help = "the declaration file, instead of the identity's"},
-			{name = "allow-protected", kind = .Enum, values = PROTECTED_CLASSES, help = "a protected class --prune may remove; may repeat"},
+			{name = "allow-protected", kind = .Enum, values = PROTECTED_CLASSES, repeat = true, help = "a protected class --prune may remove; may repeat"},
 		},
 		out = PLAN_FIELDS,
 		examples = {"pkg sync --dry-run --json", "pkg sync --prune --yes --json"},
@@ -320,27 +326,29 @@ selftest_cli :: proc() -> int {
 	return EXIT_OK
 }
 
-// every_value collects each occurrence of a flag that may be repeated
-// (`--profile a --profile b`, `--allow-protected=kernel`), since the kit keeps
-// only the last one.
+// refuse_remove is what the kit asks when it refuses `remove` for want of
+// --yes: the planner's own reason, so the refusal names the protected class
+// or every dependant, as it did before the kit refused first. It plans with
+// yes = false, which the planner always refuses, and runs nothing -- the kit
+// holds its guard over this as over an intent command.
 @(private = "file")
-every_value :: proc(c: ^kit.Call, name: string) -> []string {
-	out := make([dynamic]string, context.temp_allocator)
-	flag := strings.concatenate({"--", name}, context.temp_allocator)
-	prefix := strings.concatenate({flag, "="}, context.temp_allocator)
-	for i := 0; i < len(c.argv); i += 1 {
-		a := c.argv[i]
-		if a == "--" {
-			break
-		}
-		if a == flag && i + 1 < len(c.argv) {
-			append(&out, c.argv[i + 1])
-			i += 1
-		} else if strings.has_prefix(a, prefix) {
-			append(&out, a[len(prefix):])
-		}
+refuse_remove :: proc(c: ^kit.Call) {
+	o, code := opts_of(c)
+	if code != EXIT_OK || len(o.args) == 0 {
+		return
 	}
-	return out[:]
+	w, ok := load_world()
+	if !ok {
+		return
+	}
+	world_load_dependants(&w, o.args)
+	_, r := plan_remove(&w, o.args, Remove_Opts{yes = false, recursive = o.recursive, snapshot = true, allow = o.allow})
+	if !r.refused {
+		return
+	}
+	g_call = c
+	defer g_call = nil
+	emit_refusal(&o, "remove", r)
 }
 
 // opts_of turns a parsed call into the Opts the verbs have always taken.
@@ -359,7 +367,7 @@ opts_of :: proc(c: ^kit.Call) -> (o: Opts, code: int) {
 	o.identity = c.identity == "" ? "default" : c.identity
 
 	profiles := make([dynamic]string, context.temp_allocator)
-	for v in every_value(c, "profile") {
+	for v in kit.cli_all(c, "profile") {
 		for p in strings.split(v, ",", context.temp_allocator) {
 			if t := strings.trim_space(p); t != "" {
 				append(&profiles, t)
@@ -369,7 +377,7 @@ opts_of :: proc(c: ^kit.Call) -> (o: Opts, code: int) {
 	o.profiles = profiles[:]
 
 	allow := make([dynamic]Guard, context.temp_allocator)
-	for v in every_value(c, "allow-protected") {
+	for v in kit.cli_all(c, "allow-protected") {
 		g, good := guard_from_name(v)
 		if !good {
 			kit.cli_err_field(c, "given", v)

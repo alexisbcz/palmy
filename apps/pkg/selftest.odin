@@ -1306,11 +1306,14 @@ test_nothing_executes :: proc() {
 		{{"install", "ripgrep", "--refresh", "--yes", "--json"}, EXIT_NEEDS_YES, "partial-upgrade"},
 		{{"install", "only-in-the-aur", "--yes", "--json"}, EXIT_NOT_FOUND, "unknown-package"},
 		// remove is declared destructive, so without --yes the shared parser
-		// refuses before the planner is reached; --dry-run goes on to the
-		// planner, which names the dependants.
+		// refuses before the body runs -- and asks the planner why
+		// (on_refuse), so the refusal names the dependants as it always did.
+		{{"remove", "libfoo", "--json"}, EXIT_NEEDS_YES, "has-dependants"},
 		{{"remove", "libfoo", "--json"}, EXIT_NEEDS_YES, "kit:needs --yes"},
 		{{"remove", "libfoo", "--dry-run", "--json"}, EXIT_NEEDS_YES, "has-dependants"},
+		{{"remove", "orphanpkg", "--json"}, EXIT_NEEDS_YES, "needs-yes"},
 		{{"remove", "orphanpkg", "--json"}, EXIT_NEEDS_YES, "kit:needs --yes"},
+		{{"remove", "linux", "--json"}, EXIT_NEEDS_YES, "protected:kernel"},
 		{{"remove", "orphanpkg", "--dry-run", "--json"}, EXIT_NEEDS_YES, "needs-yes"},
 		{{"rollback", "7", "--json"}, EXIT_NEEDS_YES, "kit:needs --yes"},
 		{{"remove", "linux", "--yes", "--json"}, EXIT_NEEDS_YES, "protected:kernel"},
@@ -1361,6 +1364,29 @@ test_nothing_executes :: proc() {
 
 	_, dryu := drive({"upgrade", "--dry-run", "--json"})
 	check(!strings.contains(dryu, "-Sy\""), "no verb's JSON ever contains a bare -Sy")
+
+	// The refusal without --yes names every dependant, in the detail too.
+	_, why := drive({"remove", "libfoo", "--json"})
+	check(strings.contains(why, "foo-app"), "`pkg remove libfoo` without --yes names the dependants (%s)", why)
+	eq_i(len(read_lines(f.fired)), 0, "and asking the planner why changed nothing")
+
+	// The kit's guard is the second fence, for every other application: the
+	// argv pkg plans would be refused from kit.run while a command runs. pkg
+	// itself execs its plan directly, after --yes, so the guard does not stand
+	// in its way -- the sentinel section below proves that argv still lands.
+	for argv in ([?][]string {
+			{"sudo", "pacman", "-S", "--needed", "--", "ripgrep"},
+			{"sudo", "pacman", "-R", "--", "htop"},
+			{"sudo", "snapper", "-c", "root", "create", "--description", "palm: install ripgrep"},
+			{"snapper", "-c", "root", "create"},
+			{"pacman", "-Syu"},
+			{"yay", "-S", "--needed", "--", "only-in-the-aur"},
+		}) {
+		check(kit.cli_forbidden(argv) != "", "the kit's guard refuses `%s`", strings.join(argv, " ", context.temp_allocator))
+	}
+	for argv in ([?][]string{{"pacman", "-Qq"}, {"pacman", "-Si", "ripgrep"}, {"snapper", "-c", "root", "list"}}) {
+		check(kit.cli_forbidden(argv) == "", "and lets the read-only `%s` through", strings.join(argv, " ", context.temp_allocator))
+	}
 }
 
 // ---------------------------------------------------------------------------
