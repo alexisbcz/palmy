@@ -370,7 +370,10 @@ popups_layout :: proc(ctx: ^Ctx) {
 		}
 		arrange(ctx, pn.idx, rect, clip)
 		n = &ctx.nodes[pn.idx]
-		n.style.hidden = true
+		// A real popup stays out of the window's paint; one drawn in the
+		// window is painted by it, last (see "Painting" below).
+		n.style.hidden = pn.surface
+		popup_lift(ctx, pn.idx)
 		pn.rect = rect
 		for i in pn.idx ..< pn.end {
 			nn := &ctx.nodes[i]
@@ -387,23 +390,77 @@ popups_layout :: proc(ctx: ^Ctx) {
 	}
 }
 
-// popups_paint paints the frame: the main tree without its popups, then each
-// popup -- on top in the window, or into its own surface.
+// ---------------------------------------------------------------------------
+// Painting
+//
+// A popup drawn in the window is painted by the window's own paint, as the
+// last child of the root: popup_lift moves its root there once it is laid out
+// (it stays where it is in the node array, which is what damage tracking walks;
+// only the links change, and its parent becomes the root). So it is on top of
+// everything, its clip is the window's rather than whatever container it was
+// built in, and whole, partial (damage.odin, "Partial repaint") and verifying
+// paints all include it the same way: a partial repaint covers the changed
+// popup nodes' ink, shadows included, exactly as it covers anything else.
+//
+// A real popup's root stays hidden, so the window's paint leaves it out, and
+// popups_paint paints it into its own surface.
+// ---------------------------------------------------------------------------
+
+// popup_lift relinks a popup's root as the root's last child, on top of the
+// rest of the frame. Layout is already done; this changes painting order only.
 @(private)
-popups_paint :: proc(ctx: ^Ctx, canvas: ^Canvas) {
-	paint_tree(ctx, canvas)
-	for pn in ctx.popups.list {
-		if pn.surface {
-			when ODIN_OS == .Linux {
-				if pn.ready {
-					wl_popup_paint(ctx, pn)
-				}
-			}
-			continue
+popup_lift :: proc(ctx: ^Ctx, idx: int) {
+	nodes := ctx.nodes[:]
+	n := &nodes[idx]
+	par := n.parent
+	if par == 0 && nodes[0].last_child == idx {
+		n.style.z = POPUP_Z
+		return
+	}
+	if par >= 0 {
+		pp := &nodes[par]
+		prev := -1
+		for k := pp.first_child; k >= 0 && k != idx; k = nodes[k].next {
+			prev = k
 		}
-		ctx.nodes[pn.idx].style.hidden = false
-		paint_node(ctx, canvas, pn.idx)
-		ctx.nodes[pn.idx].style.hidden = true
+		if prev < 0 {
+			pp.first_child = n.next
+		} else {
+			nodes[prev].next = n.next
+		}
+		if pp.last_child == idx {
+			pp.last_child = prev
+		}
+		pp.n_children -= 1
+	}
+	root := &nodes[0]
+	if root.last_child >= 0 {
+		nodes[root.last_child].next = idx
+	} else {
+		root.first_child = idx
+	}
+	root.last_child = idx
+	root.n_children += 1
+	n.next = -1
+	n.parent = 0
+	// Root children with a z-index are painted in z order; a popup is above
+	// all of them.
+	n.style.z = POPUP_Z
+}
+
+@(private)
+POPUP_Z :: 1 << 30
+
+// popups_paint paints the frame's real popups into their surfaces, after the
+// window's own paint.
+@(private)
+popups_paint :: proc(ctx: ^Ctx) {
+	when ODIN_OS == .Linux {
+		for pn in ctx.popups.list {
+			if pn.surface && pn.ready {
+				wl_popup_paint(ctx, pn)
+			}
+		}
 	}
 }
 

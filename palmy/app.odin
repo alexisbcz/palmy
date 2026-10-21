@@ -633,7 +633,8 @@ end_ui :: proc(ctx: ^Ctx, canvas: ^Canvas) {
 	clear(&ctx.stack)
 	layout_tree(ctx, {0, 0, ctx.viewport.x, ctx.viewport.y})
 	popups_layout(ctx)
-	popups_paint(ctx, canvas)
+	paint_tree(ctx, canvas)
+	popups_paint(ctx)
 }
 
 @(private)
@@ -668,7 +669,9 @@ finish_frame :: proc(app: ^App) {
 	// repaint"), or whole.
 	clear(&ctx.stack)
 	layout_tree(ctx, {0, 0, ctx.viewport.x, ctx.viewport.y})
+	popups_layout(ctx)
 	region, partial := paint_frame(ctx, &app.canvas, &w.damage, &w.damage.repaint, false)
+	popups_paint(ctx)
 	if present(w, b) {
 		app.frames_shown += 1
 		if app.trace {

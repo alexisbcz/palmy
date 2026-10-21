@@ -116,7 +116,9 @@ offscreen_end :: proc(o: ^Offscreen) {
 offscreen_end_partial :: proc(o: ^Offscreen) -> (region: Damage_Rect, partial: bool) {
 	clear(&o.ctx.stack)
 	layout_tree(&o.ctx, {0, 0, o.ctx.viewport.x, o.ctx.viewport.y})
+	popups_layout(&o.ctx)
 	region, partial = paint_frame(&o.ctx, &o.canvas, nil, &o.repaint, true)
+	popups_paint(&o.ctx)
 	clear_edges(&o.input)
 	free_all(context.temp_allocator)
 	return

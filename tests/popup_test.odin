@@ -223,3 +223,75 @@ test_popup_closed_leaves_no_trace :: proc(t: ^testing.T) {
 	testing.expect(t, same)
 }
 
+
+// An in-window popup over a frame that is repainted only where it changed
+// (damage.odin, "Partial repaint"): every frame must come out exactly as a
+// whole paint would -- when the popup opens, when its own content changes,
+// when what is under it changes, and when it closes.
+@(private = "file")
+Partial_Ui :: struct {
+	open:  bool,
+	hot:   int,
+	under: bool,
+}
+
+@(private = "file")
+partial_ui :: proc(ui: ^p.Ctx, s: Partial_Ui) {
+	p.div(ui, "absolute left-[10] top-[10] w-[180] h-[40]")
+	p.apply(ui, s.under ? "bg-rose-500" : "bg-slate-600")
+	p.end(ui)
+	tr := p.div(ui, "absolute left-[10] top-[150] w-[80] h-[24] bg-sky-600")
+	p.end(ui)
+	if s.open {
+		p.popup_begin(ui, p.rect_of(ui, p.node_id(ui, tr)), p.POPUP_MENU)
+		p.div(ui, "w-[120] flex-col p-1 bg-white rounded-md shadow-md")
+		for i in 0 ..< 3 {
+			p.div(ui, "w-full h-[20]")
+			p.apply(ui, i == s.hot ? "bg-amber-300" : "bg-white")
+			p.end(ui)
+		}
+		p.end(ui)
+		p.popup_end(ui)
+	}
+}
+
+@(test)
+test_popup_in_window_with_partial_repaint_matches_a_whole_paint :: proc(t: ^testing.T) {
+	part := p.offscreen_create(220, 200)
+	defer p.offscreen_destroy(part)
+	whole := p.offscreen_create(220, 200)
+	defer p.offscreen_destroy(whole)
+
+	steps := [?]Partial_Ui {
+		{},
+		{},
+		{open = true},
+		{open = true, hot = 1}, // the popup's own content changes
+		{open = true, hot = 1, under = true}, // what is under it changes
+		{open = true, hot = 2, under = true},
+		{under = true}, // closed
+		{},
+	}
+	partials := 0
+	for s, k in steps {
+		ui := p.offscreen_begin(part)
+		partial_ui(ui, s)
+		_, was_partial := p.offscreen_end_partial(part)
+		if was_partial {
+			partials += 1
+		}
+		ui = p.offscreen_begin(whole)
+		partial_ui(ui, s)
+		p.offscreen_end(whole)
+
+		a, b := p.offscreen_pixels(part), p.offscreen_pixels(whole)
+		differ := 0
+		for v, i in a {
+			if v != b[i] {
+				differ += 1
+			}
+		}
+		testing.expectf(t, differ == 0, "step %d: %d pixels differ from a whole paint", k, differ)
+	}
+	testing.expect(t, partials >= 3, "the frames inside the popup's life were repainted partially")
+}
