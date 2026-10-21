@@ -79,6 +79,7 @@ selftest :: proc() -> int {
 	test_keysyms()
 	test_selection_click()
 	test_graphics()
+	test_splits()
 
 	ms := time.duration_milliseconds(time.since(t0))
 	fmt.printf("\n%d assertions, %d failures, %.0f ms\n", checks, failures, ms)

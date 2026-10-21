@@ -28,8 +28,11 @@ PAD :: f32(6)
 Term_App :: struct {
 	app:        ^p.App,
 	sess:       Session,
-	rend:       Grid_Renderer,
+	// Holds the fonts and the cell size every pane's renderer copies.
+	metrics:    Grid_Renderer,
 	sel:        Selection,
+	// The pane the selection is in. Only one pane has a selection at once.
+	sel_pane:   ^Pane,
 	font_size:  f32,
 	always_tabs: bool,
 	focused:    bool,
@@ -39,8 +42,8 @@ Term_App :: struct {
 	drag_tab:   int,
 	status:     string,
 	status_at:  time.Time,
-	// Tabs asked to close whose child has not gone yet.
-	zombies:    [dynamic]^Tab,
+	// Panes asked to close whose child has not gone yet.
+	zombies:    [dynamic]^Pane,
 	quit:       bool,
 	paste_confirmed: bool,
 	// Clipboard work, deferred to the end of the frame. palmy speaks the
@@ -54,6 +57,11 @@ Term_App :: struct {
 	// middle-click paste.
 	clip_primary:       string,
 	clip_paste_primary: bool,
+	// The grid area of the last frame, in device pixels, and the divider
+	// width between panes.
+	area:       [4]int,
+	div:        int,
+	scale:      f32,
 }
 
 note :: proc(a: ^Term_App, s: string) {
@@ -93,6 +101,54 @@ wait_for_work :: proc(a: ^Term_App, timeout_ms: int) {
 }
 
 // ---------------------------------------------------------------------------
+// Layout
+// ---------------------------------------------------------------------------
+
+// layout_tab places the panes of a tab in the grid area and gives each the
+// grid size that fits its rectangle, resizing its terminal and telling its
+// child when that changed.
+layout_tab :: proc(a: ^Term_App, tab: ^Tab) {
+	tab_layout(tab, a.area, a.div)
+	panes := make([dynamic]^Pane, context.temp_allocator)
+	tab_panes(tab, &panes)
+	pad := int(PAD * a.scale)
+	for pn in panes {
+		if !pn.shown {
+			continue
+		}
+		r := &pn.rend
+		if r.fonts == nil {
+			r.fonts = a.metrics.fonts
+		}
+		cell_changed := false
+		if r.scale != a.metrics.scale || r.size != a.metrics.size {
+			renderer_metrics(r, a.metrics.size, a.metrics.scale)
+			r.full = true
+			cell_changed = r.cell_w != pn.term.gfx.cell_w || r.cell_h != pn.term.gfx.cell_h
+			vt.terminal_set_cell_size(&pn.term, r.cell_w, r.cell_h)
+		}
+		cols, rows := renderer_fit(r, pn.rect[2] - 2 * pad, pn.rect[3] - 2 * pad)
+		if cols != pn.term.cols || rows != pn.term.rows {
+			pane_resize(pn, cols, rows)
+		} else if cell_changed {
+			pty_resize(&pn.pty, cols, rows, r.cell_w, r.cell_h)
+		}
+		renderer_resize(r, cols, rows)
+		pn.grid = {
+			pn.rect[0] + max(0, (pn.rect[2] - r.w) / 2),
+			pn.rect[1] + max(0, (pn.rect[3] - r.h) / 2),
+		}
+	}
+}
+
+@(private = "file")
+repaint_all :: proc(a: ^Term_App) {
+	for pn in a.sess.panes {
+		pn.rend.full = true
+	}
+}
+
+// ---------------------------------------------------------------------------
 // The frame
 // ---------------------------------------------------------------------------
 
@@ -118,33 +174,34 @@ frame :: proc(a: ^Term_App, ui: ^p.Ctx) {
 	size := p.size(ui)
 	scale := f32(p.window_scale(ui))
 	show_tabs := a.always_tabs || len(a.sess.tabs) > 1
-	grid_h := size.y - (show_tabs ? TAB_STRIP_H : 0) - PAD * 2
-	grid_w := size.x - PAD * 2
+	grid_h := size.y - (show_tabs ? TAB_STRIP_H : 0)
+	grid_w := size.x
 
-	if a.rend.scale != scale || a.rend.size != a.font_size {
-		renderer_metrics(&a.rend, a.font_size, scale)
-		a.rend.full = true
+	if a.metrics.scale != scale || a.metrics.size != a.font_size {
+		renderer_metrics(&a.metrics, a.font_size, scale)
 	}
-	// Images are measured in cells of the size the font gives.
-	for tb in a.sess.tabs {
-		if tb.term.gfx.cell_w != a.rend.cell_w || tb.term.gfx.cell_h != a.rend.cell_h {
-			vt.terminal_set_cell_size(&tb.term, a.rend.cell_w, a.rend.cell_h)
-			pty_resize(&tb.pty, tb.term.cols, tb.term.rows, a.rend.cell_w, a.rend.cell_h)
-		}
-	}
-	cols, rows := renderer_fit(&a.rend, int(grid_w * scale), int(grid_h * scale))
-	if cols != a.sess.cols || rows != a.sess.rows {
-		session_resize(&a.sess, cols, rows)
-		renderer_resize(&a.rend, cols, rows)
-	}
-	renderer_resize(&a.rend, cols, rows)
+	a.scale = scale
+	a.div = max(1, int(DIVIDER_LOGICAL * scale + 0.5))
+	a.area = {0, 0, int(grid_w * scale), int(grid_h * scale)}
+	a.sess.cell_w, a.sess.cell_h = a.metrics.cell_w, a.metrics.cell_h
+	pad := int(PAD * scale)
+	a.sess.cols, a.sess.rows = renderer_fit(&a.metrics, a.area[2] - 2 * pad, a.area[3] - 2 * pad)
 
+	if tab := session_tab(&a.sess); tab != nil {
+		layout_tab(a, tab)
+	}
 	handle_keys(a, ui)
 	handle_mouse(a, ui, show_tabs, scale)
+	// The keys may have split, closed, zoomed or switched; lay out again so
+	// this frame already draws the result.
+	tab := session_tab(&a.sess)
+	if tab != nil {
+		layout_tab(a, tab)
+	}
 
 	// The cursor blink is the one thing that has to keep ticking on its own.
 	t := session_active(&a.sess)
-	if t != nil && (t.term.modes.cursor_blink || a.rend.has_blink) {
+	if t != nil && (t.term.modes.cursor_blink || t.rend.has_blink) {
 		if time.since(a.blink_at) > 530 * time.Millisecond {
 			a.blink_on = !a.blink_on
 			a.blink_at = time.now()
@@ -164,20 +221,44 @@ frame :: proc(a: ^Term_App, ui: ^p.Ctx) {
 		tab_strip(a, ui)
 	}
 
-	if t != nil {
-		if vt.graphics_take_changed(&t.term) {
-			a.rend.full = true
+	if tab != nil {
+		panes := make([dynamic]^Pane, context.temp_allocator)
+		tab_panes(tab, &panes)
+		for pn in panes {
+			if !pn.shown {
+				continue
+			}
+			if vt.graphics_take_changed(&pn.term) {
+				pn.rend.full = true
+			}
+			sel := pn == a.sel_pane ? a.sel : Selection{}
+			renderer_draw(&pn.rend, &pn.term, sel, a.focused && pn == tab.focus, a.blink_on)
 		}
-		renderer_draw(&a.rend, &t.term, a.sel, a.focused, a.blink_on)
 	}
 	p.pixels(ui, "flex-1 w-full", a, proc(c: ^p.Canvas, r: p.Rect, a: ^Term_App) {
 		p.fill_rect(c, r, p.Color{11, 17, 32, 255})
-		// Centre the grid in whatever space the layout gave it, so a window
-		// that is not an exact multiple of the cell size has an even border
-		// rather than a fat edge on one side.
-		x := r.x + max(0, (r.w - f32(a.rend.w)) * 0.5)
-		y := r.y + max(0, (r.h - f32(a.rend.h)) * 0.5)
-		renderer_blit(&a.rend, c, {x, y, f32(a.rend.w), f32(a.rend.h)})
+		tab := session_tab(&a.sess)
+		if tab == nil {
+			return
+		}
+		panes := make([dynamic]^Pane, context.temp_allocator)
+		tab_panes(tab, &panes)
+		split := len(panes) > 1 && !tab.zoomed
+		for pn in panes {
+			if !pn.shown {
+				continue
+			}
+			// The panes that will not get the keystrokes are dimmed, which
+			// is how a glance says where typing goes; their cursors are
+			// hollow as well.
+			dim := split && pn != tab.focus
+			renderer_blit(&pn.rend, c, {r.x + f32(pn.grid[0]), r.y + f32(pn.grid[1]), f32(pn.rend.w), f32(pn.rend.h)}, dim)
+		}
+		divs := make([dynamic][4]int, context.temp_allocator)
+		tab_dividers(tab, &divs, a.div)
+		for d in divs {
+			p.fill_rect(c, {r.x + f32(d[0]), r.y + f32(d[1]), f32(d[2]), f32(d[3])}, p.Color{0x33, 0x41, 0x55, 255})
+		}
 	})
 
 	if t != nil && t.term.view_offset > 0 {
@@ -191,7 +272,7 @@ frame :: proc(a: ^Term_App, ui: ^p.Ctx) {
 }
 
 @(private = "file")
-scroll_hint :: proc(a: ^Term_App, ui: ^p.Ctx, t: ^Tab) {
+scroll_hint :: proc(a: ^Term_App, ui: ^p.Ctx, t: ^Pane) {
 	p.row(ui, "w-full px-3 py-1 bg-slate-900 border-t border-slate-800 items-center gap-2")
 	defer p.end(ui)
 	p.textf(ui, "text-xs text-amber-300", "scrolled back %d lines", t.term.view_offset)
@@ -218,10 +299,16 @@ tab_strip :: proc(a: ^Term_App, ui: ^p.Ctx) {
 		if p.clickable(ui) {
 			session_select(&a.sess, i)
 		}
-		if t.term.progress == .Set || t.term.progress == .Indetermine {
-			p.textf(ui, "text-xs text-sky-400", "%d%%", t.term.progress_pct)
-		} else if t.dead {
+		f := t.focus
+		if f != nil && (f.term.progress == .Set || f.term.progress == .Indetermine) {
+			p.textf(ui, "text-xs text-sky-400", "%d%%", f.term.progress_pct)
+		} else if f != nil && f.dead {
 			p.text(ui, "●", "text-xs text-rose-400")
+		}
+		if n := tab_pane_count(t); n > 1 {
+			// How many panes the tab holds, so a split tab is told apart
+			// from a plain one without switching to it.
+			p.textf(ui, "text-xs text-slate-500", t.zoomed ? "%d panes, zoomed" : "%d panes", n)
 		}
 		title := tab_title(t)
 		if len(title) > 24 {
@@ -250,60 +337,140 @@ new_tab :: proc(a: ^Term_App) {
 		note(a, err)
 		return
 	}
-	session_resize_force(&a.sess)
-	a.rend.full = true
+	repaint_all(a)
 }
 
-session_resize_force :: proc(s: ^Session) {
-	for t in s.tabs {
-		vt.terminal_resize(&t.term, s.cols, s.rows)
-		pty_resize(&t.pty, s.cols, s.rows)
-	}
-}
-
-@(private = "file")
-close_tab :: proc(a: ^Term_App, idx: int) {
-	if idx < 0 || idx >= len(a.sess.tabs) {
+split_pane :: proc(a: ^Term_App, dir: Split_Dir) {
+	tab := session_tab(&a.sess)
+	if tab == nil {
 		return
 	}
-	t := a.sess.tabs[idx]
-	if !t.dead {
-		tab_request_close(t)
-		append(&a.zombies, t)
+	if _, err := tab_split(&a.sess, tab, dir); err != "" {
+		note(a, err)
+		return
+	}
+	repaint_all(a)
+}
+
+// close_pane closes one pane, and its tab with it when it was the last.
+close_pane :: proc(a: ^Term_App, pn: ^Pane) {
+	if pn == nil {
+		return
+	}
+	tab := pane_tab(&a.sess, pn)
+	if a.sel_pane == pn {
+		a.sel = {}
+		a.sel_pane = nil
+	}
+	if tab != nil && tab_detach(&a.sess, tab, pn) {
+		for x, i in a.sess.tabs {
+			if x == tab {
+				ordered_remove(&a.sess.tabs, i)
+				break
+			}
+		}
+		free(tab)
+		if a.sess.active >= len(a.sess.tabs) {
+			a.sess.active = max(0, len(a.sess.tabs) - 1)
+		}
+	}
+	if !pn.dead {
+		pane_request_close(pn)
+		append(&a.zombies, pn)
 	} else {
-		tab_destroy(t)
+		pane_destroy(pn)
 	}
-	ordered_remove(&a.sess.tabs, idx)
-	if a.sess.active >= len(a.sess.tabs) {
-		a.sess.active = max(0, len(a.sess.tabs) - 1)
-	}
-	a.rend.full = true
+	repaint_all(a)
 	if len(a.sess.tabs) == 0 {
 		a.quit = true
 	}
 }
 
-// reap_zombies finishes closing tabs whose child was signalled but had not
+// reap_zombies finishes closing panes whose child was signalled but had not
 // gone yet. Nothing blocks on it: the window stays responsive while a child
 // takes its time dying.
 @(private = "file")
 reap_zombies :: proc(a: ^Term_App) {
 	for i := len(a.zombies) - 1; i >= 0; i -= 1 {
 		t := a.zombies[i]
-		if tab_close_ready(t) {
-			tab_destroy(t)
+		if pane_close_ready(t) {
+			pane_destroy(t)
 			unordered_remove(&a.zombies, i)
 		}
 	}
 }
 
 @(private = "file")
+arrow_dir :: proc(sym: u32) -> (Direction, bool) {
+	switch sym {
+	case 0xff51:
+		return .Left, true
+	case 0xff52:
+		return .Up, true
+	case 0xff53:
+		return .Right, true
+	case 0xff54:
+		return .Down, true
+	}
+	return .Left, false
+}
+
+// pane_key handles the split shortcuts. alt+arrow moves focus and
+// alt+shift+arrow moves a divider -- but only in a tab that has more than
+// one pane, so in an ordinary tab those keys still reach the program.
+pane_key :: proc(a: ^Term_App, mods: u16, sym: u32) -> bool {
+	ctrl := mods & vt.MOD_CTRL != 0
+	shift := mods & vt.MOD_SHIFT != 0
+	alt := mods & vt.MOD_ALT != 0
+	tab := session_tab(&a.sess)
+	if tab == nil {
+		return false
+	}
+	if ctrl && shift && !alt {
+		switch sym {
+		case 'R', 'r':
+			split_pane(a, .Columns)
+			return true
+		case 'D', 'd':
+			split_pane(a, .Rows)
+			return true
+		case 'Z', 'z':
+			if tab_pane_count(tab) > 1 {
+				tab.zoomed = !tab.zoomed
+				repaint_all(a)
+			}
+			return true
+		}
+		return false
+	}
+	if alt && !ctrl && tab_pane_count(tab) > 1 {
+		d, ok := arrow_dir(sym)
+		if !ok {
+			return false
+		}
+		if shift {
+			step := (d == .Left || d == .Right) ? a.metrics.cell_w : a.metrics.cell_h
+			min_px := 2 * int(PAD * a.scale) + 2 * max(a.metrics.cell_w, a.metrics.cell_h)
+			if tab_resize(tab, d, step, min_px, a.div) {
+				repaint_all(a)
+			}
+		} else if tab_focus_move(tab, d, a.div) {
+			a.sel = {}
+			a.sel_pane = nil
+			repaint_all(a)
+		}
+		return true
+	}
+	return false
+}
+
+@(private = "file")
 handle_keys :: proc(a: ^Term_App, ui: ^p.Ctx) {
-	t := session_active(&a.sess)
 	buf: [8]u8
 	enc: [256]u8
 
 	for k in ui.input.keys {
+		t := session_active(&a.sess)
 		mods := mods_from_palmy(k.mods)
 		ctrl := mods & vt.MOD_CTRL != 0
 		shift := mods & vt.MOD_SHIFT != 0
@@ -311,13 +478,16 @@ handle_keys :: proc(a: ^Term_App, ui: ^p.Ctx) {
 		sym := k.sym
 
 		// --- the application's own shortcuts ---------------------------
+		if pane_key(a, mods, sym) {
+			continue
+		}
 		if ctrl && shift {
 			switch sym {
 			case 'T', 't':
 				new_tab(a)
 				continue
 			case 'W', 'w':
-				close_tab(a, a.sess.active)
+				close_pane(a, t)
 				continue
 			case 'C', 'c':
 				copy_selection(a)
@@ -333,13 +503,13 @@ handle_keys :: proc(a: ^Term_App, ui: ^p.Ctx) {
 				continue
 			case 0xff09, 0xfe20: // Tab / ISO_Left_Tab
 				session_prev(&a.sess)
-				a.rend.full = true
+				repaint_all(a)
 				continue
 			}
 		}
 		if ctrl && !shift && sym == 0xff09 {
 			session_next(&a.sess)
-			a.rend.full = true
+			repaint_all(a)
 			continue
 		}
 		if ctrl && (sym == KEY_PRIOR || sym == KEY_NEXT) {
@@ -348,7 +518,7 @@ handle_keys :: proc(a: ^Term_App, ui: ^p.Ctx) {
 			} else {
 				session_next(&a.sess)
 			}
-			a.rend.full = true
+			repaint_all(a)
 			continue
 		}
 		if ctrl && (sym == '+' || sym == '=' || sym == '-' || sym == '_' || sym == '0') {
@@ -360,12 +530,12 @@ handle_keys :: proc(a: ^Term_App, ui: ^p.Ctx) {
 			case '0':
 				a.font_size = 14
 			}
-			a.rend.full = true
+			repaint_all(a)
 			continue
 		}
 		if alt && sym >= '1' && sym <= '9' {
 			session_select(&a.sess, int(sym - '1'))
-			a.rend.full = true
+			repaint_all(a)
 			continue
 		}
 		if shift && (sym == KEY_PRIOR || sym == KEY_NEXT || sym == 0xff57 || sym == 0xff50) {
@@ -386,7 +556,7 @@ handle_keys :: proc(a: ^Term_App, ui: ^p.Ctx) {
 		// you typed, so you want to see what you typed.
 		if t.term.view_offset != 0 {
 			t.term.view_offset = 0
-			a.rend.full = true
+			t.rend.full = true
 		}
 		a.sel.active = false
 
@@ -410,7 +580,7 @@ handle_keys :: proc(a: ^Term_App, ui: ^p.Ctx) {
 }
 
 @(private = "file")
-scroll_view :: proc(a: ^Term_App, t: ^Tab, sym: u32) {
+scroll_view :: proc(a: ^Term_App, t: ^Pane, sym: u32) {
 	s := vt.screen(&t.term)
 	maxoff := max(0, vt.screen_total_rows(s) - t.term.rows)
 	page := max(1, t.term.rows - 2)
@@ -424,22 +594,40 @@ scroll_view :: proc(a: ^Term_App, t: ^Tab, sym: u32) {
 	case 0xff57: // End
 		t.term.view_offset = 0
 	}
-	a.rend.full = true
+	t.rend.full = true
 }
 
 @(private = "file")
 handle_mouse :: proc(a: ^Term_App, ui: ^p.Ctx, show_tabs: bool, scale: f32) {
-	t := session_active(&a.sess)
-	if t == nil {
+	tab := session_tab(&a.sess)
+	if tab == nil {
 		return
 	}
 	mouse := p.mouse_pos(ui)
-	top := (show_tabs ? TAB_STRIP_H : 0) + PAD
-	gx := (mouse.x - PAD) * scale
-	gy := (mouse.y - top) * scale
-	col := int(gx) / max(a.rend.cell_w, 1)
-	row := int(gy) / max(a.rend.cell_h, 1)
-	in_grid := gy >= 0 && row >= 0 && row < a.rend.rows && col >= 0 && col < a.rend.cols
+	top := show_tabs ? TAB_STRIP_H : 0
+	mx := int(mouse.x * scale)
+	my := int((mouse.y - top) * scale)
+	if mouse.y < top {
+		return
+	}
+	hit := tab_pane_at(tab, mx, my)
+
+	// A drag stays with the pane it started in, wherever the pointer goes.
+	t := hit
+	if a.sel.dragging && a.sel_pane != nil {
+		t = a.sel_pane
+	}
+	if t == nil {
+		return
+	}
+	if ui.input.pressed[.Left] && hit != nil && hit != tab.focus {
+		// Clicking a pane focuses it.
+		tab.focus = hit
+		repaint_all(a)
+	}
+	col := (mx - t.grid[0]) / max(t.rend.cell_w, 1)
+	row := (my - t.grid[1]) / max(t.rend.cell_h, 1)
+	in_grid := my >= t.grid[1] && mx >= t.grid[0] && row >= 0 && row < t.rend.rows && col >= 0 && col < t.rend.cols
 
 	wheel := p.wheel(ui)
 	if wheel.y != 0 && in_grid {
@@ -471,15 +659,17 @@ handle_mouse :: proc(a: ^Term_App, ui: ^p.Ctx, show_tabs: bool, scale: f32) {
 			} else {
 				t.term.view_offset = max(t.term.view_offset - step, 0)
 			}
-			a.rend.full = true
+			t.rend.full = true
 		}
 	}
 
-	if !in_grid {
+	if !in_grid && !a.sel.dragging {
 		return
 	}
+	col = clamp(col, 0, max(t.rend.cols - 1, 0))
+	row = clamp(row, 0, max(t.rend.rows - 1, 0))
 	s := vt.screen(&t.term)
-	abs_row := max(0, vt.screen_total_rows(s) - a.rend.rows - t.term.view_offset) + row
+	abs_row := max(0, vt.screen_total_rows(s) - t.rend.rows - t.term.view_offset) + row
 	shift := .Shift in ui.input.mods
 	report := vt.mouse_wants(&t.term) && !shift
 
@@ -487,14 +677,18 @@ handle_mouse :: proc(a: ^Term_App, ui: ^p.Ctx, show_tabs: bool, scale: f32) {
 		if report {
 			send_mouse(a, t, .Left, .Press, col, row, ui)
 		} else {
+			if a.sel_pane != nil && a.sel_pane != t {
+				a.sel_pane.rend.full = true
+			}
 			a.sel = sel_press(col, abs_row)
-			a.rend.full = true
+			a.sel_pane = t
+			t.rend.full = true
 		}
 	} else if ui.input.down[.Left] {
 		if report {
 			send_mouse(a, t, .Left, .Motion, col, row, ui)
-		} else if sel_drag(&a.sel, col, abs_row) {
-			a.rend.full = true
+		} else if a.sel_pane == t && sel_drag(&a.sel, col, abs_row) {
+			t.rend.full = true
 		}
 	} else if ui.input.released[.Left] {
 		if report {
@@ -516,7 +710,7 @@ handle_mouse :: proc(a: ^Term_App, ui: ^p.Ctx, show_tabs: bool, scale: f32) {
 @(private = "file")
 send_mouse :: proc(
 	a: ^Term_App,
-	t: ^Tab,
+	t: ^Pane,
 	b: vt.Mouse_Button_Kind,
 	act: vt.Mouse_Action,
 	col, row: int,
@@ -540,7 +734,7 @@ send_mouse :: proc(
 // ---------------------------------------------------------------------------
 
 selection_text :: proc(a: ^Term_App, allocator := context.allocator) -> string {
-	t := session_active(&a.sess)
+	t := a.sel_pane
 	if t == nil || !a.sel.active {
 		return ""
 	}

@@ -155,9 +155,9 @@ run_window :: proc(opt: Options, always_tabs: bool) {
 		blink_on    = true,
 		blink_at    = time.now(),
 	}
-	ta.rend.fonts = &app.fonts
-	ta.zombies = make([dynamic]^Tab)
-	renderer_metrics(&ta.rend, ta.font_size, 1)
+	ta.metrics.fonts = &app.fonts
+	ta.zombies = make([dynamic]^Pane)
+	renderer_metrics(&ta.metrics, ta.font_size, 1)
 
 	shell := opt.argv
 	if len(shell) == 0 {
@@ -189,21 +189,22 @@ run_window :: proc(opt: Options, always_tabs: bool) {
 	busy := false
 	for ui in p.frames(app) {
 		wait_for_work(&ta, idle_timeout(&ta, busy))
-		before := ta.sess.tabs[0].bytes_in if len(ta.sess.tabs) > 0 else 0
+		// Busy is any pane of any tab producing output, not only the first.
+		before := session_bytes_in(&ta.sess)
 		frame(&ta, ui)
 		run_clipboard(&ta)
-		busy = len(ta.sess.tabs) > 0 && ta.sess.tabs[0].bytes_in != before
+		busy = session_bytes_in(&ta.sess) != before
 		if ta.quit {
 			p.quit_app(app)
 		}
 	}
 	pump_stop(&ta.pump)
-	// Hang up anything still running, the same way closing a tab does.
-	for t in ta.sess.tabs {
-		tab_request_close(t)
+	// Hang up anything still running, the same way closing a pane does.
+	for pn in ta.sess.panes {
+		pane_request_close(pn)
 	}
 	session_destroy(&ta.sess)
-	renderer_destroy(&ta.rend)
+	renderer_destroy(&ta.metrics)
 }
 
 // idle_timeout decides how long to sleep. Busy means the child is producing
@@ -215,7 +216,7 @@ idle_timeout :: proc(a: ^Term_App, busy: bool) -> int {
 		return 0
 	}
 	t := session_active(&a.sess)
-	if t != nil && (t.term.modes.cursor_blink || a.rend.has_blink) && a.focused {
+	if t != nil && (t.term.modes.cursor_blink || t.rend.has_blink) && a.focused {
 		return 120
 	}
 	if len(a.zombies) > 0 {

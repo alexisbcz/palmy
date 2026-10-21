@@ -9,7 +9,7 @@ import p "palmy:."
 import vt "./vt"
 
 // ---------------------------------------------------------------------------
-// The image protocols.
+// The image protocols and the splits.
 //
 // The numbers these assert come from the oracles, not from this code:
 //
@@ -711,3 +711,231 @@ test_image_render :: proc() {
 	eq_i(int(r2.px[(r2.cell_h / 2) * r2.w + r2.cell_w * 2 - 2]), int(0xFF00FF00), "at twice the font it still covers two cells")
 }
 
+// ---------------------------------------------------------------------------
+// Splits
+// ---------------------------------------------------------------------------
+
+@(private = "file")
+pane_wait :: proc(pn: ^Pane, want: string, ms: int) -> bool {
+	buf: [4096]u8
+	start := time.now()
+	for time.since(start) < time.Duration(ms) * time.Millisecond {
+		n, done := pty_read(&pn.pty, buf[:])
+		if n > 0 {
+			vt.terminal_feed(&pn.term, buf[:n])
+		}
+		for y in 0 ..< pn.term.rows {
+			if strings.contains(vt.terminal_line(&pn.term, y, context.temp_allocator), want) {
+				return true
+			}
+		}
+		if done {
+			return false
+		}
+		if n <= 0 {
+			time.sleep(5 * time.Millisecond)
+		}
+	}
+	return false
+}
+
+test_splits :: proc() {
+	s: Session
+	session_init(&s, 80, 24, 100, "xterm-256color", []string{"/bin/sh"})
+	defer session_destroy(&s)
+	s.last_cwd = "/"
+
+	tab, err := tab_open(&s, []string{"/bin/sh"})
+	if err != "" {
+		check(false, "a tab opens: %s", err)
+		return
+	}
+	left := tab.focus
+	right, e2 := tab_split(&s, tab, .Columns, []string{"/bin/sh"})
+	check(e2 == "" && right != nil, "a side-by-side split opens a second pane")
+	if right == nil {
+		return
+	}
+	eq_i(tab_pane_count(tab), 2, "the tab holds two panes")
+	eq_i(len(s.panes), 2, "and the session knows both")
+	check(tab.focus == right, "the new pane has the focus")
+	check(left.pty.master != right.pty.master && left.pty.pid != right.pty.pid, "each pane has its own pty and process")
+
+	bottom, e3 := tab_split(&s, tab, .Rows, []string{"/bin/sh"})
+	check(e3 == "" && bottom != nil, "the right pane splits again, stacked")
+	if bottom == nil {
+		return
+	}
+	// left | (right / bottom)
+	DIV :: 1
+	tab_layout(tab, {0, 0, 801, 601}, DIV)
+	check(left.rect == {0, 0, 400, 601}, "left gets half the width: %v", left.rect)
+	check(right.rect == {401, 0, 400, 300}, "top right: %v", right.rect)
+	check(bottom.rect == {401, 301, 400, 300}, "bottom right: %v", bottom.rect)
+	divs := make([dynamic][4]int, context.temp_allocator)
+	tab_dividers(tab, &divs, DIV)
+	eq_i(len(divs), 2, "two dividers")
+	check(len(divs) == 2 && divs[0] == {400, 0, 1, 601} && divs[1] == {401, 300, 400, 1}, "where the gaps are: %v", divs)
+	// No pixel belongs to two panes, and only the dividers belong to none.
+	covered := 0
+	for pn in ([]^Pane{left, right, bottom}) {
+		covered += pn.rect[2] * pn.rect[3]
+	}
+	for d in divs {
+		covered += d[2] * d[3]
+	}
+	eq_i(covered, 801 * 601, "the panes and dividers tile the area exactly")
+
+	// Focus moves by geometry.
+	check(tab.focus == bottom, "focus is on the newest pane")
+	check(tab_focus_move(tab, .Up, DIV) && tab.focus == right, "up goes to the pane above")
+	check(!tab_focus_move(tab, .Up, DIV) && tab.focus == right, "and no further")
+	check(tab_focus_move(tab, .Left, DIV) && tab.focus == left, "left goes to the tall pane")
+	check(tab_focus_move(tab, .Right, DIV) && tab.focus == right, "right from it lands on the one it overlaps most, the top (ties go to the nearest)")
+	tab.focus = bottom
+	check(tab_focus_move(tab, .Left, DIV) && tab.focus == left, "left from the bottom pane is the tall one too")
+	check(!tab_focus_move(tab, .Left, DIV), "nothing left of the leftmost")
+
+	// Resizing moves the nearest divider that runs the right way.
+	tab.focus = bottom
+	check(tab_resize(tab, .Left, 40, 50, DIV), "alt+shift+left moves the vertical divider")
+	tab_layout(tab, {0, 0, 801, 601}, DIV)
+	eq_i(left.rect[2], 360, "40 px to the left")
+	check(tab_resize(tab, .Up, 30, 50, DIV), "alt+shift+up moves the horizontal one")
+	tab_layout(tab, {0, 0, 801, 601}, DIV)
+	eq_i(right.rect[3], 270, "30 px up")
+	for _ in 0 ..< 50 {
+		tab_resize(tab, .Left, 40, 50, DIV)
+	}
+	tab_layout(tab, {0, 0, 801, 601}, DIV)
+	eq_i(left.rect[2], 50, "and stops at the minimum")
+	tab.focus = left
+	check(!tab_resize(tab, .Up, 30, 50, DIV), "a pane with no stacked split above it cannot resize vertically")
+
+	// Each pane its own VT state and its own child: resize one and ask.
+	pane_resize(left, 30, 10)
+	pane_resize(bottom, 50, 7)
+	pty_write(&left.pty, transmute([]u8)string("stty size; printf 'LEFT%sDONE\\n' -\n"))
+	pty_write(&bottom.pty, transmute([]u8)string("stty size; printf 'BOTTOM%sDONE\\n' -\n"))
+	check(pane_wait(left, "LEFT-DONE", 3000), "the left pane's shell answered")
+	check(pane_wait(bottom, "BOTTOM-DONE", 3000), "the bottom pane's shell answered")
+	has := proc(pn: ^Pane, want: string) -> bool {
+		for y in 0 ..< pn.term.rows {
+			if strings.contains(vt.terminal_line(&pn.term, y, context.temp_allocator), want) {
+				return true
+			}
+		}
+		return false
+	}
+	check(has(left, "10 30"), "the left child sees 10 rows by 30 columns")
+	check(has(bottom, "7 50"), "the bottom child sees 7 by 50")
+	check(!has(left, "BOTTOM") && !has(bottom, "LEFT"), "and neither sees the other's output")
+	check(!has(right, "LEFT") && !has(right, "BOTTOM"), "the third pane saw none of it")
+
+	// A split starts where the pane it splits is, even when the shell never
+	// says so with OSC 7.
+	pty_write(&left.pty, transmute([]u8)string("cd /usr/share && echo CD-DONE\n"))
+	check(pane_wait(left, "CD-DONE", 3000), "the left shell changed directory")
+	time.sleep(50 * time.Millisecond)
+	eq_s(pane_cwd(left), "/usr/share", "the new pane's directory comes from the kernel")
+
+	// Closing: the sibling takes the space, focus moves to it.
+	tab.focus = right
+	pane_request_close(right)
+	check(!tab_detach(&s, tab, right), "closing one pane of three keeps the tab")
+	for !pane_close_ready(right) {
+		time.sleep(10 * time.Millisecond)
+	}
+	pane_destroy(right)
+	eq_i(tab_pane_count(tab), 2, "two panes left")
+	eq_i(len(s.panes), 2, "and the session forgets the closed one")
+	check(tab.focus == bottom, "focus went to the sibling")
+	tab_layout(tab, {0, 0, 801, 601}, DIV)
+	check(bottom.rect[1] == 0 && bottom.rect[3] == 601, "which now has the full height: %v", bottom.rect)
+
+	// Zoom gives one pane the tab and hides the rest.
+	tab.zoomed = true
+	tab_layout(tab, {0, 0, 801, 601}, DIV)
+	check(bottom.shown && !left.shown && bottom.rect == {0, 0, 801, 601}, "zoomed, the focused pane fills the tab")
+	tab.zoomed = false
+
+	pane_request_close(bottom)
+	tab_detach(&s, tab, bottom)
+	for !pane_close_ready(bottom) {
+		time.sleep(10 * time.Millisecond)
+	}
+	pane_destroy(bottom)
+	pane_request_close(left)
+	check(tab_detach(&s, tab, left), "closing the last pane empties the tab")
+	for !pane_close_ready(left) {
+		time.sleep(10 * time.Millisecond)
+	}
+	pane_destroy(left)
+	eq_i(len(s.panes), 0, "no panes left")
+
+	test_splits_render()
+}
+
+// A frame with a split, drawn headlessly: the divider is where the layout
+// says, the unfocused pane is dimmed, and keys reach the focused pane only.
+@(private = "file")
+test_splits_render :: proc() {
+	W :: 800
+	H :: 400
+	o := p.offscreen_create(W, H, 1, "w-full h-full bg-slate-950 text-slate-200")
+	defer p.offscreen_destroy(o)
+	o.input.focused = true
+	a := Term_App {
+		font_size = 14,
+		blink_on  = true,
+		focused   = true,
+	}
+	a.metrics.fonts = &o.fonts
+	a.zombies = make([dynamic]^Pane)
+	defer delete(a.zombies)
+	renderer_metrics(&a.metrics, 14, 1)
+	session_init(&a.sess, 80, 24, 100, "xterm-256color", []string{"/bin/sh", "-c", "sleep 3"})
+	defer session_destroy(&a.sess)
+	tab, err := tab_open(&a.sess)
+	if err != "" {
+		check(false, "a tab: %s", err)
+		return
+	}
+	left := tab.focus
+	split_pane(&a, .Columns)
+	right := tab.focus
+	check(right != left, "ctrl+shift+r's split made a pane")
+
+	// Both panes show a full-width bar of the same colour, so dimming is
+	// measurable.
+	bar := "\x1b[H\x1b[47m\x1b[2K\x1b[0m"
+	vt.terminal_feed(&left.term, transmute([]u8)bar)
+	vt.terminal_feed(&right.term, transmute([]u8)bar)
+
+	ui := p.offscreen_begin(o)
+	frame(&a, ui)
+	p.offscreen_end(o)
+	// The pane keys reach panes.
+	append(&o.input.keys, p.Key_Event{sym = 0xff51, mods = {.Alt}})
+	ui = p.offscreen_begin(o)
+	frame(&a, ui)
+	p.offscreen_end(o)
+	check(tab.focus == left, "alt+left moved the focus to the left pane")
+	ui = p.offscreen_begin(o)
+	frame(&a, ui)
+	p.offscreen_end(o)
+
+	px := p.offscreen_pixels(o)
+	get := proc(px: []u32, x, y: int) -> u32 {
+		return px[y * W + x]
+	}
+	dx := left.rect[2] // the divider column
+	eq_i(int(get(px, dx, 200) & 0xFFFFFF), 0x334155, "the divider is drawn between the panes")
+	lb := get(px, left.grid[0] + 4, left.grid[1] + 4)
+	rb := get(px, right.grid[0] + 4, right.grid[1] + 4)
+	check(lb != rb, "the two bars differ: one pane is dimmed")
+	check(int(lb >> 16 & 0xFF) > int(rb >> 16 & 0xFF), "and it is the unfocused right one that is darker")
+	for pn in a.sess.panes {
+		pane_request_close(pn)
+	}
+}

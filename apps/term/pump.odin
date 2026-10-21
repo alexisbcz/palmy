@@ -92,7 +92,7 @@ pump_loop :: proc(p: ^Pump) {
 	buf: [64 * 1024]u8
 	pfds := make([dynamic]linux.Poll_Fd)
 	defer delete(pfds)
-	tabs := make([dynamic]^Tab)
+	tabs := make([dynamic]^Pane)
 	defer delete(tabs)
 
 	for {
@@ -103,7 +103,7 @@ pump_loop :: proc(p: ^Pump) {
 		}
 		clear(&tabs)
 		clear(&pfds)
-		for t in p.sess.tabs {
+		for t in p.sess.panes {
 			if !t.dead && t.pty.master > 0 {
 				append(&tabs, t)
 				append(&pfds, linux.Poll_Fd{fd = t.pty.master, events = {.IN}})
@@ -157,7 +157,7 @@ pump_loop :: proc(p: ^Pump) {
 					}
 				}
 				if done {
-					tab_mark_dead(t)
+					pane_mark_dead(t)
 				}
 				sync.unlock(&p.mu)
 				if got > 0 {
@@ -182,8 +182,8 @@ pump_loop :: proc(p: ^Pump) {
 // tab_still_live guards against a tab being closed by the frame loop between
 // the poll and the read.
 @(private = "file")
-tab_still_live :: proc(s: ^Session, t: ^Tab) -> bool {
-	for x in s.tabs {
+tab_still_live :: proc(s: ^Session, t: ^Pane) -> bool {
+	for x in s.panes {
 		if x == t {
 			return true
 		}

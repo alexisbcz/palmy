@@ -2,6 +2,7 @@ package main
 
 import "core:fmt"
 import "core:os"
+import "core:sync"
 import "core:time"
 import p "palmy:."
 import vt "./vt"
@@ -34,7 +35,7 @@ SHOT_SCRIPTS := [?]struct {
 		 printf 'CJK  \346\227\245\346\234\254\350\252\236 \344\270\255\346\226\207 \355\225\234\352\265\255\354\226\264\n'
 		 printf 'emoji  \360\237\214\264 \360\237\232\200 \342\234\205 \360\237\216\250\n'
 		 printf 'marks  e\314\201 a\314\212 o\314\210   arabic \330\247\331\204\330\271\330\261\330\250\331\212\330\251\n'
-		 sleep 5`,
+		 sleep 9`,
 	},
 	{
 		"attrs",
@@ -42,7 +43,7 @@ SHOT_SCRIPTS := [?]struct {
 		 printf '\033[4mAunderline\033[0m \033[53moverline\033[0m \033[21mdouble\033[0m\n'
 		 printf 'plain line, nothing set\n'
 		 printf '\033[4:1msingle\033[0m \033[4:2mdouble\033[0m \033[4:3mcurly\033[0m \033[4:4mdotted\033[0m \033[4:5mdashed\033[0m\n'
-		 sleep 5`,
+		 sleep 9`,
 	},
 	{
 		"boxes",
@@ -55,7 +56,7 @@ SHOT_SCRIPTS := [?]struct {
 		 printf '\033(0mqqqqqqqqqqqqqqqqqqqqqvqqqqqqqqqqqqqqqqqqqj\033(B\n\n'
 		 printf 'tab stops:\ta\tb\tc\n'
 		 printf '\033[4munderline\033[0m \033[53moverline\033[0m \033[21mdouble\033[0m\n'
-		 sleep 5`,
+		 sleep 9`,
 	},
 }
 
@@ -80,9 +81,9 @@ shots :: proc(dir: string, opt: Options, verbose: bool) -> (files: []string, cod
 		blink_on    = true,
 		focused     = true,
 	}
-	a.rend.fonts = &o.fonts
-	a.zombies = make([dynamic]^Tab)
-	renderer_metrics(&a.rend, a.font_size, 1)
+	a.metrics.fonts = &o.fonts
+	a.zombies = make([dynamic]^Pane)
+	renderer_metrics(&a.metrics, a.font_size, 1)
 	session_init(&a.sess, 80, 24, 2000, opt.term, default_shell())
 	defer session_destroy(&a.sess)
 	if !pump_start(&a.pump, &a.sess) {
@@ -103,7 +104,9 @@ shots :: proc(dir: string, opt: Options, verbose: bool) -> (files: []string, cod
 		for time.since(deadline) < 900 * time.Millisecond {
 			time.sleep(10 * time.Millisecond)
 		}
-		a.rend.full = true
+		for pn in a.sess.panes {
+			pn.rend.full = true
+		}
 		ui := p.offscreen_begin(o)
 		frame(&a, ui)
 		p.offscreen_end(o)
@@ -115,10 +118,16 @@ shots :: proc(dir: string, opt: Options, verbose: bool) -> (files: []string, cod
 			}
 		}
 	}
-	for t in a.sess.tabs {
-		tab_request_close(t)
+	if path, ok := shot_splits(&a, o, dir); ok {
+		append(&out, path)
+		if verbose {
+			fmt.printfln("wrote %s", path)
+		}
 	}
-	if len(out) != len(SHOT_SCRIPTS) {
+	for pn in a.sess.panes {
+		pane_request_close(pn)
+	}
+	if len(out) != len(SHOT_SCRIPTS) + 1 {
 		return out[:], 7
 	}
 	return out[:], 0
@@ -143,4 +152,62 @@ shot_of :: proc(t: ^vt.Terminal, fonts: ^p.Fonts, size: f32, path: string) -> bo
 	})
 	p.offscreen_end(o)
 	return p.offscreen_write_png(o, path)
+}
+
+SHOT_ROSE :: #load("testdata/rose.six")
+SHOT_LOGO :: #load("testdata/logo.png")
+
+// shot_splits is one tab split three ways: a shell on the left, a Sixel
+// image (img2sixel's output, fed straight in) top right, and a PNG sent over
+// the Kitty graphics protocol bottom right, which has the focus.
+@(private = "file")
+shot_splits :: proc(a: ^Term_App, o: ^p.Offscreen, dir: string) -> (string, bool) {
+	tab, err := tab_open(
+		&a.sess,
+		[]string {
+			"/bin/sh",
+			"-c",
+			`printf '\033[1msplits\033[0m  ctrl+shift+r beside, ctrl+shift+d below\r\n'
+			 printf '        alt+arrows to move, alt+shift+arrows to resize\r\n'
+			 printf '        ctrl+shift+z to zoom, ctrl+shift+w to close\r\n\r\n'
+			 i=0; while [ $i -lt 16 ]; do printf "\033[3%dm%s\033[0m " $((i % 8)) "pane-$i"; i=$((i+1)); done
+			 printf '\r\n'; sleep 5`,
+		},
+	)
+	if err != "" {
+		return "", false
+	}
+	a.sess.active = len(a.sess.tabs) - 1
+	sixel, e1 := tab_split(&a.sess, tab, .Columns, []string{"/bin/sh", "-c", "sleep 5"})
+	kitty, e2 := tab_split(&a.sess, tab, .Rows, []string{"/bin/sh", "-c", "sleep 5"})
+	if e1 != "" || e2 != "" {
+		return "", false
+	}
+	// One frame lays the panes out, which gives each terminal its cell size;
+	// only then are the images sent, so they are measured in those cells.
+	ui := p.offscreen_begin(o)
+	frame(a, ui)
+	p.offscreen_end(o)
+	time.sleep(600 * time.Millisecond)
+	{
+		sync.lock(&a.pump.mu)
+		defer sync.unlock(&a.pump.mu)
+		send := proc(t: ^vt.Terminal, s: string) {
+			vt.terminal_feed(t, transmute([]u8)s)
+		}
+		send(&sixel.term, "\x1b[1mSixel\x1b[0m  img2sixel, ImageMagick's rose\r\n")
+		vt.terminal_feed(&sixel.term, SHOT_ROSE)
+		send(&sixel.term, "\r\n")
+		send(&kitty.term, "\x1b[1mKitty graphics\x1b[0m  a PNG, sent directly\r\n")
+		send(&kitty.term, fmt.tprintf("\x1b_Ga=T,f=100,q=2;%s\x1b\\", base64_encode(SHOT_LOGO, context.temp_allocator)))
+		send(&kitty.term, "\r\n")
+	}
+	for pn in a.sess.panes {
+		pn.rend.full = true
+	}
+	ui = p.offscreen_begin(o)
+	frame(a, ui)
+	p.offscreen_end(o)
+	path := fmt.aprintf("%s/term-splits.png", dir)
+	return path, p.offscreen_write_png(o, path)
 }
