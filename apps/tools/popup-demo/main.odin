@@ -10,6 +10,7 @@ package popup_demo
 
 import "core:fmt"
 import "core:os"
+import "core:strings"
 import p "palmy:."
 import sc "shadcn:."
 
@@ -32,7 +33,7 @@ main :: proc() {
 		os.exit(1)
 	}
 	defer p.destroy(app)
-	st := State{fruit = -1, last = "nothing yet"}
+	st := State{fruit = -1, last = strings.clone("nothing yet")}
 	for ui in p.frames(app) {
 		frame(ui, &st)
 		os.flush(os.stdout)
@@ -40,7 +41,8 @@ main :: proc() {
 }
 
 say :: proc(st: ^State, s: string) {
-	st.last = s
+	delete(st.last)
+	st.last = strings.clone(s)
 	fmt.println(s)
 }
 

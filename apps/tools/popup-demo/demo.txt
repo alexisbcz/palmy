@@ -1,0 +1,31 @@
+# headless-record.sh steps for popup-demo: WINDOW=480x300+272+234, 1024x768.
+wait 0.8
+move 65 32
+wait 1.2
+move 400 100
+wait 0.5
+type m
+wait 0.8
+key Down
+wait 0.3
+key Down
+wait 0.6
+key Escape
+wait 0.6
+move 386 268
+click
+wait 0.8
+move 386 330
+wait 0.4
+move 386 360
+wait 0.4
+move 386 388
+wait 0.8
+click
+wait 1.0
+move 64 268
+click
+wait 1.0
+move 250 150
+click
+wait 1.2

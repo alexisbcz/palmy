@@ -31,6 +31,10 @@
 #   wait <seconds>
 #   # comment
 #
+# WINDOW=WxH+X+Y floats the window at that size and place instead of making
+# it fullscreen, for takes that show something outside it (a popup past its
+# edge); pointer steps stay relative to the window.
+#
 # The seat has no real devices, so it holds one virtual keyboard
 # (`wtype -s`, asleep) and one virtual pointer (wl-pointer.py, beside this
 # script) for the whole take. See "Input" below for why that matters.
@@ -70,9 +74,20 @@ cleanup() {
   [ -n "${KEEP_TMP:-}" ] && cp -r "$TMP" "$KEEP_TMP"; rm -rf "$TMP"
 }
 
+OFFX=0; OFFY=0; FLOAT=""
+if [ -n "${WINDOW:-}" ]; then
+  if [[ "$WINDOW" =~ ^([0-9]+)x([0-9]+)\+([0-9]+)\+([0-9]+)$ ]]; then
+    FLOAT="for_window [app_id=\".*\"] floating enable, resize set ${BASH_REMATCH[1]} ${BASH_REMATCH[2]}, move position ${BASH_REMATCH[3]} ${BASH_REMATCH[4]}"
+    OFFX=${BASH_REMATCH[3]}; OFFY=${BASH_REMATCH[4]}
+  else
+    echo "WINDOW must look like 480x300+272+234"; exit 1
+  fi
+fi
+
 cat > "$TMP/sway.conf" <<CONF
 output HEADLESS-1 resolution ${W}x${H}
 default_border none
+$FLOAT
 # No bar, no bindings, no idle inhibitor: this compositor exists to hold one
 # window still while it is filmed. Keep this file minimal -- sway paints a red
 # "errors in your config file" banner across the top of the screen for any
@@ -160,7 +175,7 @@ sleep 0.4
 
 # A private compositor has one window and one seat, so it is always the right
 # one -- no pid matching, no re-focusing, no class guessing.
-swaymsg '[app_id=".*"] fullscreen enable' >/dev/null 2>&1
+[ -z "$FLOAT" ] && swaymsg '[app_id=".*"] fullscreen enable' >/dev/null 2>&1
 
 # Capture. This used to be wf-recorder, and in the build VM it records almost
 # nothing: sway's headless output only renders when something is damaged, so
@@ -239,9 +254,10 @@ while IFS= read -r line || [ -n "$line" ]; do
               for m in "${mods[@]}"; do args+=( -m "$m" ); done
               wtype "${args[@]}" ;;
     wait\ *)  sleep "${line#wait }" ;;
-    # The window is fullscreen on the only output, so window coordinates are
-    # output coordinates.
-    move\ *)  pointer move ${line#move } ;;
+    # The window is fullscreen on the only output, or floating at
+    # (OFFX, OFFY): pointer steps are relative to it.
+    move\ *)  set -- ${line#move }
+              pointer move $(( $1 + OFFX )) $(( $2 + OFFY )) ;;
     click*|down*|up*|wheel\ *) pointer $line ;;
     *)        echo "unknown step: $line" ;;
   esac
