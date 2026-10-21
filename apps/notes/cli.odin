@@ -98,7 +98,7 @@ COMMANDS := []kit.Command {
 		effect = .Mutate,
 		args = {{name = "note", kind = .String, help = "a title, a slug, an id or a path", required = true}},
 		flags = {
-			{name = "text", kind = .String, help = "the new text"},
+			{name = "text", kind = .String, unless = {"file"}, help = "the new text"},
 			{name = "file", kind = .Path, help = "read the new text from this file instead"},
 		},
 		out = WROTE_FIELDS,
@@ -1187,6 +1187,7 @@ cmd_write :: proc(c: ^kit.Call) -> int {
 	text := kit.cli_str(c, "text")
 	file := kit.cli_str(c, "file")
 	if text == "" && file == "" {
+		// Only `--file ""` gets here: the kit refuses a line with neither.
 		return kit.cli_fail(c, kit.EXIT_USAGE, "notes write needs --text or --file")
 	}
 	if file != "" {
