@@ -73,13 +73,6 @@ main :: proc() {
 		if code, handled := kit.cli(surface()); handled {
 			os.exit(code)
 		}
-		// A bare word the CLI did not claim is a map file for the window —
-		// unless there is no such file, in which case it is a typo, and the
-		// answer to a typo is not a window that never returns to its caller.
-		if len(args) > 0 && !strings.has_prefix(args[0], "-") && !os.exists(args[0]) {
-			fmt.eprintfln("maps: %q is neither a command nor a file (maps --help)", args[0])
-			os.exit(2)
-		}
 	}
 
 	// Two passes over the command line. The first collects the file to open,
