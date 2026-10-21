@@ -133,6 +133,7 @@ run_selftest :: proc(verbose: bool, with_e2e: bool) -> int {
 	test_loopback_gate(&t)
 	test_metadata_loopback(&t)
 	test_cli(&t)
+	test_bare_words(&t)
 
 	unit_passed := t.passed
 	unit_failed := t.failed
@@ -2679,4 +2680,40 @@ test_loopback_gate :: proc(t: ^T) {
 		hs[25] & 0x10 == 0,
 		"peer exchange would arrive over it",
 	)
+}
+
+// ---------------------------------------------------------------------------
+// A bare word: a torrent opens the window, a typo does not
+// ---------------------------------------------------------------------------
+
+// test_bare_words pins `takes_word`. Before it, every bare word that was not a
+// verb fell through to the window, so `torrent lsit` from a script opened a
+// window and never returned. Only the refusals are run as child processes: a
+// word that is accepted would open a window, which is what is being avoided.
+test_bare_words :: proc(t: ^T) {
+	tsection(t, "a bare word: a .torrent or a magnet opens the window, a typo is a usage error")
+
+	s := surface()
+	if !tcheck(t, "the surface narrows bare words", s.takes_word != nil) {
+		return
+	}
+	tcheck(t, "a .torrent on disk is taken", s.takes_word("testdata/palmy-synthetic.torrent"))
+	tcheck(t, "a magnet link is taken", s.takes_word("magnet:?xt=urn:btih:6fed858fd9a7ac0233be66b3878f14e96c9741a9"))
+	tcheck(t, "a misspelt verb is not", !s.takes_word("lsit"))
+	tcheck(t, "nor is a path that does not exist", !s.takes_word("no-such.torrent"))
+
+	self, found := find_self()
+	if !tcheck(t, "the binary under test was found", found, self) {
+		return
+	}
+	for word in ([?]string{"lsit", "no-such.torrent"}) {
+		state, sout, serr, err := os.process_exec(
+			{command = {"env", "WAYLAND_DISPLAY=", "DISPLAY=", "timeout", "20", self, word}},
+			context.temp_allocator,
+		)
+		tcheck(t, asprint("torrent %s ran", word), err == nil)
+		teq_int(t, asprint("torrent %s is a usage error (exit 2), not a window", word), state.exit_code, 2)
+		both := strings.concatenate({string(sout), string(serr)}, context.temp_allocator)
+		tcheck(t, "...that says why", strings.contains(both, "neither a command nor a file"), both)
+	}
 }

@@ -253,6 +253,7 @@ surface :: proc() -> ^kit.Surface {
 			summary    = "a BitTorrent client, loopback only",
 			gui        = true,
 			takes_path = true,
+			takes_word = kit.cli_word_is_path, // a .torrent or a magnet opens; `torrent lsit` is a usage error
 			selftest   = cli_selftest,
 			commands   = COMMANDS,
 			notes      = `torrent [file.torrent]   the window, with that torrent added
