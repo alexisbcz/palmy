@@ -2052,7 +2052,7 @@ ev_pump :: proc(timeout_ms: int) -> int {
 	if len(fds) == 0 {
 		return 0
 	}
-	n, err := linux.poll(fds[:], i32(timeout_ms))
+	n, err := p.poll_fds(fds[:], timeout_ms) // -1 must mean forever on arm64 too
 	if err != .NONE || n <= 0 {
 		return 0
 	}
