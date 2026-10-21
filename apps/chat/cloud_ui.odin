@@ -347,11 +347,10 @@ prompt_overlay :: proc(ui: ^p.Ctx, a: ^App) {
 		p.text(ui, string(a.pbuf[:]), "text-sm whitespace-nowrap")
 	}
 	p.style(ui).shrink = 0
-	if mod1(ui.now, 1.1) < 0.62 {
+	if p.caret_on(ui) {
 		p.div(ui, "w-[1.5] h-4 rounded-full bg-foreground ml-px")
 		p.end(ui)
 	}
-	ui.animating = true
 	p.end(ui)
 
 	p.text(ui, hint, "text-[11] text-muted-foreground")

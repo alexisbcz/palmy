@@ -2,12 +2,11 @@ package main
 
 // The client half of the protocol.
 //
-// There are no threads here. The socket is non-blocking and serviced once per
-// frame from the frame loop, which is both simpler than a reader thread and
-// the only arrangement palmy's loop permits: it blocks in `poll` on the
-// Wayland fd and exposes no way to add a second fd or to wake it from
-// elsewhere, so the window asks for a frame every vsync (`always = true`) and
-// drains the socket there.
+// The socket is non-blocking and serviced from the frame loop, which is
+// simpler than a reader thread doing the protocol: everything here runs on
+// the frame thread. The loop sleeps between events; a small thread in
+// wake.odin only watches the socket and wakes the loop when it is readable,
+// and the frame drains it here.
 //
 // Reconnection is explicit and visible: `Link` is one of offline, connecting
 // or online, the sidebar says which, and the composer refuses to pretend a

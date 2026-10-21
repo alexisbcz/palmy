@@ -15,6 +15,7 @@ import "core:net"
 import "core:os"
 import "core:strconv"
 import "core:strings"
+import "core:time"
 import ck "../cloudkit"
 import kit "kit:."
 import p "palmy:."
@@ -125,6 +126,7 @@ App :: struct {
 
 	// Connection.
 	sock:        net.TCP_Socket,
+	watch:       Sock_Watch, // wakes the window when the socket has data; see wake.odin
 	link:        Link,
 	rd:          w.Reader,
 	retry_at:    f64,
@@ -379,12 +381,8 @@ run_ui :: proc(a: ^App) {
 			min_width = 900,
 			min_height = 560,
 			root_class = "w-full h-full flex-row bg-background text-foreground overflow-hidden",
-			// palmy's frame loop blocks in `poll` on the Wayland fd alone and
-			// gives an app no way to add a socket to that poll set or to wake
-			// it from another thread. A network-driven UI therefore has to ask
-			// for a frame every vsync and service its socket there. Reported
-			// as a gap.
-			always = true,
+			// No `always`: the loop sleeps, and a thread watching the socket
+			// wakes it when something arrives (wake.odin).
 		},
 		a.args.dark,
 	)
@@ -407,12 +405,18 @@ run_ui :: proc(a: ^App) {
 	a.tz = tz_offset()
 	a.cur = -1
 
+	a.now = mono()
 	net_connect(a)
+	if !watch_start(&a.watch, app) {
+		fmt.eprintln("chat: cannot start the socket watcher")
+		os.exit(1)
+	}
+	defer watch_stop(&a.watch)
 
 	frame := 0
 	for ui in p.frames(app) {
 		free_all(context.temp_allocator)
-		a.now = ui.now
+		a.now = mono()
 		frame += 1
 		if frame == 2 && a.args.full {
 			p.set_fullscreen(app, true)
@@ -422,6 +426,7 @@ run_ui :: proc(a: ^App) {
 		}
 
 		net_pump(a)
+		watch_frame(&a.watch, a)
 		cloud_tick(a)
 		expire_typers(a)
 		// The attach dialog is modal, so the list behind it must not react to
@@ -433,9 +438,19 @@ run_ui :: proc(a: ^App) {
 		build(ui, a)
 		pin_to_bottom(a, ui)
 
-		if a.toast != "" && ui.now > a.toast_t {
+		if a.toast != "" && a.now > a.toast_t {
+			// This frame still drew the toast. Two more take it off the
+			// screen: measured on headless sway, the first frame after a
+			// clear is presented and the toast stays visible (palmy's damage
+			// tracking; PALMY_DAMAGE=off needs only one).
 			a.toast = ""
+			p.redraw(ui)
+			p.wake_after(ui, 50 * time.Millisecond)
 		}
+		// Anything sent this frame (a key, a read cursor) may have a reply
+		// already on its way; the watcher sees it. Deadlines are armed here.
+		watch_frame(&a.watch, a)
+		schedule_wakes(ui, a)
 	}
 	net_close(a)
 }

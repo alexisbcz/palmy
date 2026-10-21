@@ -270,6 +270,9 @@ link_footer_body :: proc(ui: ^p.Ctx, a: ^App) {
 		p.end(ui)
 
 	case .Connecting:
+		// The one place this window still animates every frame: a spinner
+		// while a connection is being made, which ends when it is made or
+		// fails.
 		p.icon(ui, IC_LOADER_CIRCLE, "size-4 shrink-0 text-muted-foreground", p.elapsed(ui) * 0.8)
 		ui.animating = true
 		p.col(ui, "flex-1 min-w-0 gap-0")
@@ -832,8 +835,8 @@ composer :: proc(ui: ^p.Ctx, a: ^App) {
 		src := string(a.buf[:])
 		pre := src[v.start:clamp(a.caret, v.start, v.end)]
 		cx := p.text_width(ui.fonts, pre, 14, .Sans, .Regular)
-		ui.animating = true
-		if mod1(ui.now, 1.1) < 0.62 {
+		// caret_on wakes the loop once per blink edge on a real clock.
+		if p.caret_on(ui) {
 			car := p.div(ui, "absolute w-[1.5] rounded-full bg-foreground")
 			cs := p.style(ui, car)
 			cs.position = .Absolute
@@ -886,7 +889,15 @@ typing_strip :: proc(ui: ^p.Ctx, a: ^App) {
 		p.style(ui).margin[p.BOTTOM] = up ? f32(3) : 0
 		p.end(ui)
 	}
-	ui.animating = true
+	// The dots only change when one of them crosses half its cycle, so the
+	// next frame worth drawing is the nearest such edge -- about ten a
+	// second, rather than every frame at the display rate.
+	next := 1.0
+	for k in 0 ..< 3 {
+		x := a.now * 1.6 + f64(k) * 0.22
+		next = min(next, (0.5 - mod1(x, 0.5)) / 1.6)
+	}
+	p.wake_after(ui, secs(next))
 
 	label: string
 	switch len(who) {
@@ -1192,8 +1203,7 @@ search_overlay :: proc(ui: ^p.Ctx, a: ^App) {
 		p.text(ui, q, "text-sm whitespace-nowrap")
 	}
 	p.style(ui).shrink = 0
-	ui.animating = true
-	if mod1(ui.now, 1.1) < 0.62 {
+	if p.caret_on(ui) {
 		cx := p.text_width(ui.fonts, q[:clamp(a.qcaret, 0, len(q))], 14, .Sans, .Regular)
 		car := p.div(ui, "absolute w-[1.5] rounded-full bg-foreground")
 		cs := p.style(ui, car)
