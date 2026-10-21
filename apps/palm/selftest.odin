@@ -360,6 +360,7 @@ selftest :: proc() -> int {
 	test_examples(infos)
 	test_read_schemas(infos)
 	test_destructive(infos)
+	test_confirm(infos)
 	test_safety(infos)
 	test_exit_codes(scratch)
 	test_dispatcher(scratch)
@@ -663,6 +664,70 @@ test_read_schemas :: proc(infos: []Surface_Info) {
 			)
 		}
 	}
+}
+
+// A flag declared `confirm` asks for --yes on any command, a read included
+// (`vault health --breach` sends something off the machine). Like the
+// destructive gate it is in the shared parser, so --parse-only reaches it and
+// nothing runs.
+test_confirm :: proc(infos: []Surface_Info) {
+	section("every flag that asks for --yes refuses without it")
+
+	found := 0
+	for info in infos {
+		if !info.available {
+			continue
+		}
+		for cmd in info.commands {
+			verb := str_of(cmd, "verb")
+			for f in arr_of(cmd, "flags") {
+				if str_of(f, "confirm") == "" {
+					continue
+				}
+				found += 1
+				flag := fmt.tprintf("--%s", str_of(f, "name"))
+				dex: Example
+				for e in arr_of(cmd, "examples") {
+					s, _ := e.(json.String)
+					if d := example_of(string(s)); !d.composed && slice_has(d.words, flag) {
+						dex = d
+						break
+					}
+				}
+				check(len(dex.words) > 0, "%s %s ships an example with %s", info.noun.noun, verb, flag)
+				if len(dex.words) == 0 {
+					continue
+				}
+				check(slice_has(dex.words, "--yes"), "the example for %s %s %s passes --yes", info.noun.noun, verb, flag)
+				without := make([dynamic]string, context.temp_allocator)
+				with := make([dynamic]string, context.temp_allocator)
+				for w in dex.words[1:] {
+					if w != "--yes" {
+						append(&without, w)
+					}
+					append(&with, w)
+				}
+				append(&without, "--parse-only", "--json")
+				append(&with, "--parse-only")
+				out, code := sh(with_env(dex.env, quoted(info.path, without[:])))
+				eq_i(code, kit.EXIT_NEEDS_YES, "%s %s %s without --yes exits 4", info.noun.noun, verb, flag)
+				check(strings.contains(out, fmt.tprintf(`"flag": "%s"`, flag[2:])), "and names the flag (%s)", strings.trim_space(out))
+				_, ok_code := sh(with_env(dex.env, quoted(info.path, with[:])))
+				eq_i(ok_code, 0, "%s %s %s with --yes is accepted", info.noun.noun, verb, flag)
+			}
+		}
+	}
+	check(found > 0, "and there is at least one such flag to check (%d)", found)
+}
+
+@(private = "file")
+slice_has :: proc(words: []string, w: string) -> bool {
+	for x in words {
+		if x == w {
+			return true
+		}
+	}
+	return false
 }
 
 // Every destructive command refuses without --yes. The refusal is in the

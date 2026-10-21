@@ -290,7 +290,14 @@ COMMANDS := []kit.Command {
 		summary = "reused, weak and exposed passwords; --breach also asks Have I Been Pwned (k-anonymity, off by default)",
 		effect = .Read,
 		flags = {PW, LOCAL, VAULTF, OFFLINE,
-			{name = "breach", kind = .Bool, help = "send the first 5 hex digits of each password's SHA-1 to api.pwnedpasswords.com"},
+			{
+				name = "breach",
+				kind = .Bool,
+				help = "send the first 5 hex digits of each password's SHA-1 to api.pwnedpasswords.com",
+				// A read that sends something off the machine: the kit
+				// refuses it without --yes, before the vault is opened.
+				confirm = "makes network requests to api.pwnedpasswords.com (5 hex digits of each password's SHA-1)",
+			},
 		},
 		out = {
 			{name = "items", kind = .Int}, {name = "weak", kind = .Int}, {name = "reused", kind = .Int},
@@ -1218,10 +1225,7 @@ cmd_health :: proc(c: ^kit.Call) -> int {
 	if code := open_book(c, &b); code != kit.EXIT_OK {
 		return code
 	}
-	breach := kit.cli_bool(c, "breach")
-	if breach && !c.yes {
-		return kit.cli_fail(c, kit.EXIT_NEEDS_YES, "--breach makes network requests to api.pwnedpasswords.com (5 hex digits of each password's SHA-1); add --yes to allow it")
-	}
+	breach := kit.cli_bool(c, "breach") // the kit has refused it without --yes
 	h := health_check(&b.v)
 	defer health_free(&h)
 	if breach {
