@@ -222,7 +222,7 @@ COMMANDS := []kit.Command {
 		effect = .Mutate,
 		aliases = {"--engine"},
 		flags = {
-			{name = "torrent", kind = .Path, help = "the .torrent to add"},
+			{name = "torrent", kind = .Path, unless = {"magnet"}, help = "the .torrent to add"},
 			{name = "magnet", kind = .String, help = "or a magnet link, resolved from its own loopback trackers"},
 			{name = "dir", kind = .Path, help = "the download directory", def = "."},
 			{name = "port", kind = .Int, help = "the 127.0.0.1 port to listen on; 0 picks one", def = "0"},
@@ -514,6 +514,7 @@ cmd_engine :: proc(c: ^kit.Call) -> int {
 			return kit.cli_fail(c, kit.EXIT_USAGE, err)
 		}
 	} else {
+		// Only `--magnet ""` gets here: the kit refuses a line with neither.
 		return kit.cli_fail(c, kit.EXIT_USAGE, "the client needs --torrent or --magnet")
 	}
 	if c.dry_run {
