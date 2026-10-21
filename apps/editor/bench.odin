@@ -14,7 +14,22 @@ ms :: proc(d: time.Duration) -> f64 {
 	return time.duration_milliseconds(d)
 }
 
-run_bench :: proc(path: string) {
+// The report goes to stdout, except under `editor bench --json`, where stdout
+// is the JSON document and nothing else.
+@(private = "file")
+g_bench_stderr: bool
+
+@(private = "file")
+say :: proc(format: string, args: ..any) {
+	if g_bench_stderr {
+		fmt.eprintfln(format, ..args)
+	} else {
+		fmt.printfln(format, ..args)
+	}
+}
+
+run_bench :: proc(path: string, to_stderr := false) {
+	g_bench_stderr = to_stderr
 	if path == "" {
 		fmt.eprintln("editor --bench needs a file")
 		os.exit(2)
@@ -45,10 +60,10 @@ run_bench :: proc(path: string) {
 
 	n := buf_lines(&b)
 	bytes := buf_byte_size(&b)
-	fmt.printfln("file          %s", path)
-	fmt.printfln("size          %d bytes, %d lines", bytes, n)
-	fmt.printfln("load          %.1f ms", ms(load))
-	fmt.printfln("round trip    %s", same ? "byte for byte identical" : "DIFFERS")
+	say("file          %s", path)
+	say("size          %d bytes, %d lines", bytes, n)
+	say("load          %.1f ms", ms(load))
+	say("round trip    %s", same ? "byte for byte identical" : "DIFFERS")
 
 	// A frame builds one Disp per visible line. 40 lines is a full window.
 	ROWS :: 40
@@ -63,7 +78,7 @@ run_bench :: proc(path: string) {
 		}
 	}
 	time.stopwatch_stop(&sw)
-	fmt.printfln(
+	say(
 		"viewport      %.3f ms per 40-line window (%d windows, %d bytes read)",
 		ms(time.stopwatch_duration(sw)) / frames,
 		frames,
@@ -80,7 +95,7 @@ run_bench :: proc(path: string) {
 		cur = buf_apply(&b, cur, cur, "x", cur, .Type)
 	}
 	time.stopwatch_stop(&sw)
-	fmt.printfln(
+	say(
 		"insert@top    %.4f ms per character (2000 chars at line 0)",
 		ms(time.stopwatch_duration(sw)) / 2000,
 	)
@@ -94,7 +109,7 @@ run_bench :: proc(path: string) {
 		cur = buf_apply(&b, cur, cur, "\n", cur, .No)
 	}
 	time.stopwatch_stop(&sw)
-	fmt.printfln(
+	say(
 		"newline@top   %.4f ms per line split (500 splits in a %d-line file)",
 		ms(time.stopwatch_duration(sw)) / 500,
 		buf_lines(&b),
@@ -109,7 +124,7 @@ run_bench :: proc(path: string) {
 		end = buf_apply(&b, end, end, "y", end, .Type)
 	}
 	time.stopwatch_stop(&sw)
-	fmt.printfln(
+	say(
 		"insert@end    %.4f ms per character (2000 chars at the last line)",
 		ms(time.stopwatch_duration(sw)) / 2000,
 	)
@@ -125,12 +140,12 @@ run_bench :: proc(path: string) {
 		}
 	}
 	time.stopwatch_stop(&sw)
-	fmt.printfln(
+	say(
 		"undo all      %.1f ms for %d entries",
 		ms(time.stopwatch_duration(sw)),
 		depth,
 	)
-	fmt.printfln("lines after   %d (back to %d: %v)", buf_lines(&b), n, buf_lines(&b) == n)
+	say("lines after   %d (back to %d: %v)", buf_lines(&b), n, buf_lines(&b) == n)
 
 	// A whole-file search, which is what the match counter in the find bar
 	// recomputes on every keystroke.
@@ -139,7 +154,7 @@ run_bench :: proc(path: string) {
 	time.stopwatch_start(&sw)
 	hits := buf_count(&b, needle, true)
 	time.stopwatch_stop(&sw)
-	fmt.printfln(
+	say(
 		"count \"%s\"     %.1f ms, %d hits",
 		needle,
 		ms(time.stopwatch_duration(sw)),
@@ -153,7 +168,7 @@ run_bench :: proc(path: string) {
 		time.stopwatch_start(&sw)
 		lex_states_upto(&b, buf_lines(&b), lang_for_path(path))
 		time.stopwatch_stop(&sw)
-		fmt.printfln("tokenise all  %.1f ms", ms(time.stopwatch_duration(sw)))
+		say("tokenise all  %.1f ms", ms(time.stopwatch_duration(sw)))
 	}
 
 	bench_wrap(&b, path)
@@ -185,7 +200,7 @@ bench_carets :: proc(path: string) {
 	caret_add_all(&ed)
 	time.stopwatch_stop(&sw)
 	placed := carets_count(&ed)
-	fmt.printfln(
+	say(
 		"carets place  %.3f ms to put %d cursors on every match in %d lines",
 		ms(time.stopwatch_duration(sw)),
 		placed,
@@ -199,7 +214,7 @@ bench_carets :: proc(path: string) {
 		carets_edit(&ed, .Insert, "x")
 	}
 	time.stopwatch_stop(&sw)
-	fmt.printfln(
+	say(
 		"carets type   %.3f ms per keystroke across %d cursors",
 		ms(time.stopwatch_duration(sw)) / KEYS,
 		placed,
@@ -209,7 +224,7 @@ bench_carets :: proc(path: string) {
 	time.stopwatch_start(&sw)
 	buf_undo(&ed.buf)
 	time.stopwatch_stop(&sw)
-	fmt.printfln(
+	say(
 		"carets undo   %.3f ms to take the whole run of %d keystrokes back",
 		ms(time.stopwatch_duration(sw)),
 		KEYS,
@@ -246,7 +261,7 @@ bench_wrap :: proc(b: ^Buffer, path: string) {
 		rows += len(ed.vis)
 	}
 	time.stopwatch_stop(&sw)
-	fmt.printfln(
+	say(
 		"wrap window   %.4f ms per %d-row window (%d windows, %d rows laid out)",
 		ms(time.stopwatch_duration(sw)) / frames,
 		ed.rows,
@@ -263,7 +278,7 @@ bench_wrap :: proc(b: ^Buffer, path: string) {
 		line, sub = vis_advance(&ed, line, sub, 1)
 	}
 	time.stopwatch_stop(&sw)
-	fmt.printfln(
+	say(
 		"wrap scroll   %.4f ms per visual row (%d rows walked)",
 		ms(time.stopwatch_duration(sw)) / steps,
 		steps,
@@ -285,7 +300,7 @@ bench_wrap :: proc(b: ^Buffer, path: string) {
 		}
 	}
 	time.stopwatch_stop(&sw)
-	fmt.printfln(
+	say(
 		"wrap caret    %.4f ms per round trip (%d trips, %d)",
 		ms(time.stopwatch_duration(sw)) / trips,
 		trips,

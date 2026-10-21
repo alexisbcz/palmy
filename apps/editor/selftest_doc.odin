@@ -289,6 +289,8 @@ test_cli :: proc() {
 		check(code == 0, "cli: --shots=<dir> too")
 		_, code = run(dir, "--bench", "a.odin", "--parse-only")
 		check(code == 0, "cli: --bench <file> too")
+		bout, bcode := run(dir, "bench", "a.odin", "--json")
+		check(bcode == 0 && strings.has_prefix(strings.trim_space(bout), "{") && strings.contains(bout, `"file"`), "cli: bench --json keeps its report off stdout")
 		_, code = run(dir, "lnes")
 		check(code == kit.EXIT_USAGE, "cli: a mistyped verb is a usage error, not a new file in a window")
 	}

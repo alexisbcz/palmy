@@ -739,7 +739,7 @@ cmd_shots :: proc(c: ^kit.Call) -> int {
 
 @(private = "file")
 cmd_bench :: proc(c: ^kit.Call) -> int {
-	run_bench(kit.cli_str(c, "file"))
+	run_bench(kit.cli_str(c, "file"), c.json)
 	kit.jset_str(c.out, "file", kit.cli_str(c, "file"))
 	return kit.EXIT_OK
 }
