@@ -5,6 +5,9 @@
 # exists (generated with ffmpeg, nothing downloaded), and ask Hyprland to float
 # the window at its natural size so the recording is not whatever slot the
 # tiling layout happened to give it.
+# With no sound device (the build VM, headless-record.sh) run it with
+# PALMY_AUDIO_SINK=null: the null sink takes the PCM at a sound card's rate,
+# so the clock, the gapless join and the analyser all run for real.
 set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
 

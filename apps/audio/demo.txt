@@ -1,24 +1,35 @@
-# palmy audio — gapless playback, and a spectrum that reaches 8 kHz.
+# palmy audio — gapless playback, a spectrum that reaches 24 kHz, and chapters.
 #
-# Two files holding one continuous frequency sweep. If the join were not
-# gapless the climb would stutter; it does not. The sweep also runs straight
-# through 4 kHz, which is where the old 8 kHz analysis rate stopped.
+# Two files holding one continuous frequency sweep, 100 Hz to 16 kHz. If the
+# join were not gapless the climb would stutter; it does not. The sweep runs
+# straight through 4 and 8 kHz, where the old 8 and 16 kHz analysis rates
+# stopped. Then a four-chapter "audiobook": the marks on the waveform, the list
+# under the playlist, and ] / [ jumping between them.
 wait 1.6
 key Return
-wait 4.0
+wait 3.0
 key 8
-wait 4.2
-wait 3.5
+wait 4.5
+wait 4.0
 key v
-wait 3.0
+wait 2.5
 key v
-wait 1.6
+wait 1.0
+key 6
+wait 4.0
 key n
-wait 4.5
-key 9
-wait 4.5
+wait 1.0
+key n
+wait 1.0
+key n
 wait 3.0
-key r
-wait 1.2
-key 9
-wait 5.0
+key bracketright
+wait 3.0
+key bracketright
+wait 3.0
+key bracketleft
+wait 2.5
+key bracketright
+wait 2.0
+key bracketright
+wait 3.0

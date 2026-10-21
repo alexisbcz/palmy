@@ -283,6 +283,7 @@ AUDIO_EXT := [?]string {
 	".oga",
 	".opus",
 	".m4a",
+	".m4b",
 	".aac",
 	".wav",
 	".wma",
