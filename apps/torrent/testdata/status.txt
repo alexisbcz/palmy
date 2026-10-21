@@ -1,0 +1,16 @@
+port 40211
+elapsed 2.002
+torrents 1
+state Seeding
+progress 1.000000
+pieces 82
+have 82
+verified 82
+downloaded 0
+uploaded 0
+wasted 0
+down_rate 0.0
+up_rate 0.0
+peers 0
+info_hash 6fed858fd9a7ac0233be66b3878f14e96c9741a9
+error 

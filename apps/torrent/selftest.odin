@@ -131,6 +131,7 @@ run_selftest :: proc(verbose: bool, with_e2e: bool) -> int {
 	test_create_torrent(&t)
 	test_loopback_gate(&t)
 	test_metadata_loopback(&t)
+	test_cli(&t)
 
 	unit_passed := t.passed
 	unit_failed := t.failed

@@ -12,6 +12,7 @@ package main
 // It binds 127.0.0.1 and nothing else, through the same `sock_listen` gate the
 // client uses. There is no configuration that would let it bind 0.0.0.0.
 
+import "base:runtime"
 import "core:fmt"
 import "core:strings"
 import "core:sys/linux"
@@ -71,6 +72,7 @@ trackerd_run :: proc(
 	ports_file: string,
 	verbose: bool,
 	run_for: f64 = 0,
+	ports_out: ^[2]int = nil, // the ports actually bound, for a caller that asked for 0
 ) -> (
 	err: string,
 ) {
@@ -92,7 +94,11 @@ trackerd_run :: proc(
 	}
 	t.udp_port = t.udp.bound
 
-	fmt.printfln(
+	if ports_out != nil {
+		ports_out^ = {t.http_port, t.udp_port}
+	}
+	// Progress, on stderr: stdout belongs to the command's result.
+	fmt.eprintfln(
 		"tracker: http://127.0.0.1:%d/announce  udp://127.0.0.1:%d  (loopback only)",
 		t.http_port,
 		t.udp_port,
@@ -109,12 +115,22 @@ trackerd_run :: proc(
 		}
 	}
 
-	started := now_s()
-	for !t.stop {
-		if run_for > 0 && now_s() - started > run_for {
-			break
+	// A temp allocator of its own, reset every step, so a tracker left
+	// running for half an hour does not grow, and the caller's — which may
+	// hold the command line it was started from — is left alone.
+	loop_temp: runtime.Default_Temp_Allocator
+	runtime.default_temp_allocator_init(&loop_temp, 1 << 20, context.allocator)
+	defer runtime.default_temp_allocator_destroy(&loop_temp)
+	{
+		context.temp_allocator = runtime.default_temp_allocator(&loop_temp)
+		started := now_s()
+		for !t.stop {
+			if run_for > 0 && now_s() - started > run_for {
+				break
+			}
+			trackerd_step(t, 200)
+			free_all(context.temp_allocator)
 		}
-		trackerd_step(t, 200)
 	}
 	sock_close(t.listener)
 	udp_close(&t.udp)
