@@ -442,12 +442,39 @@ test_button_label_is_legible_on_its_own_fill :: proc(t: ^testing.T) {
 	// A caller recolouring the button keeps the label: `class` wins over the
 	// base, and a variant that set only the fill would be the regression.
 	//
-	// The bar here is 3:1, not 4.5:1, and deliberately: the stock
-	// `text-slate-100` on `bg-indigo-500` measures 4.08:1, which is under
-	// WCAG AA for body text. That is a design note for the toolkit rather
-	// than something this test should enforce, so the assertion only catches
-	// a real collision between the label and the fill.
-	ratio, ink, fill := draw("w-full h-full bg-white text-slate-900", "bg-indigo-500 border-indigo-400")
+	// THE DECISION on `text-slate-100` over `bg-indigo-500` (4.08:1, under
+	// WCAG AA's 4.5:1 for body text; the label is 14px semibold, which is not
+	// "large text"):
+	//
+	//   The token stays. indigo-500 is Tailwind's #6366f1, and a class name in
+	//   palmy means what it means in Tailwind: that is what lets the parity
+	//   suite compare against a browser, and what lets anyone read a palmy
+	//   class string. Darkening palmy's indigo-500 would make every
+	//   `bg-indigo-500` disagree with the browser to fix one pairing.
+	//
+	//   The label stays. No label colour rescues that fill: even pure white
+	//   on #6366f1 is 4.47:1. Changing BUTTON_BASE's `text-slate-100` would
+	//   cost the default button nothing and fix nothing.
+	//
+	//   The pairing changes. A coloured primary button is
+	//   `bg-indigo-600 hover:bg-indigo-700 border-indigo-500`: 5.74:1 at rest
+	//   and 7.21:1 hovered, which is also what Tailwind's own examples use for
+	//   a filled button with light text. The old documented example,
+	//   `bg-indigo-500 hover:bg-indigo-400`, was 4.08:1 at rest and 2.72:1
+	//   under the pointer. The example in `button`'s doc comment
+	//   (palmy/widgets.odin) and in README.md should say indigo-600; neither
+	//   file is this test's to change, so the change is asked for in the
+	//   round-3 report.
+	//
+	// So two assertions: the recommended pairing meets AA, and a recolour to
+	// any fill keeps the label (3:1 catches a collision, not a style choice
+	// a caller is allowed to make).
+	ratio, ink, fill := draw("w-full h-full bg-white text-slate-900", "bg-indigo-600 hover:bg-indigo-700 border-indigo-500")
+	testing.expect_value(t, fill, p.Color{0x4f, 0x46, 0xe5, 255})
+	testing.expectf(t, ink > 30, "the label survives a recolour (%d pixels)", ink)
+	testing.expectf(t, ratio >= 4.5, "the recommended primary pairing meets WCAG AA (%.2f:1)", ratio)
+
+	ratio, ink, fill = draw("w-full h-full bg-white text-slate-900", "bg-indigo-500 border-indigo-400")
 	testing.expect_value(t, fill, p.Color{0x63, 0x66, 0xf1, 255})
 	testing.expectf(t, ink > 30, "the label survives a recolour (%d pixels)", ink)
 	testing.expectf(t, ratio >= 3, "a recoloured button is still readable (%.2f:1)", ratio)
