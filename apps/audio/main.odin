@@ -603,6 +603,32 @@ seek_to :: proc(st: ^St, t: f64) {
 	rethink_next(st)
 }
 
+// chapter_step seeks to the next (d > 0) or previous chapter of the track
+// playing, and names where it landed. Previous rewinds to the start of the
+// current chapter first unless it only just began (chapter_seek_target).
+chapter_step :: proc(st: ^St, d: int) -> (label: string, ok: bool) {
+	c := current(st)
+	if c == nil || len(c.m.chapters) == 0 || !st.e.live {
+		return "", false
+	}
+	t, good := chapter_seek_target(c.m.chapters, st.now, d)
+	if !good {
+		return d > 0 ? "No later chapter" : "", d > 0
+	}
+	seek_to(st, t)
+	st.now = t
+	return chapter_label(c.m.chapters, t), true
+}
+
+// chapter_label names the chapter a time falls in, for the toast.
+chapter_label :: proc(chs: []Chapter, t: f64) -> string {
+	i := chapter_at(chs, t)
+	if i < 0 || i >= len(chs) {
+		return "Start"
+	}
+	return fmt.tprintf("Chapter %d/%d · %s", i + 1, len(chs), chs[i].title)
+}
+
 load_cover :: proc(st: ^St, idx: int) {
 	if st.cover_for == idx {
 		return
@@ -770,6 +796,13 @@ handle_keys :: proc(ui: ^p.Ctx, app: ^p.App, st: ^St) {
 		rebuild_order(st)
 		rethink_next(st)
 		toast(st, ui, st.shuffle ? "Shuffle on" : "Shuffle off")
+	}
+	// Chapters: brackets, because PgUp/PgDn page the playlist here.
+	if p.key_pressed(ui, ']') {
+		if label, ok := chapter_step(st, 1); ok {toast(st, ui, label)}
+	}
+	if p.key_pressed(ui, '[') {
+		if label, ok := chapter_step(st, -1); ok {toast(st, ui, label)}
 	}
 	if p.key_pressed(ui, 'v') {
 		st.vis_mode = st.vis_mode == .Spectrum ? .Scope : .Spectrum

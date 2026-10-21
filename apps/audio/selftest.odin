@@ -49,7 +49,9 @@ run_selftest :: proc() {
 	test_tags()
 	test_formats()
 	test_order()
+	test_chapter_doc()
 	test_engine()
+	test_chapters()
 	test_gapless()
 	test_cli()
 
@@ -921,6 +923,135 @@ test_gapless :: proc() {
 
 	engine_stop(&e)
 	check(!e.live && !e.sink_live, "an explicit stop does tear the sink down")
+}
+
+// test_chapter_doc is apps/video's chapter test, run against audio's copy of
+// the same reader.
+test_chapter_doc :: proc() {
+	doc := `{
+	  "chapters": [
+	    { "id": 0, "time_base": "1/1000", "start": 0, "end": 5000,
+	      "start_time": "0.000000", "end_time": "5.000000",
+	      "tags": { "title": "Opening" } },
+	    { "id": 2, "time_base": "1/1000", "start": 12500, "end": 20000,
+	      "start_time": "12.500000", "end_time": "20.000000" },
+	    { "id": 1, "time_base": "1/1000", "start": 5000, "end": 12500,
+	      "tags": { "TITLE": "The Middle" } }
+	  ]
+	}`
+	chs := parse_chapters(doc)
+	check(len(chs) == 3, fmt.tprintf("three chapters, got %d", len(chs)))
+	if len(chs) != 3 {
+		return
+	}
+	check(abs(chs[0].start) < 1e-9 && abs(chs[0].end - 5) < 1e-9, "the first chapter's times")
+	check(chs[0].title == "Opening", fmt.tprintf("the first chapter's title, got %q", chs[0].title))
+	// Sorted by start time, so the out-of-order middle chapter is second.
+	check(abs(chs[1].start - 5) < 1e-9, "the chapters come back in time order")
+	check(chs[1].title == "The Middle", fmt.tprintf("an upper-case TITLE tag is read, got %q", chs[1].title))
+	check(abs(chs[1].end - 12.5) < 1e-9, "a chapter with no start_time falls back to the time base")
+	check(chs[2].title == "Chapter 3", fmt.tprintf("an untitled chapter is numbered, got %q", chs[2].title))
+
+	check(chapter_at(chs, 0) == 0, "time zero is in the first chapter")
+	check(chapter_at(chs, 4.99) == 0, "just before the boundary")
+	check(chapter_at(chs, 5.0) == 1, "exactly on the boundary is the next chapter")
+	check(chapter_at(chs, 19) == 2, "inside the last chapter")
+	check(chapter_at(chs, 1e6) == 2, "past the end is still the last chapter")
+
+	// Jumping. Forward is the next start; back rewinds to this chapter's start
+	// unless we only just entered it.
+	t, ok := chapter_seek_target(chs, 1, 1)
+	check(ok && abs(t - 5) < 1e-9, "next chapter from the first")
+	t, ok = chapter_seek_target(chs, 19, 1)
+	check(!ok, "there is no chapter after the last one")
+	t, ok = chapter_seek_target(chs, 10, -1)
+	check(ok && abs(t - 5) < 1e-9, "back rewinds to the current chapter's start")
+	t, ok = chapter_seek_target(chs, 6, -1)
+	check(ok && abs(t) < 1e-9, "back from just inside a chapter goes to the previous one")
+	_, ok = chapter_seek_target(nil, 10, 1)
+	check(!ok, "a file with no chapters cannot jump")
+
+	// A file whose first chapter starts late: before it there is no chapter.
+	late := parse_chapters(`{"chapters":[{"start_time":"2.0","end_time":"4.0","tags":{"title":"Late"}}]}`)
+	check(len(late) == 1 && chapter_at(late, 1) == -1, "before the first chapter there is no chapter")
+
+	check(len(parse_chapters(`{"format":{}}`)) == 0, "a document with no chapters block has no chapters")
+	check(len(parse_chapters("not json")) == 0, "an unparseable document has no chapters")
+}
+
+// test_chapters runs a real chaptered file through ffprobe, the probe CLI and
+// the engine: the marks come back titled and in order, and seeking to the
+// next one puts the playback clock inside it.
+test_chapters :: proc() {
+	if !kit.has_tool("ffmpeg") || !kit.has_tool("ffprobe") {
+		fmt.println("  skip  ffmpeg is not installed; chapter checks not run")
+		return
+	}
+	dir := fmt.tprintf("%s/palmy-audio-chapters-%d", os.temp_dir(context.temp_allocator), os.get_pid())
+	_ = os.make_directory_all(dir)
+	defer _ = os.remove_all(dir)
+	meta := fmt.tprintf("%s/meta.txt", dir)
+	book := fmt.tprintf("%s/book.m4a", dir)
+	_ = os.write_entire_file(meta, transmute([]u8)string(`;FFMETADATA1
+title=Selftest Book
+[CHAPTER]
+TIMEBASE=1/1000
+START=0
+END=4000
+title=Prologue
+[CHAPTER]
+TIMEBASE=1/1000
+START=4000
+END=9000
+title=The Middle
+[CHAPTER]
+TIMEBASE=1/1000
+START=9000
+END=12000
+`))
+	_, made := kit.run(
+		{
+			"ffmpeg", "-y", "-v", "error",
+			"-f", "lavfi", "-i", "sine=frequency=330:duration=12",
+			"-i", meta, "-map", "0:a", "-map_metadata", "1", "-map_chapters", "1",
+			"-c:a", "aac", "-b:a", "96k", book,
+		},
+		context.temp_allocator,
+	)
+	if !made || !os.exists(book) {
+		fmt.println("  skip  could not generate a chaptered file")
+		return
+	}
+	m := probe_file(book)
+	check(m.ok, "a chaptered file probes")
+	check(len(m.chapters) == 3, fmt.tprintf("ffprobe's three chapters are read (got %d)", len(m.chapters)))
+	if len(m.chapters) != 3 {
+		return
+	}
+	check(m.chapters[1].title == "The Middle" && abs(m.chapters[1].start - 4) < 0.01, "the second is titled and starts at 4 s")
+	check(m.chapters[2].title == "Chapter 3", "the untitled third is numbered")
+
+	out, code := cli_run({}, "probe", book, "--json")
+	check(code == 0 && strings.contains(out, `"The Middle"`), "audio probe --json lists the chapters")
+	valid(out, PROBE_FIELDS, "audio probe --json with chapters")
+
+	e: Engine
+	engine_init(&e)
+	engine_set_volume(&e, 0)
+	engine_start(&e, m, 1, 0)
+	check(e.live, "the chaptered file plays")
+	t, ok := chapter_seek_target(m.chapters, engine_clock(&e), 1)
+	check(ok && abs(t - 4) < 0.01, "next chapter from the first is at 4 s")
+	engine_start(&e, m, t, 0)
+	for _ in 0 ..< 400 {
+		if engine_clock(&e) > t + 0.3 {break}
+		kit_sleep(5)
+	}
+	c := engine_clock(&e)
+	check(chapter_at(m.chapters, c) == 1 && c < t + 2, fmt.tprintf("and after the seek the clock is inside it (%.2f s)", c))
+	t, ok = chapter_seek_target(m.chapters, c, -1)
+	check(ok && abs(t) < 0.01, "back, just after entering a chapter, goes to the one before it")
+	engine_stop(&e)
 }
 
 kit_sleep :: proc(ms: int) {

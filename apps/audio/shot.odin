@@ -134,6 +134,10 @@ apply_keys :: proc(st: ^St, keys: string) {
 			engine_mute(&st.e, !st.e.muted)
 		case "silent":
 			engine_set_volume(&st.e, 0)
+		case "chapnext":
+			chapter_step(st, 1)
+		case "chapprev":
+			chapter_step(st, -1)
 		case:
 			// `seek0.8` jumps to eight tenths of the track, which is how a
 			// headless run gets near a track boundary without waiting for it.

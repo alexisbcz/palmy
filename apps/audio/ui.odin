@@ -251,6 +251,22 @@ wave_strip :: proc(ui: ^p.Ctx, st: ^St) {
 	p.text(ui, timecode(clamp(now, 0, dur)), "text-xs font-medium tabular-nums whitespace-nowrap")
 	p.style(ui).shrink = 0
 	p.spacer(ui)
+	// The chapter the playhead is in, named: a mark on the strip alone does
+	// not say which one you are hearing.
+	if chs := cur.m.chapters; len(chs) > 0 {
+		if ci := chapter_at(chs, now); ci >= 0 {
+			p.icon(ui, IC_LIST, "size-3.5 shrink-0 text-muted-foreground")
+			p.textf(
+				ui,
+				"shrink min-w-0 text-xs text-muted-foreground whitespace-nowrap truncate pl-1.5",
+				"%d/%d  %s",
+				ci + 1,
+				len(chs),
+				chs[ci].title,
+			)
+			p.spacer(ui)
+		}
+	}
 	p.textf(
 		ui,
 		"text-xs text-muted-foreground tabular-nums whitespace-nowrap",
@@ -297,6 +313,20 @@ draw_wave :: proc(c: ^p.Canvas, r: p.Rect, st: ^St) {
 			{w / 2, w / 2, w / 2, w / 2},
 			x + w <= split ? played : ahead,
 		)
+	}
+	// Chapter marks: a faint line through the strip with a solid cap at each
+	// edge, so the waveform stays readable under them.
+	if cur != nil {
+		mark := p.Color{251, 191, 36, 255}
+		for ch in cur.m.chapters {
+			if ch.start <= 0.001 || ch.start >= dur {
+				continue
+			}
+			x := r.x + r.w * f32(ch.start / dur) - 1 * c.scale
+			p.fill_rect(c, {x, r.y, 2 * c.scale, r.h}, p.Color{251, 191, 36, 70})
+			p.fill_rect(c, {x, r.y, 2 * c.scale, 6 * c.scale}, mark)
+			p.fill_rect(c, {x, r.y + r.h - 6 * c.scale, 2 * c.scale, 6 * c.scale}, mark)
+		}
 	}
 	p.fill_rect(c, {split - 1 * c.scale, r.y, 2 * c.scale, r.h}, p.Color{255, 255, 255, 210})
 }
@@ -471,6 +501,14 @@ playlist :: proc(ui: ^p.Ctx, st: ^St, w: f32, narrow: bool) {
 
 	size := p.size(ui)
 	avail := size.y - TOPBAR_H - STATUS_H - 40 - 12
+	// The playing track's chapters take the bottom of the panel, and the
+	// tracks what is left.
+	cur := current(st)
+	nch := cur != nil ? len(cur.m.chapters) : 0
+	ch_rows := min(nch, CHAPTER_ROWS)
+	if nch > 0 {
+		avail -= CHAPTER_HEAD_H + f32(ch_rows) * CHAPTER_ROW_H + 12
+	}
 	st.vis = max(1, int(avail / 52))
 	if st.sel < st.top {st.top = st.sel}
 	if st.sel >= st.top + st.vis {st.top = st.sel - st.vis + 1}
@@ -498,6 +536,60 @@ playlist :: proc(ui: ^p.Ctx, st: ^St, w: f32, narrow: bool) {
 	for i in st.top ..< last {
 		p.key(ui, st.list[i].path)
 		track_row(ui, st, i)
+	}
+	if nch > 0 {
+		p.spacer(ui)
+		chapter_list(ui, st, cur, ch_rows)
+	}
+}
+
+CHAPTER_ROWS :: 8
+CHAPTER_ROW_H :: 26
+CHAPTER_HEAD_H :: 30
+
+// chapter_list is the playing track's chapters, the current one marked, each a
+// click target that seeks to it. A long audiobook shows a window of
+// CHAPTER_ROWS that follows the playhead.
+chapter_list :: proc(ui: ^p.Ctx, st: ^St, cur: ^Track, rows: int) {
+	chs := cur.m.chapters
+	now := st.scrubbing ? st.scrub_at : st.now
+	ci := chapter_at(chs, now)
+	first := clamp(ci - rows / 2, 0, max(0, len(chs) - rows))
+
+	p.col(ui, "w-full shrink-0 gap-px pt-2 border-t border-border")
+	defer p.end(ui)
+	p.row(ui, "w-full items-center gap-2 px-2")
+	p.style(ui).h = p.px(CHAPTER_HEAD_H - 8)
+	p.icon(ui, IC_LIST, "size-3.5 shrink-0 text-muted-foreground")
+	p.textf(
+		ui,
+		"flex-1 text-[10] font-semibold uppercase tracking-widest text-muted-foreground/70 whitespace-nowrap",
+		"Chapters · %d",
+		len(chs),
+	)
+	sc.kbd(ui, "[")
+	sc.kbd(ui, "]")
+	p.end(ui)
+
+	for i in first ..< min(first + rows, len(chs)) {
+		ch := chs[i]
+		p.key(ui, fmt.tprintf("chap%d", i))
+		row := p.row(ui, "w-full shrink-0 items-center gap-2 px-2 rounded-md border transition cursor-pointer")
+		p.style(ui, row).h = p.px(CHAPTER_ROW_H - 1)
+		p.apply(ui, i == ci ? "bg-accent border-border" : "border-transparent hover:bg-muted/60", row)
+		if p.clickable(ui, row) && st.e.live {
+			seek_to(st, ch.start)
+			st.now = ch.start
+		}
+		p.text(
+			ui,
+			timecode(ch.start),
+			i == ci \
+			? "w-[44] shrink-0 text-[11] font-medium tabular-nums text-foreground whitespace-nowrap" \
+			: "w-[44] shrink-0 text-[11] tabular-nums text-muted-foreground whitespace-nowrap",
+		)
+		p.text(ui, ch.title, i == ci ? "flex-1 min-w-0 text-[12] font-medium truncate" : "flex-1 min-w-0 text-[12] truncate")
+		p.end(ui)
 	}
 }
 
@@ -614,6 +706,9 @@ status_bar :: proc(ui: ^p.Ctx, st: ^St) {
 	hint(ui, "Enter", "", "Open")
 	hint(ui, "n", "p", "Track")
 	hint(ui, "Left", "Right", "±5s")
+	if c := current(st); c != nil && len(c.m.chapters) > 0 {
+		hint(ui, "[", "]", "Chapter")
+	}
 	hint(ui, "v", "", "Visual")
 	hint(ui, "s", "r", "Shuffle / repeat")
 	hint(ui, "Esc", "", "Quit")

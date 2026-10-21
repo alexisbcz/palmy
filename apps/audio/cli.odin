@@ -136,6 +136,11 @@ PROBE_FIELDS := []kit.Field {
 	{name = "date", kind = .String},
 	{name = "has_cover", kind = .Bool},
 	{name = "has_video", kind = .Bool},
+	{name = "chapters", kind = .Array, help = "the container's chapter marks, in time order", of = {
+		{name = "start", kind = .Float, help = "seconds"},
+		{name = "end", kind = .Float, help = "seconds"},
+		{name = "title", kind = .String, help = "\"Chapter N\" when the file gives none"},
+	}},
 }
 
 ANALYZE_FIELDS := []kit.Field {
@@ -235,6 +240,15 @@ cmd_probe :: proc(c: ^kit.Call) -> int {
 	kit.jset_str(c.out, "date", m.date)
 	kit.jset_bool(c.out, "has_cover", m.has_cover)
 	kit.jset_bool(c.out, "has_video", m.has_video)
+	ca := kit.jarr()
+	for ch in m.chapters {
+		co := kit.jobj()
+		kit.jset_num(co, "start", ch.start)
+		kit.jset_num(co, "end", ch.end)
+		kit.jset_str(co, "title", ch.title)
+		kit.jpush(ca, co)
+	}
+	kit.jset(c.out, "chapters", ca)
 	return kit.EXIT_OK
 }
 

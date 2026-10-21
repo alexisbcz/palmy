@@ -726,6 +726,25 @@ test_chapters :: proc() {
 
 	check(len(parse_chapters(`{"format":{}}`)) == 0, "a document with no chapters block has no chapters")
 	check(len(parse_chapters("not json")) == 0, "an unparseable document has no chapters")
+
+	// And from a real container, through ffprobe: the parser above is only
+	// worth something if `probe_file` asks for the chapters at all.
+	if kit.has_tool("ffmpeg") && kit.has_tool("ffprobe") {
+		dir := fmt.tprintf("%s/palmy-video-chapters-%d", os.temp_dir(context.temp_allocator), os.get_pid())
+		_ = os.make_directory_all(dir)
+		defer _ = os.remove_all(dir)
+		meta := fmt.tprintf("%s/meta.txt", dir)
+		clip := fmt.tprintf("%s/clip.mkv", dir)
+		_ = os.write_entire_file(meta, transmute([]u8)string(";FFMETADATA1\n[CHAPTER]\nTIMEBASE=1/1000\nSTART=0\nEND=1500\ntitle=Cold open\n[CHAPTER]\nTIMEBASE=1/1000\nSTART=1500\nEND=3000\ntitle=Titles\n"))
+		_, made := kit.run({"ffmpeg", "-y", "-v", "error", "-f", "lavfi", "-i", "testsrc2=size=160x90:rate=10:duration=3", "-i", meta, "-map", "0:v", "-map_chapters", "1", "-c:v", "mjpeg", clip}, context.temp_allocator)
+		if made {
+			m := probe_file(clip)
+			check(len(m.chapters) == 2, fmt.tprintf("a real file's chapters come through ffprobe (got %d)", len(m.chapters)))
+			if len(m.chapters) == 2 {
+				check(m.chapters[1].title == "Titles" && abs(m.chapters[1].start - 1.5) < 0.01, "titled and timed as written")
+			}
+		}
+	}
 }
 
 // ---------------------------------------------------------------------------
