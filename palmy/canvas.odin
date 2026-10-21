@@ -411,10 +411,14 @@ stroke_round_rect :: proc(c: ^Canvas, r: Rect, rad_in: Radius, width: f32, col: 
 		py := f32(y) + 0.5 - cy
 		// Skip the hollow middle of the ring in one jump.
 		if abs(py) < min(ihh - 1, straight_to) && r.w > 2 * width + 2 {
-			lx0 := int(math.floor(r.x))
-			lx1 := int(math.ceil(r.x + width))
-			rx0 := int(math.floor(rect_right(r) - width))
-			rx1 := int(math.ceil(rect_right(r)))
+			// The two edge columns, kept inside the clip like every other
+			// row: computed from `r` alone they ignored it, which a whole
+			// frame never showed but a partial repaint did -- a card's
+			// border redrawn across the rows of a caret, over its shadow.
+			lx0 := max(int(math.floor(r.x)), x0)
+			lx1 := min(int(math.ceil(r.x + width)), x1)
+			rx0 := max(int(math.floor(rect_right(r) - width)), x0)
+			rx1 := min(int(math.ceil(rect_right(r))), x1)
 			for x in lx0 ..< lx1 {
 				ring_pixel(c, x, y, cx, cy, hw, hh, ihw, ihh, rad, irad, col)
 			}
