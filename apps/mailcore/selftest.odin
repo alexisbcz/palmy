@@ -88,6 +88,7 @@ selftest_unit :: proc(t: ^T) {
 	test_json(t)
 	test_http_bits(t)
 	test_loopback_gate(t)
+	test_cli(t)
 }
 
 // ---------------------------------------------------------------------------

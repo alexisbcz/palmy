@@ -170,96 +170,48 @@ palm_fresh :: proc(s: ^Palm_Session) -> string {
 	return palm_save(s^)
 }
 
-cmd_palm :: proc(args: []string) -> int {
-	if len(args) == 0 {
-		usage()
-		return 2
+// palm_login signs in with a password grant and keeps the session. It is
+// what `mailcore login` (and the older `mailcore palm login`, which apps/mail
+// runs from its sign-in sheet) calls; nothing else signs in.
+palm_login :: proc(s: ^Palm_Session, password: string) -> string {
+	if s.email == "" || password == "" {
+		return "--email and --password (or --password-file) are required"
 	}
-	opt :: proc(args: []string, name: string) -> string {
-		for a, i in args {
-			if a == name && i + 1 < len(args) {
-				return args[i + 1]
-			}
-		}
-		return ""
+	if e := palm_token_grant(s, "password", fmt.tprintf(`{{"email":%s,"password":%s}}`, json_quote(s.email, context.temp_allocator), json_quote(password, context.temp_allocator))); e != "" {
+		return e
 	}
-	port_opt :: proc(args: []string, name: string, def: int) -> int {
-		if v := opt(args, name); v != "" {
-			n, _ := strconv.parse_int(v, 10)
-			return n
-		}
-		return def
-	}
-	switch args[0] {
-	case "login":
-		s := Palm_Session {
-			email       = opt(args, "--email"),
-			auth_port   = port_opt(args, "--auth-port", 55529),
-			jmap_port   = port_opt(args, "--jmap-port", 55580),
-			submit_port = port_opt(args, "--submit-port", 55587),
-		}
-		password := opt(args, "--password")
-		if pf := opt(args, "--password-file"); pf != "" {
-			data, err := os.read_entire_file_from_path(pf, context.allocator)
-			if err != nil {
-				fmt.eprintfln("mailcore palm: cannot read %s", pf)
-				return 2
-			}
-			password = strings.trim_space(string(data))
-		}
-		if s.email == "" || password == "" {
-			fmt.eprintln("mailcore palm login: --email and --password (or --password-file) are required")
-			return 2
-		}
-		if e := palm_token_grant(&s, "password", fmt.tprintf(`{{"email":%s,"password":%s}}`, json_quote(s.email, context.temp_allocator), json_quote(password, context.temp_allocator))); e != "" {
-			fmt.eprintfln("mailcore palm: %s", e)
-			return 1
-		}
-		if e := palm_save(s); e != "" {
-			fmt.eprintfln("mailcore palm: %s", e)
-			return 1
-		}
-		fmt.printfln("signed in as %s", s.email)
-		return 0
-
-	case "status":
-		s, ok := palm_load()
-		if !ok {
-			fmt.println("not signed in")
-			return 1
-		}
-		left := s.expires_at - time.time_to_unix(time.now())
-		fmt.printfln("signed in as %s; token %s", s.email, left > 0 ? fmt.tprintf("valid for %ds", left) : "expired (sync refreshes it)")
-		return 0
-
-	case "logout":
-		os.remove(palm_session_path())
-		fmt.println("signed out; the synced Maildirs are left where they are")
-		return 0
-
-	case "sync":
-		s, ok := palm_load()
-		if !ok {
-			fmt.eprintln("mailcore palm: not signed in (mailcore palm login)")
-			return 1
-		}
-		if v := opt(args, "--jmap-port"); v != "" {s.jmap_port, _ = strconv.parse_int(v, 10)}
-		if v := opt(args, "--submit-port"); v != "" {s.submit_port, _ = strconv.parse_int(v, 10)}
-		if e := palm_fresh(&s); e != "" {
-			fmt.eprintfln("mailcore palm: %s", e)
-			return 1
-		}
-		return palm_sync(&s)
-	}
-	usage()
-	return 2
+	return palm_save(s^)
 }
 
-palm_sync :: proc(s: ^Palm_Session) -> int {
+// palm_logout forgets the session. The synced Maildirs are left where they
+// are. `removed` says whether there was a session to forget.
+palm_logout :: proc() -> (removed: bool) {
+	path := palm_session_path()
+	removed = os.exists(path)
+	os.remove(path)
+	return removed
+}
+
+// Palm_Sync_Row is one identity's outcome of a sync.
+Palm_Sync_Row :: struct {
+	address:   string,
+	kind:      string,
+	handle:    string,
+	messages:  int,
+	pushed:    int,
+	submitted: int,
+	held:      int,
+	error:     string,
+}
+
+// palm_sync syncs every identity the session can reach — or, when `only` is
+// set, the one identity in scope (by handle or by address) — and reports each
+// one. It prints nothing: the caller decides what the outcome looks like.
+palm_sync :: proc(s: ^Palm_Session, only := "") -> (rows: []Palm_Sync_Row, conf_path: string, err: string) {
+	out := make([dynamic]Palm_Sync_Row, 0, 4, context.allocator)
 	j: JMAP
 	if e := jmap_connect_bearer(&j, "127.0.0.1", s.jmap_port, s.access_token, {}, context.allocator); e != "" {
-		fmt.eprintfln("mailcore palm: %s", e)
-		return 1
+		return nil, "", e
 	}
 	defer jmap_close(&j)
 	base := maildir_default_root(context.allocator)
@@ -285,40 +237,50 @@ palm_sync :: proc(s: ^Palm_Session) -> int {
 		}
 		return a.name < b.name
 	})
-	status := 0
 	for a in j.session.accounts {
 		addr := a.address != "" ? a.address : a.name
 		if addr == "" || strings.contains(addr, "/") || strings.contains(addr, "..") {
 			continue
 		}
+		if only != "" && only != a.handle && only != addr {
+			continue
+		}
+		row := Palm_Sync_Row {
+			address = addr,
+			kind    = a.kind,
+			handle  = a.handle,
+		}
 		j.session.primary_mail_account = a.id
 		root := strings.concatenate({base, "/", addr}, context.allocator)
 		pushed := palm_push_flags(&j, root)
 		sent, held, serr := palm_submit_outbox(s, root, addr)
+		row.pushed, row.submitted, row.held = pushed, sent, held
 		if serr != "" {
-			fmt.eprintfln("mailcore palm: %s: %s", addr, serr)
-			status = 1
+			row.error = serr
 		}
 		n, ferr := palm_fetch_all(&j, root)
+		row.messages = n
 		if ferr != "" {
-			fmt.eprintfln("mailcore palm: %s: %s", addr, ferr)
-			status = 1
+			row.error = ferr
+			append(&out, row)
 			continue
 		}
-		fmt.printfln("%-28s %-9s %d messages; %d flag change(s) pushed; %d submitted%s", addr, a.kind, n, pushed, sent, held > 0 ? fmt.tprintf(" (%d recipient(s) held: outbound delivery is not enabled)", held) : "")
+		append(&out, row)
 		fmt.sbprintf(
 			&conf,
 			"[identity]\nid = %s\nhandle = %s\nname = %s\nkind = %s\ncolor = %s\naddress = %s\npath = %s\n\n",
 			a.id, a.handle, a.display_name, a.kind, a.color, addr, addr,
 		)
 	}
-	conf_path := strings.concatenate({base, "/palmy.conf"}, context.temp_allocator)
-	if os.write_entire_file(conf_path, transmute([]u8)strings.to_string(conf)) != nil {
-		fmt.eprintfln("mailcore palm: cannot write %s", conf_path)
-		return 1
+	conf_path = strings.concatenate({base, "/palmy.conf"}, context.allocator)
+	// A sync narrowed to one identity knows only that identity, and writing
+	// the file from it would make the others vanish from apps/mail.
+	if only == "" {
+		if os.write_entire_file(conf_path, transmute([]u8)strings.to_string(conf)) != nil {
+			return out[:], conf_path, fmt.aprintf("cannot write %s", conf_path)
+		}
 	}
-	fmt.printfln("identities: %s", conf_path)
-	return status
+	return out[:], conf_path, ""
 }
 
 // palm_push_flags compares each message's Maildir flags with the flags it had

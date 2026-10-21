@@ -177,6 +177,7 @@ selftest_e2e :: proc(t: ^T, testserver_bin: string, want_tls: bool) {
 		tcheck(t, "TLS was skipped by request (--no-tls)", true)
 	}
 	e2e_pop3_delete_semantics(t, &e)
+	e2e_cli(t, &e)
 
 	// Leave nothing behind.
 	os_rm_rf(e.root)

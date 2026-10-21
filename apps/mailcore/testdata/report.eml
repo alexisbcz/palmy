@@ -1,0 +1,35 @@
+From: Ada Example <ada@example.test>
+To: Bob Example <bob@example.test>
+Cc: carol@example.test
+Subject: =?UTF-8?Q?Quarterly_r=C3=A9port?=
+Date: Tue, 20 Oct 2026 09:15:00 +0200
+Message-ID: <report-1@example.test>
+References: <kickoff-0@example.test>
+MIME-Version: 1.0
+Content-Type: multipart/mixed; boundary="outer"
+
+A synthetic message for the mailcore command-line examples and self-test.
+--outer
+Content-Type: multipart/alternative; boundary="alt"
+
+--alt
+Content-Type: text/plain; charset=utf-8
+Content-Transfer-Encoding: quoted-printable
+
+Hi Bob,
+
+The quarterly r=C3=A9port is attached. Numbers are made up.
+
+Ada
+--alt
+Content-Type: text/html; charset=utf-8
+
+<p>Hi Bob,</p><p>The quarterly réport is attached. Numbers are made up.</p><p>Ada</p>
+--alt--
+--outer
+Content-Type: text/csv; name="figures.csv"
+Content-Disposition: attachment; filename="figures.csv"
+Content-Transfer-Encoding: base64
+
+cXVhcnRlcixyZXZlbnVlClExLDEwMApRMiwxMjAKUTMsMTM1Cg==
+--outer--
