@@ -13,6 +13,11 @@ package main
 // a compromise — it is more precise than a cursor.
 //
 // The conversions are in color.odin and are checked by `colorpick --selftest`.
+//
+// The same core is the command line, `palm color` (cli.odin): parse_color reads
+// what Ctrl+V pastes and what every command is given, palette.odin is the
+// palette both Ctrl+S and `color save` write, and pixel_at is the loupe's
+// sampler and `color sample`'s.
 
 import "core:fmt"
 import "core:math"
@@ -146,12 +151,10 @@ g_test_clip: string
 
 main :: proc() {
 	args := os.args[1:]
+	// `colorpick --shots <dir>` renders the interface offscreen: see
+	// shot.odin. It opens no window and never captures the screen. It is the
+	// one older flag kept outside the convention, as image keeps --shot.
 	for a, i in args {
-		if a == "--selftest" || a == "-selftest" {
-			os.exit(selftest() == 0 ? 0 : 1)
-		}
-		// `colorpick --shots <dir>` renders the interface offscreen: see
-		// shot.odin. It opens no window and never captures the screen.
 		if a == "--shots" || a == "-shots" {
 			if i + 1 >= len(args) {
 				fmt.eprintln("colorpick --shots <dir>")
@@ -159,6 +162,11 @@ main :: proc() {
 			}
 			os.exit(shots(args[i + 1]))
 		}
+	}
+	// Everything else with arguments is `palm color …` (cli.odin), including
+	// --selftest. No arguments opens the window.
+	if code, handled := kit.cli(surface()); handled {
+		os.exit(code)
 	}
 
 	app, err := kit.start(
@@ -569,7 +577,7 @@ palette_keys :: proc(ui: ^p.Ctx, st: ^St) {
 	}
 	if p.key_pressed(ui, p.KEY_DELETE, false) ||
 	   p.key_pressed(ui, p.KEY_BACKSPACE, false) {
-		ordered_remove(&st.palette, st.pal_sel)
+		palette_remove_at(&st.palette, st.pal_sel)
 		st.pal_sel = clamp(st.pal_sel, 0, max(0, len(st.palette) - 1))
 		save_palette(st)
 		if len(st.palette) == 0 {
@@ -589,7 +597,9 @@ toast :: proc(st: ^St, ui: ^p.Ctx, msg: string) {
 	}
 	st.toast = strings.clone(msg)
 	st.toast_t = mono() + 4
-	p.wake_after(ui, secs(4))
+	if ui != nil {
+		p.wake_after(ui, secs(4))
+	}
 }
 
 // quit is nil-safe so the headless self-test can drive `handle_keys` with no
@@ -641,39 +651,42 @@ paste_colour :: proc(st: ^St, ui: ^p.Ctx) {
 		toast(st, ui, "Nothing on the clipboard")
 		return
 	}
-	if rgb, good := parse_hex(text); good {
-		st.rgb = rgb
-		resync(st, .Hex)
-		toast(st, ui, fmt.tprintf("Pasted %s", fmt_hex(rgb)))
+	if take_colour_text(st, text) {
+		toast(st, ui, fmt.tprintf("Pasted %s", fmt_hex(st.rgb)))
 		return
 	}
-	toast(st, ui, fmt.tprintf("Not a hex colour: %s", trunc(text, 32)))
+	toast(st, ui, fmt.tprintf("Not a colour: %s", trunc(text, 32)))
+}
+
+// take_colour_text makes a colour written in any notation the editor itself
+// writes the current one: what Ctrl+1..4 copied comes back with Ctrl+V, and
+// it is the same parse_color every CLI command reads its colours with. An
+// oklch() outside sRGB keeps its OKLCH fields and is flagged out of gamut,
+// exactly as typing it into those fields would be.
+take_colour_text :: proc(st: ^St, text: string) -> bool {
+	pc, good := parse_color(text)
+	if !good {
+		return false
+	}
+	if pc.notation == "oklch" {
+		st.lch = pc.lch
+		resync(st, .Oklch)
+	} else {
+		st.rgb = pc.rgb
+		resync(st, .Hex)
+	}
+	return true
 }
 
 save_to_palette :: proc(st: ^St, ui: ^p.Ctx) {
-	b := to_bytes(st.rgb)
-	for c, i in st.palette {
-		if c == b {
-			st.pal_sel = i
-			toast(st, ui, fmt.tprintf("%s is already in the palette", fmt_hex(st.rgb)))
-			return
-		}
+	at, already := palette_add(&st.palette, to_bytes(st.rgb))
+	st.pal_sel = at
+	if already {
+		toast(st, ui, fmt.tprintf("%s is already in the palette", fmt_hex(st.rgb)))
+		return
 	}
-	inject_front(&st.palette, b)
-	for len(st.palette) > PALETTE_CAP {
-		pop(&st.palette)
-	}
-	st.pal_sel = 0
 	save_palette(st)
 	toast(st, ui, fmt.tprintf("%s saved to the palette", fmt_hex(st.rgb)))
-}
-
-inject_front :: proc(a: ^[dynamic][3]u8, v: [3]u8) {
-	append(a, v)
-	for i := len(a) - 1; i > 0; i -= 1 {
-		a[i] = a[i - 1]
-	}
-	a[0] = v
 }
 
 trunc :: proc(s: string, n: int) -> string {
@@ -779,10 +792,7 @@ sample_at :: proc(st: ^St, x, y: int) -> [3]u8 {
 	if !st.shot.ok {
 		return {0, 0, 0}
 	}
-	cx := clamp(x, 0, st.shot.img.w - 1)
-	cy := clamp(y, 0, st.shot.img.h - 1)
-	v := st.shot.img.px[cy * st.shot.img.w + cx]
-	return {u8(v >> 16), u8(v >> 8), u8(v)}
+	return pixel_at(st.shot.img, x, y)
 }
 
 take_sample :: proc(st: ^St, ui: ^p.Ctx) {
@@ -839,57 +849,15 @@ screen_keys :: proc(ui: ^p.Ctx, st: ^St) {
 }
 
 // ---------------------------------------------------------------------------
-// Persistence
-//
-// ~/.local/share/palmy-colorpick/palette — one `#rrggbb` per line, newest
-// first, at most PALETTE_CAP lines.
+// Persistence: palette.odin, shared with the command line.
 // ---------------------------------------------------------------------------
 
-palette_dir :: proc(al := context.temp_allocator) -> string {
-	home, err := os.user_home_dir(context.temp_allocator)
-	if err != nil {
-		return ""
-	}
-	return fmt.aprintf("%s/.local/share/palmy-colorpick", home, allocator = al)
-}
-
 load_palette :: proc(st: ^St) {
-	dir := palette_dir()
-	if dir == "" {
-		return
-	}
-	data, err := os.read_entire_file_from_path(
-		fmt.tprintf("%s/palette", dir),
-		context.temp_allocator,
-	)
-	if err != nil {
-		return
-	}
-	it := string(data)
-	for line in strings.split_lines_iterator(&it) {
-		if rgb, ok := parse_hex(strings.trim_space(line)); ok {
-			append(&st.palette, to_bytes(rgb))
-		}
-		if len(st.palette) >= PALETTE_CAP {
-			break
-		}
-	}
+	palette_read(&st.palette)
 }
 
 save_palette :: proc(st: ^St) {
-	dir := palette_dir()
-	if dir == "" {
-		return
-	}
-	_ = os.make_directory_all(dir)
-	_ = os.chmod(dir, os.perm_number(0o700))
-	b := strings.builder_make(context.temp_allocator)
-	for c in st.palette {
-		fmt.sbprintfln(&b, "#%02x%02x%02x", c[0], c[1], c[2])
-	}
-	path := fmt.tprintf("%s/palette", dir)
-	_ = os.write_entire_file(path, transmute([]u8)strings.to_string(b), os.perm_number(0o600))
-	_ = os.chmod(path, os.perm_number(0o600))
+	palette_write(st.palette[:])
 }
 
 // ---------------------------------------------------------------------------

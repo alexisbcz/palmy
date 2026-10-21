@@ -334,6 +334,99 @@ parse_number :: proc(s: string) -> (f32, bool) {
 	return f32(v), ok
 }
 
+// parse_color reads any notation the editor writes: hex (#rgb, #rrggbb, with or
+// without the hash), rgb()/rgba(), hsl()/hsla() and oklch(). Commas, spaces
+// and a CSS "/ alpha" tail are all accepted, and the alpha is ignored — the
+// editor has no alpha channel. It is what the window's Ctrl+V and every CLI
+// command that takes a colour go through, so the two cannot disagree on what
+// a colour is. `notation` says which form was read; `in_gamut` is false only
+// for an oklch() outside sRGB, whose rgb is then the clipped colour.
+Parsed_Color :: struct {
+	rgb:      [3]f32, // sRGB 0..1, clipped
+	lch:      [3]f32, // the OKLCH as written, for an oklch() (else derived)
+	notation: string, // hex, rgb, hsl or oklch
+	in_gamut: bool,
+}
+
+parse_color :: proc(s_in: string) -> (pc: Parsed_Color, ok: bool) {
+	rgb, notation, inside, lch, good := parse_color_parts(s_in)
+	if !good {
+		return {}, false
+	}
+	if notation != "oklch" {
+		lch = srgb_to_oklch(rgb)
+	}
+	return {rgb = rgb, lch = lch, notation = notation, in_gamut = inside}, true
+}
+
+@(private = "file")
+parse_color_parts :: proc(s_in: string) -> (rgb: [3]f32, notation: string, in_gamut: bool, lch: [3]f32, ok: bool) {
+	s := strings.to_lower(strings.trim_space(s_in), context.temp_allocator)
+	if h, good := parse_hex(s); good {
+		return h, "hex", true, {}, true
+	}
+	open := strings.index_byte(s, '(')
+	if open <= 0 || !strings.has_suffix(s, ")") {
+		return
+	}
+	fn := strings.trim_space(s[:open])
+	body := s[open + 1:len(s) - 1]
+	if slash := strings.index_byte(body, '/'); slash >= 0 {
+		body = body[:slash]
+	}
+	spaced, _ := strings.replace_all(body, ",", " ", context.temp_allocator)
+	parts := strings.fields(spaced, context.temp_allocator)
+	if len(parts) == 4 && (fn == "rgba" || fn == "hsla") {
+		parts = parts[:3] // the legacy comma form's alpha
+	}
+	if len(parts) != 3 {
+		return
+	}
+	// num reads one component; a percentage is scaled to `pct_full`.
+	num :: proc(t: string, pct_full: f32) -> (f32, bool) {
+		u := strings.trim_suffix(t, "deg")
+		pct := strings.has_suffix(u, "%")
+		v, good := parse_number(u)
+		if !good {
+			return 0, false
+		}
+		return pct ? v / 100 * pct_full : v, true
+	}
+	switch fn {
+	case "rgb", "rgba":
+		out: [3]f32
+		for i in 0 ..< 3 {
+			v, good := num(parts[i], 255)
+			if !good {
+				return
+			}
+			out[i] = clamp(v, 0, 255) / 255
+		}
+		return out, "rgb", true, {}, true
+	case "hsl", "hsla":
+		h, g1 := num(parts[0], 360)
+		sat, g2 := num(parts[1], 100)
+		l, g3 := num(parts[2], 100)
+		if !g1 || !g2 || !g3 {
+			return
+		}
+		h = math.mod_f32(math.mod_f32(h, 360) + 360, 360)
+		return hsl_to_srgb({h, clamp(sat, 0, 100) / 100, clamp(l, 0, 100) / 100}), "hsl", true, {}, true
+	case "oklch":
+		l, g1 := num(parts[0], 1)
+		c, g2 := num(parts[1], 0.4) // CSS: 100% chroma is 0.4
+		h, g3 := num(parts[2], 360)
+		if !g1 || !g2 || !g3 {
+			return
+		}
+		h = math.mod_f32(math.mod_f32(h, 360) + 360, 360)
+		w := [3]f32{clamp(l, 0, 1), max(c, 0), h}
+		out, inside := oklch_to_srgb(w)
+		return out, "oklch", inside, w, true
+	}
+	return
+}
+
 // ---------------------------------------------------------------------------
 // Self test
 // ---------------------------------------------------------------------------
