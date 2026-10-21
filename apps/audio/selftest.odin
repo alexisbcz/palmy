@@ -9,6 +9,7 @@ package main
 import "core:fmt"
 import "core:math"
 import "core:os"
+import "core:strings"
 import "core:time"
 import kit "kit:."
 
@@ -34,6 +35,7 @@ run_selftest :: proc() {
 	test_order()
 	test_engine()
 	test_gapless()
+	test_cli()
 
 	fmt.printfln("audio selftest: %d checks, %d failures", checks, failures)
 }
@@ -733,4 +735,191 @@ test_gapless :: proc() {
 
 kit_sleep :: proc(ms: int) {
 	time.sleep(time.Duration(ms) * time.Millisecond)
+}
+
+// ---------------------------------------------------------------------------
+// The command surface
+//
+// Run as real child processes of this binary with a trap first on PATH: fake
+// pw-cat, pw-play, pw-record, parec, arecord, paplay, aplay, ffplay, wpctl
+// and pactl, each writing to a sentinel. ffmpeg and ffprobe stay real — they
+// are how a file is read. Every command is run and the sentinel must stay
+// empty: nothing here plays, records or touches a volume.
+// ---------------------------------------------------------------------------
+
+@(private = "file")
+self_exe :: proc() -> string {
+	if path, err := os.get_executable_path(context.temp_allocator); err == nil {
+		return path
+	}
+	return os.args[0]
+}
+
+@(private = "file")
+cli_run :: proc(env: []string, args: ..string) -> (out: string, code: int) {
+	line := strings.builder_make(context.temp_allocator)
+	strings.write_string(&line, "WAYLAND_DISPLAY= DISPLAY= ")
+	for e in env {
+		strings.write_string(&line, e)
+		strings.write_byte(&line, ' ')
+	}
+	strings.write_string(&line, fmt.tprintf("%q", self_exe()))
+	for a in args {
+		strings.write_string(&line, fmt.tprintf(" %q", a))
+	}
+	state, sout, _, err := os.process_exec({command = {"sh", "-c", strings.to_string(line)}}, context.temp_allocator)
+	if err != nil {
+		return "", -1
+	}
+	return string(sout), state.exit_code
+}
+
+@(private = "file")
+valid :: proc(out: string, fields: []kit.Field, what: string) {
+	problems := kit.cli_validate_output(out, fields, context.temp_allocator)
+	check(len(problems) == 0, fmt.tprintf("%s matches its declared schema%s", what, len(problems) > 0 ? fmt.tprintf(" (%s)", problems[0]) : ""))
+}
+
+test_cli :: proc() {
+	fmt.println("the command surface")
+
+	sf := surface()
+	check(sf.noun == "audio", "the surface is named audio")
+	check(sf.takes_path, "a bare file or folder still opens the window")
+	for cmd in sf.commands {
+		check(cmd.run != nil, fmt.tprintf("%q has an implementation", cmd.verb))
+		check(len(cmd.out) > 0, fmt.tprintf("%q declares what it prints", cmd.verb))
+		check(len(cmd.examples) > 0, fmt.tprintf("%q ships an example", cmd.verb))
+		if cmd.verb == "shot" {
+			check(cmd.effect == .Mutate, "shot is mutate (it writes the PNG it is given)")
+		} else {
+			check(cmd.effect == .Read, fmt.tprintf("%q is read class", cmd.verb))
+		}
+		for bad in ([?]string{"play", "record", "volume", "mute", "capture", "listen"}) {
+			check(cmd.verb != bad, fmt.tprintf("there is no %q verb", bad))
+		}
+	}
+
+	root := fmt.tprintf("/tmp/palmy-audio-cli-%d", os.get_pid())
+	bin := fmt.tprintf("%s/fakebin", root)
+	music := fmt.tprintf("%s/music", root)
+	_ = os.make_directory_all(bin)
+	_ = os.make_directory_all(music)
+	defer _ = os.remove_all(root)
+	sentinel := fmt.tprintf("%s/fired", root)
+	trap := fmt.tprintf("#!/bin/sh\nprintf '%%s %%s\\n' \"$0\" \"$*\" >> %s\nexit 0\n", sentinel)
+	for name in ([?]string{"pw-cat", "pw-play", "pw-record", "parec", "parecord", "arecord", "paplay", "aplay", "ffplay", "wpctl", "pactl"}) {
+		_ = os.write_entire_file(fmt.tprintf("%s/%s", bin, name), transmute([]u8)trap, os.Permissions_All)
+	}
+	path_env := fmt.tprintf("PATH=%s:%s", bin, os.get_env("PATH", context.temp_allocator))
+	env := []string{path_env, fmt.tprintf("PALM_AUDIT=%s/audit.jsonl", root)}
+	{
+		_, _, _, err := os.process_exec({command = {"sh", "-c", fmt.tprintf("%s pw-cat --playback x", path_env)}}, context.temp_allocator)
+		check(err == nil && os.exists(sentinel), "the fake pw-cat on PATH is reached (the trap works)")
+		os.remove(sentinel)
+	}
+
+	{
+		out, code := cli_run(env, "--schema")
+		check(code == 0 && strings.contains(out, `"noun": "audio"`), "--schema answers")
+	}
+	for cmd in sf.commands {
+		for ex in cmd.examples {
+			words := kit.cli_split_example(ex, context.temp_allocator)
+			check(len(words) > 0 && words[0] == "audio", fmt.tprintf("the example %q starts with the binary's name", ex))
+			args := make([dynamic]string, context.temp_allocator)
+			for w in words[1:] {
+				append(&args, w)
+			}
+			append(&args, "--parse-only")
+			_, code := cli_run(env, ..args[:])
+			check(code == 0, fmt.tprintf("the example %q parses", ex))
+		}
+	}
+
+	// An empty folder, and refusals, need no ffmpeg.
+	{
+		out, code := cli_run(env, "library", music, "--json")
+		check(code == 0, "audio library on an empty folder exits 0")
+		valid(out, LIBRARY_FIELDS, "audio library --json")
+		check(strings.contains(out, `"count": 0`), "and finds nothing")
+	}
+	{
+		out, code := cli_run(env, "probe", fmt.tprintf("%s/nope.mp3", music), "--json")
+		check(code == kit.EXIT_NOT_FOUND, "probing a file that is not there exits 3")
+		check(strings.contains(out, `"error": "not found"`), "with the documented token")
+		_, c2 := cli_run(env, "library", fmt.tprintf("%s/nope", music))
+		check(c2 == kit.EXIT_NOT_FOUND, "listing a folder that is not there exits 3")
+		_, c3 := cli_run(env, "play", "x.mp3")
+		check(c3 != 0, "there is no play command to run")
+	}
+
+	if !kit.has_tool("ffmpeg") || !kit.has_tool("ffprobe") {
+		fmt.println("  skip  ffmpeg is not installed; the file commands were not run")
+		check(!os.exists(sentinel), "nothing played or recorded")
+		return
+	}
+	track := fmt.tprintf("%s/tone.mp3", music)
+	_, made := kit.run(
+		{
+			"ffmpeg", "-y", "-v", "error",
+			"-f", "lavfi", "-i", "sine=frequency=1000:duration=3",
+			"-metadata", "title=CLI Tone", "-metadata", "artist=lavfi",
+			"-b:a", "192k", track,
+		},
+		context.temp_allocator,
+	)
+	if !made || !os.exists(track) {
+		fmt.println("  skip  could not generate a test track")
+		return
+	}
+	_ = os.write_entire_file(fmt.tprintf("%s/notes.txt", music), transmute([]u8)string("not audio"))
+
+	{
+		out, code := cli_run(env, "library", music, "--probe", "--json")
+		check(code == 0, "audio library --probe exits 0")
+		valid(out, LIBRARY_FIELDS, "audio library --probe --json")
+		check(strings.contains(out, `"count": 1`), "one track: the text file is not audio")
+		check(strings.contains(out, `"title": "CLI Tone"`), "with its tag, read through the window's own prober")
+	}
+	{
+		out, code := cli_run(env, "probe", track, "--json")
+		check(code == 0, "audio probe exits 0")
+		valid(out, PROBE_FIELDS, "audio probe --json")
+		check(strings.contains(out, `"artist": "lavfi"`), "the artist tag")
+		check(strings.contains(out, `"duration": 3.`), "about three seconds long")
+	}
+	{
+		out, code := cli_run(env, "analyze", track, "--at", "1.5", "--columns", "16", "--json")
+		check(code == 0, "audio analyze exits 0")
+		valid(out, ANALYZE_FIELDS, "audio analyze --json")
+		// The same check test_engine makes in-process, through the CLI: a
+		// 1 kHz tone lands in the bar whose range holds 1 kHz.
+		k := -1
+		if i := strings.index(out, `"loudest_bar": `); i >= 0 {
+			rest := out[i + len(`"loudest_bar": `):]
+			k = 0
+			for j in 0 ..< len(rest) {
+				if rest[j] < '0' || rest[j] > '9' {break}
+				k = k * 10 + int(rest[j] - '0')
+			}
+		}
+		hz := bar_hz(k)
+		check(k >= 0 && hz > 800 && hz < 1250, fmt.tprintf("the loudest bar is the one around 1 kHz (bar %d, %.0f Hz)", k, hz))
+	}
+	{
+		png := fmt.tprintf("%s/shot.png", root)
+		out, code := cli_run(env, "shot", png, "--dir", music, "--json")
+		check(code == 0, "audio shot exits 0")
+		check(strings.has_prefix(strings.trim_space(out), "{"), "and stdout is the document alone")
+		check(os.exists(png), "the PNG was written")
+		check(strings.contains(out, `"tracks": 1`), "showing the one track")
+	}
+	{
+		// The window's own spelling still renders, without --json.
+		png := fmt.tprintf("%s/legacy.png", root)
+		_, code := cli_run(env, music, "--shot", png, "1")
+		check(code == 0 && os.exists(png), "audio DIR --shot OUT SECONDS still renders")
+	}
+	check(!os.exists(sentinel), "no command played, recorded or touched a volume")
 }

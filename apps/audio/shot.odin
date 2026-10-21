@@ -95,7 +95,8 @@ run_shot :: proc(st: ^St, out: string, seconds: f64, keys: string) {
 		time.sleep(16 * time.Millisecond)
 	}
 	if p.offscreen_write_png(off, out) {
-		fmt.printfln("wrote %s", out)
+		// stderr: under `audio shot --json` stdout is the document alone.
+		fmt.eprintfln("wrote %s", out)
 	} else {
 		fmt.eprintfln("could not write %s", out)
 	}

@@ -105,6 +105,17 @@ main :: proc() {
 
 	shot_out, shot_secs, shot_keys, want_shot := shot_requested()
 
+	// Everything else on the command line is the other front end, declared
+	// in cli.odin and parsed by the shared convention in apps/kit. A bare
+	// file or folder is still a document for the window (`audio song.mp3`),
+	// and `--selftest`, `--gap-test` and `--shot` keep their old spellings
+	// above and here.
+	if !want_shot {
+		if code, handled := kit.cli(surface()); handled {
+			os.exit(code)
+		}
+	}
+
 	app: ^p.App
 	if !want_shot {
 		err: string
