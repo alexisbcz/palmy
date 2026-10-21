@@ -1060,6 +1060,7 @@ cocoa_mouse :: proc(w: ^Window, ev: ^NS.Event) {
 	case .LeftMouseDown, .RightMouseDown, .OtherMouseDown:
 		mb := t == .LeftMouseDown ? Mouse_Button.Left : t == .RightMouseDown ? .Right : button(ev)
 		in_.mouse = p
+		in_.button_at = p
 		in_.over_surface = true
 		in_.down[mb] = true
 		in_.pressed[mb] = true
@@ -1068,6 +1069,7 @@ cocoa_mouse :: proc(w: ^Window, ev: ^NS.Event) {
 	case .LeftMouseUp, .RightMouseUp, .OtherMouseUp:
 		mb := t == .LeftMouseUp ? Mouse_Button.Left : t == .RightMouseUp ? .Right : button(ev)
 		in_.mouse = p
+		in_.button_at = p
 		in_.down[mb] = false
 		in_.released[mb] = true
 	case .MouseMoved, .LeftMouseDragged, .RightMouseDragged, .OtherMouseDragged:

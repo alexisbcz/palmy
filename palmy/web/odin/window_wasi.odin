@@ -504,6 +504,9 @@ web_dispatch :: proc(w: ^Window) {
 			case:
 				mb = .Left
 			}
+			// The page sends a move before each button, so the pointer is
+			// already where the press or release happened (route_input).
+			in_.button_at = in_.mouse
 			if ev.b != 0 {
 				in_.down[mb] = true
 				in_.pressed[mb] = true
