@@ -207,6 +207,7 @@ t_pointer :: proc(tc: ^TC) {
 		drag(&r, corner + {-2, -2}, centre(&r, {9, 5}))
 		c2 := app.sh.charts[0]
 		ok_mark(tc, c2.at == Addr{0, 0} && c2.w == 6 && c2.h == 10, fmt.tprintf("dragging the handle onto F10 makes it A1:F10 (%v %dx%d)", c2.at, c2.w, c2.h))
+		ok_mark(tc, chart_at(app.sh, app.cur) == 0, "and the chart is still the selected one")
 		g, _ = pointer_geom(app)
 		box, _ = chart_box(app, app.sh.charts[0], &g)
 		drag(&r, {p.rect_right(box) - 2, p.rect_bottom(box) - 2}, centre(&r, {0, 0}))

@@ -231,6 +231,9 @@ pointer_press :: proc(app: ^App, pos: [2]f32, shift: bool) -> bool {
 		app.cur = h.cell
 		app.anchor = h.cell
 		if h.kind == .Chart_Handle {
+			// On the corner that stays put, so the chart is still under the
+			// cursor — still selected — however small the drag makes it.
+			app.cur, app.anchor = ch.at, ch.at
 			app.ptr = {drag = .Chart_Size, index = h.index}
 		} else {
 			app.ptr = {drag = .Chart_Move, index = h.index, grab = {h.cell.row - ch.at.row, h.cell.col - ch.at.col}}
