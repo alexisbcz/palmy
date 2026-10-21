@@ -490,6 +490,11 @@ help_overlay :: proc(ui: ^p.Ctx, app: ^App) {
 		"Formulas: + - * / ^ % & = <> < <= > >=,  A1  $A$1  A1:B10  A:A  1:1  Sheet2!A1  'My Sheet'!A1:B4  a named range,  and SUM AVERAGE MIN MAX COUNT COUNTA IF AND OR NOT ABS ROUND FLOOR CEILING SQRT POWER MOD CONCAT LEN LEFT RIGHT MID UPPER LOWER TRIM TODAY NOW DATE YEAR MONTH DAY VLOOKUP INDEX MATCH IFERROR IS*",
 		"text-xs text-muted-foreground",
 	)
+	p.text(
+		ui,
+		"Pointer: click selects a cell, a header its column or row; drag selects a range; drag a chart to move it and its corner to resize it; drag a header border to resize the column or row.",
+		"text-xs text-muted-foreground",
+	)
 }
 
 help_column :: proc(ui: ^p.Ctx, title: string, rows: []Key_Row) {
