@@ -7,10 +7,13 @@
 //   t:<text>   type it      k:<key>   press it      c:<key>  with Ctrl
 //   s:<key>    with Shift   a:<key>   with Alt      C:<key>  Ctrl+Shift
 //   A:<key>    Alt+Shift    .         one idle frame
+//   m:<x>,<y>  move the pointer there (logical pixels)
+//   d:         press the left button   u:  release it
 package main
 
 import "core:fmt"
 import "core:os"
+import "core:strconv"
 import "core:strings"
 import p "palmy:."
 import sc "shadcn:."
@@ -111,6 +114,7 @@ shot_run :: proc(args: []string, film: bool) -> int {
 		ui := p.offscreen_begin(off)
 		measure_viewport(app, p.size(ui))
 		handle_keys(ui, app)
+		handle_pointer(ui, app)
 		frame(ui, app)
 		p.offscreen_end(off)
 	}
@@ -159,6 +163,16 @@ shot_run :: proc(args: []string, film: bool) -> int {
 			p.press_key(off, key_sym(body), {.Ctrl, .Shift})
 		case 'A':
 			p.press_key(off, key_sym(body), {.Alt, .Shift})
+		case 'm':
+			if comma := strings.index_byte(body, ','); comma > 0 {
+				x, _ := strconv.parse_f32(body[:comma])
+				y, _ := strconv.parse_f32(body[comma + 1:])
+				p.move_pointer(off, x, y)
+			}
+		case 'd':
+			p.press(off)
+		case 'u':
+			p.release(off)
 		}
 		run_frame(off, app)
 		off.input.mods = {}

@@ -105,6 +105,7 @@ main :: proc() {
 		// Up/Down and following the cursor both need to know what fits.
 		measure_viewport(app, p.size(ui))
 		handle_keys(ui, app)
+		handle_pointer(ui, app)
 		collab_tick(ui, app)
 		if app.quit {
 			p.quit_app(app_win)

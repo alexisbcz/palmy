@@ -198,6 +198,8 @@ draw_grid :: proc(c: ^p.Canvas, r: p.Rect, app: ^App) {
 	pal := app.pal
 	sh := app.sh
 	p.fill_rect(c, r, pal.bg)
+	// Where the pointer finds the grid next frame, in logical pixels.
+	app.grid_rect = {r.x / s, r.y / s, r.w / s, r.h / s}
 
 	hdr_w := header_width(app) * s
 	hdr_h := HDR_H * s

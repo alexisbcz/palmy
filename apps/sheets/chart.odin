@@ -818,10 +818,10 @@ delete_chart_at :: proc(sh: ^Sheet, a: Addr) -> bool {
 // Resizing and labelling
 //
 // The window reaches a chart by putting the cursor on a cell it covers — the
-// same convention Delete-the-chart-here already used, because this program
-// is driven from the keyboard and a pointer cannot be synthesised on its
-// compositor. `sheets chart-set` reaches it by naming such a cell. Both then
-// call the two procedures below, so there is one rule for what a size is.
+// same convention Delete-the-chart-here already used — whether by the keys
+// or by a click on it (pointer.odin), and dragging its corner handle calls
+// `chart_resize` like Alt+Shift+Arrows does. `sheets chart-set` reaches it by
+// naming such a cell. So there is one rule for what a size is.
 // ---------------------------------------------------------------------------
 
 // chart_at is the chart covering `a` — the topmost, i.e. the last drawn,

@@ -171,6 +171,11 @@ App :: struct {
 	quit:      bool,
 	tab_edit:  bool, // the prompt is renaming the sheet tab
 	chart_pick: Chart_Kind,
+
+	// The pointer: where the grid was last drawn, in logical pixels, and the
+	// drag in progress (pointer.odin).
+	grid_rect: p.Rect,
+	ptr:       Pointer_State,
 }
 
 // app_init gives the application a book with one sheet in it.

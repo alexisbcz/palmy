@@ -289,6 +289,7 @@ selftest :: proc() -> int {
 	t_local_names(&tc)
 	t_name_spans(&tc)
 	t_csv_book(&tc)
+	t_pointer(&tc)
 	t_charts(&tc)
 	t_chart_ops(&tc)
 	t_book_document(&tc)

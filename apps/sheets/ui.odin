@@ -18,7 +18,9 @@ frame :: proc(ui: ^p.Ctx, app: ^App) {
 	formula_bar(ui, app)
 
 	p.row(ui, "flex-1 w-full min-h-0 overflow-hidden")
-	p.pixels(ui, "flex-1 h-full overflow-hidden", app, draw_grid)
+	// The pointer's shape follows what it is over: a border, a chart, its
+	// handle (pointer.odin).
+	p.pixels(ui, p.concat(ui, "flex-1 h-full overflow-hidden ", pointer_cursor(app, p.mouse_pos(ui))), app, draw_grid)
 	if collab.on && collab.ui.panel != .None {
 		collab_panel(ui, app)
 	}

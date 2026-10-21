@@ -1,6 +1,7 @@
-// Keyboard. Every operation in this app has a key, because pointer clicks
-// cannot be synthesized on this compositor and because a spreadsheet is a
-// keyboard instrument anyway.
+// Keyboard. Every operation in this app has a key, because a spreadsheet is
+// a keyboard instrument, and because the headless Wayland seat the demos are
+// recorded on delivers no pointer. The pointer works too (pointer.odin), and
+// is tested through X11 instead (pointer.sh).
 package main
 
 import "core:fmt"
