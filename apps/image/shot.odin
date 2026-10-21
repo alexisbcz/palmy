@@ -139,6 +139,11 @@ apply_keys :: proc(st: ^St, keys: string) {
 		case key == "library":
 			build_library(st)
 			st.view = .Library
+		case key == "save":
+			// Ctrl-S. The picture has to be decoded by the time the keys run.
+			if out, ok, _ := save_copy(st); ok {
+				add_saved(st, out)
+			}
 		case key == "info":
 			st.info = !st.info
 		case key == "next":

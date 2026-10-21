@@ -626,6 +626,7 @@ viewer_keys :: proc(ui: ^p.Ctx, app: ^p.App, st: ^St) {
 	if p.shortcut(ui, 's', {.Ctrl}) {
 		if s := current_shot(st); s != nil {
 			if out, ok, why := save_copy(st); ok {
+				add_saved(st, out)
 				toast(st, ui, fmt.tprintf("Saved %s", base_of(out)))
 			} else {
 				toast(st, ui, fmt.tprintf("Not saved: %s", why))

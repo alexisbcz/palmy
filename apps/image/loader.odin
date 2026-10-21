@@ -105,6 +105,41 @@ loader_stop :: proc(l: ^Loader) {
 	}
 }
 
+// loader_insert adds a file at index `at` — a copy the viewer just saved —
+// keeping every thumbnail already decoded. The worker reads `paths` outside the
+// lock, so it is stopped while the arrays move and started again after; every
+// index the loader holds that is at or past `at` moves up one with its file.
+loader_insert :: proc(l: ^Loader, at: int, path: string) {
+	running := l.worker != nil
+	loader_stop(l)
+	at := clamp(at, 0, len(l.paths))
+
+	paths := make([]string, len(l.paths) + 1)
+	copy(paths[:at], l.paths[:at])
+	paths[at] = path
+	copy(paths[at + 1:], l.paths[at:])
+	delete(l.paths)
+	l.paths = paths
+
+	thumbs := make([]Thumb, len(l.thumbs) + 1)
+	copy(thumbs[:at], l.thumbs[:at])
+	copy(thumbs[at + 1:], l.thumbs[at:])
+	delete(l.thumbs)
+	l.thumbs = thumbs
+
+	if l.want >= at {l.want += 1}
+	if l.have >= at {l.have += 1}
+	if l.hint >= at {l.hint += 1}
+
+	l.quit = false
+	if running {
+		l.worker = thread.create(loader_main)
+		l.worker.data = rawptr(l)
+		thread.start(l.worker)
+		sync.sema_post(&l.sem)
+	}
+}
+
 // loader_want asks for a full-size decode. Idempotent: asking for what is
 // already in the slot costs nothing.
 loader_want :: proc(l: ^Loader, idx: int) {

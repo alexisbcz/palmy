@@ -7,6 +7,7 @@ import "core:encoding/json"
 import "core:fmt"
 import "core:os"
 import "core:strings"
+import "core:time"
 import kit "kit:."
 import p "palmy:."
 
@@ -226,6 +227,78 @@ test_core :: proc() {
 		back, _ := p.load_image(out)
 		checkf(ok && back.w == 2 && back.h == 3 && back.px[1] == RED, "Ctrl-S: writes the picture turned as shown (%s)", why)
 		check(base_of(copy_path(src, 1)) == "pic (rotated 90° 2).png", "copy_path: and never over the last one")
+	}
+
+	// --- and the copy is in the strip at once -----------------------------------
+	// A folder of three, the loader running and every thumbnail decoded; save
+	// a copy of the middle one. The copy must be listed where a rescan would
+	// put it, the selection and the decoded picture must stay on the original,
+	// the old thumbnails must be the same pixels (not re-decoded), and the new
+	// one must arrive.
+	{
+		fdir := fmt.tprintf("%s/strip", dir)
+		os.make_directory_all(fdir)
+		for name, i in ([?]string{"a.png", "b.png", "c.png"}) {
+			px := make([]u32, 4 * 4, context.temp_allocator)
+			for j in 0 ..< len(px) {px[j] = i == 1 ? BLUE : RED}
+			img_save(p.Image{px = px, w = 4, h = 4, source_channels = 4}, fmt.tprintf("%s/%s", fdir, name))
+		}
+		st := st_make()
+		open_folder(&st, fdir, fmt.tprintf("%s/b.png", fdir))
+		defer loader_destroy(&st.ld)
+		wait_thumbs :: proc(l: ^Loader, n: int) -> bool {
+			for _ in 0 ..< 400 {
+				done := 0
+				for i in 0 ..< len(l.thumbs) {
+					if _, s := loader_thumb(l, i); s == .Ready {done += 1}
+				}
+				if done == n {return true}
+				time.sleep(5 * time.Millisecond)
+			}
+			return false
+		}
+		check(len(st.shots) == 3 && st.sel == 1, "strip: three pictures, the middle one open")
+		check(wait_thumbs(&st.ld, 3), "strip: every thumbnail decodes")
+		a_before, _ := loader_thumb(&st.ld, 0)
+		c_before, _ := loader_thumb(&st.ld, 2)
+		for _ in 0 ..< 400 {
+			if img, got, failed, _ := loader_take(&st.ld, 1); got {
+				st.cur = img
+				st.cur_ok = !failed
+				st.cur_idx = 1
+				break
+			}
+			loader_want(&st.ld, 1)
+			time.sleep(5 * time.Millisecond)
+		}
+		out, ok, why := save_copy(&st)
+		checkf(ok, "strip: Ctrl-S saves (%s)", why)
+		at := add_saved(&st, out)
+		names := make([dynamic]string, context.temp_allocator)
+		for s in st.shots {append(&names, s.name)}
+		rescan := scan_dir(fdir, context.temp_allocator)
+		same := len(rescan) == len(st.shots)
+		for s, i in rescan {
+			if same && s.name != st.shots[i].name {same = false}
+		}
+		// Natural order puts "b (copy).png" before "b.png" (a space sorts
+		// before a dot), as a file manager would.
+		checkf(len(st.shots) == 4 && at == 1 && st.shots[1].name == "b (copy).png", "strip: the copy is listed beside its original (%v)", names[:])
+		check(same, "strip: in the order a rescan of the folder gives")
+		check(st.sel == 2 && st.cur_idx == 2 && st.shots[st.sel].name == "b.png", "strip: the selection and the decoded picture stay on the original")
+		lp := len(st.ld.paths) == 4
+		for s, i in st.shots {
+			if lp && st.ld.paths[i] != s.path {lp = false}
+		}
+		check(lp, "strip: the loader's list moved with it")
+		a_after, a_state := loader_thumb(&st.ld, 0)
+		c_after, c_state := loader_thumb(&st.ld, 3)
+		check(a_state == .Ready && raw_data(a_after.px) == raw_data(a_before.px), "strip: the thumbnail before it is kept, not re-decoded")
+		check(c_state == .Ready && raw_data(c_after.px) == raw_data(c_before.px), "strip: the one after it moved up with its file")
+		check(wait_thumbs(&st.ld, 4), "strip: and the copy's own thumbnail arrives")
+		new_t, _ := loader_thumb(&st.ld, 1)
+		check(new_t.w > 0 && new_t.px[0] == BLUE, "strip: showing the copy's pixels")
+		check(add_saved(&st, out) == -1 && len(st.shots) == 4, "strip: saving the same path twice lists it once")
 	}
 }
 
