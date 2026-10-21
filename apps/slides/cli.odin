@@ -418,13 +418,10 @@ COMMANDS := []kit.Command {
 				help = "a text box's style",
 			},
 			{name = "src", kind = .String, help = "an image's file, absolute or relative to the binary"},
-			// Named for what they are rather than x/y/w/h: a Param has no
-			// long aliases, so going back to --x would mean declaring every
-			// one twice to keep the spelling scripts already use.
-			{name = "left", kind = .Float, help = "slide units: the slide is 1280 by 720"},
-			{name = "top", kind = .Float},
-			{name = "width", kind = .Float},
-			{name = "height", kind = .Float},
+			{name = "left", kind = .Float, aliases = {"x"}, help = "slide units: the slide is 1280 by 720"},
+			{name = "top", kind = .Float, aliases = {"y"}},
+			{name = "width", kind = .Float, aliases = {"w"}},
+			{name = "height", kind = .Float, aliases = {"h"}},
 		},
 		out = CHANGE_FIELDS,
 		examples = {

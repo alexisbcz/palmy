@@ -197,8 +197,8 @@ COMMANDS := []kit.Command {
 			{name = "at", kind = .String, help = "any cell the chart covers, optionally Sheet!F3", required = true},
 		},
 		flags = {
-			{name = "w", kind = .Int, help = "width in columns (2..60)"},
-			{name = "h", kind = .Int, help = "height in rows (3..120)"},
+			{name = "w", kind = .Int, aliases = {"width"}, help = "width in columns (2..60)"},
+			{name = "h", kind = .Int, aliases = {"height"}, help = "height in rows (3..120)"},
 			{name = "size", kind = .String, help = "both at once, 8x14"},
 			{name = "labels", kind = .Bool, help = "show each value on its bar, point or slice; --no-labels hides them"},
 			{name = "out", kind = .Path, help = "write here instead of over the input"},

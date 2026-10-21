@@ -148,8 +148,8 @@ COMMANDS := []kit.Command {
 		effect = .Mutate,
 		args = {{name = "input", kind = .Path, required = true}, {name = "output", kind = .Path, required = true}},
 		flags = {
-			{name = "width", kind = .Int, help = "pixels"},
-			{name = "height", kind = .Int, help = "pixels"},
+			{name = "width", kind = .Int, aliases = {"w"}, help = "pixels"},
+			{name = "height", kind = .Int, aliases = {"h"}, help = "pixels"},
 			{name = "scale", kind = .Float, help = "a factor: 0.5 halves it"},
 			{name = "overwrite", kind = .Bool, help = "replace the output if it exists"},
 			{name = "quality", kind = .Int, def = "90", help = "JPEG quality, 1-100"},
@@ -164,12 +164,10 @@ COMMANDS := []kit.Command {
 		effect = .Mutate,
 		args = {{name = "input", kind = .Path, required = true}, {name = "output", kind = .Path, required = true}},
 		flags = {
-			// Not --x/--y: the kit reads `--y` as its own `-y` (--yes) and
-			// `--v`/`--h` likewise (C3), so the corner is --left/--top.
-			{name = "left", kind = .Int, def = "0", help = "x of the top-left corner"},
-			{name = "top", kind = .Int, def = "0", help = "y of the top-left corner"},
-			{name = "width", kind = .Int, required = true},
-			{name = "height", kind = .Int, required = true},
+			{name = "left", kind = .Int, def = "0", aliases = {"x"}, help = "x of the top-left corner"},
+			{name = "top", kind = .Int, def = "0", aliases = {"y"}, help = "y of the top-left corner"},
+			{name = "width", kind = .Int, required = true, aliases = {"w"}},
+			{name = "height", kind = .Int, required = true, aliases = {"h"}},
 			{name = "overwrite", kind = .Bool, help = "replace the output if it exists"},
 			{name = "quality", kind = .Int, def = "90", help = "JPEG quality, 1-100"},
 		},
