@@ -593,6 +593,7 @@ wl_on_event :: proc(w: ^Window, id: u32, opcode: u16, r: ^Reader) {
 				return
 			}
 			w.clip.serial = serial
+			in_.button_at = in_.mouse
 			if state == 1 {
 				in_.down[mb] = true
 				in_.pressed[mb] = true

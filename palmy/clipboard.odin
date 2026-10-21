@@ -151,6 +151,7 @@ Late_Input :: struct {
 	text:     strings.Builder,
 	pressed:  [Mouse_Button]bool,
 	released: [Mouse_Button]bool,
+	button_at: Maybe([2]f32),
 	any:      bool,
 }
 
@@ -467,6 +468,9 @@ release_input :: proc(w: ^Window, m: Input_Mark) {
 			l.any = true
 		}
 	}
+	if l.pressed != {} || l.released != {} {
+		l.button_at = in_.button_at
+	}
 }
 
 // restore_late puts held input back after a frame's edges were cleared, and
@@ -491,7 +495,11 @@ restore_late :: proc(w: ^Window) {
 			w.input.released[b] = true
 		}
 	}
+	if l.pressed != {} || l.released != {} {
+		w.input.button_at = l.button_at
+	}
 	l.pressed, l.released = {}, {}
+	l.button_at = nil
 	l.any = false
 	w.input_dirty = true
 }

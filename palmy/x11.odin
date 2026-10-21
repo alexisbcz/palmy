@@ -791,6 +791,7 @@ x_event :: proc(w: ^Window, rec: []u8, avail: int) -> int {
 		switch btn {
 		case 1, 2, 3:
 			mb := x_button(btn)
+			in_.button_at = in_.mouse
 			in_.down[mb] = true
 			in_.pressed[mb] = true
 			in_.click_serial = u32(xr16(rec, 2))
@@ -812,6 +813,7 @@ x_event :: proc(w: ^Window, rec: []u8, avail: int) -> int {
 		// A wheel notch is a press and a release; only the press carries it.
 		if btn >= 1 && btn <= 3 {
 			mb := x_button(btn)
+			in_.button_at = in_.mouse
 			in_.down[mb] = false
 			in_.released[mb] = true
 		}

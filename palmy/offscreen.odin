@@ -194,11 +194,13 @@ move_pointer :: proc(o: ^Offscreen, x, y: f32) {
 // press and release drive a button through a full click. A click is press on a
 // frame and release on a later one, exactly as a real pointer delivers it.
 press :: proc(o: ^Offscreen, b := Mouse_Button.Left) {
+	o.input.button_at = o.input.mouse
 	o.input.down[b] = true
 	o.input.pressed[b] = true
 }
 
 release :: proc(o: ^Offscreen, b := Mouse_Button.Left) {
+	o.input.button_at = o.input.mouse
 	o.input.down[b] = false
 	o.input.released[b] = true
 }

@@ -99,6 +99,14 @@ Input :: struct {
 	pressed:        [Mouse_Button]bool,
 	released:       [Mouse_Button]bool,
 	click_serial:   u32,
+	// Where the pointer was at the last button press or release. A frame
+	// folds every event since the previous one into one state, and a release
+	// followed by a motion off the button in the same batch used to be hit
+	// tested at the motion's end: the click landed nowhere. A frame with a
+	// button edge hit tests here instead (route_input). Nil when whatever
+	// fed the edge did not say where (apps/wm's evdev path writes Input
+	// itself), which keeps the old behaviour: the latest position.
+	button_at:      Maybe([2]f32),
 	scroll:         [2]f32,
 	over_surface:   bool,
 	mods:           Modifiers,

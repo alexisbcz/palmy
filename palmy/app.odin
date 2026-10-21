@@ -725,6 +725,7 @@ clear_edges :: proc(in_: ^Input) {
 	in_.released = {}
 	in_.scroll = {}
 	in_.mouse_delta = {}
+	in_.button_at = nil
 	clear(&in_.keys)
 	strings.builder_reset(&in_.text)
 }
@@ -850,9 +851,15 @@ cursor_at :: proc(nodes: []Node, idx: int) -> Cursor {
 route_input :: proc(ctx: ^Ctx) {
 	in_ := ctx.input
 
+	// A frame with a button edge is hit tested where the button changed,
+	// not where the pointer went after it (see `Input.button_at`).
+	at := in_.mouse
+	if b, ok := in_.button_at.?; ok && (in_.pressed != {} || in_.released != {}) {
+		at = b
+	}
 	h: Hit
 	if in_.over_surface && len(ctx.prev) > 0 {
-		hit_test(ctx.prev[:], 0, in_.mouse, &h)
+		hit_test(ctx.prev[:], 0, at, &h)
 	}
 	ctx.hot = h.id
 
