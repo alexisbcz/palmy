@@ -204,11 +204,14 @@ COMMANDS := []kit.Command {
 		verb = "add",
 		summary = "record text as if it had been copied, through the same gate",
 		effect = .Mutate,
-		args = {{name = "text", kind = .String, help = "\\n is a new line", required = true}},
+		args = {{name = "text", kind = .String, help = "\\n is a new line", required = true, free = true}},
 		flags = {{name = "mime", kind = .String, def = "text/plain;charset=utf-8", help = "the type it is recorded under"}},
 		out = ADD_FIELDS,
 		examples = {"clipboard add \"ssh -L 8080:localhost:80 host\" --json"},
 		run = cmd_add,
+		// What was copied lives in a 0600 file and nowhere else, so the
+		// audit log records `clipboard add <redacted>`.
+		private_args = true,
 	},
 	{
 		verb = "copy",
@@ -279,63 +282,6 @@ mode 0700, its file 0600.`
 
 cli_selftest :: proc() -> int {
 	return selftest() == 0 ? 0 : 1
-}
-
-// ---------------------------------------------------------------------------
-// Keeping what was copied out of the audit log
-//
-// The kit writes the argv of every command that is not a read into the audit
-// log (TODO.md C3: no secret parameters), and the argument to `add` is
-// clipboard content — the very thing this program keeps in a 0600 file and
-// nowhere else. So it is lifted out before the kit sees the line, as mailcore
-// does with --password, and the line carries a placeholder.
-// ---------------------------------------------------------------------------
-
-ADD_PLACEHOLDER :: "<text kept out of the audit log>"
-
-@(private = "file")
-g_add_text: string
-@(private = "file")
-g_add_have: bool
-
-scrub_add_text :: proc(args: []string) -> []string {
-	if len(args) < 2 || args[0] != "add" {
-		return args
-	}
-	out := make([]string, len(args))
-	copy(out, args)
-	positional := false
-	for i := 1; i < len(out); i += 1 {
-		a := out[i]
-		if !positional {
-			if a == "--" {
-				positional = true
-				continue
-			}
-			if a == "--mime" || a == "--identity" {
-				i += 1
-				continue
-			}
-			if strings.has_prefix(a, "-") && a != "-" {
-				continue
-			}
-		}
-		g_add_text = a
-		g_add_have = true
-		out[i] = ADD_PLACEHOLDER
-		break
-	}
-	return out
-}
-
-// add_text is `add`'s argument: the real one, not the placeholder.
-@(private = "file")
-add_text :: proc(c: ^kit.Call) -> string {
-	v := kit.cli_str(c, "text")
-	if v == ADD_PLACEHOLDER && g_add_have {
-		return g_add_text
-	}
-	return v
 }
 
 // ---------------------------------------------------------------------------
@@ -603,7 +549,7 @@ cmd_clear :: proc(c: ^kit.Call) -> int {
 cmd_add :: proc(c: ^kit.Call) -> int {
 	ensure_dirs()
 	cli_open()
-	text := unescape_arg(add_text(c))
+	text := unescape_arg(kit.cli_str(c, "text"))
 	mime := kit.cli_str(c, "mime")
 	// The watcher's own decision, given the type list a copy of this would
 	// have advertised. A secret is refused before the payload is looked at.
@@ -685,15 +631,9 @@ cmd_copy :: proc(c: ^kit.Call) -> int {
 
 @(private = "file")
 cmd_shots :: proc(c: ^kit.Call) -> int {
-	dir := strings.clone(kit.cli_str(c, "dir"))
-	// The shots render offscreen frames, which free the temp allocator — where
-	// the kit keeps the parsed command line it reads again for the audit
-	// record (TODO.md C3). Move it out first.
-	argv := make([]string, len(c.argv))
-	for a, i in c.argv {
-		argv[i] = strings.clone(a)
-	}
-	c.argv = argv
+	// The shots free the temp allocator; the parsed line lives in the kit's
+	// own arena, so `dir` and the audit record survive that.
+	dir := kit.cli_str(c, "dir")
 	if !c.dry_run && shots(dir) != 0 {
 		return kit.cli_failf(c, kit.EXIT_FAILED, "could not render the shots into %s", dir)
 	}

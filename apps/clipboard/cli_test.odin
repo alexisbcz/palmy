@@ -389,4 +389,25 @@ test_cli :: proc() {
 		tcheck(strings.contains(log, `"verb":"add"`), "add is audited")
 		tcheck(!strings.contains(log, "hunter") && !strings.contains(log, "SELECT id"), "but what was added — copied text, a refused secret — is not in the audit log")
 	}
+	{
+		// The kit's private_args, not a scrub of our own, keeps it out: the
+		// text sits after a flag with a value and after `--`, where a hand
+		// scrub has to know every flag to find it.
+		audit := fmt.tprintf("%s/audit.jsonl", SCRATCH_HOME)
+		os.remove(audit)
+		_, c1 := run("add", "--mime", "text/plain", "correct-horse-7319", "--json")
+		_, c2 := run("add", "--identity", "alex", "--json", "--", "-battery-staple-7319")
+		_, c4 := run("add", "-free-text-7319", "--json")
+		po, c3 := run("add", "--parse-only", "staple-parse-7319", "--json")
+		raw, _ := os.read_entire_file_from_path(audit, context.temp_allocator)
+		log := string(raw)
+		tcheck(c1 == 0 && c2 == 0 && c3 == 0 && c4 == 0, "add after a flag, after --, starting with a dash, and under --parse-only all succeed (%d %d %d %d)", c1, c2, c3, c4)
+		tcheck(strings.count(log, `"verb":"add"`) == 3 && strings.contains(log, "<redacted>"), "the three adds are audited, with <redacted> in the text's place")
+		tcheck(!strings.contains(po, "7319") && strings.contains(po, "<redacted>"), "--parse-only echoes <redacted> too")
+		tcheck(!strings.contains(log, "7319"), "grepping the audit log for the added text finds nothing")
+		list, _ := run("list", "--json")
+		tcheck(strings.contains(list, "correct-horse-7319") && strings.contains(list, "-battery-staple-7319"), "and the history has the real text, not the placeholder")
+		tcheck(strings.contains(list, `"-free-text-7319"`), "a text starting with a dash is free text, not an unknown flag")
+		run("clear", "--yes")
+	}
 }

@@ -64,7 +64,7 @@ main :: proc() {
 	// Everything but an empty line is the command line's (cli.odin): the
 	// history, read and edited headlessly, and the older --selftest and
 	// --shots spellings.
-	if code, handled := kit.cli_args(surface(), scrub_add_text(os.args[1:])); handled {
+	if code, handled := kit.cli(surface()); handled {
 		os.exit(code)
 	}
 
