@@ -99,7 +99,7 @@ COMMANDS := []kit.Command {
 		effect = .Mutate,
 		args = {PROJECT_ARG, {name = "clip", kind = .Int, help = "a clip id, from info", required = true}},
 		flags = {
-			{name = "in-by", kind = .Float, help = "seconds to move the in point (negative extends)"},
+			{name = "in-by", kind = .Float, unless = {"out-by"}, help = "seconds to move the in point (negative extends)"},
 			{name = "out-by", kind = .Float, help = "seconds to move the out point (negative shortens)"},
 		},
 		out = PROJECT_FIELDS,
@@ -634,9 +634,6 @@ cmd_split :: proc(c: ^kit.Call) -> int {
 
 @(private = "file")
 cmd_trim :: proc(c: ^kit.Call) -> int {
-	if !kit.cli_has(c, "in-by") && !kit.cli_has(c, "out-by") {
-		return kit.cli_fail(c, kit.EXIT_USAGE, "trim needs --in-by, --out-by or both")
-	}
 	l: Loaded
 	if code := load(c, &l); code != kit.EXIT_OK {
 		return code
