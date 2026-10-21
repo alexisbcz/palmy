@@ -242,6 +242,16 @@ EXIT_SCOPE :: 5
 EXIT_UNAVAILABLE :: 6
 EXIT_FAILED :: 7
 
+// subject makes a one-element subjects list that outlives the call. A slice
+// literal (`{n}`) passed to refuse() lives in the planner's stack frame, and a
+// Refusal returned from the planner then points at a dead frame: the first
+// real run printed an empty subject for a refused rollback because of it.
+subject :: proc(s: string, allocator := context.allocator) -> []string {
+	out := make([]string, 1, allocator)
+	out[0] = s
+	return out
+}
+
 refuse :: proc(code: int, reason, detail: string, subjects: []string = nil) -> Refusal {
 	return Refusal{refused = true, code = code, reason = reason, detail = detail, subjects = subjects}
 }
@@ -447,7 +457,7 @@ plan_install :: proc(
 				EXIT_USAGE,
 				"invalid-name",
 				fmt.aprintf("%q is not a package name; it would be read as a flag or a path", n),
-				{n},
+				subject(n, allocator),
 			)
 		}
 	}
@@ -582,7 +592,7 @@ plan_remove :: proc(
 				EXIT_USAGE,
 				"invalid-name",
 				fmt.aprintf("%q is not a package name", n),
-				{n},
+				subject(n, allocator),
 			)
 		}
 	}
@@ -895,6 +905,10 @@ Snapshot :: struct {
 	date:        string,
 	description: string,
 	from_palm:   bool,
+	// snapper marks the number column: `+` the btrfs default subvolume (what
+	// the next boot mounts), `-` the one mounted now, `*` both.
+	is_default:  bool,
+	is_active:   bool,
 }
 
 // parse_snapper_list reads `snapper --config root list`, whose columns are
@@ -914,6 +928,22 @@ parse_snapper_list :: proc(text: string, allocator := context.allocator) -> []Sn
 		if num == "" || num == "#" {
 			continue
 		}
+		// The marks follow the number with no space ("1*"). Before the first
+		// real run this parser saw only unmarked numbers and dropped a marked
+		// row whole -- which on a layout that can roll back is exactly the
+		// snapshot the machine is running.
+		is_default, is_active := false, false
+		switch num[len(num) - 1] {
+		case '+':
+			is_default = true
+		case '-':
+			is_active = true
+		case '*':
+			is_default, is_active = true, true
+		}
+		if is_default || is_active {
+			num = num[:len(num) - 1]
+		}
 		n := 0
 		ok := true
 		for i in 0 ..< len(num) {
@@ -926,9 +956,14 @@ parse_snapper_list :: proc(text: string, allocator := context.allocator) -> []Sn
 		if !ok {
 			continue
 		}
+		if num == "" {
+			continue
+		}
 		s := Snapshot {
-			number = n,
-			kind   = strings.clone(strings.trim_space(cols[1]), allocator),
+			number     = n,
+			kind       = strings.clone(strings.trim_space(cols[1]), allocator),
+			is_default = is_default,
+			is_active  = is_active,
 		}
 		if len(cols) >= 4 {
 			s.date = strings.clone(strings.trim_space(cols[3]), allocator)
@@ -945,12 +980,104 @@ parse_snapper_list :: proc(text: string, allocator := context.allocator) -> []Sn
 Rollback_Opts :: struct {
 	yes:         bool,
 	interactive: bool,
+	// What `snapper list` said, when it could be read. nil means it could
+	// not (it needs root or an ALLOW_USERS entry), and snapper is left to
+	// judge the layout itself.
+	snapshots:   []Snapshot,
+	listed:      bool,
+	// What /proc/self/mountinfo says / is mounted from, which needs no root.
+	// It is the fallback when the list cannot be read.
+	root:        Root_Mount,
+}
+
+// Root_Mount is the line of /proc/self/mountinfo whose mount point is /.
+Root_Mount :: struct {
+	known:  bool,
+	fstype: string,
+	subvol: string, // the btrfs subvolume path, e.g. /@ or /@/.snapshots/1/snapshot
+}
+
+// parse_root_mount reads /proc/self/mountinfo. Each line is
+// `id parent major:minor root mountpoint options [optional...] - fstype source superoptions`;
+// for btrfs the `root` field is the subvolume path. The last line mounted on
+// / wins, as it does in the kernel.
+parse_root_mount :: proc(text: string, allocator := context.allocator) -> Root_Mount {
+	r := Root_Mount{}
+	rest := text
+	for line in strings.split_lines_iterator(&rest) {
+		f := strings.fields(line, context.temp_allocator)
+		if len(f) < 7 || f[4] != "/" {
+			continue
+		}
+		dash := -1
+		for x, i in f {
+			if x == "-" {
+				dash = i
+				break
+			}
+		}
+		if dash < 0 || dash + 1 >= len(f) {
+			continue
+		}
+		r = Root_Mount {
+			known  = true,
+			fstype = strings.clone(f[dash + 1], allocator),
+			subvol = strings.clone(f[3], allocator),
+		}
+	}
+	return r
+}
+
+// root_is_a_snapshot is the same question as rollback_layout_ok, asked of
+// the mount instead of the list: is / mounted from `.../.snapshots/N/snapshot`
+// on btrfs. On the openSUSE layout it always is; on the usual Arch layout it
+// is `/@`.
+root_is_a_snapshot :: proc(r: Root_Mount) -> bool {
+	if r.fstype != "btrfs" {
+		return false
+	}
+	parts := strings.split(strings.trim(r.subvol, "/"), "/", context.temp_allocator)
+	n := len(parts)
+	if n < 3 || parts[n - 1] != "snapshot" || parts[n - 3] != ".snapshots" || parts[n - 2] == "" {
+		return false
+	}
+	for c in transmute([]u8)parts[n - 2] {
+		if c < '0' || c > '9' {
+			return false
+		}
+	}
+	return true
+}
+
+// rollback_layout_ok is snapper's own rule, read from client/snapper/
+// cmd-rollback.cc: `snapper rollback` works only when the btrfs default
+// subvolume is one of the config's snapshots (the openSUSE layout, where /
+// is mounted from @/.snapshots/N/snapshot). On the layout most Arch installs
+// have -- / mounted with `subvol=/@` and the default subvolume left at the
+// top level -- snapper exits 1 with "Cannot detect ambit since default
+// subvolume is unknown". That is what the first real run hit (apps/pkg/
+// integration), and it is the layout limine-snapper-sync's own README calls
+// "typical for most Arch-based installations" and restores with
+// `limine-snapper-restore` instead.
+rollback_layout_ok :: proc(snaps: []Snapshot) -> bool {
+	for s in snaps {
+		if s.is_default && s.number > 0 {
+			return true
+		}
+	}
+	return false
 }
 
 // plan_rollback is as interactive as upgrade, and for a sharper reason: a
 // snapper rollback on this machine swaps the root subvolume and needs a
 // reboot, which limine-snapper-sync has already written boot entries for. An
 // agent cannot be the thing that reboots the machine it is working on.
+//
+// When the snapshot list could be read, two things are decided before any
+// argv exists: that the snapshot named is in it, and that the machine's
+// layout is one `snapper rollback` can act on. Without the second check the
+// verb took no snapshot, ran snapper, and reported exit 7 with snapper's
+// message as the only explanation.
 plan_rollback :: proc(
 	number: int,
 	o: Rollback_Opts,
@@ -978,6 +1105,36 @@ plan_rollback :: proc(
 			EXIT_NEEDS_YES,
 			"needs-yes",
 			"rollback is destructive: everything written to / since that snapshot goes. Pass --yes.",
+		)
+	}
+	if o.listed {
+		found := false
+		for s in o.snapshots {
+			if s.number == number {
+				found = true
+			}
+		}
+		if !found {
+			return Plan{}, refuse(
+				EXIT_NOT_FOUND,
+				"unknown-snapshot",
+				"snapper has no snapshot with that number; `palm pkg snapshots` lists them",
+				subject(fmt.aprintf("%d", number, allocator = allocator), allocator),
+			)
+		}
+	}
+	layout_ok := true
+	if o.listed {
+		layout_ok = rollback_layout_ok(o.snapshots)
+	} else if o.root.known {
+		layout_ok = root_is_a_snapshot(o.root)
+	}
+	if !layout_ok {
+		return Plan{}, refuse(
+			EXIT_SCOPE,
+			"rollback-layout",
+			"`snapper rollback` needs the btrfs default subvolume to be one of snapper's snapshots (the openSUSE layout), and on this machine none is: / is a plain subvolume. snapper would refuse with \"Cannot detect ambit\". With limine-snapper-sync, boot the snapshot from Limine's Snapshots menu and run `limine-snapper-restore`; without it, `snapper undochange` reverts files in place. Neither is something this program starts for you.",
+			subject(fmt.aprintf("%d", number, allocator = allocator), allocator),
 		)
 	}
 	argv := make([dynamic]string, allocator)

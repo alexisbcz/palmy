@@ -754,6 +754,8 @@ verb_snapshots :: proc(o: ^Opts) -> int {
 			jw_kstr(&jw, "date", s.date)
 			jw_kstr(&jw, "description", s.description)
 			jw_kbool(&jw, "from_palm", s.from_palm)
+			jw_kbool(&jw, "default", s.is_default)
+			jw_kbool(&jw, "active", s.is_active)
 			jw_obj_end(&jw)
 		}
 		jw_arr_end(&jw)
@@ -777,7 +779,19 @@ verb_rollback :: proc(o: ^Opts) -> int {
 		}
 		n = v
 	}
-	p, r := plan_rollback(n, Rollback_Opts{yes = o.yes, interactive = is_a_person()})
+	// The list is a read; if it cannot be had (it needs root or an
+	// ALLOW_USERS entry), the plan goes ahead and snapper judges the layout.
+	ro := Rollback_Opts{yes = o.yes, interactive = is_a_person()}
+	if n > 0 && have_tool("snapper") {
+		if text, ok := run_query({"snapper", "--config", "root", "list"}); ok {
+			ro.snapshots = parse_snapper_list(text)
+			ro.listed = len(ro.snapshots) > 0
+		}
+	}
+	if mi, err := os.read_entire_file_from_path("/proc/self/mountinfo", context.temp_allocator); err == nil {
+		ro.root = parse_root_mount(string(mi))
+	}
+	p, r := plan_rollback(n, ro)
 	if r.refused {
 		return emit_refusal(o, "rollback", r)
 	}

@@ -395,6 +395,23 @@ test_parsers :: proc() {
 	eq_s(snaps[1].description, "palm pkg install git", "the description names the operation")
 	check(snaps[1].from_palm, "and is recognised as palm's")
 	check(!snaps[0].from_palm, "a snapshot palm did not take is not claimed")
+
+	// snapper marks the default and the active snapshot in the number column.
+	// The parser used to drop a marked row whole.
+	marked := parse_snapper_list(
+		" # | Type   | Pre # | Date | User | Cleanup | Description | Userdata\n---+--------+-------+------+------+---------+-------------+---------\n0  | single |       |      | root |         | current     |\n1* | single |       | now  | root |         | first root filesystem |\n5+ | single |       | now  | root | number  | writable copy of #3 |\n6- | single |       | now  | root | number  | palm pkg install git |\n",
+	)
+	eq_i(len(marked), 4, "rows marked +, - and * are snapshots too")
+	if len(marked) == 4 {
+		eq_i(marked[1].number, 1, "a `*` is read off the number")
+		check(marked[1].is_default && marked[1].is_active, "and means default and active")
+		check(marked[2].is_default && !marked[2].is_active, "`+` is the default subvolume only")
+		check(!marked[3].is_default && marked[3].is_active, "`-` is the mounted one only")
+		eq_s(marked[3].description, "palm pkg install git", "and a marked row keeps its description")
+		check(marked[3].from_palm, "and is still recognised as palm's")
+	}
+	check(rollback_layout_ok(marked), "a default subvolume that is a snapshot is a layout snapper can roll back")
+	check(!rollback_layout_ok(snaps), "and none marked default is not")
 }
 
 // ---------------------------------------------------------------------------
@@ -980,8 +997,69 @@ test_upgrade_and_rollback :: proc() {
 	_, rr3 := plan_rollback(0, Rollback_Opts{yes = true, interactive = true})
 	eq_s(rr3.reason, "no-snapshot", "and a rollback with no snapshot named is a usage error")
 
+	// When the list can be read, the layout and the number are checked
+	// before any argv exists.
+	plain := []Snapshot{{number = 0, description = "current"}, {number = 42, description = "palm pkg install git", from_palm = true}}
+	_, rl := plan_rollback(42, Rollback_Opts{yes = true, interactive = true, snapshots = plain, listed = true})
+	eq_s(rl.reason, "rollback-layout", "on a plain-subvolume root a rollback is refused before snapper is asked")
+	eq_i(rl.code, EXIT_SCOPE, "exit 5: this layout is out of scope for snapper rollback")
+	check(strings.contains(rl.detail, "limine-snapper-restore"), "and the refusal names what does work there")
+	suse := []Snapshot{{number = 0}, {number = 1, is_default = true, is_active = true}, {number = 42, from_palm = true}}
+	ps, rs := plan_rollback(42, Rollback_Opts{yes = true, interactive = true, snapshots = suse, listed = true})
+	check(!rs.refused, "with the default subvolume a snapshot, it plans (%s)", rs.reason)
+	eq_i(len(ps.steps), 1, "one step")
+	_, ru := plan_rollback(99, Rollback_Opts{yes = true, interactive = true, snapshots = suse, listed = true})
+	eq_s(ru.reason, "unknown-snapshot", "a number snapper does not have is refused by name")
+	eq_i(ru.code, EXIT_NOT_FOUND, "exit 3")
+	_, rp := plan_rollback(42, Rollback_Opts{yes = false, interactive = true, snapshots = plain, listed = true})
+	eq_s(rp.reason, "needs-yes", "--yes is still asked for first")
+
+	// Without the list (it needs root), the mount table answers the same
+	// question: is / mounted from a snapper snapshot on btrfs.
+	arch := parse_root_mount(
+		"22 1 0:21 / /proc rw - proc proc rw\n25 1 0:24 /@ / rw,relatime shared:1 - btrfs /dev/nvme0n1p2 rw,subvol=/@\n26 25 0:24 /@home /home rw - btrfs /dev/nvme0n1p2 rw\n",
+	)
+	check(arch.known, "the root line of mountinfo is found")
+	eq_s(arch.fstype, "btrfs", "its filesystem type, past the optional fields")
+	eq_s(arch.subvol, "/@", "and its subvolume")
+	check(!root_is_a_snapshot(arch), "/@ is the plain Arch layout")
+	opensuse := parse_root_mount("60 1 0:30 /@/.snapshots/1/snapshot / rw - btrfs /dev/vda2 rw\n")
+	check(root_is_a_snapshot(opensuse), "/@/.snapshots/1/snapshot is the openSUSE layout")
+	check(!root_is_a_snapshot(Root_Mount{known = true, fstype = "ext4", subvol = "/.snapshots/1/snapshot"}), "and only on btrfs")
+	check(!root_is_a_snapshot(Root_Mount{known = true, fstype = "btrfs", subvol = "/.snapshots/x/snapshot"}), "and only with a number")
+	_, rm := plan_rollback(42, Rollback_Opts{yes = true, interactive = true, root = arch})
+	eq_s(rm.reason, "rollback-layout", "with no list, a /@ root is refused from the mount table alone")
+	_, rm2 := plan_rollback(42, Rollback_Opts{yes = true, interactive = true, root = opensuse})
+	check(!rm2.refused, "and a snapshot root plans")
+	_, rm3 := plan_rollback(42, Rollback_Opts{yes = true, interactive = true, root = arch, snapshots = suse, listed = true})
+	check(!rm3.refused, "the list, when it can be read, is what decides")
+
+	// A refusal's subjects must outlive the planner's stack frame. The
+	// planner is called one frame down and the stack is scribbled on before
+	// the subjects are read, which is the order the real verb does it in.
+	refused_far :: proc() -> (Refusal, Refusal, Refusal) {
+		plain := []Snapshot{{number = 0}, {number = 42}}
+		_, a := plan_rollback(42, Rollback_Opts{yes = true, interactive = true, snapshots = plain, listed = true})
+		w := canned_world()
+		_, b := plan_install(&w, {"-Sy"}, Install_Opts{})
+		_, c := plan_remove(&w, {"--noconfirm"}, Remove_Opts{yes = true})
+		return a, b, c
+	}
+	scribble :: proc() -> int {
+		buf: [4096]u8
+		for i in 0 ..< len(buf) {
+			buf[i] = u8(i * 7)
+		}
+		return int(buf[1234])
+	}
+	ra, rb, rc := refused_far()
+	_ = scribble()
+	check(len(ra.subjects) == 1 && ra.subjects[0] == "42", "a refused rollback still names its snapshot after the planner returns (%v)", ra.subjects)
+	check(len(rb.subjects) == 1 && rb.subjects[0] == "-Sy", "a refused install still names the bad name (%v)", rb.subjects)
+	check(len(rc.subjects) == 1 && rc.subjects[0] == "--noconfirm", "a refused remove still names the bad name (%v)", rc.subjects)
+
 	pr, pok := plan_rollback(42, Rollback_Opts{yes = true, interactive = true})
-	check(!pok.refused, "with a person and --yes it plans")
+	check(!pok.refused, "with a person and --yes, and no list to read, it plans and snapper judges")
 	eq_argv(
 		step_argv(&pr, 0),
 		{"sudo", "snapper", "--config", "root", "rollback", "42"},
@@ -1539,6 +1617,20 @@ test_argv_that_runs :: proc() {
 	if len(fired4) == 2 {
 		eq_s(fired4[1], "sudo pacman -Syu", "and it is -Syu, never -Sy")
 	}
+
+	// rollback, with a person declared present, against the fake snapper's
+	// list, which has no default-subvolume mark: the plain-subvolume layout
+	// the real run found. It is refused, and nothing runs.
+	os.remove(f.fired)
+	_ = os.set_env("PALM_PKG_NONINTERACTIVE", "0")
+	code5, text5 := drive({"rollback", "7", "--yes", "--json"})
+	code6, text6 := drive({"rollback", "99", "--yes", "--json"})
+	_ = os.set_env("PALM_PKG_NONINTERACTIVE", "1")
+	eq_i(code5, EXIT_SCOPE, "rollback on a plain-subvolume root is out of scope")
+	check(strings.contains(text5, "rollback-layout"), "by name (%s)", text5)
+	eq_i(code6, EXIT_NOT_FOUND, "and a snapshot snapper does not list is not found")
+	check(strings.contains(text6, "unknown-snapshot"), "by name")
+	eq_i(len(read_lines(f.fired)), 0, "neither ran anything")
 
 	// The strongest form of the rule: across everything that ran in this
 	// section, no command line refreshed without upgrading.
