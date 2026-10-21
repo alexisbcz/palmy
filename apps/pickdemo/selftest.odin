@@ -874,6 +874,31 @@ test_hostile_paths :: proc(root: string) {
 		check(!e.is_dir, "and not as a folder")
 	}
 
+	// --- pick_go refuses whatever has no inside ----------------------------
+	// The loop checks above were failing because pick_go made any *existing*
+	// path the current directory. These pin the rest of that contract: a
+	// file and a broken link are refused the same way, while a folder that
+	// cannot be read — reached directly or through a link — is still opened,
+	// so its permission error shows where the user asked for it.
+	for name in ([?]string{"alpha.txt", "broken-link", "link-to-file"}) {
+		kit.pick_go(&st, root)
+		kit.pick_go(&st, kit.pick_join(root, name, context.temp_allocator))
+		eq(st.dir, root, fmt.tprintf("pick_go on %s stays put", name))
+	}
+	check(st.note != "", "and says why, in the note")
+	{
+		side := fmt.tprintf("%s-links", root)
+		os.remove_all(side)
+		must(os.make_directory_all(side), "make the side directory")
+		locked_link := kit.pick_join(side, "to-locked", context.temp_allocator)
+		_ = os.symlink(kit.pick_join(root, PERM_DIR, context.temp_allocator), locked_link)
+		kit.pick_go(&st, locked_link)
+		eq(st.dir, locked_link, "a link to an unreadable folder is still entered")
+		check(strings.contains(st.err, "permission"), "and shows the permission error, got %q", st.err)
+		kit.pick_go(&st, root)
+		os.remove_all(side)
+	}
+
 	// --- a path that no longer exists --------------------------------------
 	gone := kit.pick_join(root, "sub/deeper/was-here/and-here", context.temp_allocator)
 	eq(

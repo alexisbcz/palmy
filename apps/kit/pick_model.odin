@@ -678,6 +678,15 @@ pick_go :: proc(st: ^Pick, path: string) {
 	}
 	if !pick_exists(clean) {
 		clean = pick_existing_dir(clean, context.temp_allocator)
+	} else if !pick_enterable(clean) {
+		// It exists but is no folder: a file, a broken link, or a symlink
+		// loop. Making it the current directory would leave the dialog
+		// "inside" something that has no inside — New Folder would aim at it
+		// and every reload would fail — so the request is refused and the
+		// dialog stays where it was. The UI only offers folders, but places,
+		// bookmarks and callers can hand over anything.
+		pick_note(st, "That is not a folder.")
+		return
 	}
 	delete(st.dir)
 	st.dir = strings.clone(clean)
@@ -690,6 +699,30 @@ pick_go :: proc(st: ^Pick, path: string) {
 	clear(&st.ahead)
 	pick_load(st, st.dir)
 	pick_sync_place(st)
+}
+
+// pick_enterable is pick_is_dir plus one case it cannot see: a link to a
+// folder the user may not read. Resolving that link fails with EACCES, so
+// pick_is_dir says no, but it is still a folder, and the dialog should open
+// it to show the permission error where it was asked for — as it does for a
+// locked folder reached directly.
+@(private)
+pick_enterable :: proc(path: string) -> bool {
+	if pick_is_dir(path) {
+		return true
+	}
+	fi, err := os.lstat(path, context.temp_allocator)
+	if err != nil || fi.type != .Symlink {
+		return false
+	}
+	_, terr := os.stat(path, context.temp_allocator)
+	if terr == .Permission_Denied {
+		return true
+	}
+	if errno, ok := os.is_platform_error(terr); ok {
+		return errno == 13 || errno == 1 // EACCES, EPERM
+	}
+	return false
 }
 
 // pick_up is Backspace: the enclosing folder, landing on the folder just left.
