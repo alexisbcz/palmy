@@ -24,17 +24,18 @@ import stbi "vendor:stb/image"
 // the two bitmap tables. The PNGs go through the stb_image already vendored for
 // `load_image`, get box-filtered down to the text size once, and are cached.
 //
-// What this does not do is shape. Without GSUB there is no way to join
-// `U+1F468 U+200D U+1F4BB` into one "man technologist" glyph, so a ZWJ sequence
-// renders as its parts and a skin-tone modifier renders as a colour swatch
-// after the base emoji. The joiners and variation selectors themselves draw
-// nothing (see `is_ignorable`), so the result is readable rather than a row of
-// boxes — which is what it was before.
+// Sequences -- `U+1F468 U+200D U+1F4BB` "man technologist", a skin tone after a
+// hand, two regional indicators, a keycap, a tag flag -- are one glyph each in
+// the font, reachable only through its GSUB table. `emoji_compose` gathers a
+// sequence out of a line, maps it to glyph ids and runs the font's own `ccmp`
+// lookups over it (gsub.odin); the line layout then places whatever glyphs
+// came out. A sequence the font has no glyph for falls apart the way a browser
+// shows it: its parts side by side, the joiners drawing nothing.
 // ---------------------------------------------------------------------------
 
 @(private)
 Emoji_Key :: struct {
-	cp:   rune,
+	gid:  u32,
 	size: u16, // target height in whole pixels
 }
 
@@ -76,6 +77,10 @@ Emoji_Font :: struct {
 
 	ppem:   f32,
 	ranges: [dynamic]Emoji_Range,
+
+	// The font's substitutions, for sequences. Empty for a font without GSUB,
+	// which then draws every sequence as its parts.
+	gsub: Gsub,
 
 	cache: map[Emoji_Key]Emoji_Bitmap,
 }
@@ -139,6 +144,7 @@ emoji_destroy :: proc(e: ^Emoji_Font) {
 	}
 	delete(e.cache)
 	delete(e.ranges)
+	gsub_destroy(&e.gsub)
 	if e.data != nil {
 		delete(e.data)
 		e.data = nil
@@ -200,6 +206,7 @@ emoji_load :: proc(e: ^Emoji_Font, path: string) -> bool {
 		delete(e.data)
 		e.data = nil
 		clear(&e.ranges)
+		gsub_destroy(&e.gsub)
 		return false
 	}
 	e.path = strings.clone(path)
@@ -301,6 +308,12 @@ emoji_parse :: proc(e: ^Emoji_Font) -> bool {
 		return false
 	}
 	e.ppem = f32(best_ppem)
+
+	// The features a browser applies to every run. NotoColorEmoji puts all of
+	// its sequences under `ccmp`; other colour fonts use `liga` or `rlig`.
+	if gsub, _ := find(d, base, num, "GSUB"); gsub != 0 {
+		gsub_init(&e.gsub, d, gsub, {"ccmp", "locl", "rlig", "liga", "clig"})
+	}
 
 	b := cblc + 8 + 48 * best
 	ist_array := cblc + int(sfnt_u32(d, b + 0))
@@ -430,10 +443,16 @@ emoji_has :: proc(e: ^Emoji_Font, r: rune) -> bool {
 // emoji_advance is the font's own advance for this codepoint, in pixels.
 @(private)
 emoji_advance :: proc(e: ^Emoji_Font, r: rune, size: f32) -> f32 {
+	return emoji_glyph_advance(e, emoji_glyph(e, r), size)
+}
+
+// emoji_glyph_advance is the advance of a glyph id, which is what a sequence
+// has once GSUB has replaced it: there is no codepoint to look up.
+@(private)
+emoji_glyph_advance :: proc(e: ^Emoji_Font, gid: u32, size: f32) -> f32 {
 	if !e.ok || e.hmtx == 0 || e.num_hmetrics == 0 {
 		return size
 	}
-	gid := emoji_glyph(e, r)
 	i := min(gid, e.num_hmetrics - 1)
 	units := f32(sfnt_u16(e.data, e.hmtx + 4 * int(i)))
 	if units <= 0 {
@@ -447,20 +466,19 @@ emoji_advance :: proc(e: ^Emoji_Font, r: rune, size: f32) -> f32 {
 // ---------------------------------------------------------------------------
 
 @(private)
-emoji_bitmap :: proc(e: ^Emoji_Font, r: rune, size: f32) -> ^Emoji_Bitmap {
-	key := Emoji_Key{cp = r, size = u16(clamp(size + 0.5, 1, 4096))}
+emoji_bitmap :: proc(e: ^Emoji_Font, gid: u32, size: f32) -> ^Emoji_Bitmap {
+	key := Emoji_Key{gid = gid, size = u16(clamp(size + 0.5, 1, 4096))}
 	if bm, found := &e.cache[key]; found {
 		return bm
 	}
-	// Decoded once per (codepoint, whole-pixel size) and then kept, miss or
-	// hit: a glyph the font cannot draw must not be re-decoded every frame.
-	e.cache[key] = emoji_decode(e, r, key)
+	// Decoded once per (glyph, whole-pixel size) and then kept, miss or hit:
+	// a glyph the font cannot draw must not be re-decoded every frame.
+	e.cache[key] = emoji_decode(e, gid, key)
 	return &e.cache[key]
 }
 
 @(private)
-emoji_decode :: proc(e: ^Emoji_Font, r: rune, key: Emoji_Key) -> (bm: Emoji_Bitmap) {
-	gid := emoji_glyph(e, r)
+emoji_decode :: proc(e: ^Emoji_Font, gid: u32, key: Emoji_Key) -> (bm: Emoji_Bitmap) {
 	rng := emoji_range_for(e, gid)
 	if rng == nil {
 		return
@@ -593,10 +611,17 @@ box_filter_rgba :: proc(src: []u8, sw, sh, dw, dh: int) -> []u32 {
 // baseline at `baseline`.
 @(private)
 emoji_draw :: proc(c: ^Canvas, e: ^Emoji_Font, r: rune, pen, baseline, size: f32, alpha: u8) {
-	if !e.ok || alpha == 0 {
+	emoji_draw_glyph(c, e, emoji_glyph(e, r), pen, baseline, size, alpha)
+}
+
+// emoji_draw_glyph is emoji_draw for a glyph id, which is what a composed
+// sequence is.
+@(private)
+emoji_draw_glyph :: proc(c: ^Canvas, e: ^Emoji_Font, gid: u32, pen, baseline, size: f32, alpha: u8) {
+	if !e.ok || alpha == 0 || gid == 0 {
 		return
 	}
-	bm := emoji_bitmap(e, r, size)
+	bm := emoji_bitmap(e, gid, size)
 	if bm == nil || !bm.ok || bm.img.w <= 0 {
 		return
 	}
@@ -754,16 +779,238 @@ text_requested :: proc "contextless" (s: string, at: int) -> bool {
 	return at + 3 <= len(s) && s[at] == 0xef && s[at + 1] == 0xb8 && s[at + 2] == 0x8e
 }
 
+// modifier_follows and zwj_follows look one rune ahead for the other two
+// things that make the rune before them an emoji: a skin-tone modifier (UTS
+// #51: a modifier sequence is displayed as an emoji, so "✌🏽" is a hand and not
+// a text glyph and a swatch) and a joiner, which is how a text-default base
+// such as 🕵 U+1F575 starts "🕵‍♂️" without a VS16.
+@(private)
+modifier_follows :: proc "contextless" (s: string, at: int) -> bool {
+	// U+1F3FB..1F3FF: F0 9F 8F BB..BF
+	return at + 4 <= len(s) && s[at] == 0xf0 && s[at + 1] == 0x9f && s[at + 2] == 0x8f && s[at + 3] >= 0xbb && s[at + 3] <= 0xbf
+}
+
+@(private)
+zwj_follows :: proc "contextless" (s: string, at: int) -> bool {
+	return at + 3 <= len(s) && s[at] == 0xe2 && s[at + 1] == 0x80 && s[at + 2] == 0x8d
+}
+
 // prefers_emoji decides, for the rune at byte `at`, whether the colour font
 // should be consulted before the outline fallback chain.
 @(private)
 prefers_emoji :: proc "contextless" (s: string, at: int, r: rune) -> bool {
-	if r < 0x231a {
-		return false // no codepoint below this has an emoji form at all
+	if r < 0x23 {
+		return false // '#' is the first codepoint with an emoji form
 	}
 	next := at + rune_len(r)
+	if r < 0x231a {
+		// Nothing below U+231A is emoji by default, but '#', '*', the digits,
+		// ©, ®, ‼, ™, ℹ and the arrows have an emoji form a VS16 asks for --
+		// which is also how a keycap begins, "1️⃣".
+		return emoji_requested(s, next)
+	}
 	if text_requested(s, next) {
 		return false
 	}
-	return is_emoji_presentation(r) || emoji_requested(s, next)
+	return is_emoji_presentation(r) || emoji_requested(s, next) || modifier_follows(s, next) || zwj_follows(s, next)
+}
+
+// ---------------------------------------------------------------------------
+// Sequences
+//
+// Unicode builds most of the newer emoji out of older ones: a profession is a
+// person, ZWJ and a tool; a skin tone is a modifier after a hand; a flag is two
+// regional indicators, or a black flag and a run of tag letters; a keycap is a
+// digit, VS16 and U+20E3. The font has one glyph for each sequence it supports
+// and says which in GSUB, so composing one is three steps: find where a
+// sequence starts and ends in the line, turn it into glyph ids, and let the
+// font's lookups substitute (gsub.odin).
+// ---------------------------------------------------------------------------
+
+// has_emoji_sequence reports whether a string contains anything that can glue
+// emoji together: ZWJ, a skin-tone modifier, a regional indicator, a tag
+// character or the keycap mark. It is a byte scan, because it sits in front of
+// every measurement: text without one of these goes down the one-run fast
+// path, which draws a lone emoji perfectly well.
+@(private)
+has_emoji_sequence :: proc "contextless" (s: string) -> bool {
+	for i := 0; i + 2 < len(s); i += 1 {
+		switch s[i] {
+		case 0xe2:
+			// U+200D ZWJ is E2 80 8D, U+20E3 COMBINING ENCLOSING KEYCAP E2 83 A3.
+			if (s[i + 1] == 0x80 && s[i + 2] == 0x8d) || (s[i + 1] == 0x83 && s[i + 2] == 0xa3) {
+				return true
+			}
+		case 0xf0:
+			// U+1F1E6..1F1FF regional indicators: F0 9F 87 A6..BF.
+			// U+1F3FB..1F3FF skin tones: F0 9F 8F BB..BF.
+			if i + 3 < len(s) && s[i + 1] == 0x9f {
+				b2, b3 := s[i + 2], s[i + 3]
+				if (b2 == 0x87 && b3 >= 0xa6 && b3 <= 0xbf) || (b2 == 0x8f && b3 >= 0xbb && b3 <= 0xbf) {
+					return true
+				}
+			}
+		case 0xf3:
+			// U+E0020..E007F tags: F3 A0 80 A0..BF, F3 A0 81 80..BF.
+			if s[i + 1] == 0xa0 && (s[i + 2] == 0x80 || s[i + 2] == 0x81) {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+@(private)
+is_regional_indicator :: #force_inline proc "contextless" (r: rune) -> bool {
+	return r >= 0x1f1e6 && r <= 0x1f1ff
+}
+
+// emoji_continues says whether `r` can extend a sequence that so far ends in
+// `last`. `ri` is how many regional indicators the sequence holds: a flag is
+// exactly two, so a third starts a new one.
+@(private)
+emoji_continues :: proc(e: ^Emoji_Font, last, r: rune, ri: int) -> bool {
+	switch {
+	case r == 0x200d, r >= 0xfe00 && r <= 0xfe0f:
+		return true
+	case r >= 0x1f3fb && r <= 0x1f3ff: // skin tones
+		return true
+	case r >= 0xe0020 && r <= 0xe007f: // tags
+		return true
+	case r == 0x20e3: // keycap
+		return true
+	case is_regional_indicator(r):
+		return ri == 1 && is_regional_indicator(last)
+	case last == 0x200d:
+		// Whatever follows a joiner is part of the sequence if the font can
+		// draw it, emoji-presentation or not: ❤ in "👩‍❤️‍👨" is text by default.
+		return emoji_glyph(e, r) != 0
+	}
+	return false
+}
+
+// emoji_compose replaces each emoji sequence in `gs[first:]` -- one bidi run,
+// still in logical order -- with the glyphs the font substitutes for it. A
+// composed glyph carries its glyph id in `gid` and the whole sequence's bytes
+// in its span, so a caret or a selection treats it as one character.
+//
+// `starts(g)` decides whether a glyph is drawn by the emoji font at all, which
+// is a question for the line's resolution rules and not for this file.
+@(private)
+emoji_compose :: proc(
+	e: ^Emoji_Font,
+	gs: ^[dynamic]Text_Glyph,
+	first: int,
+	out: ^[dynamic]Text_Glyph,
+	buf: ^[dynamic]Gsub_Glyph,
+	starts: proc(g: Text_Glyph, user: rawptr) -> bool,
+	user: rawptr,
+) {
+	if !e.ok {
+		return
+	}
+	clear(out)
+	changed := false
+	k := first
+	for k < len(gs) {
+		g := gs[k]
+		if g.shaped || g.mark || !starts(g, user) {
+			append(out, g)
+			k += 1
+			continue
+		}
+		// The sequence: this glyph and everything that may extend it.
+		j := k + 1
+		ri := is_regional_indicator(g.cp) ? 1 : 0
+		for j < len(gs) && !gs[j].shaped && emoji_continues(e, gs[j - 1].cp, gs[j].cp, ri) {
+			if is_regional_indicator(gs[j].cp) {
+				ri += 1
+			}
+			j += 1
+		}
+		if j == k + 1 {
+			append(out, g)
+			k += 1
+			continue
+		}
+
+		clear(buf)
+		for m in k ..< j {
+			s := gs[m]
+			append(
+				buf,
+				Gsub_Glyph {
+					gid = emoji_glyph(e, s.cp),
+					start = s.src,
+					end = s.src + s.size,
+					// Skippable as HarfBuzz has it: a joiner or a selector
+					// is stepped over when a rule does not name it, a tag
+					// never -- the tags are what spell the flag.
+					skip = is_ignorable(s.cp) && !(s.cp >= 0xe0020 && s.cp <= 0xe007f),
+				},
+			)
+		}
+		gsub_apply(&e.gsub, buf)
+
+		// What GSUB left. A joiner or selector nothing consumed has no picture
+		// and must not get an advance: it is folded into the glyph before it,
+		// which keeps the bytes owned and the sequence one unit for the caret.
+		lead := len(out)
+		for o in buf {
+			blank := o.gid == 0 || emoji_range_for(e, o.gid) == nil
+			if blank && len(out) > lead {
+				prev := &out[len(out) - 1]
+				prev.size = max(prev.src + prev.size, o.end) - prev.src
+				continue
+			}
+			ng := g
+			ng.cp = emoji_source_rune(gs[k:j], o.start)
+			ng.src = o.start
+			ng.size = o.end - o.start
+			ng.gid = o.gid
+			ng.blank = blank
+			append(out, ng)
+		}
+		changed = true
+		k = j
+	}
+	if !changed {
+		return
+	}
+	resize(gs, first + len(out))
+	copy(gs[first:], out[:])
+}
+
+// emoji_source_rune is the codepoint at byte `at` among a sequence's source
+// glyphs, for a composed glyph's `cp`: still the rune that is in the string.
+@(private)
+emoji_source_rune :: proc(src: []Text_Glyph, at: int) -> rune {
+	for s in src {
+		if s.src == at {
+			return s.cp
+		}
+	}
+	return len(src) > 0 ? src[0].cp : 0
+}
+
+// emoji_shape_glyphs returns the emoji font's glyph ids for a string, in
+// visual order, as the line layout composes them: one id per glyph drawn by
+// the emoji font, 0 for a glyph drawn by an outline face. For checking the
+// composition against a reference shaper; nothing draws through it.
+emoji_shape_glyphs :: proc(f: ^Fonts, text: string, allocator := context.allocator) -> []u32 {
+	st := text_style(f, 16, .Sans, .Regular, .Upright, 0, false)
+	glyphs, _, _ := text_layout_line(f, text, text_base_dir(text), st)
+	out := make([dynamic]u32, 0, len(glyphs), allocator)
+	for g in glyphs {
+		switch {
+		case g.blank:
+		case g.emoji && g.gid != 0:
+			append(&out, g.gid)
+		case g.emoji:
+			append(&out, emoji_glyph(&f.emoji, g.cp))
+		case:
+			append(&out, 0)
+		}
+	}
+	return out[:]
 }

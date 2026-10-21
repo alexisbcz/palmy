@@ -785,9 +785,10 @@ face_for_rune :: proc(f: ^Fonts, fam: Font_Family, wt: Font_Weight, r: rune, sl 
 }
 
 // is_ignorable covers the format controls that appear inside real strings and
-// must not become tofu: zero-width joiners and the variation selectors that
-// emoji sequences are glued together with, which palmy cannot shape but can at
-// least decline to draw a box for.
+// must not become tofu: zero-width joiners, the variation selectors and the
+// tag characters that emoji sequences are glued together with. Inside a
+// sequence the emoji font's GSUB consumes them (emoji_compose); anywhere else
+// they draw nothing, which is what they are for.
 @(private)
 is_ignorable :: proc "contextless" (r: rune) -> bool {
 	switch {
@@ -796,6 +797,8 @@ is_ignorable :: proc "contextless" (r: rune) -> bool {
 	case r == 0x2060, r == 0xfeff: // word joiner, BOM
 		return true
 	case r >= 0xfe00 && r <= 0xfe0f: // variation selectors 1-16
+		return true
+	case r >= 0xe0000 && r <= 0xe0fff: // tags, variation selectors 17-256
 		return true
 	}
 	return false
@@ -1552,6 +1555,8 @@ Text_Glyph :: struct {
 	mark:   bool, // a combining mark, which stays with the base before it
 	emoji:  bool, // drawn by the colour bitmap font
 	blank:  bool, // zero advance, nothing drawn: a control or a default-ignorable
+	gid:    u32,  // an emoji sequence GSUB composed: the colour font's glyph id,
+	              // standing for every rune in the span (see emoji_compose)
 }
 
 // Text_Span is one rectangle's horizontal extent, relative to the line origin.
@@ -1575,9 +1580,13 @@ Caret_Step :: enum u8 {
 // first use, so nothing has to remember to set it up.
 @(private)
 Text_Shaper :: struct {
-	bidi:   Bidi_Scratch,
-	glyphs: [dynamic]Text_Glyph,
-	ready:  bool,
+	bidi:     Bidi_Scratch,
+	glyphs:   [dynamic]Text_Glyph,
+	// Scratch for composing emoji sequences, kept so that a line with one in
+	// it allocates nothing after the first.
+	composed: [dynamic]Text_Glyph,
+	gsub_buf: [dynamic]Gsub_Glyph,
+	ready:    bool,
 }
 
 @(private)
@@ -1597,6 +1606,8 @@ text_shaper_destroy :: proc(f: ^Fonts) {
 	}
 	bidi_scratch_destroy(&f.shaper.bidi)
 	delete(f.shaper.glyphs)
+	delete(f.shaper.composed)
+	delete(f.shaper.gsub_buf)
 	f.shaper = {}
 }
 
@@ -1648,7 +1659,7 @@ text_simple :: proc "contextless" (text: string, dir: Bidi_Direction) -> bool {
 	if dir == .RTL {
 		return false
 	}
-	return bidi_cannot_reorder(text) && !needs_arabic_shaping(text)
+	return bidi_cannot_reorder(text) && !needs_arabic_shaping(text) && !has_emoji_sequence(text)
 }
 
 // text_base_dir resolves a paragraph's base direction to the forced direction
@@ -1737,6 +1748,23 @@ text_layout_line :: proc(
 				},
 			)
 		}
+		// Emoji sequences are composed in logical order, before a
+		// right-to-left run is turned round, so that the font sees "👨 ZWJ 💻"
+		// and the composed glyph is reversed as the one unit it now is.
+		if has_emoji_sequence(sub) {
+			Compose_Ctx :: struct {
+				f:    ^Fonts,
+				text: string,
+				st:   Text_Style,
+			}
+			cc := Compose_Ctx{f, text, st}
+			starts :: proc(g: Text_Glyph, user: rawptr) -> bool {
+				cc := (^Compose_Ctx)(user)
+				pe := prefers_emoji(cc.text, g.src, g.cp)
+				return resolve_rune(cc.f, cc.st.fam, cc.st.wt, cc.st.sl, g.cp, pe).emoji
+			}
+			emoji_compose(&f.emoji, &sh.glyphs, first, &sh.composed, &sh.gsub_buf, starts, &cc)
+		}
 		if rtl {
 			text_reverse_clusters(sh.glyphs[first:])
 		}
@@ -1757,6 +1785,15 @@ text_layout_line :: proc(
 		g := &sh.glyphs[i]
 		g.x = pen
 		if g.blank {
+			prev, prev_face = 0, nil
+			continue
+		}
+		if g.gid != 0 {
+			// Composed by emoji_compose: already a glyph of the colour font.
+			g.emoji = true
+			g.adv = emoji_glyph_advance(&f.emoji, g.gid, st.size) + st.tracking
+			base_x = g.x
+			pen += g.adv
 			prev, prev_face = 0, nil
 			continue
 		}
@@ -1937,7 +1974,8 @@ draw_text_complex :: proc(
 		}
 		gpen := x + g.x + g.dx
 		if g.emoji {
-			emoji_draw(c, &f.emoji, g.cp, gpen, y, st.size, col.a)
+			gid := g.gid != 0 ? g.gid : emoji_glyph(&f.emoji, g.cp)
+			emoji_draw_glyph(c, &f.emoji, gid, gpen, y, st.size, col.a)
 			continue
 		}
 		rf := resolve_rune(f, st.fam, st.wt, st.sl, g.cp).face
