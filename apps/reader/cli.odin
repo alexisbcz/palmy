@@ -98,7 +98,7 @@ COMMANDS := []kit.Command {
 		effect = .Idempotent,
 		args = {{name = "book", kind = .String, help = "an id, a path, a file name or a title", required = true}},
 		flags = {
-			{name = "chapter", kind = .Int, help = "0-based chapter (reflowable)"},
+			{name = "chapter", kind = .Int, unless = {"block", "page", "percent"}, help = "0-based chapter (reflowable)"},
 			{name = "block", kind = .Int, help = "a block index, as `search` reports it (reflowable)"},
 			{name = "page", kind = .Int, help = "1-based page (fixed)"},
 			{name = "percent", kind = .Float, help = "0-100 through the book"},
@@ -807,9 +807,6 @@ cmd_seek :: proc(c: ^kit.Call) -> int {
 	i := resolve_entry(&l, ref)
 	if i < 0 {
 		return not_found(c, ref)
-	}
-	if !kit.cli_has(c, "chapter") && !kit.cli_has(c, "block") && !kit.cli_has(c, "page") && !kit.cli_has(c, "percent") {
-		return kit.cli_fail(c, kit.EXIT_USAGE, "say where: --chapter, --block, --page or --percent")
 	}
 	b: Book
 	_, _, code := open_ref(c, &l, &b, ref, false)
