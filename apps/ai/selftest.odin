@@ -18,6 +18,7 @@ import "core:fmt"
 import "core:mem/virtual"
 import "core:os"
 import ck "../cloudkit"
+import ic "../index/core"
 import en "../../cloud/assistant/engine"
 import p "palmy:."
 import sc "shadcn:."
@@ -81,6 +82,9 @@ run_selftest :: proc() -> int {
 	test_layout()
 	test_scope_check()
 	test_engine()
+	test_conversations()
+	test_prompts()
+	test_recall()
 	test_sandbox()
 
 	fmt.println()
@@ -1088,4 +1092,187 @@ test_sandbox :: proc() {
 	for pr in ck.array(ck.get(v, "probes")) {
 		check(ck.get_bool(pr, "pass"), "sandbox: %s — must %s, %s", ck.get_str(pr, "what"), ck.get_str(pr, "must"), ck.get_str(pr, "outcome"))
 	}
+}
+
+// ---------------------------------------------------------------------------
+// 12. Conversations: what a rename stores, what a search sends
+//
+// The requests themselves run against a live stack in cloud/assistant/e2e.sh
+// (section G, with the cross-identity cases); here, the parts that decide
+// what reaches PostgREST.
+// ---------------------------------------------------------------------------
+
+test_conversations :: proc() {
+	fmt.println("conversations: rename and search")
+	check_eq_s(title_clean("  Halden invoice  ", context.temp_allocator), "Halden invoice", "a title is trimmed")
+	check_eq_s(title_clean("first line\nsecond", context.temp_allocator), "first line", "a title is one line")
+	check_eq_s(title_clean(" \n ", context.temp_allocator), "", "a blank title is nothing to store")
+	long := strings.repeat("é", 250, context.temp_allocator)
+	cut := title_clean(long, context.temp_allocator)
+	check(strings.rune_count(cut) == TITLE_MAX && len(cut) == 2 * TITLE_MAX, "a long title keeps 200 characters, cut on a rune boundary (%d runes)", strings.rune_count(cut))
+
+	check_eq_s(like_value("halden"), "%2Ahalden%2A", "a search is a substring match")
+	check_eq_s(like_value("50%_off*"), "%2A50%5C%25%5C_off%2A", "LIKE's wildcards in what was typed match literally")
+	check_eq_s(like_value("a,b(c)"), "%2Aa%2Cb%28c%29%2A", "PostgREST's separators are percent-encoded")
+
+	check(uuid_like("0d4e1b2c-3a4f-4b5c-8d6e-7f8091a2b3c4"), "an id is accepted")
+	check(!uuid_like("0d4e1b2c-3a4f-4b5c-8d6e-7f8091a2b3c4&identity_id=neq.x"), "a filter smuggled in an id is not")
+	check(!uuid_like("*"), "nor a wildcard")
+
+	check(fold_index("The Halden Invoice", "halden invoice") == 4, "the match ignores case")
+	sn := snippet_around("Noor wrote:\nCould you send me the signed Halden invoice for September? Finance needs it by Friday to close the month.", "HALDEN", 20, context.temp_allocator)
+	check(strings.contains(sn, "Halden") && !strings.contains(sn, "\n") && strings.has_prefix(sn, "…") && strings.has_suffix(sn, "…"), "a snippet is one line around the match, marked where cut: %q", sn)
+}
+
+// ---------------------------------------------------------------------------
+// 13. The prompt library, edited in place
+// ---------------------------------------------------------------------------
+
+test_prompts :: proc() {
+	fmt.println("the prompt library")
+	ps := make([dynamic]Prompt, context.temp_allocator)
+	for d in DEFAULT_PROMPTS {append(&ps, Prompt{strings.clone(d.name), strings.clone(d.body)})}
+	n := len(ps)
+	at := prompt_find(ps[:], "this WEEK")
+	check(at == 1, "a prompt is found by its name, whatever the case (%d)", at)
+	check(!prompt_set(&ps, "This week", "What is on my calendar this week, by day?"), "saving an existing name edits it")
+	check(len(ps) == n && ps[1].body == "What is on my calendar this week, by day?" && ps[1].name == "This week", "in place: same position, same name, new body")
+	check(prompt_set(&ps, "Halden", "Find the Halden invoice and draft a reply to Noor attaching it."), "a new name is added")
+	check(len(ps) == n + 1 && ps[n].name == "Halden", "at the end")
+	check(prompt_rename(&ps, "halden", "This week") != "", "a rename onto another prompt's name is refused")
+	check(prompt_rename(&ps, "halden", "Halden reply") == "" && prompt_find(ps[:], "Halden reply") == n, "a rename keeps the position")
+	check(prompt_rename(&ps, "nope", "x") == "no such prompt", "renaming what is not there says so")
+	check(prompt_delete(&ps, "Unread mail") && len(ps) == n && prompt_find(ps[:], "Unread mail") < 0, "a prompt is deleted")
+	check(ps[0].name == "This week", "and the rest keep their order")
+
+	// Through the file, as the CLI and the window use it.
+	dir := fmt.tprintf("/tmp/palmy-ai-selftest-%d", os.get_pid())
+	defer os.remove_all(dir)
+	old := os.get_env("XDG_DATA_HOME", context.temp_allocator)
+	os.set_env("XDG_DATA_HOME", dir)
+	defer {if old == "" {os.unset_env("XDG_DATA_HOME")} else {os.set_env("XDG_DATA_HOME", old)}}
+	fresh := prompts_load(context.temp_allocator)
+	check(len(fresh) == len(DEFAULT_PROMPTS), "a machine with no library starts with the defaults")
+	append(&ps, Prompt{"Tabs\tand\nnewlines", "line one\n\tline two \\ done"})
+	prompts_save(ps[:])
+	back := prompts_load(context.temp_allocator)
+	check(len(back) == len(ps), "the library round-trips through prompts.txt (%d of %d)", len(back), len(ps))
+	same := len(back) == len(ps)
+	for pr, i in back {
+		if i < len(ps) && (pr.name != ps[i].name || pr.body != ps[i].body) {same = false}
+	}
+	check(same, "names and bodies survive, tabs, newlines and backslashes included")
+}
+
+// ---------------------------------------------------------------------------
+// 14. Retrieval by meaning (cloud/assistant/engine/recall.odin)
+//
+// With a stand-in embedder, so this needs no model: hashed bag-of-words
+// vectors, which rank by shared words — enough to test everything around
+// the ranking: that only the one identity's index is opened, the cache, a
+// changed document embedded again, a deleted one dropped, a model change
+// invalidating the cache, and a failing model reported rather than hidden.
+// What a real embedding model adds — finding by meaning with no word in
+// common — is measured in cloud/assistant/e2e.sh, section R.
+// ---------------------------------------------------------------------------
+
+Fake_Embed :: struct {
+	calls, texts: int,
+	model:        string,
+	fail:         bool,
+}
+
+fake_embed :: proc(data: rawptr, texts: []string, purpose: en.Embed_Purpose) -> en.Embed_Reply {
+	fe := cast(^Fake_Embed)data
+	fe.calls += 1
+	fe.texts += len(texts)
+	if fe.fail {return {err = "ollama answered 404: model \"nomic-embed-text\" not found"}}
+	vs := make([][]f32, len(texts), context.temp_allocator)
+	for t, i in texts {
+		v := make([]f32, 64, context.temp_allocator)
+		for w in strings.fields(strings.to_lower(t, context.temp_allocator), context.temp_allocator) {
+			h: u32 = 2166136261
+			for c in transmute([]u8)strings.trim(w, ".,:;!?") {h = (h ~ u32(c)) * 16777619}
+			v[h % 64] += 1
+		}
+		vs[i] = v
+	}
+	return {vectors = vs, model = fe.model}
+}
+
+test_recall :: proc() {
+	fmt.println("retrieval by meaning, with a stand-in embedder")
+	root := fmt.tprintf("/tmp/palmy-ai-recall-%d", os.get_pid())
+	defer os.remove_all(root)
+	put :: proc(root, handle: string, docs: []ic.Doc) {
+		w, err := ic.writer_open(root, handle)
+		if err != "" {return}
+		for d in docs {ic.writer_put(w, d)}
+		ic.writer_flush(w)
+		ic.writer_close(w)
+	}
+	put(root, "camille.roux", {
+		{key = "mail:1", kind = .Mail, sig = 1, time = 1792000000, title = "Signed Halden invoice?", who = "Noor Haddad", body = "Could you send me the signed Halden invoice for September?", uri = "palm://camille.roux/mail/1", app = "mail"},
+		{key = "note:roadmap", kind = .Note, sig = 1, time = 1792000000, title = "Q4 roadmap", body = "Ship the Halden integration before the November close.", app = "notes"},
+		{key = "event:standup", kind = .Event, sig = 1, time = 1792000000, title = "Stand-up", body = "Daily stand-up with the platform team.", app = "calendar"},
+	})
+	put(root, "camille", {
+		{key = "note:diary", kind = .Note, sig = 1, time = 1792000000, title = "Diary", body = "Saw the GP about my knee. PERSONAL-CANARY-7731 invoice", app = "notes"},
+	})
+	cache := fmt.tprintf("%s/state/camille.roux/recall", root)
+
+	opened := make([dynamic]string, context.temp_allocator)
+	ic.opened_paths = &opened
+	fe := Fake_Embed{model = "stand-in"}
+	hits, stats, err := en.recall(root, "camille.roux", cache, "signed invoice September", 2, fake_embed, &fe, context.temp_allocator)
+	ic.opened_paths = nil
+	check(err == "", "recall runs (%s)", err)
+	check(stats.docs == 3 && len(hits) == 2, "it ranks the identity's 3 documents and returns the 2 asked for (%d, %d)", stats.docs, len(hits))
+	check(len(hits) > 0 && hits[0].key == "mail:1", "the closest document first (%s)", len(hits) > 0 ? hits[0].key : "")
+	check(len(hits) > 1 && hits[0].score >= hits[1].score, "best first")
+	others := 0
+	for p in opened {if strings.contains(p, "/camille/") {others += 1}}
+	check(len(opened) > 0 && others == 0, "only camille.roux's index files were opened (%d opened, %d of the other identity's)", len(opened), others)
+	for h in hits {check(!strings.contains(h.snippet, "CANARY"), "no result carries the other identity's canary")}
+	check(stats.embedded == 3 && stats.cached == 0, "the first call embeds every document (%d)", stats.embedded)
+
+	before := fe.texts
+	_, stats, err = en.recall(root, "camille.roux", cache, "roadmap", 1, fake_embed, &fe, context.temp_allocator)
+	check(err == "" && stats.embedded == 0 && stats.cached == 3 && fe.texts - before == 1, "the second embeds only the query; the documents come from the cache (%d embedded)", stats.embedded)
+
+	put(root, "camille.roux", {{key = "event:standup", kind = .Event, sig = 2, time = 1792000000, title = "Stand-up moved", body = "Daily stand-up, now at ten.", app = "calendar"}})
+	_, stats, _ = en.recall(root, "camille.roux", cache, "stand-up", 1, fake_embed, &fe, context.temp_allocator)
+	check(stats.embedded == 1 && stats.cached == 2, "a changed document is embedded again, and only it (%d)", stats.embedded)
+
+	{
+		w, _ := ic.writer_open(root, "camille.roux")
+		ic.writer_remove(w, "note:roadmap")
+		ic.writer_flush(w)
+		ic.writer_close(w)
+	}
+	hits, stats, _ = en.recall(root, "camille.roux", cache, "roadmap November", 5, fake_embed, &fe, context.temp_allocator)
+	gone := true
+	for h in hits {if h.key == "note:roadmap" {gone = false}}
+	check(stats.docs == 2 && gone, "a deleted document is not recalled (%d docs)", stats.docs)
+
+	fe.model = "another-model"
+	_, stats, _ = en.recall(root, "camille.roux", cache, "invoice", 1, fake_embed, &fe, context.temp_allocator)
+	check(stats.embedded == 2, "another embedding model starts the cache again (%d)", stats.embedded)
+
+	fe.fail = true
+	_, _, err = en.recall(root, "camille.roux", cache, "invoice", 1, fake_embed, &fe, context.temp_allocator)
+	check(strings.contains(err, "not found"), "a missing model is reported, not hidden (%q)", err)
+	_, _, err = en.recall(root, "nobody", cache, "invoice", 1, fake_embed, &fe, context.temp_allocator)
+	check(err != "", "an identity with no index is an error, not an empty answer that looks like one")
+
+	// The pipe: vectors survive the trip from the person's process to the
+	// sandboxed child.
+	r := en.Embed_Reply{vectors = {{0.25, -1.5, 3e-5}, {1, 0, 0}}, model = "nomic-embed-text"}
+	v, ok := ck.parse(en.embed_reply_json(7, r), context.temp_allocator)
+	back := en.parse_embed_reply(v, context.temp_allocator)
+	check(ok && len(back.vectors) == 2 && back.vectors[0][1] == -1.5 && abs(back.vectors[0][2] - 3e-5) < 1e-9 && back.model == "nomic-embed-text", "an embed_result line round-trips")
+	cv, cok := ck.parse(en.embed_call_json(3, {"a \"quoted\"\nline", "b"}, .Query), context.temp_allocator)
+	texts, purpose := en.parse_embed_call(cv, context.temp_allocator)
+	check(cok && len(texts) == 2 && texts[0] == "a \"quoted\"\nline" && purpose == .Query, "and an embed request")
+	check(abs(en.cosine({1, 0}, {0, 1})) < 1e-6 && abs(en.cosine({1, 2}, {2, 4}) - 1) < 1e-6, "cosine: orthogonal 0, parallel 1")
 }

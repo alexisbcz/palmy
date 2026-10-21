@@ -82,6 +82,23 @@ child_model :: proc(io: ^en.IO, call: en.Model_Call) -> en.Model_Reply {
 	}
 }
 
+// child_embed asks the parent to embed texts (engine/recall.odin): the
+// sandbox has no route to ollama, so embeddings are brokered like the model.
+@(private = "file")
+child_embed :: proc(data: rawptr, texts: []string, purpose: en.Embed_Purpose) -> en.Embed_Reply {
+	io := cast(^en.IO)data
+	st := cast(^Child_IO)io.data
+	st.seq += 1
+	put_line(en.embed_call_json(st.seq, texts, purpose))
+	for {
+		line, ok := get_line(st)
+		if !ok {return {err = "the parent went away"}}
+		v, pok := ck.parse(line, context.temp_allocator)
+		if !pok || ck.get_str(v, "t") != "embed_result" {continue}
+		return en.parse_embed_reply(v)
+	}
+}
+
 @(private = "file")
 fail :: proc(msg: string) -> int {
 	o := ck.obj()
@@ -162,7 +179,7 @@ agent_main :: proc(args: []string) -> int {
 		return fail(fmt.tprintf("the delegated session acts for %q, not %q", db.scope, handle))
 	}
 
-	io := en.IO{emit = child_emit, model = child_model, data = &st}
+	io := en.IO{emit = child_emit, model = child_model, embed = child_embed, data = &st}
 	a: en.Agent
 	domain := ""
 	if at := strings.index_byte(req.identity.address, '@'); at >= 0 {domain = req.identity.address[at + 1:]}

@@ -20,6 +20,7 @@ package engine
 //	{"t":"draft", "tool", "summary", "action_id"}
 //	{"t":"proposal", "action_id", "tool", "args", "summary", "warnings":[...]}
 //	{"t":"model", "id", "purpose", "messages":[...], "format": {...}|null, "max_tokens"}
+//	{"t":"embed", "id", "purpose": "document"|"query", "texts":[...]}
 //	{"t":"answer", "text"}
 //	{"t":"done", "steps", "model_calls", "ms"}
 //	{"t":"error", "message"}
@@ -27,6 +28,11 @@ package engine
 // Parent -> child, in reply to each "model":
 //
 //	{"t":"model_result", "id", "text", "error", "ms"}
+//
+// and to each "embed" (recall.odin; embeddings are always computed on this
+// machine, by the person's process, whatever the chat provider):
+//
+//	{"t":"embed_result", "id", "vectors":[[...]], "model", "error", "ms"}
 //
 // Model calls go through the parent so that the sandbox needs no route to a
 // model at all, and so that a remote provider's API key never enters the
@@ -76,6 +82,10 @@ Model_Reply :: struct {
 IO :: struct {
 	emit:  proc(io: ^IO, line: string),
 	model: proc(io: ^IO, call: Model_Call) -> Model_Reply,
+	// embed is called with the IO itself as its data; nil when no embedding
+	// model is brokered (the self-test's scripted IO), and then index_search
+	// finds by words alone.
+	embed: Embedder,
 	data:  rawptr,
 	calls: int,
 }
@@ -214,4 +224,75 @@ model_reply_json :: proc(id: int, r: Model_Reply, allocator := context.temp_allo
 	ck.put(&o, "error", r.err)
 	ck.put(&o, "ms", r.ms)
 	return ck.obj_done(&o)
+}
+
+embed_call_json :: proc(id: int, texts: []string, purpose: Embed_Purpose, allocator := context.temp_allocator) -> string {
+	o := ck.obj(allocator)
+	ck.put(&o, "t", "embed")
+	ck.put(&o, "id", i64(id))
+	ck.put(&o, "purpose", purpose == .Query ? "query" : "document")
+	b := strings.builder_make(context.temp_allocator)
+	strings.write_byte(&b, '[')
+	for t, i in texts {
+		if i > 0 {strings.write_byte(&b, ',')}
+		strings.write_string(&b, ck.quote(t))
+	}
+	strings.write_byte(&b, ']')
+	ck.put_raw(&o, "texts", strings.to_string(b))
+	return ck.obj_done(&o)
+}
+
+parse_embed_call :: proc(v: ck.Value, allocator := context.allocator) -> (texts: []string, purpose: Embed_Purpose) {
+	out := make([dynamic]string, allocator)
+	for t in ck.array(ck.get(v, "texts")) {
+		if s, ok := t.(json.String); ok {append(&out, strings.clone(string(s), allocator))}
+	}
+	return out[:], ck.get_str(v, "purpose") == "query" ? .Query : .Document
+}
+
+embed_reply_json :: proc(id: int, r: Embed_Reply, allocator := context.temp_allocator) -> string {
+	o := ck.obj(allocator)
+	ck.put(&o, "t", "embed_result")
+	ck.put(&o, "id", i64(id))
+	b := strings.builder_make(context.temp_allocator)
+	strings.write_byte(&b, '[')
+	for v, i in r.vectors {
+		if i > 0 {strings.write_byte(&b, ',')}
+		strings.write_byte(&b, '[')
+		for x, j in v {
+			if j > 0 {strings.write_byte(&b, ',')}
+			fmt.sbprintf(&b, "%.7g", x)
+		}
+		strings.write_byte(&b, ']')
+	}
+	strings.write_byte(&b, ']')
+	ck.put_raw(&o, "vectors", strings.to_string(b))
+	ck.put(&o, "model", r.model)
+	ck.put(&o, "error", r.err)
+	ck.put(&o, "ms", r.ms)
+	return ck.obj_done(&o)
+}
+
+parse_embed_reply :: proc(v: ck.Value, allocator := context.allocator) -> Embed_Reply {
+	r := Embed_Reply {
+		model = strings.clone(ck.get_str(v, "model"), allocator),
+		err   = strings.clone(ck.get_str(v, "error"), allocator),
+		ms    = ck.get_int(v, "ms"),
+	}
+	vs := make([dynamic][]f32, allocator)
+	for row in ck.array(ck.get(v, "vectors")) {
+		xs := ck.array(row)
+		vec := make([]f32, len(xs), allocator)
+		for x, j in xs {
+			#partial switch n in x {
+			case json.Float:
+				vec[j] = f32(n)
+			case json.Integer:
+				vec[j] = f32(n)
+			}
+		}
+		append(&vs, vec)
+	}
+	r.vectors = vs[:]
+	return r
 }

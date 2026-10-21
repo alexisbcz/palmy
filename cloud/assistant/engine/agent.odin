@@ -1194,10 +1194,17 @@ execute :: proc(a: ^Agent, t: ^Tool, args: map[string]string, shown: string) {
 			r = a.runner(a, argv_for(t, run_args))
 		}
 	}
+	recall_note := ""
+	if t.name == "index_search" {
+		// Words, then meaning (recall.odin): the whole query, not the
+		// keywords search_relaxed kept, since meaning is in the sentence.
+		r, recall_note = recall_merge(a, r, args["query"])
+	}
 
 	text, brief: string
 	if r.ok {
 		text, brief = remember(a, t, args, r)
+		if recall_note != "" {brief = fmt.tprintf("%s, %s", brief, recall_note)}
 	} else {
 		reason := r.err != "" ? r.err : fmt.tprintf("exit %d", r.code)
 		if r.code == 5 || r.code == 3 {

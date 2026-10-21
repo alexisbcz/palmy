@@ -355,6 +355,14 @@ settings_load :: proc(model: ^string, pr: ^Params, show_think: ^bool) {
 
 // ---------------------------------------------------------------------------
 // The prompt library
+//
+// Requests the person saved to ask again. They are the person's own words,
+// kept on this device (prompts.txt, one `name<TAB>body` record per line,
+// escaped like the rest of this file) and offered in every identity's
+// composer: a prompt holds no identity's data unless the person typed some
+// into it, and it reaches an assistant only when the person sends it. The
+// CLI (`ai prompts`, `ai prompt-save`, `ai prompt-rename`, `ai prompt-delete`)
+// and the window's Prompts view edit the same file.
 // ---------------------------------------------------------------------------
 
 Prompt :: struct {
@@ -367,13 +375,14 @@ prompts_path :: proc(allocator := context.allocator) -> string {
 	return strings.concatenate({d, "/prompts.txt"}, allocator)
 }
 
+// The library a fresh machine starts with: requests the assistant can act
+// on, each ending where the person adds the particulars.
 DEFAULT_PROMPTS := [?]Prompt {
-	{"Explain simply", "Explain this as if to a competent beginner, in no more than five sentences:\n\n"},
-	{"Code review", "Review this code for correctness bugs. Be specific and terse. Do not restate the code.\n\n"},
-	{"Shell one-liner", "Give me a single POSIX shell command that does this, and one line explaining it:\n\n"},
-	{"Summarise", "Summarise the following in three bullet points:\n\n"},
-	{"Name things", "Suggest five short, concrete names for this, with a two-word reason each:\n\n"},
-	{"Odin idiom", "I am writing Odin. Show the idiomatic way to do this, with no imports I do not need:\n\n"},
+	{"Unread mail", "Summarise my unread mail: who wrote, what they want, and what needs an answer from me."},
+	{"This week", "What is on my calendar this week? List each event with its day and time."},
+	{"Draft a reply", "Find the latest mail from "},
+	{"Find a file", "Find the file about "},
+	{"Open issues", "Which forge issues are open and assigned to me?"},
 }
 
 prompts_load :: proc(allocator := context.allocator) -> [dynamic]Prompt {
@@ -420,6 +429,53 @@ prompts_save :: proc(ps: []Prompt) {
 		prompts_path(context.temp_allocator),
 		transmute([]u8)strings.to_string(b),
 	)
+}
+
+// Editing the library in place. A prompt is found by its name, compared
+// without regard to case; editing one keeps its place in the list, which is
+// the order the person put them in.
+
+prompt_find :: proc(ps: []Prompt, name: string) -> int {
+	for p, i in ps {
+		if strings.equal_fold(p.name, strings.trim_space(name)) {return i}
+	}
+	return -1
+}
+
+// prompt_set writes `body` under `name`: in place when the name exists (the
+// body replaced, the position kept), appended when it does not. It says
+// which it did.
+prompt_set :: proc(ps: ^[dynamic]Prompt, name, body: string) -> (created: bool) {
+	n := strings.trim_space(name)
+	if i := prompt_find(ps[:], n); i >= 0 {
+		delete(ps[i].body)
+		ps[i].body = strings.clone(body)
+		return false
+	}
+	append(ps, Prompt{strings.clone(n), strings.clone(body)})
+	return true
+}
+
+// prompt_rename renames in place. Refused when the new name is taken by
+// another prompt, so a rename can never silently drop one.
+prompt_rename :: proc(ps: ^[dynamic]Prompt, from, to: string) -> (err: string) {
+	i := prompt_find(ps[:], from)
+	if i < 0 {return "no such prompt"}
+	t := strings.trim_space(to)
+	if t == "" {return "a name needs at least one character"}
+	if j := prompt_find(ps[:], t); j >= 0 && j != i {return "another prompt already has that name"}
+	delete(ps[i].name)
+	ps[i].name = strings.clone(t)
+	return ""
+}
+
+prompt_delete :: proc(ps: ^[dynamic]Prompt, name: string) -> bool {
+	i := prompt_find(ps[:], name)
+	if i < 0 {return false}
+	delete(ps[i].name)
+	delete(ps[i].body)
+	ordered_remove(ps, i)
+	return true
 }
 
 // ---------------------------------------------------------------------------

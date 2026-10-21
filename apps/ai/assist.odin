@@ -375,6 +375,102 @@ ollama_call :: proc(model: string, call: en.Model_Call) -> en.Model_Reply {
 	return {text = strings.clone(strings.trim_space(text)), ms = ms}
 }
 
+// model_caveat is what every surface says under an answer from a small
+// local model. qwen3:0.6b is the default, and measured in e2e.sh it lists
+// files when asked to draft, claims what it did not do, and picks the wrong
+// tool often enough that its answer must never be read as the record: the
+// steps and the proposals are.
+model_caveat :: proc(provider, model: string) -> string {
+	if provider == "anthropic" {return ""}
+	m := model != "" ? model : ASSISTANT_MODEL_DEFAULT
+	small := false
+	for size in ([?]string{":0.5b", ":0.6b", ":1b", ":1.5b", ":1.7b", ":2b", ":3b", ":4b"}) {
+		if strings.has_suffix(m, size) {small = true}
+	}
+	if !small {return ""}
+	return fmt.tprintf("%s is a small local model and frequently wrong: the steps and proposals are what happened, this answer is only its account of them", m)
+}
+
+// embed_model is the local model that embeds for retrieval
+// (cloud/assistant/engine/recall.odin): $PALM_EMBED_MODEL, else
+// nomic-embed-text. Always ollama on this machine, whatever answers chat.
+embed_model :: proc() -> string {
+	if m := os.get_env("PALM_EMBED_MODEL", context.temp_allocator); m != "" {return m}
+	return en.EMBED_MODEL_DEFAULT
+}
+
+ollama_embed :: proc(texts: []string, purpose: en.Embed_Purpose) -> en.Embed_Reply {
+	start := time.tick_now()
+	model := embed_model()
+	u, ok := ck.parse_url(ollama_url())
+	if !ok {return {err = "bad OLLAMA_HOST"}}
+	// nomic-embed-text was trained with a task prefix on each side.
+	prefix := ""
+	if strings.contains(model, "nomic-embed") {prefix = purpose == .Query ? "search_query: " : "search_document: "}
+	b := strings.builder_make(context.temp_allocator)
+	strings.write_byte(&b, '[')
+	for t, i in texts {
+		if i > 0 {strings.write_byte(&b, ',')}
+		strings.write_string(&b, ck.quote(fmt.tprintf("%s%s", prefix, t)))
+	}
+	strings.write_byte(&b, ']')
+	o := ck.obj()
+	ck.put(&o, "model", model)
+	ck.put_raw(&o, "input", strings.to_string(b))
+	ck.put(&o, "truncate", true)
+	body := ck.obj_done(&o)
+	resp, err := ck.http_do(u, ck.Request{
+		method = "POST", path = "/api/embed", body = transmute([]u8)body, timeout_ms = 300000,
+		headers = {{"Content-Type", "application/json"}},
+	})
+	ms := i64(time.duration_milliseconds(time.tick_since(start)))
+	if err != "" {
+		return {err = fmt.aprintf("ollama is not reachable at %s (%s)", ollama_url(), err), ms = ms}
+	}
+	defer ck.response_destroy(&resp)
+	v, pok := ck.parse(resp.body, context.temp_allocator)
+	if resp.status != 200 || !pok {
+		e := ck.get_str(v, "error")
+		if strings.contains(e, "not found") {e = fmt.tprintf("%s; `ollama pull %s` fetches it", e, model)}
+		return {err = fmt.aprintf("ollama answered %d: %s", resp.status, e), ms = ms}
+	}
+	vs := make([dynamic][]f32)
+	for row in ck.array(ck.get(v, "embeddings")) {
+		xs := ck.array(row)
+		vec := make([]f32, len(xs))
+		for x, j in xs {
+			#partial switch n in x {
+			case json.Float:
+				vec[j] = f32(n)
+			case json.Integer:
+				vec[j] = f32(n)
+			}
+		}
+		append(&vs, vec)
+	}
+	return {vectors = vs[:], model = strings.clone(model), ms = ms}
+}
+
+embed_reply_destroy :: proc(r: ^en.Embed_Reply) {
+	for v in r.vectors {delete(v)}
+	delete(r.vectors)
+	delete(r.model)
+	delete(r.err)
+	r^ = {}
+}
+
+// index_dir is the search index root the assistant is given (assist sets
+// PALM_INDEX_DIR to the same place for the sandboxed child).
+index_dir :: proc() -> string {
+	if d := os.get_env("PALM_INDEX_DIR", context.temp_allocator); d != "" {return d}
+	return fmt.tprintf("%s/.local/share/palm/index", home_dir())
+}
+
+// person_embed is ollama_embed as an en.Embedder, for `ai recall`.
+person_embed :: proc(data: rawptr, texts: []string, purpose: en.Embed_Purpose) -> en.Embed_Reply {
+	return ollama_embed(texts, purpose)
+}
+
 // anthropic_call goes to the Messages API with curl, from this process only.
 // It runs only for an identity whose settings record the person's opt-in,
 // and the key comes from this process's environment ($ANTHROPIC_API_KEY),
@@ -649,7 +745,7 @@ assist :: proc(p: ^Person, ask: Ask) -> (out: Outcome) {
 		fmt.tprintf("PALM_DAV_URL=%s", dav_url()),
 		"PALM_DAV_CACHE=dav", // relative to the state directory; see run_argv
 		fmt.tprintf("PALM_ASSISTANT_STATE=%s", dir),
-		fmt.tprintf("PALM_INDEX_DIR=%s/.local/share/palm/index", home_dir()),
+		fmt.tprintf("PALM_INDEX_DIR=%s", index_dir()),
 		fmt.tprintf("PALMY_NOTES_DIR=%s/Notes/%s", home_dir(), ident.handle),
 		fmt.tprintf("PALM_AUDIT=%s/audit.jsonl", dir),
 		fmt.tprintf("TMPDIR=%s/tmp", dir),
@@ -722,6 +818,13 @@ assist :: proc(p: ^Person, ask: Ask) -> (out: Outcome) {
 		v, pok := ck.parse(line, context.temp_allocator)
 		if !pok {continue}
 		t := ck.get_str(v, "t")
+		if t == "embed" {
+			texts, purpose := en.parse_embed_call(v, context.temp_allocator)
+			reply := ollama_embed(texts, purpose)
+			write_line(in_w, en.embed_reply_json(int(ck.get_int(v, "id")), reply))
+			embed_reply_destroy(&reply)
+			continue
+		}
 		if t == "model" {
 			call := en.parse_model_call(v, context.temp_allocator)
 			reply: en.Model_Reply
