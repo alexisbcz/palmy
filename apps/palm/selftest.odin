@@ -33,6 +33,7 @@ checks: int
 failures: int
 ran_reads: int // read commands run and validated against their own schema
 unavailable_reads: int // read commands that could only answer "unavailable" here
+timed_out_reads: int // read commands that never answered, killed by the timeout
 
 check :: proc(ok: bool, what: string, args: ..any) {
 	checks += 1
@@ -63,10 +64,32 @@ self_exe :: proc() -> string {
 
 // sh runs a command line and hands back stdout and the exit code. Every child
 // has the display variables cleared: a command that fell through to a window
-// would otherwise block a test run on a window nobody is watching.
+// would otherwise block a test run on a window nobody is watching. And every
+// child runs under `timeout`: a read that waits on a daemon that is not there
+// (`bluetoothctl` with no bluetoothd never returns) is reported as timed out
+// rather than hanging the whole run.
+TIMED_OUT :: 124 // what timeout(1) exits with; 137 if it had to kill -9
+
+timeout_secs :: proc() -> string {
+	if t := os.get_env("PALM_SELFTEST_TIMEOUT", context.temp_allocator); t != "" {
+		return t
+	}
+	return "30"
+}
+
 sh :: proc(line: string) -> (out: string, code: int) {
 	state, sout, _, err := os.process_exec(
-		{command = {"sh", "-c", fmt.tprintf("WAYLAND_DISPLAY= DISPLAY= %s", line)}},
+		{
+			command = {
+				"timeout",
+				"-k",
+				"5",
+				timeout_secs(),
+				"sh",
+				"-c",
+				fmt.tprintf("WAYLAND_DISPLAY= DISPLAY= %s", line),
+			},
+		},
 		context.temp_allocator,
 	)
 	if err != nil {
@@ -111,7 +134,7 @@ example_of :: proc(line: string) -> Example {
 	if strings.contains(line, "$(") || strings.contains(line, "`") {
 		return {composed = true}
 	}
-	all := kit.cli_split_example(line, context.temp_allocator)
+	all := kit.cli_split_example(command_part(line), context.temp_allocator)
 	i := 0
 	for i < len(all) {
 		eq := strings.index_byte(all[i], '=')
@@ -125,6 +148,87 @@ example_of :: proc(line: string) -> Example {
 		i += 1
 	}
 	return {env = all[:i], words = all[i:]}
+}
+
+// command_part is an example line with what the shell does around the
+// command taken off: a redirect (`> out.json`, `2>/dev/null`, `< in.md`,
+// `2>&1`) is the shell's, not an argument, and anything after a pipe or a
+// `&&`/`;` is a second command. Quotes are honoured, so a `>` inside one is
+// an argument like any other.
+command_part :: proc(line: string) -> string {
+	// Split into raw words, keeping their quotes, noting which are bare.
+	Word :: struct {
+		text: string,
+		bare: bool, // no quote anywhere in it
+	}
+	words := make([dynamic]Word, context.temp_allocator)
+	start := -1
+	quote: u8 = 0
+	quoted := false
+	for i := 0; i <= len(line); i += 1 {
+		ch: u8 = i < len(line) ? line[i] : ' '
+		switch {
+		case quote != 0:
+			if ch == quote {
+				quote = 0
+			}
+		case ch == '"' || ch == '\'':
+			quote = ch
+			quoted = true
+			if start < 0 {start = i}
+		case ch == ' ' || ch == '\t':
+			if start >= 0 {
+				append(&words, Word{line[start:i], !quoted})
+				start = -1
+				quoted = false
+			}
+		case:
+			if start < 0 {start = i}
+		}
+	}
+	if start >= 0 {
+		append(&words, Word{line[start:], !quoted})
+	}
+
+	kept := make([dynamic]string, context.temp_allocator)
+	skip_next := false
+	for w in words {
+		if skip_next {
+			skip_next = false
+			continue
+		}
+		if !w.bare {
+			append(&kept, w.text)
+			continue
+		}
+		t := w.text
+		if t == "|" || t == "||" || t == "&&" || t == ";" || t == "&" {
+			break
+		}
+		// [n]> [n]>> < << <<< &> &>>, alone or with the target attached.
+		j := 0
+		for j < len(t) && t[j] >= '0' && t[j] <= '9' {
+			j += 1
+		}
+		op := t[j:]
+		if strings.has_prefix(op, "&>") {
+			op = op[1:]
+		}
+		if strings.has_prefix(op, ">") || strings.has_prefix(op, "<") {
+			k := 0
+			for k < len(op) && (op[k] == '>' || op[k] == '<') {
+				k += 1
+			}
+			target := op[k:]
+			if target == "" {
+				skip_next = true // the target is the next word
+			}
+			// `2>&1`, `>&2`: a descriptor, not a file; nothing more to skip.
+			continue
+		}
+		append(&kept, t)
+	}
+	return strings.join(kept[:], " ", context.temp_allocator)
 }
 
 // with_env puts an example's assignments in front of a command line.
@@ -207,12 +311,34 @@ output_fields :: proc(cmd: json.Value) -> []kit.Field {
 selftest :: proc() -> int {
 	fmt.println("palm self-test")
 
-	// Never append to the real audit log, and never read the real notebook.
+	// What the ordinary build does not produce, palm builds (prose's command
+	// line lives in a subdirectory of a library). Before the isolation below,
+	// which moves $HOME and with it the compiler's usual place.
+	for n in NOUNS {
+		if !n.on_convention {
+			continue
+		}
+		if built, why := ensure_built(n); built {
+			fmt.printfln("built %s from %s", n.app, build_line(n))
+		} else if why != "" {
+			fmt.printfln("could not build %s: %s", n.app, why)
+		}
+	}
+
+	// Never append to the real audit log, and never read the real notebook —
+	// nor anything else of the person's. Every child below runs blind read
+	// commands, and a blind `clipboard list` with the real $HOME is the real
+	// clipboard history. So the whole run gets a private home: $HOME and every
+	// XDG directory point into the scratch directory, and any PALMY_*/PALM_*
+	// override inherited from the shell (which could point at real data) is
+	// dropped first.
 	scratch := fmt.tprintf("/tmp/palmy-palm-selftest-%d", os.get_pid())
 	os.make_directory_all(scratch)
 	defer os.remove_all(scratch)
+	isolate(scratch)
 	_ = os.set_env("PALM_AUDIT", fmt.tprintf("%s/audit.jsonl", scratch))
 	_ = os.set_env("PALMY_NOTES_DIR", fmt.tprintf("%s/notes", scratch))
+	test_isolation(scratch)
 
 	// A notebook with something in it, so the examples that name a note have
 	// one to find. It is written through the surface itself — `notes write` —
@@ -242,9 +368,59 @@ selftest :: proc() -> int {
 	for n in NOUNS {
 		if n.on_convention {on += 1}
 	}
-	fmt.printfln("\n%d of %d nouns on the convention; %d reads validated against their schema, %d answered unavailable (no server, daemon or session here)", on, len(NOUNS), ran_reads, unavailable_reads)
+	fmt.printfln("\n%d of %d nouns on the convention; %d reads validated against their schema, %d answered unavailable (no server, daemon or session here), %d timed out (counted as unavailable)", on, len(NOUNS), ran_reads, unavailable_reads, timed_out_reads)
 	fmt.printfln("\n%d assertions, %d failures", checks, failures)
 	return failures == 0 ? 0 : 1
+}
+
+// isolate gives this process, and so every child, a home of its own.
+isolate :: proc(scratch: string) {
+	env, _ := os.environ(context.temp_allocator)
+	for kv in env {
+		eq := strings.index_byte(kv, '=')
+		if eq <= 0 {
+			continue
+		}
+		name := kv[:eq]
+		if (strings.has_prefix(name, "PALMY_") || strings.has_prefix(name, "PALM_")) && name != "PALM_SELFTEST_TIMEOUT" && name != "PALM_BIN_DIR" {
+			_ = os.unset_env(name)
+		}
+	}
+	home := fmt.tprintf("%s/home", scratch)
+	dirs := [?][2]string {
+		{"HOME", home},
+		{"XDG_CONFIG_HOME", fmt.tprintf("%s/.config", home)},
+		{"XDG_DATA_HOME", fmt.tprintf("%s/.local/share", home)},
+		{"XDG_STATE_HOME", fmt.tprintf("%s/.local/state", home)},
+		{"XDG_CACHE_HOME", fmt.tprintf("%s/.cache", home)},
+		{"XDG_RUNTIME_DIR", fmt.tprintf("%s/run", scratch)},
+	}
+	for d in dirs {
+		os.make_directory_all(d[1])
+		_ = os.set_env(d[0], d[1])
+	}
+	_ = os.unset_env("PALM_IDENTITY")
+	_ = os.unset_env("DBUS_SESSION_BUS_ADDRESS")
+}
+
+// test_isolation asserts what isolate promised, as the children see it.
+test_isolation :: proc(scratch: string) {
+	section("every child runs in a private home")
+	for name in ([?]string{"HOME", "XDG_CONFIG_HOME", "XDG_DATA_HOME", "XDG_STATE_HOME", "XDG_CACHE_HOME", "XDG_RUNTIME_DIR", "PALM_AUDIT"}) {
+		out, _ := sh(fmt.tprintf("printf %%s \"$%s\"", name))
+		check(strings.has_prefix(out, scratch), "a child's $%s is inside the scratch directory (%q)", name, out)
+	}
+	out, _ := sh("env | grep -E '^PALMY_' | grep -v '^PALMY_NOTES_DIR=' | wc -l")
+	check(strings.trim_space(out) == "0", "and no PALMY_* override from the shell reaches it (%s)", strings.trim_space(out))
+	t0 := os.get_env("PALM_SELFTEST_TIMEOUT", context.temp_allocator)
+	_ = os.set_env("PALM_SELFTEST_TIMEOUT", "1")
+	_, code := sh("sleep 5")
+	if t0 == "" {
+		_ = os.unset_env("PALM_SELFTEST_TIMEOUT")
+	} else {
+		_ = os.set_env("PALM_SELFTEST_TIMEOUT", t0)
+	}
+	eq_i(code, TIMED_OUT, "a child that never returns is stopped by the timeout")
 }
 
 // ---------------------------------------------------------------------------
@@ -359,6 +535,23 @@ test_examples :: proc(infos: []Surface_Info) {
 		}
 	}
 	check(total > 20, "and there are enough of them to mean something (%d)", total)
+
+	// What the shell does around an example is not part of the command.
+	for c in ([?][2]string {
+			{"prose lint a.md --json > out.json", "prose lint a.md --json"},
+			{"prose lint a.md --json >out.json", "prose lint a.md --json"},
+			{"notes list --json 2>/dev/null", "notes list --json"},
+			{"notes list --json 2> errors.txt", "notes list --json"},
+			{"notes list --json 2>&1", "notes list --json"},
+			{"prose lint - < a.md", "prose lint -"},
+			{"notes list --json | jq .notes", "notes list --json"},
+			{"notes write x --text \"a > b\" && notes list", "notes write x --text \"a > b\""},
+			{"PALM_IDENTITY=work drive ls &> log", "PALM_IDENTITY=work drive ls"},
+			{"mailcore login --password '<redacted>'", "mailcore login --password '<redacted>'"},
+		}) {
+		got := command_part(c[0])
+		check(got == c[1], "the command in %q is %q (got %q)", c[0], c[1], got)
+	}
 }
 
 // Every read command emits JSON matching its declared schema. Only commands
@@ -420,6 +613,15 @@ test_read_schemas :: proc(infos: []Surface_Info) {
 			// runs with none). The answer must still be the documented error
 			// object. How many reads could only be checked this way is
 			// counted, so the number stays visible.
+			if code == TIMED_OUT || code == 137 {
+				// Waiting on something that is not here, forever: that is
+				// unavailable, said badly. It is counted, and named, so it
+				// stays visible rather than passing quietly.
+				timed_out_reads += 1
+				unavailable_reads += 1
+				fmt.printfln("  note  %s %s --json timed out after %ss; counted as unavailable", info.noun.noun, verb, timeout_secs())
+				continue
+			}
 			if code == kit.EXIT_UNAVAILABLE {
 				unavailable_reads += 1
 			}

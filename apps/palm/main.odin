@@ -182,7 +182,104 @@ binary_for :: proc(n: Noun) -> (path: string, found: bool) {
 			return cand, true
 		}
 	}
+	// An installed system names binaries without the suffix, side by side.
+	if flat := fmt.tprintf("%s/%s", dir, n.app); n.app != "palm" && os.exists(flat) && !os.is_dir(flat) {
+		return flat, true
+	}
 	return fmt.tprintf("%s/../%s/%s.bin", dir, n.app, n.app), false
+}
+
+// ---------------------------------------------------------------------------
+// Building what the working tree does not build by default
+//
+// Every application under apps/ has its main package at its top, and every
+// build script in the repository builds those. A few do not: prose is a
+// library (docs imports it) whose command line lives in apps/prose/cli, so
+// nothing produces apps/prose/prose.bin unless someone types the line. palm
+// knows that line, says it when the binary is missing, and `palm --selftest`
+// runs it rather than reporting the noun unavailable.
+// ---------------------------------------------------------------------------
+
+Build :: struct {
+	app: string, // the noun's binary name
+	src: string, // the package with its main, relative to the repository root
+}
+
+BUILDS := []Build{{"prose", "apps/prose/cli"}}
+
+build_of :: proc(n: Noun) -> (b: Build, ok: bool) {
+	for it in BUILDS {
+		if it.app == n.app {
+			return it, true
+		}
+	}
+	return {}, false
+}
+
+// build_line is the command that builds a noun's binary from the repository
+// root, or "" when the ordinary build covers it.
+build_line :: proc(n: Noun, odin := "odin") -> string {
+	b, ok := build_of(n)
+	if !ok {
+		return ""
+	}
+	return fmt.tprintf(
+		"%s build %s -collection:palmy=palmy -collection:shadcn=shadcn -collection:kit=apps/kit -out:apps/%s/%s.bin",
+		odin,
+		b.src,
+		b.app,
+		b.app,
+	)
+}
+
+// find_odin is the compiler: $ODIN, then `odin` on PATH, then the pinned one
+// this project's machines install through mise.
+find_odin :: proc() -> string {
+	if o := os.get_env("ODIN", context.temp_allocator); o != "" && os.exists(o) {
+		return o
+	}
+	if path := os.get_env("PATH", context.temp_allocator); path != "" {
+		for d in strings.split(path, ":", context.temp_allocator) {
+			if c := fmt.tprintf("%s/odin", d); d != "" && os.exists(c) {
+				return c
+			}
+		}
+	}
+	if home := os.get_env("HOME", context.temp_allocator); home != "" {
+		for v in ([?]string{"dev-2026-09"}) {
+			if c := fmt.tprintf("%s/.local/share/mise/installs/odin/%s/odin", home, v); os.exists(c) {
+				return c
+			}
+		}
+	}
+	return ""
+}
+
+// ensure_built builds a noun's binary in the working tree when it is missing
+// and palm knows how. It is quiet about nouns the ordinary build covers, and
+// about a tree that is not a checkout (an installed system).
+ensure_built :: proc(n: Noun) -> (built: bool, why: string) {
+	if _, found := binary_for(n); found {
+		return false, ""
+	}
+	b, ok := build_of(n)
+	if !ok || !os.is_dir(b.src) || !os.is_dir("apps/kit") {
+		return false, ""
+	}
+	odin := find_odin()
+	if odin == "" {
+		return false, "no odin compiler to build it with"
+	}
+	line := build_line(n, odin)
+	fmt.eprintfln("palm: building %s: %s", n.app, line)
+	state, _, serr, err := os.process_exec(
+		{command = {"sh", "-c", fmt.tprintf("WAYLAND_DISPLAY= DISPLAY= %s", line)}},
+		context.temp_allocator,
+	)
+	if err != nil || state.exit_code != 0 {
+		return false, strings.trim_space(string(serr))
+	}
+	return true, ""
 }
 
 find_noun :: proc(name: string) -> (n: Noun, ok: bool) {
@@ -294,6 +391,9 @@ collect :: proc(only := "") -> []Surface_Info {
 			info.reason = "not yet on the shared convention"
 		case !found:
 			info.reason = "the binary is not built"
+			if line := build_line(n); line != "" {
+				info.reason = fmt.tprintf("the binary is not built (from the repository root: %s)", line)
+			}
 		case:
 			text, got := schema_of(n)
 			if !got {
