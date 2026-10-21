@@ -113,6 +113,29 @@ test_cli :: proc() {
 		eq_int(code, 0, "--schema answers")
 		_, err := json.parse_string(out, json.DEFAULT_SPECIFICATION, true, context.temp_allocator)
 		ok(err == nil, "and is JSON")
+		eq_int(strings.count(out, `"name": "data-dir"`), len(sf.commands) + 1, "--data-dir is in every command's schema, and the surface's")
+		ok(strings.contains(out, `"name": "maildir"`) && strings.contains(out, `"name": "save-dir"`), "and so are --maildir and --save-dir")
+	}
+	{
+		// The surface's flags, read by the kit rather than stripped from argv
+		// first. $PALMY_MAIL_DIR points at an empty directory, so only the
+		// flag can find the fixtures.
+		empty := fmt.tprintf("%s/flag-empty", scratch)
+		os.make_directory_all(empty)
+		out, code := run_cli(empty, scratch, {}, "accounts", "--data-dir", data, "--json")
+		eq_int(code, 0, "accounts --data-dir PATH exits 0")
+		ok(strings.contains(out, `"count": 3`) && strings.contains(out, data), "and reads that directory, not $PALMY_MAIL_DIR")
+		out2, code2 := run_cli(empty, scratch, {}, "accounts", fmt.tprintf("--data-dir=%s", data), "--save-dir=/nonexistent", "--json")
+		eq_int(code2, 0, "--data-dir=PATH and --save-dir=PATH are taken too")
+		ok(strings.contains(out2, `"count": 3`), "with the same answer")
+		tree := fmt.tprintf("%s/flag-tree", scratch)
+		maildir_make(tree)
+		write_file(fmt.tprintf("%s/new/1.M1P1.flag", tree), transmute([]u8)string("From: A <a@t>\r\nSubject: Only here\r\nMessage-ID: <flag-1@t>\r\n\r\nbody\r\n"))
+		out3, code3 := run_cli(data, scratch, {}, "search", "only here", fmt.tprintf("--maildir=%s", tree), "--json")
+		eq_int(code3, 0, "search --maildir=PATH exits 0")
+		ok(strings.contains(out3, "Only here") && strings.contains(out3, `"count": 1`), "and searches that one tree")
+		_, code4 := run_cli(data, scratch, {}, "accounts", "--data-dir")
+		eq_int(code4, kit.EXIT_USAGE, "--data-dir with no value is a usage error")
 	}
 
 	// --- reads ------------------------------------------------------------

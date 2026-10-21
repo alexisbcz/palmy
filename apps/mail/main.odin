@@ -90,25 +90,15 @@ main :: proc() {
 		}
 	}
 
-	// The command line: everything else that is not one of the window's own
-	// path options. `--data-dir=`, `--maildir=` and `--save-dir=` are taken
-	// out first so `mail list --data-dir=X --json` reads X, and so a bare
-	// `mail --maildir=X` still opens the window on X.
-	rest := make([dynamic]string, context.temp_allocator)
-	for arg in os.args[1:] {
-		switch {
-		case strings.has_prefix(arg, "--data-dir="):
-			data_dir_override = strings.clone(arg[len("--data-dir="):])
-			data_dir_explicit = true
-		case strings.has_prefix(arg, "--maildir="):
-			cli_maildir = strings.clone(arg[len("--maildir="):])
-		case strings.has_prefix(arg, "--save-dir="):
-		case:
-			append(&rest, arg)
+	// The command line: everything else. `--data-dir`, `--maildir` and
+	// `--save-dir` are the surface's flags, so `mail list --data-dir=X` reads
+	// X. A line of nothing but those is the window's (`mail --maildir=X`, as
+	// home and the index open it): the kit takes a surface flag only after a
+	// verb.
+	if !window_options_only(os.args[1:]) {
+		if code, handled := kit.cli(surface()); handled {
+			os.exit(code)
 		}
-	}
-	if code, handled := kit.cli_args(surface(), rest[:]); handled {
-		os.exit(code)
 	}
 
 	app, err := kit.start(
@@ -148,6 +138,17 @@ main :: proc() {
 	if compose_dirty(&st.comp) {
 		draft_save(st)
 	}
+}
+
+// window_options_only says every word is one of the window's path options,
+// spelled with `=` as init_state reads them.
+window_options_only :: proc(args: []string) -> bool {
+	for a in args {
+		if !strings.has_prefix(a, "--data-dir=") && !strings.has_prefix(a, "--maildir=") && !strings.has_prefix(a, "--save-dir=") {
+			return false
+		}
+	}
+	return true
 }
 
 init_state :: proc(st: ^State) {

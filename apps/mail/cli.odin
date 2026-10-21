@@ -32,10 +32,6 @@ import "core:strings"
 import "core:time"
 import kit "kit:."
 
-// cli_maildir is `--maildir=PATH`, taken off the command line by main before
-// the kit parses the rest.
-cli_maildir: string
-
 @(private = "file")
 COMMANDS := []kit.Command {
 	{
@@ -180,9 +176,18 @@ surface :: proc() -> ^kit.Surface {
 			selftest   = run_selftest,
 			notes      = SURFACE_NOTES,
 			commands   = COMMANDS,
+			flags      = SURFACE_FLAGS,
 		}
 	}
 	return &g_surface
+}
+
+// The paths every command takes, and the window too (`mail --maildir=X`).
+@(private = "file")
+SURFACE_FLAGS := []kit.Param {
+	{name = "data-dir", kind = .Path, help = "the data directory, instead of $PALMY_MAIL_DIR or ~/.local/share/palmy-mail"},
+	{name = "maildir", kind = .Path, help = "one Maildir tree as the only account; it is only ever read"},
+	{name = "save-dir", kind = .Path, help = "the window's: where the Save Attachment dialog opens; a command ignores it"},
 }
 
 @(private = "file")
@@ -336,9 +341,13 @@ FIXTURES_FIELDS := []kit.Field {
 // cli_open loads every account the way the window does, without the window's
 // one write (fixtures for an empty data directory) and without its draft.
 @(private = "file")
-cli_open :: proc() -> ^State {
+cli_open :: proc(c: ^kit.Call) -> ^State {
+	if kit.cli_has(c, "data-dir") {
+		data_dir_override = kit.cli_str(c, "data-dir")
+		data_dir_explicit = true
+	}
 	st := new(State)
-	model_open(st, cli_maildir)
+	model_open(st, kit.cli_str(c, "maildir"))
 	reload_all(st)
 	return st
 }
@@ -525,7 +534,7 @@ newest_first :: proc(st: ^State, xs: []int) {
 
 @(private = "file")
 cmd_accounts :: proc(c: ^kit.Call) -> int {
-	st := cli_open()
+	st := cli_open(c)
 	arr := kit.jarr()
 	for a, ai in st.accounts {
 		if !in_scope(c, a) {
@@ -559,7 +568,7 @@ cmd_accounts :: proc(c: ^kit.Call) -> int {
 
 @(private = "file")
 cmd_folders :: proc(c: ^kit.Call) -> int {
-	st := cli_open()
+	st := cli_open(c)
 	only, code := find_account(c, st)
 	if code != kit.EXIT_OK {
 		return code
@@ -601,7 +610,7 @@ find_folder :: proc(c: ^kit.Call, st: ^State, ai: int, name: string) -> int {
 
 @(private = "file")
 cmd_list :: proc(c: ^kit.Call) -> int {
-	st := cli_open()
+	st := cli_open(c)
 	ai, code := find_account(c, st)
 	if code != kit.EXIT_OK {
 		return code
@@ -645,7 +654,7 @@ cmd_list :: proc(c: ^kit.Call) -> int {
 
 @(private = "file")
 cmd_read :: proc(c: ^kit.Call) -> int {
-	st := cli_open()
+	st := cli_open(c)
 	mi, code := find_message(c, st, kit.cli_str(c, "id"))
 	if code != kit.EXIT_OK {
 		return code
@@ -689,7 +698,7 @@ cmd_read :: proc(c: ^kit.Call) -> int {
 
 @(private = "file")
 cmd_search :: proc(c: ^kit.Call) -> int {
-	st := cli_open()
+	st := cli_open(c)
 	q := kit.cli_str(c, "query")
 	idx := make([dynamic]int, context.temp_allocator)
 	for m, i in st.messages {
@@ -717,7 +726,7 @@ cmd_search :: proc(c: ^kit.Call) -> int {
 
 @(private = "file")
 cmd_mark :: proc(c: ^kit.Call) -> int {
-	st := cli_open()
+	st := cli_open(c)
 	mi, code := find_message(c, st, kit.cli_str(c, "id"))
 	if code != kit.EXIT_OK {
 		return code
@@ -761,7 +770,7 @@ filed :: proc(c: ^kit.Call, st: ^State, key, from: string, local: bool) -> int {
 
 @(private = "file")
 cmd_move :: proc(c: ^kit.Call) -> int {
-	st := cli_open()
+	st := cli_open(c)
 	mi, code := find_message(c, st, kit.cli_str(c, "id"))
 	if code != kit.EXIT_OK {
 		return code
@@ -802,7 +811,7 @@ cmd_trash :: proc(c: ^kit.Call) -> int {
 
 @(private = "file")
 file_away :: proc(c: ^kit.Call, archive: bool) -> int {
-	st := cli_open()
+	st := cli_open(c)
 	mi, code := find_message(c, st, kit.cli_str(c, "id"))
 	if code != kit.EXIT_OK {
 		return code
@@ -836,7 +845,7 @@ file_away :: proc(c: ^kit.Call, archive: bool) -> int {
 
 @(private = "file")
 cmd_purge :: proc(c: ^kit.Call) -> int {
-	st := cli_open()
+	st := cli_open(c)
 	mi, code := find_message(c, st, kit.cli_str(c, "id"))
 	if code != kit.EXIT_OK {
 		return code
@@ -859,7 +868,7 @@ cmd_purge :: proc(c: ^kit.Call) -> int {
 
 @(private = "file")
 cmd_send :: proc(c: ^kit.Call) -> int {
-	st := cli_open()
+	st := cli_open(c)
 	ai, code := find_account(c, st)
 	if code != kit.EXIT_OK {
 		return code
