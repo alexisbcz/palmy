@@ -307,7 +307,7 @@ watch_poke :: proc(w: ^Watch) {
 // watch_idle blocks until the watcher pokes, for a process with no window.
 watch_idle :: proc(w: ^Watch, timeout_ms: int) {
 	pfd := [1]linux.Poll_Fd{{fd = w.pipe[0], events = {.IN}}}
-	linux.poll(pfd[:], i32(timeout_ms))
+	p.poll_fds(pfd[:], timeout_ms) // -1 must mean forever on arm64 too
 	drain: [64]u8
 	for {
 		n, _ := linux.read(w.pipe[0], drain[:])
