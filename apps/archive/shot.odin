@@ -13,6 +13,7 @@ package main
 import "core:fmt"
 import "core:os"
 import "core:strings"
+import "core:time"
 import kit "kit:."
 import p "palmy:."
 
@@ -97,7 +98,7 @@ shots :: proc(dir: string) -> int {
 		fmt.eprintln("archive --shots: could not build the fixture archive")
 		return 1
 	}
-	items, lerr := list_archive(zip)
+	items, lerr, _ := list_archive(zip)
 	if lerr != "" {
 		fmt.eprintfln("archive --shots: listing the fixture failed: %s", lerr)
 		return 1
@@ -185,6 +186,60 @@ shots :: proc(dir: string) -> int {
 	shot(off, dir, "04-archive-create")
 	p.press_key(off, p.KEY_ESCAPE)
 	step(off, &st)
+
+	// Passwords, when 7-Zip is here to make the encrypted fixtures: a 7z whose
+	// names are hidden asks before it can list, and a zip with encrypted
+	// entries says so in its confirmation.
+	if tools().sevenzip != "" {
+		// Heap, not the frame arena: every step resets the temp allocator.
+		src := fmt.aprintf("%s/src/palmy-demo", SHOT_WORK)
+		seven := fmt.aprintf("%s/out/locked.7z", SHOT_WORK)
+		zipped := fmt.aprintf("%s/out/locked.zip", SHOT_WORK)
+		defer delete(src)
+		defer delete(seven)
+		defer delete(zipped)
+		a := create_archive(src, seven, "demo-pass")
+		b := create_archive(src, zipped, "demo-pass")
+		if a.ok && b.ok {
+			wait :: proc(off: ^p.Offscreen, st: ^St) {
+				for _ in 0 ..< 4000 {
+					step(off, st)
+					if !job_busy() {
+						step(off, st)
+						return
+					}
+					time.sleep(5 * time.Millisecond)
+				}
+			}
+			open_archive(&st, seven)
+			wait(off, &st)
+			p.type_text(off, "demo-p")
+			step(off, &st)
+			step(off, &st)
+			shot(off, dir, "05-archive-password")
+			p.press_key(off, p.KEY_ESCAPE)
+			step(off, &st)
+
+			open_archive(&st, zipped)
+			wait(off, &st)
+			delete(st.dest)
+			st.dest = strings.clone(fmt.tprintf("%s/out/unlocked", SHOT_WORK))
+			p.press_key(off, p.KEY_RETURN) // into palmy-demo/
+			step(off, &st)
+			p.press_key(off, p.KEY_DOWN)
+			step(off, &st)
+			p.press_key(off, p.KEY_DOWN)
+			step(off, &st)
+			step(off, &st)
+			shot(off, dir, "06-archive-encrypted")
+			p.press_key(off, 'e')
+			step(off, &st)
+			step(off, &st)
+			shot(off, dir, "07-archive-confirm-encrypted")
+		}
+		delete(a.msg)
+		delete(b.msg)
+	}
 
 	_ = os.remove_all(SHOT_WORK)
 	return 0

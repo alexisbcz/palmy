@@ -19,6 +19,17 @@ package main
 //     number already on disk and the number refused, and overwriting is a
 //     separate key from going ahead.
 //
+// Which program reads or writes each format — bsdtar, 7-Zip, unrar, rar — and
+// how a password reaches it without ever being on a command line is
+// backend.odin. An encrypted archive asks for its password in the window: when
+// its listing needs one (a 7z or RAR with encrypted names), when an extraction
+// includes encrypted entries, and, optionally, when creating a zip or 7z.
+// The password is drawn as dots and kept only in memory, for the archive it was
+// typed for.
+//
+// The command line (cli.odin, `archive list|extract|create|formats`) goes
+// through the same list_archive, stage_names, extract_entries and
+// create_archive the window's worker runs.
 // Everything slow — listing, extracting, creating — runs on a worker thread.
 // The frame polls two atomics and keeps drawing.
 
@@ -44,6 +55,14 @@ Mode :: enum u8 {
 	Create,
 	Confirm,
 	Done,
+	Password,
+}
+
+// Pw_For is what the password dialog is for: once it is entered, that step
+// is retried.
+Pw_For :: enum u8 {
+	List,
+	Extract,
 }
 
 // Row is one line of the current view: a real entry, or a directory implied by
@@ -92,6 +111,15 @@ St :: struct {
 	stage:     [dynamic]string,
 	stage_bad: int,
 	stage_hit: int, // entries that already exist in the destination
+	stage_locked: int, // staged files that need the password
+	stage_over: bool, // the extraction waiting on a password overwrites
+
+	// The password for the open archive, and the one typed for a new archive.
+	// Only ever in memory; the dialog draws dots.
+	password:    string,
+	create_pw:   string,
+	pw_for:      Pw_For,
+	pw_note:     string,
 
 	busy_label: string,
 	result:    string,
@@ -99,16 +127,17 @@ St :: struct {
 
 	toast:     string,
 	toast_until: time.Tick, // on a real monotonic clock; see the frame loop
-	have_tar:  bool,
+	have_tar:  bool, // anything at all that reads an archive is installed
 }
 
 main :: proc() {
 	for a, i in os.args[1:] {
-		if a == "--selftest" || a == "-selftest" {
+		if a == "-selftest" {
 			os.exit(selftest() == 0 ? 0 : 1)
 		}
 		// `--shots <dir>` renders the screens offscreen and exits. No window
-		// is opened, so it is safe to run on a live desktop.
+		// is opened, so it is safe to run on a live desktop. It predates the
+		// command line and is not a command on it, so it is looked for first.
 		if a == "--shots" || a == "-shots" {
 			rest := os.args[1:]
 			if i + 1 >= len(rest) {
@@ -117,6 +146,12 @@ main :: proc() {
 			}
 			os.exit(shots(rest[i + 1]))
 		}
+	}
+	// Everything else — the commands, --help, --schema, --selftest — is the
+	// convention's. What it does not handle is no arguments, or a bare path to
+	// an archive: the window.
+	if code, handled := kit.cli(surface()); handled {
+		os.exit(code)
 	}
 
 	app, err := kit.start(
@@ -146,7 +181,7 @@ main :: proc() {
 		edit       = make([dynamic]u8),
 		found      = make([dynamic]string),
 		stage      = make([dynamic]string),
-		have_tar   = kit.has_tool("bsdtar"),
+		have_tar   = have_any_reader(),
 		create_src = strings.clone(home_rel("")),
 		create_out = strings.clone(home_rel("Downloads/archive.zip")),
 	}
@@ -286,6 +321,10 @@ open_archive :: proc(st: ^St, path: string) {
 		st.items = nil
 	}
 	clear_marks(st)
+	if abs != st.archive {
+		// A password belongs to the archive it was typed for.
+		set_password(st, "")
+	}
 	delete(st.archive)
 	st.archive = strings.clone(abs)
 	st.cwd = ""
@@ -300,8 +339,32 @@ open_archive :: proc(st: ^St, path: string) {
 	)
 
 	st.busy_label = "Reading the archive"
-	job_start(Job{kind = .List, archive = strings.clone(abs)})
+	job_start(Job{kind = .List, archive = strings.clone(abs), password = strings.clone(st.password)})
 	st.mode = .Browse
+}
+
+// have_any_reader is whether anything at all that reads an archive is here.
+have_any_reader :: proc() -> bool {
+	t := tools()
+	return t.bsdtar || t.sevenzip != "" || t.unrar
+}
+
+set_password :: proc(st: ^St, pw: string) {
+	if st.password != "" {
+		delete(st.password)
+	}
+	st.password = pw == "" ? "" : strings.clone(pw)
+}
+
+// ask_password opens the password dialog for a step that needs one.
+ask_password :: proc(st: ^St, why: Pw_For, note: string) {
+	st.pw_for = why
+	if st.pw_note != "" {
+		delete(st.pw_note)
+	}
+	st.pw_note = strings.clone(note)
+	begin_edit(st, "")
+	st.mode = .Password
 }
 
 collect :: proc(st: ^St, ui: ^p.Ctx) {
@@ -317,12 +380,31 @@ collect :: proc(st: ^St, ui: ^p.Ctx) {
 			st.items = j.items
 			st.sel = 0
 			st.top = 0
+		} else if j.fail == .Need_Password || j.fail == .Wrong_Password {
+			// A 7z or RAR with encrypted names cannot even be listed without
+			// the password: ask, and list again with it.
+			ask_password(
+				st,
+				.List,
+				j.fail == .Wrong_Password ? "That password is wrong. The names in this archive are encrypted too." : "The names in this archive are encrypted. Its password is needed to see what is inside.",
+			)
 		} else {
 			st.result_ok = false
 			st.result = strings.clone(j.msg)
 			st.mode = .Done
 		}
 	case .Extract, .Create:
+		if j.kind == .Extract && (j.fail == .Need_Password || j.fail == .Wrong_Password) {
+			ask_password(
+				st,
+				.Extract,
+				j.fail == .Wrong_Password ? "That password is wrong. Nothing more was extracted." : "Some of these entries are encrypted.",
+			)
+			st.stage_over = j.overwrite
+			set_password(st, "")
+			job_release(j)
+			return
+		}
 		st.result_ok = j.ok
 		st.result = strings.clone(j.msg)
 		st.mode = .Done
@@ -483,42 +565,29 @@ marked_count :: proc(st: ^St) -> int {
 stage_extraction :: proc(st: ^St) {
 	for s in st.stage {delete(s)}
 	clear(&st.stage)
-	st.stage_bad = 0
-	st.stage_hit = 0
 
-	want :: proc(st: ^St, it: Item) -> bool {
-		if len(st.marks) == 0 {
-			return true
-		}
-		for m in st.marks {
-			if m == it.name {
-				return true
-			}
-			if strings.has_suffix(m, "/") && strings.has_prefix(it.name, m) {
-				return true
-			}
-		}
-		return false
+	picks := make([dynamic]string, context.temp_allocator)
+	for m in st.marks {
+		append(&picks, m)
 	}
-
-	for it in st.items {
-		if !want(st, it) {
-			continue
-		}
-		if it.bad {
-			st.stage_bad += 1
-			continue
-		}
-		append(&st.stage, strings.clone(it.name))
-		if !it.dir {
-			if os.exists(fmt.tprintf("%s/%s", st.dest, it.name)) {
-				st.stage_hit += 1
-			}
-		}
+	staged := stage_names(st.items, picks[:], st.dest)
+	defer staged_free(&staged)
+	for n in staged.names {
+		append(&st.stage, strings.clone(n))
 	}
+	st.stage_bad = len(staged.refused)
+	st.stage_hit = staged.hit
+	st.stage_locked = staged.encrypted
 }
 
 start_extract :: proc(st: ^St, overwrite: bool) {
+	if st.stage_locked > 0 && st.password == "" {
+		// Ask first: half an extraction followed by a failure is the worst
+		// way to learn an archive is encrypted.
+		st.stage_over = overwrite
+		ask_password(st, .Extract, fmt.tprintf("%d of these files are encrypted.", st.stage_locked))
+		return
+	}
 	names := make([]string, len(st.stage))
 	for s, i in st.stage {
 		names[i] = strings.clone(s)
@@ -531,6 +600,7 @@ start_extract :: proc(st: ^St, overwrite: bool) {
 			dest = strings.clone(st.dest),
 			names = names,
 			overwrite = overwrite,
+			password = strings.clone(st.password),
 		},
 	)
 	st.mode = .Browse
@@ -572,6 +642,9 @@ handle_keys :: proc(ui: ^p.Ctx, app: ^p.App, st: ^St) {
 		return
 	case .Create:
 		create_keys(ui, st)
+		return
+	case .Password:
+		password_keys(ui, st)
 		return
 	case .Browse:
 	}
@@ -782,8 +855,8 @@ create_keys :: proc(ui: ^p.Ctx, st: ^St) {
 	}
 	if p.key_pressed(ui, p.KEY_TAB) {
 		commit_edit(st)
-		st.edit_which = 1 - st.edit_which
-		begin_edit(st, st.edit_which == 0 ? st.create_src : st.create_out)
+		st.edit_which = (st.edit_which + 1) % 3
+		begin_edit(st, st.edit_which == 0 ? st.create_src : st.edit_which == 1 ? st.create_out : st.create_pw)
 		return
 	}
 	if p.key_pressed(ui, p.KEY_RETURN) || p.key_pressed(ui, p.KEY_KP_ENTER) {
@@ -805,8 +878,17 @@ create_keys :: proc(ui: ^p.Ctx, st: ^St) {
 			st.mode = .Done
 			return
 		}
-		st.busy_label = "Creating the archive"
-		job_start(Job{kind = .Create, src = strings.clone(src), out = strings.clone(out)})
+		if st.create_pw != "" && !can_encrypt(kind_of(out)) {
+			st.result_ok = false
+			st.result = fmt.aprintf("a %s archive has no encryption — name it .zip or .7z to use a password", KIND_NAMES[kind_of(out)])
+			st.mode = .Done
+			return
+		}
+		st.busy_label = st.create_pw != "" ? "Creating the encrypted archive" : "Creating the archive"
+		job_start(Job{kind = .Create, src = strings.clone(src), out = strings.clone(out), password = strings.clone(st.create_pw)})
+		// The new archive's password is not kept once it has been used.
+		delete(st.create_pw)
+		st.create_pw = ""
 		st.mode = .Browse
 		return
 	}
@@ -815,13 +897,56 @@ create_keys :: proc(ui: ^p.Ctx, st: ^St) {
 
 commit_edit :: proc(st: ^St) {
 	text := strings.trim_space(string(st.edit[:]))
-	if st.edit_which == 0 {
+	switch st.edit_which {
+	case 0:
 		delete(st.create_src)
 		st.create_src = strings.clone(text)
-	} else {
+	case 1:
 		delete(st.create_out)
 		st.create_out = strings.clone(text)
+	case:
+		// A password is taken as typed: spaces at its ends are part of it.
+		delete(st.create_pw)
+		st.create_pw = strings.clone(string(st.edit[:]))
 	}
+}
+
+// password_keys runs the password dialog. Enter retries the step that asked
+// for it; Escape gives up on that step.
+password_keys :: proc(ui: ^p.Ctx, st: ^St) {
+	if p.key_pressed(ui, p.KEY_ESCAPE) {
+		clear(&st.edit)
+		st.mode = st.items != nil ? .Browse : .Open
+		return
+	}
+	if p.key_pressed(ui, p.KEY_RETURN) || p.key_pressed(ui, p.KEY_KP_ENTER) {
+		if len(st.edit) == 0 {
+			return
+		}
+		set_password(st, string(st.edit[:]))
+		clear(&st.edit)
+		switch st.pw_for {
+		case .List:
+			path := strings.clone(st.archive, context.temp_allocator)
+			st.busy_label = "Reading the archive"
+			job_start(Job{kind = .List, archive = strings.clone(path), password = strings.clone(st.password)})
+			st.mode = .Browse
+		case .Extract:
+			start_extract(st, st.stage_over)
+		}
+		return
+	}
+	edit_buffer(ui, &st.edit)
+}
+
+// dots is what a password field shows: one per character, never the text.
+dots :: proc(s: string) -> string {
+	n := strings.rune_count(s)
+	b := strings.builder_make(context.temp_allocator)
+	for _ in 0 ..< n {
+		strings.write_string(&b, "•")
+	}
+	return strings.to_string(b)
 }
 
 begin_edit :: proc(st: ^St, initial: string) {
@@ -909,6 +1034,8 @@ build :: proc(ui: ^p.Ctx, st: ^St) {
 			confirm_overlay(ui, st)
 		case .Done:
 			done_overlay(ui, st)
+		case .Password:
+			password_overlay(ui, st)
 		}
 	}
 }
@@ -926,7 +1053,7 @@ header :: proc(ui: ^p.Ctx, st: ^St) {
 		p.style(ui).shrink = 0
 		p.spacer(ui)
 		if !st.have_tar {
-			sc.badge(ui, "bsdtar missing", .Destructive)
+			sc.badge(ui, "bsdtar, 7z and unrar missing", .Destructive)
 		}
 		return
 	}
@@ -940,11 +1067,15 @@ header :: proc(ui: ^p.Ctx, st: ^St) {
 	p.row(ui, "shrink-0 items-center gap-2")
 	sc.badge(ui, archive_label(st.archive), .Secondary)
 	if st.items != nil {
-		files, dirs, bad := 0, 0, 0
+		files, dirs, bad, locked := 0, 0, 0, 0
 		total := i64(0)
 		for it in st.items {
 			if it.dir {dirs += 1} else {files += 1; total += it.size}
 			if it.bad {bad += 1}
+			if it.encrypted {locked += 1}
+		}
+		if locked > 0 {
+			sc.badge_icon(ui, st.password != "" ? "encrypted · unlocked" : "encrypted", IC_LOCK, .Outline)
 		}
 		p.textf(
 			ui,
@@ -1159,6 +1290,9 @@ side_pane :: proc(ui: ^p.Ctx, st: ^St) {
 		if r.item >= 0 && st.items[r.item].perms != "" {
 			meta(ui, "Mode", st.items[r.item].perms)
 		}
+		if r.item >= 0 && st.items[r.item].encrypted {
+			meta(ui, "Encrypted", st.password != "" ? "yes — password entered" : "yes — needs the password")
+		}
 		meta(ui, "Marked", st.marks[r.name] ? "yes" : "no")
 
 		if r.bad {
@@ -1315,6 +1449,20 @@ field_overlay :: proc(ui: ^p.Ctx, st: ^St, title, note: string) {
 	p.end(ui)
 }
 
+password_overlay :: proc(ui: ^p.Ctx, st: ^St) {
+	panel_open(ui, 560, 200)
+	defer p.end(ui)
+	_, base := split_parent(st.archive)
+	panel_title(ui, IC_LOCK, fmt.tprintf("Password for %s", base), st.pw_note)
+	text_field(ui, "Password", dots(string(st.edit[:])), true)
+	p.row(ui, "w-full items-center gap-3 pt-1")
+	keyhint(ui, "Enter", st.pw_for == .List ? "unlock and list" : "unlock and extract")
+	keyhint(ui, "Ctrl U", "clear")
+	p.spacer(ui)
+	keyhint(ui, "Esc", "cancel")
+	p.end(ui)
+}
+
 open_overlay :: proc(ui: ^p.Ctx, st: ^St) {
 	panel_open(ui, 640, 430)
 	defer p.end(ui)
@@ -1355,13 +1503,13 @@ open_overlay :: proc(ui: ^p.Ctx, st: ^St) {
 }
 
 create_overlay :: proc(ui: ^p.Ctx, st: ^St) {
-	panel_open(ui, 620, 280)
+	panel_open(ui, 620, 340)
 	defer p.end(ui)
 	panel_title(
 		ui,
 		IC_FOLDER_PLUS,
 		"Create an archive",
-		"bsdtar picks the format from the output extension: .zip, .tar.gz, .tar.xz, .tar.zst…",
+		"The format is the output's extension: .zip, .7z, .rar, .tar.gz, .tar.xz, .tar.zst…",
 	)
 	text_field(
 		ui,
@@ -1375,8 +1523,14 @@ create_overlay :: proc(ui: ^p.Ctx, st: ^St) {
 		st.edit_which == 1 ? string(st.edit[:]) : st.create_out,
 		st.edit_which == 1,
 	)
+	text_field(
+		ui,
+		"Password (optional — .zip, .7z or .rar)",
+		dots(st.edit_which == 2 ? string(st.edit[:]) : st.create_pw),
+		st.edit_which == 2,
+	)
 	p.row(ui, "w-full items-center gap-3 pt-1")
-	keyhint(ui, "Tab", "other field")
+	keyhint(ui, "Tab", "next field")
 	keyhint(ui, "Enter", "create")
 	p.spacer(ui)
 	keyhint(ui, "Esc", "cancel")
@@ -1396,6 +1550,14 @@ confirm_overlay :: proc(ui: ^p.Ctx, st: ^St) {
 			IC_TRIANGLE_ALERT,
 			"Already on disk",
 			fmt.tprintf("%d files — kept unless you choose to overwrite", st.stage_hit),
+		)
+	}
+	if st.stage_locked > 0 {
+		line(
+			ui,
+			IC_LOCK,
+			"Encrypted",
+			st.password != "" ? fmt.tprintf("%d files — the password is entered", st.stage_locked) : fmt.tprintf("%d files — you will be asked for the password", st.stage_locked),
 		)
 	}
 	if st.stage_bad > 0 {

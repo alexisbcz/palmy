@@ -208,7 +208,7 @@ selftest :: proc() -> int {
 	)
 	ok(made && os.exists(hostile), "the hostile fixture should have been created")
 
-	items, lerr := list_archive(hostile)
+	items, lerr, _ := list_archive(hostile)
 	ok(lerr == "", "listing the hostile archive failed: %s", lerr)
 	ok(len(items) == 3, "the hostile archive should list 3 entries, got %d", len(items))
 
@@ -294,7 +294,7 @@ selftest :: proc() -> int {
 		ok(settle(), "the create job did not finish")
 		ok(os.exists(normal), "creating an archive from a directory should produce a file")
 
-		ni, nerr := list_archive(normal)
+		ni, nerr, _ := list_archive(normal)
 		ok(nerr == "", "listing the archive we just created failed: %s", nerr)
 		ok(len(ni) >= 4, "the created archive should hold at least 4 entries, got %d", len(ni))
 		bad := 0
@@ -430,6 +430,11 @@ selftest :: proc() -> int {
 	}
 
 	_ = os.remove_all(SCRATCH)
+
+	more_checks, more_fails := backend_selftest()
+	checks += more_checks
+	fails += more_fails
+
 	fmt.printfln("\n%s  %d checks, %d failure(s)", fails == 0 ? "PASS" : "FAILED", checks, fails)
 	return fails
 }

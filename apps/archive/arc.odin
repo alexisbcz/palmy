@@ -2,10 +2,16 @@ package main
 
 // Reading archives, checking them, and the worker that does anything slow.
 //
-// Listing goes through two bsdtar runs rather than one: `-tf` gives the exact
+// Which program reads or writes a given archive is backend.odin's business.
+// Through bsdtar, listing is two runs rather than one: `-tf` gives the exact
 // names, one per line, and `-tvf` gives the metadata. Parsing names out of the
 // verbose listing alone is a trap — `project/docs/release notes.md` has a space
-// in it, and so does half of everything a person ever zipped.
+// in it, and so does half of everything a person ever zipped. 7-Zip and unrar
+// have technical listings with one `key = value` per line instead.
+//
+// The procedures the window's worker runs are the same ones the command line
+// calls directly (cli.odin): `list_archive`, `extract_entries`,
+// `create_archive`. Only the threading is the window's.
 //
 // Nothing here runs on the frame thread except the pure functions at the top.
 
@@ -25,6 +31,7 @@ Item :: struct {
 	size:   i64,
 	date:   string,
 	perms:  string,
+	encrypted: bool, // needs the password to extract (as far as the backend can tell)
 	bad:    bool,   // refuses to extract: see `why`
 	why:    string,
 }
@@ -133,41 +140,80 @@ parse_i64 :: proc(s: string) -> (i64, bool) {
 	return v, true
 }
 
-// list_archive reads an archive into Items. It runs on the worker thread.
-list_archive :: proc(path: string) -> (items: []Item, err: string) {
-	names, ok1 := kit.run_lines({"bsdtar", "-tf", path}, context.allocator)
-	if !ok1 {
-		return nil, fmt.aprintf("bsdtar could not read %s", path)
+// list_archive reads an archive into Items, through whichever installed
+// program reads this format (backend.odin). It runs on the worker thread, or
+// directly from the command line.
+list_archive :: proc(path: string, password := "") -> (items: []Item, err: string, fail: Fail) {
+	kind := kind_of(path)
+	if password != "" && !can_encrypt(kind) {
+		return nil, fmt.aprintf("%s has no encryption; a password means nothing to it", KIND_NAMES[kind]), .Failed
 	}
-	verbose, _ := kit.run_lines({"bsdtar", "-tvf", path}, context.allocator)
-	defer {
-		for v in verbose {delete(v)}
-		delete(verbose)
+	tool, why := reader_for(kind, password != "", tools())
+	if tool == .None {
+		return nil, strings.clone(why), .Unavailable
 	}
+	return list_with(tool, path, password)
+}
 
-	out := make([dynamic]Item)
-	for n, i in names {
-		it := Item {
-			name = n,
-			dir  = strings.has_suffix(n, "/"),
+// Staged is what an extraction would do, decided before anything is written:
+// the entries it would write, the ones the safety check refused, and the
+// files already at the destination.
+Staged :: struct {
+	names:     [dynamic]string, // heap clones, in archive order
+	refused:   [dynamic]int,    // indices into the items
+	hit:       int,             // files that already exist under dest
+	encrypted: int,             // files that need the password
+}
+
+// wanted says whether an entry is picked by a set of picks: its own name, or
+// a folder (`name/`) above it. No picks means everything.
+wanted :: proc(picks: []string, name: string) -> bool {
+	if len(picks) == 0 {
+		return true
+	}
+	for m in picks {
+		if m == name {
+			return true
 		}
-		if i < len(verbose) {
-			if perms, size, date, good := parse_verbose(verbose[i]); good {
-				it.perms = strings.clone(perms)
-				it.size = size
-				it.date = strings.clone(date)
-				it.dir = len(perms) > 0 && perms[0] == 'd'
-				it.link = len(perms) > 0 && perms[0] == 'l'
+		folder := strings.has_suffix(m, "/") ? m : fmt.tprintf("%s/", m)
+		if strings.has_prefix(name, folder) || name == folder {
+			return true
+		}
+	}
+	return false
+}
+
+// stage_names is the one place an extraction is decided, for the window's
+// confirmation dialog and for `archive extract` alike.
+stage_names :: proc(items: []Item, picks: []string, dest: string) -> (s: Staged) {
+	s.names = make([dynamic]string)
+	s.refused = make([dynamic]int)
+	for it, i in items {
+		if !wanted(picks, it.name) {
+			continue
+		}
+		if it.bad {
+			append(&s.refused, i)
+			continue
+		}
+		append(&s.names, strings.clone(it.name))
+		if !it.dir {
+			if os.exists(fmt.tprintf("%s/%s", dest, it.name)) {
+				s.hit += 1
+			}
+			if it.encrypted {
+				s.encrypted += 1
 			}
 		}
-		it.parent, it.base = split_parent(n)
-		it.parent = strings.clone(it.parent)
-		it.base = strings.clone(it.base)
-		it.why = strings.clone(check_name(n, it.link))
-		it.bad = it.why != ""
-		append(&out, it)
 	}
-	return out[:], ""
+	return
+}
+
+staged_free :: proc(s: ^Staged) {
+	for n in s.names {delete(n)}
+	delete(s.names)
+	delete(s.refused)
+	s^ = {}
 }
 
 free_items :: proc(items: []Item) {
@@ -204,6 +250,7 @@ Job :: struct {
 	out:      string,
 	names:    []string,
 	overwrite: bool,
+	password: string, // never printed, logged or kept past the job
 
 	// Progress, written by the worker and read by the frame.
 	total:    int,
@@ -218,13 +265,17 @@ Job :: struct {
 	msg:      string,
 	errors:   int,
 	label:    string,
+	fail:     Fail,
+	tool:     Tool,
+	written:  int,
+	kept:     int,
 }
 
 job: Job
 
-// CHUNK is how many entries go into one bsdtar invocation. bsdtar reports
-// nothing while it works, so the progress bar is real only because the work is
-// cut into pieces and counted between them.
+// CHUNK is how many entries go into one invocation. None of the backends
+// reports progress while it works, so the progress bar is real only because
+// the work is cut into pieces and counted between them.
 CHUNK :: 12
 
 job_busy :: proc() -> bool {
@@ -244,93 +295,198 @@ worker :: proc() {
 	switch job.kind {
 	case .None:
 	case .List:
-		items, err := list_archive(job.archive)
+		items, err, fail := list_archive(job.archive, job.password)
 		job.items = items
 		job.ok = err == ""
 		job.msg = err
+		job.fail = fail
 	case .Extract:
-		run_extract()
+		r := extract_entries(job.archive, job.dest, job.names, job.overwrite, job.password, &job.done, &job.total, &job.cancel)
+		job.ok, job.msg, job.fail, job.tool, job.errors = r.ok, r.msg, r.fail, r.tool, r.chunk_errors
+		job.written, job.kept = r.written, r.kept
 	case .Create:
-		run_create()
+		sync.atomic_store(&job.total, 1)
+		r := create_archive(job.src, job.out, job.password)
+		sync.atomic_store(&job.done, 1)
+		job.ok, job.msg, job.fail, job.tool = r.ok, r.msg, r.fail, r.tool
 	}
 	sync.atomic_store(&job.finished, true)
 }
 
-@(private = "file")
-run_extract :: proc() {
-	if os.make_directory_all(job.dest) != nil && !os.exists(job.dest) {
-		job.ok = false
-		job.msg = fmt.aprintf("could not create %s", job.dest)
-		return
-	}
-	sync.atomic_store(&job.total, len(job.names))
-
-	i := 0
-	for i < len(job.names) {
-		if sync.atomic_load(&job.cancel) {
-			job.ok = false
-			job.msg = fmt.aprintf("cancelled after %d of %d entries", i, len(job.names))
-			return
-		}
-		n := min(CHUNK, len(job.names) - i)
-
-		argv := make([dynamic]string, context.temp_allocator)
-		append(&argv, "bsdtar", "-x", "-f", job.archive, "-C", job.dest, "--no-same-owner")
-		if !job.overwrite {
-			// -k keeps whatever is already on disk. Overwriting is only ever
-			// done when the user picked it in the dialog.
-			append(&argv, "-k")
-		}
-		append(&argv, "--")
-		for k in 0 ..< n {
-			append(&argv, job.names[i + k])
-		}
-
-		if _, ok := kit.run(argv[:], context.temp_allocator); !ok {
-			job.errors += 1
-		}
-		i += n
-		sync.atomic_store(&job.done, i)
-		free_all(context.temp_allocator)
-	}
-
-	job.ok = true
-	if job.errors > 0 {
-		job.msg = fmt.aprintf(
-			"extracted %d entries to %s (%d chunks reported warnings — existing files are kept)",
-			len(job.names),
-			job.dest,
-			job.errors,
-		)
-	} else {
-		job.msg = fmt.aprintf("extracted %d entries to %s", len(job.names), job.dest)
-	}
+Extracted :: struct {
+	ok:           bool,
+	msg:          string, // heap
+	fail:         Fail,
+	tool:         Tool,
+	written:      int, // files the archive put on disk
+	kept:         int, // files already on disk and left alone
+	dirs:         int,
+	chunk_errors: int,
 }
 
-@(private = "file")
-run_create :: proc() {
-	sync.atomic_store(&job.total, 1)
-	parent, base := split_parent(strings.trim_suffix(job.src, "/"))
+// extract_entries writes the named entries of an archive under dest. It is
+// what the window's Extract runs on its worker and what `archive extract`
+// runs directly. `names` must already have been through the safety check
+// (stage_names); directories among them are made here, and only files are
+// handed to the backend, a chunk at a time, so that no tool is ever given a
+// directory to recurse into. Progress and cancellation are optional.
+extract_entries :: proc(
+	archive, dest: string,
+	names: []string,
+	overwrite: bool,
+	password: string,
+	done: ^int = nil,
+	total: ^int = nil,
+	cancel: ^bool = nil,
+) -> (r: Extracted) {
+	kind := kind_of(archive)
+	tool, why := reader_for(kind, password != "", tools())
+	r.tool = tool
+	if tool == .None {
+		r.fail = .Unavailable
+		r.msg = strings.clone(why)
+		return
+	}
+	if os.make_directory_all(dest) != nil && !os.is_directory(dest) {
+		r.fail = .Failed
+		r.msg = fmt.aprintf("could not create %s", dest)
+		return
+	}
+
+	files := make([dynamic]string, context.temp_allocator)
+	for n in names {
+		if strings.has_suffix(n, "/") {
+			// Already checked: a directory name cannot climb out of dest.
+			if os.make_directory_all(fmt.tprintf("%s/%s", dest, n)) == nil {
+				r.dirs += 1
+			}
+			continue
+		}
+		if os.exists(fmt.tprintf("%s/%s", dest, n)) && !overwrite {
+			r.kept += 1
+		}
+		append(&files, n)
+	}
+	if total != nil {
+		sync.atomic_store(total, len(files))
+	}
+
+	i := 0
+	for i < len(files) {
+		if cancel != nil && sync.atomic_load(cancel) {
+			r.fail = .Failed
+			r.msg = fmt.aprintf("cancelled after %d of %d files", i, len(files))
+			return
+		}
+		n := min(CHUNK, len(files) - i)
+		ran := run_tool(extract_argv(tool, archive, dest, files[i:i + n], overwrite), password)
+		if !ran.started || ran.code != 0 {
+			// A password problem stops everything: every later chunk would
+			// fail the same way, and half an extraction is worse than none.
+			f := classify(ran, password != "")
+			if f == .Need_Password || f == .Wrong_Password {
+				r.fail = f
+				r.msg = f == .Need_Password \
+					? fmt.aprintf("%s is encrypted — a password is needed", archive) \
+					: fmt.aprintf("the password for %s is wrong", archive)
+				if i > 0 {
+					// What earlier chunks wrote stays; say so.
+					r.written = i
+				}
+				return
+			}
+			r.chunk_errors += 1
+		}
+		i += n
+		if done != nil {
+			sync.atomic_store(done, i)
+		}
+	}
+	r.written = len(files) - (overwrite ? 0 : r.kept)
+	r.ok = true
+	if r.chunk_errors > 0 {
+		r.msg = fmt.aprintf(
+			"extracted %d entries to %s (%d chunks reported warnings — existing files are kept)",
+			len(names),
+			dest,
+			r.chunk_errors,
+		)
+	} else {
+		r.msg = fmt.aprintf("extracted %d entries to %s", len(names), dest)
+	}
+	return
+}
+
+Created :: struct {
+	ok:        bool,
+	msg:       string, // heap
+	fail:      Fail,
+	tool:      Tool,
+	kind:      Kind,
+	bytes:     i64,
+	encrypted: bool,
+}
+
+// create_archive builds `out` from the file or folder `src`, the format named
+// by out's extension, encrypted when a password is given. It refuses an `out`
+// that exists — the window and the command line alike — and a password for a
+// format that has no encryption.
+create_archive :: proc(src_in, out_in, password: string) -> (r: Created) {
+	src := strings.trim_suffix(strings.trim_space(src_in), "/")
+	out := strings.trim_space(out_in)
+	r.kind = kind_of(out)
+	if !os.exists(src) {
+		r.fail = .Failed
+		r.msg = fmt.aprintf("%s does not exist", src)
+		return
+	}
+	if os.exists(out) {
+		r.fail = .Failed
+		r.msg = fmt.aprintf("%s already exists — choose another name", out)
+		return
+	}
+	if password != "" && !can_encrypt(r.kind) {
+		r.fail = .Failed
+		r.msg = fmt.aprintf("a %s archive has no encryption — use .zip or .7z for a password", KIND_NAMES[r.kind])
+		return
+	}
+	tool, why := writer_for(r.kind, password != "", tools())
+	r.tool = tool
+	if tool == .None {
+		r.fail = .Unavailable
+		r.msg = strings.clone(why)
+		return
+	}
+	// The tools run in the source's parent so the archive holds `name/…`
+	// rather than the whole absolute path; the output is made absolute first.
+	abs_out, aerr := os.get_absolute_path(out, context.temp_allocator)
+	if aerr != nil {
+		abs_out = out
+	}
+	abs_src, serr := os.get_absolute_path(src, context.temp_allocator)
+	if serr != nil {
+		abs_src = src
+	}
+	parent, base := split_parent(abs_src)
 	if parent == "" {
 		parent = "."
 	}
-	// bsdtar -a picks the format from the output file's extension, so
-	// `out.zip` really is a zip and `out.tar.gz` really is gzipped tar.
-	_, ok := kit.run(
-		{"bsdtar", "-a", "-c", "-f", job.out, "-C", strings.trim_suffix(parent, "/"), base},
-		context.temp_allocator,
-	)
-	sync.atomic_store(&job.done, 1)
-	job.ok = ok
-	if ok {
-		size := i64(0)
-		if st, serr := os.stat(job.out, context.temp_allocator); serr == nil {
-			size = i64(st.size)
-		}
-		job.msg = fmt.aprintf("created %s (%s)", job.out, human(size))
-	} else {
-		job.msg = fmt.aprintf("bsdtar could not create %s", job.out)
+	ran := run_tool(create_argv(tool, r.kind, abs_out, base, password != ""), password, strings.trim_suffix(parent, "/"))
+	if !ran.started || ran.code != 0 || !os.exists(abs_out) {
+		r.fail = .Failed
+		line := first_error(ran)
+		r.msg = line != "" \
+			? fmt.aprintf("%s could not create %s: %s", TOOL_NAMES[tool], out, line) \
+			: fmt.aprintf("%s could not create %s", TOOL_NAMES[tool], out)
+		return
 	}
+	r.ok = true
+	r.encrypted = password != ""
+	if st, err := os.stat(abs_out, context.temp_allocator); err == nil {
+		r.bytes = i64(st.size)
+	}
+	r.msg = fmt.aprintf("created %s (%s)%s", out, human(r.bytes), r.encrypted ? ", encrypted" : "")
+	return
 }
 
 // job_start takes ownership of every string handed to it.
@@ -374,6 +530,7 @@ job_release :: proc(j: Job) {
 	for n in j.names {delete(n)}
 	delete(j.names)
 	delete(j.msg)
+	delete(j.password)
 }
 
 // ---------------------------------------------------------------------------
