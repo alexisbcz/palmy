@@ -46,14 +46,14 @@ apply.
   tools/diff-all.sh`. It compares against real browser captures and is the
   instrument that says whether something changed that was not meant to. The
   mean mae depends on the machine's fonts and browser — 2.953 on the old Arch
-  host, 3.472 in the build VM — so compare against a baseline taken on the
-  same machine, not against a number in a brief. It prints `measuring <tree>`
-  first; check that line is the tree you meant. **The browser captures
-  (`parity/out/web/*.png`) are gitignored and absent from a fresh clone**, and
-  the renderer sizes each canvas from them: without them 53 cases render a
-  pixel off and every comparison is meaningless. Until they are re-captured,
-  render against stand-ins (the committed `.json` files plus a baseline's own
-  renders, via `PARITY_WEB`) and byte-compare the renders to that baseline.
+  host, 2.959 in the build VM with Chrome for Testing 153 (playwright 1.63) —
+  so compare against a baseline taken on the same machine, not against a
+  number in a brief. It prints `measuring <tree>` first; check that line is
+  the tree you meant. The browser captures (`parity/out/web/*.png`) are
+  gitignored, so a fresh clone has none, and the renderer sizes each canvas
+  from them: without them 53 cases render a pixel off and every comparison is
+  meaningless. Re-capture (`parity/harness`: `capture.mjs`, `interact.mjs`
+  against `parity/web`'s dev server) or copy them in before measuring.
 - **The unit tests must pass**: `odin test tests -collection:shadcn=$PWD/shadcn`
   — **154 tests**. Note that `tests/` imports `"../palmy"` by *relative path*,
   not as a collection, so `-collection:palmy=` is silently ignored and the
@@ -395,10 +395,11 @@ between adjacent layers and has only been laid out at 20 nodes.
 
 # Test and tooling debt
 
-- **The parity browser captures are gone** from the current checkout (see the
-  standing rules) and Playwright's Chromium download returns 403 from the build
-  VM. Re-capturing needs the pinned Chromium on a machine that can fetch it, or
-  the old captures copied in from the Arch host.
+- **Playwright's own browser download fails** (`npx playwright install`
+  exits with "Download failure") even when its CDN answers; the Chrome for
+  Testing zips from `storage.googleapis.com/chrome-for-testing-public/<version>/`
+  unpacked into `~/.cache/ms-playwright/chromium{,_headless_shell}-<rev>/` with
+  an `INSTALLATION_COMPLETE` marker work.
 - **`torrent`'s end-to-end check** ("seeder still uploaded the whole payload")
   fails about 1 run in 6 under full CPU load, on main as on branches.
 - **The VM's `bluetoothctl` never returns** (no bluetoothd); `palm --selftest`
