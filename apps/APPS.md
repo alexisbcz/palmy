@@ -100,22 +100,59 @@ The rest of what you need:
 - **Exit codes**: `EXIT_OK` 0, `EXIT_USAGE` 2, `EXIT_NOT_FOUND` 3,
   `EXIT_NEEDS_YES` 4, `EXIT_OUT_OF_SCOPE` 5, `EXIT_UNAVAILABLE` 6,
   `EXIT_FAILED` 7. `cli_fail`/`cli_failf` record the refusal and return the
-  code; `cli_err_field` adds a machine-readable key to it.
+  code; `cli_err_field` adds a machine-readable key to it — a string, int,
+  bool, `[]string` or any `^Json` — and `cli_err_detail` replaces the
+  sentence. `cli_partial(c)` before failing keeps what was done: the refusal
+  carries `out` as `partial`.
+- **Declaring parameters**: beside `required`, `def`, `values`, `variadic`,
+  a `Param` may be `secret` (never repeated back: the audit log, `--json`,
+  refusals, `cli_note`, `--help` and the schema's examples show
+  `<redacted>`; `cli_str` still returns the value), `repeat` (`cli_all(c,
+  name)` is every value, in order; `cli_str` stays the last), or `unless =
+  {"password-file"}` (required unless one of those was given). A surface's
+  `flags` are taken by every command and published in each command's schema
+  (`mail --data-dir`). An output `Field` with `keyed = true` is an object
+  whose keys are data; `of` is the shape of each value.
+- **Destructive refusals with a reason**: `on_refuse = proc(c)` on a
+  destructive command is asked why when the kit refuses it for want of
+  `--yes` — `pkg remove` names the dependants. It runs under the guard as an
+  intent command does, so it can execute nothing, and the exit stays 4.
+- **A bare word under `takes_path`** opens the window. Set `takes_word =
+  kit.cli_word_is_path` to open it only for something on disk or a URI, and
+  make anything else (a mistyped verb) a usage error; a surface whose window
+  takes other words (`settings network`) passes its own predicate.
 - **Stdout is the result and nothing else.** Progress and warnings go through
   `cli_note` (or `cli_trace`, `--verbose` only), which write to stderr.
+  `cli_progress(c, done, total)` reports progress there too, as one JSON
+  object per line under `--json`. A long command can keep a job record
+  (`cli_job_begin` / `cli_job_progress` / `cli_job_end`, read back with
+  `cli_jobs`) in `$XDG_RUNTIME_DIR/palm/jobs` (`$PALM_JOBS`). Text tables
+  pad by display width, so `é`, `€` and CJK line up; a successful dry run
+  says so on stderr in text mode and as `"dry_run": true` under `--json`.
 - **Nothing prompts.** The kit never reads stdin.
 - **Intent commands** (`effect = .Intent`, anything that would power off, log
   out, disconnect) are written as `return kit.cli_intent(c, "systemctl
   poweroff", "power off")`: it logs and runs nothing, and while any command
   runs the guard makes `kit.run`/`run_lines`/`launch` refuse the project's
-  denylist.
+  denylist — power and session verbs, network changes, camera and
+  microphone capture, `sudo`/`doas`/`pkexec`, and every mutating `pacman`,
+  `yay`, `paru` and `snapper` argv (`-Q`, `-Si`, `-Ss`, `snapper list` stay
+  allowed). `pkg` execs its own plan after `--yes`, not through these.
 - **Scope**: `kit.cli_scope()` is `$PALM_IDENTITY`; `c.identity` is that,
-  narrowed by `--identity`; `cli_scope_require(c, owner)` refuses anything
-  outside it.
-- **Testing**: `kit.cli_args(surface(), argv)` runs a command line in-process,
-  and `kit.cli_validate_output(text, FIELDS)` checks printed JSON against the
-  declared `out`. Set `$PALM_AUDIT` so a self-test never writes the real
-  audit log (`$XDG_STATE_HOME/palm/audit.jsonl`).
+  narrowed by `--identity`; `cli_scope_require(c, owner, ...)` refuses
+  anything outside the scope of every owner named.
+- **Memory**: the kit's parse lives in its own arena (`cli_mem()`), so a
+  command may `free_all(context.temp_allocator)` and an argv built in the
+  temp allocator is safe to hand to `cli_args`.
+- **Testing**: `kit.cli_args(surface(), argv)` runs a command line in-process;
+  `kit.cli_capture(surface(), argv)` does the same and returns what the kit
+  printed instead of printing it, and `kit.cli_capture_json` adds `--json`
+  and parses it. `kit.cli_validate_output(text, FIELDS)` checks printed JSON
+  against the declared `out`. Set `$PALM_AUDIT` so a self-test never writes
+  the real audit log (`$XDG_STATE_HOME/palm/audit.jsonl`: compact JSONL, one
+  record per line, with the `--json` refusal's `error` token on a failure).
+  The convention's own tests: `odin test apps/kit/cli_test
+  -collection:palmy=palmy -collection:kit=apps/kit -collection:shadcn=shadcn`.
 - **`palm`** finds the application only once its noun's `on_convention` flag
   is flipped in `apps/palm/main.odin`'s `NOUNS`; `palm --selftest` then holds
   it to the whole convention.

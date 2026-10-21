@@ -171,6 +171,12 @@ already inside the owning identity's scope, every access is written to the
 audit log with the caller's identity, and there is no verb that lists secrets
 across identities at all — not gated, absent.
 
+The other half is that a secret *given* to a command is not repeated back. A
+parameter declared `secret` (`--password`, `--token`) is shown as
+`<redacted>` in the audit log, in the `--json` result and refusal, on stderr,
+in `--help` and in the schema's examples; the command itself still gets the
+value.
+
 ## Safety rules that live in the code, not the docs
 
 This project has already made these decisions in several places, and `palm`
@@ -268,9 +274,11 @@ the two will diverge, and the CLI will be the one that rots.
 
 ## Open questions
 
-- **How a long-running command reports progress** to an agent. Streaming NDJSON
-  on stdout is the obvious answer and matches what `apps/ai` already consumes
-  from ollama.
+- **How a long-running command reports progress** to an agent. *(Answered by
+  what was built: NDJSON on **stderr** — `kit.cli_progress` writes one
+  `{"progress": {...}}` object per line under `--json` — so stdout stays the
+  one result document; a command that outlives its caller keeps a job record
+  with `kit.cli_job_*`, which `kit.cli_jobs` reads back.)*
 - **Whether the audit log is append-only on disk or in the account**, once the
   account exists.
 - **Whether `palm` should be a dispatcher of separate binaries, as Omarchy is,
