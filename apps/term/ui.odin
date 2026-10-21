@@ -192,8 +192,12 @@ frame :: proc(a: ^Term_App, ui: ^p.Ctx) {
 	}
 	handle_keys(a, ui)
 	handle_mouse(a, ui, show_tabs, scale)
-	// The keys may have split, closed, zoomed or switched; lay out again so
-	// this frame already draws the result.
+	// The keys may have split, closed, zoomed or switched, or opened the
+	// second tab and with it the strip; lay out again so this frame already
+	// draws the result.
+	show_tabs = a.always_tabs || len(a.sess.tabs) > 1
+	grid_h = size.y - (show_tabs ? TAB_STRIP_H : 0)
+	a.area = {0, 0, int(grid_w * scale), int(grid_h * scale)}
 	tab := session_tab(&a.sess)
 	if tab != nil {
 		layout_tab(a, tab)
@@ -333,7 +337,12 @@ tab_strip :: proc(a: ^Term_App, ui: ^p.Ctx) {
 
 @(private = "file")
 new_tab :: proc(a: ^Term_App) {
-	if _, err := tab_open(&a.sess); err != "" {
+	// A new tab opens where the focused pane is, the same way a split does.
+	cwd := ""
+	if f := session_active(&a.sess); f != nil {
+		cwd = pane_cwd(f)
+	}
+	if _, err := tab_open(&a.sess, nil, cwd); err != "" {
 		note(a, err)
 		return
 	}
