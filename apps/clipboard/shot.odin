@@ -118,6 +118,8 @@ shots :: proc(dir: string) -> int {
 	defer delete(scratch)
 	_ = os.make_directory_all(scratch)
 	_ = os.set_env("HOME", scratch)
+	// $PALMY_CLIPBOARD_DIR would win over HOME; it must not point anywhere real.
+	_ = os.unset_env("PALMY_CLIPBOARD_DIR")
 	// The scratch home exists only so a stray save has somewhere harmless to
 	// go; nothing should ever be written into it.
 	defer _ = os.remove_all(scratch)
@@ -212,6 +214,7 @@ shots :: proc(dir: string) -> int {
 		query   = make([dynamic]u8),
 		hits    = make([dynamic]Ranked),
 		have_wl = true,
+		capture = .Offers,
 	}
 	defer delete(st.query)
 	defer delete(st.hits)

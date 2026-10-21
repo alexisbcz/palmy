@@ -102,7 +102,7 @@ NOUNS := []Noun {
 	{"bluetooth", "bluetooth", "bluetooth devices — read-only, by rule", true, ""},
 	{"sysmon", "sysmon", "processes, memory and load", true, ""},
 	{"capture", "screenshot", "screenshots, on a private headless compositor", true, ""},
-	{"clipboard", "clipboard", "the clipboard history", false, ""},
+	{"clipboard", "clipboard", "the clipboard history", true, ""},
 	{"editor", "editor", "a text editor", false, ""},
 	{"image", "image", "an image viewer", false, ""},
 	{"prose", "prose", "a Vale-compatible prose linter", true, ""},

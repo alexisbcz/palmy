@@ -32,6 +32,11 @@ ok :: proc(cond: bool, format: string, args: ..any) {
 	}
 }
 
+// tcheck is `ok` for the other self-test files.
+tcheck :: proc(cond: bool, format: string, args: ..any) {
+	ok(cond, format, ..args)
+}
+
 @(private = "file")
 frame :: proc(o: ^p.Offscreen, st: ^St) {
 	ui := p.offscreen_begin(o)
@@ -136,6 +141,8 @@ selftest :: proc() -> int {
 	_ = os.remove_all(SCRATCH_HOME)
 	_ = os.make_directory_all(SCRATCH_HOME)
 	_ = os.set_env("HOME", SCRATCH_HOME)
+	// $PALMY_CLIPBOARD_DIR would win over HOME; it must not point anywhere real.
+	_ = os.unset_env("PALMY_CLIPBOARD_DIR")
 	ensure_dirs()
 	{
 		dir := data_dir()
@@ -746,6 +753,9 @@ selftest :: proc() -> int {
 		}
 		ok(different > 200, "the empty state drew almost nothing (%d differing samples)", different)
 	}
+
+	test_offers()
+	test_cli()
 
 	fmt.printfln("\n%s  %d checks, %d failure(s)", fails == 0 ? "PASS" : "FAILED", checks, fails)
 	return fails

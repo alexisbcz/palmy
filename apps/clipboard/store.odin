@@ -2,14 +2,18 @@ package main
 
 // The history store and the watcher thread.
 //
-// palmy is a Wayland client that does not implement `wl_data_device`, so the
-// selection is read through wl-clipboard. `wl-paste --list-types` is asked
-// first, because the answer decides three things: whether this is an image or
-// text, which mime type to request, and — the part that matters most — whether
-// the owner has flagged the selection as a secret.
+// The selection is watched through palmy's offer API (`clipboard_watch`,
+// `clipboard_next_offer`, `clipboard_offer_read`): every copy arrives as an
+// *offer* carrying the list of types its owner advertised, and the bytes are
+// read from that same offer. The type list decides three things: whether this
+// is an image or text, which mime type to request, and — the part that matters
+// most — whether the owner has flagged the selection as a secret, in which
+// case nothing is read at all. See "The offer path" below.
 //
-// Everything in here runs on a worker thread and is read by the frame under
-// `mu`. The frame never shells out.
+// Where the display server cannot show this window every change (palmy says
+// `.Focused` or `.Unsupported`), the older path runs instead: `wl-paste
+// --watch` writing a spool that a worker thread drains, read by the frame
+// under `mu`. The frame never shells out.
 
 import "core:fmt"
 import "core:os"
@@ -18,6 +22,7 @@ import "core:strings"
 import "core:sync"
 import "core:thread"
 import "core:time"
+import kit "kit:."
 import p "palmy:."
 
 // HISTORY_CAP is the number of entries kept. Pinned entries are never evicted;
@@ -70,6 +75,7 @@ Store :: struct {
 	enabled:  bool, // monitoring on
 	stop:     bool,
 	captured: int,  // total captures since launch
+	reload:   bool, // the history file changed under the window; see history_changed
 	secrets:  int,  // selections skipped because they were flagged sensitive
 
 	// Worker-only.
@@ -95,7 +101,13 @@ g: Store
 //   ~/.local/share/palmy-clipboard/blobs/*   0600
 // ---------------------------------------------------------------------------
 
+// data_dir is the history's directory. $PALMY_CLIPBOARD_DIR moves it, which is
+// what the self-tests and `palm --selftest` use so that nothing they run reads
+// or writes the real history.
 data_dir :: proc(al := context.temp_allocator) -> string {
+	if d := os.get_env("PALMY_CLIPBOARD_DIR", context.temp_allocator); d != "" {
+		return strings.clone(d, al)
+	}
 	home, err := os.user_home_dir(context.temp_allocator)
 	if err != nil {
 		return ""
@@ -197,6 +209,20 @@ is_sensitive :: proc(types: string) -> (bool, string) {
 	return false, ""
 }
 
+// entry_secret says an entry is marked as a secret: the type it was recorded
+// under carries a password-manager hint. Nothing this program captures is ever
+// stored that way — `ingest_selection` refuses the selection before reading it
+// — but a history file is a file, written by older versions, by hand, or by
+// something else entirely, and a marked entry that turns up in one must still
+// never be shown. Its text is not previewed, not searched, not printed by the
+// command line and not copied back.
+entry_secret :: proc(e: ^Entry) -> bool {
+	secret, _ := is_sensitive(e.mime)
+	return secret
+}
+
+SECRET_PREVIEW :: "(flagged as a secret — not shown)"
+
 // pick_type chooses what to ask for. Images first, because a screenshot on the
 // clipboard also offers a `text/html` wrapper on some apps and the picture is
 // the thing worth keeping.
@@ -266,15 +292,16 @@ pick_type :: proc(types: string) -> (mime: string, kind: Kind, ok: bool) {
 // interval, sampled and then evented, with the first one missing in the
 // first case and present in the second.
 //
-// WHAT IS STILL NOT CLOSED, AND CANNOT BE FROM HERE
+// WHAT THIS PATH CANNOT CLOSE, AND WHY IT IS NOW THE FALLBACK
 //
-// The type list and the bytes still come from two different calls. wl-paste
-// gives a command its content on stdin but does not tell it what the offer
+// The type list and the bytes come from two different calls. wl-paste gives a
+// command its content on stdin but does not tell it what the offer
 // advertised, so the spool command asks `wl-paste --list-types` separately.
 // If the selection changes between the two, the verdict (including the
-// `is_sensitive` gate) describes one selection and the bytes another. Closing
-// that needs the offer itself — `wl_data_device` in palmy — which this
-// application cannot add. It is reported rather than worked around.
+// `is_sensitive` gate) describes one selection and the bytes another. The
+// offer path below closes it — the gate and the read are on one offer by
+// construction — and this path now runs only where palmy cannot watch every
+// change (`.Focused`: GNOME's wl_data_device alone; `.Unsupported`).
 //
 // THE SPOOL AND PRIVACY
 //
@@ -487,6 +514,98 @@ sample_once :: proc() -> Ingest {
 	}
 	defer delete(payload)
 	return ingest_selection(types, payload)
+}
+
+// ---------------------------------------------------------------------------
+// The offer path
+//
+// palmy hands out each selection as an offer: the types its owner advertised
+// and, on request, the bytes of one of them, read from that same offer. So
+// the order here is the whole design:
+//
+//   1. the type list is joined and given to `is_sensitive`;
+//   2. a flagged offer goes to `ingest_selection` with no payload, and
+//      `clipboard_offer_read` is never called for it — the password never
+//      leaves its owner, let alone reaches this process;
+//   3. anything else is read with `clipboard_offer_read(offer, mime)`, where
+//      `mime` was picked from that offer's own list, and palmy refuses a read
+//      of any offer but the one it handed out last (`.Stale`).
+//
+// The gate and the read cannot describe two different selections, because
+// there is no second question: there is one offer, and both are about it.
+//
+// palmy wakes the frame loop for every offer and queues them in order, so two
+// copies between two frames are two entries, not one, and a window that is
+// unfocused or hidden still sees them under data control (`.Always`).
+//
+// This runs on the frame thread, because palmy's display connection is not
+// shared, and before the frame takes `g.mu`, because `push` takes it too.
+// ---------------------------------------------------------------------------
+
+// g_offer_reads counts `clipboard_offer_read` calls. It is how the self-test,
+// and the live check on a private compositor (PALMY_CLIPBOARD_TRACE=1), see
+// that a flagged offer was decided on without being read.
+g_offer_reads: int
+
+// offer_types joins an offer's types the way the type list arrives from
+// `wl-paste --list-types`, so one `is_sensitive` and one `pick_type` serve
+// both paths.
+offer_types :: proc(offer: p.Clip_Offer) -> string {
+	return strings.join(offer.types, "\n", context.temp_allocator)
+}
+
+// ingest_offer is one offer, decided and — unless it is a secret — read.
+ingest_offer :: proc(ui: ^p.Ctx, offer: p.Clip_Offer) -> Ingest {
+	if len(offer.types) == 0 {
+		return .Unusable // the selection was cleared
+	}
+	types := offer_types(offer)
+	if secret, _ := is_sensitive(types); secret {
+		// Decided on this offer's own type list. Nothing is read.
+		return ingest_selection(types, nil)
+	}
+	mime, _, good := pick_type(types)
+	if !good {
+		return .Unusable
+	}
+	sync.atomic_add(&g_offer_reads, 1)
+	data, err := p.clipboard_offer_read(ui, offer, mime)
+	if err != .None {
+		return .Failed
+	}
+	defer delete(data)
+	return ingest_selection(types, data)
+}
+
+// drain_offers takes every offer palmy has queued. While monitoring is paused
+// they are let go of unread, so a pause records nothing and the queue does not
+// fill with selections nobody asked for.
+drain_offers :: proc(ui: ^p.Ctx) -> (stored: int, seen: int) {
+	trace := os.get_env("PALMY_CLIPBOARD_TRACE", context.temp_allocator) != ""
+	for offer in p.clipboard_next_offer(ui) {
+		seen += 1
+		if !sync.atomic_load(&g.enabled) {
+			continue
+		}
+		r := ingest_offer(ui, offer)
+		if r == .Stored {
+			stored += 1
+		}
+		if offer.missed > 0 {
+			set_status(fmt.tprintf("missed %d selection(s) the queue could not hold", offer.missed))
+		}
+		if trace {
+			// Types and the verdict only: never a byte of the content.
+			fmt.eprintfln(
+				"[clipboard] offer %d types=%v -> %v (reads so far %d)",
+				offer.id,
+				offer.types,
+				r,
+				sync.atomic_load(&g_offer_reads),
+			)
+		}
+	}
+	return
 }
 
 // ---------------------------------------------------------------------------
@@ -951,29 +1070,99 @@ save_locked :: proc() {
 	}
 
 	path := fmt.tprintf("%s/history", dir)
-	// 0600 on creation and again afterwards: `open` masks the mode with the
-	// process umask, and a clipboard log must not be group or world readable
-	// whatever the umask happens to be.
-	if os.write_entire_file(path, transmute([]u8)strings.to_string(b), os.perm_number(0o600)) !=
+	// Written beside it and renamed over it, so the window and the command
+	// line never read half a file of each other's. 0600 on creation and
+	// again afterwards: `open` masks the mode with the process umask, and a
+	// clipboard log must not be group or world readable whatever the umask
+	// happens to be.
+	part := fmt.tprintf("%s/history.part", dir)
+	if os.write_entire_file(part, transmute([]u8)strings.to_string(b), os.perm_number(0o600)) !=
 	   nil {
 		return
 	}
-	_ = os.chmod(path, os.perm_number(0o600))
+	_ = os.chmod(part, os.perm_number(0o600))
+	if os.rename(part, path) != nil {
+		_ = os.remove(part)
+		return
+	}
+	note_history_stamp()
 }
 
-load :: proc() {
+// The history file is shared by the window and the command line: `clipboard
+// delete` in a terminal while the window is open must not be undone by the
+// window's next save. So the window remembers the stamp of the file as it last
+// wrote or read it, its waker thread notices when the stamp moves, and the
+// frame reloads (`history_changed`, `reload_locked`).
+//
+// What is still not closed: an edit from each side inside the same few
+// milliseconds is last-writer-wins. There is no lock between processes.
+History_Stamp :: struct {
+	mtime: i64,
+	size:  i64,
+}
+
+g_stamp: History_Stamp
+g_stamp_mu: sync.Mutex
+
+history_stamp :: proc() -> (st: History_Stamp, ok: bool) {
+	dir := data_dir()
+	if dir == "" {
+		return
+	}
+	fi, err := os.stat(fmt.tprintf("%s/history", dir), context.temp_allocator)
+	if err != nil {
+		return {}, true // no file is a state too
+	}
+	return {time.time_to_unix_nano(fi.modification_time), fi.size}, true
+}
+
+note_history_stamp :: proc() {
+	if now, ok := history_stamp(); ok {
+		sync.mutex_lock(&g_stamp_mu)
+		g_stamp = now
+		sync.mutex_unlock(&g_stamp_mu)
+	}
+}
+
+// history_changed says the file is not the one this process last wrote or
+// read. Any thread; it takes only its own small lock.
+history_changed :: proc() -> bool {
+	now, ok := history_stamp()
+	if !ok {
+		return false
+	}
+	sync.mutex_lock(&g_stamp_mu)
+	defer sync.mutex_unlock(&g_stamp_mu)
+	return now != g_stamp
+}
+
+// reload_locked replaces the in-memory history with the file. The caller holds
+// `mu` — the frame, which also owns the graveyard the old entries go to.
+reload_locked :: proc() {
+	for i := len(g.items) - 1; i >= 0; i -= 1 {
+		retire(&g.items[i])
+	}
+	clear(&g.items)
+	load_locked()
+}
+
+load :: proc(thumbs := true) {
+	sync.mutex_lock(&g.mu)
+	defer sync.mutex_unlock(&g.mu)
+	load_locked(thumbs)
+}
+
+load_locked :: proc(thumbs := true) {
 	dir := data_dir()
 	if dir == "" {
 		return
 	}
 	path := fmt.tprintf("%s/history", dir)
 	data, err := os.read_entire_file_from_path(path, context.temp_allocator)
+	note_history_stamp()
 	if err != nil {
 		return
 	}
-
-	sync.mutex_lock(&g.mu)
-	defer sync.mutex_unlock(&g.mu)
 
 	images := 0
 	it := string(data)
@@ -1000,9 +1189,16 @@ load :: proc() {
 				size    = int(size),
 				when_   = when_,
 				pinned  = pinned,
-				preview = make_preview(text),
 			}
-			e.lower = strings.to_lower(text[:min(len(text), 4096)])
+			if entry_secret(&e) {
+				// Kept so that it can be seen to exist and deleted, never
+				// previewed or matched by a search.
+				e.preview = strings.clone(SECRET_PREVIEW)
+				e.lower = strings.clone("")
+			} else {
+				e.preview = make_preview(text)
+				e.lower = strings.to_lower(text[:min(len(text), 4096)])
+			}
 			append(&g.items, e)
 		} else if f[0] == "I" && len(f) >= 8 {
 			w, _ := parse_i64(f[6])
@@ -1026,7 +1222,7 @@ load :: proc() {
 			// Thumbnails cost a decode each, so only the newest handful are
 			// rebuilt at startup; the rest show a placeholder until they are
 			// re-copied.
-			if images < 24 {
+			if thumbs && images < 24 {
 				if full, ok := p.load_image(blob); ok {
 					e.thumb = shrink(full, THUMB_MAX_W, THUMB_MAX_H)
 					e.has_thumb = true
@@ -1067,18 +1263,171 @@ parse_i64 :: proc(s: string) -> (i64, bool) {
 	return neg ? -v : v, true
 }
 
+// ---------------------------------------------------------------------------
+// What a person does to the history
+//
+// The window's keys and the command line's verbs are these procedures, so a
+// pin from Ctrl+P and a pin from `clipboard pin` are one pin. Each one is
+// `_locked`: the caller holds `mu` — the frame holds it for its whole
+// duration, and `sync.Mutex` is not reentrant.
+// ---------------------------------------------------------------------------
+
 // clear_all_locked wipes the history and every blob on disk. This is the escape
-// hatch a clipboard log needs to have. The caller already holds `mu`: the frame
-// holds it for its whole duration, and `sync.Mutex` is not reentrant.
-clear_all_locked :: proc() -> int {
-	n := len(g.items)
+// hatch a clipboard log needs to have. `keep_pinned` spares the pins, which the
+// window's Ctrl+L does not.
+clear_all_locked :: proc(keep_pinned := false) -> int {
+	n := 0
 	for i := len(g.items) - 1; i >= 0; i -= 1 {
+		if keep_pinned && g.items[i].pinned {
+			continue
+		}
 		drop_entry(i)
+		n += 1
 	}
 	g.last_id = 0
 	g.last_secret_id = 0
 	save_locked()
 	return n
+}
+
+// set_pinned_locked pins or unpins an entry and saves. A pin is a promise the
+// cap keeps, so it is written at once.
+set_pinned_locked :: proc(i: int, on: bool) {
+	if i < 0 || i >= len(g.items) {
+		return
+	}
+	g.items[i].pinned = on
+	save_locked()
+}
+
+// delete_locked removes one entry, its stored image with it, and saves.
+delete_locked :: proc(i: int) {
+	drop_entry(i)
+	save_locked()
+}
+
+// entry_ref is how an entry is named outside the window: its id, the 64-bit
+// hash that also de-duplicates it, as sixteen hex digits.
+entry_ref :: proc(e: ^Entry) -> string {
+	return fmt.tprintf("%016x", e.id)
+}
+
+// find_locked resolves a reference — the id, or any unique prefix of it of four
+// digits or more — to an index. `ambiguous` says more than one entry matched.
+find_locked :: proc(ref: string) -> (i: int, ambiguous: bool) {
+	r := strings.to_lower(strings.trim_space(ref), context.temp_allocator)
+	i = -1
+	if len(r) < 4 {
+		return -1, false
+	}
+	for &e, k in g.items {
+		if strings.has_prefix(entry_ref(&e), r) {
+			if i >= 0 {
+				return -1, true
+			}
+			i = k
+		}
+	}
+	return i, false
+}
+
+// copy_entry puts an entry back on the clipboard: Enter in the window, `clipboard
+// copy` on the command line. The watcher sees it a moment later and folds it
+// back to the top of the list, which is exactly what a clipboard manager
+// should do.
+//
+// Through `wl-copy`, detached, and never kit.clipboard_set: that runs wl-copy
+// through os.process_exec, which waits for the child's pipes to close, and
+// wl-copy's daemon keeps them open for as long as it owns the selection — the
+// frame loop would stop forever. A gap in apps/kit, reported rather than
+// patched. palmy's own clipboard_set would serve the text only while this
+// window lives, which is not what putting something back on the clipboard
+// means.
+copy_entry :: proc(e: ^Entry) -> (msg: string, ok: bool) {
+	if entry_secret(e) {
+		return "A secret is never copied back out of the history", false
+	}
+	// A test must not reach out and change the user's real clipboard.
+	if g_test {
+		if g_test_clip != "" {delete(g_test_clip)}
+		g_test_clip = strings.clone(e.kind == .Text ? e.text : e.blob)
+		return "Copied", true
+	}
+	if !kit.has_tool("wl-copy") {
+		return "wl-clipboard is not installed", false
+	}
+	switch e.kind {
+	case .Text:
+		if kit.launch({"wl-copy", "--", e.text}) {
+			return fmt.tprintf("Copied %s", short(e.preview, 48)), true
+		}
+		return "wl-copy could not be started", false
+	case .Image:
+		if kit.launch({"sh", "-c", fmt.tprintf("wl-copy --type %s < '%s'", e.mime, e.blob)}) {
+			return fmt.tprintf("Copied the %d × %d image", e.w, e.h), true
+		}
+		return "wl-copy failed", false
+	}
+	return "nothing to copy", false
+}
+
+// Filter is which entries a list shows: the window's filter tabs.
+Filter :: enum u8 {
+	All,
+	Text,
+	Images,
+	Pinned,
+}
+
+FILTER_LABEL := [Filter]string {
+	.All    = "All",
+	.Text   = "Text",
+	.Images = "Images",
+	.Pinned = "Pinned",
+}
+
+Ranked :: struct {
+	idx:   int,
+	score: int,
+	hit:   Hit,
+}
+
+// rank_locked is the list the window shows for a query and a filter: pinned
+// first, then by match quality, otherwise newest first. A secret-marked entry
+// shows under no query, because matching its text would say what it is.
+rank_locked :: proc(out: ^[dynamic]Ranked, query: string, filter: Filter) {
+	clear(out)
+	q := strings.to_lower(strings.trim_space(query), context.temp_allocator)
+	for &e, i in g.items {
+		switch filter {
+		case .All:
+		case .Text:
+			if e.kind != .Text {continue}
+		case .Images:
+			if e.kind != .Image {continue}
+		case .Pinned:
+			if !e.pinned {continue}
+		}
+		if q != "" && entry_secret(&e) {
+			continue
+		}
+		score, hit, ok := fuzzy(e.preview, q)
+		if !ok {
+			// The preview is one line; the body may still contain the term.
+			if _, _, deep := fuzzy(e.lower, q); !deep {
+				continue
+			}
+			score = 1
+			hit = {}
+		}
+		if e.pinned {
+			score += 1_000_000
+		}
+		append(out, Ranked{idx = i, score = score, hit = hit})
+	}
+	slice.stable_sort_by(out[:], proc(a, b: Ranked) -> bool {
+		return a.score > b.score
+	})
 }
 
 set_status_locked :: proc(msg: string) {

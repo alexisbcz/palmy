@@ -28,26 +28,6 @@ WIN_H :: 720
 
 ROW_H :: 62
 
-Filter :: enum u8 {
-	All,
-	Text,
-	Images,
-	Pinned,
-}
-
-FILTER_LABEL := [Filter]string {
-	.All    = "All",
-	.Text   = "Text",
-	.Images = "Images",
-	.Pinned = "Pinned",
-}
-
-Ranked :: struct {
-	idx:   int,
-	score: int,
-	hit:   Hit,
-}
-
 St :: struct {
 	query:    [dynamic]u8,
 	caret:    int,
@@ -66,28 +46,26 @@ St :: struct {
 	toast_until: time.Tick, // on a real monotonic clock; see the frame loop
 
 	have_wl:  bool,
+	capture:  Capture,
 }
 
 // g_test / g_test_clip make the clipboard write observable instead of real.
 g_test: bool
 g_test_clip: string
 
+// Capture is how this window learns about selections.
+Capture :: enum u8 {
+	None, // no way to: no data control and no wl-paste
+	Offers, // palmy's offer API with data control: every change, focused or not
+	Wl_Paste, // the fallback: `wl-paste --watch` and its spool (store.odin)
+}
+
 main :: proc() {
-	args := os.args[1:]
-	for a, i in args {
-		if a == "--selftest" || a == "-selftest" {
-			os.exit(selftest() == 0 ? 0 : 1)
-		}
-		// `clipboard --shots <dir>` renders the interface offscreen, from a
-		// fabricated history: see shot.odin. It opens no window, reads no
-		// clipboard and never loads the stored history.
-		if a == "--shots" || a == "-shots" {
-			if i + 1 >= len(args) {
-				fmt.eprintln("clipboard --shots <dir>")
-				os.exit(2)
-			}
-			os.exit(shots(args[i + 1]))
-		}
+	// Everything but an empty line is the command line's (cli.odin): the
+	// history, read and edited headlessly, and the older --selftest and
+	// --shots spellings.
+	if code, handled := kit.cli_args(surface(), scrub_add_text(os.args[1:])); handled {
+		os.exit(code)
 	}
 
 	app, err := kit.start(
@@ -117,21 +95,49 @@ main :: proc() {
 
 	ensure_dirs()
 	load()
-	if st.have_wl {
-		watcher_start()
+
+	// The offer path when palmy can see every change; the wl-paste path when
+	// it can see them only while focused, or not at all. Either way the
+	// sensitivity gate runs before anything is read (store.odin).
+	switch p.clipboard_watch(app) {
+	case .Always:
+		st.capture = .Offers
+		sync.atomic_store(&g.enabled, true)
+		set_status("watching the selection (data control, focused or not)")
+	case .Focused, .Unsupported:
+		// `.Focused` would hand this window an offer only when it gains
+		// focus; a clipboard manager that misses everything copied while it
+		// is in the background is not one. Stop watching and fall back.
+		p.clipboard_watch(app, {})
+		if st.have_wl {
+			st.capture = .Wl_Paste
+			watcher_start()
+		}
 	}
-	defer watcher_stop()
+	if os.get_env("PALMY_CLIPBOARD_TRACE", context.temp_allocator) != "" {
+		fmt.eprintfln("[clipboard] capture: %v", st.capture)
+	}
+	defer if st.capture == .Wl_Paste {
+		watcher_stop()
+	}
 
 	// The window used to keep drawing at vsync while it had focus, to notice
 	// the watcher thread's captures. A second, tiny thread now watches the
-	// watcher's counters and wakes the loop when one moves, so the window
-	// sleeps whether it has focus or not and a capture still appears within
-	// a tenth of a second -- focused or not, which it did not before.
+	// watcher's counters — and the history file, which `clipboard delete` in
+	// a terminal may have changed — and wakes the loop when one moves, so the
+	// window sleeps whether it has focus or not. Offers wake the loop through
+	// palmy themselves.
 	waker := waker_start(app)
 	defer waker_stop(waker)
 
 	for ui in p.frames(app) {
 		free_all(context.temp_allocator)
+
+		// Offers first, before the frame takes the store: storing one takes
+		// the lock itself.
+		if st.capture == .Offers {
+			drain_offers(ui)
+		}
 
 		// The frame owns the store for its whole duration. Nothing below may
 		// call a procedure that locks again — `sync.Mutex` is not reentrant.
@@ -139,6 +145,13 @@ main :: proc() {
 
 		// Free whatever was retired while the last frame was still on screen.
 		reap_locked()
+
+		// Another process — `clipboard` on the command line — rewrote the
+		// history: take its version rather than overwrite it on the next save.
+		if sync.atomic_exchange(&g.reload, false) {
+			reload_locked()
+			drop_preview(&st)
+		}
 
 		refilter(&st)
 		handle_keys(ui, app, &st)
@@ -207,6 +220,11 @@ waker_start :: proc(app: ^p.App) -> ^Waker {
 				seen_c, seen_s = c, s
 				p.wake(wk.app)
 			}
+			if !sync.atomic_load(&g.reload) && history_changed() {
+				sync.atomic_store(&g.reload, true)
+				p.wake(wk.app)
+			}
+			free_all(context.temp_allocator)
 		}
 	})
 	return wk
@@ -280,45 +298,7 @@ query_text :: proc(st: ^St) -> string {
 }
 
 refilter :: proc(st: ^St) {
-	clear(&st.hits)
-	q := strings.to_lower(strings.trim_space(query_text(st)), context.temp_allocator)
-
-	for &e, i in g.items {
-		switch st.filter {
-		case .All:
-		case .Text:
-			if e.kind != .Text {continue}
-		case .Images:
-			if e.kind != .Image {continue}
-		case .Pinned:
-			if !e.pinned {continue}
-		}
-		score, hit, ok := fuzzy(e.preview, q)
-		if !ok {
-			// The preview is one line; the body may still contain the term.
-			if _, _, deep := fuzzy(e.lower, q); !deep {
-				continue
-			}
-			score = 1
-			hit = {}
-		}
-		if e.pinned {
-			score += 1_000_000
-		}
-		append(&st.hits, Ranked{idx = i, score = score, hit = hit})
-	}
-
-	if q != "" {
-		slice.stable_sort_by(st.hits[:], proc(a, b: Ranked) -> bool {
-			return a.score > b.score
-		})
-	} else {
-		// No query: pinned first, then newest first, which is the order
-		// `g.items` is already in.
-		slice.stable_sort_by(st.hits[:], proc(a, b: Ranked) -> bool {
-			return a.score > b.score
-		})
-	}
+	rank_locked(&st.hits, query_text(st), st.filter)
 	st.sel = clamp(st.sel, 0, max(0, len(st.hits) - 1))
 }
 
@@ -404,15 +384,12 @@ handle_keys :: proc(ui: ^p.Ctx, app: ^p.App, st: ^St) {
 			return
 		}
 		if p.shortcut(ui, 'p', {.Ctrl}) {
-			e.pinned = !e.pinned
-			save_locked()
+			set_pinned_locked(st.hits[st.sel].idx, !e.pinned)
 			toast(st, ui, e.pinned ? "Pinned" : "Unpinned")
 			return
 		}
 		if p.key_pressed(ui, p.KEY_DELETE, false) || p.shortcut(ui, 'd', {.Ctrl}) {
-			idx := st.hits[st.sel].idx
-			drop_entry(idx)
-			save_locked()
+			delete_locked(st.hits[st.sel].idx)
 			drop_preview(st)
 			toast(st, ui, "Deleted")
 			return
@@ -489,9 +466,6 @@ toast :: proc(st: ^St, ui: ^p.Ctx, msg: string) {
 	st.toast_until = time.tick_add(time.tick_now(), 4 * time.Second)
 }
 
-// copy_back puts an entry on the clipboard again. The watcher will see it a
-// moment later and fold it back to the top of the list, which is exactly what
-// a clipboard manager should do.
 // quit is nil-safe so the headless self-test can drive `handle_keys` with no
 // window behind it.
 quit :: proc(app: ^p.App) {
@@ -500,45 +474,11 @@ quit :: proc(app: ^p.App) {
 	}
 }
 
+// copy_back is Enter: copy_entry, with its answer in the footer.
 copy_back :: proc(st: ^St, ui: ^p.Ctx, e: ^Entry) {
-	// A test must not reach out and change the user's real clipboard.
-	if g_test {
-		if g_test_clip != "" {delete(g_test_clip)}
-		g_test_clip = strings.clone(e.kind == .Text ? e.text : e.blob)
-		toast(st, ui, "Copied")
-		return
-	}
-	if !st.have_wl {
-		toast(st, ui, "wl-clipboard is not installed")
-		return
-	}
-	switch e.kind {
-	case .Text:
-		// Detached, never through kit.clipboard_set — see the note below.
-		if kit.launch({"wl-copy", "--", e.text}) {
-			toast(st, ui, fmt.tprintf("Copied %s", short(e.preview, 48)))
-		} else {
-			toast(st, ui, "wl-copy could not be started")
-		}
-	case .Image:
-		cmd := fmt.tprintf("wl-copy --type %s < '%s'", e.mime, e.blob)
-		if kit.launch({"sh", "-c", cmd}) {
-			toast(st, ui, fmt.tprintf("Copied the %d × %d image", e.w, e.h))
-		} else {
-			toast(st, ui, "wl-copy failed")
-		}
-	}
+	msg, _ := copy_entry(e)
+	toast(st, ui, msg)
 }
-
-// kit.clipboard_set runs `wl-copy` through os.process_exec, which captures the
-// child's stdout and stderr and waits for them to reach EOF. wl-copy forks a
-// daemon that keeps owning the selection — and keeps those pipes open — until
-// something else takes the clipboard, so process_exec never returns and the
-// frame loop stops forever. The compositor puts up "Application Not
-// Responding" a few seconds later.
-//
-// Starting it detached is what the launcher does, and it is the only thing that
-// works. This is a gap in apps/kit, reported rather than patched.
 
 drop_preview :: proc(st: ^St) {
 	if st.prev_ok {
@@ -640,8 +580,9 @@ header :: proc(ui: ^p.Ctx, st: ^St) {
 
 	p.row(ui, "shrink-0 items-center gap-2")
 	on := sync.atomic_load(&g.enabled)
-	if !st.have_wl {
-		sc.badge(ui, "wl-clipboard missing", .Destructive)
+	if st.capture == .None {
+		// No data control and no wl-paste: nothing can be recorded.
+		sc.badge(ui, "cannot watch the clipboard", .Destructive)
 	} else if on {
 		p.row(ui, "shrink-0 items-center gap-1.5 h-5 px-2 rounded-4xl bg-emerald-500/15")
 		p.div(ui, "size-1.5 rounded-full bg-emerald-400")
@@ -987,6 +928,12 @@ image_detail :: proc(ui: ^p.Ctx, st: ^St, e: ^Entry) {
 }
 
 text_detail :: proc(ui: ^p.Ctx, e: ^Entry) {
+	if entry_secret(e) {
+		p.col(ui, "w-full shrink-0 p-3 rounded-lg bg-muted ring-1 ring-border")
+		p.text(ui, "This entry is flagged as a secret. Its text is not shown or copied; Del removes it.", "text-xs text-muted-foreground")
+		p.end(ui)
+		return
+	}
 	body := e.text
 	if len(body) > 2400 {
 		cut := 2400
