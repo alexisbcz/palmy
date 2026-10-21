@@ -41,6 +41,7 @@ import "core:fmt"
 import "core:os"
 import "core:strings"
 import "core:sys/linux"
+import p "palmy:."
 
 Notify_Class :: enum u8 {
 	Person, // a message addressed to you, a mention, a call: interrupts
@@ -149,8 +150,11 @@ notify_read_line :: proc(fd: linux.Fd, buf: ^[dynamic]u8, timeout_ms: int, alloc
 				return line, true
 			}
 		}
+		// p.poll_fds, not linux.poll: on arm64 and riscv64 linux.poll turns
+		// -1 into an invalid timespec and fails at once with EINVAL, which
+		// made every watcher hang up the instant it started.
 		pfd := [1]linux.Poll_Fd{{fd = fd, events = {.IN}}}
-		n, perr := linux.poll(pfd[:], i32(timeout_ms))
+		n, perr := p.poll_fds(pfd[:], timeout_ms)
 		if perr == .EINTR {
 			continue
 		}
