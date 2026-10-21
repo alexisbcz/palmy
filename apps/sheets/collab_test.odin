@@ -221,6 +221,50 @@ t_collab :: proc(tc: ^TC) {
 		ok_mark(tc, shown(b, 0, "A1") == "21", "and evaluates")
 	}
 
+	// 5b. The same for a 3-D reference: both of its ends are sheets, and both
+	// are anchored to the sheets' identities, so a collaborator renaming
+	// either end — while the formula is being typed — rewrites it.
+	{
+		a := rep_make(0xa1, "alice")
+		b := rep_make(0xb2, "bob")
+		defer rep_free(a)
+		defer rep_free(b)
+		begin_on(a)
+		book_add_sheet(a.app.book, "Jan")
+		book_add_sheet(a.app.book, "Feb")
+		book_add_sheet(a.app.book, "Mar")
+		collab_note_edit(a.app)
+		end_on()
+		edit(a, 1, "B2", "1")
+		edit(a, 2, "B2", "2")
+		edit(a, 3, "B2", "3")
+		sync_all(a, b)
+		begin_on(a)
+		undo_push(a.app)
+		book_rename_sheet(a.app.book, 1, "January")
+		book_rename_sheet(a.app.book, 3, "Q1 end")
+		end_on()
+		edit(b, 0, "A1", "=SUM(Jan:Mar!B2)*2")
+		edit(b, 0, "A2", "=SUM(Jan:Mar!$B$2:B3)")
+		sync_all(a, b)
+		want := "=SUM('January:Q1 end'!B2)*2"
+		ok_mark(tc, cell(a, 0, "A1") == want && cell(b, 0, "A1") == want, fmt.tprintf("a 3-D reference follows a concurrent rename of both its ends (%q / %q)", cell(a, 0, "A1"), cell(b, 0, "A1")))
+		ok_mark(tc, cell(a, 0, "A2") == "=SUM('January:Q1 end'!$B$2:B3)", fmt.tprintf("and so does a 3-D range, its dollar signs kept (%q)", cell(a, 0, "A2")))
+		ok_mark(tc, shown(a, 0, "A1") == "12" && shown(b, 0, "A1") == "12", "and evaluates on both sides")
+		// Which tab each person is looking at is theirs, not the book's.
+		a.app.book.active, b.app.book.active = 0, 0
+		ok_mark(tc, book_text(a) == book_text(b), "the two books converge")
+		// A sheet inserted inside the span joins it on both sides: the span
+		// is still positional, only its ends are anchored.
+		begin_on(b)
+		undo_push(b.app)
+		ins := book_insert_sheet(b.app.book, "Extra", 2)
+		set_input(ins, {1, 1}, "10")
+		end_on()
+		sync_all(a, b)
+		ok_mark(tc, shown(a, 0, "A1") == "32", fmt.tprintf("a sheet a collaborator inserts inside the span joins it (%q)", shown(a, 0, "A1")))
+	}
+
 	// 6. Undo is per person.
 	{
 		a := rep_make(0xa1, "alice")

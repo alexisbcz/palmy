@@ -217,11 +217,21 @@ anchor_formula :: proc(bk: ^Book, own: int, ba: ^Book_Axes, text: string) -> str
 			target := own
 			qualified := t.sheet != ""
 			if t.sheet2 != "" {
-				// A 3-D reference names a run of sheets by position, which no
-				// single row/column anchor can hold. It stays as text, which
-				// loses nothing: a 3-D reference does not follow a one-sheet
-				// row insert locally either (see `ast_structural`).
+				// A 3-D reference names a run of sheets by position. Its two
+				// *ends* are anchored, to the sheets' keys, so a collaborator
+				// renaming either end rewrites it here as a local rename
+				// would; its cell stays A1 text, because no one sheet's row
+				// identities can hold a span, and a 3-D reference does not
+				// follow a one-sheet row insert locally either (see
+				// `ast_structural`). The far end of a 3-D range (`B3` in
+				// `Jan:Mar!B2:B3`) follows with no sheet, and stays text too.
 				target = -1
+				a, z := book_find(bk, t.sheet), book_find(bk, t.sheet2)
+				if a >= 0 && z >= 0 && a < len(ba.keys) && z < len(ba.keys) {
+					strings.write_string(&b, text[last:start])
+					fmt.sbprintf(&b, "%c~%s%c%s%c%s%c", ANCHOR_OPEN, ba.keys[a], ANCHOR_SEP, ba.keys[z], ANCHOR_SEP, ref_text(t.ref), ANCHOR_CLOSE)
+					last = lx.i
+				}
 			} else if qualified {
 				target = book_find(bk, t.sheet)
 			} else if prev_kind == .Colon {
@@ -275,6 +285,26 @@ render_formula :: proc(d: ^crdt.Doc, ba: ^Book_Axes, own: int, text: string) -> 
 		}
 		parts := strings.split(text[i + 1:i + end], "\x02", context.temp_allocator)
 		i += end + 1
+		if len(parts) == 3 && strings.has_prefix(parts[0], "~") {
+			// A 3-D reference: two sheet keys and the cell. An end whose
+			// sheet is gone (deleted concurrently: a local delete narrows the
+			// span first) is #REF!, as a vanished sheet is anywhere else.
+			first, last := parts[0][1:], parts[1]
+			found := 0
+			for k in ba.keys {
+				if k == first {found += 1}
+				if k == last {found += 1}
+			}
+			if found < 2 {
+				strings.write_string(&b, "#REF!")
+				continue
+			}
+			n1 := crdt.reg_str(d, fmt.tprintf("sh/%s", first), "name")
+			n2 := crdt.reg_str(d, fmt.tprintf("sh/%s", last), "name")
+			strings.write_string(&b, first == last ? sheet_prefix(n1) : sheet_span_prefix(n1, n2))
+			strings.write_string(&b, parts[2])
+			continue
+		}
 		if len(parts) != 4 {
 			strings.write_string(&b, "#REF!")
 			continue
