@@ -13,11 +13,11 @@ package main
 // store's mutex for its whole duration and never shells out.
 
 import "core:fmt"
-import "core:math"
 import "core:os"
 import "core:slice"
 import "core:strings"
 import "core:sync"
+import "core:thread"
 import "core:time"
 import kit "kit:."
 import p "palmy:."
@@ -63,7 +63,7 @@ St :: struct {
 	confirm:  bool, // the "clear everything" dialog
 
 	toast:    string,
-	toast_t:  f64,
+	toast_until: time.Tick, // on a real monotonic clock; see the frame loop
 
 	have_wl:  bool,
 }
@@ -122,17 +122,16 @@ main :: proc() {
 	}
 	defer watcher_stop()
 
+	// The window used to keep drawing at vsync while it had focus, to notice
+	// the watcher thread's captures. A second, tiny thread now watches the
+	// watcher's counters and wakes the loop when one moves, so the window
+	// sleeps whether it has focus or not and a capture still appears within
+	// a tenth of a second -- focused or not, which it did not before.
+	waker := waker_start(app)
+	defer waker_stop(waker)
+
 	for ui in p.frames(app) {
 		free_all(context.temp_allocator)
-
-		// palmy has no timer and no way to wake the frame loop from another
-		// thread, so a window that must notice the clipboard changing has to
-		// keep drawing. It does that only while it has focus: look away and
-		// the loop goes back to sleep at zero cost, while the watcher thread
-		// keeps capturing regardless.
-		if ui.input.focused && sync.atomic_load(&g.enabled) {
-			ui.animating = true
-		}
 
 		// The frame owns the store for its whole duration. Nothing below may
 		// call a procedure that locks again — `sync.Mutex` is not reentrant.
@@ -146,16 +145,107 @@ main :: proc() {
 		refilter(&st)
 		build(ui, &st)
 
+		// The rows say how long ago each entry was taken ("12s ago"), so the
+		// next time one of those labels changes is the next frame worth
+		// drawing.
+		if at, ok := next_ago_change(now_unix()); ok {
+			wall := time.now()
+			p.wake_after(ui, time.diff(wall, time.unix(at, 0)) + 5 * time.Millisecond)
+		}
+
 		sync.mutex_unlock(&g.mu)
 
+		// The toast expires on a real clock with one wake at its deadline.
+		// `ui.now` is clamped per frame and cannot time anything.
 		if st.toast != "" {
-			if ui.now > st.toast_t {
+			left := time.tick_diff(time.tick_now(), st.toast_until)
+			if left <= 0 {
+				// This frame still drew the toast. Two more take it off the
+				// screen: measured on headless sway, the first frame after a
+				// clear is presented and the toast stays visible (palmy's
+				// damage tracking; PALMY_DAMAGE=off needs only one).
+				delete(st.toast)
 				st.toast = ""
-			} else {
 				p.redraw(ui)
+				p.wake_after(ui, 50 * time.Millisecond)
+			} else {
+				p.wake_after(ui, left + time.Millisecond)
 			}
 		}
 	}
+}
+
+// ---------------------------------------------------------------------------
+// Waking the window for a capture
+// ---------------------------------------------------------------------------
+
+// WAKER_PERIOD is how often the waker looks at the watcher's counters. The
+// watcher itself drains its spool every 50 ms, so this is the same order.
+WAKER_PERIOD :: 100 * time.Millisecond
+
+Waker :: struct {
+	app:  ^p.App,
+	stop: bool,
+	th:   ^thread.Thread,
+}
+
+// waker_start runs a thread that wakes the frame loop whenever the watcher has
+// captured or skipped something since it last looked. It reads two atomics
+// and takes no lock, so it cannot contend with the frame for the store.
+waker_start :: proc(app: ^p.App) -> ^Waker {
+	wk := new(Waker)
+	wk.app = app
+	wk.th = thread.create_and_start_with_data(wk, proc(data: rawptr) {
+		wk := (^Waker)(data)
+		seen_c := sync.atomic_load(&g.captured)
+		seen_s := sync.atomic_load(&g.secrets)
+		for !sync.atomic_load(&wk.stop) {
+			time.sleep(WAKER_PERIOD)
+			c := sync.atomic_load(&g.captured)
+			s := sync.atomic_load(&g.secrets)
+			if c != seen_c || s != seen_s {
+				seen_c, seen_s = c, s
+				p.wake(wk.app)
+			}
+		}
+	})
+	return wk
+}
+
+waker_stop :: proc(wk: ^Waker) {
+	sync.atomic_store(&wk.stop, true)
+	thread.join(wk.th)
+	thread.destroy(wk.th)
+	free(wk)
+}
+
+// next_ago_change is the unix second at which the earliest of the rows'
+// relative timestamps (see `ago`) next reads differently. Caller holds `g.mu`.
+next_ago_change :: proc(now: i64) -> (at: i64, ok: bool) {
+	for e in g.items {
+		d := now - e.when_
+		next: i64
+		switch {
+		case d < 0:
+			next = e.when_
+		case d < 5:
+			next = e.when_ + 5
+		case d < 60:
+			next = now + 1
+		case d < 3600:
+			next = e.when_ + (d / 60 + 1) * 60
+		case d < 86400:
+			next = e.when_ + (d / 3600 + 1) * 3600
+		case d < 7 * 86400:
+			next = e.when_ + (d / 86400 + 1) * 86400
+		case:
+			continue
+		}
+		if !ok || next < at {
+			at, ok = next, true
+		}
+	}
+	return
 }
 
 register_dark_theme :: proc() {
@@ -396,7 +486,7 @@ toast :: proc(st: ^St, ui: ^p.Ctx, msg: string) {
 		delete(st.toast)
 	}
 	st.toast = strings.clone(msg)
-	st.toast_t = ui.now + 4
+	st.toast_until = time.tick_add(time.tick_now(), 4 * time.Second)
 }
 
 // copy_back puts an entry on the clipboard again. The watcher will see it a
@@ -533,9 +623,10 @@ header :: proc(ui: ^p.Ctx, st: ^St) {
 	}
 	p.style(ui).shrink = 0
 
+	// caret_on wakes the loop once per blink edge on a real clock, where
+	// `animating = true` held a focused window at vsync to blink this.
 	if !st.confirm && ui.input.focused {
-		ui.animating = true
-		if math.mod_f32(f32(ui.now), 1.1) < 0.62 {
+		if p.caret_on(ui) {
 			w := p.text_width(ui.fonts, txt[:clamp(st.caret, 0, len(txt))], 16, .Sans, .Regular)
 			car := p.div(ui, "absolute w-[2] rounded-full bg-foreground")
 			cs := p.style(ui, car)
