@@ -61,6 +61,8 @@ Obj_Kind :: enum u8 {
 	Control_Manager,
 	Control_Device,
 	Control_Offer,
+	// A wl_data_source offered for drag and drop rather than as a selection.
+	Drag_Source,
 
 	// The object has been destroyed locally but the server has not confirmed
 	// it yet, so its id must not be handed out again.

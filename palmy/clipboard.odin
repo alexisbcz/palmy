@@ -104,7 +104,8 @@ Clip_State :: struct {
 	// Types announced for offers not yet named as a selection; the offer
 	// events arrive before the selection event that says what they are for.
 	pending:      map[u32][dynamic]string,
-	dnd_offer:    u32,
+	// Drag and drop, both ends (dnd.odin).
+	dnd:          Dnd_State,
 
 	// X11.
 	x_ready:      bool,
@@ -356,6 +357,7 @@ clip_destroy :: proc(w: ^Window) {
 		delete(list)
 	}
 	delete(w.clip.pending)
+	dnd_destroy(&w.clip.dnd)
 	clip_queue_destroy(&w.clip.watch)
 	for _, name in w.clip.atom_names {
 		delete(name)
@@ -777,24 +779,9 @@ wl_clip_event :: proc(w: ^Window, kind: Obj_Kind, id: u32, opcode: u16, r: ^Read
 			oid := r_u32(r)
 			server_id(c, oid, .Data_Offer)
 			w.clip.pending[oid] = make([dynamic]string)
-		case 1:
-			// enter(serial, surface, x, y, offer): drag and drop, which
-			// palmy does not take. The offer is released on leave.
-			r_u32(r)
-			r_u32(r)
-			r_u32(r)
-			r_u32(r)
-			oid := r_u32(r)
-			if w.clip.dnd_offer != 0 && w.clip.dnd_offer != oid {
-				wl_clip_offer_destroy(w, .Clipboard, w.clip.dnd_offer)
-			}
-			w.clip.dnd_offer = oid
-		case 2, 4:
-			// leave, drop
-			if w.clip.dnd_offer != 0 {
-				wl_clip_offer_destroy(w, .Clipboard, w.clip.dnd_offer)
-				w.clip.dnd_offer = 0
-			}
+		case 1, 2, 3, 4:
+			// enter, leave, motion, drop: drag and drop (dnd.odin).
+			dnd_device_event(w, opcode, r)
 		case 5:
 			wl_clip_selection(w, .Clipboard, r_u32(r))
 		}

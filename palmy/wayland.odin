@@ -145,6 +145,8 @@ Wl_State :: struct {
 	keyboard:           u32,
 	cursor_device:      u32,
 	pointer_serial:     u32,
+	// The serial of the last button press, which a drag must start from.
+	press_serial:       u32,
 	frame_cb:           u32,
 
 	// Keys held on a keyboard that appeared while the window was running,
@@ -598,6 +600,7 @@ wl_on_event :: proc(w: ^Window, id: u32, opcode: u16, r: ^Reader) {
 				in_.down[mb] = true
 				in_.pressed[mb] = true
 				in_.click_serial = serial
+				w.wl.press_serial = serial
 			} else {
 				in_.down[mb] = false
 				in_.released[mb] = true
@@ -679,6 +682,9 @@ wl_on_event :: proc(w: ^Window, id: u32, opcode: u16, r: ^Reader) {
 
 	case .Data_Device, .Data_Source, .Data_Offer, .Primary_Device, .Primary_Source, .Primary_Offer, .Control_Device, .Control_Offer:
 		wl_clip_event(w, kind_of(c, id), id, opcode, r)
+
+	case .Drag_Source:
+		dnd_source_event(w, id, opcode, r)
 
 	case:
 		// Interfaces we create but never listen to.
