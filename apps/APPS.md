@@ -184,6 +184,11 @@ The rest of what you need:
   writes that format).
   The convention's own tests: `odin test apps/kit/cli_test
   -collection:palmy=palmy -collection:kit=apps/kit -collection:shadcn=shadcn`.
+- **The window's loop**: `for ui in kit.frames(app)` is `p.frames` that
+  notices a loop ended by a dead display connection (`p.window_error`); the
+  code after the loop still runs, and the process then exits 6 with the
+  reason on stderr instead of 0. An app with its own loop calls
+  `kit.window_loop_ended(app)` where it ends.
 - **`palm`** finds the application only once its noun's `on_convention` flag
   is flipped in `apps/palm/main.odin`'s `NOUNS`; `palm --selftest` then holds
   it to the whole convention.

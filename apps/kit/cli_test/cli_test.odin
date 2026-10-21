@@ -20,6 +20,7 @@ import "core:strings"
 import "core:sync"
 import "core:testing"
 import kit "kit:."
+import p "palmy:."
 
 @(private = "file")
 g_lock: sync.Mutex
@@ -1010,7 +1011,7 @@ dashes_and_aliases :: proc(t: ^testing.T) {
 
 // ---------------------------------------------------------------------------
 // The third round: surface flags first, empty alternatives, long aliases,
-// padding, every bare word, a read that asks for --yes
+// padding, every bare word, a read that asks for --yes, the loop's end
 // ---------------------------------------------------------------------------
 
 @(private = "file")
@@ -1239,4 +1240,35 @@ read_that_confirms :: proc(t: ^testing.T) {
 	schema := kit.json_text(kit.cli_schema_json(surface()), 2, context.temp_allocator)
 	testing.expect(t, strings.contains(schema, `"confirm": "asks a server somewhere else"`), "the schema says which flag asks")
 	testing.expect(t, strings.contains(kit.cli_help_text(surface(), "peek"), "needs --yes"), "and so does --help")
+}
+
+@(test)
+loop_end :: proc(t: ^testing.T) {
+	sync.mutex_lock(&g_lock)
+	defer sync.mutex_unlock(&g_lock)
+
+	// No window has ended: a clean exit.
+	kit.window_exit_clear()
+	code, why := kit.window_exit()
+	testing.expect(t, code == kit.EXIT_OK && why == "", "nothing recorded, nothing asked")
+
+	// A window closed by its person: no error, still clean.
+	app := new(p.App)
+	defer free(app)
+	app.cfg.title = "Test"
+	kit.window_loop_ended(app)
+	code, _ = kit.window_exit()
+	testing.expect_value(t, code, kit.EXIT_OK)
+
+	// A window whose display server went away.
+	app.win.conn.fatal = "the display server closed the connection"
+	kit.window_loop_ended(app)
+	code, why = kit.window_exit()
+	testing.expect_value(t, code, kit.EXIT_UNAVAILABLE)
+	testing.expect_value(t, why, "the display server closed the connection")
+
+	// Not left set, or this test binary would exit 6 at its end.
+	kit.window_exit_clear()
+	code, _ = kit.window_exit()
+	testing.expect_value(t, code, kit.EXIT_OK)
 }

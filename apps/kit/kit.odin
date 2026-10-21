@@ -3,6 +3,7 @@
 // launching one.
 package kit
 
+import "base:runtime"
 import "core:fmt"
 import "core:os"
 import "core:strings"
@@ -33,6 +34,9 @@ start :: proc(cfg: p.Config, dark := false) -> (app: ^p.App, err: string) {
 	if err != "" {
 		return nil, err
 	}
+	// A window that opens is a recovery from whatever ended the last one
+	// (the toasts reopen theirs after a compositor restart).
+	g_window_error = ""
 
 	for pair in ([?]struct {
 		file: string,
@@ -75,6 +79,90 @@ start :: proc(cfg: p.Config, dark := false) -> (app: ^p.App, err: string) {
 	sc.register_shadcn_theme(dark || system_theme_dark())
 	p.set_text_gamma(1.8)
 	return app, ""
+}
+
+// ---------------------------------------------------------------------------
+// The end of the loop
+//
+// palmy's frame loop ends for two kinds of reason: the person (or the app)
+// closed the window, or the connection to the display server died — the
+// compositor crashed, logged out, or killed the client for a protocol error.
+// palmy says which on stderr and in `window_error(app)`, but the loop ends
+// the same way either time, so an application that returns from main after
+// it exits 0 whether it was closed or killed, and a session manager or a
+// test cannot tell the two apart.
+//
+// `frames` is palmy's loop with that check: write `for ui in kit.frames(app)`
+// instead of `for ui in p.frames(app)`. When the loop ends on an error the
+// reason is kept, the application's own code after the loop still runs (a
+// draft is still saved, a store still written), and when main returns the
+// process exits EXIT_UNAVAILABLE (6) — the display server it talks to is not
+// there — with the reason on stderr.
+//
+// Why not inside `start`, with no change to the application at all: palmy
+// frees the App in `destroy`, which the application defers, so nothing the
+// kit could look at survives to the end of main, and palmy has no hook that
+// runs when the loop ends. With palmy keeping the last error past `destroy`
+// the check below would read that instead and cover `p.frames` too; until
+// then an application opts in with the one word.
+// ---------------------------------------------------------------------------
+
+@(private = "file")
+g_window_error: string
+@(private = "file")
+g_window_title: string
+
+// frames is `p.frames` that remembers why the loop ended, when it ended on an
+// error. A drop-in: `for ui in kit.frames(app) { ... }`.
+frames :: proc(app: ^p.App) -> (ui: ^p.Ctx, ok: bool) {
+	ui, ok = p.frames(app)
+	if !ok {
+		window_loop_ended(app)
+	}
+	return
+}
+
+// window_loop_ended records why `app`'s loop stopped, if it stopped on an
+// error. `frames` calls it; an application with a loop of its own (one that
+// calls `p.frames` by hand, say to reopen the window) calls it where the loop
+// ends, before it destroys the App.
+window_loop_ended :: proc(app: ^p.App) {
+	if app == nil {
+		return
+	}
+	if e := p.window_error(app); e != "" {
+		g_window_error = strings.clone(e, runtime.default_allocator())
+		g_window_title = strings.clone(app.cfg.title, runtime.default_allocator())
+	}
+}
+
+// window_exit is the exit status the window's end asks for: EXIT_OK and ""
+// after a window that was closed, EXIT_UNAVAILABLE and the reason after one
+// whose connection died (and no window has opened since).
+window_exit :: proc() -> (code: int, why: string) {
+	if g_window_error == "" {
+		return EXIT_OK, ""
+	}
+	return EXIT_UNAVAILABLE, g_window_error
+}
+
+// window_exit_clear forgets a recorded end, as a window opening does.
+window_exit_clear :: proc() {
+	g_window_error = ""
+}
+
+// At the end of main: a window whose connection died is not a clean exit.
+// An application that calls os.exit itself has chosen its status and does
+// not come through here.
+@(fini, private = "file")
+window_exit_fini :: proc "contextless" () {
+	if g_window_error == "" {
+		return
+	}
+	context = runtime.default_context()
+	code, why := window_exit()
+	fmt.eprintfln("%s: the window ended because %s; exiting %d", g_window_title, why, code)
+	os.exit(code)
 }
 
 // system_theme_dark reports the person's light/dark choice: PALMY_THEME if
