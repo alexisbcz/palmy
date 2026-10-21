@@ -661,15 +661,20 @@ finish_frame :: proc(app: ^App) {
 		return
 	}
 	w.paint_owed = false
-	end_ui(ctx, &app.canvas)
+	// Laid out, then painted where it changed (damage.odin, "Partial
+	// repaint"), or whole.
+	clear(&ctx.stack)
+	layout_tree(ctx, {0, 0, ctx.viewport.x, ctx.viewport.y})
+	region, partial := paint_frame(ctx, &app.canvas, &w.damage, &w.damage.repaint, false)
 	if present(w, b) {
 		app.frames_shown += 1
 		if app.trace {
-			trace_loop(app, "sent", "buffer %d, %d damage rects, first %v", b == &w.buffers[0] ? 0 : 1, len(w.damage.rects), len(w.damage.rects) > 0 ? w.damage.rects[0] : Damage_Rect{})
+			trace_loop(app, "sent", "buffer %d, %d damage rects, first %v, %s", b == &w.buffers[0] ? 0 : 1, len(w.damage.rects), len(w.damage.rects) > 0 ? w.damage.rects[0] : Damage_Rect{}, partial ? fmt.tprintf("partial %v", region) : fmt.tprintf("whole: %s", w.damage.repaint.why))
 		}
 	} else if app.trace {
-		trace_loop(app, "skipped", "unchanged")
+		trace_loop(app, "skipped", "unchanged, %s", partial ? fmt.tprintf("partial %v", region) : "whole")
 	}
+	damage_sent_buffer(&w.damage, b.px)
 
 	clear_edges(&w.input)
 	restore_late(w)

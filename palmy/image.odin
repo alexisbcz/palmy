@@ -239,7 +239,7 @@ draw_image :: proc(c: ^Canvas, img: Image, dst: Rect, opacity: f32 = 1) {
 		return
 	}
 
-	b := rect_intersect(dst, c.clip)
+	b := rect_intersect(dst, draw_clip(c))
 	if b.w <= 0 || b.h <= 0 {
 		return
 	}

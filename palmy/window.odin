@@ -388,6 +388,10 @@ present :: proc(w: ^Window, b: ^Shm_Buffer) -> bool {
 		}
 		wl_present(w, b, w.damage.rects[:])
 	case .X11:
+		// The put is still the whole image, and an unchanged frame is still
+		// put (X11 paces on its completion). The shadow is kept anyway: it is
+		// what lets the next frame be repainted partially (damage.odin).
+		frame_damage(&w.damage, b.px, b.w, b.h)
 		x_present(w, b)
 	}
 	w.last_present = time.now()

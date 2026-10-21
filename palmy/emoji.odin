@@ -126,6 +126,7 @@ emoji_init :: proc(e: ^Emoji_Font, files: [dynamic]string) {
 
 // load_emoji_font pins the colour-bitmap emoji font, overriding discovery.
 load_emoji_font :: proc(f: ^Fonts, path: string) -> bool {
+	f.generation += 1
 	emoji_destroy(&f.emoji)
 	f.emoji.cache = make(map[Emoji_Key]Emoji_Bitmap)
 	f.emoji.ranges = make([dynamic]Emoji_Range)

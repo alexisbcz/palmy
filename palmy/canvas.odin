@@ -101,6 +101,22 @@ Canvas :: struct {
 	// Device pixels per logical pixel. Drawing procedures work in device
 	// pixels; the UI layer scales as it paints.
 	scale: f32,
+	// While `limited`, nothing outside `limit` is written: the frame is being
+	// repainted only where it changed (damage.odin, "Partial repaint"). It is
+	// separate from `clip` on purpose. The painter's own decisions -- which
+	// node is clipped away, which clip a shadow is drawn against -- read
+	// `clip` and must come out exactly as they would for a whole frame; only
+	// the pixels written are narrowed. Whole device pixels, so that a
+	// primitive's edge coverage inside it is what it would have been anyway.
+	limit:   Rect,
+	limited: bool,
+}
+
+// draw_clip is the rectangle a primitive may write: the clip, narrowed to the
+// repaint limit when there is one.
+@(private)
+draw_clip :: #force_inline proc "contextless" (c: ^Canvas) -> Rect {
+	return c.limited ? rect_intersect(c.clip, c.limit) : c.clip
 }
 
 canvas_from :: proc(px: []u32, w, h: int, scale: f32 = 1) -> Canvas {
@@ -245,7 +261,7 @@ fill_rect :: proc(c: ^Canvas, r: Rect, col: Color) {
 }
 
 fill_rect_paint :: proc(c: ^Canvas, r: Rect, p: Paint) {
-	b := rect_intersect(r, c.clip)
+	b := rect_intersect(r, draw_clip(c))
 	if b.w <= 0 || b.h <= 0 {
 		return
 	}
@@ -326,7 +342,7 @@ fill_round_rect_paint :: proc(c: ^Canvas, r: Rect, rad_in: Radius, p: Paint) {
 		return
 	}
 
-	b := rect_intersect(r, c.clip)
+	b := rect_intersect(r, draw_clip(c))
 	if b.w <= 0 || b.h <= 0 {
 		return
 	}
@@ -381,7 +397,7 @@ stroke_round_rect :: proc(c: ^Canvas, r: Rect, rad_in: Radius, width: f32, col: 
 		return
 	}
 	rad := clamp_radius(r, rad_in)
-	b := rect_intersect(rect_inset(r, -1), c.clip)
+	b := rect_intersect(rect_inset(r, -1), draw_clip(c))
 	if b.w <= 0 || b.h <= 0 {
 		return
 	}
@@ -487,7 +503,7 @@ drop_shadow_excluding :: proc(
 	sr := Rect{r.x + offset.x - spread, r.y + offset.y - spread, r.w + 2 * spread, r.h + 2 * spread}
 	rad := clamp_radius(sr, {rad_in[0] + spread, rad_in[1] + spread, rad_in[2] + spread, rad_in[3] + spread})
 
-	b := rect_intersect(rect_inset(sr, -blur - 1), c.clip)
+	b := rect_intersect(rect_inset(sr, -blur - 1), draw_clip(c))
 	if b.w <= 0 || b.h <= 0 {
 		return
 	}
@@ -599,7 +615,7 @@ draw_line :: proc(c: ^Canvas, x0, y0, x1, y1, thickness: f32, col: Color) {
 		abs(dx) + 2 * half + 2,
 		abs(dy) + 2 * half + 2,
 	}
-	b := rect_intersect(bb, c.clip)
+	b := rect_intersect(bb, draw_clip(c))
 	if b.w <= 0 || b.h <= 0 {
 		return
 	}
@@ -782,10 +798,11 @@ blend_coverage :: proc "contextless" (c: ^Canvas, x, y: int, col: Color, cov: f3
 
 // blit_mask composites an 8-bit coverage mask, which is how glyphs are drawn.
 blit_mask :: proc(c: ^Canvas, x, y: int, mask: []u8, mw, mh: int, col: Color) {
-	cx0 := max(x, int(c.clip.x))
-	cy0 := max(y, int(c.clip.y))
-	cx1 := min(x + mw, int(math.ceil(rect_right(c.clip))))
-	cy1 := min(y + mh, int(math.ceil(rect_bottom(c.clip))))
+	clip := draw_clip(c)
+	cx0 := max(x, int(clip.x))
+	cy0 := max(y, int(clip.y))
+	cx1 := min(x + mw, int(math.ceil(rect_right(clip))))
+	cy1 := min(y + mh, int(math.ceil(rect_bottom(clip))))
 	if cx0 >= cx1 || cy0 >= cy1 {
 		return
 	}

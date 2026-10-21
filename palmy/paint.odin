@@ -196,7 +196,18 @@ paint_node :: proc(ctx: ^Ctx, c: ^Canvas, idx: int) {
 		}
 	}
 
-	switch n.kind {
+	// Repainting only part of the frame, the expensive kinds of content --
+	// shaping and drawing text, running someone's drawing procedure, scaling
+	// an image -- are skipped where their ink cannot reach the part being
+	// repainted. Boxes need no such test: every primitive clips to the limit
+	// before it touches a pixel.
+	content := true
+	if c.limited && n.kind != .Box && n.kind != .Icon {
+		ink := dev_rect(node_ink(ctx.nodes[:], idx, ctx.fonts), sc)
+		content = rect_overlaps(rect_inset(ink, -1), c.limit)
+	}
+
+	if content do switch n.kind {
 	case .Image:
 		if n.img.w > 0 && n.img.h > 0 {
 			inner := Rect {
@@ -301,7 +312,20 @@ paint_children :: proc(ctx: ^Ctx, c: ^Canvas, n: ^Node) {
 // only when there is something to scroll to.
 @(private)
 paint_scrollbar :: proc(ctx: ^Ctx, c: ^Canvas, n: ^Node, sc: f32) {
-	if n.style.overflow != .Scroll {
+	r, shown := scrollbar_thumb(ctx, n, sc)
+	if !shown {
+		return
+	}
+	rad := Radius{2 * sc, 2 * sc, 2 * sc, 2 * sc}
+	fill_round_rect(c, r, rad, Color{148, 163, 184, 90}) // slate-400, faint
+}
+
+// scrollbar_thumb is where a scroll container's thumb is drawn, in device
+// pixels. It reads widget state rather than the node, which is why a partial
+// repaint has to ask it separately (damage.odin).
+@(private)
+scrollbar_thumb :: proc(ctx: ^Ctx, n: ^Node, sc: f32) -> (r: Rect, shown: bool) {
+	if n.style.overflow != .Scroll || n.style.hidden || n.style.opacity <= 0.004 {
 		return
 	}
 	w, found := ctx.widgets[n.id]
@@ -316,10 +340,20 @@ paint_scrollbar :: proc(ctx: ^Ctx, c: ^Canvas, n: ^Node, sc: f32) {
 	s := n.style
 	x := (n.rect.x + n.rect.w - s.border_w[RIGHT]) * sc - 7 * sc
 	y := (n.rect.y + s.border_w[TOP] + s.pad[TOP]) * sc + (track - thumb) * t
+	return Rect{x, y, 4 * sc, thumb}, true
+}
 
-	r := Rect{x, y, 4 * sc, thumb}
-	rad := Radius{2 * sc, 2 * sc, 2 * sc, 2 * sc}
-	fill_round_rect(c, r, rad, Color{148, 163, 184, 90}) // slate-400, faint
+// scrollbar_thumbs lists every thumb the frame draws, for damage.
+@(private)
+scrollbar_thumbs :: proc(ctx: ^Ctx, sc: f32, out: ^[dynamic]Repaint_Thumb) {
+	for &n in ctx.nodes {
+		if n.style.overflow != .Scroll {
+			continue
+		}
+		if r, shown := scrollbar_thumb(ctx, &n, sc); shown {
+			append(out, Repaint_Thumb{n.id, r})
+		}
+	}
 }
 
 @(private)

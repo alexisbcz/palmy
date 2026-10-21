@@ -30,6 +30,11 @@ Offscreen :: struct {
 	scale:      f32,
 	root_class: string,
 	dt:         f32,
+
+	// What the last frame painted, so that `offscreen_end_partial` can
+	// repaint only what changed. The canvas itself is the shadow: it is never
+	// handed to anyone, so it always holds the last frame.
+	repaint:    Repaint_State,
 }
 
 offscreen_create :: proc(width, height: int, scale: f32 = 1, root_class := "w-full h-full bg-slate-950 text-slate-200") -> ^Offscreen {
@@ -58,6 +63,7 @@ offscreen_destroy :: proc(o: ^Offscreen) {
 	}
 	canvas_destroy(&o.canvas)
 	ctx_destroy(&o.ctx)
+	repaint_destroy(&o.repaint)
 	fonts_destroy(&o.fonts)
 	delete(o.px)
 	delete(o.root_class)
@@ -97,8 +103,29 @@ offscreen_begin :: proc(o: ^Offscreen) -> ^Ctx {
 //	}
 offscreen_end :: proc(o: ^Offscreen) {
 	end_ui(&o.ctx, &o.canvas)
+	repaint_note(&o.repaint, &o.ctx, &o.canvas)
 	clear_edges(&o.input)
 	free_all(context.temp_allocator)
+}
+
+// offscreen_end_partial is offscreen_end repainting only what changed since
+// the last frame, the way a window does (damage.odin, "Partial repaint"). It
+// returns the device-pixel rectangle it repainted, and false when it painted
+// the whole frame instead. The pixels are the same either way; that is what
+// tests/partial_repaint_test.odin holds it to.
+offscreen_end_partial :: proc(o: ^Offscreen) -> (region: Damage_Rect, partial: bool) {
+	clear(&o.ctx.stack)
+	layout_tree(&o.ctx, {0, 0, o.ctx.viewport.x, o.ctx.viewport.y})
+	region, partial = paint_frame(&o.ctx, &o.canvas, nil, &o.repaint, true)
+	clear_edges(&o.input)
+	free_all(context.temp_allocator)
+	return
+}
+
+// offscreen_repaint_why says why the last offscreen_end_partial painted the
+// whole frame.
+offscreen_repaint_why :: proc(o: ^Offscreen) -> string {
+	return o.repaint.why
 }
 
 // offscreen_viewport overrides the layout size, which may be fractional and

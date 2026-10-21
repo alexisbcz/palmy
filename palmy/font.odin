@@ -144,6 +144,11 @@ Fonts :: struct {
 	// next text call, which is why nothing in `font.odin` lays out a second
 	// line while still reading the first.
 	shaper: Text_Shaper,
+
+	// Bumped whenever a face is loaded or replaced, which changes how text
+	// that has not changed is drawn. A partial repaint is only valid against
+	// a frame drawn with the same faces (damage.odin).
+	generation: u64,
 }
 
 // Metrics describes a font at one size, in pixels.
@@ -527,6 +532,7 @@ load_font :: proc(f: ^Fonts, path: string, fam: Font_Family, wt: Font_Weight, sl
 // italic wants exactly this: a sheared Geist still reads as Geist, where a real
 // Noto Sans Italic set beside Geist reads as a bug.
 use_synthetic_italic :: proc(f: ^Fonts, fam: Font_Family, wt: Font_Weight) -> bool {
+	f.generation += 1
 	up := f.faces[fam][wt][.Upright]
 	if !up.ok {
 		return false
@@ -806,6 +812,7 @@ is_ignorable :: proc "contextless" (r: rune) -> bool {
 
 @(private)
 face_load :: proc(f: ^Fonts, face: ^Face, path: string) -> bool {
+	f.generation += 1
 	data, rerr := os.read_entire_file_from_path(path, context.allocator)
 	if rerr != nil {
 		return false

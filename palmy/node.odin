@@ -59,6 +59,10 @@ Node :: struct {
 	img:         Image,
 	fit:         Fit,
 	zoom:        f32,
+	// What a `pixels` or `image` node's drawing depends on, as the caller
+	// summarised it (`paint_key`). Zero means unknown, and an unknown node is
+	// repainted every frame. See damage.odin, "Partial repaint".
+	paint_key:   u64,
 }
 
 // Widget is the state palmy keeps for a node between frames: where it was, how
