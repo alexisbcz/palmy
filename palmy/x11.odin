@@ -196,10 +196,13 @@ X11_State :: struct {
 	// VisibilityNotify said FullyObscured: another window covers all of this
 	// one. Under a compositing manager the server never says so.
 	obscured:         bool,
-	// _NET_WM_STATE_HIDDEN: the window manager has minimised the window but,
-	// as compositing managers do (KWin, xfwm4, Mutter on X11) to keep a
-	// thumbnail, left it mapped. Unmapping is what told palmy before, and
-	// without it a minimised animating window kept painting at full rate.
+	// `obscured` is either of two things. VisibilityNotify said
+	// FullyObscured; or _NET_WM_STATE_HIDDEN says the window manager has
+	// minimised the window but, as compositing managers do (KWin, xfwm4,
+	// Mutter on X11) to keep a thumbnail, left it mapped -- unmapping is what
+	// told palmy before, and without it a minimised animating window kept
+	// painting at full rate. Both mean nothing of it can be seen.
+	vis_obscured:     bool,
 	wm_hidden:        bool,
 
 	// Interned atoms.
@@ -862,7 +865,8 @@ x_event :: proc(w: ^Window, rec: []u8, avail: int) -> int {
 		// here as well so a server with backing store still gets the frame
 		// the window owes it (see x_ready_for_pixels).
 		was := x.obscured
-		x.obscured = xr8(rec, 8) == 2
+		x.vis_obscured = xr8(rec, 8) == 2
+		x.obscured = x.vis_obscured || x.wm_hidden
 		if was && !x.obscured {
 			w.input_dirty = true
 		}
@@ -1060,6 +1064,7 @@ x_refresh_wm_state :: proc(w: ^Window) {
 		}
 	}
 	w.maximized = vert && horz
+	w.x.obscured = w.x.vis_obscured || w.x.wm_hidden
 	if was_hidden != w.x.wm_hidden {
 		x_debug(w, "_NET_WM_STATE_HIDDEN %v", w.x.wm_hidden)
 	}

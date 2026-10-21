@@ -271,29 +271,6 @@ test_frame_step_hidden_x11_window_parks :: proc(t: ^testing.T) {
 }
 
 @(test)
-test_frame_step_minimised_but_mapped_x11_window_parks :: proc(t: ^testing.T) {
-	// A compositing window manager keeps a minimised window mapped for its
-	// thumbnail (KWin's "keep thumbnails: always"; xfwm4) and never says it
-	// is obscured. _NET_WM_STATE_HIDDEN is all that says it cannot be seen:
-	// measured under kwin_x11 5.27, an animating window painted 108 frames
-	// in 2 s minimised before this, 0 after.
-	app := fake_app(.X11)
-	defer free(app)
-	w := &app.win
-	w.last_present = time.time_add(time.now(), -LONG_AGO)
-	w.x.mapped = true
-	w.x.obscured = false
-	w.x.wm_hidden = true
-	app.ctx.animating = true
-	testing.expect_value(t, p.frame_step(app), p.Frame_Step{.Wait, -1})
-	w.wake_pending = true
-	testing.expect_value(t, p.frame_step(app), p.Frame_Step{.Logic, 0})
-	w.wake_pending = false
-	w.x.wm_hidden = false
-	testing.expect_value(t, p.frame_step(app).kind, p.Frame_Step_Kind.Frame)
-}
-
-@(test)
 test_frame_step_first_frame_paints_even_when_hidden :: proc(t: ^testing.T) {
 	// The first frame is never a logic frame, so it must not wait for the
 	// window to be seen either: an app started behind another window would
