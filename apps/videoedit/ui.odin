@@ -339,6 +339,12 @@ center_panel :: proc(ed: ^Editor, ui: ^p.Ctx) {
 		"%s",
 		timecode(ed.playhead, ed.pr.out_fps),
 	)
+	p.textf(
+		ui,
+		ed_rate(ed) == 1 ? "text-xs font-mono text-muted-foreground" : "text-xs font-mono text-primary font-semibold",
+		"%gx",
+		ed_rate(ed),
+	)
 	p.spacer(ui)
 
 	p.text(ui, audio_stat_line(ed), "text-[11] font-mono text-muted-foreground whitespace-nowrap")
@@ -1079,7 +1085,8 @@ status_bar :: proc(ed: ^Editor, ui: ^p.Ctx) {
 
 HELP :: [?][2]string {
 	{"space", "play / pause"},
-	{"left right", "step one frame (shift: one second)"},
+	{"left right", "step one frame, and hear it (shift: one second)"},
+	{"< >", "playback rate slower / faster, 0.25x to 4x"},
 	{"home end", "jump to the start / end"},
 	{"up down", "change track"},
 	{"[ ]", "select the previous / next clip"},

@@ -59,6 +59,7 @@ Editor :: struct {
 	pv:           Preview,
 	ex:           Exporter,
 	mx:           Mixer,
+	sc:           Scrub, // sound while the playhead is dragged or stepped
 	hist:         History,
 
 	playhead:     f64,
@@ -105,6 +106,8 @@ Editor :: struct {
 	mix_dirty:    bool,
 	mix_built:    time.Time,
 	audio_said:   bool, // the sink's failure has been reported once
+	rate:         f64, // playback rate, timeline seconds per second; 0 means 1
+	scrub_at:     f64, // where the scrubber last saw the playhead
 
 	// How far the painted picture was from the audio clock, which is the
 	// preview's presentation error. Counted while playing only.
@@ -197,6 +200,7 @@ main :: proc() {
 		importer_stop(&ed.im)
 		preview_stop(&ed.pv)
 		exporter_stop(&ed.ex)
+		scrub_destroy(&ed.sc)
 		mixer_destroy(&ed.mx)
 		history_destroy(&ed.hist)
 		project_destroy(&ed.pr)

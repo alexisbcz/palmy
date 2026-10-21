@@ -129,6 +129,15 @@ handle_keys :: proc(ed: ^Editor, ui: ^p.Ctx) {
 	if p.key_pressed(ui, p.KEY_HOME) {
 		seek_to(ed, 0)
 	}
+	// Playback rate: `<` slower, `>` faster, through RATES. Changing it while
+	// playing is a seek to where the ear is, so the new rate starts at once.
+	if p.shortcut(ui, '>', {.Shift}) || p.shortcut(ui, '<', {.Shift}) {
+		ed.rate = rate_step(ed_rate(ed), p.shortcut(ui, '>', {.Shift}) ? +1 : -1)
+		if ed.playing {
+			ed.seek_req = true
+		}
+		status(ed, ui, fmt.tprintf("playback at %gx", ed.rate))
+	}
 	if p.key_pressed(ui, p.KEY_END) {
 		seek_to(ed, total)
 	}
@@ -319,8 +328,8 @@ handle_keys :: proc(ed: ^Editor, ui: ^p.Ctx) {
 			if c.gain == was && fresh {
 				undo_drop(ed)
 			}
-			// The gain is in the mix graph, so the mixer has to rebuild for
-			// the change to be heard — but the frames are untouched.
+			// Heard on the next chunk: the running mixer takes new gains
+			// without a rebuild (mixer_set_gains). The frames are untouched.
 			edited_audio(ed)
 			status(ed, ui, fmt.tprintf("gain %.0f%%", c.gain * 100))
 		}
@@ -628,32 +637,49 @@ start_export :: proc(ed: ^Editor, ui: ^p.Ctx, q: Export_Quality) {
 	if q == .Draft && strings.has_suffix(out, ".mp4") {
 		out = fmt.tprintf("%s-draft.mp4", out[:len(out) - 4])
 	}
-	w, h, err := export_submit(&ed.pr, &ed.ex, out, q)
+	w, h, err, info := export_submit(&ed.pr, &ed.ex, out, q)
 	if err != "" {
 		status(ed, ui, err)
 		return
 	}
 	ed.verified = false
-	status(ed, ui, fmt.tprintf("exporting %dx%d to %s", w, h, base_name(out)))
+	if info.notes != "" {
+		status(ed, ui, fmt.tprintf("exporting %dx%d to %s — %s", w, h, base_name(out), info.notes))
+	} else {
+		status(ed, ui, fmt.tprintf("exporting %dx%d to %s", w, h, base_name(out)))
+	}
 }
 
 // export_submit builds the ffmpeg plan for the timeline and hands it to the
 // exporter thread. The window's `p`/`P` and `videoedit export` both start an
 // export here; the command line then waits on `exporter_status` where the
 // window draws a progress bar from it.
-export_submit :: proc(pr: ^Project, ex: ^Exporter, out: string, q: Export_Quality) -> (w, h: int, err: string) {
+export_submit :: proc(pr: ^Project, ex: ^Exporter, out: string, q: Export_Quality) -> (w, h: int, err: string, info: Export_Info) {
 	plan := build_export(pr, Export_Settings{quality = q, out_path = out})
 	if plan.err != "" {
 		err = strings.clone(plan.err, context.temp_allocator)
 		export_plan_destroy(&plan)
-		return 0, 0, err
+		return 0, 0, err, {}
 	}
 	w, h = plan.width, plan.height
+	info = Export_Info {
+		captions   = plan.captions,
+		titles_out = plan.titles_out,
+		notes      = strings.clone(plan.notes, context.temp_allocator),
+	}
 	if !exporter_submit(ex, plan, out) {
 		export_plan_destroy(&plan)
-		return 0, 0, "an export is already running"
+		return 0, 0, "an export is already running", {}
 	}
-	return w, h, ""
+	return w, h, "", info
+}
+
+// Export_Info is what a caller needs to tell the user about a submitted
+// export beyond its size: what became of the captions and the titles.
+Export_Info :: struct {
+	captions:   Caption_Mode,
+	titles_out: int,
+	notes:      string, // temp
 }
 
 // verify_last reads the finished file back with ffprobe and pulls a frame out

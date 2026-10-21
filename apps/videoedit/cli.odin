@@ -19,10 +19,14 @@ package main
 // mutating command prints the whole project afterwards, which is where the new
 // ids are.
 //
+// Mute, solo and gain set what the live mixer and the export both read
+// (`resolve_audio_mix`), so a project muted here is muted when it plays.
+//
 // What does not exist here: playback, scrubbing, the preview, undo (its
 // history lives in the window's memory, not in the file) and the live mixer.
 
 import "core:fmt"
+import "core:math"
 import "core:os"
 import "core:strconv"
 import "core:strings"
@@ -164,6 +168,39 @@ COMMANDS := []kit.Command {
 		run = cmd_captions,
 	},
 	{
+		verb = "mute",
+		summary = "mute a track, or unmute it with --off (the window's u, or M in the track header)",
+		effect = .Idempotent,
+		args = {PROJECT_ARG, {name = "track", kind = .String, help = "a track by name (A2) or index", required = true}},
+		flags = {{name = "off", kind = .Bool, help = "unmute instead"}},
+		out = PROJECT_FIELDS,
+		examples = {"videoedit mute demo.vep A2 --json", "videoedit mute demo.vep A2 --off --json"},
+		run = cmd_mute,
+	},
+	{
+		verb = "solo",
+		summary = "solo a track — only soloed tracks are heard and seen — or clear it with --off (the window's o, or S)",
+		effect = .Idempotent,
+		args = {PROJECT_ARG, {name = "track", kind = .String, help = "a track by name (A1) or index", required = true}},
+		flags = {{name = "off", kind = .Bool, help = "unsolo instead"}},
+		out = PROJECT_FIELDS,
+		examples = {"videoedit solo demo.vep A1 --json", "videoedit solo demo.vep A1 --off --json"},
+		run = cmd_solo,
+	},
+	{
+		verb = "gain",
+		summary = "set an audio clip's gain, linear with --to (1 is unity, 0 silent, at most 4) or in decibels with --db (the window's g / G)",
+		effect = .Idempotent,
+		args = {PROJECT_ARG, {name = "clip", kind = .Int, help = "an audio clip's id, from info", required = true}},
+		flags = {
+			{name = "to", kind = .Float, unless = {"db"}, help = "linear gain, 0 to 4"},
+			{name = "db", kind = .Float, help = "gain in dB, up to +12"},
+		},
+		out = PROJECT_FIELDS,
+		examples = {"videoedit gain demo.vep 3 --to 0.5 --json", "videoedit gain demo.vep 3 --db -6 --json"},
+		run = cmd_gain,
+	},
+	{
 		verb = "export",
 		summary = "render the timeline to a file with ffmpeg, wait for it, and read the result back",
 		effect = .Mutate,
@@ -258,6 +295,7 @@ PROJECT_FIELDS := []kit.Field {
 			{name = "kind", kind = .String, help = "video or audio"},
 			{name = "mute", kind = .Bool},
 			{name = "solo", kind = .Bool},
+			{name = "audible", kind = .Bool, help = "false when muted, or when another track is soloed"},
 			{
 				name = "clips",
 				kind = .Array,
@@ -267,6 +305,7 @@ PROJECT_FIELDS := []kit.Field {
 					{name = "end", kind = .Float},
 					{name = "src_in", kind = .Float},
 					{name = "src_out", kind = .Float},
+					{name = "gain", kind = .Float, help = "linear, 1 is unity; heard only on an audio track"},
 					{name = "media", kind = .Int, help = "index into media, -1 for a title"},
 					{name = "title", kind = .String},
 					{name = "transition", kind = .String, help = "cut or dissolve"},
@@ -293,6 +332,9 @@ EXPORT_FIELDS := []kit.Field {
 	{name = "streams", kind = .Int},
 	{name = "vcodec", kind = .String},
 	{name = "acodec", kind = .String},
+	{name = "captions", kind = .String, help = "none, burned, track (a subtitle stream: this ffmpeg has no libass), or left out"},
+	{name = "titles_left_out", kind = .Int, help = "titles not drawn because this ffmpeg has no drawtext"},
+	{name = "notes", kind = .Array, of = {{kind = .String}}, help = "what was degraded, and why"},
 }
 
 // ---------------------------------------------------------------------------
@@ -404,6 +446,7 @@ project_json :: proc(o: ^kit.Json, pr: ^Project, path: string, saved: bool) {
 		kit.jset_str(to, "kind", t.kind == .Video ? "video" : "audio")
 		kit.jset_bool(to, "mute", t.mute)
 		kit.jset_bool(to, "solo", t.solo)
+		kit.jset_bool(to, "audible", track_enabled(pr, ti))
 		clips := kit.jarr()
 		for cl in t.clips {
 			co := kit.jobj()
@@ -412,6 +455,7 @@ project_json :: proc(o: ^kit.Json, pr: ^Project, path: string, saved: bool) {
 			kit.jset_num(co, "end", clip_end(cl))
 			kit.jset_num(co, "src_in", cl.src_in)
 			kit.jset_num(co, "src_out", cl.src_out)
+			kit.jset_num(co, "gain", f64(cl.gain))
 			kit.jset_int(co, "media", cl.media)
 			kit.jset_str(co, "title", cl.title)
 			kit.jset_str(co, "transition", cl.trans == .Dissolve ? "dissolve" : "cut")
@@ -793,6 +837,7 @@ cmd_export :: proc(c: ^kit.Call) -> int {
 		if plan.err != "" {
 			return kit.cli_failf(c, kit.EXIT_FAILED, "%s", plan.err)
 		}
+		export_info_json(c, plan.captions, plan.titles_out, plan.notes)
 		for t in plan.temps {
 			os.remove(t)
 		}
@@ -811,11 +856,15 @@ cmd_export :: proc(c: ^kit.Call) -> int {
 	ex: Exporter
 	exporter_start(&ex)
 	defer exporter_stop(&ex)
-	w, h, err := export_submit(&l.pr, &ex, out, q)
+	w, h, err, info := export_submit(&l.pr, &ex, out, q)
 	if err != "" {
 		return kit.cli_failf(c, kit.EXIT_FAILED, "%s", err)
 	}
+	export_info_json(c, info.captions, info.titles_out, info.notes)
 	kit.cli_note(c, "exporting %dx%d to %s", w, h, out)
+	if info.notes != "" {
+		kit.cli_note(c, "%s", info.notes)
+	}
 	t0 := time.now()
 	st: Export_Status
 	for {
@@ -844,4 +893,98 @@ cmd_export :: proc(c: ^kit.Call) -> int {
 		return kit.cli_failf(c, kit.EXIT_FAILED, "ffprobe could not read %s back", out)
 	}
 	return kit.EXIT_OK
+}
+
+// set_track_flag is mute and solo: the same flag the window's u/o keys and
+// M/S buttons flip, set to a state rather than toggled so that running the
+// command twice is running it once.
+@(private = "file")
+set_track_flag :: proc(c: ^kit.Call, solo: bool) -> int {
+	l: Loaded
+	if code := load(c, &l); code != kit.EXIT_OK {
+		return code
+	}
+	ti, ok := track_named(c, &l.pr, kit.cli_str(c, "track"))
+	if !ok {
+		return kit.EXIT_NOT_FOUND
+	}
+	want := !kit.cli_bool(c, "off")
+	t := &l.pr.tracks[ti]
+	flag := solo ? &t.solo : &t.mute
+	was := flag^
+	flag^ = want
+	word := solo ? (want ? "soloed" : "unsoloed") : (want ? "muted" : "unmuted")
+	did := was == want ? fmt.tprintf("%s was already %s", t.name, word) : fmt.tprintf("%s %s", t.name, word)
+	return save(c, &l, did)
+}
+
+@(private = "file")
+cmd_mute :: proc(c: ^kit.Call) -> int {
+	return set_track_flag(c, false)
+}
+
+@(private = "file")
+cmd_solo :: proc(c: ^kit.Call) -> int {
+	return set_track_flag(c, true)
+}
+
+// gain_value reads --to or --db. The window's range is 0..4 linear (+12 dB),
+// and so is this.
+gain_value :: proc(linear: f64, is_db: bool) -> (gain: f32, ok: bool) {
+	v := linear
+	if is_db {
+		v = math.pow(10, linear / 20)
+	}
+	if v != v || v < 0 || v > 4.0001 {
+		return 0, false
+	}
+	return f32(math.min(v, 4)), true
+}
+
+@(private = "file")
+cmd_gain :: proc(c: ^kit.Call) -> int {
+	l: Loaded
+	if code := load(c, &l); code != kit.EXIT_OK {
+		return code
+	}
+	t, i, id, ok := clip_named(c, &l.pr)
+	if !ok {
+		return kit.EXIT_NOT_FOUND
+	}
+	is_db := kit.cli_has(c, "db")
+	if is_db && kit.cli_has(c, "to") {
+		return kit.cli_fail(c, kit.EXIT_USAGE, "give the gain once: --to or --db, not both")
+	}
+	raw := is_db ? kit.cli_f64(c, "db") : kit.cli_f64(c, "to")
+	g, gok := gain_value(raw, is_db)
+	if !gok {
+		code := kit.cli_failf(c, kit.EXIT_USAGE, "%g%s is not a gain the window can set: 0 to 4 linear, at most +12 dB", raw, is_db ? " dB" : "")
+		kit.cli_err_field(c, is_db ? "db" : "to", fmt.tprintf("%g", raw))
+		return code
+	}
+	if l.pr.tracks[t].kind != .Audio {
+		return kit.cli_failf(
+			c,
+			kit.EXIT_USAGE,
+			"clip %d is on %s, a video track; its sound is the clip alongside it on an audio track",
+			id,
+			l.pr.tracks[t].name,
+		)
+	}
+	l.pr.tracks[t].clips[i].gain = g
+	db := g > 0 ? 20 * math.log10(f64(g)) : math.inf_f64(-1)
+	return save(c, &l, fmt.tprintf("clip %d at gain %.3f (%+.1f dB)", id, g, db), id)
+}
+
+@(private = "file")
+export_info_json :: proc(c: ^kit.Call, captions: Caption_Mode, titles_out: int, notes: string) {
+	kit.jset_str(c.out, "captions", caption_mode_name(captions))
+	kit.jset_int(c.out, "titles_left_out", titles_out)
+	arr := kit.jarr()
+	if notes != "" {
+		for n in strings.split(notes, "; ", context.temp_allocator) {
+			kit.jpush(arr, kit.jstr(n))
+		}
+	}
+	kit.jset(c.out, "notes", arr)
 }

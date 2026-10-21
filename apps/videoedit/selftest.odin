@@ -61,6 +61,10 @@ selftest :: proc() {
 	test_undo()
 	test_audio_mix()
 	test_audio_live()
+	test_audio_stems()
+	test_audio_live_gain()
+	test_audio_rate()
+	test_scrub()
 	test_reprobe()
 	test_interaction()
 	test_export()
@@ -1351,6 +1355,68 @@ test_export :: proc() {
 		p.image_destroy(&im)
 	}
 	fmt.printf("  export took %.0f ms for %.1fs of timeline\n", ms, want)
+
+	// --- an ffmpeg without libass or freetype -----------------------------
+	// palmy's own ffmpeg is built that way (distro/recipes/runtime/src/
+	// ffmpeg.build). The probe is asked rather than assumed; here it is
+	// overridden so the degraded plan can be built on any machine, and the
+	// file it describes is really written and read back.
+	real := ffmpeg_caps()
+	fmt.printf(
+		"  this ffmpeg: subtitles (libass) %v, drawtext (freetype) %v, mov_text %v\n",
+		real.subtitles,
+		real.drawtext,
+		real.mov_text,
+	)
+	check(plan.captions == (real.subtitles ? Caption_Mode.Burned : Caption_Mode.Track), "the plan used what the probe found: %v", plan.captions)
+	bare := real
+	bare.subtitles, bare.drawtext = false, false
+	caps_force = bare
+	defer caps_force = nil
+	soft_out := fmt.tprintf("%s/soft.mp4", dir)
+	os.remove(soft_out)
+	soft := build_export(&pr, {quality = .Draft, out_path = soft_out})
+	defer export_plan_destroy(&soft)
+	sj := strings.join(soft.argv, " ", context.temp_allocator)
+	check(soft.err == "", "without libass the export still builds: %s", soft.err)
+	check(!strings.contains(sj, "subtitles=") && !strings.contains(sj, "drawtext="), "with neither filter in the graph")
+	check(soft.captions == .Track, "the captions become a track, got %v", soft.captions)
+	check(strings.contains(sj, "-c:s mov_text") && strings.contains(sj, "-map 2:s"), "mov_text in an mp4, the SRT mapped as the third input")
+	check(soft.titles_out == 1, "the title is counted as left out, got %d", soft.titles_out)
+	check(strings.contains(soft.notes, "libass") && strings.contains(soft.notes, "not burned in"), "and the notes say why: %s", soft.notes)
+	check(strings.contains(soft.notes, "drawtext"), "for the title too")
+	sst, _, sserr, sperr := os.process_exec({command = soft.argv}, context.temp_allocator)
+	check(sperr == nil && sst.exit_code == 0, "the degraded export runs: %s", strings.trim_space(string(sserr)))
+	for t in soft.temps {
+		os.remove(t)
+	}
+	os.remove(soft.progress)
+	if sst.exit_code == 0 {
+		sv := verify_output(soft_out, context.temp_allocator)
+		check(sv.ok && sv.streams == 2, "picture and sound are there")
+		near(sv.duration, want, "at full length", 0.15)
+		subs, _ := run_capture(
+			{"ffprobe", "-v", "error", "-select_streams", "s", "-show_entries", "stream=codec_name", "-of", "csv=p=0", soft_out},
+			context.temp_allocator,
+		)
+		check(strings.trim_space(subs) == "mov_text", "and a mov_text subtitle stream, got %q", strings.trim_space(subs))
+		cues, cok := run_capture({"ffmpeg", "-v", "error", "-i", soft_out, "-map", "0:s", "-f", "srt", "-"}, context.temp_allocator)
+		check(cok && strings.contains(cues, "a caption, with a comma") && strings.contains(cues, "and a second one"), "carrying both cues: %q", cues)
+	}
+	mkv := build_export(&pr, {quality = .Draft, out_path = fmt.tprintf("%s/soft.mkv", dir)})
+	check(strings.contains(strings.join(mkv.argv, " ", context.temp_allocator), "-c:s srt"), "an mkv carries them as srt")
+	for t in mkv.temps {os.remove(t)}
+	export_plan_destroy(&mkv)
+	avi := build_export(&pr, {quality = .Draft, out_path = fmt.tprintf("%s/soft.avi", dir)})
+	check(avi.captions == .Left_Out && strings.contains(avi.notes, "captions left out"), "a container with no subtitle track leaves them out, and says so: %s", avi.notes)
+	for t in avi.temps {os.remove(t)}
+	export_plan_destroy(&avi)
+	bare.mov_text = false
+	caps_force = bare
+	nomov := build_export(&pr, {quality = .Draft, out_path = soft_out})
+	check(nomov.captions == .Left_Out, "and so does an ffmpeg without the encoder")
+	for t in nomov.temps {os.remove(t)}
+	export_plan_destroy(&nomov)
 }
 
 @(private = "file")
@@ -1755,6 +1821,83 @@ test_cli :: proc() {
 		project_destroy(&pr)
 	}
 	{
+		// Mute, solo and gain: the flags and the number the live mixer and
+		// the export both read.
+		track_flags :: proc(path, name: string) -> (mute, solo, audible: bool, first_clip: int, first_kind: Track_Kind) {
+			pr: Project
+			project_init(&pr)
+			defer project_destroy(&pr)
+			if !project_load(&pr, path).ok {
+				return
+			}
+			for t, ti in pr.tracks {
+				if t.name == name {
+					first_clip = len(t.clips) > 0 ? t.clips[0].id : -1
+					return t.mute, t.solo, track_enabled(&pr, ti), first_clip, t.kind
+				}
+			}
+			return
+		}
+		clip_gain :: proc(path: string, id: int) -> f32 {
+			pr: Project
+			project_init(&pr)
+			defer project_destroy(&pr)
+			if !project_load(&pr, path).ok {
+				return -1
+			}
+			t, i := find_clip(&pr, id)
+			return t >= 0 ? pr.tracks[t].clips[i].gain : -1
+		}
+		out, code := cli_run(dir, "mute", "demo.vep", "A1", "--json")
+		check(code == 0, "mute exits 0, got %d", code)
+		bad := kit.cli_validate_output(out, PROJECT_FIELDS, context.temp_allocator)
+		check(len(bad) == 0, "mute matches its declared schema%s", len(bad) > 0 ? bad[0] : "")
+		m, _, aud, _, _ := track_flags(proj, "A1")
+		check(m && !aud, "the window sees A1 muted and not audible")
+		again, acode := cli_run(dir, "mute", "demo.vep", "A1", "--json")
+		check(acode == 0 && strings.contains(again, "already muted"), "muting twice is muting once, and says so")
+		_, ucode := cli_run(dir, "mute", "demo.vep", "A1", "--off", "--json")
+		m, _, aud, _, _ = track_flags(proj, "A1")
+		check(ucode == 0 && !m && aud, "--off unmutes it")
+
+		_, scode := cli_run(dir, "solo", "demo.vep", "A2", "--json")
+		_, s2, _, _, _ := track_flags(proj, "A2")
+		_, _, aud1, _, _ := track_flags(proj, "A1")
+		check(scode == 0 && s2 && !aud1, "solo on A2 takes A1 out of the mix")
+		info, _ := cli_run(dir, "info", "demo.vep", "--json")
+		check(strings.contains(info, `"audible": false`), "and info says which tracks are not audible")
+		_, socode := cli_run(dir, "solo", "demo.vep", "A2", "--off", "--json")
+		_, _, aud1, _, _ = track_flags(proj, "A1")
+		check(socode == 0 && aud1, "solo --off puts it back")
+		_, nf := cli_run(dir, "mute", "demo.vep", "A9", "--json")
+		check(nf == kit.EXIT_NOT_FOUND, "a track that is not there is not found, got %d", nf)
+
+		_, _, _, aclip, _ := track_flags(proj, "A1")
+		_, _, _, vclip, vkind := track_flags(proj, "V1")
+		check(aclip > 0 && vclip > 0 && vkind == .Video, "there is a clip on A1 and on V1 to set gains on")
+		gout, gcode := cli_run(dir, "gain", "demo.vep", fmt.tprintf("%d", aclip), "--to", "0.5", "--json")
+		check(gcode == 0, "gain exits 0, got %d: %s", gcode, gout)
+		check(strings.contains(gout, `"gain": 0.5`), "and prints the clip's new gain")
+		near(f64(clip_gain(proj, aclip)), 0.5, "the window sees the clip at 0.5")
+		_, dcode := cli_run(dir, "gain", "demo.vep", fmt.tprintf("%d", aclip), "--db", "-6", "--json")
+		near(f64(clip_gain(proj, aclip)), 0.501187, "-6dB is 0.501 linear", 1e-4)
+		check(dcode == 0, "a gain in dB is taken")
+		_, big := cli_run(dir, "gain", "demo.vep", fmt.tprintf("%d", aclip), "--to", "5", "--json")
+		check(big == kit.EXIT_USAGE, "a gain past the window's 4x is a usage error, got %d", big)
+		_, word := cli_run(dir, "gain", "demo.vep", fmt.tprintf("%d", aclip), "--to", "loud", "--json")
+		check(word == kit.EXIT_USAGE, "so is a word, got %d", word)
+		_, none := cli_run(dir, "gain", "demo.vep", fmt.tprintf("%d", aclip), "--json")
+		check(none == kit.EXIT_USAGE, "and no gain at all, got %d", none)
+		_, both := cli_run(dir, "gain", "demo.vep", fmt.tprintf("%d", aclip), "--to", "1", "--db", "0", "--json")
+		check(both == kit.EXIT_USAGE, "and both at once, got %d", both)
+		_, onv := cli_run(dir, "gain", "demo.vep", fmt.tprintf("%d", vclip), "--to", "0.5", "--json")
+		check(onv == kit.EXIT_USAGE, "a video clip has no gain of its own to set, got %d", onv)
+		_, _ = cli_run(dir, "gain", "demo.vep", fmt.tprintf("%d", aclip), "--to", "1", "--json")
+		near(f64(clip_gain(proj, aclip)), 1, "and back to unity")
+		g, gok := gain_value(3, true)
+		check(gok && abs(g - 1.4125) < 1e-3, "+3 dB is 1.413 linear, got %.4f", g)
+	}
+	{
 		out, code := cli_run(dir, "export", "demo.vep", "out.mp4", "--quality", "draft", "--json")
 		check(code == 0, "export exits 0, got %d: %s", code, out)
 		bad := kit.cli_validate_output(out, EXPORT_FIELDS, context.temp_allocator)
@@ -1763,10 +1906,568 @@ test_cli :: proc() {
 		check(v.ok, "ffprobe reads the export back")
 		check(v.streams == 2, "with picture and sound, got %d streams", v.streams)
 		check(v.width == 640 && v.height == 360, "at draft size, got %dx%d", v.width, v.height)
+		want_mode := ffmpeg_caps().subtitles ? `"captions": "burned"` : `"captions": "track"`
+		check(strings.contains(out, want_mode), "and says what became of the captions (%s): %s", want_mode, out)
 	}
 	{
 		audit, _ := os.read_entire_file_from_path(fmt.tprintf("%s/audit.jsonl", dir), context.temp_allocator)
 		check(strings.contains(string(audit), `"verb":"split"`), "a mutation leaves an audit record")
 		check(!strings.contains(string(audit), `"verb":"info"`), "and a read does not")
 	}
+}
+
+// ---------------------------------------------------------------------------
+// Stems: the gains move out of the graph and into the pump
+//
+// A gain change, a mute or a solo used to rebuild the whole pipeline while
+// playing, because the gains were `volume=` filters inside it. Now ffmpeg
+// hands back one stereo pair per clip and the pump multiplies. These are the
+// assertions that the graph has that shape, that the layout key tells a
+// gain-only edit from one that changes what plays, and — rendered for real —
+// that the stems summed at their gains are the same sound the baked graph
+// makes, so moving the gains did not move the mix.
+// ---------------------------------------------------------------------------
+
+test_audio_stems :: proc() {
+	section("stems: the gains in the pump, not the graph")
+	pr: Project
+	fixture(&pr)
+	defer project_destroy(&pr)
+	a1 := track_of_kind(&pr, .Audio, 0)
+	a2 := track_of_kind(&pr, .Audio, 1)
+	append_clip(&pr, V, 0, 0, 4) // video, no stem
+	c1 := append_clip(&pr, a1, 0, 0, 4)
+	c2 := append_clip(&pr, a2, 1, 1, 3)
+	_, i2 := find_clip(&pr, c2)
+	pr.tracks[a2].clips[i2].start = 2.0
+	pr.tracks[a2].clips[i2].gain = 0.4
+	track_sort(&pr.tracks[a2])
+	total := project_duration(&pr)
+
+	gr := mix_graph(&pr, 0, total)
+	joined := strings.join(gr.argv, " ", context.temp_allocator)
+	check(gr.float, "the preview's graph is stems")
+	check(gr.srcs == 2 && gr.chans == 6, "two stems plus the bed, six channels: got %d stems, %d channels", gr.srcs, gr.chans)
+	check(
+		len(gr.stem_clip) == 3 && gr.stem_clip[0] == -1 && gr.stem_clip[1] == c1 && gr.stem_clip[2] == c2,
+		"the bed is pair 0 and each stem knows its clip: %v",
+		gr.stem_clip,
+	)
+	check(strings.contains(joined, "amerge=inputs=3"), "merged, not mixed: %s", joined)
+	check(!strings.contains(joined, "volume="), "with no gain anywhere in the graph")
+	check(strings.contains(joined, fmt.tprintf("apad=whole_dur=%.4f", total)), "every stem padded to the bed, since amerge stops at the shortest")
+	check(strings.contains(joined, "adelay=2000:all=1"), "A2's clip still delayed to 2s")
+	check(strings.contains(joined, "f32le") && !strings.contains(joined, " -ac "), "float out, and not down-mixed by -ac")
+	check(!strings.contains(joined, "atempo"), "and no tempo filter at 1x")
+
+	// --- mute and solo are gains of zero ---------------------------------
+	g: [MIX_MAX_STEMS + 1]f32
+	pr.tracks[a2].mute = true
+	gm := mix_graph(&pr, 0, total)
+	check(gm.srcs == 2, "a muted track's clip is still a stem, so unmuting needs no rebuild, got %d", gm.srcs)
+	check(stem_gains(&pr, gm.stem_clip, g[:]), "the gains resolve")
+	near(f64(g[1]), 1, "A1 at unity")
+	near(f64(g[2]), 0, "the muted A2 at zero, which is what the export leaves out")
+	pr.tracks[a2].mute = false
+	pr.tracks[a2].solo = true
+	check(stem_gains(&pr, gm.stem_clip, g[:]), "the gains resolve under a solo")
+	near(f64(g[1]), 0, "a solo elsewhere silences A1")
+	near(f64(g[2]), 0.4, "and the soloed clip keeps its own gain", 1e-6)
+	pr.tracks[a2].solo = false
+	// The exporter's list and the stems' gains are the same function's answer.
+	exp := resolve_audio_mix(&pr, 0)
+	check(stem_gains(&pr, gm.stem_clip, g[:]) && len(exp) == 2, "two audible clips")
+	if len(exp) == 2 {
+		near(f64(g[1]), f64(exp[0].gain), "stem 1's gain is the exporter's")
+		near(f64(g[2]), f64(exp[1].gain), "stem 2's gain is the exporter's")
+	}
+
+	// --- the layout key ----------------------------------------------------
+	k0 := mix_layout_key(&pr)
+	_, i1 := find_clip(&pr, c1)
+	pr.tracks[a1].clips[i1].gain = 0.7
+	pr.tracks[a2].mute = true
+	pr.tracks[a1].solo = true
+	check(mix_layout_key(&pr) == k0, "a gain, a mute and a solo leave the layout key alone")
+	pr.tracks[a1].clips[i1].gain = 1
+	pr.tracks[a2].mute = false
+	pr.tracks[a1].solo = false
+	_, i2 = find_clip(&pr, c2)
+	move_clip(&pr, a2, i2, a2, 2.5)
+	check(mix_layout_key(&pr) != k0, "moving a clip changes it")
+	_, i2 = find_clip(&pr, c2)
+	move_clip(&pr, a2, i2, a2, 2.0)
+	check(mix_layout_key(&pr) == k0, "and moving it back restores it")
+	_, i2 = find_clip(&pr, c2)
+	trim_out(&pr, a2, i2, -0.5)
+	check(mix_layout_key(&pr) != k0, "trimming changes it")
+	_, i2 = find_clip(&pr, c2)
+	trim_out(&pr, a2, i2, 0.5)
+	check(mix_layout_key(&pr) == k0, "and untrimming restores it")
+	// A stem whose clip is gone is a stale graph, not a silent stem.
+	stale := [?]int{-1, c1, 9999}
+	check(!stem_gains(&pr, stale[:], g[:]), "a stem whose clip has gone asks for a rebuild")
+
+	// --- the baked fallback ------------------------------------------------
+	gb := mix_graph(&pr, 0, total, 1, context.temp_allocator, true)
+	bj := strings.join(gb.argv, " ", context.temp_allocator)
+	check(!gb.float && gb.chans == 2 && strings.contains(bj, "amix=inputs=3"), "baked on request: the old amix graph")
+	big: Project
+	fixture(&big)
+	defer project_destroy(&big)
+	ba := track_of_kind(&big, .Audio, 0)
+	for _ in 0 ..< MIX_MAX_STEMS + 7 {
+		append_clip(&big, ba, 0, 0, 0.1)
+	}
+	gbig := mix_graph(&big, 0, project_duration(&big))
+	check(!gbig.float && gbig.srcs == MIX_MAX_STEMS + 7, "past amerge's 64 inputs the graph bakes rather than fails: %d srcs, float %v", gbig.srcs, gbig.float)
+
+	// --- playback rate -----------------------------------------------------
+	check(atempo_chain(2) == "atempo=2.000000", "2x is one atempo: %s", atempo_chain(2))
+	check(atempo_chain(0.75) == "atempo=0.750000", "0.75x is one: %s", atempo_chain(0.75))
+	check(atempo_chain(0.25) == "atempo=0.5,atempo=0.500000", "0.25x is two, each in atempo's safe range: %s", atempo_chain(0.25))
+	check(atempo_chain(4) == "atempo=2.0,atempo=2.000000", "4x is two: %s", atempo_chain(4))
+	g2 := mix_graph(&pr, 0, total, 2)
+	j2 := strings.join(g2.argv, " ", context.temp_allocator)
+	check(strings.contains(j2, "amerge=inputs=3,atempo=2.000000[aout]"), "the tempo is applied after the merge: %s", j2)
+	check(strings.contains(j2, fmt.tprintf("-t %.4f", total / 2)), "and the sound lasts half the timeline")
+	check(rate_step(1, +1) == 1.25 && rate_step(1, -1) == 0.75, "the rate keys step through RATES")
+	check(rate_step(4, +1) == 4 && rate_step(0.25, -1) == 0.25, "and stop at its ends")
+
+	// --- the ramp ----------------------------------------------------------
+	// Two stems of four frames: the bed (zeros) and a constant 1.0 / 0.5.
+	src := [?]f32{0, 0, 1, 0.5, 0, 0, 1, 0.5, 0, 0, 1, 0.5, 0, 0, 1, 0.5}
+	g0 := [?]f32{0, 0}
+	g1 := [?]f32{0, 1}
+	out: [8]f32
+	mix_stems(src[:], 4, g0[:], g1[:], out[:])
+	check(out[0] == 0 && out[2] == 0.25 && out[4] == 0.5 && out[6] == 0.75, "a gain change ramps across the block: %v", out)
+	check(out[3] == 0.125, "on both channels: %v", out)
+
+	// --- rendered for real -------------------------------------------------
+	bars := fmt.tprintf("%s/bars.mp4", media_dir())
+	frac := fmt.tprintf("%s/fractal.mp4", media_dir())
+	if !os.exists(bars) || !os.exists(frac) || !have_tool("ffmpeg") {
+		fmt.println("  skipped the render: the bundled test media is not present")
+		return
+	}
+	rp: Project
+	project_init(&rp)
+	defer project_destroy(&rp)
+	for path in ([?]string{bars, frac}) {
+		append(&rp.media, Media{path = strings.clone(path), name = strings.clone(base_name(path)), duration = 8, has_video = true, has_audio = true, probed = true})
+	}
+	r1 := track_of_kind(&rp, .Audio, 0)
+	r2 := track_of_kind(&rp, .Audio, 1)
+	append_clip(&rp, r1, 0, 0, 2)
+	rc2 := append_clip(&rp, r2, 1, 0.5, 1.5)
+	_, ri := find_clip(&rp, rc2)
+	rp.tracks[r2].clips[ri].start = 0.5
+	rp.tracks[r2].clips[ri].gain = 0.6
+	track_sort(&rp.tracks[r2])
+	rtot := project_duration(&rp)
+	sg := mix_graph(&rp, 0, rtot)
+	bg := mix_graph(&rp, 0, rtot, 1, context.temp_allocator, true)
+	sbytes, sok := run_capture_bytes(sg.argv, context.temp_allocator)
+	bbytes, bok := run_capture_bytes(bg.argv, context.temp_allocator)
+	check(sok && bok, "both graphs render")
+	if !sok || !bok {
+		return
+	}
+	stems := (transmute([^]f32)raw_data(sbytes))[:len(sbytes) / 4]
+	baked := (transmute([^]i16)raw_data(bbytes))[:len(bbytes) / 2]
+	frames := min(len(stems) / sg.chans, len(baked) / 2)
+	near(f64(frames) / MIX_RATE, rtot, "the stems cover the timeline", 0.03)
+	rg: [MIX_MAX_STEMS + 1]f32
+	_ = stem_gains(&rp, sg.stem_clip, rg[:])
+	mixed := make([]f32, frames * 2, context.temp_allocator)
+	mix_stems(stems[:frames * sg.chans], sg.chans, rg[:], rg[:], mixed)
+	worst := f32(0)
+	energy := f64(0)
+	for i in 0 ..< frames * 2 {
+		worst = max(worst, abs(mixed[i] - f32(baked[i]) / 32768))
+		energy += f64(abs(mixed[i]))
+	}
+	check(energy / f64(frames * 2) > 0.02, "the render is sound, mean |x| %.4f", energy / f64(frames * 2))
+	check(worst < 2.0 / 32768 + 1e-4, "the stems summed at their gains are the baked mix to within s16 rounding: worst %.6f", worst)
+}
+
+// ---------------------------------------------------------------------------
+// A live gain change, a live mute, and what still rebuilds
+//
+// The real pipeline, silent (measured, then zeroed). The assertion that
+// matters is the first one after the gain change: the pipeline did *not*
+// restart. On the code before stems it did — `audio_follow` saw `mix_dirty`,
+// killed both processes and started new ones, which is the ~87 ms hole.
+// ---------------------------------------------------------------------------
+
+@(private = "file")
+follow_frame :: proc(ed: ^Editor, off: ^p.Offscreen) {
+	ui := p.offscreen_begin(off)
+	mixer_tick(&ed.mx)
+	audio_follow(ed, ui)
+	p.offscreen_end(off)
+}
+
+@(private = "file")
+level_over :: proc(ed: ^Editor, off: ^p.Offscreen, secs: f64) -> f64 {
+	b0, s0 := mixer_bytes(&ed.mx)
+	t0 := time.now()
+	for time.duration_seconds(time.since(t0)) < secs {
+		follow_frame(ed, off)
+		time.sleep(10 * time.Millisecond)
+	}
+	b1, s1 := mixer_bytes(&ed.mx)
+	if b1 <= b0 {
+		return -1
+	}
+	return f64(s1 - s0) / f64((b1 - b0) / 2) / 32768
+}
+
+test_audio_live_gain :: proc() {
+	section("a live gain change, mute and solo: no rebuild")
+	if !os.exists(fmt.tprintf("%s/bars.mp4", media_dir())) || !have_tool("pw-cat") || !have_tool("ffmpeg") {
+		fmt.println("  skipped: needs the bundled test media, ffmpeg and pw-cat")
+		return
+	}
+	off := p.offscreen_create(320, 200, 1, "w-full h-full")
+	defer p.offscreen_destroy(off)
+	ed := bench_editor(false)
+	defer bench_editor_destroy(ed)
+	a1 := track_of_kind(&ed.pr, .Audio, 0)
+	a2 := track_of_kind(&ed.pr, .Audio, 1)
+	c1 := append_clip(&ed.pr, a1, 0, 0, 6) // bars: a 440 Hz sine at 1/8
+	append_clip(&ed.pr, a2, 1, 0, 6) // fractal: 660 Hz at 1/8
+	mixer_init(&ed.mx)
+	ed.mx.silent = true
+	defer mixer_destroy(&ed.mx)
+
+	ed.playing = true
+	ed.seek_req = true
+	follow_frame(ed, off)
+	check(mixer_live(&ed.mx) && ed.mx.float, "playing on a stem graph: %s", mixer_error(&ed.mx))
+	t0 := time.now()
+	for time.duration_seconds(time.since(t0)) < 8 {
+		follow_frame(ed, off)
+		if b, _ := mixer_bytes(&ed.mx); b > MIX_BPS / 4 {
+			break
+		}
+		time.sleep(5 * time.Millisecond)
+	}
+	both := level_over(ed, off, 0.4)
+	starts := ed.mx.starts
+	bytes0, _ := mixer_bytes(&ed.mx)
+	clock0 := mixer_clock(&ed.mx)
+
+	// 1. Mute A2, through the path the M button takes.
+	undo_mark(ed, .Track_Flags, "mute a track", a2)
+	ed.pr.tracks[a2].mute = true
+	edited(ed)
+	ed.mix_built = {} // so the rebuild throttle cannot be what spares it
+	follow_frame(ed, off)
+	check(ed.mx.starts == starts, "muting a track while playing did not restart the pipeline: %d starts, was %d", ed.mx.starts, starts)
+	check(!ed.mix_dirty, "and the mute was taken")
+	bytes1, _ := mixer_bytes(&ed.mx)
+	check(bytes1 >= bytes0, "the byte counter carried on (%d → %d): nothing was flushed", bytes0, bytes1)
+	check(mixer_clock(&ed.mx) >= clock0, "and the clock did not jump back")
+	time.sleep(40 * time.Millisecond)
+	solo_a1 := level_over(ed, off, 0.4)
+	// mean |x| of a sine of amplitude 1/8 is (1/8)·(2/π), and the mono source
+	// is spread to stereo at -3 dB (1/√2) — the exporter does the same, by
+	// the same aformat. AAC moves it a little.
+	want := 0.125 * 2 / math.PI / math.SQRT_TWO
+	check(abs(solo_a1 - want) < want * 0.1, "with A2 muted the level is one sine's: %.4f, want %.4f (both: %.4f)", solo_a1, want, both)
+
+	// 2. A1's gain to 25 %, through the path the `g` key takes.
+	undo_break(ed)
+	undo_mark(ed, .Gain, "change the gain", c1)
+	_, i1 := find_clip(&ed.pr, c1)
+	ed.pr.tracks[a1].clips[i1].gain = 0.25
+	edited_audio(ed)
+	ed.mix_built = {}
+	follow_frame(ed, off)
+	check(ed.mx.starts == starts, "a gain change while playing did not restart the pipeline: %d starts, was %d", ed.mx.starts, starts)
+	time.sleep(40 * time.Millisecond)
+	quarter := level_over(ed, off, 0.4)
+	check(abs(quarter / solo_a1 - 0.25) < 0.03, "and is heard at a quarter of the level: %.4f / %.4f = %.3f", quarter, solo_a1, quarter / solo_a1)
+	check(ed.mx.live_gains >= 2, "two live changes counted, got %d", ed.mx.live_gains)
+	gap := mixer_max_gap(&ed.mx)
+	fmt.printf("  longest wait between two writes to pw-cat across both changes: %.1f ms\n", gap)
+	// Reported, not asserted: on a loaded machine pw-cat's own scheduling
+	// puts 150 ms between two writes with no help from us. The assertions
+	// that a change cost no hole are the two above — no restart, no reset.
+
+	// 3. Solo A2: A1 drops to zero, A2 is back although it is still muted —
+	// a solo overrides a mute, as track_enabled says.
+	undo_break(ed)
+	ed.pr.tracks[a2].solo = true
+	edited(ed)
+	ed.mix_built = {}
+	follow_frame(ed, off)
+	check(ed.mx.starts == starts, "a solo while playing did not restart it either")
+	time.sleep(40 * time.Millisecond)
+	solo_a2 := level_over(ed, off, 0.4)
+	check(abs(solo_a2 - want) < want * 0.1, "soloed A2 is one sine at unity: %.4f", solo_a2)
+
+	// 4. What *does* still rebuild: a change to what plays.
+	_, i1 = find_clip(&ed.pr, c1)
+	trim_out(&ed.pr, a1, i1, -1)
+	edited(ed)
+	ed.mix_built = {}
+	follow_frame(ed, off)
+	check(ed.mx.starts == starts + 1, "a trim does rebuild — the graph's shape changed: %d starts, was %d", ed.mx.starts, starts)
+	ed.playing = false
+	follow_frame(ed, off)
+	check(!mixer_live(&ed.mx), "stopping leaves nothing running")
+}
+
+// ---------------------------------------------------------------------------
+// Playback rates
+// ---------------------------------------------------------------------------
+
+test_audio_rate :: proc() {
+	section("playback at 2x and 0.5x")
+	src := fmt.tprintf("%s/bars.mp4", media_dir())
+	if !os.exists(src) || !have_tool("pw-cat") || !have_tool("ffmpeg") {
+		fmt.println("  skipped: needs the bundled test media, ffmpeg and pw-cat")
+		return
+	}
+	pr: Project
+	project_init(&pr)
+	defer project_destroy(&pr)
+	append(&pr.media, Media{path = strings.clone(src), name = strings.clone("bars.mp4"), duration = 8, has_video = true, has_audio = true, probed = true})
+	append_clip(&pr, track_of_kind(&pr, .Audio, 0), 0, 0, 1.2)
+	total := project_duration(&pr)
+	mx: Mixer
+	mixer_init(&mx)
+	mx.silent = true
+	defer mixer_destroy(&mx)
+	for rate in ([?]f64{2, 0.5}) {
+		check(mixer_start(&mx, &pr, 0, total, rate), "the pipeline started at %gx", rate)
+		t0 := time.now()
+		mid := f64(-1)
+		mid_bytes := i64(0)
+		mid_lat := f64(0)
+		for !mixer_done(&mx) && time.duration_seconds(time.since(t0)) < 10 {
+			mixer_tick(&mx)
+			if b, _ := mixer_bytes(&mx); mid < 0 && f64(b) / MIX_BPS > 0.4 {
+				mid, mid_bytes = mixer_clock(&mx), b
+				mid_lat, _ = mixer_latency(&mx)
+			}
+			time.sleep(5 * time.Millisecond)
+		}
+		wall := time.duration_seconds(time.since(t0))
+		b, s := mixer_bytes(&mx)
+		played := f64(b) / MIX_BPS
+		check(mixer_done(&mx), "%gx ran to the end of the timeline", rate)
+		near(played, total / rate, fmt.tprintf("%gx: %.2fs of timeline is %.2fs of sound", rate, total, total / rate), 0.1)
+		check(s > 0, "%gx: and it is sound", rate)
+		if mid >= 0 {
+			near(mid, (f64(mid_bytes) / MIX_BPS - mid_lat) * rate, fmt.tprintf("%gx: the clock advances %g timeline seconds per second heard", rate, rate), 0.02)
+		}
+		fmt.printf("  %gx: %.2fs of timeline in %.2fs of sound, %.2fs wall\n", rate, total, played, wall)
+		mixer_stop(&mx)
+	}
+}
+
+// ---------------------------------------------------------------------------
+// Scrubbing with sound
+// ---------------------------------------------------------------------------
+
+test_scrub :: proc() {
+	section("scrubbing plays the sound under the playhead")
+	// A buffer of 2 s of a 300 Hz sine at 0.5, starting at timeline 10 s.
+	N :: 2 * MIX_RATE
+	buf := make([]f32, N * 2)
+	defer delete(buf)
+	for i in 0 ..< N {
+		v := f32(0.5 * math.sin(2 * math.PI * 300 * f64(i) / MIX_RATE))
+		buf[2 * i], buf[2 * i + 1] = v, v
+	}
+	chunk: [MIX_FRAMES * MIX_CH]f32
+	mean :: proc(x: []f32) -> f64 {
+		s := f64(0)
+		for v in x {s += f64(abs(v))}
+		return s / f64(len(x))
+	}
+	dt := f64(MIX_FRAMES) / MIX_RATE
+
+	// 1. Dragging at 1x: the head follows, and plays the sine at full level.
+	h := Scrub_Head{pos = 10.2}
+	target := 10.2
+	lv := f64(0)
+	for k in 0 ..< 60 {
+		target += dt
+		scrub_head_fill(&h, buf, 10, {a = N}, target, chunk[:])
+		if k >= 20 {lv += mean(chunk[:])}
+	}
+	lv /= 40
+	sine_mean := 0.5 * 2 / math.PI
+	check(abs(lv - sine_mean) < sine_mean * 0.05, "a 1x drag plays the sound at its level: mean |x| %.4f, want %.4f", lv, sine_mean)
+	// Measured at the end of a chunk, after the target stepped at its start:
+	// speed·τ less half a chunk.
+	check(abs(target - h.pos - (SCRUB_TAU - dt / 2)) < 0.002, "the head trails a steady drag by speed·τ: %.4f s behind", target - h.pos)
+
+	// 2. Stopping: silence within a few tens of milliseconds, and exact zeros after.
+	tail := 0
+	for k in 0 ..< 40 {
+		scrub_head_fill(&h, buf, 10, {a = N}, target, chunk[:])
+		if mean(chunk[:]) > 0 {tail = k + 1}
+	}
+	check(tail > 0 && f64(tail) * dt < 0.4, "standing still fades out over %.0f ms", f64(tail) * dt * 1000)
+	check(mean(chunk[:]) == 0, "and is then silence, not a held sample")
+	check(abs(h.pos - target) < 0.001, "with the head on the playhead")
+
+	// 3. One frame step: that frame's sound, once.
+	voice0 := h.voice
+	heard := f64(0)
+	target += 1.0 / 30
+	for _ in 0 ..< 40 {
+		scrub_head_fill(&h, buf, 10, {a = N}, target, chunk[:])
+		heard += mean(chunk[:])
+	}
+	check(heard > 0, "a frame step is heard")
+	vms := f64(h.voice - voice0) / MIX_RATE * 1000
+	check(vms > 10 && vms < 400, "for %.0f ms, then nothing", vms)
+
+	// 4. A jump is a seek: the head lands on it and nothing plays the distance.
+	target = 11.5
+	scrub_head_fill(&h, buf, 10, {a = N}, target, chunk[:])
+	check(abs(h.pos - 11.5) < 1e-9, "a jump past SCRUB_JUMP lands the head on the target")
+	check(mean(chunk[:]) < 0.002, "silently: mean |x| %.5f", mean(chunk[:]))
+
+	// 5. Backwards is the sound reversed, at the same level.
+	lv = 0
+	for k in 0 ..< 60 {
+		target -= dt
+		scrub_head_fill(&h, buf, 10, {a = N}, target, chunk[:])
+		if k >= 20 {lv += mean(chunk[:])}
+	}
+	lv /= 40
+	check(abs(lv - sine_mean) < sine_mean * 0.05, "a backward drag plays at the same level: %.4f", lv)
+
+	// 6. Outside what has been rendered: silence, never garbage.
+	h2 := Scrub_Head{pos = 3}
+	t2 := 3.0
+	for _ in 0 ..< 20 {
+		t2 += dt
+		scrub_head_fill(&h2, buf, 10, {a = N}, t2, chunk[:])
+	}
+	check(mean(chunk[:]) == 0, "a head outside the rendered window plays silence")
+
+	// The render fills forward from the playhead first, then behind it; a
+	// frame in neither stretch yet is silence.
+	f := Scrub_Fill{a0 = 100, a = 50, b = 30}
+	check(fill_has(f, 100) && fill_has(f, 149) && fill_has(f, 0) && fill_has(f, 29), "both rendered stretches count")
+	check(!fill_has(f, 150) && !fill_has(f, 30) && !fill_has(f, 99) && !fill_has(f, -1), "and nothing else does")
+	h3 := Scrub_Head{pos = 10.5}
+	t3 := 10.5
+	part := Scrub_Fill{a0 = MIX_RATE, a = MIX_RATE} // 11 s onwards only
+	for _ in 0 ..< 20 {
+		t3 += dt
+		scrub_head_fill(&h3, buf, 10, part, t3, chunk[:])
+	}
+	check(mean(chunk[:]) == 0, "a head over the not-yet-rendered stretch behind the playhead is silent")
+	for _ in 0 ..< 60 {
+		t3 += dt
+		scrub_head_fill(&h3, buf, 10, part, t3, chunk[:])
+	}
+	check(mean(chunk[:]) > 0.1, "and plays as soon as it reaches the rendered one")
+
+	// --- the real thing ------------------------------------------------
+	src := fmt.tprintf("%s/bars.mp4", media_dir())
+	if !os.exists(src) || !have_tool("pw-cat") || !have_tool("ffmpeg") {
+		fmt.println("  skipped the live scrub: needs the bundled test media, ffmpeg and pw-cat")
+		return
+	}
+	off := p.offscreen_create(320, 200, 1, "w-full h-full")
+	defer p.offscreen_destroy(off)
+	ed := bench_editor(false)
+	defer bench_editor_destroy(ed)
+	defer scrub_destroy(&ed.sc)
+	append_clip(&ed.pr, track_of_kind(&ed.pr, .Audio, 0), 0, 0, 8)
+	mixer_init(&ed.mx)
+	ed.mx.silent = true
+	defer mixer_destroy(&ed.mx)
+
+	// Press on the ruler, and give the window around the playhead its render
+	// before dragging (on a loaded machine that can take a while; a drag
+	// before it is ready is silence, which is right but not what is tested).
+	ed.playhead, ed.scrub_at = 2, 2
+	ed.drag = .Scrub
+	{
+		ui := p.offscreen_begin(off)
+		seek_to(ed, 2.001)
+		audio_follow(ed, ui)
+		p.offscreen_end(off)
+	}
+	tr := time.now()
+	for !scrub_ready(&ed.sc) && time.duration_seconds(time.since(tr)) < 8 {
+		time.sleep(10 * time.Millisecond)
+	}
+	fmt.printf("  the scrub window's first samples were ready after %.0f ms\n", time.duration_milliseconds(time.since(tr)))
+	t0 := time.now()
+	for time.duration_seconds(time.since(t0)) < 0.8 {
+		ui := p.offscreen_begin(off)
+		seek_to(ed, 2 + time.duration_seconds(time.since(t0)))
+		audio_follow(ed, ui)
+		p.offscreen_end(off)
+		time.sleep(16 * time.Millisecond)
+	}
+	check(scrub_live(&ed.sc), "dragging the playhead opened the scrubber: %s", ed.sc.err)
+	check(!mixer_live(&ed.mx), "and the mixer stayed down")
+	check(scrub_ready(&ed.sc), "the window around the playhead was rendered")
+	sh, moves := scrub_stats(&ed.sc)
+	_, sum := scrub_bytes(&ed.sc)
+	check(sum > 0 && sh > 0.3, "the drag was heard: %.0f ms of sound over %d moves", sh * 1000, moves)
+
+	// Holding still: the stream keeps flowing (it is the same sink) but it is silence.
+	ts := time.now()
+	for !scrub_settled(&ed.sc) && time.duration_seconds(time.since(ts)) < 5 {
+		time.sleep(10 * time.Millisecond)
+	}
+	fmt.printf("  the head settled %.0f ms after the drag stopped\n", time.duration_milliseconds(time.since(ts)))
+	check(scrub_settled(&ed.sc), "the head comes to rest on the playhead")
+	b0, s0 := scrub_bytes(&ed.sc)
+	for _ in 0 ..< 20 {
+		ui := p.offscreen_begin(off)
+		audio_follow(ed, ui)
+		p.offscreen_end(off)
+		time.sleep(16 * time.Millisecond)
+	}
+	b1, s1 := scrub_bytes(&ed.sc)
+	check(b1 > b0, "holding the playhead still keeps the sink fed")
+	check(s1 == s0, "with silence: %d of |sample| added", s1 - s0)
+
+	// Letting go, then the idle timeout closes the sink.
+	ed.drag = .None
+	ed.sc.last_move = time.time_add(time.now(), -2 * time.Second)
+	ui := p.offscreen_begin(off)
+	audio_follow(ed, ui)
+	p.offscreen_end(off)
+	check(!scrub_live(&ed.sc), "idle for SCRUB_IDLE closes the scrubber's sink")
+
+	// A keyboard frame step while stopped is a scrub too.
+	ed.playing = false
+	ui = p.offscreen_begin(off)
+	seek_to(ed, ed.playhead + FRAME_STEP)
+	audio_follow(ed, ui)
+	p.offscreen_end(off)
+	check(scrub_live(&ed.sc), "a frame step while stopped opens it again")
+	t1 := time.now()
+	for time.duration_seconds(time.since(t1)) < 0.4 {
+		time.sleep(20 * time.Millisecond)
+	}
+	_, s2 := scrub_bytes(&ed.sc)
+	check(s2 > 0, "and the step is heard")
+	// Pressing play hands the speakers back to the mixer.
+	ed.playing = true
+	ui = p.offscreen_begin(off)
+	audio_follow(ed, ui)
+	p.offscreen_end(off)
+	check(!scrub_live(&ed.sc) && mixer_live(&ed.mx), "play closes the scrubber and starts the mixer")
+	ed.playing = false
+	ui = p.offscreen_begin(off)
+	audio_follow(ed, ui)
+	p.offscreen_end(off)
 }

@@ -19,8 +19,9 @@ package main
 // whole timeline through a concat).
 //
 // Titles become `drawtext`, captions become `subtitles` reading a copy of the
-// cue list with the user's nudge baked in, and audio is `atrim` + `adelay` +
-// `amix`. This whole file produces an argv; `exporter_run` is the only part
+// cue list with the user's nudge baked in (or a subtitle track, when this
+// ffmpeg has no libass — see "What this ffmpeg can do"), and audio is
+// `atrim` + `adelay` + `amix`. This whole file produces an argv; `exporter_run` is the only part
 // that starts a process.
 
 import "core:fmt"
@@ -113,7 +114,138 @@ Export_Plan :: struct {
 	height:     int,
 	video_srcs: int,
 	audio_srcs: int,
+	captions:   Caption_Mode,
+	titles_out: int, // titles left out because this ffmpeg cannot draw text
+	notes:      string, // what was degraded and why, "" if nothing; owned
 	err:        string,
+}
+
+// Caption_Mode is what happened to the caption track in an export.
+Caption_Mode :: enum u8 {
+	None, // there were no captions
+	Burned, // drawn into the picture by `subtitles` (libass)
+	Track, // written as a subtitle stream the player can switch on
+	Left_Out, // neither was possible; the notes say why
+}
+
+caption_mode_name :: proc(m: Caption_Mode) -> string {
+	switch m {
+	case .None:
+		return "none"
+	case .Burned:
+		return "burned"
+	case .Track:
+		return "track"
+	case .Left_Out:
+		return "left out"
+	}
+	return "none"
+}
+
+// ---------------------------------------------------------------------------
+// What this ffmpeg can do
+//
+// The export leans on two filters that are not ffmpeg's own code: `subtitles`
+// needs libass and `drawtext` needs libfreetype. Arch's ffmpeg and Ubuntu's
+// have both. palmy's own does not — distro/recipes/runtime/src/ffmpeg.build
+// builds with `--disable-autodetect` and links glibc, zlib, libopus and
+// libx264 and nothing else — and without them the graph does not half-work,
+// it fails to parse, and the export writes nothing at all.
+//
+// So the export asks once (`ffmpeg -filters`, `ffmpeg -encoders`) and degrades
+// honestly instead of failing:
+//   - no `subtitles`: the captions go into the file as a subtitle *stream*
+//     (mov_text in .mp4/.mov, srt in .mkv, webvtt in .webm — encoders ffmpeg
+//     always has), which every player can show, and the notes say they were
+//     not burned in. If even that is impossible, they are left out and the
+//     notes say so.
+//   - no `drawtext`: titles are left out of the file, and the notes say how
+//     many. They are still in the project and the preview.
+// The notes reach the window's status line and `videoedit export --json`.
+// ---------------------------------------------------------------------------
+
+Ffmpeg_Caps :: struct {
+	probed:    bool,
+	subtitles: bool, // the libass filter
+	drawtext:  bool, // the freetype filter
+	mov_text:  bool, // subtitle encoders, for a soft track
+	srt:       bool,
+	webvtt:    bool,
+}
+
+@(private = "file")
+g_caps: Ffmpeg_Caps
+@(private = "file")
+g_caps_mu: sync.Mutex
+
+// caps_force replaces what the probe found, for the self-test; nil restores it.
+caps_force: Maybe(Ffmpeg_Caps)
+
+ffmpeg_caps :: proc() -> Ffmpeg_Caps {
+	if f, ok := caps_force.?; ok {
+		return f
+	}
+	sync.lock(&g_caps_mu)
+	defer sync.unlock(&g_caps_mu)
+	if !g_caps.probed {
+		g_caps = probe_ffmpeg_caps()
+	}
+	return g_caps
+}
+
+// probe_ffmpeg_caps asks the ffmpeg on PATH. A line of `-filters` is
+// `<flags> <name> <in->out> <description>` and a line of `-encoders` is
+// `<flags> <name> <description>`, so the name is the second field of either.
+probe_ffmpeg_caps :: proc() -> Ffmpeg_Caps {
+	c := Ffmpeg_Caps{probed = true}
+	if out, ok := run_capture({"ffmpeg", "-hide_banner", "-filters"}, context.temp_allocator); ok {
+		body := out
+		for line in strings.split_lines_iterator(&body) {
+			f := strings.fields(line, context.temp_allocator)
+			if len(f) < 2 {
+				continue
+			}
+			switch f[1] {
+			case "subtitles":
+				c.subtitles = true
+			case "drawtext":
+				c.drawtext = true
+			}
+		}
+	}
+	if out, ok := run_capture({"ffmpeg", "-hide_banner", "-encoders"}, context.temp_allocator); ok {
+		body := out
+		for line in strings.split_lines_iterator(&body) {
+			f := strings.fields(line, context.temp_allocator)
+			if len(f) < 2 {
+				continue
+			}
+			switch f[1] {
+			case "mov_text":
+				c.mov_text = true
+			case "srt":
+				c.srt = true
+			case "webvtt":
+				c.webvtt = true
+			}
+		}
+	}
+	return c
+}
+
+// soft_sub_codec is the subtitle encoder the output's container takes, or ""
+// if this container has none this ffmpeg can write.
+soft_sub_codec :: proc(out_path: string, caps: Ffmpeg_Caps) -> string {
+	lower := strings.to_lower(out_path, context.temp_allocator)
+	switch {
+	case strings.has_suffix(lower, ".mp4") || strings.has_suffix(lower, ".mov") || strings.has_suffix(lower, ".m4v"):
+		return caps.mov_text ? "mov_text" : ""
+	case strings.has_suffix(lower, ".mkv"):
+		return caps.srt ? "srt" : ""
+	case strings.has_suffix(lower, ".webm"):
+		return caps.webvtt ? "webvtt" : ""
+	}
+	return ""
 }
 
 // build_export assembles the whole invocation. It allocates into the given
@@ -219,26 +351,42 @@ build_export :: proc(
 		}
 	}
 
-	// --- captions, burned in ------------------------------------------
+	// --- captions: burned in when this ffmpeg can, a track when not -----
+	caps := ffmpeg_caps()
+	notes := make([dynamic]string, context.temp_allocator)
+	sub_codec := ""
 	if len(pr.captions) > 0 {
 		sub := fmt.aprintf("%s/videoedit-burn-%d.srt", tmp_dir(), os.get_pid())
 		if write_shifted_srt(pr, sub) {
 			plan.sub_path = sub
 			append(&temps, strings.clone(sub))
-			fmt.sbprintf(
-				&g,
-				"[%s]subtitles=filename=%s:force_style='FontSize=%d'[vsub];",
-				cur,
-				quote_path(sub),
-				set.quality == .Draft ? 14 : 22,
-			)
-			cur = "vsub"
+			if caps.subtitles {
+				fmt.sbprintf(
+					&g,
+					"[%s]subtitles=filename=%s:force_style='FontSize=%d'[vsub];",
+					cur,
+					quote_path(sub),
+					set.quality == .Draft ? 14 : 22,
+				)
+				cur = "vsub"
+				plan.captions = .Burned
+			} else if sub_codec = soft_sub_codec(set.out_path, caps); sub_codec != "" {
+				plan.captions = .Track
+				append(&notes, fmt.tprintf("captions written as a %s subtitle track, not burned in: this ffmpeg has no libass (no subtitles filter)", sub_codec))
+			} else {
+				plan.captions = .Left_Out
+				append(&notes, "captions left out: this ffmpeg has no libass to burn them in, and no subtitle encoder for this container")
+			}
 		}
 	}
 
 	// --- titles, as drawtext on top -----------------------------------
 	for c, i in titles {
 		if c.title == "" {
+			continue
+		}
+		if !caps.drawtext {
+			plan.titles_out += 1
 			continue
 		}
 		size := int(f64(c.font_size) * f64(oh) / f64(math.max(1, pr.out_h)))
@@ -268,6 +416,9 @@ build_export :: proc(
 			i,
 		)
 		cur = fmt.tprintf("t%d", i)
+	}
+	if plan.titles_out > 0 {
+		append(&notes, fmt.tprintf("%d title(s) left out: this ffmpeg has no drawtext (built without freetype)", plan.titles_out))
 	}
 	fmt.sbprintf(&g, "[%s]format=yuv420p[vout];", cur)
 
@@ -318,8 +469,17 @@ build_export :: proc(
 	for in_path in inputs {
 		arg(&argv, "-i", in_path)
 	}
+	if plan.captions == .Track {
+		// The SRT is one more input, after every media file, so its index is
+		// the count of those.
+		arg(&argv, "-i", plan.sub_path)
+	}
 	arg(&argv, "-filter_complex", graph)
 	arg(&argv, "-map", "[vout]", "-map", "[aout]")
+	if plan.captions == .Track {
+		arg(&argv, "-map", fmt.tprintf("%d:s", len(inputs)), "-c:s", sub_codec)
+		arg(&argv, "-metadata:s:s:0", "language=und")
+	}
 	arg(&argv, "-c:v", "libx264", "-pix_fmt", "yuv420p")
 	if set.quality == .Draft {
 		arg(&argv, "-preset", "ultrafast", "-crf", "30", "-b:a", "96k")
@@ -332,6 +492,7 @@ build_export :: proc(
 	arg(&argv, "-movflags", "+faststart")
 	arg(&argv, set.out_path)
 	plan.argv = argv[:]
+	plan.notes = strings.join(notes[:], "; ")
 	return plan
 }
 
@@ -509,6 +670,7 @@ export_plan_destroy :: proc(plan: ^Export_Plan) {
 	}
 	delete(plan.temps)
 	delete(plan.err)
+	delete(plan.notes)
 	plan^ = {}
 }
 
@@ -545,7 +707,8 @@ run_export :: proc(ex: ^Exporter, plan: Export_Plan) {
 		if werr == nil && state.exited {
 			dt := read_progress(plan.progress)
 			if state.exit_code == 0 {
-				exporter_set(ex, .Done, 1, "export finished", max(dt, secs))
+				msg := plan.notes == "" ? "export finished" : fmt.tprintf("export finished; %s", plan.notes)
+				exporter_set(ex, .Done, 1, msg, max(dt, secs))
 			} else {
 				msg := tail_of(logp, 400)
 				if msg == "" {

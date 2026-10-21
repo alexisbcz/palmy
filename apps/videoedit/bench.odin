@@ -480,6 +480,7 @@ audio_bench :: proc(secs: f64, silent: bool) {
 	seek_done := false
 	seek_at := f64(0)
 	seek_resume_ms := f64(0)
+	gain_done := false
 
 	for time.duration_seconds(time.since(wall0)) < secs {
 		mixer_tick(&ed.mx)
@@ -544,6 +545,27 @@ audio_bench :: proc(secs: f64, silent: bool) {
 			wall0 = time.now()
 			clock0 = -1
 			samples = 0
+		}
+		// A second after the seek, change a gain the way the inspector does.
+		// It is stored for the pump; nothing restarts, so there is no hole —
+		// where the seek above is the cost a rebuild would have had.
+		if seek_done && !gain_done && time.duration_seconds(time.since(wall0)) > 1.0 {
+			gain_done = true
+			starts := ed.mx.starts
+			for &t in ed.pr.tracks {
+				if t.kind == .Audio && len(t.clips) > 0 {
+					t.clips[0].gain *= 0.5
+					break
+				}
+			}
+			ok := mixer_set_gains(&ed.mx, &ed.pr)
+			fmt.printf(
+				"  live gain change at %.2fs: taken by the pump %v, restarts %d, longest write gap since the seek %.1f ms\n",
+				clock,
+				ok,
+				ed.mx.starts - starts,
+				mixer_max_gap(&ed.mx),
+			)
 		}
 		if mixer_done(&ed.mx) {
 			fmt.println("\n  the pipeline reached the end of the timeline")
