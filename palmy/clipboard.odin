@@ -508,7 +508,7 @@ write_all_fd :: proc(fd: linux.Fd, data: []u8, limit: time.Duration) {
 		if left <= 0 {
 			return
 		}
-		n, perr := linux.poll(pfd[:], i32(max(1, time.duration_milliseconds(left))))
+		n, perr := poll_fds(pfd[:], int(max(1, time.duration_milliseconds(left))))
 		if perr == .EINTR {
 			continue
 		}
@@ -573,7 +573,7 @@ read_all_fd :: proc(fd: linux.Fd, allocator := context.allocator) -> (string, bo
 			return "", false
 		}
 		pfd := [1]linux.Poll_Fd{{fd = fd, events = {.IN}}}
-		n, perr := linux.poll(pfd[:], i32(max(1, time.duration_milliseconds(left))))
+		n, perr := poll_fds(pfd[:], int(max(1, time.duration_milliseconds(left))))
 		if perr == .EINTR {
 			continue
 		}
@@ -1105,7 +1105,7 @@ x_clip_convert :: proc(
 			return
 		}
 		pfd := [1]linux.Poll_Fd{{fd = c.fd, events = {.IN}}}
-		cnt, perr := linux.poll(pfd[:], i32(max(1, time.duration_milliseconds(left))))
+		cnt, perr := poll_fds(pfd[:], int(max(1, time.duration_milliseconds(left))))
 		if perr != .NONE && perr != .EINTR {
 			x.in_sync -= 1
 			return
@@ -1896,7 +1896,7 @@ wl_offer_read :: proc(
 			return nil, false
 		}
 		pfd := [2]linux.Poll_Fd{{fd = fds[0], events = {.IN}}, {fd = c.fd, events = {.IN}}}
-		n, perr := linux.poll(pfd[:], i32(max(1, time.duration_milliseconds(left))))
+		n, perr := poll_fds(pfd[:], int(max(1, time.duration_milliseconds(left))))
 		if perr == .EINTR {
 			continue
 		}

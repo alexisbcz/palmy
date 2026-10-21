@@ -373,7 +373,7 @@ x_read_at_least :: proc(w: ^Window, n: int) -> bool {
 			return false
 		}
 		pfd := [1]linux.Poll_Fd{{fd = c.fd, events = {.IN}}}
-		cnt, perr := linux.poll(pfd[:], 200)
+		cnt, perr := poll_fds(pfd[:], 200)
 		if perr != .NONE && perr != .EINTR {
 			c.fatal = fmt.tprintf("poll on the X server socket failed: %v", perr)
 			return false
@@ -621,7 +621,7 @@ x_sync :: proc(w: ^Window, seq: u32) -> (reply: []u8, ok: bool) {
 			break
 		}
 		pfd := [1]linux.Poll_Fd{{fd = c.fd, events = {.IN}}}
-		cnt, perr := linux.poll(pfd[:], 200)
+		cnt, perr := poll_fds(pfd[:], 200)
 		if perr != .NONE && perr != .EINTR {
 			c.fatal = fmt.tprintf("poll on the X server socket failed: %v", perr)
 			return nil, false

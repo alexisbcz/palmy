@@ -346,7 +346,7 @@ conn_flush :: proc(c: ^Conn) {
 		if err == .EAGAIN {
 			// Wait for room in the socket buffer rather than spinning.
 			pfd := [1]linux.Poll_Fd{{fd = c.fd, events = {.OUT}}}
-			linux.poll(pfd[:], 100)
+			poll_fds(pfd[:], 100)
 			continue
 		}
 		if err != .NONE || n <= 0 {

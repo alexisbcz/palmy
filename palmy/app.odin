@@ -49,6 +49,8 @@ App :: struct {
 	quit:       bool,
 	last:       time.Tick,
 	direct:     bool,
+	logic:      bool, // this frame runs the app's code but paints nothing
+	reported:   bool, // the loop's fatal error has been written to stderr
 	frames_shown: u64,
 	fps:        f32,
 	fps_accum:  f32,
@@ -274,11 +276,32 @@ frames :: proc(app: ^App) -> (ctx: ^Ctx, ok: bool) {
 		app.open = false
 	}
 	if !wait_for_frame(app) {
+		report_loop_end(app)
 		return nil, false
 	}
 	begin_frame(app)
 	app.open = true
 	return &app.ctx, true
+}
+
+// window_error is why the frame loop ended, when it ended because something
+// went wrong rather than because the app or the user asked it to: a lost
+// connection, a protocol error, a failed poll. Empty otherwise.
+window_error :: proc(app: ^App) -> string {
+	return app == nil ? "" : app.win.conn.fatal
+}
+
+// report_loop_end says on stderr why the loop stopped when the reason is an
+// error. Without it a window that lost its display server, or whose poll
+// failed, closed with nothing said and exit status 0, and looked exactly like
+// a user closing it.
+@(private)
+report_loop_end :: proc(app: ^App) {
+	if app.reported || app.quit || app.win.should_close || app.win.conn.fatal == "" {
+		return
+	}
+	app.reported = true
+	fmt.eprintfln("palmy: %s: the window's event loop stopped: %s", app.cfg.app_id, app.win.conn.fatal)
 }
 
 // direct_frames is the no-UI loop: it hands you the window's pixel buffer each
@@ -294,6 +317,7 @@ direct_frames :: proc(app: ^App) -> (c: ^Canvas, ok: bool) {
 		app.open = false
 	}
 	if !wait_for_frame(app) {
+		report_loop_end(app)
 		return nil, false
 	}
 	if !prepare_canvas(app) {
@@ -321,6 +345,120 @@ tick :: proc(app: ^App) {
 	}
 }
 
+// ---------------------------------------------------------------------------
+// Running on time without the server
+//
+// A frame is two things: the application's code (input, state, timers — the
+// body of `for ui in frames(app)`) and the pixels it produces. The server
+// paces the second: Wayland withholds the frame callback until it wants
+// another buffer, X11 acknowledges each put with a completion event. Until
+// both loops below learnt otherwise, they paced the first by the same clock.
+//
+// That is right for a visible window — the callback is a vsync away — and
+// wrong for a hidden one. A compositor sends no frame callbacks to a surface
+// nobody can see (sway, for a window on a workspace that is not shown), so a
+// window that had just committed a frame ran no code at all until it was shown
+// again, however long that was. A `wake_after` that fell due meanwhile — a
+// password manager's idle lock, its clipboard clear — simply did not happen.
+//
+// So when the loop owes the application a frame for something it must see (a
+// due wake, or input) and the server is not ready for pixels, it runs a
+// *logic* frame: the body runs, the tree is laid out so that hit testing
+// stays correct, and nothing is painted or committed. The window keeps showing
+// its last frame and `paint_owed` asks for a real one the moment the server is
+// ready. Paint-only reasons (animating, redraw, `always`) never start a logic
+// frame, so a hidden animating window parks instead of spinning.
+//
+// A logic frame waits `LOGIC_GRACE_MS` after the last frame sent and after the
+// last logic frame. A visible window's callback nearly always arrives inside
+// that, so it pays nothing — no frame runs twice — and an app that wakes
+// itself every frame cannot turn a hidden window into a busy loop. A window
+// that has been hidden for longer than that runs a due wake immediately.
+// ---------------------------------------------------------------------------
+
+@(private)
+LOGIC_GRACE_MS :: 50
+
+// The longest the loop sleeps on X11 while a put is unacknowledged:
+// `frame_watchdog` gives up on a completion that never comes, and has to be
+// called to do it.
+@(private)
+X11_PENDING_POLL_MS :: 50
+
+// Frame_Step is what the frame loop does next.
+Frame_Step_Kind :: enum {
+	Wait,  // poll for `timeout_ms` (negative: until something happens)
+	Frame, // run the app's code and paint
+	Logic, // run the app's code; the server is not ready for pixels
+}
+
+Frame_Step :: struct {
+	kind:       Frame_Step_Kind,
+	timeout_ms: int,
+}
+
+// frame_step decides what the loop does next from the window's state. It does
+// not block or change anything; `wait_for_frame` acts on it. It is exported so
+// that the policy can be tested without a display server.
+frame_step :: proc(app: ^App) -> Frame_Step {
+	w := &app.win
+
+	// Reasons the pixels on screen may be stale.
+	paint := app.first ||
+		app.direct ||
+		app.cfg.always ||
+		app.ctx.redraw ||
+		app.ctx.animating ||
+		w.need_configure_ack ||
+		w.paint_owed
+	// Reasons the application's code has to run.
+	run := w.wake_pending || w.input_dirty
+
+	timeout := -1
+	if w.repeat_key != 0 && w.repeat_rate > 0 {
+		ms := int(time.duration_milliseconds(time.diff(time.now(), w.repeat_at)))
+		timeout = clamp(ms, 0, 1000)
+	}
+	shorter :: proc(a, b: int) -> int {
+		return b if a < 0 || (b >= 0 && b < a) else a
+	}
+
+	if !paint && !run {
+		return {.Wait, timeout}
+	}
+
+	if !w.frame_pending && next_buffer(w) != nil {
+		// Wayland paces frames with a frame callback. The X11 core protocol
+		// has no vsync at all, so `frame_hold_ms` supplies the floor that
+		// keeps an animating app from repainting as fast as the server can
+		// swallow it.
+		if hold := frame_hold_ms(w); hold > 0 {
+			return {.Wait, shorter(timeout, hold)}
+		}
+		return {.Frame, 0}
+	}
+
+	// The server is not ready for pixels: a frame callback or a completion
+	// is outstanding, or both buffers are still the server's.
+	if run && !app.direct && !app.first {
+		since := w.last_present
+		if time.diff(since, w.last_logic) > 0 {
+			since = w.last_logic
+		}
+		left := LOGIC_GRACE_MS - int(time.duration_milliseconds(time.since(since)))
+		if left <= 0 {
+			return {.Logic, 0}
+		}
+		timeout = shorter(timeout, left)
+	}
+	if w.backend == .X11 {
+		timeout = shorter(timeout, X11_PENDING_POLL_MS)
+	}
+	// On Wayland the callback and the buffer release both arrive on the
+	// socket, which wakes the poll; there is nothing to time out for.
+	return {.Wait, timeout}
+}
+
 @(private)
 wait_for_frame :: proc(app: ^App) -> bool {
 	w := &app.win
@@ -335,47 +473,24 @@ wait_for_frame :: proc(app: ^App) -> bool {
 		// not only after palmy's own wait below.
 		pump_key_repeat(app)
 
-		want := app.first ||
-			app.direct ||
-			app.cfg.always ||
-			app.ctx.redraw ||
-			app.ctx.animating ||
-			w.wake_pending ||
-			w.input_dirty ||
-			w.need_configure_ack
-
-		if want && !w.frame_pending && next_buffer(w) != nil {
-			// Wayland paces frames with a frame callback. The X11 core
-			// protocol has no vsync at all, so `frame_hold_ms` supplies the
-			// floor that keeps an animating app from repainting as fast as
-			// the server can swallow it.
-			if hold := frame_hold_ms(w); hold > 0 {
-				if !window_wait(w, hold) {
-					return false
-				}
-				pump_key_repeat(app)
-				continue
-			}
+		step := frame_step(app)
+		switch step.kind {
+		case .Frame, .Logic:
 			// The wake is spent on this frame, not on the next one too.
 			w.wake_pending = false
 			w.input_dirty = false
 			app.ctx.redraw = false
+			app.logic = step.kind == .Logic
+			if app.logic {
+				w.last_logic = time.now()
+			}
 			return true
+		case .Wait:
+			if !window_wait(w, step.timeout_ms) {
+				return false
+			}
+			pump_key_repeat(app)
 		}
-
-		timeout := -1
-		if w.repeat_key != 0 && w.repeat_rate > 0 {
-			ms := int(time.duration_milliseconds(time.diff(time.now(), w.repeat_at)))
-			timeout = clamp(ms, 0, 1000)
-		} else if want {
-			// Waiting on a frame callback or a free buffer.
-			timeout = 50
-		}
-
-		if !window_wait(w, timeout) {
-			return false
-		}
-		pump_key_repeat(app)
 	}
 }
 
@@ -429,7 +544,9 @@ prepare_canvas :: proc(app: ^App) -> bool {
 @(private)
 begin_frame :: proc(app: ^App) {
 	w := &app.win
-	if !prepare_canvas(app) {
+	// A logic frame has no buffer to draw into and does not need one; a
+	// pending resize waits for the frame that paints at the new size.
+	if !app.logic && !prepare_canvas(app) {
 		return
 	}
 	tick(app)
@@ -483,11 +600,25 @@ finish_frame :: proc(app: ^App) {
 	w := &app.win
 	ctx := &app.ctx
 
+	if app.logic {
+		// Lay out, so that the next frame routes input against where things
+		// are, but paint and send nothing: the server is not ready for it.
+		clear(&ctx.stack)
+		layout_tree(ctx, {0, 0, ctx.viewport.x, ctx.viewport.y})
+		w.paint_owed = true
+		app.logic = false
+		clear_edges(&w.input)
+		restore_late(w)
+		free_all(context.temp_allocator)
+		return
+	}
+
 	b := next_buffer(w)
 	if b == nil || app.canvas.px == nil {
 		clear(&ctx.stack)
 		return
 	}
+	w.paint_owed = false
 	end_ui(ctx, &app.canvas)
 	if present(w, b) {
 		app.frames_shown += 1

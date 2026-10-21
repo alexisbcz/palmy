@@ -146,6 +146,12 @@ Window :: struct {
 	frame_ready:       bool,
 	last_present:      time.Time,
 
+	// A frame ran the application's code while the server was not ready for
+	// pixels (see "Running on time without the server" in app.odin), so the
+	// window still shows what it showed before it: paint as soon as it can.
+	paint_owed:        bool,
+	last_logic:        time.Time,
+
 	// What changed since the last frame sent (damage.odin). Wayland only.
 	damage:            Damage_State,
 
@@ -610,6 +616,29 @@ drain_wake :: proc(w: ^Window) {
 // Event pumping
 // ---------------------------------------------------------------------------
 
+// poll_fds is poll(2) with a millisecond timeout that means the same thing on
+// every architecture: negative waits forever, zero does not wait, anything
+// else waits that long.
+//
+// `core:sys/linux.poll` cannot be trusted with that. arm64 and riscv64 have no
+// poll syscall, so it is built on ppoll with a timespec made from the i32 by
+// unsigned casts: -1 becomes 2^64/1000 seconds and an out-of-range nanosecond
+// field, the kernel answers EINVAL, and a frame loop that asked to wait
+// forever for its next event instead ends — which is how every idle palmy
+// window on an arm64 machine used to quit by itself. "Forever" in ppoll is a
+// nil timespec, so that is what this passes; it uses ppoll on every
+// architecture so there is one path, not one per ISA.
+poll_fds :: proc(fds: []linux.Poll_Fd, timeout_ms: int) -> (i32, linux.Errno) {
+	if timeout_ms < 0 {
+		return linux.ppoll(fds, nil, nil)
+	}
+	ts := linux.Time_Spec {
+		time_sec  = uint(timeout_ms / 1000),
+		time_nsec = uint(timeout_ms % 1000) * 1_000_000,
+	}
+	return linux.ppoll(fds, &ts, nil)
+}
+
 // window_wait blocks until the server sends something, until somebody wakes
 // the window, until an armed one-shot comes due, or until the timeout expires.
 // A negative timeout waits forever — or until one of the first three happens.
@@ -643,13 +672,15 @@ window_wait :: proc(w: ^Window, timeout_ms: int) -> bool {
 		nfds = 2
 	}
 
-	n, perr := linux.poll(pfd[:nfds], i32(wake_cap(w, timeout_ms)))
+	n, perr := poll_fds(pfd[:nfds], wake_cap(w, timeout_ms))
 	drain_wake(w)
 	if perr == .EINTR {
+		// A signal is not an event. Every caller loops on window_wait and
+		// recomputes its timeout, so returning is the retry.
 		return true
 	}
 	if perr != .NONE {
-		c.fatal = fmt.tprintf("poll failed: %v", perr)
+		c.fatal = fmt.aprintf("poll on the display connection failed: %v", perr)
 		return false
 	}
 	if n > 0 {
