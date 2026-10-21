@@ -389,7 +389,9 @@ COMMANDS := []kit.Command {
 				help = "a text box's style",
 			},
 			{name = "src", kind = .String, help = "an image's file, absolute or relative to the binary"},
-			// Not x/y/w/h: the kit reads --y as --yes and --h as --help.
+			// Named for what they are rather than x/y/w/h: a Param has no
+			// long aliases, so going back to --x would mean declaring every
+			// one twice to keep the spelling scripts already use.
 			{name = "left", kind = .Float, help = "slide units: the slide is 1280 by 720"},
 			{name = "top", kind = .Float},
 			{name = "width", kind = .Float},
@@ -1355,15 +1357,9 @@ cmd_render :: proc(c: ^kit.Call) -> int {
 
 @(private = "file")
 cmd_shots :: proc(c: ^kit.Call) -> int {
-	dir := strings.clone(kit.cli_str(c, "dir"))
-	// `shots` renders offscreen frames, and an offscreen frame frees the temp
-	// allocator — where the kit keeps the parsed command line it reads again
-	// for the audit record afterwards (TODO.md C3). Move it out first.
-	argv := make([]string, len(c.argv))
-	for a, i in c.argv {
-		argv[i] = strings.clone(a)
-	}
-	c.argv = argv
+	// The shots free the temp allocator; the parsed line lives in the kit's
+	// own arena, so `dir` and the audit record survive that.
+	dir := kit.cli_str(c, "dir")
 	if !c.dry_run && shots(dir) != 0 {
 		return kit.cli_failf(c, kit.EXIT_FAILED, "could not render the shots into %s", dir)
 	}
