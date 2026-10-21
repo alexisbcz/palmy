@@ -544,7 +544,7 @@ sheet_meta :: proc(sh: ^Sheet) -> string {
 	for r in sh.merges {append(&merges, rect_text(r))}
 	charts := make([dynamic]Chart_JSON, 0, len(sh.charts), context.temp_allocator)
 	for ch in sh.charts {
-		append(&charts, Chart_JSON{kind = int(ch.kind), title = ch.title, sheet = ch.sheet, range = rect_text(ch.rect), at = addr_name(ch.at), w = ch.w, h = ch.h})
+		append(&charts, Chart_JSON{kind = int(ch.kind), title = ch.title, sheet = ch.sheet, range = rect_text(ch.rect), at = addr_name(ch.at), w = ch.w, h = ch.h, labels = ch.labels})
 	}
 	m.merges = merges[:]
 	m.charts = charts[:]

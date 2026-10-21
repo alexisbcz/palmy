@@ -60,6 +60,12 @@ Cmd :: enum u8 {
 	Chart_Line,
 	Chart_Pie,
 	Chart_Delete,
+	Chart_Wider,
+	Chart_Narrower,
+	Chart_Taller,
+	Chart_Shorter,
+	Chart_Size,
+	Chart_Labels,
 	Name_Define,
 	Name_Define_Local,
 	Name_Delete,
@@ -133,6 +139,12 @@ COMMANDS := [?]Cmd_Row {
 	{.Chart_Line, "Insert a line chart", "Alt+L"},
 	{.Chart_Pie, "Insert a pie chart", "Alt+P"},
 	{.Chart_Delete, "Delete the chart here", "Alt+Shift+B"},
+	{.Chart_Wider, "Make the chart here wider", "Alt+Shift+Right on a chart"},
+	{.Chart_Narrower, "Make the chart here narrower", "Alt+Shift+Left on a chart"},
+	{.Chart_Taller, "Make the chart here taller", "Alt+Shift+Down on a chart"},
+	{.Chart_Shorter, "Make the chart here shorter", "Alt+Shift+Up on a chart"},
+	{.Chart_Size, "Set the chart's size (columns x rows)", ""},
+	{.Chart_Labels, "Show or hide the chart's data labels", "Alt+D"},
 	{.Name_Define, "Name the selection", "Ctrl+Shift+N"},
 	{.Name_Define_Local, "Name the selection, for this sheet only", "Ctrl+Alt+N"},
 	{.Name_Delete, "Delete a name", ""},
@@ -344,6 +356,48 @@ run_cmd :: proc(app: ^App, cmd: Cmd) {
 		} else {
 			set_status(app, "No chart at %s", addr_name(app.cur))
 		}
+
+	case .Chart_Wider, .Chart_Narrower, .Chart_Taller, .Chart_Shorter:
+		i := chart_at(app.sh, app.cur)
+		if i < 0 {
+			set_status(app, "No chart at %s", addr_name(app.cur))
+			break
+		}
+		ch := app.sh.charts[i]
+		w, h := ch.w, ch.h
+		#partial switch cmd {
+		case .Chart_Wider:
+			w += 1
+		case .Chart_Narrower:
+			w -= 1
+		case .Chart_Taller:
+			h += 1
+		case .Chart_Shorter:
+			h -= 1
+		}
+		undo_push(app)
+		if chart_resize(app.sh, i, w, h) {
+			set_status(app, "Chart is %s cells", chart_size_text(app.sh.charts[i]))
+		} else {
+			set_status(app, "Chart is already %s, as far as it goes", chart_size_text(ch))
+		}
+	case .Chart_Size:
+		i := chart_at(app.sh, app.cur)
+		if i < 0 {
+			set_status(app, "No chart at %s", addr_name(app.cur))
+			break
+		}
+		open_prompt(app, .Chart_Size, chart_size_text(app.sh.charts[i]))
+	case .Chart_Labels:
+		i := chart_at(app.sh, app.cur)
+		if i < 0 {
+			set_status(app, "No chart at %s", addr_name(app.cur))
+			break
+		}
+		undo_push(app)
+		on := !app.sh.charts[i].labels
+		chart_set_labels(app.sh, i, on)
+		set_status(app, on ? "Data labels on" : "Data labels off")
 
 	case .Name_Define:
 		open_prompt(app, .Name_Define, "")

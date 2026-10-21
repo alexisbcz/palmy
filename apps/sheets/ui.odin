@@ -436,6 +436,8 @@ HELP_SHEET := [?]Key_Row {
 	{"Alt+M / Alt+Shift+M", "merge / unmerge the selection"},
 	{"Alt+B / Alt+L / Alt+P", "bar / line / pie chart"},
 	{"Alt+Shift+B", "delete the chart under the cursor"},
+	{"Alt+Shift+Arrows", "on a chart: resize it"},
+	{"Alt+D", "on a chart: data labels on / off"},
 	{"Ctrl+Shift+N", "name the selection"},
 	{"Ctrl+Alt+N", "name it for this sheet only"},
 }

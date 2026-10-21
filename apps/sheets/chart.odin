@@ -41,10 +41,21 @@ Chart :: struct {
 	at:    Addr, // the grid cell the chart's top-left corner sits on
 	w:     int, // width in columns
 	h:     int, // height in rows
+	// Data labels: each bar, point or slice carries its value, formatted as
+	// the cell it came from is. Excel's `<c:showVal>`.
+	labels: bool,
 }
 
 CHART_DEF_W :: 6
 CHART_DEF_H :: 12
+
+// A chart is sized in whole cells — its frame is anchored to two cells, which
+// is also how .xlsx anchors it — so these are columns and rows. The limits
+// are the ones the loaders already clamped to.
+CHART_MIN_W :: 2
+CHART_MIN_H :: 3
+CHART_MAX_W :: 60
+CHART_MAX_H :: 120
 MAX_CHART_SERIES :: 8
 MAX_CHART_POINTS :: 64
 
@@ -73,6 +84,7 @@ Series :: struct {
 	name: string,
 	vals: [dynamic]f64,
 	have: [dynamic]bool,
+	fmt:  Cell_Fmt, // the format of the series' first number, for its labels
 }
 
 Chart_Data :: struct {
@@ -168,9 +180,13 @@ chart_read :: proc(sh: ^Sheet, ch: Chart) -> (d: Chart_Data) {
 			vals = make([dynamic]f64, 0, nrows, context.temp_allocator),
 			have = make([dynamic]bool, 0, nrows, context.temp_allocator),
 		}
+		got_fmt := false
 		for i in 0 ..< nrows {
 			v := value_at(ds, {row0 + i, col})
 			if v.kind == .Number {
+				if !got_fmt {
+					se.fmt, got_fmt = fmt_at(ds, {row0 + i, col}), true
+				}
 				append(&se.vals, v.num)
 				append(&se.have, true)
 				if !d.any {
@@ -194,8 +210,25 @@ chart_read :: proc(sh: ^Sheet, ch: Chart) -> (d: Chart_Data) {
 		if d.hi == d.lo {
 			d.hi = d.lo + 1
 		}
+		// A label sits above the tallest bar (below the deepest negative
+		// one), so leave it a little headroom inside the axis rather than
+		// let it collide with the title.
+		if ch.labels {
+			pad := (d.hi - d.lo) * 0.1
+			if d.hi > 0 {
+				d.hi += pad
+			}
+			if d.lo < 0 {
+				d.lo -= pad
+			}
+		}
 	}
 	return
+}
+
+// label_text is a data label: the value as its cell would show it.
+label_text :: proc(se: Series, v: f64) -> string {
+	return format_value(vnum(v), se.fmt)
 }
 
 // ---------------------------------------------------------------------------
@@ -290,11 +323,11 @@ draw_chart :: proc(c: ^p.Canvas, app: ^App, ch: Chart, box: p.Rect) {
 
 	switch ch.kind {
 	case .Bar:
-		draw_chart_bars(c, app, d, plot)
+		draw_chart_bars(c, app, d, plot, ch.labels)
 	case .Line:
-		draw_chart_lines(c, app, d, plot)
+		draw_chart_lines(c, app, d, plot, ch.labels)
 	case .Pie:
-		draw_chart_pie(c, app, d, plot)
+		draw_chart_pie(c, app, d, plot, ch.labels)
 	}
 
 	if legend_h > 0 {
@@ -434,7 +467,14 @@ draw_cat_labels :: proc(c: ^p.Canvas, app: ^App, d: Chart_Data, plot: p.Rect, sl
 	}
 }
 
-draw_chart_bars :: proc(c: ^p.Canvas, app: ^App, d: Chart_Data, box: p.Rect) {
+// Data labels are drawn after every bar, line or slice, so no series paints
+// over another's numbers. A label that would not fit — wider than its bar,
+// crowding the previous point of its line, on a slice too thin to hold it —
+// is left out rather than drawn over its neighbour; Excel draws them anyway
+// and the result is a smear.
+CHART_LABEL_SIZE :: f32(9)
+
+draw_chart_bars :: proc(c: ^p.Canvas, app: ^App, d: Chart_Data, box: p.Rect, labels := false) {
 	s := c.scale
 	plot, y0, y1 := plot_frame(c, app, d, box)
 	np := len(d.cats)
@@ -461,10 +501,32 @@ draw_chart_bars :: proc(c: ^p.Canvas, app: ^App, d: Chart_Data, box: p.Rect) {
 			p.fill_rect(c, {x, top, max(bw - max(1, s * 0.5), 1), hgt}, col)
 		}
 	}
+	if labels {
+		lsize := CHART_LABEL_SIZE * s
+		m := p.font_metrics(app.fonts, lsize, .Sans, .Medium)
+		for j in 0 ..< ns {
+			for i in 0 ..< np {
+				if !d.series[j].have[i] {
+					continue
+				}
+				v := d.series[j].vals[i]
+				lab := label_text(d.series[j], v)
+				tw := p.text_width(app.fonts, lab, lsize, .Sans, .Medium)
+				if tw > bw + gap * 0.9 {
+					continue
+				}
+				y := p.rect_bottom(plot) - f32((v - y0) / (y1 - y0)) * plot.h
+				cx := plot.x + slot * f32(i) + gap / 2 + bw * f32(j) + bw / 2
+				// Above a positive bar, below a negative one.
+				base := v >= 0 ? y - 3 * s - m.descent : y + 3 * s + m.ascent
+				p.draw_text(c, app.fonts, lab, cx - tw / 2, base, lsize, app.pal.fg, .Sans, .Medium)
+			}
+		}
+	}
 	draw_cat_labels(c, app, d, plot, slot)
 }
 
-draw_chart_lines :: proc(c: ^p.Canvas, app: ^App, d: Chart_Data, box: p.Rect) {
+draw_chart_lines :: proc(c: ^p.Canvas, app: ^App, d: Chart_Data, box: p.Rect, labels := false) {
 	s := c.scale
 	plot, y0, y1 := plot_frame(c, app, d, box)
 	np := len(d.cats)
@@ -494,6 +556,31 @@ draw_chart_lines :: proc(c: ^p.Canvas, app: ^App, d: Chart_Data, box: p.Rect) {
 			prev_x, prev_y, have_prev = x, y, true
 		}
 	}
+	if labels {
+		lsize := CHART_LABEL_SIZE * s
+		m := p.font_metrics(app.fonts, lsize, .Sans, .Medium)
+		for j in 0 ..< ns {
+			col := series_color(app.pal, j, ns)
+			last_right := f32(-1e9)
+			for i in 0 ..< np {
+				if !d.series[j].have[i] {
+					continue
+				}
+				v := d.series[j].vals[i]
+				lab := label_text(d.series[j], v)
+				tw := p.text_width(app.fonts, lab, lsize, .Sans, .Medium)
+				x := plot.x + slot * (f32(i) + 0.5)
+				y := p.rect_bottom(plot) - f32((v - y0) / (y1 - y0)) * plot.h
+				lx := x - tw / 2
+				if lx < last_right + 3 * s {
+					continue // it would run into the previous one
+				}
+				// In the series' colour, so two lines' labels stay apart.
+				p.draw_text(c, app.fonts, lab, lx, y - 5 * s - m.descent, lsize, col, .Sans, .Medium)
+				last_right = lx + tw
+			}
+		}
+	}
 	draw_cat_labels(c, app, d, plot, slot)
 }
 
@@ -518,7 +605,7 @@ draw_thick_line :: proc(c: ^p.Canvas, x0, y0, x1, y1, w: f32, col: p.Color) {
 // asking, for each pixel, which slice its angle falls in. At the size a chart
 // is drawn that is a few thousand tests, and it gives a clean edge without a
 // polygon rasteriser.
-draw_chart_pie :: proc(c: ^p.Canvas, app: ^App, d: Chart_Data, box: p.Rect) {
+draw_chart_pie :: proc(c: ^p.Canvas, app: ^App, d: Chart_Data, box: p.Rect, labels := false) {
 	s := c.scale
 	if len(d.series) == 0 {
 		return
@@ -570,6 +657,32 @@ draw_chart_pie :: proc(c: ^p.Canvas, app: ^App, d: Chart_Data, box: p.Rect) {
 				idx += 1
 			}
 			p.fill_rect(c, {f32(px), f32(py), 1, 1}, series_color(app.pal, idx, n))
+		}
+	}
+	if labels {
+		// Inside each slice, two thirds of the way out along its middle,
+		// in white: the slice colours are all dark enough to carry it.
+		lsize := CHART_LABEL_SIZE * s
+		m := p.font_metrics(app.fonts, lsize, .Sans, .Bold)
+		start := f32(0)
+		for i in 0 ..< n {
+			frac := ends[i] - start
+			mid := (start + ends[i]) / 2
+			start = ends[i]
+			if !se.have[i] || se.vals[i] <= 0 {
+				continue
+			}
+			lab := label_text(se, se.vals[i])
+			tw := p.text_width(app.fonts, lab, lsize, .Sans, .Bold)
+			// The arc at that radius has to be wider than the text.
+			arc := frac * 2 * math.PI * rad * 0.62
+			if arc < tw * 0.9 {
+				continue
+			}
+			a := mid * 2 * math.PI
+			lx := cx + math.sin(a) * rad * 0.62
+			ly := cy - math.cos(a) * rad * 0.62
+			p.draw_text(c, app.fonts, lab, lx - tw / 2, ly + (m.ascent - m.descent) / 2, lsize, p.hex(0xffffff), .Sans, .Bold)
 		}
 	}
 }
@@ -699,4 +812,88 @@ delete_chart_at :: proc(sh: ^Sheet, a: Addr) -> bool {
 		}
 	}
 	return false
+}
+
+// ---------------------------------------------------------------------------
+// Resizing and labelling
+//
+// The window reaches a chart by putting the cursor on a cell it covers — the
+// same convention Delete-the-chart-here already used, because this program
+// is driven from the keyboard and a pointer cannot be synthesised on its
+// compositor. `sheets chart-set` reaches it by naming such a cell. Both then
+// call the two procedures below, so there is one rule for what a size is.
+// ---------------------------------------------------------------------------
+
+// chart_at is the chart covering `a` — the topmost, i.e. the last drawn,
+// when they overlap — or -1.
+chart_at :: proc(sh: ^Sheet, a: Addr) -> int {
+	for i := len(sh.charts) - 1; i >= 0; i -= 1 {
+		if chart_covers(sh.charts[i], a) {
+			return i
+		}
+	}
+	return -1
+}
+
+// chart_resize sets a chart's size in columns and rows, clamped to what a
+// chart can be, and reports whether anything changed. The top-left corner
+// stays where it is, which is what dragging the bottom-right handle does.
+chart_resize :: proc(sh: ^Sheet, i: int, w, h: int) -> bool {
+	if i < 0 || i >= len(sh.charts) {
+		return false
+	}
+	ch := &sh.charts[i]
+	nw := clamp(w, CHART_MIN_W, min(CHART_MAX_W, MAX_COLS - ch.at.col))
+	nh := clamp(h, CHART_MIN_H, min(CHART_MAX_H, MAX_ROWS - ch.at.row))
+	if nw == ch.w && nh == ch.h {
+		return false
+	}
+	ch.w, ch.h = nw, nh
+	return true
+}
+
+chart_set_labels :: proc(sh: ^Sheet, i: int, on: bool) -> bool {
+	if i < 0 || i >= len(sh.charts) || sh.charts[i].labels == on {
+		return false
+	}
+	sh.charts[i].labels = on
+	return true
+}
+
+// parse_chart_size reads `8x14`, `8 x 14` or `8,14`: columns, then rows.
+parse_chart_size :: proc(s: string) -> (w, h: int, ok: bool) {
+	t := strings.to_lower(strings.trim_space(s), context.temp_allocator)
+	sep := -1
+	for i in 0 ..< len(t) {
+		if t[i] == 'x' || t[i] == ',' || t[i] == '*' || t[i] == ' ' {
+			sep = i
+			break
+		}
+	}
+	if sep < 0 {
+		return 0, 0, false
+	}
+	a, aok := parse_small_int(strings.trim_space(t[:sep]))
+	b, bok := parse_small_int(strings.trim(t[sep + 1:], " x,*"))
+	return a, b, aok && bok
+}
+
+@(private = "file")
+parse_small_int :: proc(s: string) -> (int, bool) {
+	if s == "" || len(s) > 6 {
+		return 0, false
+	}
+	n := 0
+	for i in 0 ..< len(s) {
+		if s[i] < '0' || s[i] > '9' {
+			return 0, false
+		}
+		n = n * 10 + int(s[i] - '0')
+	}
+	return n, true
+}
+
+// chart_size_text is the status-bar and CLI spelling of a size.
+chart_size_text :: proc(ch: Chart) -> string {
+	return fmt.tprintf("%dx%d", ch.w, ch.h)
 }

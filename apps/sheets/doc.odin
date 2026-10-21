@@ -43,6 +43,7 @@ Chart_JSON :: struct {
 	at:    string,
 	w:     int,
 	h:     int,
+	labels: bool,
 }
 
 Name_JSON :: struct {
@@ -137,6 +138,7 @@ sheet_json :: proc(sh: ^Sheet) -> Sheet_JSON {
 				at = addr_name(ch.at),
 				w = ch.w,
 				h = ch.h,
+				labels = ch.labels,
 			},
 		)
 	}
@@ -241,8 +243,9 @@ load_sheet_json :: proc(sh: ^Sheet, sj: Sheet_JSON) {
 				sheet = strings.clone(cj.sheet, sh.heap),
 				rect = rect,
 				at = {at.row, at.col},
-				w = clamp(cj.w, 1, 60),
-				h = clamp(cj.h, 1, 120),
+				w = clamp(cj.w, 1, CHART_MAX_W),
+				h = clamp(cj.h, 1, CHART_MAX_H),
+				labels = cj.labels,
 			},
 		)
 	}

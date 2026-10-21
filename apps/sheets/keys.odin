@@ -107,8 +107,21 @@ handle_keys :: proc(ui: ^p.Ctx, app: ^App) {
 				run_cmd(app, .Align_Auto)
 			}
 		}
-		// Alt+Shift+Arrow resizes the column or row under the cursor.
-		if nkeys(ui, d.sym, {.Alt, .Shift}) > 0 {
+		// Alt+Shift+Arrow resizes the column or row under the cursor — or,
+		// with the cursor on a chart, the chart, the way a drag of its
+		// corner handle would.
+		if nkeys(ui, d.sym, {.Alt, .Shift}) > 0 && chart_at(app.sh, app.cur) >= 0 {
+			switch d.sym {
+			case p.KEY_LEFT:
+				run_cmd(app, .Chart_Narrower)
+			case p.KEY_RIGHT:
+				run_cmd(app, .Chart_Wider)
+			case p.KEY_UP:
+				run_cmd(app, .Chart_Shorter)
+			case p.KEY_DOWN:
+				run_cmd(app, .Chart_Taller)
+			}
+		} else if nkeys(ui, d.sym, {.Alt, .Shift}) > 0 {
 			switch d.sym {
 			case p.KEY_LEFT:
 				run_cmd(app, .Narrower_Column)
@@ -221,6 +234,7 @@ handle_keys :: proc(ui: ^p.Ctx, app: ^App) {
 		{'l', {.Alt}, .Chart_Line},
 		{'p', {.Alt}, .Chart_Pie},
 		{'B', {.Alt, .Shift}, .Chart_Delete},
+		{'d', {.Alt}, .Chart_Labels},
 		{'N', {.Ctrl, .Shift}, .Name_Define},
 		{'n', {.Ctrl, .Alt}, .Name_Define_Local},
 	}
@@ -403,6 +417,8 @@ prompt_title :: proc(k: Prompt_Kind) -> string {
 		return "Name the selection (Sheet!Name scopes it to one sheet)"
 	case .Name_Define_Local:
 		return "Name the selection, for this sheet only"
+	case .Chart_Size:
+		return "Chart size, columns x rows"
 	case .Name_Delete:
 		return "Delete which name (Sheet!Name for a local one)"
 	case .Comment:
@@ -546,6 +562,16 @@ run_prompt :: proc(app: ^App, text: string) {
 		} else {
 			set_status(app, "There is no name %s", arg)
 		}
+	case .Chart_Size:
+		i := chart_at(app.sh, app.cur)
+		w, h, ok := parse_chart_size(arg)
+		if i < 0 || !ok {
+			set_status(app, "%s is not a size like 8x14", arg)
+			return
+		}
+		undo_push(app)
+		chart_resize(app.sh, i, w, h)
+		set_status(app, "Chart is %s cells", chart_size_text(app.sh.charts[i]))
 	case .Comment:
 		collab_comment(app, arg)
 	case .Share:

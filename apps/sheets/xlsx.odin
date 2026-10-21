@@ -1657,8 +1657,51 @@ xlsx_read_chart :: proc(pkg: ^Xlsx_Pkg, part: string) -> (ch: Chart, ok: bool) {
 	if t, f := x_kid(doc, root, "title"); f {
 		title = strings.trim_space(first_text(doc, t))
 	}
-	return Chart{kind = kind, title = title, sheet = sheet, rect = rect, w = CHART_DEF_W, h = CHART_DEF_H},
+	return Chart {
+			kind = kind,
+			title = title,
+			sheet = sheet,
+			rect = rect,
+			w = CHART_DEF_W,
+			h = CHART_DEF_H,
+			labels = chart_shows_values(doc, plot),
+		},
 		true
+}
+
+// chart_shows_values reports whether any `<c:dLbls>` under the plot area
+// turns values (or percentages, which is how a pie is usually labelled
+// elsewhere) on. This program has one switch where the format has a dozen,
+// so any series or chart-group label that shows a number counts; one that is
+// `<c:delete val="1"/>` does not.
+chart_shows_values :: proc(doc: ^xml.Document, id: xml.Element_ID) -> bool {
+	if int(id) >= len(doc.elements) {
+		return false
+	}
+	for v in doc.elements[id].value {
+		kid, is_el := v.(xml.Element_ID)
+		if !is_el {
+			continue
+		}
+		if x_is(doc.elements[kid].ident, "dLbls") {
+			if del, f := x_kid(doc, kid, "delete"); f && x_attr(doc, del, "val") != "0" {
+				continue
+			}
+			for flag in ([?]string{"showVal", "showPercent"}) {
+				if e, f := x_kid(doc, kid, flag); f {
+					v2 := x_attr(doc, e, "val")
+					if v2 == "1" || v2 == "true" || v2 == "" {
+						return true
+					}
+				}
+			}
+			continue
+		}
+		if chart_shows_values(doc, kid) {
+			return true
+		}
+	}
+	return false
 }
 
 // collect_f walks a subtree gathering the text of every `<c:f>` element.

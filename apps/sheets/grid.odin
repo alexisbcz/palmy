@@ -321,6 +321,22 @@ draw_grid :: proc(c: ^p.Canvas, r: p.Rect, app: ^App) {
 		draw_chart(c, app, ch, box)
 		p.pop_clip(c)
 	}
+	// The chart under the cursor is the one Alt+Shift+Arrows resizes and
+	// Alt+D labels, so it is drawn selected: an outline and a handle on the
+	// corner that moves.
+	if app.mode == .Nav {
+		if i := chart_at(sh, app.cur); i >= 0 {
+			if box, ok := chart_box(app, sh.charts[i], g_ptr(&g)); ok {
+				p.push_clip(c, p.rect_intersect(c.clip, body))
+				p.stroke_round_rect(c, box, {6 * s, 6 * s, 6 * s, 6 * s}, max(1, 2 * s), pal.sel_edge)
+				hs := 8 * s
+				hb := p.Rect{p.rect_right(box) - hs / 2 - 1 * s, p.rect_bottom(box) - hs / 2 - 1 * s, hs, hs}
+				p.fill_rect(c, hb, pal.sel_edge)
+				p.fill_rect(c, {hb.x + s, hb.y + s, hb.w - 2 * s, hb.h - 2 * s}, pal.bg)
+				p.pop_clip(c)
+			}
+		}
+	}
 
 	// --- the cell being edited ---
 	if app.mode == .Edit && !app.in_bar {
@@ -340,7 +356,11 @@ draw_grid :: proc(c: ^p.Canvas, r: p.Rect, app: ^App) {
 	}
 
 	// --- the active cell outline ---
-	if !(app.mode == .Edit && !app.in_bar) {
+	// Not on a chart: there the chart's own outline is the selection, and a
+	// cell box drawn across its title would only say "this cell" about a
+	// cell nobody can see.
+	on_chart := app.mode == .Nav && chart_at(sh, app.cur) >= 0
+	if !(app.mode == .Edit && !app.in_bar) && !on_chart {
 		if cr, ok := geom_cell(app, g_ptr(&g), app.cur); ok {
 			p.push_clip(c, p.rect_intersect(c.clip, body))
 			p.stroke_round_rect(c, cr, {0, 0, 0, 0}, max(1, 2 * s), pal.sel_edge)

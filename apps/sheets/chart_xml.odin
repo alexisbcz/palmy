@@ -184,6 +184,26 @@ chart_part_xml :: proc(sh: ^Sheet, ch: Chart, data_sheet: string) -> string {
 				series_hex(j),
 			)
 		}
+		// Data labels, per series, where the schema puts them: after the
+		// data points and the marker, before the categories. Each kind has
+		// its own legal positions; these are the ones nearest to what the
+		// window draws (above a bar, above a point, inside a slice).
+		if ch.labels {
+			pos := "outEnd"
+			switch ch.kind {
+			case .Bar:
+				pos = "outEnd"
+			case .Line:
+				pos = "t"
+			case .Pie:
+				pos = "ctr"
+			}
+			fmt.sbprintf(
+				&b,
+				"<c:dLbls><c:dLblPos val=\"%s\"/><c:showLegendKey val=\"0\"/><c:showVal val=\"1\"/><c:showCatName val=\"0\"/><c:showSerName val=\"0\"/><c:showPercent val=\"0\"/><c:showBubbleSize val=\"0\"/></c:dLbls>",
+				pos,
+			)
+		}
 		if cat_f != "" {
 			write_str_ref(&b, "cat", cat_f, d.cats[:])
 		}

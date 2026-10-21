@@ -37,6 +37,7 @@ Prompt_Kind :: enum u8 {
 	Name_Define,
 	Name_Define_Local,
 	Name_Delete,
+	Chart_Size,
 	// collaboration
 	Comment,
 	Share,

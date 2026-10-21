@@ -18,6 +18,7 @@ package main
 // point of the exercise: the GUI and the CLI reach the same code.
 
 import "core:fmt"
+import "core:mem/virtual"
 import "core:strings"
 import kit "kit:."
 
@@ -176,6 +177,38 @@ COMMANDS := []kit.Command {
 		out = NAME_FIELDS,
 		examples = {"sheets name-delete book.sheet.json Q2!Rate --json"},
 		run = cmd_name_delete,
+	},
+	{
+		verb = "charts",
+		summary = "every chart in the book: where it sits, its size in cells, what it reads, whether it labels its values",
+		effect = .Read,
+		args = {{name = "file", kind = .Path, help = "the book; the demo book when absent"}},
+		flags = {{name = "sheet", kind = .String, help = "only the charts on this sheet"}},
+		out = CHARTS_FIELDS,
+		examples = {"sheets charts --json", "sheets charts book.xlsx --sheet Summary --json"},
+		run = cmd_charts,
+	},
+	{
+		verb = "chart-set",
+		summary = "resize a chart (columns x rows, from its top-left cell) and turn its data labels on or off",
+		effect = .Idempotent,
+		args = {
+			{name = "file", kind = .Path, help = "the book to change", required = true},
+			{name = "at", kind = .String, help = "any cell the chart covers, optionally Sheet!F3", required = true},
+		},
+		flags = {
+			{name = "w", kind = .Int, help = "width in columns (2..60)"},
+			{name = "h", kind = .Int, help = "height in rows (3..120)"},
+			{name = "size", kind = .String, help = "both at once, 8x14"},
+			{name = "labels", kind = .Bool, help = "show each value on its bar, point or slice; --no-labels hides them"},
+			{name = "out", kind = .Path, help = "write here instead of over the input"},
+		},
+		out = CHART_FIELDS,
+		examples = {
+			"sheets chart-set book.sheet.json Summary!F3 --size 9x16 --labels --json",
+			"sheets chart-set book.xlsx F3 --w 8 --no-labels --json",
+		},
+		run = cmd_chart_set,
 	},
 	{
 		verb = "export",
@@ -345,6 +378,39 @@ SET_FIELDS := []kit.Field {
 	{name = "value", kind = .String},
 	{name = "formatted", kind = .String},
 	{name = "written", kind = .Bool, help = "false under --dry-run"},
+}
+
+CHART_FIELDS := []kit.Field {
+	{name = "path", kind = .String, opt = true, help = "chart-set: the file written"},
+	{name = "sheet", kind = .String, help = "the sheet the chart is drawn on"},
+	{name = "index", kind = .Int, help = "its position among that sheet's charts"},
+	{name = "kind", kind = .String, help = "bar, line or pie"},
+	{name = "title", kind = .String},
+	{name = "data", kind = .String, help = "the range it reads, sheet-qualified"},
+	{name = "at", kind = .String, help = "the cell under its top-left corner"},
+	{name = "w", kind = .Int, help = "width in columns"},
+	{name = "h", kind = .Int, help = "height in rows"},
+	{name = "labels", kind = .Bool, help = "data labels shown"},
+	{name = "written", kind = .Bool, opt = true, help = "chart-set: false under --dry-run"},
+}
+
+CHARTS_FIELDS := []kit.Field {
+	{
+		name = "charts",
+		kind = .Array,
+		of = {
+			{name = "sheet", kind = .String},
+			{name = "index", kind = .Int},
+			{name = "kind", kind = .String},
+			{name = "title", kind = .String},
+			{name = "data", kind = .String},
+			{name = "at", kind = .String},
+			{name = "w", kind = .Int},
+			{name = "h", kind = .Int},
+			{name = "labels", kind = .Bool},
+		},
+	},
+	{name = "count", kind = .Int},
 }
 
 NAME_FIELDS := []kit.Field {
@@ -810,6 +876,26 @@ cmd_export :: proc(c: ^kit.Call) -> int {
 	return kit.EXIT_OK
 }
 
+// offscreen_private_temp runs a render with a temp allocator of its own.
+//
+// Every offscreen frame ends in `free_all(context.temp_allocator)`, as a
+// windowed frame does — and the kit had put this call's argv, and the record
+// it writes to the audit log afterwards, in that same allocator. A shot of a
+// few steps freed them under it and the audit then cloned freed memory: a
+// segfault after the PNG was written (reproduced on main @ 4bd8315 with
+// `sheets shot x.png c:PageDown k:Right k:Right k:Right`). Frames now free
+// only their own arena.
+@(private = "file")
+offscreen_private_temp :: proc(f: proc(args: []string) -> int, args: []string) -> int {
+	arena: virtual.Arena
+	if virtual.arena_init_growing(&arena) != nil {
+		return f(args)
+	}
+	defer virtual.arena_destroy(&arena)
+	context.temp_allocator = virtual.arena_allocator(&arena)
+	return f(args)
+}
+
 @(private = "file")
 cmd_shot :: proc(c: ^kit.Call) -> int {
 	path := kit.cli_str(c, "path")
@@ -822,7 +908,7 @@ cmd_shot :: proc(c: ^kit.Call) -> int {
 	for s in kit.cli_rest(c) {
 		append(&args, s)
 	}
-	if shot_mode(args[:]) != 0 {
+	if offscreen_private_temp(shot_mode, args[:]) != 0 {
 		return kit.cli_failf(c, kit.EXIT_FAILED, "could not render %s", path)
 	}
 	return kit.EXIT_OK
@@ -840,7 +926,7 @@ cmd_film :: proc(c: ^kit.Call) -> int {
 	for s in kit.cli_rest(c) {
 		append(&args, s)
 	}
-	if film_mode(args[:]) != 0 {
+	if offscreen_private_temp(film_mode, args[:]) != 0 {
 		return kit.cli_failf(c, kit.EXIT_FAILED, "could not render %s", prefix)
 	}
 	return kit.EXIT_OK
@@ -1081,5 +1167,98 @@ cmd_name_delete :: proc(c: ^kit.Call) -> int {
 	kit.jset_str(c.out, "name", strings.to_upper(name, context.temp_allocator))
 	kit.jset_str(c.out, "scope", scope)
 	kit.jset_str(c.out, "target", target)
+	return commit_book(c, app, src)
+}
+
+// ---------------------------------------------------------------------------
+// Charts
+//
+// `chart-set` finds the chart the way the window does — by a cell it covers,
+// through `chart_at` — and changes it through `chart_resize` and
+// `chart_set_labels`, the procedures Alt+Shift+Arrows and Alt+D run.
+// ---------------------------------------------------------------------------
+
+@(private = "file")
+chart_json_into :: proc(o: ^kit.Json, sh: ^Sheet, i: int) {
+	ch := sh.charts[i]
+	data_sheet := ch.sheet != "" ? ch.sheet : sh.name
+	kit.jset_str(o, "sheet", sh.name)
+	kit.jset_int(o, "index", i)
+	kit.jset_str(o, "kind", strings.to_lower(chart_kind_name(ch.kind), context.temp_allocator))
+	kit.jset_str(o, "title", ch.title)
+	kit.jset_str(o, "data", strings.concatenate({sheet_prefix(data_sheet), rect_text(ch.rect)}, context.temp_allocator))
+	kit.jset_str(o, "at", addr_name(ch.at))
+	kit.jset_int(o, "w", ch.w)
+	kit.jset_int(o, "h", ch.h)
+	kit.jset_bool(o, "labels", ch.labels)
+}
+
+@(private = "file")
+cmd_charts :: proc(c: ^kit.Call) -> int {
+	src := kit.cli_str(c, "file")
+	app, ok := open_book(src)
+	if !ok {
+		return no_book(c, src)
+	}
+	only := kit.cli_str(c, "sheet")
+	if only != "" && book_find(app.book, only) < 0 {
+		return no_sheet(c, only)
+	}
+	arr := kit.jarr()
+	for sh in app.book.sheets {
+		if only != "" && !strings.equal_fold(sh.name, only) {
+			continue
+		}
+		for _, i in sh.charts {
+			o := kit.jobj()
+			chart_json_into(o, sh, i)
+			kit.jpush(arr, o)
+		}
+	}
+	kit.jset(c.out, "charts", arr)
+	kit.jset_int(c.out, "count", kit.jlen(arr))
+	return kit.EXIT_OK
+}
+
+@(private = "file")
+cmd_chart_set :: proc(c: ^kit.Call) -> int {
+	src := kit.cli_str(c, "file")
+	app, ok := open_book(src)
+	if !ok {
+		return no_book(c, src)
+	}
+	sh, rest, found := pick_sheet(app, kit.cli_str(c, "at"), "")
+	if !found {
+		return no_sheet(c, kit.cli_str(c, "at"))
+	}
+	r, good := ref_parse(rest)
+	if !good || r.row == NO_ROW || r.col == NO_COL {
+		return kit.cli_failf(c, kit.EXIT_USAGE, "%q is not a cell reference", rest)
+	}
+	i := chart_at(sh, {r.row, r.col})
+	if i < 0 {
+		code := kit.cli_failf(c, kit.EXIT_NOT_FOUND, "no chart covers %s!%s", sh.name, addr_name({r.row, r.col}))
+		kit.cli_err_field(c, "at", kit.cli_str(c, "at"))
+		return code
+	}
+	w, h := sh.charts[i].w, sh.charts[i].h
+	if size := kit.cli_str(c, "size"); size != "" {
+		sw, shh, sok := parse_chart_size(size)
+		if !sok {
+			return kit.cli_failf(c, kit.EXIT_USAGE, "%q is not a size like 8x14", size)
+		}
+		w, h = sw, shh
+	}
+	if kit.cli_has(c, "w") {
+		w = kit.cli_int(c, "w")
+	}
+	if kit.cli_has(c, "h") {
+		h = kit.cli_int(c, "h")
+	}
+	chart_resize(sh, i, w, h)
+	if kit.cli_has(c, "labels") {
+		chart_set_labels(sh, i, kit.cli_bool(c, "labels"))
+	}
+	chart_json_into(c.out, sh, i)
 	return commit_book(c, app, src)
 }
