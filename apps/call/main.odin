@@ -675,6 +675,11 @@ media_admit :: proc(s: ^Session, h: Header, n: int) -> bool {
 		s.e2ee.rx_clear += 1
 		return false
 	}
+	owd := i64(now_us()) - i64(h.ts_us)
+	if s.owd_wn == 0 || owd < s.owd_wmin {
+		s.owd_wmin = owd
+	}
+	s.owd_wn += 1
 	if is_video(h.ptype) {
 		// The report's rate is video's alone: it is the stream the
 		// controller sets, and the delay rule scales it from what arrived.
@@ -1304,7 +1309,11 @@ print_summary_more :: proc(app: ^App) {
 	a := &app.a
 	e := &s.e2ee
 	if e.required {
-		fmt.printfln("  encryption         %s, safety code %s", e2ee_status(e), e.safety == "" ? "-" : e.safety)
+		if e.safety == "" && e.last_safety != "" {
+			fmt.printfln("  encryption         SFrame AES-128-GCM, X25519 (call over, keys discarded), safety code was %s", e.last_safety)
+		} else {
+			fmt.printfln("  encryption         %s, safety code %s", e2ee_status(e), e.safety == "" ? "-" : e.safety)
+		}
 		fmt.printfln(
 			"  e2ee frames        %d sealed, %d opened; refused: %d clear, %d failed auth, %d replayed, %d malformed, %d before the key; %d held back before the key",
 			e.sealed, e.opened, e.rx_clear, e.rx_auth, e.rx_replay, e.rx_malformed, e.rx_no_key, e.tx_no_key,
@@ -1334,7 +1343,7 @@ print_summary_more :: proc(app: ^App) {
 	}
 	rc := &s.rate
 	fmt.printfln(
-		"  bitrate            %s, video now %.0f kbit/s (ceiling %.0f), %d reports in, rtt %.1f ms (min %.1f), peer loss %.1f%%, our rx loss %.1f%%; %d down, %d up, %d encoder restarts",
+		"  bitrate            %s, video now %.0f kbit/s (ceiling %.0f), %d reports in, rtt %.1f ms (min %.1f), peer loss %.1f%%, peer-measured queue %.0f ms, our rx loss %.1f%%; %d down, %d up, %d encoder restarts",
 		s.adapt ? "adaptive" : "fixed",
 		rc.applied,
 		rc.max_kbps,
@@ -1342,6 +1351,7 @@ print_summary_more :: proc(app: ^App) {
 		s.rtt_ms,
 		rc.min_rtt_ms,
 		s.peer_loss * 100,
+		rc.queue_ms,
 		s.rx_loss * 100,
 		rc.decreases,
 		rc.increases,

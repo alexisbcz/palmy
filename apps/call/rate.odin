@@ -24,9 +24,13 @@ package call
 //	loss < 2 % and queueing < 15 ms  increase:  rate *= 1.08 per report
 //	otherwise                        hold
 //
-// "Queueing delay" is the RTT minus the smallest RTT seen, so a long
-// path is not mistaken for a congested one — and the smaller of the last two
-// samples, so the burst of one keyframe is not mistaken for a standing queue: it is the *growth* of the RTT that
+// "Queueing delay" is measured by the receiver, one way, on the sender's
+// direction: the smallest (arrival - capture timestamp) of the window minus
+// the smallest ever seen. No clock sync is needed — the offset between the
+// two clocks cancels in the subtraction — and the window minimum means the
+// burst of one keyframe is not mistaken for a standing queue. (The first
+// version used RTT, which cannot say which direction is congested: with only
+// Alice's uplink constrained, Bob cut his own rate to the floor too.) it is the *growth* of the RTT that
 // says a queue is filling, and that signal arrives before any loss does — a
 // droptail bottleneck only drops once its queue is full, by which time the
 // call has a quarter of a second of extra latency. That is why delay comes
@@ -95,6 +99,14 @@ Rate_Ctl :: struct {
 	have_rtt:   bool,
 	last_loss:  f64,
 	last_queue_ms: f64,
+	// The receiver's own measure of the queue on *our* direction: its
+	// one-way delay, the window's minimum over the smallest ever seen. Used
+	// when the peer reports it, which this version always does; the RTT
+	// rule above is the fallback, and it cannot tell which direction is
+	// congested — measured: with only Alice's uplink constrained, Bob's RTT
+	// rose too and Bob cut his own rate to the floor for nothing.
+	queue_ms:   f64,
+	have_queue: bool,
 	last_reason: Rate_Reason,
 
 	last_decrease: f64,
@@ -114,6 +126,13 @@ rate_init :: proc(c: ^Rate_Ctl, start_kbps: f64, min_kbps := RATE_MIN_KBPS) {
 	c.applied = start_kbps
 	c.last_decrease = -100
 	c.applied_at = -100
+}
+
+// rate_on_queue takes the queueing delay the receiver measured on our
+// direction.
+rate_on_queue :: proc(c: ^Rate_Ctl, q_ms: f64) {
+	c.queue_ms = max(0, q_ms)
+	c.have_queue = true
 }
 
 // rate_on_rtt folds one RTT sample in.
@@ -142,6 +161,9 @@ rate_on_rtt :: proc(c: ^Rate_Ctl, rtt_ms: f64) {
 rate_on_feedback :: proc(c: ^Rate_Ctl, now: f64, loss: f64, recv_kbps: f64) -> Rate_Reason {
 	c.last_loss = loss
 	queue := c.have_rtt ? min(c.rtt_last[0], c.rtt_last[1]) - c.min_rtt_ms : 0
+	if c.have_queue {
+		queue = c.queue_ms
+	}
 	c.last_queue_ms = queue
 	reason := Rate_Reason.Hold
 	target := c.kbps
@@ -338,6 +360,7 @@ rate_simulate :: proc(cfg: Rate_Sim, keep_trace := false) -> (res: Rate_Result) 
 	sent_w, recv_w: [2]int // [audio, video]
 	bytes_w: int
 	next_fb := RATE_FEEDBACK_EVERY
+	wq := f64(1e9) // the smallest queue a packet met in this window: one-way, as the receiver measures it
 	next_video, next_audio := 0.0, 0.0
 	pending_kf := 0
 	last10 := cfg.seconds - 10
@@ -349,10 +372,11 @@ rate_simulate :: proc(cfg: Rate_Sim, keep_trace := false) -> (res: Rate_Result) 
 	}
 
 	for t := 0.0; t < cfg.seconds; t += DT {
-		send :: proc(link: ^Link, q: ^[dynamic]Inflight, t: f64, bytes: int, video: bool, lossy: bool, gen: rand.Generator, loss_pct: f64) -> bool {
+		send :: proc(link: ^Link, q: ^[dynamic]Inflight, t: f64, bytes: int, video: bool, lossy: bool, gen: rand.Generator, loss_pct: f64, wq: ^f64) -> bool {
 			if lossy && rand.float64(gen) * 100 < loss_pct {
 				return false
 			}
+			wq^ = min(wq^, link_queue_ms(link, t))
 			dep, ok := link_admit(link, t, bytes)
 			if ok {
 				append(q, Inflight{dep, bytes, video})
@@ -372,7 +396,7 @@ rate_simulate :: proc(cfg: Rate_Sim, keep_trace := false) -> (res: Rate_Result) 
 				frame -= MTU_PAYLOAD
 				sent_w[1] += 1
 				if t >= last10 {sent10 += 1}
-				send(&link, &q, t, b, true, lossy, gen, cfg.loss_pct)
+				send(&link, &q, t, b, true, lossy, gen, cfg.loss_pct, &wq)
 			}
 		}
 		if t >= next_audio {
@@ -380,7 +404,7 @@ rate_simulate :: proc(cfg: Rate_Sim, keep_trace := false) -> (res: Rate_Result) 
 			sent_w[0] += 1
 			if t >= last10 {sent10 += 1}
 			opus := int(rate_opus_bps(ctl.applied)) / 8 / 50
-			send(&link, &q, t, opus + HDR + 28, false, lossy, gen, cfg.loss_pct)
+			send(&link, &q, t, opus + HDR + 28, false, lossy, gen, cfg.loss_pct, &wq)
 		}
 		// Arrivals.
 		for len(q) > 0 && q[0].at <= t {
@@ -408,8 +432,12 @@ rate_simulate :: proc(cfg: Rate_Sim, keep_trace := false) -> (res: Rate_Result) 
 			recv_kbps := f64(bytes_w) * 8 / 1000 / RATE_FEEDBACK_EVERY
 			rtt := cfg.base_rtt_ms + link_queue_ms(&link, t)
 			sent_w, recv_w, bytes_w = {}, {}, 0
+			wq = 1e9
 			if cfg.adaptive {
 				rate_on_rtt(&ctl, rtt)
+				if wq < 1e9 {
+					rate_on_queue(&ctl, wq)
+				}
 				rate_on_feedback(&ctl, t, loss, recv_kbps)
 				if _, apply := rate_should_apply(&ctl, t); apply {
 					pending_kf += 6000

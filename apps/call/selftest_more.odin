@@ -165,11 +165,12 @@ test_rate :: proc() {
 		for _ in 0 ..< 10 {
 			rate_on_rtt(&c, 80)
 		}
-		check(rate_on_feedback(&c, 3.6, 0.0, 200) == .Delay, "a growing RTT is a delay decrease before any loss")
+		check(rate_on_feedback(&c, 3.6, 0.0, 200) == .Delay, "a growing RTT is a delay decrease before any loss (the fallback, for a peer that does not report a queue)")
 		check(math.abs(c.kbps - 170) < 0.01, "to 0.85 x what arrived: %.0f", c.kbps)
 		for _ in 0 ..< 20 {
 			rate_on_rtt(&c, 20)
 		}
+		rate_on_queue(&c, 3) // from here on the peer reports its one-way queue
 		check(rate_on_feedback(&c, 4.0, 0, 170) == .Hold, "clean again, but it holds for two seconds after a decrease")
 		r := rate_on_feedback(&c, 5.7, 0, 170)
 		check(r == .Increase, "then it probes upward (%s)", rate_reason_name(r))
@@ -177,6 +178,8 @@ test_rate :: proc() {
 			rate_on_feedback(&c, 6 + f64(i) * 0.5, 0, c.kbps)
 		}
 		check(c.kbps == 300, "and climbs back to the ceiling, never past it (%.0f)", c.kbps)
+		rate_on_queue(&c, 80)
+		check(rate_on_feedback(&c, 29, 0, 280) == .Delay, "a queue the receiver measures one way is a delay decrease (%.0f)", c.kbps)
 		for i in 0 ..< 60 {
 			rate_on_feedback(&c, 30 + f64(i), 0.5, 10)
 		}
@@ -555,12 +558,16 @@ test_control_ext :: proc() {
 	out: [CONTROL_MAX]u8
 	kp := pcp.keypair_generate()
 	c := Control{kind = .Feedback, name = "Alice", codecs = CODEC_ALL, has_pub = true, pub = kp.public, has_fb = true}
-	c.fb = {loss_permille = 123, recv_kbps = 456, echo_ts = 0x0102030405060708, hold_us = 98765}
+	c.fb = {loss_permille = 123, recv_kbps = 456, echo_ts = 0x0102030405060708, hold_us = 98765, has_queue = true, queue_ms = 37}
 	b := write_control(out[:], c)
 	got, ok := read_control(b)
 	check(ok && got.kind == .Feedback && got.name == "Alice" && got.codecs == CODEC_ALL, "a FEEDBACK with both extensions round trips")
 	check(got.has_pub && got.pub == kp.public, "the public key survives")
 	check(got.has_fb && got.fb == c.fb, "the report survives")
+	old := out
+	old[len(b) - 18 - 1] = 16 // the same report, as a 16-byte one from before the queue field
+	g0, ok0 := read_control(old[:len(b) - 2])
+	check(ok0 && g0.has_fb && !g0.fb.has_queue && g0.fb.hold_us == c.fb.hold_us, "a 16-byte report without the queue field still reads")
 	plain := write_control(out[:], {kind = .State, name = "Bob", codecs = CODEC_H264})
 	check(len(plain) == 5 + 3, "a message with no extensions is exactly the old message (%d bytes)", len(plain))
 	// An unknown extension is skipped by length; one that runs off the end

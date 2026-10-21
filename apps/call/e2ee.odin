@@ -98,6 +98,8 @@ E2ee :: struct {
 	// Heap-allocated so an AEAD context never moves after it is set up.
 	tx, rx:    ^pcp.Sframe_Key,
 	safety:    string,
+	// The last call's code, kept for the summary after its keys are gone.
+	last_safety: string,
 
 	// Scratch for one sealed or opened frame.
 	buf: [dynamic]u8,
@@ -123,6 +125,8 @@ e2ee_init :: proc(e: ^E2ee) {
 
 e2ee_destroy :: proc(e: ^E2ee) {
 	e2ee_forget(e)
+	delete(e.last_safety)
+	e.last_safety = ""
 	delete(e.buf)
 	e.buf = nil
 	crypto.zero_explicit(&e.kp, size_of(e.kp))
@@ -141,7 +145,8 @@ e2ee_forget :: proc(e: ^E2ee) {
 		e.rx = nil
 	}
 	if e.safety != "" {
-		delete(e.safety)
+		delete(e.last_safety)
+		e.last_safety = e.safety
 		e.safety = ""
 	}
 	e.have_peer = false

@@ -113,6 +113,11 @@ Session :: struct {
 	rx_seq_audio: Seq_Count,
 	rx_seq_video: Seq_Count,
 	rx_media_w:   int, // video bytes received in the current window
+	owd_base:     i64, // smallest one-way delay seen (arrival - capture), us
+	owd_wmin:     i64, // smallest in the current window
+	owd_have:     bool,
+	owd_wn:       int,
+	rx_queue_ms:  f64, // what we last reported
 	last_fb_tx:   f64,
 	fb_peer_ts:   u64, // capture timestamp of the peer's last FEEDBACK
 	fb_peer_at:   u64, // when it arrived, on our clock
@@ -389,6 +394,7 @@ set_state :: proc(s: ^Session, st: Call_State, reason := "") {
 		}
 		s.rx_seq_audio, s.rx_seq_video = {}, {}
 		s.fb_peer_ts, s.fb_peer_at = 0, 0
+		s.owd_have, s.owd_wn = false, 0
 	}
 }
 
@@ -526,6 +532,16 @@ send_feedback :: proc(s: ^Session, t: f64) {
 		recv_kbps     = u16(clamp(f64(s.rx_media_w) * 8 / 1000 / max(dt, 0.1), 0, 65535)),
 	}
 	s.rx_media_w = 0
+	if s.owd_wn > 0 {
+		if !s.owd_have || s.owd_wmin < s.owd_base {
+			s.owd_base = s.owd_wmin
+			s.owd_have = true
+		}
+		s.rx_queue_ms = f64(s.owd_wmin - s.owd_base) / 1000
+		fb.has_queue = true
+		fb.queue_ms = u16(clamp(s.rx_queue_ms, 0, 65535))
+	}
+	s.owd_wn = 0
 	if s.fb_peer_ts != 0 {
 		fb.echo_ts = s.fb_peer_ts
 		fb.hold_us = u32(min(now_us() - s.fb_peer_at, u64(max(u32))))
@@ -546,6 +562,9 @@ session_on_feedback :: proc(s: ^Session, c: Control, sent_ts: u64) -> (kbps: int
 	if c.fb.echo_ts != 0 && now > c.fb.echo_ts + u64(c.fb.hold_us) {
 		s.rtt_ms = f64(now - c.fb.echo_ts - u64(c.fb.hold_us)) / 1000
 		rate_on_rtt(&s.rate, s.rtt_ms)
+	}
+	if c.fb.has_queue {
+		rate_on_queue(&s.rate, f64(c.fb.queue_ms))
 	}
 	s.peer_loss = f64(c.fb.loss_permille) / 1000
 	s.peer_kbps = f64(c.fb.recv_kbps)

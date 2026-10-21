@@ -15,11 +15,16 @@ predictive codec costs and what is done about it.
 Implementation: [`proto.odin`](proto.odin). Header round-trips, rejection
 cases, fragmentation arithmetic, codec negotiation, the keyframe flag and the
 loss path are asserted in `call --self-test` — 345 checks, up from 229 before the codec work
-(430 now that it also covers SFU mode).
+(430 with SFU mode, 501 now with direct-call encryption, adaptive bitrate and echo cancellation).
 
 **Calls with more than two people** go through `palm-sfu` and speak PCP2, a
 superset of this header, end-to-end encrypted with SFrame. That is the second
 half of this document: see **PCP2** below.
+
+**Direct calls are end-to-end encrypted too** (X25519 + SFrame, the same
+library), **adapt their video rate** to the peer's loss and RTT reports, and
+can **cancel echo** in process: see **End-to-end encryption (direct calls)**,
+**Adaptive bitrate** and **Echo cancellation** below.
 
 ## Transport
 
@@ -68,7 +73,7 @@ and the reassembler are what make that acceptable.
 | --- | --- | --- |
 | `magic` | 4 | `"PCP1"`. A port on a shared machine receives strays; a packet that is not ours is discarded here. |
 | `payload type` | 1 | `0` control, `1` Opus audio, `2` PCM-16 audio, `3` MJPEG video, `4` H.264 video. |
-| `flags` | 1 | bit 0 `MARKER`: this is the last fragment of its frame. bit 1 `KEYFRAME`: this frame needs no earlier frame to decode. Bits 2–7 reserved, sent as zero. |
+| `flags` | 1 | bit 0 `MARKER`: this is the last fragment of its frame. bit 1 `KEYFRAME`: this frame needs no earlier frame to decode. bit 2 `E2EE`: the reassembled frame is an SFrame ciphertext. Bits 3–7 reserved, sent as zero. |
 | `sequence` | 2 | Per-stream datagram counter, wrapping. Audio and video count separately, so loss on one is measurable without the other. |
 | `capture timestamp` | 8 | `CLOCK_MONOTONIC_RAW` microseconds, taken **at capture**, not at send. |
 | `frame id` | 4 | Per-stream frame counter, wrapping. Every fragment of one video frame carries the same id. |
@@ -239,7 +244,18 @@ Signalling, on the same socket, one datagram per message.
 +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
 |  codec offer  |   <- optional; absent means "MJPEG only"
 +-+-+-+-+-+-+-+-+
+|  ext type     |  ext length   |  value ...    <- zero or more extensions
++-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
 ```
+
+Extensions follow the offer, each `type length value`; a reader skips a type
+it does not know by its length, and refuses one whose length runs past the
+datagram. A message with none is byte for byte the old message.
+
+| type | length | |
+| --- | --- | --- |
+| 1 | 32 | the sender's X25519 public key for this call (see **End-to-end encryption**), on `HELLO`, `INVITE`, `RINGING`, `ACCEPT` and `STATE` |
+| 2 | 16 | a receiver report: loss (u16, per mille), received video rate (u16, kbit/s), RTT echo timestamp (u64, µs), hold (u32, µs) — on `FEEDBACK` (see **Adaptive bitrate**) |
 
 | kind | | |
 | --- | --- | --- |
@@ -251,6 +267,7 @@ Signalling, on the same socket, one datagram per message.
 | 5 | `BYE` | hung up; sent three times, because its loss leaves the other end looking at a frozen picture until the 5 s peer timeout |
 | 6 | `STATE` | mute and camera flags, every 500 ms while connected; doubles as a keepalive. An instance that receives one while idle replies `BYE`, because the peer believes it is in a call that no longer exists |
 | 7 | `KEYFRAME` | *send me a frame I can decode on its own.* This protocol's PLI; see **Loss** below. It says nothing about the call's state, and is the one kind an idle instance does not answer with `BYE` |
+| 8 | `FEEDBACK` | a receiver report every 500 ms while connected, carrying extension 2; what the sender's bitrate controller runs on |
 
 `flags`: bit 0 muted, bit 1 camera off.
 
@@ -690,6 +707,163 @@ Two defences, both in this application, because `palmy/` is not ours to patch:
   the worst failure a call application can have, because the only symptom is
   the other person saying "hello?".
 
+## End-to-end encryption (direct calls)
+
+Since this revision a direct call is encrypted end to end, with the same
+primitives and library as PCP2 (`cloud/rtc/pcp`), from Odin's `core:crypto`,
+nothing invented. Implementation and the full threat model:
+[`e2ee.odin`](e2ee.odin).
+
+```
+key agreement   X25519, one ephemeral keypair per end per call; public keys
+                ride INVITE/RINGING/ACCEPT/STATE as control extension 1
+key schedule    shared = X25519(mine, theirs), refused if all-zero
+                base_tx = HKDF-SHA256(salt "palm-call-pcp1-v1", shared,
+                                      "media" || my_pub || peer_pub)[:16]
+                base_rx = the same, public keys swapped
+media           SFrame (RFC 9605), AES_128_GCM_SHA256_128, KID 1, whole
+                frame sealed before fragmentation, FLAG_E2EE on every
+                fragment; AAD = SFrame header || payload type, keyframe bit,
+                capture timestamp, frame id
+replay          SFrame's 64-frame window per receive key
+```
+
+**Threat model, in short.** A passive observer — anyone who can read the
+datagrams, including a relay between the two ends — sees the clear PCP1
+header (types, sizes, timing, sequence numbers, frame ids, keyframe bit,
+timestamps) and nothing of the media. A frame altered in flight, including
+its keyframe bit or timestamp, fails authentication; a replayed frame is
+refused; a clear frame injected into an encrypted call is refused; and a
+sender never falls back to the clear — with no key, frames are held back.
+Keys are per call and discarded at the end (forward secrecy per call), and
+the peer's key is pinned for the length of the call so an old INVITE cannot
+move the session back onto an old key. **Not** protected: an *active*
+man in the middle at key agreement (the public keys are not bound to any
+identity — both ends show a safety code, SHA-256 over the two keys, and a
+substitution makes them differ: compare it aloud), metadata, unauthenticated
+signalling (an attacker on the path can end a call — denial of service it
+already has by dropping packets), and the endpoints themselves.
+
+Asserted in `call --self-test` ("direct call end-to-end encryption, through a
+relay that reads everything"): two real sessions talk through a two-socket
+relay on loopback; the relay keeps every datagram. No byte it saw contains the
+plaintext; Bob opens the frame; an observer's own X25519 key fails
+authentication; a replay, a flipped ciphertext byte, a keyframe bit set in
+flight and a rewritten timestamp are each refused; a clear frame is refused;
+a five-fragment video frame reassembles and opens byte for byte; a different
+key mid-call is ignored; hanging up discards the keys; and a relay that
+substitutes its own key is detected by the safety codes differing.
+
+`--no-e2ee` turns it off at one end, and then that end and its peer exchange
+no media at all, by design: there is no negotiation down to the clear.
+
+## Adaptive bitrate (direct calls)
+
+The H.264 rate now follows the peer's reports instead of sitting at 300
+kbit/s. Each end sends `FEEDBACK` every 500 ms — loss over the window (the
+worse of audio and video, by sequence number), the video rate that arrived,
+and an RTT echo (RTCP's LSR/DLSR shape: the timestamp of the peer's last
+report, and how long it was held). The sender runs a controller shaped like
+Google Congestion Control: loss > 10 % decreases by loss/2; queueing delay
+(RTT over its minimum, the smaller of the last two samples) > 40 ms decreases
+to 0.85 × what arrived; clean reports increase 8 % per report after a 2 s
+hold; floor 60 kbit/s, ceiling `--video-bitrate`. The encoder follows when
+the target moves more than 15 % (a new rate is an encoder restart, which costs
+a keyframe), at most every 2 s up and 0.5 s down; Opus follows without a
+restart (32 → 24 → 16 kbit/s) and its FEC loss figure tracks the measured
+loss. MJPEG is not rate-controlled. Implementation and the reasoning:
+[`rate.odin`](rate.odin).
+
+`--link-kbps N` sends everything through an emulated bottleneck (FIFO at N
+kbit/s, 250 ms of queue, tail drop); `--loss N --loss-until S` injects
+random video loss for S seconds; `--fixed-bitrate` turns adaptation off.
+`call rate` runs the same controller against the same link in simulation.
+
+Measured live (`apps/call/measure.sh OUT rate|loss`, two headless `call`
+processes on loopback, 40 s, synthetic sources, end-to-end encrypted):
+
+| Alice → Bob through a 200 kbit/s bottleneck | fixed 300 kbit/s | adaptive |
+| --- | --- | --- |
+| packets dropped at the link | 2245 of 4048 (55 %) | 186 of 3376 (5.5 %, mostly the first 5 s) |
+| Bob's video frames decoded | **0** of 1216 — never a clean keyframe | **890** of 1218 |
+| queue Bob measured on Alice's stream | 104 ms (RTT 228 ms) | 4 ms (RTT 24 ms) |
+| Alice's video rate | 300 | 300 → 100 in 5 s, then 83–139 |
+| Bob's own rate (his link is not constrained) | 300 | 300 throughout |
+
+The last row is the reason the delay signal is one-way: the first version
+used RTT, Bob's RTT rose with Alice's queue, and Bob cut his own rate to the
+60 kbit/s floor for nothing.
+
+Injected loss (`--loss 150 --loss-until 15`, 15 % of Alice's video fragments
+for 15 s, then none): 300 → 252 (2.2 s) → 198 → 165 → 140 → 118 → 84 kbit/s
+(12.8 s), all on loss; then 102 (17.3 s) → 143 → 200 → 276 → back at the 300
+ceiling at 25.3 s.
+
+`call rate` (simulation, same controller and link model): fixed 300 into 200
+kbit/s loses 70 % with RTT 297 ms; adaptive settles at ~80 kbit/s of video,
+147 kbit/s on the wire, 0.2 % loss, RTT 52 ms — 73 % of the link, the
+headroom being the 6 KB keyframe each rate change costs.
+
+## Echo cancellation
+
+In process, no library: [`aec.odin`](aec.odin), with the decision written at
+its top. In short: AEC3 is C++ (webrtc-audio-processing, no C API), speexdsp
+is C but would be a dependency for ~600 lines of arithmetic, the project
+prefers none, and only an in-process canceller can be scored sample-exactly
+on a synthetic echo path. It is speex's design — a partitioned-block
+frequency-domain filter (256-sample blocks, 170 ms tail), proportionate
+step, Valin's leakage-based per-bin step for double talk, two filters with a
+statistical promotion test, pre-emphasis — written fresh in Odin with an FFT
+of its own. `--echo-cancel` (PipeWire's AEC3 on real devices) stays as the
+alternative.
+
+`--aec` runs it on the microphone, with what was handed to the player as the
+reference. `--echo-path D:G[:R]` puts a synthetic room (D ms of delay, G dB,
+R ms of decaying impulse response) between the player and the synthetic
+microphone, so a call has an echo to cancel without a loudspeaker; the
+summary then scores it live, echo energy against what is left of it.
+
+Measured, offline (`call aec`, a synthetic voice — pink noise plus a harmonic
+comb, syllable envelope, pauses — through a 40 ms, −6 dB, 30 ms room, −65
+dBFS noise; double talk 5–7 s; the room moves at 9 s):
+
+| | ERLE | double talk: echo removed | after double talk | 1.5 s after the room moved | converged |
+| --- | --- | --- | --- | --- | --- |
+| default room | **23.9 dB** | 30.9 dB | 27.5 dB | 15.4 dB | 2.2 s |
+| 90 ms delay, 60 ms room | 18.7 | 27.4 | 25.3 | 12.9 | 3.2 s |
+| −20 dB echo | 14.8 | 22.8 | 15.0 | 12.3 | 2.6 s |
+| −50 dBFS noise floor | 14.0 (floor-bound; echo itself 20.1 down) | 21.7 | 14.0 | 11.3 | 2.6 s |
+| ffmpeg pink noise far, 330 Hz tone near | 22.9 | 12.8 | 12.6 | 3.4 | 1.0 s |
+| ffmpeg pink noise far, loud 440 Hz tone near | 25.7 | 20.7 | 19.1 | 21.6 | 1.3 s |
+| bypassed (`--off`) | 0.0 | 0.0 | 0.0 | 0.0 | — |
+
+Three versions were measured on the way, and the table is the third: a fixed
+step gave the same ERLE but let a steady near-end tone be learnt in double
+talk (−2.6 dB during, 1.3 after); speex's step without pre-emphasis fixed
+that and lost to a louder tone (−20 dB during); with pre-emphasis every row
+holds.
+
+Live (`apps/call/measure.sh OUT aec`, two `call` processes, Bob's synthetic
+microphone is gated pink noise, Alice's synthetic room echoes it, 20 s,
+scored from 3 s):
+
+| Alice | live echo removal |
+| --- | --- |
+| silent, `--aec` | **54.4 dB** (no noise in the synthetic room, so no floor) |
+| talking 2 s in every 8 (double talk), `--aec` | **26.1 dB** |
+| silent, no `--aec` | 0.0 dB |
+
+Cost: 6–19 ms of one core per second of audio with `-o:speed`.
+
+**Not done:** residual echo suppression (non-linear processing); a delay
+estimator (a bulk delay past the 170 ms tail is not cancelled); clock-drift
+compensation between a real capture device and a real player; and SFU mode.
+No real microphone or loudspeaker was used — by rule — so its behaviour in a
+real room is untested; the synthetic room is what it is measured on. A
+canceller that never hears the far end alone (double talk from the first
+sample) never converges, and is then slightly worse than none (−3 dB): it
+needs single talk to learn, as every adaptive canceller does.
+
 ## Running it
 
 ```sh
@@ -701,7 +875,7 @@ Two defences, both in this application, because `palmy/` is not ours to patch:
 ./call.bin --headless --bind 47812 --peer 47811 --name Bob --autoanswer --quit-after 30
 
 # the pipeline tests, no compositor, no window
-./call.bin --selftest        # 345 checks
+./call.bin --selftest        # 501 checks
 
 # the same call on MJPEG, which is also how an MJPEG-only peer is simulated
 ./call.bin --headless --bind 47812 --peer 47811 --autoanswer --video-codec mjpeg
@@ -766,6 +940,33 @@ Implementation:
 that plays the SFU, 4 for echo-cancel routing). `palm-sfu --selftest` runs the
 library's checks and then a real SFU on a loopback port with fake participants
 speaking PCP2 over real sockets: **100 checks**.
+
+## More than two: an SFU, not a mesh — the decision
+
+Decided, and built: calls of three or more go through a selective forwarding
+unit (`palm-sfu`); a call of two stays direct, with no server at all.
+
+- **A mesh** has every participant send its media to every other. With no
+  server it is attractive, and it is what this file's PCP1 already is for two.
+  But the uplink grows with the room: each sender pays (N − 1) × its rate —
+  for a 375 kbit/s stream, 1.1 Mbit/s up at four people and 1.9 at six, on
+  the link that is usually the narrow one. And it cannot adapt per receiver
+  without an encoder per receiver: one person on a bad link drags everyone
+  to the rate that person can take, or the sender runs N − 1 encoders. Here
+  an encoder is an `ffmpeg` process; two per participant (simulcast) is
+  already the budget.
+- **An SFU** takes one copy per simulcast layer from each sender (~465
+  kbit/s up whatever the size of the room) and forwards to each receiver the
+  layer *that receiver's* link can carry, from its own loss reports. It also
+  picks the dominant speaker from the clear audio-level byte. The cost is a
+  server, and that the server sees metadata; with SFrame it cannot see media
+  (below, and asserted with a relay in the self-test).
+- **An MCU** (mixing server) was not considered: it has to decode, so it
+  cannot be end-to-end encrypted.
+
+`apps/call/rooms.sh OUT N` runs an N-party call (3 to 6) through palm-sfu on
+loopback, synthetic and headless, and reports every receiver ← sender stream;
+the 3- and 4-party runs are under **Measured** below.
 
 What is reused unchanged from the two-party path: the capture processes, the
 Opus encoder, the H.264 encoder and its keyframe-by-restart, the jitter buffer,
@@ -1001,16 +1202,9 @@ the source here is ready for it.
 
 ## Echo cancellation
 
-Not implemented in this app, deliberately. The realistic path is PipeWire's
-`module-echo-cancel`, which runs WebRTC's AEC3 (`libspa-aec-webrtc.so`, which
-is installed on this machine) between a virtual source and a virtual sink.
-`--echo-cancel` makes the real-device path record from `echo-cancel-source` and
-play into `echo-cancel-sink`; the synthetic sources are untouched, and nothing
-changes unless the module is loaded, which belongs in Palmy's PipeWire
-configuration. It is not loaded here, and no real microphone was opened to
-test it — the self-test asserts the command lines only. In-process AEC3 would
-mean linking webrtc-audio-processing (C++ only) behind a C shim; speexdsp's
-echo canceller is C but clearly worse with speakers and double talk.
+In process since PCP1 got it — see **Echo cancellation** in the first half.
+In SFU mode `--aec` is not wired yet (the mixed playout is the reference it
+would need); `--echo-cancel` (PipeWire's AEC3) works in both modes.
 
 ## Measured
 
@@ -1064,6 +1258,22 @@ At 150 kbit/s (`demo3.sh OUTDIR 20 150`): Carol → **audio** at 1.9 s (estimate
 129 kbit/s, 39.8 % loss), receives 984 and 982 of 985 audio frames from the
 others and no video; one probe to low at 14 s falls back at 14.5 s.
 
+### Three and four people, again (`apps/call/rooms.sh`)
+
+Re-run with this revision, 20 s each, every participant a headless `call`
+with a synthetic camera and a scheduled synthetic talker, encrypted end to
+end:
+
+| | streams | audio frames per stream | video frames per stream | capture→received | capture→played | failed auth | safety code |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| 3 people | 6 of 6 | 981–983 | 582–587 | 3.9–4.7 ms | 35.5–40.7 ms | 0 | identical at all 3 |
+| 4 people | 12 of 12 | 958–974 | 571–592 | 8.6–11.0 ms | 29.4–34.2 ms | 0 | identical at all 4 |
+
+The VM was under a load average of ~50 from other work during the four-way
+run, which is where its extra wire milliseconds come from. "No key" (frames
+that arrived before their key, 0–19 per stream) is the start of the call, as
+above.
+
 ## Running it
 
 ```sh
@@ -1072,7 +1282,7 @@ odin build cloud/rtc/sfu -out:$B/palm-sfu.bin -o:speed
 odin build apps/call -collection:palmy=… -collection:shadcn=… -collection:kit=… -out:$B/call.bin -o:speed
 
 $B/palm-sfu.bin --selftest                       # 100 checks
-$B/call.bin --self-test                          # 430 checks
+$B/call.bin --self-test                          # 501 checks
 bash cloud/rtc/sfu/demo3.sh /tmp/out 20          # the measurement above
 bash cloud/rtc/sfu/demo3.sh /tmp/out 20 400      # Carol on a 400 kbit/s downlink
 bash cloud/rtc/sfu/shots.sh /tmp/shots dark      # screenshots, offscreen

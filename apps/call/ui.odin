@@ -542,7 +542,7 @@ draw_stats :: proc(app: ^App, ui: ^p.Ctx) {
 	}
 	switch {
 	case a.aec_on:
-		stat_row(ui, "Echo canceller", fmt.tprintf("in process · %.0f dB", aec_erle_estimate(&a.aec)))
+		stat_row(ui, "Echo canceller", fmt.tprintf("in process · ERLE %.0f dB", aec_erle_estimate(&a.aec)))
 	case aec_nodes:
 		stat_row(ui, "Echo canceller", "PipeWire AEC3")
 	case:

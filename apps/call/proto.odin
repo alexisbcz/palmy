@@ -488,11 +488,16 @@ Feedback :: struct {
 	// trip without either end trusting the other's clock.
 	echo_ts: u64,
 	hold_us: u32,
+	// The queueing delay this receiver sees on the sender's direction, ms:
+	// its one-way delay over the window's minimum against the smallest seen.
+	// Two more bytes; a 16-byte report (no queue) is still read.
+	has_queue: bool,
+	queue_ms:  u16,
 }
 
 EXT_PUB :: u8(1) // 32 bytes
 EXT_FEEDBACK :: u8(2) // 16 bytes
-FEEDBACK_BYTES :: 16
+FEEDBACK_BYTES :: 18
 CONTROL_MAX :: 5 + 64 + 2 + 32 + 2 + FEEDBACK_BYTES
 
 // write_control serialises into `out` and returns the used prefix.
@@ -514,8 +519,8 @@ CONTROL_MAX :: 5 + 64 + 2 + 32 + 2 + FEEDBACK_BYTES
 // order; a reader skips a type it does not know by its length, so the same
 // rule — append, never move — keeps holding:
 //   type 1   32 bytes   X25519 public key (end-to-end encryption, e2ee.odin)
-//   type 2   16 bytes   receiver report: loss u16, kbps u16, echo ts u64,
-//                       hold u32 (adaptive bitrate, rate.odin)
+//   type 2   18 bytes   receiver report: loss u16, kbps u16, echo ts u64,
+//                       hold u32, queue ms u16 (adaptive bitrate, rate.odin)
 write_control :: proc(out: []u8, c: Control) -> []u8 {
 	n := min(len(c.name), 64)
 	need := 5 + n
@@ -549,6 +554,7 @@ write_control :: proc(out: []u8, c: Control) -> []u8 {
 		put_u16(b[2:4], c.fb.recv_kbps)
 		put_u64(b[4:12], c.fb.echo_ts)
 		put_u32(b[12:16], c.fb.hold_us)
+		put_u16(b[16:18], c.fb.queue_ms)
 		at += 2 + FEEDBACK_BYTES
 	}
 	return out[:at]
@@ -588,13 +594,17 @@ read_control :: proc(b: []u8) -> (c: Control, ok: bool) {
 			copy(c.pub[:], v)
 			c.has_pub = true
 		case EXT_FEEDBACK:
-			if l != FEEDBACK_BYTES {
+			if l != 16 && l != FEEDBACK_BYTES {
 				return {}, false
 			}
 			c.fb.loss_permille = get_u16(v[0:2])
 			c.fb.recv_kbps = get_u16(v[2:4])
 			c.fb.echo_ts = get_u64(v[4:12])
 			c.fb.hold_us = get_u32(v[12:16])
+			if l >= 18 {
+				c.fb.queue_ms = get_u16(v[16:18])
+				c.fb.has_queue = true
+			}
 			c.has_fb = true
 		}
 		at += 2 + l
