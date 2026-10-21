@@ -92,6 +92,17 @@ REPLACE_FIELDS := []kit.Field {
 	{name = "written", kind = .Bool, help = "false under --dry-run or when nothing matched"},
 }
 
+MERGE_FIELDS := []kit.Field {
+	{name = "file", kind = .String},
+	{name = "out", kind = .String, help = "where the result was (or would be) written"},
+	{name = "table", kind = .Int, help = "which table, counting from 1 in reading order"},
+	{name = "range", kind = .String, help = "the cells merged, or split back, as A1:B2 — grown to whole merges"},
+	{name = "rows", kind = .Int, help = "rows the range covers"},
+	{name = "cols", kind = .Int, help = "columns the range covers"},
+	{name = "merges", kind = .Int, help = "merged cells in the table afterwards"},
+	{name = "written", kind = .Bool, help = "false under --dry-run"},
+}
+
 CONVERT_FIELDS := []kit.Field {
 	{name = "from", kind = .String},
 	{name = "to", kind = .String},
@@ -249,6 +260,38 @@ COMMANDS := []kit.Command {
 			"docs replace Draft Final report.docx --out final.docx --json",
 		},
 		run = cmd_replace,
+	},
+	{
+		verb = "merge",
+		summary = "merge a rectangle of table cells into one, then save",
+		effect = .Mutate,
+		args = {
+			{name = "file", kind = .Path, help = "the document to change", required = true},
+			{name = "range", kind = .String, help = "two corner cells, A1:B2; column letters, row numbers from 1", required = true},
+		},
+		flags = {
+			{name = "table", kind = .Int, def = "1", help = "which table, counting from 1 in reading order"},
+			{name = "out", kind = .Path, help = "write the result here instead of over the file; the format follows its extension"},
+		},
+		out = MERGE_FIELDS,
+		examples = {"docs merge report.docx A1:C1 --json", "docs merge plan.odt B2:B4 --table 2 --out plan-merged.odt --json"},
+		run = cmd_merge,
+	},
+	{
+		verb = "split",
+		summary = "split a merged table cell back into its grid cells, then save",
+		effect = .Mutate,
+		args = {
+			{name = "file", kind = .Path, help = "the document to change", required = true},
+			{name = "cell", kind = .String, help = "any cell of the merge, as B2", required = true},
+		},
+		flags = {
+			{name = "table", kind = .Int, def = "1", help = "which table, counting from 1 in reading order"},
+			{name = "out", kind = .Path, help = "write the result here instead of over the file; the format follows its extension"},
+		},
+		out = MERGE_FIELDS,
+		examples = {"docs split report.docx A1 --json", "docs split plan.odt B3 --table 2 --dry-run --json"},
+		run = cmd_split,
 	},
 	{
 		verb = "convert",
@@ -578,6 +621,142 @@ cmd_replace :: proc(c: ^kit.Call) -> int {
 	kit.jset_int(c.out, "replaced", n)
 	kit.jset_bool(c.out, "written", written)
 	return kit.EXIT_OK
+}
+
+// cell_ref reads "B2" as (row 1, col 1). Column letters run A..Z (a table has
+// at most TABLE_MAX_COLS columns), rows count from 1.
+cell_ref :: proc(s: string) -> (row, col: int, ok: bool) {
+	t := strings.trim_space(s)
+	if len(t) < 2 {
+		return 0, 0, false
+	}
+	ch := t[0] | 0x20
+	if ch < 'a' || ch > 'z' {
+		return 0, 0, false
+	}
+	n := 0
+	for k in 1 ..< len(t) {
+		if t[k] < '0' || t[k] > '9' {
+			return 0, 0, false
+		}
+		n = n * 10 + int(t[k] - '0')
+		if n > 100_000 {
+			return 0, 0, false
+		}
+	}
+	if n < 1 {
+		return 0, 0, false
+	}
+	return n - 1, int(ch - 'a'), true
+}
+
+cell_name :: proc(row, col: int) -> string {
+	return fmt.tprintf("%c%d", rune('A' + col), row + 1)
+}
+
+// cli_table finds the --table'th table, counting from 1.
+@(private = "file")
+cli_table :: proc(c: ^kit.Call, st: ^State) -> (t: ^Table, n: int, code: int) {
+	n = kit.cli_int(c, "table")
+	seen := 0
+	for &pa in st.doc.paras {
+		if pa.kind == .Table && pa.table != nil {
+			seen += 1
+			if seen == n {
+				return pa.table, n, kit.EXIT_OK
+			}
+		}
+	}
+	if seen == 0 {
+		return nil, n, kit.cli_fail(c, kit.EXIT_NOT_FOUND, "the document has no table")
+	}
+	return nil, n, kit.cli_failf(c, kit.EXIT_USAGE, "--table %d: the document has %d table(s)", n, seen)
+}
+
+@(private = "file")
+cli_merge_split :: proc(c: ^kit.Call, merge: bool) -> int {
+	st := State{}
+	label, code := cli_open(c, &st, "file")
+	if code != kit.EXIT_OK {
+		return code
+	}
+	defer state_destroy(&st)
+	t, n, tc := cli_table(c, &st)
+	if tc != kit.EXIT_OK {
+		return tc
+	}
+	nr, nc := len(t.rows), table_cols(t)
+	inside :: proc(r, c, nr, nc: int) -> bool {return r >= 0 && r < nr && c >= 0 && c < nc}
+	r0, c0, r1, c1: int
+	if merge {
+		spec := kit.cli_str(c, "range")
+		colon := strings.index_byte(spec, ':')
+		ok0, ok1: bool
+		if colon > 0 {
+			r0, c0, ok0 = cell_ref(spec[:colon])
+			r1, c1, ok1 = cell_ref(spec[colon + 1:])
+		}
+		if !ok0 || !ok1 {
+			return kit.cli_failf(c, kit.EXIT_USAGE, "%q is not a range like A1:B2", spec)
+		}
+		if !inside(r0, c0, nr, nc) || !inside(r1, c1, nr, nc) {
+			return kit.cli_failf(c, kit.EXIT_USAGE, "%s is outside the %dx%d table", spec, nr, nc)
+		}
+		r0, c0, r1, c1 = table_merge_rect(t, r0, c0, r1, c1)
+		if r0 == r1 && c0 == c1 {
+			return kit.cli_failf(c, kit.EXIT_USAGE, "%s is one cell; a merge needs two or more", spec)
+		}
+		table_merge(t, r0, c0, r1, c1)
+	} else {
+		spec := kit.cli_str(c, "cell")
+		r, col, ok := cell_ref(spec)
+		if !ok {
+			return kit.cli_failf(c, kit.EXIT_USAGE, "%q is not a cell like B2", spec)
+		}
+		if !inside(r, col, nr, nc) {
+			return kit.cli_failf(c, kit.EXIT_USAGE, "%s is outside the %dx%d table", spec, nr, nc)
+		}
+		ar, ac := table_anchor(t, r, col)
+		a := table_cell(t, ar, ac)
+		if !cell_is_merged(a) {
+			return kit.cli_failf(c, kit.EXIT_USAGE, "%s is not a merged cell", spec)
+		}
+		r0, c0, r1, c1 = ar, ac, ar + cell_rspan(a) - 1, ac + cell_cspan(a) - 1
+		table_split(t, ar, ac)
+	}
+	merges := 0
+	for &row in t.rows {
+		for &cl in row.cells {
+			if cell_is_merged(&cl) {merges += 1}
+		}
+	}
+	out := kit.cli_has(c, "out") ? kit.cli_str(c, "out") : label
+	if !c.dry_run {
+		relayout(&st)
+		if !doc_export(&st, out, format_of_path(out), doc_display_title(&st.doc, base_name(out))) {
+			return kit.cli_failf(c, kit.EXIT_FAILED, "cannot write %s", out)
+		}
+	}
+	kit.cli_trace(c, "table %d: %s %s:%s", n, merge ? "merged" : "split", cell_name(r0, c0), cell_name(r1, c1))
+	kit.jset_str(c.out, "file", label)
+	kit.jset_str(c.out, "out", out)
+	kit.jset_int(c.out, "table", n)
+	kit.jset_str(c.out, "range", fmt.tprintf("%s:%s", cell_name(r0, c0), cell_name(r1, c1)))
+	kit.jset_int(c.out, "rows", r1 - r0 + 1)
+	kit.jset_int(c.out, "cols", c1 - c0 + 1)
+	kit.jset_int(c.out, "merges", merges)
+	kit.jset_bool(c.out, "written", !c.dry_run)
+	return kit.EXIT_OK
+}
+
+@(private = "file")
+cmd_merge :: proc(c: ^kit.Call) -> int {
+	return cli_merge_split(c, true)
+}
+
+@(private = "file")
+cmd_split :: proc(c: ^kit.Call) -> int {
+	return cli_merge_split(c, false)
 }
 
 @(private = "file")

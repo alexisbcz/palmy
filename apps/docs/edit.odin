@@ -1051,6 +1051,65 @@ table_toggle_borders :: proc(st: ^State) {
 	note(st, t.borders ? "Cell borders on" : "Cell borders off")
 }
 
+// table_merge_cmd merges the cells the selection spans: the rectangle between
+// the cell the selection starts in and the cell it ends in, grown to take in
+// any merge it cuts through. The text of every merged cell moves into the
+// top-left one, in reading order.
+table_merge_cmd :: proc(st: ^State) {
+	t := table_at(st)
+	if t == nil {
+		note(st, "The caret is not in a table")
+		return
+	}
+	a, c := st.anchor, st.caret
+	if a.para != c.para || (a.row == c.row && a.col == c.col) {
+		note(st, "Select across two or more cells to merge them")
+		return
+	}
+	edit_begin(st, .Structural)
+	t = table_at(st)
+	if !table_merge(t, a.row, a.col, c.row, c.col) {
+		note(st, "Select across two or more cells to merge them")
+		return
+	}
+	r0, c0, r1, c1 := table_merge_rect(t, a.row, a.col, c.row, c.col)
+	st.caret = Pos {
+		para = c.para,
+		row  = r0,
+		col  = c0,
+	}
+	st.anchor = st.caret
+	st.dirty = true
+	st.goal_ok = false
+	history_break(&st.hist)
+	note(st, fmt.tprintf("Merged %d×%d cells", r1 - r0 + 1, c1 - c0 + 1))
+}
+
+// table_split_cmd splits the merged cell the caret is in back into its grid
+// cells. The text stays in the top-left one.
+table_split_cmd :: proc(st: ^State) {
+	t := table_at(st)
+	if t == nil {
+		note(st, "The caret is not in a table")
+		return
+	}
+	ar, ac := table_anchor(t, st.caret.row, st.caret.col)
+	a := table_cell(t, ar, ac)
+	if !cell_is_merged(a) {
+		note(st, "This cell is not merged")
+		return
+	}
+	rs, cs := cell_rspan(a), cell_cspan(a)
+	edit_begin(st, .Structural)
+	t = table_at(st)
+	table_split(t, ar, ac)
+	st.caret = pos_clamp(&st.doc, st.caret)
+	st.anchor = st.caret
+	st.dirty = true
+	history_break(&st.hist)
+	note(st, fmt.tprintf("Split into %d×%d cells", rs, cs))
+}
+
 // table_nudge_width widens or narrows the caret's column by a fixed step, the
 // keyboard equivalent of dragging a column rule.
 table_nudge_width :: proc(st: ^State, delta: f32) {
@@ -1144,7 +1203,7 @@ do_insert_image :: proc(st: ^State, path: string) {
 	measure := f32(CONTENT_W)
 	if cell {
 		t := st.doc.paras[st.caret.para].table
-		measure = max(20, table_width(t, st.caret.col) - 2 * CELL_PAD)
+		measure = max(20, table_span_w(t, st.caret.row, st.caret.col) - 2 * CELL_PAD)
 	}
 	w, h := image_para_size(&arr[at], measure, CONTENT_H)
 	note(st, fmt.tprintf("%s — %dx%d, drawn %.0fx%.0f", base_name(full), arr[at].img.w, arr[at].img.h, w, h))

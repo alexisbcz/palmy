@@ -300,17 +300,55 @@ docx_table :: proc(b: ^strings.Builder, t: ^Table, media: []Media, img_seq: ^int
 	}
 	strings.write_string(b, "</w:tblGrid>")
 
+	// Every row a merge joins to the header repeats with it, as in the window.
+	head_end := table_head_end(t)
 	for r in 0 ..< len(t.rows) {
 		strings.write_string(b, "<w:tr>")
 		head := t.header && r == 0
 		strings.write_string(b, "<w:trPr><w:cantSplit/>")
-		if head {
+		if r <= head_end {
 			strings.write_string(b, "<w:tblHeader/>")
 		}
 		strings.write_string(b, "</w:trPr>")
 		for c in 0 ..< ncols {
+			// Merged cells, WordprocessingML's way: across a row, one <w:tc>
+			// with `gridSpan`; down a column, a <w:tc> in every row, the first
+			// with `vMerge restart` and the rest with a bare `vMerge` and an
+			// empty paragraph. So a covered cell in its anchor's row writes
+			// nothing, and one below writes a continuation as wide as the
+			// anchor when it is in the anchor's column, nothing otherwise.
+			span := 1
+			vm := ""
+			if cl := table_cell(t, r, c); cl != nil {
+				if cl.covered {
+					ar, ac := table_anchor(t, r, c)
+					a := table_cell(t, ar, ac)
+					if ar == r || ac != c || a == nil {
+						continue
+					}
+					strings.write_string(b, "<w:tc><w:tcPr>")
+					fmt.sbprintf(b, "<w:tcW w:w=\"%d\" w:type=\"dxa\"/>", tw(table_span_w(t, ar, ac)))
+					if cell_cspan(a) > 1 {
+						fmt.sbprintf(b, "<w:gridSpan w:val=\"%d\"/>", cell_cspan(a))
+					}
+					strings.write_string(b, "<w:vMerge/>")
+					if head {
+						strings.write_string(b, "<w:shd w:val=\"clear\" w:color=\"auto\" w:fill=\"F1F1F2\"/>")
+					}
+					strings.write_string(b, "</w:tcPr><w:p/></w:tc>")
+					continue
+				}
+				span = cell_cspan(cl)
+				if cell_rspan(cl) > 1 {
+					vm = "<w:vMerge w:val=\"restart\"/>"
+				}
+			}
 			strings.write_string(b, "<w:tc><w:tcPr>")
-			fmt.sbprintf(b, "<w:tcW w:w=\"%d\" w:type=\"dxa\"/>", tw(table_width(t, c)))
+			fmt.sbprintf(b, "<w:tcW w:w=\"%d\" w:type=\"dxa\"/>", tw(table_span_w(t, r, c)))
+			if span > 1 {
+				fmt.sbprintf(b, "<w:gridSpan w:val=\"%d\"/>", span)
+			}
+			strings.write_string(b, vm)
 			if head {
 				strings.write_string(b, "<w:shd w:val=\"clear\" w:color=\"auto\" w:fill=\"F1F1F2\"/>")
 			}
@@ -329,7 +367,7 @@ docx_table :: proc(b: ^strings.Builder, t: ^Table, media: []Media, img_seq: ^int
 						// `docx_drawing` is told which.
 						if m, got := media_for(media, cp.img); got {
 							img_seq^ += 1
-							docx_drawing(b, &cp, m, img_seq^, max(20, table_width(t, c) - 2 * CELL_PAD))
+							docx_drawing(b, &cp, m, img_seq^, max(20, table_span_w(t, r, c) - 2 * CELL_PAD))
 						} else {
 							strings.write_string(b, "<w:r><w:t xml:space=\"preserve\">[")
 							xml_escape(b, cp.img == nil ? "picture" : (cp.img.alt != "" ? cp.img.alt : cp.img.path))
@@ -968,13 +1006,26 @@ doc_to_odt_content :: proc(d: ^Doc, media: []Media = nil, alloc := context.alloc
 			head := t.header && r == 0
 			strings.write_string(b, "<table:table-row>")
 			for c in 0 ..< ncols {
+				// ODF keeps the grid whole: the anchor says how far it spans
+				// and every cell it hides is a <table:covered-table-cell/>.
+				cl := table_cell(t, r, c)
+				if cl != nil && cl.covered {
+					strings.write_string(b, "<table:covered-table-cell/>")
+					continue
+				}
 				fmt.sbprintf(
 					b,
-					"<table:table-cell table:style-name=\"Tbl%d.%s\" office:value-type=\"string\">",
+					"<table:table-cell table:style-name=\"Tbl%d.%s\" office:value-type=\"string\"",
 					n,
 					head ? "H" : "C",
 				)
-				cl := table_cell(t, r, c)
+				if cl != nil && cell_cspan(cl) > 1 {
+					fmt.sbprintf(b, " table:number-columns-spanned=\"%d\"", cell_cspan(cl))
+				}
+				if cl != nil && cell_rspan(cl) > 1 {
+					fmt.sbprintf(b, " table:number-rows-spanned=\"%d\"", cell_rspan(cl))
+				}
+				strings.write_string(b, ">")
 				if cl == nil || len(cl.paras) == 0 {
 					strings.write_string(b, "<text:p/>")
 				} else {
@@ -988,7 +1039,7 @@ doc_to_odt_content :: proc(d: ^Doc, media: []Media = nil, alloc := context.alloc
 								href = m.part
 							}
 							img_seq^ += 1
-							odt_image(b, &cp, href, img_seq^, max(20, table_width(t, c) - 2 * CELL_PAD))
+							odt_image(b, &cp, href, img_seq^, max(20, table_span_w(t, r, c) - 2 * CELL_PAD))
 							continue
 						}
 						name := head ? "TblHead" : odt_para_style(cp.kind)
@@ -1002,10 +1053,14 @@ doc_to_odt_content :: proc(d: ^Doc, media: []Media = nil, alloc := context.alloc
 			strings.write_string(b, "</table:table-row>")
 		}
 		if t.header && len(t.rows) > 0 {
+			// The header is row 0 and any rows a merge joins to it.
+			he := table_head_end(t)
 			strings.write_string(b, "<table:table-header-rows>")
-			row(b, st, t, n, 0, ncols, media, img_seq)
+			for r in 0 ..= he {
+				row(b, st, t, n, r, ncols, media, img_seq)
+			}
 			strings.write_string(b, "</table:table-header-rows>")
-			for r in 1 ..< len(t.rows) {
+			for r in he + 1 ..< len(t.rows) {
 				row(b, st, t, n, r, ncols, media, img_seq)
 			}
 		} else {
@@ -1708,11 +1763,12 @@ rtf_runs :: proc(b: ^strings.Builder, pa: ^Paragraph, cols: []u32, force_bold :=
 @(private = "file")
 rtf_table :: proc(b: ^strings.Builder, t: ^Table, cols: []u32) {
 	ncols := table_cols(t)
+	head_end := table_head_end(t)
 	for r in 0 ..< len(t.rows) {
 		head := t.header && r == 0
 		strings.write_string(b, "\\trowd\\trgaph")
 		fmt.sbprintf(b, "%d\\trleft0", tw(CELL_PAD) / 2)
-		if head {
+		if r <= head_end {
 			// `\trhdr` is RTF's repeating header row — the same pagination
 			// promise the .docx `<w:tblHeader/>` makes.
 			strings.write_string(b, "\\trhdr")
@@ -1721,6 +1777,19 @@ rtf_table :: proc(b: ^strings.Builder, t: ^Table, cols: []u32) {
 		edge := f32(0)
 		for c in 0 ..< ncols {
 			edge += table_width(t, c)
+			// Merged cells keep one \cellx per grid column, flagged: `\clmgf`
+			// starts a run merged across, `\clmrg` continues it; `\clvmgf`
+			// and `\clvmrg` do the same downwards. A cell inside a merge
+			// both ways carries one of each.
+			ar, ac := table_anchor(t, r, c)
+			if a := table_cell(t, ar, ac); cell_is_merged(a) {
+				if cell_rspan(a) > 1 {
+					strings.write_string(b, r == ar ? "\\clvmgf" : "\\clvmrg")
+				}
+				if cell_cspan(a) > 1 {
+					strings.write_string(b, c == ac ? "\\clmgf" : "\\clmrg")
+				}
+			}
 			if t.borders {
 				strings.write_string(
 					b,
@@ -1738,7 +1807,7 @@ rtf_table :: proc(b: ^strings.Builder, t: ^Table, cols: []u32) {
 		for c in 0 ..< ncols {
 			strings.write_string(b, "\\pard\\intbl\\ql")
 			fmt.sbprintf(b, "\\f0\\fs%d ", half_pt(15))
-			if cl := table_cell(t, r, c); cl != nil {
+			if cl := table_cell(t, r, c); cl != nil && !cl.covered {
 				for &cp, i in cl.paras {
 					if i > 0 {
 						// Several paragraphs in one cell are separated by
@@ -1750,7 +1819,7 @@ rtf_table :: proc(b: ^strings.Builder, t: ^Table, cols: []u32) {
 						// The same `{\pict}` group as in the body, sized
 						// against the column. No `\pard` and no `\par`: both
 						// would end the cell.
-						rtf_pict(b, &cp, max(20, table_width(t, c) - 2 * CELL_PAD))
+						rtf_pict(b, &cp, max(20, table_span_w(t, r, c) - 2 * CELL_PAD))
 						continue
 					}
 					rtf_runs(b, &cp, cols, head, cp.kind == .Code)
@@ -2183,6 +2252,12 @@ doc_from_docx_xml :: proc(
 	grid := make([dynamic]f32, 0, 8, context.temp_allocator)
 	tbl_header := false
 	tbl_borders := true
+	// Merged cells: `gridSpan` and `vMerge` on the cell being read, and the
+	// grid positions that continue a merge, resolved when the table closes.
+	tc_span := 1
+	tc_vcont := false
+	conts_h := make([dynamic][2]int, 0, 8, context.temp_allocator)
+	conts_v := make([dynamic][2]int, 0, 8, context.temp_allocator)
 	// --- picture state
 	blip_rid := ""
 	run_text := strings.builder_make(context.temp_allocator)
@@ -2228,6 +2303,8 @@ doc_from_docx_xml :: proc(
 						borders = true,
 					}
 					clear(&grid)
+					clear(&conts_h)
+					clear(&conts_v)
 					tbl_header = false
 					tbl_borders = true
 				}
@@ -2246,6 +2323,7 @@ doc_from_docx_xml :: proc(
 						append(&tbl.rows, r)
 					}
 					table_fit_widths(&tbl)
+					table_apply_conts(&tbl, conts_h[:], conts_v[:])
 					tp := para_make(.Table)
 					tp.table = new(Table)
 					tp.table^ = tbl
@@ -2307,19 +2385,42 @@ doc_from_docx_xml :: proc(
 					paras = make([dynamic]Paragraph, 0, 1),
 				}
 				cell_open = true
+				tc_span = 1
+				tc_vcont = false
 			case .Close:
 				if cell_open {
 					if len(cell.paras) == 0 {
 						append(&cell.paras, para_make())
 					}
 					if row_open {
+						// A cell spanning n grid columns holds the first and
+						// stands for the rest, which are filled in as empty
+						// cells continuing it so the grid stays positional.
+						at := [2]int{len(tbl.rows), len(row.cells)}
+						if tc_vcont {
+							append(&conts_v, at)
+						}
 						append(&row.cells, cell)
+						for k in 1 ..< clamp(tc_span, 1, TABLE_MAX_COLS) {
+							append(&row.cells, cell_make())
+							append(&conts_h, [2]int{at[0], at[1] + k})
+						}
 					} else {
 						cell_destroy(&cell)
 					}
 					cell_open = false
 				}
 			case .Empty, .Text, .Done:
+			}
+		case "w:gridSpan":
+			if tbl_depth == 1 && cell_open {
+				tc_span = attr_int(&x, "w:val", 1)
+			}
+		case "w:vMerge":
+			// `restart` begins a merge; no value, or `continue`, carries on.
+			if tbl_depth == 1 && cell_open {
+				v, has := xml_attr(&x, "w:val")
+				tc_vcont = !has || v == "continue"
 			}
 		case "a:blip":
 			if v, has := xml_attr(&x, "r:embed"); has {
@@ -3083,6 +3184,7 @@ doc_from_odt_xml :: proc(content: string, archive: []u8 = nil) -> Doc {
 						append(&tbl.rows, r)
 					}
 					table_fit_widths(&tbl)
+					table_normalise(&tbl) // spans were read off each cell; covered cells came as their own elements
 					tp := para_make(.Table)
 					tp.table = new(Table)
 					tp.table^ = tbl
@@ -3143,6 +3245,8 @@ doc_from_odt_xml :: proc(content: string, archive: []u8 = nil) -> Doc {
 			case .Open:
 				cell = Cell {
 					paras = make([dynamic]Paragraph, 0, 1),
+					cspan = attr_int(&x, "table:number-columns-spanned", 1),
+					rspan = attr_int(&x, "table:number-rows-spanned", 1),
 				}
 				cell_open = true
 			case .Close:
@@ -3158,10 +3262,16 @@ doc_from_odt_xml :: proc(content: string, archive: []u8 = nil) -> Doc {
 					cell_open = false
 				}
 			case .Empty:
-				// An empty cell element still occupies its columns.
+				// An empty cell element still occupies its columns, and an
+				// empty merged cell still spans.
 				if row_open {
-					for _ in 0 ..< clamp(attr_int(&x, "table:number-columns-repeated", 1), 1, TABLE_MAX_COLS) {
-						append(&row.cells, cell_make())
+					for k in 0 ..< clamp(attr_int(&x, "table:number-columns-repeated", 1), 1, TABLE_MAX_COLS) {
+						cl := cell_make()
+						if k == 0 && x.name == "table:table-cell" {
+							cl.cspan = attr_int(&x, "table:number-columns-spanned", 1)
+							cl.rspan = attr_int(&x, "table:number-rows-spanned", 1)
+						}
+						append(&row.cells, cl)
 					}
 				}
 			case .Text, .Done:

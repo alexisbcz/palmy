@@ -20,7 +20,8 @@
 //     marker text itself says whether the list is bulleted or numbered, which
 //     is more reliable than chasing `\pn` and `\listtable` variants;
 //   * tables: `\trowd`, the `\cellx` edges, `\intbl`, `\cell` and `\row`,
-//     including the header flag from `\trhdr`;
+//     including the header flag from `\trhdr` and merged cells from
+//     `\clmgf`/`\clmrg` (across) and `\clvmgf`/`\clvmrg` (down);
 //   * pictures: `{\pict\pngblip …}` and `\jpegblip`, hex-decoded back into the
 //     original file bytes, so a .rtf round trip keeps the picture rather than
 //     a note that there was one.
@@ -116,6 +117,18 @@ Rtf_Reader :: struct {
 	hdr_row:  bool,
 	first_row_hdr: bool,
 	in_row:   bool,
+	// Merged cells: the flags the next `\cellx` takes (1 = continues a merge
+	// across, 2 = continues one down), each cell's flags in this row, and the
+	// continuing cells of the table so far, resolved when it is flushed.
+	cell_flag: u8,
+	row_flags: [dynamic]u8,
+	conts_h:  [dynamic][2]int,
+	conts_v:  [dynamic][2]int,
+	// Every row's own `\cellx` edges, kept for the flush: a writer that
+	// merges across by writing one wider cell (LibreOffice, Word) leaves
+	// rows with fewer cells, and only the union of all rows' edges says
+	// which grid columns that wider cell covers.
+	tbl_edges: [dynamic][]f32,
 
 	// The tables RTF keeps at the top of the file.
 	colors:   [dynamic]u32,
@@ -170,6 +183,10 @@ doc_from_rtf :: proc(src: string) -> Doc {
 		row_cells  = make([dynamic]Cell, 0, 8),
 		edges      = make([dynamic]f32, 0, 8),
 		row_edges  = make([dynamic]f32, 0, 8),
+		row_flags  = make([dynamic]u8, 0, 8, context.temp_allocator),
+		conts_h    = make([dynamic][2]int, 0, 8, context.temp_allocator),
+		conts_v    = make([dynamic][2]int, 0, 8, context.temp_allocator),
+		tbl_edges  = make([dynamic][]f32, 0, 8, context.temp_allocator),
 		colors     = make([dynamic]u32, 0, 8),
 		mono_fonts = make(map[int]bool),
 		styles     = make(map[int]Para_Kind),
@@ -548,6 +565,12 @@ rtf_word :: proc(r: ^Rtf_Reader, word: string, num: int, has_num: bool) {
 		r.hdr_row = true
 	case "cellx":
 		append(&r.row_edges, f32(num) / 15)
+		append(&r.row_flags, r.cell_flag)
+		r.cell_flag = 0
+	case "clmrg":
+		r.cell_flag |= 1
+	case "clvmrg":
+		r.cell_flag |= 2
 	case "intbl":
 		r.intbl = true
 	case "cell":
@@ -787,6 +810,8 @@ rtf_begin_row :: proc(r: ^Rtf_Reader) {
 		rtf_end_row(r, false)
 	}
 	clear(&r.row_edges)
+	clear(&r.row_flags)
+	r.cell_flag = 0
 	r.hdr_row = false
 	r.in_row = true
 	r.intbl = true
@@ -844,6 +869,11 @@ rtf_end_row :: proc(r: ^Rtf_Reader, final: bool) {
 	row := Row {
 		cells = make([dynamic]Cell, 0, len(r.row_cells)),
 	}
+	for i in 0 ..< min(len(r.row_cells), len(r.row_flags)) {
+		at := [2]int{len(r.tbl.rows), i}
+		if r.row_flags[i] & 1 != 0 {append(&r.conts_h, at)}
+		if r.row_flags[i] & 2 != 0 {append(&r.conts_v, at)}
+	}
 	for c in r.row_cells {
 		cl := c
 		if len(cl.paras) == 0 {
@@ -852,6 +882,11 @@ rtf_end_row :: proc(r: ^Rtf_Reader, final: bool) {
 		append(&row.cells, cl)
 	}
 	append(&r.tbl.rows, row)
+	{
+		es := make([]f32, len(r.row_edges), context.temp_allocator)
+		copy(es, r.row_edges[:])
+		append(&r.tbl_edges, es)
+	}
 	// Column widths from the `\cellx` edges, which are cumulative.
 	if len(r.row_edges) > len(r.edges) {
 		clear(&r.edges)
@@ -866,6 +901,95 @@ rtf_end_row :: proc(r: ^Rtf_Reader, final: bool) {
 	_ = final
 }
 
+// rtf_regrid lays every row onto one column grid: the union of all rows'
+// `\cellx` edges (within 2 px, which absorbs twip rounding). A cell whose left
+// and right edges are several grid columns apart becomes a merge across that
+// many columns, and the continuation flags collected per cell are moved to
+// the cell's grid column. A row whose edges do not match its cells is left
+// as it was.
+@(private = "file")
+rtf_regrid :: proc(r: ^Rtf_Reader, t: ^Table) {
+	grid := make([dynamic]f32, 0, 16, context.temp_allocator)
+	for es in r.tbl_edges {
+		outer: for e in es {
+			for g in grid {
+				if abs(g - e) <= 2 {
+					continue outer
+				}
+			}
+			append(&grid, e)
+		}
+	}
+	for i in 1 ..< len(grid) {
+		for j := i; j > 0 && grid[j] < grid[j - 1]; j -= 1 {
+			grid[j], grid[j - 1] = grid[j - 1], grid[j]
+		}
+	}
+	if len(grid) == 0 || len(grid) > TABLE_MAX_COLS {
+		return
+	}
+	col_of :: proc(grid: []f32, e: f32) -> int {
+		for g, i in grid {
+			if abs(g - e) <= 2 {
+				return i
+			}
+		}
+		return -1
+	}
+	// Where each (row, cell) landed, to move the continuation flags.
+	moved := make(map[[2]int]int, 16, context.temp_allocator)
+	changed := false
+	for ri in 0 ..< min(len(t.rows), len(r.tbl_edges)) {
+		es := r.tbl_edges[ri]
+		row := &t.rows[ri]
+		if len(es) != len(row.cells) || len(es) == len(grid) {
+			for k in 0 ..< len(row.cells) {
+				moved[{ri, k}] = k
+			}
+			continue
+		}
+		cells := make([dynamic]Cell, 0, len(grid))
+		for k in 0 ..< len(row.cells) {
+			start := k == 0 ? 0 : col_of(grid[:], es[k - 1]) + 1
+			end := col_of(grid[:], es[k]) // inclusive
+			if start < 0 || end < start {
+				start, end = len(cells), len(cells)
+			}
+			for len(cells) < start {
+				append(&cells, cell_make())
+			}
+			cl := row.cells[k]
+			if end > start {
+				cl.cspan = end - start + 1
+			}
+			moved[{ri, k}] = len(cells)
+			append(&cells, cl)
+			for len(cells) <= end {
+				append(&cells, cell_make())
+			}
+		}
+		for len(cells) < len(grid) {
+			append(&cells, cell_make())
+		}
+		delete(row.cells)
+		row.cells = cells
+		changed = true
+	}
+	if !changed {
+		return
+	}
+	for &q in r.conts_h {
+		q[1] = moved[q] or_else q[1]
+	}
+	for &q in r.conts_v {
+		q[1] = moved[q] or_else q[1]
+	}
+	clear(&r.edges)
+	for g in grid {
+		append(&r.edges, g)
+	}
+}
+
 // rtf_flush_table turns the rows collected so far into a table paragraph.
 @(private = "file")
 rtf_flush_table :: proc(r: ^Rtf_Reader) {
@@ -878,8 +1002,10 @@ rtf_flush_table :: proc(r: ^Rtf_Reader) {
 		table_destroy(t)
 		free(t)
 		clear(&r.edges)
+		clear(&r.tbl_edges)
 		return
 	}
+	rtf_regrid(r, t)
 	// Widths from the cumulative edges, clamped onto the content measure by
 	// `table_fit_widths` the way every other table here is.
 	n := table_cols(t)
@@ -892,6 +1018,10 @@ rtf_flush_table :: proc(r: ^Rtf_Reader) {
 		append(&t.widths, max(w, TABLE_MIN_COL))
 	}
 	table_fit_widths(t)
+	table_apply_conts(t, r.conts_h[:], r.conts_v[:])
+	clear(&r.conts_h)
+	clear(&r.conts_v)
+	clear(&r.tbl_edges)
 	clear(&r.edges)
 
 	pa := para_make(.Table)

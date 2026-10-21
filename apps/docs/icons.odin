@@ -99,3 +99,19 @@ ICON_SQUARE :: p.Icon {
 	view   = 24,
 	stroke = 2,
 }
+
+// Merge: two arrows meeting inside one box. Split: a rule down the middle and
+// two arrows leaving it.
+ICON_MERGE :: p.Icon {
+	name   = "merge-cells",
+	d      = "M3 5 L21 5 L21 19 L3 19 Z M6 12 L10.5 12 M8.5 10 L10.5 12 L8.5 14 M18 12 L13.5 12 M15.5 10 L13.5 12 L15.5 14",
+	view   = 24,
+	stroke = 2,
+}
+
+ICON_SPLIT :: p.Icon {
+	name   = "split-cells",
+	d      = "M3 5 L21 5 L21 19 L3 19 Z M12 5 L12 19 M10 12 L6 12 M7.5 10.5 L6 12 L7.5 13.5 M14 12 L18 12 M16.5 10.5 L18 12 L16.5 13.5",
+	view   = 24,
+	stroke = 2,
+}

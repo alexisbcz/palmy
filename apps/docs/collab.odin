@@ -32,7 +32,8 @@
 //	b                       the body text
 //	c/<tbl>/<row>/<col>     a table cell's text
 //	r/<tbl>  k/<tbl>        a table's rows and columns (one element each)
-//	t/<tbl>                 table flags: h (header), bd (borders)
+//	t/<tbl>                 table flags: h (header), bd (borders), and
+//	                        m:<row>:<col> per merged cell: "<last row> <last col>"
 //	w/<tbl>/<col>           a column's width
 //	i/<img>                 a picture's scale
 //	p/<elem> | p/<cont>$    a paragraph's properties
@@ -720,6 +721,25 @@ sync_table :: proc(cb: ^Collab, id: crdt.ID, t: ^Table) -> (changed: bool) {
 		bd := t.borders ? "1" : "0"
 		if crdt.reg_str(d, owner, "h") != h {crdt.set_str(d, owner, "h", h); changed = true}
 		if crdt.reg_str(d, owner, "bd") != bd {crdt.set_str(d, owner, "bd", bd); changed = true}
+		// A merge is stored as its anchor's identities and the identities of
+		// its last row and column, not as counts: a collaborator inserting a
+		// row inside the merge then grows it, as it does locally, instead of
+		// shifting its end.
+		for r in 0 ..< min(nr_new, len(ax.rows)) {
+			for c in 0 ..< min(nc_new, len(ax.cols)) {
+				want := ""
+				if cl := table_cell(t, r, c); cell_is_merged(cl) {
+					er := min(r + cell_rspan(cl) - 1, len(ax.rows) - 1)
+					ec := min(c + cell_cspan(cl) - 1, len(ax.cols) - 1)
+					want = fmt.tprintf("%s %s", idkey(ax.rows[er]), idkey(ax.cols[ec]))
+				}
+				field := fmt.tprintf("m:%s:%s", idkey(ax.rows[r]), idkey(ax.cols[c]))
+				if crdt.reg_str(d, owner, field) != want {
+					crdt.set_str(d, owner, field, want)
+					changed = true
+				}
+			}
+		}
 		for c in 0 ..< min(nc_new, len(ax.cols)) {
 			wo := fmt.tprintf("w/%s/%s", tk, idkey(ax.cols[c]))
 			want := fmt.tprintf("%.3f", table_width(t, c))
@@ -925,6 +945,29 @@ materialise_table :: proc(cb: ^Collab, id: crdt.ID) -> Table {
 		}
 		table_fit_widths(&t)
 	}
+	// Merges: an end whose row or column has since been deleted, or that now
+	// sits before the anchor, is ignored and the cell comes back unmerged.
+	for r in 0 ..< min(nr, len(ax.rows)) {
+		for c in 0 ..< min(nc, len(ax.cols)) {
+			v := crdt.reg_str(d, owner, fmt.tprintf("m:%s:%s", idkey(ax.rows[r]), idkey(ax.cols[c])))
+			sp := strings.index_byte(v, ' ')
+			if sp <= 0 {
+				continue
+			}
+			er, ec := -1, -1
+			for k in r ..< len(ax.rows) {
+				if idkey(ax.rows[k]) == v[:sp] {er = k; break}
+			}
+			for k in c ..< len(ax.cols) {
+				if idkey(ax.cols[k]) == v[sp + 1:] {ec = k; break}
+			}
+			if er >= 0 && ec >= 0 {
+				t.rows[r].cells[c].rspan = er - r + 1
+				t.rows[r].cells[c].cspan = ec - c + 1
+			}
+		}
+	}
+	table_normalise(&t)
 	remember_axes(cb, id, ax)
 	return t
 }

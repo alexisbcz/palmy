@@ -399,6 +399,9 @@ doc_blocks :: proc(d: ^Doc, alloc := context.temp_allocator) -> []Blk {
 			for r in 0 ..< len(t.rows) {
 				for c in 0 ..< len(t.rows[r].cells) {
 					cl := &t.rows[r].cells[c]
+					if cl.covered {
+						continue // hidden under a merge: nothing to read or edit
+					}
 					for j in 0 ..< len(cl.paras) {
 						append(&out, Blk{pi, r, c, j})
 					}
@@ -462,6 +465,10 @@ pos_clamp :: proc(d: ^Doc, q: Pos) -> Pos {
 		out.row = clamp(out.row, 0, len(t.rows) - 1)
 		cells := len(t.rows[out.row].cells)
 		out.col = clamp(out.col, 0, max(0, cells - 1))
+		// A cell hidden under a merge is not a place: the anchor is.
+		if ar, ac := table_anchor(t, out.row, out.col); ar != out.row || ac != out.col {
+			out.row, out.col, out.cpara, out.off = ar, ac, 0, 0
+		}
 		if cl := table_cell(t, out.row, out.col); cl != nil && len(cl.paras) > 0 {
 			out.cpara = clamp(out.cpara, 0, len(cl.paras) - 1)
 		} else {

@@ -231,7 +231,29 @@ json_write_table :: proc(b: ^strings.Builder, t: ^Table) {
 		}
 		strings.write_string(b, "]")
 	}
-	strings.write_string(b, "]}")
+	strings.write_string(b, "]")
+	// Merged cells ride beside the grid rather than inside it: `rows` stays a
+	// plain grid of cells (a covered cell is written as its one empty
+	// paragraph), so a reader that predates merging still reads every word,
+	// and `merges` lists each anchor with its extent.
+	if table_has_merges(t) {
+		strings.write_string(b, ", \"merges\": [")
+		first := true
+		for &row, ri in t.rows {
+			for &cl, ci in row.cells {
+				if !cell_is_merged(&cl) {
+					continue
+				}
+				if !first {
+					strings.write_string(b, ", ")
+				}
+				first = false
+				fmt.sbprintf(b, "{{\"row\": %d, \"col\": %d, \"rows\": %d, \"cols\": %d}}", ri, ci, cell_rspan(&cl), cell_cspan(&cl))
+			}
+		}
+		strings.write_string(b, "]")
+	}
+	strings.write_string(b, "}")
 }
 
 // json_write_image carries the original file bytes base64'd. A path alone
@@ -463,7 +485,22 @@ json_read_table :: proc(to: json.Object) -> Table {
 			}
 		}
 	}
+	if mv, hm := jget(to, "merges"); hm {
+		if ma, is := mv.(json.Array); is {
+			for m in ma {
+				mo, mis := m.(json.Object)
+				if !mis {
+					continue
+				}
+				if cl := table_cell(&t, int(jnum(mo, "row", -1)), int(jnum(mo, "col", -1))); cl != nil {
+					cl.rspan = int(jnum(mo, "rows", 1))
+					cl.cspan = int(jnum(mo, "cols", 1))
+				}
+			}
+		}
+	}
 	table_fit_widths(&t)
+	table_normalise(&t)
 	return t
 }
 
@@ -640,6 +677,12 @@ md_write_inline :: proc(b: ^strings.Builder, pa: ^Paragraph) {
 // md_write_table writes a GitHub pipe table. Every cell is one line — the
 // syntax has no way to say otherwise — so a cell with several paragraphs is
 // joined with spaces, and a pipe inside a cell is escaped.
+//
+// Pipe tables cannot merge cells either, so a merged table is **flattened**:
+// the merged cell's text is written once, in its top-left cell, and the cells
+// it covered are written empty. The grid keeps its shape, every column still
+// lines up, and no text is duplicated — which is also what pandoc does. The
+// merge itself is lost; reading the file back gives the unmerged grid.
 @(private = "file")
 md_write_table :: proc(b: ^strings.Builder, t: ^Table) {
 	ncols := table_cols(t)
@@ -1351,18 +1394,32 @@ doc_to_html :: proc(d: ^Doc, title: string, alloc := context.allocator) -> strin
 			}
 			strings.write_string(b, "</colgroup>\n")
 		}
+		// A merged cell is one <td> with colspan/rowspan; the cells it covers
+		// are not written at all, which is what the HTML table model means.
+		head_end := table_head_end(t)
 		for r in 0 ..< len(t.rows) {
-			head := t.header && r == 0
-			if head {
+			head := r <= head_end
+			if r == 0 && head {
 				strings.write_string(b, "<thead>")
-			} else if r == (t.header ? 1 : 0) {
+			} else if r == head_end + 1 {
 				strings.write_string(b, "<tbody>")
 			}
 			strings.write_string(b, "<tr>")
 			for c in 0 ..< table_cols(t) {
+				cl := table_cell(t, r, c)
+				if cl != nil && cl.covered {
+					continue
+				}
 				tag := head ? "th" : "td"
-				fmt.sbprintf(b, "<%s>", tag)
-				if cl := table_cell(t, r, c); cl != nil {
+				fmt.sbprintf(b, "<%s", tag)
+				if cl != nil && cell_cspan(cl) > 1 {
+					fmt.sbprintf(b, " colspan=\"%d\"", cell_cspan(cl))
+				}
+				if cl != nil && cell_rspan(cl) > 1 {
+					fmt.sbprintf(b, " rowspan=\"%d\"", cell_rspan(cl))
+				}
+				strings.write_string(b, ">")
+				if cl != nil {
 					for &cp, i in cl.paras {
 						if i > 0 {
 							strings.write_string(b, "<br>")
@@ -1371,7 +1428,7 @@ doc_to_html :: proc(d: ^Doc, title: string, alloc := context.allocator) -> strin
 						// body, without the <figure> around it: a figure is a
 						// block, and a cell is already one.
 						if cp.kind == .Image {
-							emit_cell_image(b, &cp, max(20, table_width(t, c) - 2 * CELL_PAD))
+							emit_cell_image(b, &cp, max(20, table_span_w(t, r, c) - 2 * CELL_PAD))
 							continue
 						}
 						emit_runs(b, &cp)
@@ -1380,11 +1437,11 @@ doc_to_html :: proc(d: ^Doc, title: string, alloc := context.allocator) -> strin
 				fmt.sbprintf(b, "</%s>", tag)
 			}
 			strings.write_string(b, "</tr>")
-			if head {
+			if r == head_end {
 				strings.write_string(b, "</thead>\n")
 			}
 		}
-		if len(t.rows) > (t.header ? 1 : 0) {
+		if len(t.rows) > head_end + 1 {
 			strings.write_string(b, "</tbody>\n")
 		}
 		strings.write_string(b, "</table>\n")

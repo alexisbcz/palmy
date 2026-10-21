@@ -353,6 +353,14 @@ keys_commands :: proc(ui: ^p.Ctx, st: ^State) {
 		table_toggle_borders(st)
 		fire(st)
 	}
+	if p.shortcut(ui, 'm', {.Alt}) {
+		table_merge_cmd(st)
+		fire(st)
+	}
+	if p.shortcut(ui, 'm', {.Alt, .Shift}) {
+		table_split_cmd(st)
+		fire(st)
+	}
 	if p.shortcut(ui, p.KEY_RIGHT, {.Alt}) {
 		table_nudge_width(st, 24)
 		fire(st)

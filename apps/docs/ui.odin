@@ -350,9 +350,22 @@ toolbar_table :: proc(ui: ^p.Ctx, st: ^State) {
 		return
 	}
 
+	// A merged cell is named by its range, the way a spreadsheet would.
+	cellname := tfmt("%c%d", rune('A' + st.caret.col), st.caret.row + 1)
+	merged := false
+	if a := table_cell(t, st.caret.row, st.caret.col); cell_is_merged(a) {
+		merged = true
+		cellname = tfmt(
+			"%s:%c%d",
+			cellname,
+			rune('A' + st.caret.col + cell_cspan(a) - 1),
+			st.caret.row + cell_rspan(a),
+		)
+	}
+	multi := st.anchor.para == st.caret.para && (st.anchor.row != st.caret.row || st.anchor.col != st.caret.col)
 	p.text(
 		ui,
-		tfmt("Table %dx%d — cell %c%d", len(t.rows), table_cols(t), rune('A' + st.caret.col), st.caret.row + 1),
+		tfmt("Table %dx%d — cell %s", len(t.rows), table_cols(t), cellname),
 		"text-[12] font-medium whitespace-nowrap",
 	)
 	p.style(ui).shrink = 0
@@ -372,6 +385,11 @@ toolbar_table :: proc(ui: ^p.Ctx, st: ^State) {
 	p.style(ui).shrink = 0
 	if tool_button(ui, "colb", ICON_COLUMNS) {table_col_cmd(st, true)}
 	if tool_button(ui, "cold", ICON_TRASH, false, table_cols(t) > 1) {table_delete_col_cmd(st)}
+
+	vrule(ui)
+
+	if tool_button(ui, "merge", ICON_MERGE, false, multi) {table_merge_cmd(st)}
+	if tool_button(ui, "split", ICON_SPLIT, false, merged) {table_split_cmd(st)}
 
 	vrule(ui)
 
@@ -632,6 +650,7 @@ HELP_TABLE := [?]Shortcut {
 	{"Alt C / Alt Shift C", "Column right, column left"},
 	{"Alt Backspace", "Delete the row"},
 	{"Alt Delete", "Delete the column"},
+	{"Alt M / Alt Shift M", "Merge the selected cells, split a merged one"},
 	{"Alt H / Alt B", "Header row, cell borders"},
 	{"Alt Left / Alt Right", "Narrow, widen the column"},
 	{"Alt K", "Delete the table or picture"},

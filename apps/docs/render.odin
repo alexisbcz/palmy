@@ -127,14 +127,44 @@ pos_at_view :: proc(st: ^State, vx, vy: f32) -> Pos {
 	if lo < 0 {
 		return doc_end(&st.doc)
 	}
-	pick := lo
+	// Inside a table the point picks a cell first — by its box, so a merged
+	// cell answers for its whole rectangle — and then a line within it. Without
+	// this a click in the second column found the first column's line at the
+	// same height, since lines are listed cell by cell.
+	in_box := -1
+	if clo, chi := page_cells(&st.lay, page); clo >= 0 {
+		for i in clo ..= chi {
+			cb := st.lay.cells[i]
+			if lx >= cb.x && lx < cb.x + cb.w && ly >= cb.y && ly < cb.y + cb.h {
+				in_box = i
+				if !cb.repeat {
+					break
+				}
+			}
+		}
+	}
+	pick := -1
 	for li in lo ..= hi {
 		l := st.lay.lines[li]
-		if ly < l.y + l.h {
-			pick = li
-			break
+		if in_box >= 0 {
+			cb := st.lay.cells[in_box]
+			if l.para != cb.para || l.row != cb.row || l.col != cb.col || l.repeat != cb.repeat {
+				continue
+			}
 		}
 		pick = li
+		if ly < l.y + l.h {
+			break
+		}
+	}
+	if pick < 0 {
+		pick = lo
+		for li in lo ..= hi {
+			pick = li
+			if ly < st.lay.lines[li].y + st.lay.lines[li].h {
+				break
+			}
+		}
 	}
 	l := st.lay.lines[pick]
 	if l.repeat {

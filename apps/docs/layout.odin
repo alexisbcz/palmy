@@ -435,7 +435,7 @@ block_measure :: proc(d: ^Doc, b: Blk) -> f32 {
 	if b.para >= 0 && b.para < len(d.paras) {
 		owner := &d.paras[b.para]
 		if owner.kind == .Table && owner.table != nil {
-			return max(20, table_width(owner.table, b.col) - 2 * CELL_PAD - ind)
+			return max(20, table_span_w(owner.table, b.row, b.col) - 2 * CELL_PAD - ind)
 		}
 	}
 	return max(40, CONTENT_W - ind)
@@ -725,7 +725,9 @@ table_block_count :: proc(t: ^Table) -> int {
 	n := 0
 	for &row in t.rows {
 		for &c in row.cells {
-			n += len(c.paras)
+			if !c.covered {
+				n += len(c.paras)
+			}
 		}
 	}
 	return n
@@ -807,39 +809,87 @@ layout_table :: proc(
 	}
 
 	// Where each cell's blocks start, so a cell can be found without walking.
+	// A cell hidden under a merge contributes no blocks.
 	starts := make([]int, nrows * ncols, context.temp_allocator)
 	at := 0
 	for r in 0 ..< nrows {
 		for c in 0 ..< ncols {
 			starts[r * ncols + c] = at
-			if cl := table_cell(t, r, c); cl != nil {
+			if cl := table_cell(t, r, c); cl != nil && !cl.covered {
 				at += len(cl.paras)
 			}
 		}
 	}
 
-	// Row heights, measured once.
+	// Row heights, measured once. A cell that spans one row sets its row's
+	// height directly. A cell spanning several rows is settled afterwards:
+	// if its text is taller than the rows it spans, the shortfall is shared
+	// evenly among those rows. Shorter spans go first, so a long span sees
+	// the heights the short ones already asked for.
 	row_h := make([]f32, nrows, context.temp_allocator)
+	Tall :: struct {
+		r, n: int,
+		need: f32,
+	}
+	tall := make([dynamic]Tall, 0, 4, context.temp_allocator)
 	for r in 0 ..< nrows {
 		h := f32(0)
 		for c in 0 ..< ncols {
 			cl := table_cell(t, r, c)
-			if cl == nil {
+			if cl == nil || cl.covered {
 				continue
 			}
-			h = max(
-				h,
-				cell_content_h(
-					lay,
-					d,
-					cl,
-					keys,
-					starts[r * ncols + c],
-					max(20, table_width(t, c) - 2 * CELL_PAD),
-				),
+			ch := cell_content_h(
+				lay,
+				d,
+				cl,
+				keys,
+				starts[r * ncols + c],
+				max(20, table_span_w(t, r, c) - 2 * CELL_PAD),
 			)
+			if rs := min(cell_rspan(cl), nrows - r); rs > 1 {
+				append(&tall, Tall{r, rs, max(TABLE_MIN_ROW_H, ch + 2 * CELL_PAD)})
+				continue
+			}
+			h = max(h, ch)
 		}
 		row_h[r] = max(TABLE_MIN_ROW_H, h + 2 * CELL_PAD)
+	}
+	for i in 1 ..< len(tall) {
+		for j := i; j > 0 && tall[j].n < tall[j - 1].n; j -= 1 {
+			tall[j], tall[j - 1] = tall[j - 1], tall[j]
+		}
+	}
+	for tc in tall {
+		have := f32(0)
+		for r in tc.r ..< tc.r + tc.n {
+			have += row_h[r]
+		}
+		if tc.need > have {
+			share := (tc.need - have) / f32(tc.n)
+			for r in tc.r ..< tc.r + tc.n {
+				row_h[r] += share
+			}
+		}
+	}
+
+	// Rows joined by a vertical merge are one unit for pagination: `group_end`
+	// is the last row of the unit a row starts. A merged cell is not split
+	// across a page break, the same way a row is not.
+	group_end := make([]int, nrows, context.temp_allocator)
+	for r := 0; r < nrows; {
+		end := r
+		for k := r; k <= end; k += 1 {
+			for c in 0 ..< ncols {
+				if cl := table_cell(t, k, c); cl != nil && !cl.covered {
+					end = max(end, min(nrows - 1, k + cell_rspan(cl) - 1))
+				}
+			}
+		}
+		for k in r ..= end {
+			group_end[k] = end
+		}
+		r = end + 1
 	}
 
 	emit_row := proc(
@@ -855,12 +905,21 @@ layout_table :: proc(
 		r: int,
 		page: int,
 		top: f32,
-		h: f32,
+		row_h: []f32,
 		repeat: bool,
 	) {
 		for c in 0 ..< ncols {
+			cl := table_cell(t, r, c)
+			if cl != nil && cl.covered {
+				continue // drawn, and read, as part of its anchor
+			}
 			cx := table_col_x(t, c)
-			cw := table_width(t, c)
+			cw := table_span_w(t, r, c)
+			h := f32(0)
+			rs := cl == nil ? 1 : cell_rspan(cl)
+			for k in r ..< min(len(row_h), r + rs) {
+				h += row_h[k]
+			}
 			append(
 				&lay.cells,
 				Cell_Box {
@@ -876,7 +935,6 @@ layout_table :: proc(
 					repeat = repeat,
 				},
 			)
-			cl := table_cell(t, r, c)
 			if cl == nil {
 				continue
 			}
@@ -959,18 +1017,31 @@ layout_table :: proc(
 		}
 	}
 
-	for r in 0 ..< nrows {
-		// The row does not fit: break the page, and bring the header with it.
-		if y^ > 0 && y^ + row_h[r] > CONTENT_H {
+	// The header that repeats on a continuation page is row 0 and whatever
+	// rows a merge joins to it.
+	head_end := t.header ? group_end[0] : -1
+	for r := 0; r < nrows; {
+		g := group_end[r]
+		gh := f32(0)
+		for k in r ..= g {
+			gh += row_h[k]
+		}
+		// The unit does not fit: break the page, and bring the header with it.
+		if y^ > 0 && y^ + gh > CONTENT_H {
 			page^ += 1
 			y^ = 0
-			if t.header && r > 0 {
-				emit_row(lay, d, pi, t, bs, keys, base_bi, starts, ncols, 0, page^, y^, row_h[0], true)
-				y^ += row_h[0]
+			if t.header && r > head_end {
+				for k in 0 ..= head_end {
+					emit_row(lay, d, pi, t, bs, keys, base_bi, starts, ncols, k, page^, y^, row_h, true)
+					y^ += row_h[k]
+				}
 			}
 		}
-		emit_row(lay, d, pi, t, bs, keys, base_bi, starts, ncols, r, page^, y^, row_h[r], false)
-		y^ += row_h[r]
+		for k in r ..= g {
+			emit_row(lay, d, pi, t, bs, keys, base_bi, starts, ncols, k, page^, y^, row_h, false)
+			y^ += row_h[k]
+		}
+		r = g + 1
 	}
 }
 
