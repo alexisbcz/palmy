@@ -1,0 +1,45 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>@TITLE@</title>
+<style>
+  :root { color-scheme: light dark; --bg: #f4f4f5; --fg: #18181b; }
+  @media (prefers-color-scheme: dark) { :root { --bg: #09090b; --fg: #e4e4e7; } }
+  html, body { margin: 0; height: 100%; background: var(--bg); color: var(--fg); font: 14px system-ui, sans-serif; }
+  #host { position: absolute; inset: 0; display: grid; place-items: center; overflow: auto; }
+  body.fill #host { display: block; overflow: hidden; }
+  canvas { display: block; }
+  #status { position: fixed; left: 16px; bottom: 12px; opacity: .7; white-space: pre-wrap; }
+</style>
+</head>
+<body>
+<div id="host"><canvas id="palmy"></canvas></div>
+<div id="status">loading…</div>
+<script type="module">
+  import { run } from "./palmy-web.js";
+  const q = new URLSearchParams(location.search);
+  const status = document.getElementById("status");
+  const fill = q.get("fill") === "1";
+  if (fill) document.body.classList.add("fill");
+  const opts = {
+    canvas: document.getElementById("palmy"),
+    fill,
+    scale: q.get("scale") ? Number(q.get("scale")) : undefined,
+    env: q.getAll("env"),
+  };
+  if (q.has("args")) opts.args = q.get("args").split(" ");
+  try {
+    const p = await run(opts);
+    window.palmy = p;
+    status.textContent = "";
+    p.done.then((code) => { status.textContent = `the program exited (${code})`; },
+                (e) => { status.textContent = `the program stopped: ${e.message}`; });
+  } catch (e) {
+    status.textContent = e.message;
+    window.palmyError = e.message;
+  }
+</script>
+</body>
+</html>
