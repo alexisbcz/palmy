@@ -21,6 +21,7 @@ import "core:crypto/hmac"
 import "core:fmt"
 import "core:os"
 import "core:slice"
+import "core:strconv"
 import "core:strings"
 import "core:time"
 import "core:sys/linux"
@@ -95,11 +96,18 @@ KDF_FAST :: Kdf {
 	par = 1,
 }
 
-SCRATCH :: "/tmp/palmy-vault-selftest"
+// SCRATCH is per process. It was one fixed directory, and the self-test
+// starts by deleting it: two runs at once (agents in different worktrees, or
+// a parallel check) deleted and rewrote each other's vaults mid-test, which
+// is most of what made vault's self-test "unreliable under parallel load" —
+// the interrupted-rekey, tamper and headless-window sections failed on files
+// another run had replaced, in 16 of 16 runs eight at a time.
+SCRATCH: string
 
 selftest :: proc() -> int {
 	g_test = true
 
+	SCRATCH = fmt.aprintf("/tmp/palmy-vault-selftest-%d", os.get_pid())
 	_ = os.remove_all(SCRATCH)
 	_ = os.make_directory_all(SCRATCH, os.perm(0o700))
 	_ = os.set_env("XDG_DATA_HOME", SCRATCH)
@@ -143,6 +151,10 @@ selftest :: proc() -> int {
 	close_section()
 
 	fmt.printfln("\n%d checks, %d failures", checks, fails)
+	if fails == 0 {
+		// Kept after a failure, for whoever has to look at it.
+		_ = os.remove_all(SCRATCH)
+	}
 	return fails == 0 ? 0 : 1
 }
 
@@ -1702,6 +1714,23 @@ t_ui :: proc() {
 // What the chosen parameters cost
 // ---------------------------------------------------------------------------
 
+// machine_oversubscribed says whether more was runnable than there were cores
+// to run it, by the one-minute load average against the core count. It is the
+// question a timing assertion has to ask before it means anything.
+machine_oversubscribed :: proc() -> (load: f64, cores: int, busy: bool) {
+	cores = max(os.get_processor_core_count(), 1)
+	data, err := os.read_entire_file("/proc/loadavg", context.temp_allocator)
+	if err != nil {
+		return 0, cores, false
+	}
+	text := string(data)
+	if sp := strings.index_byte(text, ' '); sp > 0 {
+		text = text[:sp]
+	}
+	load, _ = strconv.parse_f64(text)
+	return load, cores, load > f64(cores)
+}
+
 t_kdf_cost :: proc() {
 	section("the cost of the default KDF parameters")
 
@@ -1740,8 +1769,47 @@ t_kdf_cost :: proc() {
 	)
 	// The point of a memory-hard KDF is the cost it imposes. Under 100 ms it
 	// is not imposing one; over 3 s nobody would use the app.
+	//
+	// The floor is asserted always: load only ever makes a derivation look
+	// slower, so a run on a busy machine cannot pass it by accident or fail
+	// it for no reason. The ceiling is the half that load breaks. CPU time
+	// was supposed to be immune, and in this VM it is not — a vCPU the host
+	// has descheduled still accrues thread CPU time, and 256 MiB passes
+	// contend for memory bandwidth — so eight self-tests at once measured
+	// 4.6 to 6.8 s of CPU for a derivation that takes 2.0 to 2.3 s alone,
+	// and the ceiling failed in every run. What it protects — that the
+	// default parameters are livable — is now asserted on the parameters,
+	// which no load can move, and the measured ceiling is asserted whenever
+	// the machine was not oversubscribed while it was measured. When it was,
+	// the measurement is still printed, and why it was not judged.
 	ok(best_cpu > 100, "the default derivation takes only %.0f ms of CPU, which is not a meaningful cost", best_cpu)
-	ok(best_cpu < 3000, "the default derivation takes %.0f ms of CPU, which is too slow to live with", best_cpu)
+
+	mib := f64(KDF_DEFAULT.m) / 1024
+	// OWASP's Password Storage Cheat Sheet (2023) lists m=46 MiB, t=1 as the
+	// lightest acceptable Argon2id; anything at or above it in both memory
+	// and total work is a real cost.
+	ok(mib >= 46, "the default KDF uses only %.0f MiB, under OWASP's 46 MiB floor", mib)
+	ok(mib * f64(KDF_DEFAULT.t) >= 46, "the default KDF does only %.0f MiB-passes of work", mib * f64(KDF_DEFAULT.t))
+	// The ceiling in work, not time: 1 GiB-pass is about 3 s on the slowest
+	// machine this has run on (the arm64 build VM: 768 MiB-passes, 2.0-2.3 s
+	// quiet), and 1 GiB of memory is the most a password manager may take.
+	ok(mib <= 1024, "the default KDF takes %.0f MiB of memory, more than a password manager may", mib)
+	ok(
+		mib * f64(KDF_DEFAULT.t) <= 1024,
+		"the default KDF does %.0f MiB-passes of work, which is too slow to live with",
+		mib * f64(KDF_DEFAULT.t),
+	)
+	load, cores, busy := machine_oversubscribed()
+	if busy {
+		fmt.printfln(
+			"      the 3 s ceiling is not judged on this run: load %.1f on %d cores while measuring (%.0f ms of CPU measured)",
+			load,
+			cores,
+			best_cpu,
+		)
+	} else {
+		ok(best_cpu < 3000, "the default derivation takes %.0f ms of CPU, which is too slow to live with", best_cpu)
+	}
 
 	// A full unlock, end to end, at the real parameters.
 	path := fmt.tprintf("%s/cost.pvz", SCRATCH)
