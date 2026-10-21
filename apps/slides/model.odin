@@ -607,6 +607,63 @@ hit_elem :: proc(s: ^Slide, x, y: f32) -> int {
 }
 
 // ---------------------------------------------------------------------------
+// Text, notes and the theme
+//
+// The three edits that are not an `invoke` command, because they carry a
+// value: what an element says, what the speaker notes say, and which theme the
+// deck wears. The window commits an in-place edit through these, and the
+// command line sets them through the same procedures.
+// ---------------------------------------------------------------------------
+
+// elem_set_text commits a text box's words. The string is cloned: the window
+// edits in a buffer it reuses, and the command line's arguments are not the
+// deck's to keep.
+elem_set_text :: proc(e: ^Element, text: string) {
+	e.text = strings.clone(text)
+}
+
+slide_set_notes :: proc(s: ^Slide, text: string) {
+	s.notes = strings.clone(text)
+}
+
+// theme_by_name finds a theme regardless of case, so `--theme paper` works.
+theme_by_name :: proc(name: string) -> (Theme, bool) {
+	for th in THEMES {
+		if strings.equal_fold(th.name, name) {
+			return th, true
+		}
+	}
+	return {}, false
+}
+
+// theme_after is the next theme in the table, wrapping: what G does.
+theme_after :: proc(current: string) -> Theme {
+	at := 0
+	for t, i in THEMES {
+		if t.name == current {
+			at = i
+		}
+	}
+	return THEMES[(at + 1) % len(THEMES)]
+}
+
+// slide_title is the text a person would call the slide's title: the first
+// Title-styled box, else the first text box with anything in it.
+slide_title :: proc(s: ^Slide) -> string {
+	for &e in s.elems {
+		if e.kind == .Text && e.style == .Title && strings.trim_space(e.text) != "" {
+			return e.text
+		}
+	}
+	for &e in s.elems {
+		if e.kind == .Text && strings.trim_space(e.text) != "" {
+			return e.text
+		}
+	}
+	return ""
+}
+
+// ---------------------------------------------------------------------------
 // Undo
 //
 // The deck is plain data, so history is just copies of it: before anything

@@ -91,6 +91,58 @@ write_png :: proc(path: string, px: []u32, w, h: int) -> bool {
 EXPORT_W :: 1920
 EXPORT_H :: 1080
 
+// Export_Format is everything a deck can be written as. One procedure writes
+// all of them, and it is what the window's Export entries, `slides export`
+// and the older --export/--pptx/--pdf spellings all call.
+Export_Format :: enum u8 {
+	Png, // a directory of slide-NN.png plus contact-sheet.png
+	Pptx,
+	Pdf,
+	Json, // the native format
+}
+
+EXPORT_EXT := [Export_Format]string {
+	.Png  = "png",
+	.Pptx = "pptx",
+	.Pdf  = "pdf",
+	.Json = "json",
+}
+
+// export_format_of says what a path asks for by its extension; anything
+// without a known one is a directory of PNGs.
+export_format_of :: proc(path: string) -> Export_Format {
+	low := strings.to_lower(path, context.temp_allocator)
+	switch {
+	case strings.has_suffix(low, ".pptx"):
+		return .Pptx
+	case strings.has_suffix(low, ".pdf"):
+		return .Pdf
+	case strings.has_suffix(low, ".json"):
+		return .Json
+	}
+	return .Png
+}
+
+// deck_export writes the deck to `out` as `f`. `files` is how many files it
+// wrote: one per slide plus the contact sheet for PNG, one otherwise.
+deck_export :: proc(d: ^Deck, out: string, f: Export_Format, fonts: ^p.Fonts, imgs: ^Img_Cache) -> (files: int, err: string) {
+	switch f {
+	case .Png:
+		n, e := export_deck(d, out, fonts, imgs)
+		return e == "" ? n + 1 : n, e
+	case .Pptx:
+		e := pptx_write_file(d, out, fonts, imgs)
+		return e == "" ? 1 : 0, e
+	case .Pdf:
+		e := pdf_write_file(d, out, fonts, imgs)
+		return e == "" ? 1 : 0, e
+	case .Json:
+		e := save_deck(d, out)
+		return e == "" ? 1 : 0, e
+	}
+	return 0, "unknown format"
+}
+
 // export_deck writes slide-01.png … slide-NN.png plus contact-sheet.png.
 export_deck :: proc(d: ^Deck, dir: string, fonts: ^p.Fonts, imgs: ^Img_Cache) -> (n: int, err: string) {
 	_ = os.make_directory_all(dir)

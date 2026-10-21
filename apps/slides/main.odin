@@ -2,10 +2,10 @@ package main
 
 // palmy slides — a presentation editor.
 //
-//   slides.bin [deck.json]        open a deck, or the built-in fixture
-//   slides.bin --export DIR       render every slide to PNG, headless
-//   slides.bin --make-assets      regenerate the pictures the fixture uses
-//   slides.bin --selftest         the headless test suite
+//   slides                        open the built-in deck in the window
+//   slides deck.json              open a deck
+//   slides <command> ...          the command line; `slides --help` lists it
+//   slides --selftest             the headless test suite
 //
 // Three panes: the slide sorter on the left with live thumbnails, the canvas in
 // the middle, the inspector on the right. Presenting opens a second surface —
@@ -14,7 +14,8 @@ package main
 //
 // Everything is reachable from the keyboard, because this compositor cannot
 // synthesize a pointer click; the mouse paths are there for a real user, and
-// the keys are what the demo drives.
+// the keys are what the demo drives. The command line (cli.odin) drives the
+// same `invoke` the keys do, on a deck with no window.
 
 import "core:fmt"
 import "core:os"
@@ -27,16 +28,6 @@ import collabui "../../cloud/collab/ui"
 tprintf :: fmt.tprintf
 
 MAX_THUMBS :: 64
-
-USAGE :: `palmy slides — a presentation editor
-
-  slides.bin [deck.json]      open a deck, or the built-in fixture
-  slides.bin --export [DIR]   render every slide to PNG, plus a contact sheet
-  slides.bin --pptx FILE      write a PowerPoint deck
-  slides.bin --pdf FILE       write a PDF, one page per slide
-  slides.bin --make-assets    regenerate the pictures the fixture uses
-  slides.bin --shots DIR      render the interface offscreen into PNGs
-  slides.bin --selftest       run the headless test suite`
 
 Mode :: enum u8 {
 	Browse, // the editor, nothing capturing the keyboard
@@ -155,21 +146,9 @@ St :: struct {
 	collab_args:  collabui.Args,
 }
 
-main :: proc() {
-	ca, rest_args := collabui.parse_args(os.args[1:])
-	args := rest_args[:]
-	exe_dir := exe_directory()
-
-	// Headless modes first: they need fonts but no compositor.
-	if len(args) > 0 && args[0] == "--make-assets" {
-		if e := make_assets(tprintf("%s/assets", exe_dir)); e != "" {
-			fmt.eprintfln("slides: %s", e)
-			os.exit(1)
-		}
-		fmt.printfln("wrote %s/assets/vista.png and bars.png", exe_dir)
-		return
-	}
-
+// state_new is the editor's state with no window behind it: what a fresh
+// window starts from, and what every command of the command line runs on.
+state_new :: proc(exe_dir: string) -> ^St {
 	st := new(St)
 	st.exe_dir = exe_dir
 	st.imgs = img_cache_make(exe_dir)
@@ -179,40 +158,53 @@ main :: proc() {
 	st.footer = true
 	st.show_notes = true
 	st.path = default_deck_path()
+	return st
+}
 
-	// Arguments in any order: a deck path, and at most one mode flag.
+main :: proc() {
+	// --collab and its companions (--as, --title, --link, --script,
+	// --offline) belong to the window. Anything else goes to the command line
+	// untouched: collabui.parse_args takes a --title wherever it finds one,
+	// and `slides add deck.json --title Agenda` needs it.
+	collab_line := false
+	for a in os.args[1:] {
+		if a == "--collab" {
+			collab_line = true
+		}
+	}
+	ca: collabui.Args
+	args := os.args[1:]
+	if collab_line {
+		rest_args: [dynamic]string
+		ca, rest_args = collabui.parse_args(os.args[1:])
+		args = rest_args[:]
+	} else if code, handled := kit.cli_args(surface(), args); handled {
+		// The command line answers everything except an empty line and a
+		// bare deck path, which are the window's.
+		os.exit(code)
+	}
+
+	exe_dir := exe_directory()
+	st := state_new(exe_dir)
+
+	// What is left is the window's: a deck path, and — kept so that every
+	// invocation that worked before still does — the older spellings after
+	// it (`slides deck.json --pdf out.pdf`). With no path first, those are
+	// commands, and the kit has already run them.
 	deck_path := ""
-	export_dir := ""
 	out_file := ""
 	mode := ""
 	for i := 0; i < len(args); i += 1 {
 		a := args[i]
 		switch {
-		case a == "--export":
-			mode = "export"
-			if i + 1 < len(args) && !strings.has_prefix(args[i + 1], "--") {
-				export_dir = args[i + 1]
-				i += 1
-			}
-		case a == "--pptx", a == "--pdf":
+		case a == "--export", a == "--pptx", a == "--pdf", a == "--shots":
 			mode = a[2:]
 			if i + 1 < len(args) && !strings.has_prefix(args[i + 1], "--") {
 				out_file = args[i + 1]
 				i += 1
 			}
-		case a == "--selftest":
-			mode = "selftest"
-		case a == "--shots":
-			mode = "shots"
-			if i + 1 < len(args) && !strings.has_prefix(args[i + 1], "--") {
-				export_dir = args[i + 1]
-				i += 1
-			}
-		case a == "--help", a == "-h":
-			fmt.println(USAGE)
-			return
 		case strings.has_prefix(a, "--"):
-			fmt.eprintfln("slides: unknown option %s", a)
+			fmt.eprintfln("slides: unknown option %s (slides --help lists the commands)", a)
 			os.exit(2)
 		case:
 			deck_path = a
@@ -220,6 +212,13 @@ main :: proc() {
 	}
 
 	if deck_path != "" {
+		// `takes_path` hands any word that is not a command to the window. A
+		// typo must not become a window that never returns, so a deck that is
+		// not there is an error, not an empty editor.
+		if !os.exists(deck_path) {
+			fmt.eprintfln("slides: %q is neither a command nor a deck (slides --help lists the commands)", deck_path)
+			os.exit(kit.EXIT_USAGE)
+		}
 		d, err := load_deck(deck_path)
 		if err != "" {
 			fmt.eprintfln("slides: %s", err)
@@ -232,38 +231,27 @@ main :: proc() {
 	}
 
 	switch mode {
-	case "export":
-		dir := export_dir != "" ? export_dir : default_export_dir()
-		fonts: p.Fonts
-		fonts_headless(&fonts)
-		n, err := export_deck(&st.deck, dir, &fonts, &st.imgs)
-		if err != "" {
-			fmt.eprintfln("slides: %s", err)
-			os.exit(1)
-		}
-		fmt.printfln("exported %d slides and a contact sheet to %s", n, dir)
-		return
-	case "pptx", "pdf":
+	case "export", "pptx", "pdf":
+		f: Export_Format = mode == "pptx" ? .Pptx : (mode == "pdf" ? .Pdf : .Png)
 		out := out_file
 		if out == "" {
-			out = tprintf("%s/deck.%s", default_export_dir(context.temp_allocator), mode)
+			out = f == .Png ? default_export_dir() : tprintf("%s/deck.%s", default_export_dir(context.temp_allocator), mode)
 		}
 		fonts: p.Fonts
 		fonts_headless(&fonts)
-		err := mode == "pptx" \
-			? pptx_write_file(&st.deck, out, &fonts, &st.imgs) \
-			: pdf_write_file(&st.deck, out, &fonts, &st.imgs)
+		n, err := deck_export(&st.deck, out, f, &fonts, &st.imgs)
 		if err != "" {
 			fmt.eprintfln("slides: %s", err)
 			os.exit(1)
 		}
-		fmt.printfln("wrote %s (%d slides)", out, len(st.deck.slides))
+		if f == .Png {
+			fmt.printfln("exported %d slides and a contact sheet to %s", n - 1, out)
+		} else {
+			fmt.printfln("wrote %s (%d slides)", out, len(st.deck.slides))
+		}
 		return
-	case "selftest":
-		os.exit(selftest(exe_dir))
 	case "shots":
-		// Offscreen screenshots of the real editor. No compositor, no window.
-		os.exit(shots(export_dir != "" ? export_dir : "slides-shots"))
+		os.exit(shots(out_file != "" ? out_file : "slides-shots"))
 	}
 
 	if ca.doc != "" {
@@ -285,8 +273,14 @@ main :: proc() {
 	}
 }
 
+// exe_directory is where the binary lives, which is where the built-in deck's
+// pictures are looked for. The kernel's answer first: argv[0] is only a name
+// when the binary was found on $PATH or run by `palm`.
 exe_directory :: proc() -> string {
 	exe := os.args[0]
+	if path, err := os.get_executable_path(context.temp_allocator); err == nil && path != "" {
+		exe = path
+	}
 	if slash := strings.last_index_byte(exe, '/'); slash > 0 {
 		return strings.clone(exe[:slash])
 	}

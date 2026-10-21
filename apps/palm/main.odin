@@ -90,7 +90,7 @@ NOUNS := []Noun {
 	{"mailcore", "mailcore", "the mail engine: Maildir, IMAP, POP3, JMAP, SMTP", true, ""},
 	{"torrent", "torrent", "a BitTorrent client, loopback only", true, ""},
 	{"docs", "docs", "a word processor with a headless converter", true, ""},
-	{"slides", "slides", "a presentation editor", false, ""},
+	{"slides", "slides", "a presentation editor", true, ""},
 	{"money", "money", "accounts, imports and budgets", true, ""},
 	{"files", "files", "a file browser", false, ""},
 	{"reader", "reader", "an e-book reader", true, ""},

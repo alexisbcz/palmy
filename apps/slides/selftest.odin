@@ -302,6 +302,9 @@ selftest :: proc(exe_dir: string) -> int {
 	// --- collaboration -----------------------------------------------------
 	t_collab(&t)
 
+	// --- the command line ----------------------------------------------------
+	t_cli(&t)
+
 	fmt.printfln("%d checks, %d passed, %d failed", t.ok + t.fail, t.ok, t.fail)
 	return t.fail == 0 ? 0 : 1
 }

@@ -706,13 +706,7 @@ invoke :: proc(st: ^St, ui: ^p.Ctx, app: ^p.App, cmd: Cmd) {
 		}
 
 	case .Theme_Next:
-		at := 0
-		for t, i in THEMES {
-			if t.name == st.deck.theme.name {
-				at = i
-			}
-		}
-		st.deck.theme = THEMES[(at + 1) % len(THEMES)]
+		st.deck.theme = theme_after(st.deck.theme.name)
 		st.dirty = true
 		toast(st, ui, tprintf("Theme: %s", st.deck.theme.name))
 	case .Toggle_Snap:
@@ -748,21 +742,19 @@ invoke :: proc(st: ^St, ui: ^p.Ctx, app: ^p.App, cmd: Cmd) {
 			toast(st, ui, tprintf("Loaded %s (%d slides)", st.path, len(d.slides)))
 		}
 	case .Export:
+		// deck_export is what `slides export` runs too.
 		dir := default_export_dir(context.temp_allocator)
-		n, err := export_deck(&st.deck, dir, st.fonts, &st.imgs)
+		n, err := deck_export(&st.deck, dir, .Png, st.fonts, &st.imgs)
 		if err != "" {
 			toast(st, ui, err)
 		} else {
-			toast(st, ui, tprintf("Exported %d slides to %s", n, dir))
+			toast(st, ui, tprintf("Exported %d slides to %s", n - 1, dir))
 		}
 
 	case .Export_Pptx, .Export_Pdf:
-		pptx := cmd == .Export_Pptx
-		out := tprintf("%s/%s.%s", default_export_dir(context.temp_allocator), deck_slug(st), pptx ? "pptx" : "pdf")
-		err := pptx \
-			? pptx_write_file(&st.deck, out, st.fonts, &st.imgs) \
-			: pdf_write_file(&st.deck, out, st.fonts, &st.imgs)
-		if err != "" {
+		f: Export_Format = cmd == .Export_Pptx ? .Pptx : .Pdf
+		out := tprintf("%s/%s.%s", default_export_dir(context.temp_allocator), deck_slug(st), EXPORT_EXT[f])
+		if _, err := deck_export(&st.deck, out, f, st.fonts, &st.imgs); err != "" {
 			toast(st, ui, err)
 		} else {
 			toast(st, ui, tprintf("Wrote %s", out))
@@ -946,13 +938,13 @@ text_keys :: proc(ui: ^p.Ctx, st: ^St) {
 }
 
 commit_text :: proc(st: ^St, e: ^Element) {
-	e.text = strings.clone(ed_text(st))
+	elem_set_text(e, ed_text(st))
 }
 
 notes_keys :: proc(ui: ^p.Ctx, st: ^St) {
 	s := cur_slide(st)
 	if p.key_pressed(ui, p.KEY_ESCAPE) || p.key_pressed(ui, p.KEY_TAB) {
-		s.notes = strings.clone(ed_text(st))
+		slide_set_notes(s, ed_text(st))
 		st.mode = .Browse
 		return
 	}
