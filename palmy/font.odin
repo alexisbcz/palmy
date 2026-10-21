@@ -155,6 +155,7 @@ Metrics :: struct {
 
 // Candidate font files, most preferred first. Anything installed on a typical
 // desktop will match one of these; PALMY_FONT and PALMY_FONT_MONO override.
+// The SF and Helvetica/Menlo names last are macOS's own, found only there.
 @(private)
 SANS_CANDIDATES := [?]string {
 	"Inter-Regular",
@@ -168,6 +169,8 @@ SANS_CANDIDATES := [?]string {
 	"LiberationSans-Regular",
 	"Ubuntu-R",
 	"FreeSans",
+	"SFNS",
+	"HelveticaNeue",
 }
 
 @(private)
@@ -216,6 +219,8 @@ MONO_CANDIDATES := [?]string {
 	"LiberationMono-Regular",
 	"NotoSansMono-Regular",
 	"UbuntuMono-R",
+	"SFNSMono",
+	"Menlo",
 }
 
 @(private)
@@ -246,6 +251,7 @@ SANS_ITALIC_CANDIDATES := [?]string {
 	"Ubuntu-RI",
 	"FreeSansOblique",
 	"NimbusSans-Italic",
+	"SFNSItalic",
 }
 
 @(private)
@@ -292,6 +298,7 @@ MONO_ITALIC_CANDIDATES := [?]string {
 	"LiberationMono-Italic",
 	"NotoSansMono-Italic",
 	"UbuntuMono-RI",
+	"SFNSMonoItalic",
 }
 
 @(private)
@@ -569,6 +576,13 @@ font_dirs :: proc() -> []string {
 	if home != "" {
 		append(&dirs, fmt.tprintf("%s/.local/share/fonts", home), fmt.tprintf("%s/.fonts", home))
 	}
+	when ODIN_OS == .Darwin {
+		// Supplemental/ sits under the first and is reached by the walk.
+		append(&dirs, "/System/Library/Fonts", "/Library/Fonts")
+		if home != "" {
+			append(&dirs, fmt.tprintf("%s/Library/Fonts", home))
+		}
+	}
 	return dirs[:]
 }
 
@@ -683,6 +697,14 @@ FALLBACK_CANDIDATES := [?]string {
 	"DejaVuSans", // arrows, box drawing, a lot of symbols
 	"FreeSerif",
 	"Symbola",
+	// macOS's own, found only there: Hebrew with zero-advance points, then
+	// Arial Unicode for Arabic presentation forms and most else; CJK, Hangul
+	// and symbols.
+	"SFHebrew",
+	"Arial Unicode",
+	"Hiragino Sans GB",
+	"AppleSDGothicNeo",
+	"Apple Symbols",
 }
 
 // load_fallback_font appends a face to the fallback chain. An application only

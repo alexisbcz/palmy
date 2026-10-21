@@ -90,6 +90,7 @@ EMOJI_CANDIDATES := [?]string {
 	"OpenMoji-color-cbdt",
 	"OpenMoji-Color",
 	"AppleColorEmoji",
+	"Apple Color Emoji", // macOS's own file name
 	"SegoeUIEmoji",
 	"seguiemj",
 	"JoyPixels",
