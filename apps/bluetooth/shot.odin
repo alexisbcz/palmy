@@ -212,5 +212,17 @@ shots :: proc(dir: string) -> int {
 	shot(off, dir, "06-bluetooth-radio-off")
 	m.adapter.powered = true
 
+	// No bluetoothd: every bluetoothctl call ran out its deadline (run.odin),
+	// which is what a container or this build VM looks like.
+	saved_adapter, saved_devices := m.adapter, m.devices
+	m.adapter = Adapter{silent = true, disc_timeout = -1}
+	m.devices = nil
+	m.sel_len = 0
+	note(m, "bluetoothctl did not answer: bluetoothd is not running", true)
+	step(off, m)
+	step(off, m)
+	shot(off, dir, "07-bluetooth-not-answering")
+	m.adapter, m.devices = saved_adapter, saved_devices
+
 	return 0
 }

@@ -9,8 +9,10 @@ package main
 //	bluetoothctl info <MAC>         one device in full
 //
 // Nothing in this file blocks for long: every one of those calls returns in a
-// few milliseconds. The one command that does block — `bluetoothctl --timeout
-// N scan on` — is run on a worker thread in jobs.odin, never from the frame.
+// few milliseconds when bluetoothd is there, and every bluetoothctl call has a
+// deadline (run.odin) for when it is not. The one command that does block —
+// `bluetoothctl --timeout N scan on` — is run on a worker thread in jobs.odin,
+// never from the frame.
 
 import "core:mem"
 import "core:strconv"
@@ -41,6 +43,7 @@ Kind :: enum {
 
 Adapter :: struct {
 	present:      bool,
+	silent:       bool, // bluetoothctl did not answer by its deadline: no bluetoothd
 	addr:         string,
 	addr_type:    string,
 	name:         string,
@@ -358,7 +361,11 @@ read_adapter :: proc(al: mem.Allocator) -> (a: Adapter) {
 		}
 	}
 
-	lines, ok := kit.run_lines({"bluetoothctl", "show"}, context.temp_allocator)
+	lines, ok, late := bt_lines({"bluetoothctl", "show"}, context.temp_allocator)
+	if late {
+		a.silent = true
+		return
+	}
 	if !ok || len(lines) == 0 {
 		return
 	}
@@ -433,7 +440,10 @@ device_list :: proc(
 	argv := filter == "" \
 		? []string{"bluetoothctl", "devices"} \
 		: []string{"bluetoothctl", "devices", filter}
-	lines, ok := kit.run_lines(argv, context.temp_allocator)
+	if bluez_silent() {
+		return
+	}
+	lines, ok, _ := bt_lines(argv, context.temp_allocator)
 	if !ok {
 		return
 	}
@@ -470,7 +480,10 @@ read_device :: proc(addr, list_name: string, al: mem.Allocator) -> (d: Device) {
 	d.name = strings.clone(list_name, al)
 	d.battery = -1
 
-	lines, _ := kit.run_lines({"bluetoothctl", "info", addr}, context.temp_allocator)
+	if bluez_silent() {
+		return
+	}
+	lines, _, _ := bt_lines({"bluetoothctl", "info", addr}, context.temp_allocator)
 	for l in lines {
 		t := strings.trim_space(l)
 		if strings.has_prefix(t, "Device ") {

@@ -143,7 +143,7 @@ header :: proc(ui: ^p.Ctx, m: ^Model) {
 		toggle_discoverable(m)
 		p.redraw(ui)
 	}
-	if switch_cell(ui, "Bluetooth", "P", a.powered, !a.hard_block && !job_busy()) {
+	if switch_cell(ui, "Bluetooth", "P", a.powered, !a.hard_block && !a.silent && !job_busy()) {
 		toggle_power(m)
 		p.redraw(ui)
 	}
@@ -162,6 +162,8 @@ adapter_icon :: proc(m: ^Model) -> p.Icon {
 adapter_status :: proc(m: ^Model) -> string {
 	a := m.adapter
 	switch {
+	case a.silent:
+		return "Not answering · bluetoothd is not running"
 	case !a.present:
 		return "No adapter found"
 	case a.hard_block:
@@ -360,6 +362,12 @@ nearby_empty :: proc(ui: ^p.Ctx, m: ^Model) {
 		p.end(ui)
 		sc.empty_title(ui, "Scanning")
 		sc.empty_description(ui, "Nothing has advertised yet. This takes a few seconds.")
+		return
+	}
+	if m.adapter.silent {
+		sc.empty_media_icon(ui, IC_BLUETOOTH_OFF)
+		sc.empty_title(ui, "BlueZ is not answering")
+		sc.empty_description(ui, "bluetoothctl gave no answer in 2 seconds: bluetoothd is not running. Press R to try again.")
 		return
 	}
 	if !m.adapter.powered {

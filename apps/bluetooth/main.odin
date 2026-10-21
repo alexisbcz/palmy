@@ -227,6 +227,9 @@ reload :: proc(m: ^Model, quiet := false) {
 		}
 	}
 	m.loaded = true
+	if m.adapter.silent && !quiet {
+		note(m, "bluetoothctl did not answer: bluetoothd is not running", true)
+	}
 	if !quiet {
 		log_command(
 			{"rfkill list bluetooth; bluetoothctl show; bluetoothctl devices"},
@@ -531,6 +534,11 @@ toggle_power :: proc(m: ^Model) {
 	}
 	if m.adapter.hard_block {
 		note(m, "Radio is hard-blocked; use the hardware switch", true)
+		return
+	}
+	if m.adapter.silent {
+		// A power job would only wait out its own deadline.
+		note(m, "bluetoothd is not running; press R to try again", true)
 		return
 	}
 	on := !m.adapter.powered

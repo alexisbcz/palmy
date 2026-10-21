@@ -15,6 +15,7 @@ package main
 import "core:fmt"
 import "core:os"
 import "core:strings"
+import "core:time"
 import kit "kit:."
 
 @(private = "file")
@@ -75,6 +76,7 @@ selftest :: proc() -> int {
 	make_trap()
 	test_trap_works()
 	test_cli_reads()
+	test_silent()
 	test_cli_intents()
 	test_cli_surface()
 
@@ -360,4 +362,90 @@ test_cli_surface :: proc() {
 		}
 	}
 	check(!fired(), "after the whole surface, the sentinel is still empty")
+}
+
+// ---------------------------------------------------------------------------
+// A bluetoothctl that never answers
+// ---------------------------------------------------------------------------
+
+// FAKE_HANG is bluetoothctl with no bluetoothd behind it: it never returns.
+// It leaves its pid behind so the test can see that it was killed, not
+// orphaned.
+@(private = "file")
+FAKE_HANG :: `#!/bin/sh
+echo $$ >> PIDS
+echo "Waiting to connect to bluetoothd..."
+exec sleep 30
+`
+
+@(private = "file")
+pid_alive :: proc(pid: string) -> bool {
+	return os.exists(fmt.tprintf("/proc/%s", pid))
+}
+
+test_silent :: proc() {
+	section("a bluetoothctl that never answers")
+
+	bin := fmt.tprintf("%s/hangbin", g_root)
+	_ = os.make_directory_all(bin)
+	pids := fmt.tprintf("%s/hang-pids", g_root)
+	body, _ := strings.replace_all(FAKE_HANG, "PIDS", pids, context.temp_allocator)
+	_ = os.write_entire_file(fmt.tprintf("%s/bluetoothctl", bin), transmute([]u8)body, os.Permissions_All)
+	rfk, _ := strings.replace_all(FAKE_RFKILL, "SENTINEL", g_sentinel, context.temp_allocator)
+	_ = os.write_entire_file(fmt.tprintf("%s/rfkill", bin), transmute([]u8)rfk, os.Permissions_All)
+	hang_path := fmt.tprintf("%s:%s", bin, os.get_env("PATH", context.temp_allocator))
+
+	// In process: the readers the window reloads from.
+	old_path := strings.clone(os.get_env("PATH", context.temp_allocator), context.temp_allocator)
+	_ = os.set_env("PATH", hang_path)
+	{
+		t0 := time.tick_now()
+		a := read_adapter(context.temp_allocator)
+		took := time.tick_since(t0)
+		check(a.silent, "a bluetoothctl that never answers marks the adapter silent")
+		check(!a.present, "and no adapter is invented")
+		check(took >= READ_TIMEOUT - 50 * time.Millisecond, "it waited out its deadline (%v)", took)
+		check(took < READ_TIMEOUT + 1500 * time.Millisecond, "and no longer (%v, deadline %v)", took, READ_TIMEOUT)
+		check(bluez_silent(), "the silence is remembered")
+
+		t1 := time.tick_now()
+		devs := read_devices(context.temp_allocator)
+		took = time.tick_since(t1)
+		eq_i(len(devs), 0, "the device lists come back empty")
+		check(took < 300 * time.Millisecond, "without each one waiting out its own deadline (%v)", took)
+
+		text, _ := os.read_entire_file_from_path(pids, context.temp_allocator)
+		lines := strings.split_lines(strings.trim_space(string(text)), context.temp_allocator)
+		eq_i(len(lines), 1, "exactly one bluetoothctl was started for the whole reload")
+		time.sleep(50 * time.Millisecond)
+		for pid in lines {
+			check(pid != "" && !pid_alive(pid), "the stuck bluetoothctl (pid %s) was killed, not orphaned", pid)
+		}
+
+		// A job carries its own, longer deadline, and still ends.
+		t2 := time.tick_now()
+		_, ok, late := bt_run({"bluetoothctl", "connect", HEADSET}, 300 * time.Millisecond)
+		took = time.tick_since(t2)
+		check(late && !ok, "a job against it times out instead of holding the job slot")
+		check(took < 1500 * time.Millisecond, "at its own deadline (%v)", took)
+	}
+	_ = os.set_env("PATH", g_path_env)
+	{
+		a := read_adapter(context.temp_allocator)
+		check(a.present && !a.silent, "once bluetoothctl answers again, the adapter is back")
+		check(!bluez_silent(), "and the silence is forgotten")
+	}
+	_ = os.set_env("PATH", old_path)
+
+	// As child processes: the command line reports it, quickly.
+	for verb in ([?][]string{{"status", "--json"}, {"devices", "--json"}, {"device", HEADSET, "--json"}}) {
+		t0 := time.tick_now()
+		out, code := cli_run(hang_path, ..verb)
+		took := time.tick_since(t0)
+		eq_i(code, kit.EXIT_UNAVAILABLE, fmt.tprintf("bluetooth %s with no bluetoothd exits 6", verb[0]))
+		check(strings.contains(out, `"error": "unavailable"`), "%s says unavailable", verb[0])
+		check(strings.contains(out, "bluetoothd is not running"), "%s says why", verb[0])
+		check(took < READ_TIMEOUT + 2 * time.Second, "%s returns after one deadline, not a hang (%v)", verb[0], took)
+	}
+	check(!fired(), "a silent bluetoothctl changed nothing")
 }

@@ -231,6 +231,19 @@ need_bluez :: proc(c: ^kit.Call) -> bool {
 	return true
 }
 
+// SILENT_DETAIL is what every read says when bluetoothctl ran out its
+// deadline (run.odin): BlueZ is installed but nothing is serving it.
+SILENT_DETAIL :: "bluetoothctl did not answer within 2 s: bluetoothd is not running"
+
+@(private = "file")
+bluez_answered :: proc(c: ^kit.Call) -> bool {
+	if bluez_silent() {
+		kit.cli_fail(c, kit.EXIT_UNAVAILABLE, SILENT_DETAIL)
+		return false
+	}
+	return true
+}
+
 @(private = "file")
 cmd_status :: proc(c: ^kit.Call) -> int {
 	if !need_bluez(c) {
@@ -238,6 +251,9 @@ cmd_status :: proc(c: ^kit.Call) -> int {
 	}
 	arena := cli_arena()
 	a := read_adapter(virtual.arena_allocator(&arena))
+	if !bluez_answered(c) {
+		return kit.EXIT_UNAVAILABLE
+	}
 	kit.jset_bool(c.out, "present", a.present)
 	kit.jset_str(c.out, "address", a.addr)
 	kit.jset_str(c.out, "name", a.name)
@@ -265,6 +281,9 @@ cmd_devices :: proc(c: ^kit.Call) -> int {
 	}
 	arena := cli_arena()
 	devs := read_devices(virtual.arena_allocator(&arena))
+	if !bluez_answered(c) {
+		return kit.EXIT_UNAVAILABLE
+	}
 	only_paired := kit.cli_bool(c, "paired")
 	only_connected := kit.cli_bool(c, "connected")
 	arr := kit.jarr()
@@ -299,7 +318,11 @@ cmd_device :: proc(c: ^kit.Call) -> int {
 	}
 	want := kit.cli_str(c, "addr")
 	arena := cli_arena()
-	for d in read_devices(virtual.arena_allocator(&arena)) {
+	devs := read_devices(virtual.arena_allocator(&arena))
+	if !bluez_answered(c) {
+		return kit.EXIT_UNAVAILABLE
+	}
+	for d in devs {
 		if !same_hex(d.addr, want) {
 			continue
 		}

@@ -13,6 +13,7 @@ import "core:fmt"
 import "core:strings"
 import "core:sync"
 import "core:thread"
+import "core:time"
 import kit "kit:."
 
 Job_Kind :: enum {
@@ -97,6 +98,19 @@ job_kind :: proc() -> Job_Kind {
 
 @(private = "file")
 job_worker :: proc() {
+	if len(g_job.argv) > 0 && g_job.argv[0] == "bluetoothctl" {
+		// A deadline, so a job against a missing bluetoothd ends and frees
+		// the one job slot instead of holding it for the life of the window.
+		limit := g_job.kind == .Scan ? time.Duration(SCAN_SECS) * time.Second + SCAN_GRACE : JOB_TIMEOUT
+		out, ok, late := bt_run(g_job.argv, limit, context.allocator)
+		if late {
+			out = strings.clone("bluetoothctl did not answer: bluetoothd is not running")
+		}
+		g_job.out = out
+		g_job.ok = ok
+		sync.atomic_store(&g_job.finished, true)
+		return
+	}
 	out, ok := kit.run(g_job.argv, context.allocator)
 	g_job.out = out
 	g_job.ok = ok
