@@ -258,7 +258,7 @@ cli_core_selftest :: proc() -> int {
 		ok(num(doc, "count") == 0, "and it is empty, count %v", num(doc, "count"))
 
 		audit, aerr := os.read_entire_file_from_path(SCRATCH + "/audit.jsonl", context.temp_allocator)
-		ok(aerr == nil && strings.contains(string(audit), "\"verb\":\"clear\""), "the audit went to the scratch $PALM_AUDIT")
+		ok(aerr == nil && strings.contains(string(audit), "\"verb\": \"clear\""), "the audit went to the scratch $PALM_AUDIT")
 	}
 
 	// -------------------------------------------------------------------

@@ -560,5 +560,5 @@ selftest_open_for_real :: proc(env, root, docs: string) {
 		check(got && code == 0 && strings.contains(out, `"launched": true`), "cli: launched means started, even when the opener then fails")
 	}
 	audit := read(fmt.tprintf("%s/audit.jsonl", root))
-	check(strings.contains(audit, `"verb":"open"`), "cli: a real open is audited")
+	check(strings.contains(audit, `"verb": "open"`), "cli: a real open is audited")
 }
