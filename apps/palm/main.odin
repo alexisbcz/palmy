@@ -95,7 +95,7 @@ NOUNS := []Noun {
 	{"files", "files", "a file browser", false, ""},
 	{"reader", "reader", "an e-book reader", false, ""},
 	{"maps", "maps", "a map viewer", false, ""},
-	{"shop", "shop", "a shopping list", false, ""},
+	{"shop", "shop", "a shopping list", true, ""},
 	{"audio", "audio", "an audio workstation", false, ""},
 	{"mixer", "mixer", "output and input levels", false, ""},
 	{"net", "network", "network state — read-only, by rule", false, ""},
@@ -107,6 +107,8 @@ NOUNS := []Noun {
 	{"image", "image", "an image viewer", false, ""},
 	{"prose", "prose", "a Vale-compatible prose linter", false, ""},
 	{"pkg", "pkg", "packages: list, search, install, sync, rollback", false, ""},
+	{"captions", "captions", "local speech to text, and caption files: show, lint, convert, shift, burn in", true, ""},
+	{"videoedit", "videoedit", "a non-linear video editor over project files, exporting through ffmpeg", false, ""},
 }
 
 // FORBIDDEN_VERBS are the verbs that must not exist anywhere, and that `palm`
