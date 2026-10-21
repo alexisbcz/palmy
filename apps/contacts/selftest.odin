@@ -3,10 +3,12 @@
 package main
 
 import "core:fmt"
+import "core:os"
 import "core:strings"
 import ical "../../cloud/dav/ical"
 import vcard "../../cloud/dav/vcard"
 import dc "../../cloud/dav/client"
+import kit "kit:."
 
 @(private = "file")
 checks, failures: int
@@ -162,10 +164,37 @@ run_selftest :: proc() -> int {
 	check(find_book(st, "alice-work/default") == w, "a book resolves by identity/segment")
 	check(find_book(st, "", "alice") == a, "the default book is the first own one")
 
+	test_password_secret()
+
 	if failures == 0 {
 		fmt.printfln("contacts selftest: %d checks passed", checks)
 		return 0
 	}
 	fmt.printfln("contacts selftest: %d checks, %d FAILED", checks, failures)
 	return 1
+}
+
+// test_password_secret: --password is declared secret, so the audit log, the
+// --json result and a refusal all carry <redacted> where it was. Run in
+// process against a scratch HOME, so no real session is read.
+test_password_secret :: proc() {
+	dir := "/tmp/palmy-contacts-selftest-secret"
+	_ = os.remove_all(dir)
+	_ = os.make_directory_all(dir)
+	audit := fmt.tprintf("%s/audit.jsonl", dir)
+	keys := [?]string{"HOME", "XDG_CONFIG_HOME", "XDG_DATA_HOME", "PALM_AUDIT"}
+	old: [len(keys)]string
+	for k, i in keys {
+		old[i] = strings.clone(os.get_env(k, context.temp_allocator))
+		_ = os.set_env(k, k == "PALM_AUDIT" ? audit : dir)
+	}
+	defer for k, i in keys {
+		_ = os.set_env(k, old[i])
+	}
+	_, out, _ := kit.cli_capture(surface(), {"signin", "a@b.test", "--password", "hunter2-7319", "--dry-run", "--json"})
+	raw, _ := os.read_entire_file_from_path(audit, context.temp_allocator)
+	log := string(raw)
+	check(strings.contains(log, `"verb":"signin"`), "signin is audited")
+	check(!strings.contains(log, "hunter2-7319") && strings.contains(log, "<redacted>"), "but its --password is not: <redacted> in its place")
+	check(!strings.contains(out, "hunter2-7319"), "nor is it in what signin prints")
 }
