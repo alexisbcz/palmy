@@ -126,7 +126,7 @@ f3 :: proc(v: f32) -> string {
 	return fmt.tprintf("%.3f", v)
 }
 
-elem_fields :: proc(e: ^Element) -> [20][2]string {
+elem_fields :: proc(e: ^Element) -> [21][2]string {
 	return {
 		{"kind", fmt.tprintf("%d", int(e.kind))},
 		{"x", f3(e.x)},
@@ -148,7 +148,46 @@ elem_fields :: proc(e: ^Element) -> [20][2]string {
 		{"op", f3(e.opacity)},
 		{"rot", f3(e.rotation)},
 		{"src", e.src},
+		{"runs", runs_encode(e.runs)},
 	}
+}
+
+// runs_encode spells a run list as one register value: `start,end,flags,
+// colour,size` per run, `;` between runs, flags 1 bold and 2 italic. A run's
+// offsets are bytes into the element's text, which is a separate CRDT text;
+// two people editing the same box's words concurrently can therefore leave a
+// run a few bytes off its word. runs_decode clamps, so that is a cosmetic
+// shift and never an out-of-range read.
+runs_encode :: proc(runs: []Run) -> string {
+	b := strings.builder_make(context.temp_allocator)
+	for r, i in runs {
+		if i > 0 {
+			strings.write_byte(&b, ';')
+		}
+		fl := (r.bold ? 1 : 0) | (r.italic ? 2 : 0)
+		fmt.sbprintf(&b, "%d,%d,%d,%x,%s", r.start, r.end, fl, r.color, f3(r.size))
+	}
+	return strings.to_string(b)
+}
+
+runs_decode :: proc(s: string, text_len: int) -> []Run {
+	if s == "" {
+		return nil
+	}
+	out := make([dynamic]Run, context.temp_allocator)
+	for part in strings.split(s, ";", context.temp_allocator) {
+		f := strings.split(part, ",", context.temp_allocator)
+		if len(f) != 5 {
+			continue
+		}
+		a, _ := strconv.parse_int(f[0])
+		b, _ := strconv.parse_int(f[1])
+		fl, _ := strconv.parse_int(f[2])
+		c, _ := strconv.parse_u64_of_base(f[3], 16)
+		z, _ := strconv.parse_f32(f[4])
+		append(&out, Run{start = a, end = b, bold = fl & 1 != 0, italic = fl & 2 != 0, color = u32(c), size = z})
+	}
+	return runs_clean(out[:], text_len)
 }
 
 collab_note_edit :: proc() {
@@ -191,6 +230,7 @@ collab_sync :: proc(st: ^St) -> bool {
 		sk := uid_key(s.uid)
 		owner := fmt.tprintf("sl/%s", sk)
 		crdt.set_str(d, owner, "layout", fmt.tprintf("%d", int(s.layout)))
+		crdt.set_str(d, owner, "tr", fmt.tprintf("%d,%d", int(s.transition), s.transition_ms))
 		sync_text(d, fmt.tprintf("n/%s", sk), s.notes)
 		ekeys := make([dynamic]string, 0, len(s.elems), context.temp_allocator)
 		for &e in s.elems {append(&ekeys, uid_key(e.uid))}
@@ -229,6 +269,11 @@ collab_deck :: proc(d: ^crdt.Doc, base: ^Deck) -> Deck {
 		s.uid, _ = strconv.parse_u64_of_base(sk, 16)
 		lv, _ := strconv.parse_int(crdt.reg_str(d, fmt.tprintf("sl/%s", sk), "layout", "0"))
 		s.layout = Layout(clamp(lv, 0, int(max(Layout))))
+		if tr := strings.split(crdt.reg_str(d, fmt.tprintf("sl/%s", sk), "tr", "0,0"), ",", context.temp_allocator); len(tr) == 2 {
+			tv, _ := strconv.parse_int(tr[0])
+			s.transition = Transition(clamp(tv, 0, int(max(Transition))))
+			s.transition_ms, _ = strconv.parse_int(tr[1])
+		}
 		s.notes = strings.clone(crdt.read_text(d, fmt.tprintf("n/%s", sk)))
 		for ek in movable_order(d, fmt.tprintf("E/%s", sk), "el/") {
 			eo := fmt.tprintf("el/%s", ek)
@@ -267,6 +312,7 @@ collab_deck :: proc(d: ^crdt.Doc, base: ^Deck) -> Deck {
 				src      = strings.clone(crdt.reg_str(d, eo, "src")),
 				text     = strings.clone(crdt.read_text(d, fmt.tprintf("t/%s", ek))),
 			}
+			e.runs = runs_decode(crdt.reg_str(d, eo, "runs"), len(e.text))
 			e.uid, _ = strconv.parse_u64_of_base(ek, 16)
 			append(&s.elems, e)
 		}
@@ -368,6 +414,7 @@ collab_tick :: proc(ui: ^p.Ctx, st: ^St) {
 			if e := cur_elem(st); e != nil {
 				ed_begin(st, e.text)
 				st.ed.caret = min(caret, len(st.ed.buf))
+				st.ed.anchor = st.ed.caret
 			} else {
 				st.mode = .Browse
 			}

@@ -265,6 +265,8 @@ canvas_draw :: proc(c: ^p.Canvas, r: p.Rect, st: ^St) {
 			selected = st.sel,
 			editing = st.mode == .Text,
 			caret = st.ed.caret,
+			sel_a = st.ed.anchor,
+			sel_b = st.ed.caret,
 			caret_on = on,
 			guides = st.guides[:],
 			footer = st.footer,
@@ -370,6 +372,27 @@ inspector :: proc(ui: ^p.Ctx, st: ^St) {
 	num_field(ui, "W", e.w)
 	num_field(ui, "H", e.h)
 	p.end(ui)
+	if e.kind == .Text {
+		// What the styled-run keys would act on: the selection while
+		// editing, the whole box otherwise.
+		p.row(ui, "w-full items-center gap-2 pt-1")
+		label := len(e.runs) == 0 ? "plain text" : tprintf("%d styled run%s", len(e.runs), len(e.runs) == 1 ? "" : "s")
+		if st.mode == .Text {
+			a, b := ed_sel(&st.ed)
+			at := a < len(st.ed.buf) ? a : max(a - 1, 0)
+			sty := style_at(e, at)
+			parts := make([dynamic]string, context.temp_allocator)
+			if sty.bold {append(&parts, "bold")}
+			if sty.italic {append(&parts, "italic")}
+			if sty.color != 0 {append(&parts, paint_label(sty.color))}
+			if sty.size > 0 {append(&parts, tprintf("%.0f", sty.size))}
+			label = tprintf("%s%s", a == b ? "at caret: " : "selection: ", len(parts) == 0 ? "plain" : strings.join(parts[:], " · ", context.temp_allocator))
+		}
+		p.text(ui, label, "flex-1 text-[10] text-muted-foreground whitespace-nowrap truncate")
+		sc.kbd(ui, "Ctrl B")
+		sc.kbd(ui, "Ctrl I")
+		p.end(ui)
+	}
 	p.end(ui)
 	sc.separator(ui)
 
@@ -539,6 +562,7 @@ slide_inspector :: proc(ui: ^p.Ctx, st: ^St) {
 	kv(ui, "Slides", tprintf("%d", len(st.deck.slides)))
 	kv(ui, "Elements here", tprintf("%d", len(s.elems)))
 	kv(ui, "Notes", tprintf("%d chars", len(s.notes)))
+	kv(ui, "Transition", s.transition == .None ? "none  (Shift T)" : tprintf("%s, %d ms", TRANSITION_NAMES[s.transition], s.transition_ms > 0 ? s.transition_ms : TRANSITION_MS))
 	kv(ui, "Snapping", st.snap ? "on" : "off")
 	kv(ui, "File", short_path(st.path))
 	p.end(ui)
@@ -801,6 +825,17 @@ build_present :: proc(ui: ^p.Ctx, st: ^St) {
 	// second, so it asks for exactly that: one wake at the next whole second
 	// on a real clock, rather than every frame at the display rate.
 	pres_clock = now_s(ui)
+	if pt := &st.pres_trans; pt.on {
+		el := pres_clock - pt.t0
+		if el >= pt.secs || st.pres_notes || st.pres_black {
+			pt.on = false
+		} else {
+			pt.t = f32(el / pt.secs)
+			// One frame after another until it lands; the loop goes back
+			// to sleeping the moment it does.
+			p.redraw(ui)
+		}
+	}
 	if st.pres_notes && !st.pres_black {
 		el := max(0, pres_clock - st.pres_start)
 		p.wake_after(ui, secs(math.floor(el) + 1 - el) + 2 * time.Millisecond)
@@ -821,20 +856,17 @@ present_draw :: proc(c: ^p.Canvas, r: p.Rect, st: ^St) {
 	// Full bleed, letterboxed, with a sliver of margin so a compositor that
 	// trims an edge does not trim a title.
 	box := fit_16_9(p.rect_inset(r, 10 * c.scale))
-	draw_slide(
-		c,
-		box,
-		&st.deck,
-		st.slide,
-		{
-			fonts = st.fonts,
-			imgs = &st.imgs,
-			footer = true,
-			number = st.slide + 1,
-			total = len(st.deck.slides),
-			selected = -1,
-		},
-	)
+	o := Opts {
+		fonts    = st.fonts,
+		imgs     = &st.imgs,
+		footer   = true,
+		number   = st.slide + 1,
+		total    = len(st.deck.slides),
+		selected = -1,
+	}
+	if !pres_draw_transition(c, box, st, o) {
+		draw_slide(c, box, &st.deck, st.slide, o)
+	}
 
 	// The counter and a progress rule, drawn over the slide the way a
 	// projector's own chrome would be.

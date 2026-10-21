@@ -243,6 +243,7 @@ shots :: proc(dir: string) -> int {
 	if e != nil {
 		append(&st.ed.buf, e.text)
 		st.ed.caret = len(st.ed.buf)
+		st.ed.anchor = st.ed.caret
 	}
 	shot(off, st, dir, "03-slides-editing-text")
 	st.mode = .Browse

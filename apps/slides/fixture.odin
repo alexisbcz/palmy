@@ -6,6 +6,10 @@ package main
 // deck: eight slides that use every layout, every text style, shapes with
 // rotation and stroke, both generated pictures, and speaker notes on each. It
 // is also the deck the demo recording drives, and the one `--export` renders.
+// Three of its slides carry styled runs and four arrive with a transition, so
+// both are exercised by every export and every demo.
+
+import "core:strings"
 
 fixture_deck :: proc() -> Deck {
 	d := Deck {
@@ -34,6 +38,7 @@ fixture_deck :: proc() -> Deck {
 		append(&s.elems, text_box("01", .Metric, 940, 180, 240, 160, .Right))
 		s.elems[len(s.elems) - 1].color = SLOT_ACCENT
 		s.elems[len(s.elems) - 1].opacity = 0.35
+		s.transition = .Push
 		s.notes = "Text, shapes, pictures, z-order, hit testing, a second surface for the projector. Everything a toolkit can get wrong is here."
 		append(&d.slides, s)
 	}
@@ -53,6 +58,12 @@ fixture_deck :: proc() -> Deck {
 				400,
 			),
 		)
+		// Styled runs: one box, several looks.
+		mark(&s.elems[1], "theme slots", .Color, color = SLOT_ACCENT)
+		mark(&s.elems[1], "theme slots", .Bold)
+		mark(&s.elems[1], "plain data", .Italic)
+		mark(&s.elems[1], "JSON", .Bold)
+		s.transition = .Fade
 		s.notes = "Paint order is array order. Raising an element is a swap; bringing it to the front is a move to the end of the array. No separate z field to keep consistent."
 		append(&d.slides, s)
 	}
@@ -66,6 +77,7 @@ fixture_deck :: proc() -> Deck {
 		append(&s.elems, shape(.Rect, MARGIN - 16, 208, 532, 390, SLOT_SURFACE))
 		s.elems[len(s.elems) - 1].fill_a = 0.55
 		elem_to_back(&s, len(s.elems) - 1)
+		s.transition = .Wipe
 		s.notes = "A sorter that shows placeholders is worse than useless. These thumbnails are the renderer at 160 pixels wide."
 		append(&d.slides, s)
 	}
@@ -102,6 +114,8 @@ fixture_deck :: proc() -> Deck {
 		s.elems[len(s.elems) - 1].stroke_w = 8
 		append(&s.elems, shape(.Arrow, 860, 300, 220, 120, SLOT_FG))
 		append(&s.elems, text_box("Every edge is a signed distance field, evaluated in the shape's own rotated frame.", .Caption, 110, 540, 520, 60))
+		mark(&s.elems[len(s.elems) - 1], "signed distance field", .Italic)
+		s.transition = .Push
 		s.notes = "Rotation is applied by inverse transforming each pixel into the shape's frame. Text boxes stay upright, which is the one thing this renderer will not rotate."
 		append(&d.slides, s)
 	}
@@ -115,6 +129,8 @@ fixture_deck :: proc() -> Deck {
 		append(&s.elems, text_box("dynamic libraries:\nlibc, libm, vdso", .Body, MARGIN, 420, 300, 120))
 		append(&s.elems, image_box("assets/bars.png", 480, 212, 700, 400))
 		append(&s.elems, text_box("Frames drawn per second, 1080p, one core", .Caption, 480, 630, 700, 40))
+		mark(&s.elems[2], "libc, libm, vdso", .Color, color = SLOT_ACCENT2)
+		mark(&s.elems[2], "libc, libm, vdso", .Size, size = 34)
 		s.notes = "No GPU driver, no libwayland, no font library. The chart is drawn with palmy's own rasterizer and saved as a PNG at build time."
 		append(&d.slides, s)
 	}
@@ -134,4 +150,14 @@ fixture_deck :: proc() -> Deck {
 		}
 	}
 	return d
+}
+
+// mark styles the first occurrence of `word` in a fixture text box.
+@(private = "file")
+mark :: proc(e: ^Element, word: string, op: Style_Op, color: u32 = 0, size: f32 = 0) {
+	at := strings.index(e.text, word)
+	if at < 0 {
+		return
+	}
+	e.runs = runs_apply(e.runs, len(e.text), at, at + len(word), op, true, color, size)
 }

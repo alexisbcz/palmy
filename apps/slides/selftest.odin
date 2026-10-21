@@ -299,6 +299,9 @@ selftest :: proc(exe_dir: string) -> int {
 	// --- the interchange formats ----------------------------------------
 	t_export_formats(&t, &fonts, &imgs)
 
+	// --- styled runs, transitions, placeholders, import -------------------
+	t_runs(&t, &fonts, &imgs)
+
 	// --- collaboration -----------------------------------------------------
 	t_collab(&t)
 

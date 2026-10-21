@@ -46,6 +46,13 @@ Cmd :: enum u8 {
 	Elem_Stroke,
 	Elem_Bold,
 	Elem_Center,
+	Run_Bold,
+	Run_Italic,
+	Run_Colour,
+	Run_Bigger,
+	Run_Smaller,
+	Run_Plain,
+	Transition_Next,
 	Theme_Next,
 	Toggle_Snap,
 	Toggle_Notes,
@@ -109,6 +116,15 @@ MENU := [?]MI {
 	{label = "Cycle stroke", keys = "Shift C", cmd = .Elem_Stroke},
 	{label = "Bold", keys = "B", cmd = .Elem_Bold},
 	{label = "Centre on slide", keys = "Shift G", cmd = .Elem_Center},
+	{label = "Styled text", head = true},
+	{label = "Bold", keys = "Ctrl B", cmd = .Run_Bold},
+	{label = "Italic", keys = "Ctrl I", cmd = .Run_Italic},
+	{label = "Colour", keys = "Ctrl Shift C", cmd = .Run_Colour},
+	{label = "Larger", keys = "Ctrl =", cmd = .Run_Bigger},
+	{label = "Smaller", keys = "Ctrl -", cmd = .Run_Smaller},
+	{label = "Plain", keys = "Ctrl Space", cmd = .Run_Plain},
+	{label = "Select", keys = "Shift arrows", cmd = .None},
+	{label = "Transition", keys = "Shift T", cmd = .Transition_Next},
 	{label = "Deck", head = true},
 	{label = "Next theme", keys = "G", cmd = .Theme_Next},
 	{label = "Snapping", keys = "W", cmd = .Toggle_Snap},
@@ -326,6 +342,16 @@ browse_keys :: proc(ui: ^p.Ctx, app: ^p.App, st: ^St) {
 		invoke(st, ui, app, .Help)
 		return
 	}
+	// Styling a whole box from outside it: the same commands as inside, over
+	// all of its text.
+	if p.shortcut(ui, 'b', {.Ctrl}) {
+		invoke(st, ui, app, .Run_Bold)
+		return
+	}
+	if p.shortcut(ui, 'i', {.Ctrl}) {
+		invoke(st, ui, app, .Run_Italic)
+		return
+	}
 
 	// Slide navigation. Counted rather than tested, because several presses of
 	// the same key can land in one frame and a reader holding J expects every
@@ -484,6 +510,8 @@ browse_keys :: proc(ui: ^p.Ctx, app: ^p.App, st: ^St) {
 			invoke(st, ui, app, .Elem_Bold)
 		case 'G':
 			invoke(st, ui, app, .Elem_Center)
+		case 'T':
+			invoke(st, ui, app, .Transition_Next)
 		case 'g':
 			invoke(st, ui, app, .Theme_Next)
 		case 'w':
@@ -705,6 +733,21 @@ invoke :: proc(st: ^St, ui: ^p.Ctx, app: ^p.App, cmd: Cmd) {
 			toast(st, ui, "Centred horizontally")
 		}
 
+	case .Run_Bold, .Run_Italic, .Run_Colour, .Run_Bigger, .Run_Smaller, .Run_Plain:
+		if e == nil || e.kind != .Text {
+			toast(st, ui, "Select a text box to style its text")
+		} else {
+			msg := style_text(st, e, cmd)
+			st.dirty = true
+			toast(st, ui, msg)
+		}
+
+	case .Transition_Next:
+		n := int(max(Transition)) + 1
+		s.transition = Transition((int(s.transition) + 1) % n)
+		st.dirty = true
+		toast(st, ui, tprintf("Transition: %s", TRANSITION_NAMES[s.transition]))
+
 	case .Theme_Next:
 		st.deck.theme = theme_after(st.deck.theme.name)
 		st.dirty = true
@@ -904,6 +947,7 @@ begin_text :: proc(st: ^St, ui: ^p.Ctx = nil) {
 	st.mode = .Text
 	ed_begin(st, e.text)
 	st.ed.caret = len(st.ed.buf)
+	st.ed.anchor = st.ed.caret
 }
 
 ed_begin :: proc(st: ^St, text: string) {
@@ -913,10 +957,31 @@ ed_begin :: proc(st: ^St, text: string) {
 	clear(&st.ed.buf)
 	append(&st.ed.buf, ..transmute([]u8)text)
 	st.ed.caret = len(st.ed.buf)
+	st.ed.anchor = st.ed.caret
+	clear(&st.ed.pending)
 }
 
 ed_text :: proc(st: ^St) -> string {
 	return string(st.ed.buf[:])
+}
+
+// ed_sel is the selection as an ordered byte range; empty when nothing is
+// selected.
+ed_sel :: proc(ed: ^Editor) -> (a, b: int) {
+	n := len(ed.buf)
+	return clamp(min(ed.caret, ed.anchor), 0, n), clamp(max(ed.caret, ed.anchor), 0, n)
+}
+
+// ed_replace is the one way the buffer changes: [a, b) becomes `ins`, the
+// caret lands after it with nothing selected, and the edit is logged.
+ed_replace :: proc(ed: ^Editor, a, b: int, ins: []u8, typed := false) {
+	remove_range(&ed.buf, a, b)
+	if len(ins) > 0 {
+		inject_at_elems(&ed.buf, a, ..ins)
+	}
+	ed.caret = a + len(ins)
+	ed.anchor = ed.caret
+	append(&ed.log, Ed_Edit{at = a, removed = b - a, inserted = len(ins), typed = typed})
 }
 
 text_keys :: proc(ui: ^p.Ctx, st: ^St) {
@@ -930,11 +995,103 @@ text_keys :: proc(ui: ^p.Ctx, st: ^St) {
 		st.mode = .Browse
 		return
 	}
-	if ed_keys(ui, &st.ed, true) {
+
+	// Styling the selection. These are the same commands the menu and the
+	// command line reach; inside a box they act on the selection, or arm
+	// the style for what is typed next when nothing is selected.
+	style_keys := [?]struct {
+		sym:  u32,
+		mods: p.Modifiers,
+		cmd:  Cmd,
+	} {
+		{'b', {.Ctrl}, .Run_Bold},
+		{'i', {.Ctrl}, .Run_Italic},
+		{'C', {.Ctrl, .Shift}, .Run_Colour},
+		{'=', {.Ctrl}, .Run_Bigger},
+		{'+', {.Ctrl, .Shift}, .Run_Bigger},
+		{'-', {.Ctrl}, .Run_Smaller},
+		{p.KEY_SPACE, {.Ctrl}, .Run_Plain},
+	}
+	for sk in style_keys {
+		if p.shortcut(ui, sk.sym, sk.mods) {
+			invoke(st, ui, nil, sk.cmd)
+		}
+	}
+
+	clear(&st.ed.log)
+	before := len(e.text)
+	if ed_keys(ui, &st.ed, true, true) {
+		// The runs move through exactly the edits that were made, so a
+		// style stays on its words while the words around it change.
+		n := before
+		for ev in st.ed.log {
+			n = n - ev.removed + ev.inserted
+			if len(e.runs) > 0 {
+				e.runs = runs_splice(e.runs, ev.at, ev.removed, ev.inserted, n)
+			}
+			if ev.typed && len(st.ed.pending) > 0 {
+				for ps in st.ed.pending {
+					e.runs = runs_apply(e.runs, n, ev.at, ev.at + ev.inserted, ps.op, ps.on, ps.color, ps.size)
+				}
+			}
+		}
 		// The element shows the live buffer, so the canvas is the text field.
 		e.text = ed_text(st)
 		st.dirty = true
 	}
+}
+
+// style_text runs one of the Run_* commands on a text box: over the selection
+// while editing it, armed for the next typing when the selection is empty, and
+// over the whole box otherwise. It returns what to say about it.
+style_text :: proc(st: ^St, e: ^Element, cmd: Cmd) -> string {
+	n := len(e.text)
+	a, b := 0, n
+	editing := st.mode == .Text
+	if editing {
+		a, b = ed_sel(&st.ed)
+		n = len(st.ed.buf)
+	}
+	at := a < n ? a : max(a - 1, 0) // the byte whose style a toggle reads
+	cur := style_at(e, at)
+	ps := Pending_Style{}
+	label := ""
+	#partial switch cmd {
+	case .Run_Bold:
+		on := a < b ? !range_all(e, a, b, false) : !cur.bold
+		ps = {op = .Bold, on = on}
+		label = on ? "Bold" : "Not bold"
+	case .Run_Italic:
+		on := a < b ? !range_all(e, a, b, true) : !cur.italic
+		ps = {op = .Italic, on = on}
+		label = on ? "Italic" : "Not italic"
+	case .Run_Colour:
+		c := next_paint(cur.color, 1)
+		ps = {op = .Color, color = c}
+		label = tprintf("Colour: %s", c == SLOT_NONE ? "the box's" : paint_label(c))
+	case .Run_Bigger, .Run_Smaller:
+		base := cur.size > 0 ? cur.size : text_size(e)
+		z := clamp(base + (cmd == .Run_Bigger ? 4 : -4), 8, 220)
+		if z == text_size(e) {
+			z = 0
+		}
+		ps = {op = .Size, size = z}
+		label = tprintf("Size %.0f", z > 0 ? z : text_size(e))
+	case .Run_Plain:
+		ps = {op = .Plain}
+		label = "Plain text"
+	case:
+		return ""
+	}
+	if editing && a == b {
+		append(&st.ed.pending, ps)
+		return tprintf("%s — for what you type next", label)
+	}
+	e.runs = runs_apply(e.runs, n, a, b, ps.op, ps.on, ps.color, ps.size)
+	if editing {
+		return label
+	}
+	return tprintf("%s — the whole box", label)
 }
 
 commit_text :: proc(st: ^St, e: ^Element) {
@@ -954,14 +1111,18 @@ notes_keys :: proc(ui: ^p.Ctx, st: ^St) {
 	}
 }
 
-// ed_keys is a one-caret text editor over a byte buffer: typed runes, the
-// motions, Backspace and Delete, Ctrl-A/E/U/W, and line up/down. palmy gives
-// the rune-safe measurement; the model is the application's, as its README
-// says it has to be.
-ed_keys :: proc(ui: ^p.Ctx, ed: ^Editor, multiline: bool) -> (changed: bool) {
+// ed_keys is a text editor over a byte buffer: typed runes, the motions,
+// Backspace and Delete, Ctrl-A/E/U/W, line up/down, and — when `selecting` —
+// a selection made with Shift and the motions (Ctrl+Shift+A selects all).
+// palmy gives the rune-safe measurement; the model is the application's, as
+// its README says it has to be.
+ed_keys :: proc(ui: ^p.Ctx, ed: ^Editor, multiline: bool, selecting := false) -> (changed: bool) {
+	if !selecting {
+		ed.anchor = ed.caret
+	}
 	if typed := p.typed_text(ui); len(typed) > 0 {
-		inject_at_elems(&ed.buf, ed.caret, ..transmute([]u8)typed)
-		ed.caret += len(typed)
+		a, b := ed_sel(ed)
+		ed_replace(ed, a, b, transmute([]u8)typed, true)
 		changed = true
 	}
 
@@ -977,37 +1138,45 @@ ed_keys :: proc(ui: ^p.Ctx, ed: ^Editor, multiline: bool) -> (changed: bool) {
 	}
 
 	for k in ui.input.keys {
+		moved := false
 		switch k.sym {
 		case p.KEY_RETURN, p.KEY_KP_ENTER:
 			if multiline {
-				inject_at_elems(&ed.buf, ed.caret, '\n')
-				ed.caret += 1
+				a, b := ed_sel(ed)
+				ed_replace(ed, a, b, {'\n'})
 				changed = true
 			}
 		case p.KEY_BACKSPACE:
 			if .Ctrl in k.mods {
 				continue
 			}
-			if ed.caret > 0 {
+			if a, b := ed_sel(ed); a < b {
+				ed_replace(ed, a, b, nil)
+				changed = true
+			} else if ed.caret > 0 {
 				n := utf8_back(ed.buf[:], ed.caret)
-				remove_range(&ed.buf, ed.caret - n, ed.caret)
-				ed.caret -= n
+				ed_replace(ed, ed.caret - n, ed.caret, nil)
 				changed = true
 			}
 		case p.KEY_DELETE:
-			if ed.caret < len(ed.buf) {
+			if a, b := ed_sel(ed); a < b {
+				ed_replace(ed, a, b, nil)
+				changed = true
+			} else if ed.caret < len(ed.buf) {
 				n := utf8_fwd(ed.buf[:], ed.caret)
-				remove_range(&ed.buf, ed.caret, ed.caret + n)
+				ed_replace(ed, ed.caret, ed.caret + n, nil)
 				changed = true
 			}
 		case p.KEY_LEFT:
 			if ed.caret > 0 {
 				ed.caret -= utf8_back(ed.buf[:], ed.caret)
 			}
+			moved = true
 		case p.KEY_RIGHT:
 			if ed.caret < len(ed.buf) {
 				ed.caret += utf8_fwd(ed.buf[:], ed.caret)
 			}
+			moved = true
 		case p.KEY_UP:
 			ls := line_start(ed.buf[:], ed.caret)
 			col := ed.caret - ls
@@ -1015,6 +1184,7 @@ ed_keys :: proc(ui: ^p.Ctx, ed: ^Editor, multiline: bool) -> (changed: bool) {
 				prev := line_start(ed.buf[:], ls - 1)
 				ed.caret = min(prev + col, ls - 1)
 			}
+			moved = true
 		case p.KEY_DOWN:
 			ls := line_start(ed.buf[:], ed.caret)
 			col := ed.caret - ls
@@ -1023,23 +1193,34 @@ ed_keys :: proc(ui: ^p.Ctx, ed: ^Editor, multiline: bool) -> (changed: bool) {
 				ne := line_end(ed.buf[:], le + 1)
 				ed.caret = min(le + 1 + col, ne)
 			}
+			moved = true
 		case p.KEY_HOME:
 			ed.caret = line_start(ed.buf[:], ed.caret)
+			moved = true
 		case p.KEY_END:
 			ed.caret = line_end(ed.buf[:], ed.caret)
+			moved = true
 		case 'a':
 			if .Ctrl in k.mods {
 				ed.caret = line_start(ed.buf[:], ed.caret)
+				moved = true
+			}
+		case 'A':
+			if .Ctrl in k.mods && selecting {
+				ed.anchor = 0
+				ed.caret = len(ed.buf)
+				clear(&ed.pending)
+				continue
 			}
 		case 'e':
 			if .Ctrl in k.mods {
 				ed.caret = line_end(ed.buf[:], ed.caret)
+				moved = true
 			}
 		case 'u':
 			if .Ctrl in k.mods {
 				ls := line_start(ed.buf[:], ed.caret)
-				remove_range(&ed.buf, ls, ed.caret)
-				ed.caret = ls
+				ed_replace(ed, ls, ed.caret, nil)
 				changed = true
 			}
 		case 'w':
@@ -1047,13 +1228,21 @@ ed_keys :: proc(ui: ^p.Ctx, ed: ^Editor, multiline: bool) -> (changed: bool) {
 				i := ed.caret
 				for i > 0 && ed.buf[i - 1] == ' ' {i -= 1}
 				for i > 0 && ed.buf[i - 1] != ' ' && ed.buf[i - 1] != '\n' {i -= 1}
-				remove_range(&ed.buf, i, ed.caret)
-				ed.caret = i
+				ed_replace(ed, i, ed.caret, nil)
 				changed = true
 			}
 		}
+		if moved {
+			// Shift extends the selection; any other motion collapses it and
+			// forgets a style armed for typing at the old caret.
+			if !(selecting && .Shift in k.mods) {
+				ed.anchor = ed.caret
+			}
+			clear(&ed.pending)
+		}
 	}
 	ed.caret = clamp(ed.caret, 0, len(ed.buf))
+	ed.anchor = clamp(ed.anchor, 0, len(ed.buf))
 	return
 }
 
@@ -1207,6 +1396,8 @@ mouse_edit :: proc(ui: ^p.Ctx, st: ^St) {
 					e.h * st.canvas_sc,
 				}
 				st.ed.caret = caret_at(st.fonts, box, st.canvas_sc, e, m.x, m.y, theme_family(&st.deck.theme))
+				st.ed.anchor = st.ed.caret
+				clear(&st.ed.pending)
 			} else {
 				if st.mode == .Text {
 					if e := cur_elem(st); e != nil {

@@ -244,8 +244,11 @@ write_text_body :: proc(b: ^strings.Builder, th: ^Theme, e: ^Element) {
 		para := text[i:end]
 
 		bullet := e.style == .Bullets && (strings.has_prefix(para, "- ") || strings.has_prefix(para, "• "))
+		ps := i // where the paragraph's words start in e.text
 		if bullet {
-			para = para[strings.has_prefix(para, "- ") ? 2 : len("• "):]
+			skip := strings.has_prefix(para, "- ") ? 2 : len("• ")
+			para = para[skip:]
+			ps += skip
 		}
 
 		strings.write_string(b, "<a:p><a:pPr")
@@ -268,16 +271,36 @@ write_text_body :: proc(b: ^strings.Builder, th: ^Theme, e: ^Element) {
 		strings.write_string(b, "</a:pPr>")
 
 		if para != "" {
-			fmt.sbprintf(b, "<a:r><a:rPr lang=\"en-US\" sz=\"%d\" b=\"%d\" dirty=\"0\"", int(size * PPTX_SZ_PER_UNIT), bold ? 1 : 0)
-			if spec.tracking != 0 {
-				// `spc` is in hundredths of a point, and the tracking is a
-				// fraction of the type size.
-				fmt.sbprintf(b, " spc=\"%d\"", int(math.round(f64(spec.tracking * size) * PPTX_SZ_PER_UNIT)))
+			// One `a:r` per styled segment: a run's bold, italic, colour and
+			// size become that `a:r`'s own `a:rPr`, which is exactly the
+			// model DrawingML has. A box without runs is one `a:r` per
+			// paragraph, as it always was.
+			for sg in text_segments(e, ps, end) {
+				rsize := sg.s.size > 0 ? sg.s.size : size
+				fmt.sbprintf(
+					b,
+					"<a:r><a:rPr lang=\"en-US\" sz=\"%d\" b=\"%d\"",
+					int(rsize * PPTX_SZ_PER_UNIT),
+					bold || sg.s.bold ? 1 : 0,
+				)
+				if sg.s.italic {
+					strings.write_string(b, " i=\"1\"")
+				}
+				strings.write_string(b, " dirty=\"0\"")
+				if spec.tracking != 0 {
+					// `spc` is in hundredths of a point, and the tracking is a
+					// fraction of the type size.
+					fmt.sbprintf(b, " spc=\"%d\"", int(math.round(f64(spec.tracking * rsize) * PPTX_SZ_PER_UNIT)))
+				}
+				strings.write_string(b, ">")
+				rc := col
+				if sg.s.color != SLOT_NONE {
+					rc = paint(th, sg.s.color)
+				}
+				solid_fill(b, "a:solidFill", rc, clamp(e.opacity, 0, 1))
+				fmt.sbprintf(b, "<a:latin typeface=\"%s\"/><a:cs typeface=\"%s\"/></a:rPr>", face, face)
+				fmt.sbprintf(b, "<a:t>%s</a:t></a:r>", xml_escape(e.text[sg.start:sg.end]))
 			}
-			strings.write_string(b, ">")
-			solid_fill(b, "a:solidFill", col, clamp(e.opacity, 0, 1))
-			fmt.sbprintf(b, "<a:latin typeface=\"%s\"/><a:cs typeface=\"%s\"/></a:rPr>", face, face)
-			fmt.sbprintf(b, "<a:t>%s</a:t></a:r>", xml_escape(para))
 		} else {
 			fmt.sbprintf(b, "<a:endParaRPr lang=\"en-US\" sz=\"%d\"/>", int(size * PPTX_SZ_PER_UNIT))
 		}
@@ -314,20 +337,40 @@ Pptx_Media :: struct {
 // connector. `id` is the shape id, which must be unique within the slide and
 // must not be 1 — that is the group shape every tree starts with.
 @(private = "file")
-write_element :: proc(b: ^strings.Builder, th: ^Theme, e: ^Element, id: int, rid: string) {
+write_element :: proc(b: ^strings.Builder, th: ^Theme, e: ^Element, id: int, rid: string, ph: Pptx_Ph = {}) {
 	alpha := clamp(e.opacity, 0, 1)
 
 	switch e.kind {
 	case .Rect, .Ellipse, .Text:
-		name := e.kind == .Text ? "TextBox" : KIND_NAMES[e.kind]
-		fmt.sbprintf(
-			b,
-			"<p:sp><p:nvSpPr><p:cNvPr id=\"%d\" name=\"%s %d\"/><p:cNvSpPr%s/><p:nvPr/></p:nvSpPr><p:spPr>",
-			id,
-			name,
-			id,
-			e.kind == .Text ? " txBox=\"1\"" : "",
-		)
+		if e.kind == .Text && ph.tag != "" {
+			// A placeholder: the slide's title or body, as PowerPoint's
+			// outline view and every accessibility tool read it. It keeps its
+			// own geometry and formatting below, so it renders exactly as a
+			// text box would; the placeholder is what it *is*.
+			fmt.sbprintf(
+				b,
+				"<p:sp><p:nvSpPr><p:cNvPr id=\"%d\" name=\"%s %d%s\"/><p:cNvSpPr><a:spLocks noGrp=\"1\"/></p:cNvSpPr><p:nvPr>%s</p:nvPr></p:nvSpPr><p:spPr>",
+				id,
+				ph.name,
+				id,
+				style_suffix(e),
+				ph.tag,
+			)
+		} else {
+			name := e.kind == .Text ? "TextBox" : KIND_NAMES[e.kind]
+			if ph.name != "" {
+				name = ph.name
+			}
+			fmt.sbprintf(
+				b,
+				"<p:sp><p:nvSpPr><p:cNvPr id=\"%d\" name=\"%s %d%s\"/><p:cNvSpPr%s/><p:nvPr/></p:nvSpPr><p:spPr>",
+				id,
+				name,
+				id,
+				e.kind == .Text ? style_suffix(e) : "",
+				e.kind == .Text ? " txBox=\"1\"" : "",
+			)
+		}
 		xfrm(b, e.x, e.y, e.w, e.h, e.rotation)
 		if e.kind == .Ellipse {
 			strings.write_string(b, "<a:prstGeom prst=\"ellipse\"><a:avLst/></a:prstGeom>")
@@ -428,6 +471,176 @@ write_element :: proc(b: ^strings.Builder, th: ^Theme, e: ^Element, id: int, rid
 	}
 }
 
+// ---------------------------------------------------------------------------
+// Placeholders
+//
+// PowerPoint's outline view, its accessibility checker, a screen reader and
+// every "export outline" feature read a slide's text out of its *placeholders*
+// — the title and body shapes a layout declares — and ignore free text boxes.
+// A deck written as nothing but text boxes therefore has an empty outline even
+// though every word is on the page. So each of this program's layouts is
+// written as a real slide layout with the placeholders it has (the slots
+// `apply_layout` creates), and on each slide the text boxes that fill those
+// slots are written as placeholders that point at them:
+//
+//     layout          PowerPoint type   placeholders
+//     Title           title             ctrTitle, subTitle idx 1
+//     Title + Content obj               title, content idx 1
+//     Two Content     twoObj            title, content idx 1 and 2
+//     Section Header  secHead           title, body idx 1
+//     Picture         picTx             title, body idx 2 (the caption)
+//     Blank           blank             none
+//
+// Which box is which is decided by style, in reading order: the first
+// Title-styled box is the title; the body is the first Bullets or Body box
+// (Subtitle on the Title and Section layouts, where that is what the slot
+// holds). Everything else stays a text box. A placeholder still carries its
+// own position, size, insets and every run's formatting, so a reader that
+// ignores inheritance and one that honours it draw the same slide.
+// ---------------------------------------------------------------------------
+
+Pptx_Ph :: struct {
+	tag:  string, // the <p:ph .../> element; empty for a plain text box
+	name: string, // the shape's name, as PowerPoint names placeholders
+}
+
+PPTX_LAYOUT_TYPE := [Layout]string {
+	.Title          = "title",
+	.Title_Content  = "obj",
+	.Two_Content    = "twoObj",
+	.Section_Header = "secHead",
+	.Picture        = "picTx",
+	.Blank          = "blank",
+}
+
+PPTX_LAYOUT_NAME := [Layout]string {
+	.Title          = "Title Slide",
+	.Title_Content  = "Title and Content",
+	.Two_Content    = "Two Content",
+	.Section_Header = "Section Header",
+	.Picture        = "Picture with Caption",
+	.Blank          = "Blank",
+}
+
+// pptx_placeholders says, for each element of a slide, which placeholder it
+// fills (an empty tag for none).
+pptx_placeholders :: proc(s: ^Slide, allocator := context.temp_allocator) -> []Pptx_Ph {
+	out := make([]Pptx_Ph, len(s.elems), allocator)
+	if s.layout == .Blank {
+		return out
+	}
+	first :: proc(s: ^Slide, out: []Pptx_Ph, styles: []Style) -> int {
+		for &e, i in s.elems {
+			if e.kind != .Text || out[i].tag != "" {
+				continue
+			}
+			for st in styles {
+				if e.style == st {
+					return i
+				}
+			}
+		}
+		return -1
+	}
+	if t := first(s, out, {.Title}); t >= 0 {
+		out[t] = s.layout == .Title ? {`<p:ph type="ctrTitle"/>`, "Title"} : {`<p:ph type="title"/>`, "Title"}
+	}
+	switch s.layout {
+	case .Title:
+		if i := first(s, out, {.Subtitle}); i >= 0 {
+			out[i] = {`<p:ph type="subTitle" idx="1"/>`, "Subtitle"}
+		}
+	case .Title_Content:
+		if i := first(s, out, {.Bullets, .Body}); i >= 0 {
+			out[i] = {`<p:ph idx="1"/>`, "Content Placeholder"}
+		}
+	case .Two_Content:
+		for k in 1 ..= 2 {
+			if i := first(s, out, {.Bullets, .Body}); i >= 0 {
+				out[i] = {fmt.aprintf(`<p:ph sz="half" idx="%d"/>`, k, allocator = allocator), "Content Placeholder"}
+			}
+		}
+	case .Section_Header:
+		if i := first(s, out, {.Subtitle, .Body}); i >= 0 {
+			out[i] = {`<p:ph type="body" idx="1"/>`, "Text Placeholder"}
+		}
+	case .Picture:
+		if i := first(s, out, {.Body, .Caption, .Bullets}); i >= 0 {
+			out[i] = {`<p:ph type="body" idx="2"/>`, "Text Placeholder"}
+		}
+	case .Blank:
+	}
+	return out
+}
+
+// layout_xml writes one slide layout: its type, its name and its placeholder
+// shapes where `apply_layout` puts the slots, each with the slot's prompt as
+// its text — what PowerPoint shows in an empty placeholder.
+@(private = "file")
+layout_xml :: proc(l: Layout, th: ^Theme) -> string {
+	d := Deck {
+		theme  = th^,
+		slides = make([dynamic]Slide, context.temp_allocator),
+	}
+	append(&d.slides, Slide{layout = l, elems = make([dynamic]Element, context.temp_allocator)})
+	apply_layout(&d, 0, l)
+	s := &d.slides[0]
+	phs := pptx_placeholders(s)
+	b := strings.builder_make(context.temp_allocator)
+	fmt.sbprintf(
+		&b,
+		`<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<p:sldLayout %s type="%s" preserve="1"><p:cSld name="%s"><p:spTree><p:nvGrpSpPr><p:cNvPr id="1" name=""/><p:cNvGrpSpPr/><p:nvPr/></p:nvGrpSpPr><p:grpSpPr><a:xfrm><a:off x="0" y="0"/><a:ext cx="0" cy="0"/><a:chOff x="0" y="0"/><a:chExt cx="0" cy="0"/></a:xfrm></p:grpSpPr>`,
+		NS,
+		PPTX_LAYOUT_TYPE[l],
+		PPTX_LAYOUT_NAME[l],
+	)
+	id := 1
+	for &e, i in s.elems {
+		if phs[i].tag == "" {
+			continue
+		}
+		id += 1
+		write_element(&b, th, &e, id, "", phs[i])
+	}
+	strings.write_string(&b, "</p:spTree></p:cSld><p:clrMapOvr><a:masterClrMapping/></p:clrMapOvr></p:sldLayout>")
+	return strings.to_string(b)
+}
+
+// transition_xml is a slide's `p:transition`, which follows `p:clrMapOvr` in
+// the slide part. `spd` is DrawingML's three speeds (PowerPoint plays them at
+// 0.5, 0.75 and 1 second); the nearest one to the slide's duration is used.
+// The directions are the ones LibreOffice's importer reads back as "push from
+// the right" and "wipe from the left", which is what the projector draws going
+// forward.
+transition_xml :: proc(s: ^Slide) -> string {
+	if s.transition == .None {
+		return ""
+	}
+	ms := s.transition_ms > 0 ? s.transition_ms : TRANSITION_MS
+	spd := ms <= 600 ? "fast" : (ms <= 875 ? "med" : "slow")
+	inner := ""
+	switch s.transition {
+	case .None:
+	case .Fade:
+		inner = "<p:fade/>"
+	case .Push:
+		inner = `<p:push dir="l"/>`
+	case .Wipe:
+		inner = `<p:wipe dir="r"/>`
+	}
+	return fmt.tprintf(`<p:transition spd="%s">%s</p:transition>`, spd, inner)
+}
+
+// style_suffix names a text box's type-scale style in its shape name
+// ("TextBox 7 · Metric"). PresentationML has no notion of this deck's styles,
+// and a size alone does not say whether 62pt was a Title or a big Body; the
+// importer reads the name back when the file says it came from here, so a
+// deck survives a round trip through .pptx with its styles intact.
+style_suffix :: proc(e: ^Element) -> string {
+	return fmt.tprintf(" · %s", STYLE_NAMES[e.style])
+}
+
 // cover_crop is the "cover" fit this renderer draws pictures with, expressed as
 // the four insets DrawingML uses: the shorter axis fills the box and the longer
 // one is cropped evenly from both ends. A format that only knows how to stretch
@@ -520,9 +733,7 @@ title_rule_y :: proc(fonts: ^p.Fonts, d: ^Deck, si: int) -> (y: f32, ok: bool) {
 			continue
 		}
 		tl := text_layout(fonts, {e.x, e.y, e.w, e.h}, 1, e, theme_family(&d.theme))
-		m := p.font_metrics(fonts, tl.size, tl.fam, tl.wt)
-		bottom := tl.first_y + f32(len(tl.lines) - 1) * tl.line_h + m.descent
-		return bottom + 18, true
+		return text_bottom(fonts, &tl) + 18, true
 	}
 	return 0, false
 }
@@ -592,7 +803,12 @@ pptx_bytes :: proc(d: ^Deck, fonts: ^p.Fonts, imgs: ^Img_Cache, allocator := con
 		b := strings.builder_make(context.temp_allocator)
 		rb := strings.builder_make(context.temp_allocator)
 		fmt.sbprintf(&rb, "<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>\n<Relationships xmlns=\"%s\">", PREL)
-		fmt.sbprintf(&rb, "<Relationship Id=\"rId1\" Type=\"%s/slideLayout\" Target=\"../slideLayouts/slideLayout1.xml\"/>", OREL)
+		fmt.sbprintf(
+			&rb,
+			"<Relationship Id=\"rId1\" Type=\"%s/slideLayout\" Target=\"../slideLayouts/slideLayout%d.xml\"/>",
+			OREL,
+			int(s.layout) + 1,
+		)
 		next_rid := 2
 
 		notes := strings.trim_space(s.notes)
@@ -635,7 +851,10 @@ pptx_bytes :: proc(d: ^Deck, fonts: ^p.Fonts, imgs: ^Img_Cache, allocator := con
 		)
 
 		id := 1
-		write_master_decor(&b, d, si, fonts, &id)
+		if !d.no_decor {
+			write_master_decor(&b, d, si, fonts, &id)
+		}
+		phs := pptx_placeholders(s)
 
 		for i in 0 ..< len(s.elems) {
 			e := &s.elems[i]
@@ -678,12 +897,12 @@ pptx_bytes :: proc(d: ^Deck, fonts: ^p.Fonts, imgs: ^Img_Cache, allocator := con
 					continue
 				}
 			}
-			write_element(&b, th, e, id, rid)
+			write_element(&b, th, e, id, rid, phs[i])
 		}
 
 		// The footer: the deck title and the slide number, as the editor
 		// draws them on every layout but Title and Blank.
-		if s.layout != .Title && s.layout != .Blank {
+		if s.layout != .Title && s.layout != .Blank && !d.no_decor {
 			id += 1
 			bar_c := argb(th.muted)
 			fmt.sbprintf(
@@ -700,7 +919,7 @@ pptx_bytes :: proc(d: ^Deck, fonts: ^p.Fonts, imgs: ^Img_Cache, allocator := con
 			left.size = 15
 			left.color = SLOT_MUTED
 			id += 1
-			write_element(&b, th, &left, id, "")
+			write_element(&b, th, &left, id, "", {name = "Footer title"})
 
 			right := text_box(
 				fmt.tprintf("%d / %d", si + 1, len(d.slides)),
@@ -715,10 +934,12 @@ pptx_bytes :: proc(d: ^Deck, fonts: ^p.Fonts, imgs: ^Img_Cache, allocator := con
 			right.color = SLOT_MUTED
 			right.bold = true
 			id += 1
-			write_element(&b, th, &right, id, "")
+			write_element(&b, th, &right, id, "", {name = "Footer number"})
 		}
 
-		strings.write_string(&b, "</p:spTree></p:cSld><p:clrMapOvr><a:masterClrMapping/></p:clrMapOvr></p:sld>")
+		strings.write_string(&b, "</p:spTree></p:cSld><p:clrMapOvr><a:masterClrMapping/></p:clrMapOvr>")
+		strings.write_string(&b, transition_xml(s))
+		strings.write_string(&b, "</p:sld>")
 		strings.write_string(&rb, "</Relationships>")
 		append(&slide_parts, strings.to_string(b))
 		append(&slide_rels, strings.to_string(rb))
@@ -781,28 +1002,58 @@ pptx_bytes :: proc(d: ^Deck, fonts: ^p.Fonts, imgs: ^Img_Cache, allocator := con
 	fmt.sbprintf(&prb, "<Relationship Id=\"rId%d\" Type=\"%s/theme\" Target=\"theme/theme1.xml\"/>", 3 + len(d.slides), OREL)
 	strings.write_string(&prb, "</Relationships>")
 
-	// --- the master and its one layout -------------------------------------
-	master := fmt.tprintf(
+	// --- the master and its six layouts --------------------------------------
+	// The master declares the title and body placeholders every layout's own
+	// inherit from, and the text styles they start with: the deck's own type
+	// scale and palette, no bullets and no paragraph spacing, so a
+	// placeholder a reader fills in by hand looks like this deck and not
+	// like Office's default.
+	face := th.mono ? PPTX_MONO : PPTX_SANS
+	mb := strings.builder_make(context.temp_allocator)
+	fmt.sbprintf(
+		&mb,
 		`<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
-<p:sldMaster %s><p:cSld><p:bg><p:bgPr><a:solidFill><a:srgbClr val="%s"/></a:solidFill><a:effectLst/></p:bgPr></p:bg><p:spTree><p:nvGrpSpPr><p:cNvPr id="1" name=""/><p:cNvGrpSpPr/><p:nvPr/></p:nvGrpSpPr><p:grpSpPr><a:xfrm><a:off x="0" y="0"/><a:ext cx="0" cy="0"/><a:chOff x="0" y="0"/><a:chExt cx="0" cy="0"/></a:xfrm></p:grpSpPr></p:spTree></p:cSld><p:clrMap bg1="lt1" tx1="dk1" bg2="lt2" tx2="dk2" accent1="accent1" accent2="accent2" accent3="accent3" accent4="accent4" accent5="accent5" accent6="accent6" hlink="hlink" folHlink="folHlink"/><p:sldLayoutIdLst><p:sldLayoutId id="2147483649" r:id="rId1"/></p:sldLayoutIdLst><p:txStyles><p:titleStyle><a:lvl1pPr><a:defRPr sz="4400"><a:solidFill><a:srgbClr val="%s"/></a:solidFill></a:defRPr></a:lvl1pPr></p:titleStyle><p:bodyStyle><a:lvl1pPr><a:defRPr sz="2000"><a:solidFill><a:srgbClr val="%s"/></a:solidFill></a:defRPr></a:lvl1pPr></p:bodyStyle><p:otherStyle><a:lvl1pPr><a:defRPr sz="1800"><a:solidFill><a:srgbClr val="%s"/></a:solidFill></a:defRPr></a:lvl1pPr></p:otherStyle></p:txStyles></p:sldMaster>`,
+<p:sldMaster %s><p:cSld><p:bg><p:bgPr><a:solidFill><a:srgbClr val="%s"/></a:solidFill><a:effectLst/></p:bgPr></p:bg><p:spTree><p:nvGrpSpPr><p:cNvPr id="1" name=""/><p:cNvGrpSpPr/><p:nvPr/></p:nvGrpSpPr><p:grpSpPr><a:xfrm><a:off x="0" y="0"/><a:ext cx="0" cy="0"/><a:chOff x="0" y="0"/><a:chExt cx="0" cy="0"/></a:xfrm></p:grpSpPr>`,
 		NS,
 		srgb(argb(th.bg)),
+	)
+	{
+		mt := text_box("Click to edit the title", .Title, MARGIN, 72, 1120, 96)
+		mbody := text_box("Click to edit the text", .Body, MARGIN, 208, 1120, 432)
+		write_element(&mb, th, &mt, 2, "", {`<p:ph type="title"/>`, "Title Placeholder"})
+		write_element(&mb, th, &mbody, 3, "", {`<p:ph type="body" idx="1"/>`, "Text Placeholder"})
+	}
+	strings.write_string(
+		&mb,
+		`</p:spTree></p:cSld><p:clrMap bg1="lt1" tx1="dk1" bg2="lt2" tx2="dk2" accent1="accent1" accent2="accent2" accent3="accent3" accent4="accent4" accent5="accent5" accent6="accent6" hlink="hlink" folHlink="folHlink"/><p:sldLayoutIdLst>`,
+	)
+	for l in Layout {
+		fmt.sbprintf(&mb, `<p:sldLayoutId id="%d" r:id="rId%d"/>`, 2147483649 + int(l), int(l) + 1)
+	}
+	fmt.sbprintf(
+		&mb,
+		`</p:sldLayoutIdLst><p:txStyles><p:titleStyle><a:lvl1pPr algn="l"><a:lnSpc><a:spcPct val="%d"/></a:lnSpc><a:spcBef><a:spcPts val="0"/></a:spcBef><a:buNone/><a:defRPr sz="%d" b="1"><a:solidFill><a:srgbClr val="%s"/></a:solidFill><a:latin typeface="%s"/><a:cs typeface="%s"/></a:defRPr></a:lvl1pPr></p:titleStyle><p:bodyStyle><a:lvl1pPr marL="0" indent="0" algn="l"><a:lnSpc><a:spcPct val="%d"/></a:lnSpc><a:spcBef><a:spcPts val="0"/></a:spcBef><a:buNone/><a:defRPr sz="%d"><a:solidFill><a:srgbClr val="%s"/></a:solidFill><a:latin typeface="%s"/><a:cs typeface="%s"/></a:defRPr></a:lvl1pPr></p:bodyStyle><p:otherStyle><a:lvl1pPr><a:defRPr sz="1800"><a:solidFill><a:srgbClr val="%s"/></a:solidFill></a:defRPr></a:lvl1pPr></p:otherStyle></p:txStyles></p:sldMaster>`,
+		int(TYPE_SCALE[.Title].leading * 100000),
+		int(TYPE_SCALE[.Title].size * PPTX_SZ_PER_UNIT),
 		srgb(argb(th.fg)),
+		face,
+		face,
+		int(TYPE_SCALE[.Body].leading * 100000),
+		int(TYPE_SCALE[.Body].size * PPTX_SZ_PER_UNIT),
 		srgb(argb(th.fg)),
+		face,
+		face,
 		srgb(argb(th.fg)),
 	)
-	master_rels := fmt.tprintf(
-		`<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
-<Relationships xmlns="%s"><Relationship Id="rId1" Type="%s/slideLayout" Target="../slideLayouts/slideLayout1.xml"/><Relationship Id="rId2" Type="%s/theme" Target="../theme/theme1.xml"/></Relationships>`,
-		PREL,
-		OREL,
-		OREL,
-	)
-	layout := fmt.tprintf(
-		`<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
-<p:sldLayout %s type="blank" preserve="1"><p:cSld name="Blank"><p:spTree><p:nvGrpSpPr><p:cNvPr id="1" name=""/><p:cNvGrpSpPr/><p:nvPr/></p:nvGrpSpPr><p:grpSpPr><a:xfrm><a:off x="0" y="0"/><a:ext cx="0" cy="0"/><a:chOff x="0" y="0"/><a:chExt cx="0" cy="0"/></a:xfrm></p:grpSpPr></p:spTree></p:cSld><p:clrMapOvr><a:masterClrMapping/></p:clrMapOvr></p:sldLayout>`,
-		NS,
-	)
+	master := strings.to_string(mb)
+	mrb := strings.builder_make(context.temp_allocator)
+	fmt.sbprintf(&mrb, `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<Relationships xmlns="%s">`, PREL)
+	for l in Layout {
+		fmt.sbprintf(&mrb, `<Relationship Id="rId%d" Type="%s/slideLayout" Target="../slideLayouts/slideLayout%d.xml"/>`, int(l) + 1, OREL, int(l) + 1)
+	}
+	fmt.sbprintf(&mrb, `<Relationship Id="rId%d" Type="%s/theme" Target="../theme/theme1.xml"/></Relationships>`, len(Layout) + 1, OREL)
+	master_rels := strings.to_string(mrb)
 	layout_rels := fmt.tprintf(
 		`<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
 <Relationships xmlns="%s"><Relationship Id="rId1" Type="%s/slideMaster" Target="../slideMasters/slideMaster1.xml"/></Relationships>`,
@@ -831,7 +1082,9 @@ pptx_bytes :: proc(d: ^Deck, fonts: ^p.Fonts, imgs: ^Img_Cache, allocator := con
 	OT :: "application/vnd.openxmlformats-officedocument.presentationml"
 	fmt.sbprintf(&cb, "<Override PartName=\"/ppt/presentation.xml\" ContentType=\"%s.presentation.main+xml\"/>", OT)
 	fmt.sbprintf(&cb, "<Override PartName=\"/ppt/slideMasters/slideMaster1.xml\" ContentType=\"%s.slideMaster+xml\"/>", OT)
-	fmt.sbprintf(&cb, "<Override PartName=\"/ppt/slideLayouts/slideLayout1.xml\" ContentType=\"%s.slideLayout+xml\"/>", OT)
+	for l in Layout {
+		fmt.sbprintf(&cb, "<Override PartName=\"/ppt/slideLayouts/slideLayout%d.xml\" ContentType=\"%s.slideLayout+xml\"/>", int(l) + 1, OT)
+	}
 	fmt.sbprintf(&cb, "<Override PartName=\"/ppt/notesMasters/notesMaster1.xml\" ContentType=\"%s.notesMaster+xml\"/>", OT)
 	strings.write_string(&cb, "<Override PartName=\"/ppt/theme/theme1.xml\" ContentType=\"application/vnd.openxmlformats-officedocument.theme+xml\"/>")
 	strings.write_string(&cb, "<Override PartName=\"/ppt/theme/theme2.xml\" ContentType=\"application/vnd.openxmlformats-officedocument.theme+xml\"/>")
@@ -876,8 +1129,10 @@ pptx_bytes :: proc(d: ^Deck, fonts: ^p.Fonts, imgs: ^Img_Cache, allocator := con
 	zip_add_string(&z, "ppt/_rels/presentation.xml.rels", strings.to_string(prb))
 	zip_add_string(&z, "ppt/slideMasters/slideMaster1.xml", master)
 	zip_add_string(&z, "ppt/slideMasters/_rels/slideMaster1.xml.rels", master_rels)
-	zip_add_string(&z, "ppt/slideLayouts/slideLayout1.xml", layout)
-	zip_add_string(&z, "ppt/slideLayouts/_rels/slideLayout1.xml.rels", layout_rels)
+	for l in Layout {
+		zip_add_string(&z, fmt.tprintf("ppt/slideLayouts/slideLayout%d.xml", int(l) + 1), layout_xml(l, th))
+		zip_add_string(&z, fmt.tprintf("ppt/slideLayouts/_rels/slideLayout%d.xml.rels", int(l) + 1), layout_rels)
+	}
 	zip_add_string(&z, "ppt/notesMasters/notesMaster1.xml", notes_master)
 	zip_add_string(&z, "ppt/notesMasters/_rels/notesMaster1.xml.rels", notes_master_rels)
 	zip_add_string(&z, "ppt/theme/theme1.xml", theme_xml(th, "palmy"))
@@ -935,10 +1190,7 @@ read_media :: proc(imgs: ^Img_Cache, src: string) -> (data: []u8, ext: string, o
 	if src == "" {
 		return nil, "", false
 	}
-	path := src
-	if !strings.has_prefix(src, "/") {
-		path = fmt.tprintf("%s/%s", imgs.root, src)
-	}
+	path := img_path(imgs, src)
 	raw, err := os.read_entire_file_from_path(path, context.temp_allocator)
 	if err != nil || len(raw) < 8 {
 		return nil, "", false

@@ -60,13 +60,27 @@ PDF_PT_PER_UNIT :: f32(0.75)
 PDF_PAGE_W :: SLIDE_W * PDF_PT_PER_UNIT // 960pt
 PDF_PAGE_H :: SLIDE_H * PDF_PT_PER_UNIT // 540pt
 
-// The four base-14 faces, in the order their PDF objects are written.
+// The base-14 faces, in the order their PDF objects are written. The oblique
+// four are what an italic run is set in; their advance widths are the upright
+// faces' (Adobe's AFMs for Helvetica-Oblique and Helvetica-BoldOblique carry
+// the same widths as their roman), so the `Tz` correction needs no new table.
 PDF_F_SANS :: 0
 PDF_F_SANS_BOLD :: 1
 PDF_F_MONO :: 2
 PDF_F_MONO_BOLD :: 3
+PDF_F_OBLIQUE :: 4 // added to any of the four above
+PDF_FONTS :: 8
 
-PDF_FONT_NAMES := [4]string{"Helvetica", "Helvetica-Bold", "Courier", "Courier-Bold"}
+PDF_FONT_NAMES := [PDF_FONTS]string {
+	"Helvetica",
+	"Helvetica-Bold",
+	"Courier",
+	"Courier-Bold",
+	"Helvetica-Oblique",
+	"Helvetica-BoldOblique",
+	"Courier-Oblique",
+	"Courier-BoldOblique",
+}
 
 // ---------------------------------------------------------------------------
 // Encoding
@@ -167,7 +181,7 @@ pdf_run_width :: proc(s: string, font: int) -> f32 {
 	for r in s {
 		c := winansi(r)
 		w := 0
-		switch font {
+		switch font % PDF_F_OBLIQUE {
 		case PDF_F_MONO, PDF_F_MONO_BOLD:
 			w = 600
 		case PDF_F_SANS_BOLD:
@@ -505,12 +519,16 @@ pdf_stroke_shape :: proc(pc: ^Page_Ctx, e: ^Element, c: p.Color, a: f32, ellipse
 // pdf_font_for maps this program's family and weight onto the base-14 faces.
 // Helvetica has no medium or semibold, so the four weights collapse onto two:
 // anything at semibold or above sets bold.
-pdf_font_for :: proc(fam: p.Font_Family, wt: p.Font_Weight) -> int {
+pdf_font_for :: proc(fam: p.Font_Family, wt: p.Font_Weight, sl := p.Font_Slant.Upright) -> int {
 	bold := wt == .Bold || wt == .Semibold
+	f := bold ? PDF_F_SANS_BOLD : PDF_F_SANS
 	if fam == .Mono {
-		return bold ? PDF_F_MONO_BOLD : PDF_F_MONO
+		f = bold ? PDF_F_MONO_BOLD : PDF_F_MONO
 	}
-	return bold ? PDF_F_SANS_BOLD : PDF_F_SANS
+	if sl == .Italic {
+		f += PDF_F_OBLIQUE
+	}
+	return f
 }
 
 // pdf_tz is the horizontal scaling, in percent, that makes a base-14 run as
@@ -542,33 +560,47 @@ pdf_text_element :: proc(pc: ^Page_Ctx, e: ^Element) {
 	alpha := clamp(e.opacity, 0, 1)
 
 	tl := text_layout(pc.fonts, {e.x, e.y, e.w, e.h}, 1, e, theme_family(th))
-	font := pdf_font_for(tl.fam, tl.wt)
 
-	set_alpha(b, pc.al, alpha * f32(col.a) / 255)
-	y := tl.first_y
-	for l, li in tl.lines {
+	for l in tl.lines {
 		x := line_x(&tl, l, e)
+		y := l.base
 		if l.bullet {
 			// The renderer draws a dot, not a glyph, so the PDF draws a dot.
 			r := tl.size * 0.16
 			acc := paint(th, SLOT_ACCENT)
+			set_alpha(b, pc.al, alpha * f32(acc.a) / 255)
 			set_rgb(b, acc, false)
 			path_ellipse(b, tl.box.x + r * 0.6, y - tl.size * 0.3 - r, r * 2, r * 2)
 			strings.write_string(b, "f\n")
 		}
-		run := e.text[l.start:l.end]
-		if strings.trim_space(run) != "" {
-			set_rgb(b, col, false)
-			fmt.sbprintf(b, "BT /F%d ", font + 1)
-			op(b, tl.size)
-			strings.write_string(b, "Tf ")
-			op(b, pdf_tz(l.w, tl.size, run, font))
-			strings.write_string(b, "Tz 1 0 0 -1 ")
-			op(b, x, y)
-			fmt.sbprintf(b, "Tm (%s) Tj ET\n", pdf_text_bytes(run))
+		// One text object per segment: a box without runs is one segment per
+		// line, exactly as before runs existed. Each segment carries its own
+		// face, size and colour, and its own `Tz`, so a bold word set in
+		// Helvetica-Bold is stretched to the width Geist Bold gave it and the
+		// next segment starts where this program's layout says it does.
+		sx := x
+		for sg in text_segments(e, l.start, l.end) {
+			f := span_font(&tl.m, sg.s)
+			run := e.text[sg.start:sg.end]
+			w := p.text_width(pc.fonts, run, f.size, tl.fam, f.wt, f.tracking, f.sl)
+			if strings.trim_space(run) != "" {
+				font := pdf_font_for(tl.fam, f.wt, f.sl)
+				c := col
+				if sg.s.color != SLOT_NONE {
+					c = paint(th, sg.s.color)
+				}
+				set_alpha(b, pc.al, alpha * f32(c.a) / 255)
+				set_rgb(b, c, false)
+				fmt.sbprintf(b, "BT /F%d ", font + 1)
+				op(b, f.size)
+				strings.write_string(b, "Tf ")
+				op(b, pdf_tz(w, f.size, run, font))
+				strings.write_string(b, "Tz 1 0 0 -1 ")
+				op(b, sx, y)
+				fmt.sbprintf(b, "Tm (%s) Tj ET\n", pdf_text_bytes(run))
+			}
+			sx += w
 		}
-		y += tl.line_h
-		_ = li
 	}
 }
 
@@ -716,7 +748,8 @@ pdf_slide :: proc(pc: ^Page_Ctx, d: ^Deck, si: int, gradient: bool) {
 		op(pc.b, x, y, w, h)
 		strings.write_string(pc.b, "re f\n")
 	}
-	switch s.layout {
+	layout := d.no_decor ? Layout.Blank : s.layout
+	switch layout {
 	case .Title:
 		oval(pc, 820, -220, 720, 720, accent, 0.13)
 		oval(pc, -180, 420, 620, 620, accent2, 0.08)
@@ -763,7 +796,7 @@ pdf_slide :: proc(pc: ^Page_Ctx, d: ^Deck, si: int, gradient: bool) {
 	}
 
 	// The footer, as the editor draws it.
-	if s.layout != .Title && s.layout != .Blank {
+	if s.layout != .Title && s.layout != .Blank && !d.no_decor {
 		muted := argb(th.muted)
 		bar(pc, MARGIN, SLIDE_H - 54, SLIDE_W - 2 * MARGIN, 1, muted, 0.25)
 		left := text_box(d.title, .Caption, MARGIN, SLIDE_H - 50, (SLIDE_W - 2 * MARGIN) / 2, 30)
@@ -826,13 +859,13 @@ pdf_bytes :: proc(d: ^Deck, fonts: ^p.Fonts, imgs: ^Img_Cache, allocator := cont
 	}
 
 	// Object numbering, fixed from here:
-	//   1 catalog, 2 pages, 3..6 fonts, 7 the shared /ToUnicode CMap,
-	//   8.. images, then a page object and a content object per slide.
+	//   1 catalog, 2 pages, 3..10 fonts, 11 the shared /ToUnicode CMap,
+	//   12.. images, then a page object and a content object per slide.
 	OBJ_CATALOG :: 1
 	OBJ_PAGES :: 2
 	OBJ_FONT0 :: 3
-	OBJ_TOUNI :: 7
-	obj_img0 := 8
+	OBJ_TOUNI :: OBJ_FONT0 + PDF_FONTS
+	obj_img0 := OBJ_TOUNI + 1
 	obj_page0 := obj_img0 + len(images)
 	total := obj_page0 + 2 * n - 1
 	for i in 0 ..< len(images) {
@@ -890,15 +923,15 @@ pdf_bytes :: proc(d: ^Deck, fonts: ^p.Fonts, imgs: ^Img_Cache, allocator := cont
 		pdf_obj(&f, page)
 		fmt.sbprintf(
 			&f.b,
-			"<< /Type /Page /Parent %d 0 R /MediaBox [0 0 %s %s] /Resources << /Font << /F1 %d 0 R /F2 %d 0 R /F3 %d 0 R /F4 %d 0 R >>",
+			"<< /Type /Page /Parent %d 0 R /MediaBox [0 0 %s %s] /Resources << /Font <<",
 			OBJ_PAGES,
 			num(PDF_PAGE_W),
 			num(PDF_PAGE_H),
-			OBJ_FONT0,
-			OBJ_FONT0 + 1,
-			OBJ_FONT0 + 2,
-			OBJ_FONT0 + 3,
 		)
+		for fi in 0 ..< PDF_FONTS {
+			fmt.sbprintf(&f.b, " /F%d %d 0 R", fi + 1, OBJ_FONT0 + fi)
+		}
+		strings.write_string(&f.b, " >>")
 		// Graphics states, one per distinct alpha this page used.
 		if len(alphas[si].vals) > 0 {
 			strings.write_string(&f.b, " /ExtGState <<")

@@ -8,10 +8,14 @@
 // every reader must support it. The headers, the central directory and the
 // CRC-32 are the parts that have to be right, and they are written in full.
 //
-// Only writing is needed here — nothing reads a .pptx back in — so the reader
-// is left out.
+// Reading came later, with .pptx import: somebody else's package is deflated
+// (method 8), which Odin's core inflater handles. The reader is the one
+// apps/sheets uses for .xlsx, copied rather than shared because applications
+// do not import each other.
 package main
 
+import "core:bytes"
+import "core:compress/zlib"
 import "core:os"
 import "core:strings"
 
@@ -153,4 +157,116 @@ zip_finish :: proc(z: ^Zip) -> []u8 {
 
 zip_write_file :: proc(z: ^Zip, path: string) -> bool {
 	return os.write_entire_file(path, zip_finish(z)) == nil
+}
+
+// ---------------------------------------------------------------------------
+// Reading
+//
+// The central directory is the authority on what an archive contains, so it is
+// what is walked — not the chain of local headers, which a writer is allowed
+// to pad.
+// ---------------------------------------------------------------------------
+
+Zip_File :: struct {
+	name: string,
+	data: []u8, // decompressed; borrowed from the input when stored
+}
+
+@(private = "file")
+get16 :: proc(d: []u8, at: int) -> int {
+	if at + 1 >= len(d) {
+		return 0
+	}
+	return int(d[at]) | int(d[at + 1]) << 8
+}
+
+@(private = "file")
+get32 :: proc(d: []u8, at: int) -> int {
+	if at + 3 >= len(d) {
+		return 0
+	}
+	return int(d[at]) | int(d[at + 1]) << 8 | int(d[at + 2]) << 16 | int(d[at + 3]) << 24
+}
+
+zip_read :: proc(raw: []u8, allocator := context.allocator) -> (files: [dynamic]Zip_File, ok: bool) {
+	files = make([dynamic]Zip_File, allocator)
+	if len(raw) < 22 {
+		return files, false
+	}
+	// Find the end-of-central-directory record by scanning back from the end;
+	// it is the last thing in the file, bar an optional comment.
+	eocd := -1
+	lo := max(0, len(raw) - 65557)
+	for i := len(raw) - 22; i >= lo; i -= 1 {
+		if get32(raw, i) == 0x0605_4b50 {
+			eocd = i
+			break
+		}
+	}
+	if eocd < 0 {
+		return files, false
+	}
+	n := get16(raw, eocd + 10)
+	cd := get32(raw, eocd + 16)
+
+	at := cd
+	for _ in 0 ..< n {
+		if at + 46 > len(raw) || get32(raw, at) != 0x0201_4b50 {
+			return files, false
+		}
+		method := get16(raw, at + 10)
+		csize := get32(raw, at + 20)
+		usize := get32(raw, at + 24)
+		nlen := get16(raw, at + 28)
+		elen := get16(raw, at + 30)
+		clen := get16(raw, at + 32)
+		lho := get32(raw, at + 42)
+		if at + 46 + nlen > len(raw) {
+			return files, false
+		}
+		name := string(raw[at + 46:at + 46 + nlen])
+		at += 46 + nlen + elen + clen
+
+		// The local header repeats the name and extra field, and only it knows
+		// how long *its* extra field is.
+		if lho + 30 > len(raw) || get32(raw, lho) != 0x0403_4b50 {
+			return files, false
+		}
+		lnlen := get16(raw, lho + 26)
+		lelen := get16(raw, lho + 28)
+		start := lho + 30 + lnlen + lelen
+		if start + csize > len(raw) {
+			return files, false
+		}
+		payload := raw[start:start + csize]
+
+		switch method {
+		case 0:
+			append(&files, Zip_File{name = name, data = payload})
+		case 8:
+			buf: bytes.Buffer
+			if zlib.inflate(payload, &buf, true, usize) != nil {
+				bytes.buffer_destroy(&buf)
+				return files, false
+			}
+			out := make([]u8, len(buf.buf), allocator)
+			copy(out, buf.buf[:])
+			bytes.buffer_destroy(&buf)
+			append(&files, Zip_File{name = name, data = out})
+		case:
+			// Anything else (bzip2, LZMA) is not something a spreadsheet
+			// writer produces; failing loudly beats guessing.
+			return files, false
+		}
+	}
+	return files, true
+}
+
+zip_find :: proc(files: [dynamic]Zip_File, name: string) -> ([]u8, bool) {
+	for f in files {
+		if f.name == name {
+			return f.data, true
+		}
+	}
+	return nil, false
 }

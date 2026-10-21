@@ -38,6 +38,8 @@ Opts :: struct {
 	editing:   bool,
 	caret:     int,
 	caret_on:  bool,
+	sel_a:     int, // the selection while editing, a byte range; empty when equal
+	sel_b:     int,
 	guides:    []Guide,
 	// Decoration
 	footer:    bool,
@@ -71,7 +73,9 @@ draw_slide :: proc(c: ^p.Canvas, dst: p.Rect, d: ^Deck, si: int, o: Opts) {
 		p.fill_rect(c, dst, argb(th.bg))
 	}
 
-	draw_master(c, dst, sc, d, s, o)
+	if !d.no_decor {
+		draw_master(c, dst, sc, d, s, o)
+	}
 
 	for i in 0 ..< len(s.elems) {
 		e := &s.elems[i]
@@ -161,9 +165,7 @@ title_baseline :: proc(c: ^p.Canvas, dst: p.Rect, sc: f32, s: ^Slide, o: Opts) -
 		}
 		box := p.Rect{dst.x + e.x * sc, dst.y + e.y * sc, e.w * sc, e.h * sc}
 		tl := text_layout(o.fonts, box, sc, e, o.fam)
-		m := p.font_metrics(o.fonts, tl.size, tl.fam, tl.wt)
-		bottom := tl.first_y + f32(len(tl.lines) - 1) * tl.line_h + m.descent
-		return bottom + 18 * sc, true
+		return text_bottom(o.fonts, &tl) + 18 * sc, true
 	}
 	return 0, false
 }
@@ -275,10 +277,68 @@ Line :: struct {
 	w:          f32, // measured width in device pixels
 	bullet:     bool,
 	indent:     f32,
+	// Filled in by text_layout. A line's height follows the largest type on
+	// it, so a line with one 60pt word in a 27pt box does not overprint the
+	// line above.
+	top:        f32,
+	base:       f32, // baseline
+	lh:         f32,
+	size:       f32, // the largest size on the line, device pixels
 }
 
-// wrap_text lays a string out at the size it will be drawn, returning lines
-// with their byte ranges so a caret can be placed back into the source text.
+// Measure is what wrapping needs to measure a stretch of a box's text: the
+// box's own type, and its runs when it has any.
+Measure :: struct {
+	fonts:      ^p.Fonts,
+	text:       string,
+	e:          ^Element, // nil, or a box without runs: one style throughout
+	size:       f32, // device pixels
+	sc:         f32,
+	wt:         p.Font_Weight,
+	track:      f32, // tracking at `size`, device pixels
+	track_frac: f32, // tracking as a fraction of the size, for a run's own size
+	fam:        p.Font_Family,
+}
+
+// Span_Font is the face and size one segment is set in.
+Span_Font :: struct {
+	size:     f32,
+	wt:       p.Font_Weight,
+	sl:       p.Font_Slant,
+	tracking: f32,
+}
+
+span_font :: proc(m: ^Measure, s: Run_Style) -> Span_Font {
+	if style_plain(s) {
+		return {m.size, m.wt, .Upright, m.track}
+	}
+	size := m.size
+	if s.size > 0 {
+		size = s.size * m.sc
+	}
+	return {size, s.bold ? .Bold : m.wt, s.italic ? .Italic : .Upright, m.track_frac * size}
+}
+
+// measure_width is how wide [from, to) of the text sets. Without runs it is
+// the one `text_width` call it always was.
+measure_width :: proc(m: ^Measure, from, to: int) -> f32 {
+	if from >= to {
+		return 0
+	}
+	if m.e == nil || len(m.e.runs) == 0 {
+		return p.text_width(m.fonts, m.text[from:to], m.size, m.fam, m.wt, m.track)
+	}
+	w: f32
+	for sg in text_segments(m.e, from, to) {
+		f := span_font(m, sg.s)
+		w += p.text_width(m.fonts, m.text[sg.start:sg.end], f.size, m.fam, f.wt, f.tracking, f.sl)
+	}
+	return w
+}
+
+// wrap_text lays a plain string out at the size it will be drawn, returning
+// lines with their byte ranges so a caret can be placed back into the source
+// text.
 wrap_text :: proc(
 	fonts: ^p.Fonts,
 	text: string,
@@ -289,6 +349,23 @@ wrap_text :: proc(
 	bullets: bool,
 	fam := p.Font_Family.Sans,
 ) -> []Line {
+	m := Measure {
+		fonts = fonts,
+		text  = text,
+		size  = size,
+		sc    = 1,
+		wt    = wt,
+		track = tracking,
+		fam   = fam,
+	}
+	return wrap_lines(&m, max_w, bullets)
+}
+
+// wrap_lines is wrap_text over a Measure, so a box with runs wraps on the
+// widths its runs actually set at.
+wrap_lines :: proc(m: ^Measure, max_w: f32, bullets: bool) -> []Line {
+	text := m.text
+	size := m.size
 	out := make([dynamic]Line, context.temp_allocator)
 	i := 0
 	for {
@@ -301,7 +378,7 @@ wrap_text :: proc(
 		if bullet {
 			body_start = i + (strings.has_prefix(para, "- ") ? 2 : len("• "))
 		}
-		wrap_para(fonts, text, body_start, end, size, wt, tracking, max_w - indent, bullet, indent, fam, &out)
+		wrap_para(m, body_start, end, max_w - indent, bullet, indent, &out)
 		if nl < 0 {
 			break
 		}
@@ -323,19 +400,8 @@ wrap_text :: proc(
 }
 
 @(private = "file")
-wrap_para :: proc(
-	fonts: ^p.Fonts,
-	text: string,
-	from, to: int,
-	size: f32,
-	wt: p.Font_Weight,
-	tracking: f32,
-	max_w: f32,
-	bullet: bool,
-	indent: f32,
-	fam: p.Font_Family,
-	out: ^[dynamic]Line,
-) {
+wrap_para :: proc(m: ^Measure, from, to: int, max_w: f32, bullet: bool, indent: f32, out: ^[dynamic]Line) {
+	text := m.text
 	if from >= to {
 		append(out, Line{start = from, end = to, w = 0, bullet = bullet, indent = indent})
 		return
@@ -347,14 +413,14 @@ wrap_para :: proc(
 	for i <= to {
 		// Candidate break point: a space, or the end.
 		if i == to || text[i] == ' ' {
-			w := p.text_width(fonts, text[line_start:i], size, fam, wt, tracking)
+			w := measure_width(m, line_start, i)
 			if w > max_w && last_break > line_start {
 				append(
 					out,
 					Line {
 						start = line_start,
 						end = last_break,
-						w = p.text_width(fonts, text[line_start:last_break], size, fam, wt, tracking),
+						w = measure_width(m, line_start, last_break),
 						bullet = first && bullet,
 						indent = indent,
 					},
@@ -376,7 +442,7 @@ wrap_para :: proc(
 		Line {
 			start = line_start,
 			end = to,
-			w = p.text_width(fonts, text[line_start:to], size, fam, wt, tracking),
+			w = measure_width(m, line_start, to),
 			bullet = first && bullet,
 			indent = indent,
 		},
@@ -395,7 +461,7 @@ text_weight :: proc(e: ^Element) -> p.Font_Weight {
 }
 
 // text_layout is the geometry a text element resolves to, shared by the
-// renderer and by click-to-caret hit testing.
+// renderer, the exporters and click-to-caret hit testing.
 Text_Layout :: struct {
 	lines:    []Line,
 	size:     f32,
@@ -405,6 +471,7 @@ Text_Layout :: struct {
 	fam:      p.Font_Family,
 	tracking: f32,
 	box:      p.Rect, // the text area, inset from the element box
+	m:        Measure,
 }
 
 text_layout :: proc(fonts: ^p.Fonts, box: p.Rect, sc: f32, e: ^Element, fam := p.Font_Family.Sans) -> Text_Layout {
@@ -414,11 +481,34 @@ text_layout :: proc(fonts: ^p.Fonts, box: p.Rect, sc: f32, e: ^Element, fam := p
 	tracking := spec.tracking * size
 	pad := has_paint(e.fill) ? 20 * sc : 0
 	area := p.Rect{box.x + pad, box.y + pad, max(8, box.w - 2 * pad), max(8, box.h - 2 * pad)}
-	lines := wrap_text(fonts, e.text, size, wt, tracking, area.w, e.style == .Bullets, fam)
+	m := Measure {
+		fonts      = fonts,
+		text       = e.text,
+		e          = e,
+		size       = size,
+		sc         = sc,
+		wt         = wt,
+		track      = tracking,
+		track_frac = spec.tracking,
+		fam        = fam,
+	}
+	lines := wrap_lines(&m, area.w, e.style == .Bullets)
 
 	line_h := size * spec.leading
-	m := p.font_metrics(fonts, size, fam, wt)
-	total := line_h * f32(len(lines))
+	met := p.font_metrics(fonts, size, fam, wt)
+	total: f32
+	for &l in lines {
+		l.size = size
+		if len(e.runs) > 0 {
+			for sg in text_segments(e, l.start, l.end) {
+				if sg.s.size > 0 {
+					l.size = max(l.size, sg.s.size * sc)
+				}
+			}
+		}
+		l.lh = l.size == size ? line_h : l.size * spec.leading
+		total += l.lh
+	}
 	top := area.y
 	switch e.valign {
 	case .Top:
@@ -427,17 +517,35 @@ text_layout :: proc(fonts: ^p.Fonts, box: p.Rect, sc: f32, e: ^Element, fam := p
 	case .Bottom:
 		top += area.h - total
 	}
-	first := top + (line_h - (m.ascent + m.descent)) / 2 + m.ascent
+	y := top
+	for &l in lines {
+		lm := met
+		if l.size != size {
+			lm = p.font_metrics(fonts, l.size, fam, wt)
+		}
+		l.top = y
+		l.base = y + (l.lh - (lm.ascent + lm.descent)) / 2 + lm.ascent
+		y += l.lh
+	}
 	return {
 		lines = lines,
 		size = size,
 		line_h = line_h,
-		first_y = first,
+		first_y = lines[0].base,
 		wt = wt,
 		fam = fam,
 		tracking = tracking,
 		box = area,
+		m = m,
 	}
+}
+
+// text_bottom is where the last line's descenders end, which is where a
+// master's accent rule under the title is measured from.
+text_bottom :: proc(fonts: ^p.Fonts, tl: ^Text_Layout) -> f32 {
+	l := tl.lines[len(tl.lines) - 1]
+	m := p.font_metrics(fonts, l.size, tl.fam, tl.wt)
+	return l.base + m.descent
 }
 
 line_x :: proc(tl: ^Text_Layout, l: Line, e: ^Element) -> f32 {
@@ -450,6 +558,15 @@ line_x :: proc(tl: ^Text_Layout, l: Line, e: ^Element) -> f32 {
 		return tl.box.x + tl.box.w - l.w
 	}
 	return tl.box.x
+}
+
+// seg_colour is what a segment is painted with: its run's colour when it has
+// one, the box's otherwise.
+seg_colour :: proc(th: ^Theme, s: Run_Style, box_col: p.Color, alpha: f32) -> p.Color {
+	if s.color == SLOT_NONE {
+		return box_col
+	}
+	return p.fade(paint(th, s.color), alpha)
 }
 
 @(private = "file")
@@ -488,23 +605,52 @@ draw_text_box :: proc(
 		}
 	}
 
-	y := tl.first_y
+	// The selection, behind the text it covers.
+	if editing && o.sel_a != o.sel_b {
+		a := clamp(min(o.sel_a, o.sel_b), 0, len(e.text))
+		b := clamp(max(o.sel_a, o.sel_b), 0, len(e.text))
+		for l in tl.lines {
+			lo := max(a, l.start)
+			hi := min(b, l.end)
+			if lo > hi || (lo == hi && !(b > l.end && a <= l.end)) {
+				continue
+			}
+			x := line_x(&tl, l, e)
+			x0 := x + measure_width(&tl.m, l.start, lo)
+			x1 := x + measure_width(&tl.m, l.start, hi)
+			if b > l.end {
+				x1 += l.size * 0.3 // the newline itself is selected
+			}
+			p.fill_rect(c, {x0, l.top, max(x1 - x0, 1), l.lh}, p.fade(paint(th, SLOT_ACCENT2), 0.35))
+		}
+	}
+
 	for l, li in tl.lines {
 		x := line_x(&tl, l, e)
+		y := l.base
 		if l.bullet {
 			r := tl.size * 0.16
 			p.fill_circle(c, tl.box.x + r * 1.6, y - tl.size * 0.3, r, p.fade(paint(th, SLOT_ACCENT), alpha))
 		}
-		p.draw_text(c, o.fonts, e.text[l.start:l.end], x, y, tl.size, col, tl.fam, tl.wt, tl.tracking)
+		if len(e.runs) == 0 {
+			p.draw_text(c, o.fonts, e.text[l.start:l.end], x, y, tl.size, col, tl.fam, tl.wt, tl.tracking)
+		} else {
+			sx := x
+			for sg in text_segments(e, l.start, l.end) {
+				f := span_font(&tl.m, sg.s)
+				run := e.text[sg.start:sg.end]
+				p.draw_text(c, o.fonts, run, sx, y, f.size, seg_colour(th, sg.s, col, alpha), tl.fam, f.wt, f.tracking, f.sl)
+				sx += p.text_width(o.fonts, run, f.size, tl.fam, f.wt, f.tracking, f.sl)
+			}
+		}
 
 		if editing && o.caret_on && li == caret_line {
 			upto := clamp(ci, l.start, l.end)
-			cx := x + p.text_width(o.fonts, e.text[l.start:upto], tl.size, tl.fam, tl.wt, tl.tracking)
-			p.fill_rect(c, {cx, y - tl.size * 0.82, max(1.5, 2 * sc), tl.size * 1.05}, paint(th, SLOT_ACCENT))
+			cx := x + measure_width(&tl.m, l.start, upto)
+			cs := l.size
+			p.fill_rect(c, {cx, y - cs * 0.82, max(1.5, 2 * sc), cs * 1.05}, paint(th, SLOT_ACCENT))
 		}
-		y += tl.line_h
 	}
-	_ = sc
 }
 
 // caret_at maps a point inside a text element back to a byte index.
@@ -513,12 +659,30 @@ caret_at :: proc(fonts: ^p.Fonts, box: p.Rect, sc: f32, e: ^Element, x, y: f32, 
 	if len(tl.lines) == 0 {
 		return 0
 	}
-	li := int((y - (tl.first_y - tl.size * 0.8)) / tl.line_h)
-	li = clamp(li, 0, len(tl.lines) - 1)
+	li := 0
+	for l, i in tl.lines {
+		if y >= l.top {
+			li = i
+		}
+	}
 	l := tl.lines[li]
 	lx := line_x(&tl, l, e)
-	idx := p.text_index_at(fonts, e.text[l.start:l.end], tl.size, x - lx, tl.fam, tl.wt, tl.tracking)
-	return l.start + idx
+	if len(e.runs) == 0 {
+		idx := p.text_index_at(fonts, e.text[l.start:l.end], tl.size, x - lx, tl.fam, tl.wt, tl.tracking)
+		return l.start + idx
+	}
+	sx := lx
+	segs := text_segments(e, l.start, l.end)
+	for sg, k in segs {
+		f := span_font(&tl.m, sg.s)
+		run := e.text[sg.start:sg.end]
+		w := p.text_width(fonts, run, f.size, tl.fam, f.wt, f.tracking, f.sl)
+		if x < sx + w || k == len(segs) - 1 {
+			return sg.start + p.text_index_at(fonts, run, f.size, x - sx, tl.fam, f.wt, f.tracking, f.sl)
+		}
+		sx += w
+	}
+	return l.end
 }
 
 // ---------------------------------------------------------------------------

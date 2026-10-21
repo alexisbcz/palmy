@@ -19,8 +19,34 @@ import kit "kit:."
 import p "palmy:."
 
 Img_Cache :: struct {
-	m:    map[string]p.Image,
-	root: string, // where relative paths are resolved from
+	m:        map[string]p.Image,
+	root:     string, // where relative paths are resolved from
+	// The directory of the deck file, looked in first. An imported deck's
+	// pictures live beside it (DECK-media/), so a deck and its media can be
+	// moved together; the built-in deck's live beside the binary (root).
+	deck_dir: string,
+}
+
+// img_set_deck tells the cache which deck file relative pictures belong to.
+img_set_deck :: proc(ic: ^Img_Cache, deck_path: string) {
+	slash := strings.last_index_byte(deck_path, '/')
+	ic.deck_dir = slash < 0 ? strings.clone(".") : strings.clone(deck_path[:max(slash, 1)])
+	clear(&ic.m)
+}
+
+// img_path resolves a picture's path: absolute as it is, else beside the deck
+// when it is there, else beside the binary.
+img_path :: proc(ic: ^Img_Cache, src: string) -> string {
+	if strings.has_prefix(src, "/") {
+		return src
+	}
+	if ic.deck_dir != "" {
+		cand := fmt.tprintf("%s/%s", ic.deck_dir, src)
+		if os.exists(cand) {
+			return cand
+		}
+	}
+	return fmt.tprintf("%s/%s", ic.root, src)
 }
 
 img_cache_make :: proc(root: string) -> Img_Cache {
@@ -36,10 +62,7 @@ img_get :: proc(ic: ^Img_Cache, src: string) -> (img: p.Image, ok: bool) {
 	if have, found := ic.m[src]; found {
 		return have, have.w > 0
 	}
-	path := src
-	if !strings.has_prefix(src, "/") {
-		path = fmt.tprintf("%s/%s", ic.root, src)
-	}
+	path := img_path(ic, src)
 	got, good := p.load_image(path)
 	if !good {
 		ic.m[strings.clone(src)] = p.Image{}
@@ -227,6 +250,13 @@ fonts_headless :: proc(f: ^p.Fonts) {
 			{"Geist-700.ttf", .Bold},
 		}) {
 		p.load_font(f, fmt.tprintf("%s/%s", kit.FONT_DIR, pair.file), .Sans, pair.wt)
+	}
+	// Geist has no italic. kit.start shears it for an italic run rather than
+	// letting the system scan put Noto Italic beside Geist upright; the
+	// headless faces have to agree with the window's, or an exported italic
+	// word would be a different typeface from the one on the canvas.
+	for wt in p.Font_Weight {
+		p.use_synthetic_italic(f, .Sans, wt)
 	}
 	p.set_text_gamma(1.8)
 }

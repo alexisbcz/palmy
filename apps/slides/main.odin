@@ -77,8 +77,30 @@ PROP_NAMES := [Prop]string {
 // `text_field` is single line and owns its own focus, which is not what editing
 // a text box on a canvas needs, so the caret model lives here.
 Editor :: struct {
-	buf:   [dynamic]u8,
-	caret: int,
+	buf:     [dynamic]u8,
+	caret:   int,
+	// The other end of the selection; equal to `caret` when nothing is
+	// selected. Only text boxes select (Shift with a motion); the notes pane
+	// keeps the one-caret editor it always had.
+	anchor:  int,
+	// The edits the last `ed_keys` made, in order, so the box's styled runs
+	// can be moved through exactly those edits (see text_keys).
+	log:     [dynamic]Ed_Edit,
+	// Styling asked for with nothing selected (Ctrl+B before typing), applied
+	// to whatever is typed next and dropped when the caret moves.
+	pending: [dynamic]Pending_Style,
+}
+
+Ed_Edit :: struct {
+	at, removed, inserted: int,
+	typed:                 bool, // the inserted bytes were typed, not a newline
+}
+
+Pending_Style :: struct {
+	op:    Style_Op,
+	on:    bool,
+	color: u32,
+	size:  f32,
 }
 
 // Thumb gives `p.pixels` a stable pointer per sorter row.
@@ -129,6 +151,7 @@ St :: struct {
 	pres_start:   f64,
 	pres_notes:   bool,
 	pres_black:   bool,
+	pres_trans:   Pres_Trans,
 
 	sorter_w:     f32,
 	inspect_w:    f32,
@@ -227,6 +250,7 @@ main :: proc() {
 		}
 		st.deck = d
 		st.path = strings.clone(deck_path)
+		img_set_deck(&st.imgs, deck_path)
 	} else {
 		st.deck = fixture_deck()
 	}
@@ -511,6 +535,7 @@ run_present :: proc(st: ^St) {
 			p.key_count(ui, p.KEY_UP) +
 			p.key_count(ui, p.KEY_BACKSPACE) +
 			p.key_count(ui, p.KEY_PAGE_UP)
+		was := st.slide
 		if fwd > 0 {
 			st.slide = min(st.slide + fwd, len(st.deck.slides) - 1)
 		}
@@ -522,6 +547,11 @@ run_present :: proc(st: ^St) {
 		}
 		if p.key_pressed(ui, p.KEY_END) {
 			st.slide = len(st.deck.slides) - 1
+		}
+		if st.slide != was {
+			// A move during a transition starts the next one from the slide
+			// that was arriving: the old animation is simply cut.
+			pres_begin_transition(st, was, st.slide, now_s(ui))
 		}
 		if p.key_pressed(ui, p.KEY_TAB) {
 			st.pres_notes = !st.pres_notes

@@ -53,6 +53,27 @@ find_part :: proc(raw: []u8, name: string) -> ([]u8, bool) {
 	return nil, false
 }
 
+// runs_text concatenates every <a:t> of a part, in order.
+@(private = "file")
+runs_text :: proc(xml_text: string) -> string {
+	b := strings.builder_make(context.temp_allocator)
+	rest := xml_text
+	for {
+		i := strings.index(rest, "<a:t>")
+		if i < 0 {
+			break
+		}
+		rest = rest[i + 5:]
+		j := strings.index(rest, "</a:t>")
+		if j < 0 {
+			break
+		}
+		strings.write_string(&b, rest[:j])
+		rest = rest[j:]
+	}
+	return strings.to_string(b)
+}
+
 @(private = "file")
 part_names :: proc(raw: []u8, allocator := context.temp_allocator) -> [dynamic]string {
 	out := make([dynamic]string, allocator)
@@ -211,7 +232,9 @@ t_export_formats :: proc(t: ^Checks, fonts: ^p.Fonts, imgs: ^Img_Cache) {
 			check(&t^, false, "%s is missing", part)
 			continue
 		}
-		body := string(data)
+		// A styled run is its own <a:r>, so a line is checked against the
+		// concatenated text of the runs rather than against one <a:t>.
+		body := runs_text(string(data))
 		for &e in d.slides[si].elems {
 			if e.kind != .Text {
 				continue

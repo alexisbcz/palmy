@@ -86,6 +86,7 @@ Element :: struct {
 	size:     f32, // 0 takes the size from the style
 	bold:     bool,
 	color:    u32, // text paint; slot or literal, 0 means the theme foreground
+	runs:     []Run, // styled ranges of `text`; see runs.odin
 
 	// Shape
 	fill:     u32,
@@ -124,11 +125,30 @@ LAYOUT_NAMES := [Layout]string {
 	.Blank          = "Blank",
 }
 
+// Transition is how a slide arrives when the presenter moves forward onto it,
+// which is PowerPoint's meaning too: the transition belongs to the slide being
+// entered. See transition.odin.
+Transition :: enum u8 {
+	None,
+	Fade,
+	Push,
+	Wipe,
+}
+
+TRANSITION_NAMES := [Transition]string {
+	.None = "none",
+	.Fade = "fade",
+	.Push = "push",
+	.Wipe = "wipe",
+}
+
 Slide :: struct {
-	layout: Layout,
-	notes:  string,
-	elems:  [dynamic]Element,
-	uid:    u64 `json:"-"`, // identity for collaboration; not part of the file
+	layout:        Layout,
+	notes:         string,
+	elems:         [dynamic]Element,
+	transition:    Transition,
+	transition_ms: int, // 0 takes TRANSITION_MS
+	uid:           u64 `json:"-"`, // identity for collaboration; not part of the file
 }
 
 Theme :: struct {
@@ -145,11 +165,17 @@ Theme :: struct {
 }
 
 Deck :: struct {
-	version: int,
-	title:   string,
-	author:  string,
-	theme:   Theme,
-	slides:  [dynamic]Slide,
+	version:  int,
+	title:    string,
+	author:   string,
+	theme:    Theme,
+	// no_decor turns off the decoration this program's master draws behind
+	// every layout (the accent rule under a title, the washes, the section
+	// bar, the footer). A deck imported from somebody else's .pptx brings its
+	// own master's shapes as elements, and drawing ours on top would be
+	// decoration the author never made.
+	no_decor: bool,
+	slides:   [dynamic]Slide,
 }
 
 THEMES := [?]Theme {
@@ -464,6 +490,7 @@ apply_layout :: proc(d: ^Deck, si: int, l: Layout) {
 			slots[i].color = old[i].color
 			slots[i].size = old[i].size
 			slots[i].bold = old[i].bold
+			slots[i].runs = old[i].runs
 		}
 	}
 	// Anything that did not fit the new layout keeps its own geometry rather
@@ -498,6 +525,8 @@ slide_duplicate :: proc(d: ^Deck, si: int) -> int {
 	src := &d.slides[si]
 	cp := slide_make(src.layout)
 	cp.notes = src.notes
+	cp.transition = src.transition
+	cp.transition_ms = src.transition_ms
 	for e in src.elems {
 		append(&cp.elems, e)
 	}
@@ -617,8 +646,13 @@ hit_elem :: proc(s: ^Slide, x, y: f32) -> int {
 
 // elem_set_text commits a text box's words. The string is cloned: the window
 // edits in a buffer it reuses, and the command line's arguments are not the
-// deck's to keep.
+// deck's to keep. The styled runs follow the edit: whatever the old and new
+// text have in common at either end keeps its styling, which is what makes a
+// one-word correction on the command line leave the bold word bold.
 elem_set_text :: proc(e: ^Element, text: string) {
+	if len(e.runs) > 0 {
+		e.runs = runs_after_edit(e.runs, e.text, text)
+	}
 	e.text = strings.clone(text)
 }
 

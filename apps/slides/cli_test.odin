@@ -118,6 +118,7 @@ t_cli :: proc(t: ^Checks) {
 		{{"text", "--json"}, TEXT_FIELDS},
 		{{"notes", "--slide", "2", "--json"}, NOTES_FIELDS},
 		{{"show", "4", "--json"}, SHOW_FIELDS},
+		{{"show", "3", "--json"}, SHOW_FIELDS},
 		{{"themes", "--json"}, THEMES_FIELDS},
 	}
 	for r in reads {
@@ -221,6 +222,86 @@ t_cli :: proc(t: ^Checks) {
 		check(t, code == 0 && back.theme.name == "Terminal" && back.theme.mono, "slides theme takes a name in any case")
 		_, bad := run("theme", a, "Plaid", "--json")
 		check(t, bad == kit.EXIT_NOT_FOUND, "an unknown theme is not found (exit %d)", bad)
+	}
+
+	// --- styled runs, transitions and import ---------------------------------
+	{
+		a := fresh("style.json")
+		_, code := run("style", a, "1", "title", "--match", "desktop", "--italic", "on", "--color", "accent", "--json")
+		st, b := twin("style-twin.json")
+		st.slide = 0
+		st.sel = 0
+		begin_text(st)
+		at := strings.index(ed_text(st), "desktop")
+		st.ed.anchor, st.ed.caret = at, at + len("desktop")
+		invoke(st, nil, nil, .Run_Italic)
+		invoke(st, nil, nil, .Run_Colour)
+		commit_text(st, cur_elem(st))
+		st.mode = .Browse
+		save_deck(&st.deck, b)
+		check(t, code == 0 && same_file(a, b), "slides style --match writes the deck selecting the word, Ctrl I and Ctrl Shift C make")
+		out, _ := run("show", "1", a, "--json")
+		check(t, strings.contains(out, `"text": "desktop"`) && strings.contains(out, `"italic": true`) && strings.contains(out, `"color": "accent"`), "and show lists the run")
+		_, again := run("style", a, "1", "title", "--match", "desktop", "--italic", "on", "--color", "accent", "--json")
+		check(t, again == 0 && same_file(a, b), "style is idempotent")
+		_, c2 := run("style", a, "1", "title", "--from", "1", "--to", "7", "--size", "80", "--bold", "on", "--json")
+		back, _ := load_deck(a)
+		r := back.slides[0].elems[0].runs
+		check(t, c2 == 0 && len(r) == 2 && r[0].start == 0 && r[0].end == 7 && r[0].size == 80 && r[0].bold, "--from/--to count characters from 1: %v", r)
+		_, c3 := run("style", a, "1", "title", "--plain", "--json")
+		back, _ = load_deck(a)
+		check(t, c3 == 0 && len(back.slides[0].elems[0].runs) == 0, "--plain over the whole box clears it")
+		_, bad := run("style", a, "1", "title", "--match", "nowhere", "--bold", "on", "--json")
+		check(t, bad == kit.EXIT_NOT_FOUND, "a --match that is not there is not found (exit %d)", bad)
+		_, none := run("style", a, "1", "title", "--json")
+		check(t, none == kit.EXIT_USAGE, "a style with nothing to do is a usage error (exit %d)", none)
+		_, shape := run("style", a, "6", "2", "--bold", "on", "--json")
+		check(t, shape == kit.EXIT_USAGE, "a shape has no text to style (exit %d)", shape)
+	}
+	{
+		a := fresh("trans.json")
+		_, code := run("transition", a, "1", "wipe", "--ms", "400", "--json")
+		st, b := twin("trans-twin.json")
+		st.slide = 0
+		for _ in 0 ..< 3 {
+			invoke(st, nil, nil, .Transition_Next) // none, fade, push, wipe
+		}
+		st.deck.slides[0].transition_ms = 400
+		save_deck(&st.deck, b)
+		check(t, code == 0 && same_file(a, b), "slides transition writes the deck three Shift T make")
+		_, all := run("transition", a, "all", "fade", "--json")
+		back, _ := load_deck(a)
+		every := true
+		for s in back.slides {
+			every = every && s.transition == .Fade && s.transition_ms == 0
+		}
+		check(t, all == 0 && every, "transition all sets every slide")
+		out, _ := run("show", "2", a, "--json")
+		check(t, strings.contains(out, `"transition": "fade"`) && strings.contains(out, `"transition_ms": 600`), "show reports it")
+		png := fmt.tprintf("%s/t.png", g_cli_dir)
+		_, rc := run("render", a, "2", png, "--width", "320", "--transition", "0.5", "--json")
+		check(t, rc == 0 && os.exists(png), "render --transition writes a mid-transition frame")
+		_, r1 := run("render", a, "1", png, "--transition", "0.5", "--json")
+		check(t, r1 == kit.EXIT_USAGE, "slide 1 has nothing to arrive from (exit %d)", r1)
+	}
+	{
+		pptx := fmt.tprintf("%s/rt.pptx", g_cli_dir)
+		deck := fmt.tprintf("%s/rt.json", g_cli_dir)
+		run("export", "@fixture", pptx, "--json")
+		out, code := run("import", pptx, deck, "--json")
+		back, err := load_deck(deck)
+		check(t, code == 0 && err == "" && len(back.slides) == 8, "slides import reads the exported deck back: %s", out)
+		check(t, os.exists(fmt.tprintf("%s/rt-media/image1.png", g_cli_dir)), "and writes its pictures beside it")
+		o2, _ := run("outline", deck, "--json")
+		o1, _ := run("outline", "--json")
+		check(t, strings.contains(o1, `"title": "Pictures composite like anything else"`) && strings.contains(o2, `"title": "Pictures composite like anything else"`), "with the same outline")
+		_, again := run("import", pptx, deck, "--json")
+		check(t, again == kit.EXIT_USAGE, "import will not overwrite without --force (exit %d)", again)
+		_, other := run("import", deck, fmt.tprintf("%s/x.json", g_cli_dir), "--json")
+		check(t, other == kit.EXIT_USAGE, "a .json is not something to import (exit %d)", other)
+		dry := fmt.tprintf("%s/dry-import.json", g_cli_dir)
+		_, dc := run("import", pptx, dry, "--dry-run", "--json")
+		check(t, dc == 0 && !os.exists(dry) && !os.exists(fmt.tprintf("%s/dry-import-media", g_cli_dir)), "import --dry-run writes neither the deck nor its pictures")
 	}
 
 	// --- refusal, dry runs and the things that are not there ----------------

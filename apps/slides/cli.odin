@@ -136,9 +136,26 @@ SHOW_FIELDS := []kit.Field {
 			{name = "text", kind = .String, opt = true},
 			{name = "style", kind = .String, opt = true},
 			{name = "bold", kind = .Bool, opt = true},
+			{
+				name = "runs",
+				kind = .Array,
+				opt = true,
+				help = "styled stretches of the text; anything outside them is the box's own style",
+				of = {
+					{name = "from", kind = .Int, help = "character, from 1"},
+					{name = "to", kind = .Int, help = "character, inclusive"},
+					{name = "text", kind = .String},
+					{name = "bold", kind = .Bool},
+					{name = "italic", kind = .Bool},
+					{name = "color", kind = .String, help = "a theme slot name, #rrggbb, or empty for the box's"},
+					{name = "size", kind = .Float, help = "slide units; 0 is the box's"},
+				},
+			},
 			{name = "src", kind = .String, opt = true},
 		},
 	},
+	{name = "transition", kind = .String, help = "none fade push wipe: how this slide arrives"},
+	{name = "transition_ms", kind = .Int},
 }
 
 THEMES_FIELDS := []kit.Field {
@@ -195,6 +212,18 @@ RENDER_FIELDS := []kit.Field {
 
 SHOTS_FIELDS := []kit.Field {
 	{name = "dir", kind = .String},
+	{name = "written", kind = .Bool},
+}
+
+IMPORT_FIELDS := []kit.Field {
+	{name = "in", kind = .String},
+	{name = "deck", kind = .String},
+	{name = "format", kind = .String, help = "pptx or pdf"},
+	{name = "slides", kind = .Int},
+	{name = "elements", kind = .Int},
+	{name = "pictures", kind = .Int, help = "files written into the media directory"},
+	{name = "media", kind = .String, help = "the directory the pictures went into"},
+	{name = "lost", kind = .Array, of = {{kind = .String}}, help = "what the source had that the deck does not"},
 	{name = "written", kind = .Bool},
 }
 
@@ -405,6 +434,64 @@ COMMANDS := []kit.Command {
 		run = cmd_insert,
 	},
 	{
+		verb = "style",
+		summary = "bold, italic, colour or size for part of a text box (Ctrl B, Ctrl I in the box)",
+		effect = .Idempotent,
+		args = {
+			{name = "deck", kind = .Path, required = true},
+			{name = "slide", kind = .Int, required = true},
+			{name = "element", kind = .String, help = "its number from 1, or title, subtitle or body", required = true},
+		},
+		flags = {
+			{name = "match", kind = .String, help = "style this text where it first occurs (--occurrence picks another)"},
+			{name = "occurrence", kind = .Int, def = "1", help = "which occurrence of --match, from 1"},
+			{name = "from", kind = .Int, help = "first character to style, from 1"},
+			{name = "to", kind = .Int, help = "last character to style, inclusive; the end by default"},
+			{name = "bold", kind = .Enum, values = {"on", "off"}},
+			{name = "italic", kind = .Enum, values = {"on", "off"}},
+			{name = "color", kind = .String, help = "accent, accent2, foreground, muted, surface, background, #rrggbb, or none for the box's"},
+			{name = "size", kind = .Float, help = "slide units (the slide is 720 tall); 0 for the box's"},
+			{name = "plain", kind = .Bool, help = "clear every style in the range first"},
+		},
+		out = CHANGE_FIELDS,
+		examples = {
+			"slides style talk.json 1 title --match desktop --italic on --color accent --json",
+			"slides style talk.json 3 body --from 1 --to 6 --bold on --size 34",
+			"slides style talk.json 3 body --plain",
+		},
+		run = cmd_style,
+	},
+	{
+		verb = "transition",
+		summary = "how a slide arrives in the projector: none, fade, push or wipe (Shift T)",
+		effect = .Idempotent,
+		args = {
+			{name = "deck", kind = .Path, required = true},
+			{name = "slide", kind = .String, help = "a slide number from 1, or all", required = true},
+			{name = "kind", kind = .Enum, values = {"none", "fade", "push", "wipe"}, required = true},
+		},
+		flags = {{name = "ms", kind = .Int, help = "how long it lasts; 600 by default"}},
+		out = CHANGE_FIELDS,
+		examples = {"slides transition talk.json 2 push --json", "slides transition talk.json all fade --ms 400"},
+		run = cmd_transition,
+	},
+	{
+		verb = "import",
+		summary = "make a deck from a PowerPoint .pptx or a PDF (one picture per page)",
+		effect = .Mutate,
+		args = {
+			{name = "in", kind = .Path, help = "a .pptx or .pdf", required = true},
+			{name = "deck", kind = .Path, help = "the deck .json to write; its pictures go in DECK-media/ beside it", required = true},
+		},
+		flags = {
+			{name = "theme", kind = .String, help = "the theme to dress it in; a .pptx brings its own colours"},
+			{name = "force", kind = .Bool, help = "overwrite a deck that is already there"},
+		},
+		out = IMPORT_FIELDS,
+		examples = {"slides import talk.pptx talk.json --json", "slides import handout.pdf handout.json"},
+		run = cmd_import,
+	},
+	{
 		verb = "delete",
 		summary = "delete a slide, or one element of it with --element",
 		effect = .Destructive,
@@ -455,7 +542,14 @@ COMMANDS := []kit.Command {
 			{name = "slide", kind = .Int, required = true},
 			{name = "out", kind = .Path, help = "the .png to write", required = true},
 		},
-		flags = {{name = "width", kind = .Int, def = "1920", help = "pixels; the height keeps 16:9"}},
+		flags = {
+			{name = "width", kind = .Int, def = "1920", help = "pixels; the height keeps 16:9"},
+			{
+				name = "transition",
+				kind = .Float,
+				help = "a frame of the arrival from the slide before, 0..1, as the projector draws it",
+			},
+		},
 		out = RENDER_FIELDS,
 		examples = {"slides render @fixture 1 /tmp/title.png --json", "slides render talk.json 3 /tmp/s3.png --width 640"},
 		run = cmd_render,
@@ -581,6 +675,7 @@ cli_load :: proc(c: ^kit.Call, name: string, optional := false) -> (st: ^St, lab
 	}
 	st.deck = d
 	st.path = strings.clone(path)
+	img_set_deck(&st.imgs, path)
 	return st, path, kit.EXIT_OK
 }
 
@@ -909,6 +1004,21 @@ cmd_show :: proc(c: ^kit.Call) -> int {
 			kit.jset_str(o, "text", el.text)
 			kit.jset_str(o, "style", strings.to_lower(STYLE_NAMES[el.style], context.temp_allocator))
 			kit.jset_bool(o, "bold", el.bold)
+			if len(el.runs) > 0 {
+				rl := kit.jarr()
+				for r in el.runs {
+					ro := kit.jobj()
+					kit.jset_int(ro, "from", char_index(el.text, r.start) + 1)
+					kit.jset_int(ro, "to", char_index(el.text, r.end))
+					kit.jset_str(ro, "text", el.text[r.start:r.end])
+					kit.jset_bool(ro, "bold", r.bold)
+					kit.jset_bool(ro, "italic", r.italic)
+					kit.jset_str(ro, "color", r.color == 0 ? "" : paint_word(r.color))
+					kit.jset_num(ro, "size", f64(r.size))
+					kit.jpush(rl, ro)
+				}
+				kit.jset(o, "runs", rl)
+			}
 		case .Image:
 			kit.jset_str(o, "src", el.src)
 		case .Rect, .Ellipse, .Line, .Arrow:
@@ -921,6 +1031,8 @@ cmd_show :: proc(c: ^kit.Call) -> int {
 	kit.jset_str(c.out, "title", slide_title(s))
 	kit.jset_str(c.out, "notes", s.notes)
 	kit.jset(c.out, "elements", list)
+	kit.jset_str(c.out, "transition", TRANSITION_NAMES[s.transition])
+	kit.jset_int(c.out, "transition_ms", s.transition_ms > 0 ? s.transition_ms : TRANSITION_MS)
 	return kit.EXIT_OK
 }
 
@@ -1340,7 +1452,16 @@ cmd_render :: proc(c: ^kit.Call) -> int {
 	if !c.dry_run {
 		fonts: p.Fonts
 		fonts_headless(&fonts)
-		px := render_slide_buffer(&st.deck, st.slide, w, h, &fonts, &st.imgs, context.temp_allocator)
+		px: []u32
+		if kit.cli_has(c, "transition") {
+			if st.slide == 0 {
+				return kit.cli_fail(c, kit.EXIT_USAGE, "slide 1 has no slide before it to arrive from")
+			}
+			t := f32(clamp(kit.cli_f64(c, "transition"), 0, 1))
+			px = transition_frame(&st.deck, st.slide - 1, st.slide, t, w, h, &fonts, &st.imgs, context.temp_allocator)
+		} else {
+			px = render_slide_buffer(&st.deck, st.slide, w, h, &fonts, &st.imgs, context.temp_allocator)
+		}
 		if slash := strings.last_index_byte(out, '/'); slash > 0 {
 			_ = os.make_directory_all(out[:slash])
 		}
@@ -1384,5 +1505,284 @@ cmd_make_assets :: proc(c: ^kit.Call) -> int {
 	}
 	kit.jset_str(c.out, "dir", dir)
 	kit.jset(c.out, "written", written)
+	return kit.EXIT_OK
+}
+
+// ---------------------------------------------------------------------------
+// Styled runs, transitions and import
+// ---------------------------------------------------------------------------
+
+// char_index turns a byte offset into a character count: the command line
+// speaks characters, the model bytes.
+char_index :: proc(s: string, byte_at: int) -> int {
+	n := 0
+	for i in 0 ..< min(byte_at, len(s)) {
+		if s[i] & 0xc0 != 0x80 {
+			n += 1
+		}
+	}
+	return n
+}
+
+// byte_index is char_index backwards: the byte where character `ch` (from 0)
+// starts, or len(s) past the end.
+byte_index :: proc(s: string, ch: int) -> int {
+	n := 0
+	for i in 0 ..< len(s) {
+		if s[i] & 0xc0 != 0x80 {
+			if n == ch {
+				return i
+			}
+			n += 1
+		}
+	}
+	return len(s)
+}
+
+PAINT_WORDS := [?]struct {
+	word: string,
+	v:    u32,
+} {
+	{"accent", SLOT_ACCENT},
+	{"accent2", SLOT_ACCENT2},
+	{"foreground", SLOT_FG},
+	{"muted", SLOT_MUTED},
+	{"surface", SLOT_SURFACE},
+	{"background", SLOT_BG},
+	{"none", SLOT_NONE},
+}
+
+paint_word :: proc(v: u32) -> string {
+	for pw in PAINT_WORDS {
+		if pw.v == v {
+			return pw.word
+		}
+	}
+	return fmt.tprintf("#%06x", v & 0xffffff)
+}
+
+// paint_of_word reads a colour the way `show` prints one.
+paint_of_word :: proc(w: string) -> (u32, bool) {
+	low := strings.to_lower(w, context.temp_allocator)
+	for pw in PAINT_WORDS {
+		if pw.word == low {
+			return pw.v, true
+		}
+	}
+	if low == "accent 2" {
+		return SLOT_ACCENT2, true
+	}
+	hex := strings.trim_prefix(low, "#")
+	if len(hex) == 6 {
+		if v, ok := strconv.parse_u64_of_base(hex, 16); ok {
+			return 0xff000000 | u32(v), true
+		}
+	}
+	return 0, false
+}
+
+@(private = "file")
+cmd_style :: proc(c: ^kit.Call) -> int {
+	st, label, code := cli_load(c, "deck")
+	if code != kit.EXIT_OK {
+		return code
+	}
+	if e := cli_slide(c, st, "slide"); e != kit.EXIT_OK {
+		return e
+	}
+	if e := cli_element(c, st, kit.cli_str(c, "element")); e != kit.EXIT_OK {
+		return e
+	}
+	el := cur_elem(st)
+	if el.kind != .Text {
+		return kit.cli_failf(c, kit.EXIT_USAGE, "element %d is a %s, which has no text", st.sel + 1, KIND_NAMES[el.kind])
+	}
+	if kit.cli_has(c, "match") && (kit.cli_has(c, "from") || kit.cli_has(c, "to")) {
+		return kit.cli_fail(c, kit.EXIT_USAGE, "give --match or --from/--to, not both")
+	}
+	a, b := 0, len(el.text)
+	if kit.cli_has(c, "match") {
+		m := unescape(kit.cli_str(c, "match"))
+		want := kit.cli_int(c, "occurrence", 1)
+		at := -1
+		from := 0
+		for k := 0; k < want; k += 1 {
+			i := m == "" ? -1 : strings.index(el.text[from:], m)
+			if i < 0 {
+				at = -1
+				break
+			}
+			at = from + i
+			from = at + len(m)
+		}
+		if at < 0 {
+			code := kit.cli_failf(c, kit.EXIT_NOT_FOUND, "%q does not occur %d time(s) in element %d", m, want, st.sel + 1)
+			kit.cli_err_field(c, "match", m)
+			return code
+		}
+		a, b = at, at + len(m)
+	} else {
+		nch := char_index(el.text, len(el.text))
+		f := kit.cli_int(c, "from", 1)
+		t := kit.cli_int(c, "to", nch)
+		if f < 1 || t > nch || f > t {
+			return kit.cli_failf(c, kit.EXIT_USAGE, "--from %d --to %d is not a range of the text's %d characters", f, t, nch)
+		}
+		a, b = byte_index(el.text, f - 1), byte_index(el.text, t)
+	}
+	n := len(el.text)
+	changed := make([dynamic]string, context.temp_allocator)
+	if kit.cli_bool(c, "plain") {
+		el.runs = runs_apply(el.runs, n, a, b, .Plain)
+		append(&changed, "plain")
+	}
+	if kit.cli_has(c, "bold") {
+		on := kit.cli_str(c, "bold") == "on"
+		el.runs = runs_apply(el.runs, n, a, b, .Bold, on)
+		append(&changed, on ? "bold" : "not bold")
+	}
+	if kit.cli_has(c, "italic") {
+		on := kit.cli_str(c, "italic") == "on"
+		el.runs = runs_apply(el.runs, n, a, b, .Italic, on)
+		append(&changed, on ? "italic" : "not italic")
+	}
+	if kit.cli_has(c, "color") {
+		v, ok := paint_of_word(kit.cli_str(c, "color"))
+		if !ok {
+			code := kit.cli_failf(c, kit.EXIT_USAGE, "%q is not a colour: a theme slot name or #rrggbb", kit.cli_str(c, "color"))
+			kit.cli_err_field(c, "color", kit.cli_str(c, "color"))
+			return code
+		}
+		el.runs = runs_apply(el.runs, n, a, b, .Color, color = v)
+		append(&changed, fmt.tprintf("colour %s", paint_word(v)))
+	}
+	if kit.cli_has(c, "size") {
+		z := f32(kit.cli_f64(c, "size"))
+		if z != 0 && (z < 8 || z > 220) {
+			return kit.cli_failf(c, kit.EXIT_USAGE, "--size %g is outside 8..220", z)
+		}
+		el.runs = runs_apply(el.runs, n, a, b, .Size, size = z)
+		append(&changed, fmt.tprintf("size %g", z))
+	}
+	if len(changed) == 0 {
+		return kit.cli_fail(c, kit.EXIT_USAGE, "nothing to do: give --bold, --italic, --color, --size or --plain")
+	}
+	detail := fmt.tprintf("%q: %s", el.text[a:b], strings.join(changed[:], ", ", context.temp_allocator))
+	return cli_save(c, st, label, "style", detail)
+}
+
+@(private = "file")
+cmd_transition :: proc(c: ^kit.Call) -> int {
+	st, label, code := cli_load(c, "deck")
+	if code != kit.EXIT_OK {
+		return code
+	}
+	kind: Transition
+	for name, k in TRANSITION_NAMES {
+		if name == kit.cli_str(c, "kind") {
+			kind = k
+		}
+	}
+	ms := 0
+	if kit.cli_has(c, "ms") {
+		ms = kit.cli_int(c, "ms")
+		if ms < 50 || ms > 10000 {
+			return kit.cli_failf(c, kit.EXIT_USAGE, "--ms %d is outside 50..10000", ms)
+		}
+	}
+	which := kit.cli_str(c, "slide")
+	lo, hi := 0, len(st.deck.slides)
+	if which != "all" {
+		n, ok := strconv.parse_int(which)
+		if !ok || n < 1 || n > len(st.deck.slides) {
+			code := kit.cli_failf(c, kit.EXIT_NOT_FOUND, "the deck has %d slides; there is no slide %q", len(st.deck.slides), which)
+			kit.cli_err_field(c, "slide", which)
+			return code
+		}
+		lo, hi = n - 1, n
+	}
+	for i in lo ..< hi {
+		st.deck.slides[i].transition = kind
+		st.deck.slides[i].transition_ms = ms
+	}
+	st.slide = lo
+	st.sel = -1
+	what := which == "all" ? "every slide" : fmt.tprintf("slide %d", lo + 1)
+	return cli_save(c, st, label, "transition", fmt.tprintf("%s arrives with %s", what, TRANSITION_NAMES[kind]))
+}
+
+@(private = "file")
+cmd_import :: proc(c: ^kit.Call) -> int {
+	in_path := kit.cli_str(c, "in")
+	out := kit.cli_str(c, "deck")
+	if !os.exists(in_path) {
+		code := kit.cli_failf(c, kit.EXIT_NOT_FOUND, "%s does not exist", in_path)
+		kit.cli_err_field(c, "in", in_path)
+		return code
+	}
+	if os.exists(out) && !kit.cli_bool(c, "force") {
+		return kit.cli_failf(c, kit.EXIT_USAGE, "%s is already there; pass --force to overwrite it", out)
+	}
+	theme: Maybe(Theme)
+	if kit.cli_has(c, "theme") {
+		th, ok := theme_by_name(kit.cli_str(c, "theme"))
+		if !ok {
+			code := kit.cli_failf(c, kit.EXIT_USAGE, "there is no theme %q; `slides themes` lists them", kit.cli_str(c, "theme"))
+			kit.cli_err_field(c, "theme", kit.cli_str(c, "theme"))
+			return code
+		}
+		theme = th
+	}
+	low := strings.to_lower(in_path, context.temp_allocator)
+	format := ""
+	switch {
+	case strings.has_suffix(low, ".pptx"):
+		format = "pptx"
+	case strings.has_suffix(low, ".pdf"):
+		format = "pdf"
+	case:
+		return kit.cli_failf(c, kit.EXIT_USAGE, "%s is neither a .pptx nor a .pdf", in_path)
+	}
+	media := media_dir_for(out)
+	rep: Import_Report
+	d: Deck
+	err: string
+	if c.dry_run {
+		// A dry run reads the source and writes nothing, pictures included.
+		media = ""
+	}
+	if format == "pptx" {
+		d, rep, err = import_pptx_file(in_path, media)
+	} else {
+		d, rep, err = import_pdf_file(in_path, media)
+	}
+	if err != "" {
+		return kit.cli_fail(c, kit.EXIT_FAILED, err)
+	}
+	if th, ok := theme.?; ok {
+		d.theme = th
+	}
+	if !c.dry_run {
+		if e := save_deck(&d, out); e != "" {
+			return kit.cli_fail(c, kit.EXIT_FAILED, e)
+		}
+	}
+	elements := 0
+	for s in d.slides {
+		elements += len(s.elems)
+	}
+	lost := kit.jarr()
+	for l in rep.lost {
+		kit.jpush(lost, kit.jstr(l))
+	}
+	kit.jset_str(c.out, "in", in_path)
+	kit.jset_str(c.out, "deck", out)
+	kit.jset_str(c.out, "format", format)
+	kit.jset_int(c.out, "slides", len(d.slides))
+	kit.jset_int(c.out, "elements", elements)
+	kit.jset_int(c.out, "pictures", rep.pictures)
+	kit.jset_str(c.out, "media", media)
+	kit.jset(c.out, "lost", lost)
+	kit.jset_bool(c.out, "written", !c.dry_run)
 	return kit.EXIT_OK
 }
