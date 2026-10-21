@@ -1186,10 +1186,6 @@ cmd_write :: proc(c: ^kit.Call) -> int {
 	ref := kit.cli_str(c, "note")
 	text := kit.cli_str(c, "text")
 	file := kit.cli_str(c, "file")
-	if text == "" && file == "" {
-		// Only `--file ""` gets here: the kit refuses a line with neither.
-		return kit.cli_fail(c, kit.EXIT_USAGE, "notes write needs --text or --file")
-	}
 	if file != "" {
 		data, err := os.read_entire_file_from_path(file, context.temp_allocator)
 		if err != nil {

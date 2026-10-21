@@ -510,13 +510,12 @@ cmd_engine :: proc(c: ^kit.Call) -> int {
 			return kit.cli_fail(c, path_exists(full) ? kit.EXIT_FAILED : kit.EXIT_NOT_FOUND, err)
 		}
 		o.torrent, o.dir = full, d
-	} else if o.magnet != "" {
+	} else {
+		// The kit has refused a line with neither, and counts `--magnet ""`
+		// as not given, so there is a magnet here.
 		if _, err := magnet_inspect(o.magnet); err != "" {
 			return kit.cli_fail(c, kit.EXIT_USAGE, err)
 		}
-	} else {
-		// Only `--magnet ""` gets here: the kit refuses a line with neither.
-		return kit.cli_fail(c, kit.EXIT_USAGE, "the client needs --torrent or --magnet")
 	}
 	if c.dry_run {
 		out := kit.jobj()
