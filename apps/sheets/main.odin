@@ -52,8 +52,15 @@ main :: proc() {
 			continue
 		}
 		if strings.has_suffix(arg, ".csv") || strings.has_suffix(arg, ".tsv") {
-			if ok, rows, cols := csv_read_file(app.sh, arg, {0, 0}); ok {
-				set_status(app, "Imported %d x %d from %s", rows, cols, base_name(arg))
+			// `book.csv` that is not there but whose `book-<Sheet>.csv`
+			// files are: the several-sheet export, read back as a book.
+			if ok, rows, cols, n := csv_open(app.sh, arg, {0, 0}); ok {
+				sync_sheet(app)
+				if n > 0 {
+					set_status(app, "Imported %d sheets from %s", n, base_name(arg))
+				} else {
+					set_status(app, "Imported %d x %d from %s", rows, cols, base_name(arg))
+				}
 				loaded = true
 			}
 		} else if strings.has_suffix(arg, ".xlsx") {

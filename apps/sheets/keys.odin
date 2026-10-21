@@ -686,12 +686,18 @@ run_prompt :: proc(app: ^App, text: string) {
 			return
 		}
 		undo_push(app)
-		ok, rows, cols := csv_read_file(app.sh, arg, app.cur)
+		ok, rows, cols, n := csv_open(app.sh, arg, app.cur)
 		if !ok {
 			set_status(app, "Could not read %s", arg)
 			return
 		}
-		set_status(app, "Imported %d x %d from %s", rows, cols, base_name(arg))
+		if n > 0 {
+			// The several-sheet export, back as sheets after this one's.
+			sync_sheet(app)
+			set_status(app, "Imported %d sheets from %s", n, base_name(arg))
+		} else {
+			set_status(app, "Imported %d x %d from %s", rows, cols, base_name(arg))
+		}
 	case .Export_XLSX:
 		if arg == "" {
 			return

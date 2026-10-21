@@ -461,7 +461,8 @@ open_book :: proc(src: string) -> (app: ^App, ok: bool) {
 	}
 	switch {
 	case strings.has_suffix(src, ".csv"), strings.has_suffix(src, ".tsv"):
-		got, _, _ := csv_read_file(app.sh, src, {0, 0})
+		got, _, _, _ := csv_open(app.sh, src, {0, 0})
+		sync_sheet(app)
 		ok = got
 	case strings.has_suffix(src, ".xlsx"):
 		got, _, _ := xlsx_read_book(app.book, src)

@@ -74,6 +74,36 @@ t_csv_book :: proc(tc: ^TC) {
 		at_num(tc, back.sheets[0], "A1", 7.5)
 		at_input(tc, back.sheets[0], "A1", "7.5")
 
+		// And the set reads back as one book: the reverse of the export.
+		ok_mark(tc, len(csv_book_files(fmt.tprintf("%s/book.csv", dir))) == 4, "book.csv finds its four book-<Sheet>.csv files")
+		whole := book_new()
+		defer bk_free(whole)
+		wok, nsheets, _ := csv_read_book(whole, fmt.tprintf("%s/book.csv", dir))
+		ok_mark(tc, wok && nsheets == 4 && len(whole.sheets) == 4, fmt.tprintf("and imports them as four sheets (%d)", len(whole.sheets)))
+		names := make([dynamic]string, context.temp_allocator)
+		for sh in whole.sheets {
+			append(&names, sh.name)
+		}
+		ok_mark(tc, fmt.tprint(names[:]) == `["Empty", "Feb", "Jan", "Sum"]`, fmt.tprintf("named from the files, in name order, the blank first sheet reused (%v)", names[:]))
+		if wok && len(whole.sheets) == 4 {
+			at_text(tc, whole.sheets[2], "A2", "Tea, green")
+			at_num(tc, whole.sheets[2], "B2", 3.5)
+			at_num(tc, whole.sheets[3], "A1", 7.5)
+			ok_mark(tc, len(whole.sheets[0].cells) == 0, "the empty sheet comes back empty")
+		}
+		// A path that exists is still one file, so an ordinary CSV whose
+		// name happens to prefix others is not read as a book.
+		_ = os.write_entire_file(fmt.tprintf("%s/book.csv", dir), transmute([]u8)string("1,2\n"))
+		single := book_new()
+		defer bk_free(single)
+		sok, _, _, sn := csv_open(single.sheets[0], fmt.tprintf("%s/book.csv", dir), {0, 0})
+		ok_mark(tc, sok && sn == 0 && len(single.sheets) == 1, "an existing book.csv is imported alone, as before")
+		os.remove(fmt.tprintf("%s/book.csv", dir))
+		none := book_new()
+		defer bk_free(none)
+		nok, _, _, _ := csv_open(none.sheets[0], fmt.tprintf("%s/nothing.csv", dir), {0, 0})
+		ok_mark(tc, !nok, "a path with no file and no set is a failure")
+
 		tfiles, tok := csv_write_book(b, fmt.tprintf("%s/book.tsv", dir))
 		data, _ := os.read_entire_file(tfiles[0], context.temp_allocator)
 		ok_mark(tc, tok && strings.has_suffix(tfiles[0], "book-Jan.tsv") && string(data) == "Item\tCost\nTea, green\t3.5\n", "a .tsv path writes tabs")
@@ -97,6 +127,13 @@ t_csv_book :: proc(tc: ^TC) {
 		}
 		ok_mark(tc, n == len(app.book.sheets) && n > 1, "Export every sheet as CSV writes one file per sheet")
 		ok_mark(tc, strings.contains(app.status, "Exported"), "and says so")
+		// Import CSV of the same path brings them back, as sheets added
+		// after the ones already open.
+		before := len(app.book.sheets)
+		app.prompt = .Import_CSV
+		run_prompt(app, fmt.tprintf("%s/gui.csv", dir))
+		ok_mark(tc, len(app.book.sheets) == 2 * before && app.book.sheets[before].name == "Sales2", fmt.tprintf("Import CSV of the exported path adds every sheet (%d, %s)", len(app.book.sheets), app.status))
+		ok_mark(tc, app.sh == app.book.sheets[app.book.active], "and the window still points at a sheet of the book")
 	}
 
 	// --- the command line --------------------------------------------------
@@ -109,6 +146,10 @@ t_csv_book :: proc(tc: ^TC) {
 		problems := kit.cli_validate_output(out, EXPORT_FIELDS, context.temp_allocator)
 		ok_mark(tc, code == 0 && len(problems) == 0, fmt.tprintf("export to .csv matches its schema %v", problems))
 		ok_mark(tc, os.exists(fmt.tprintf("%s/cli-Sales.csv", dir)) && os.exists(fmt.tprintf("%s/cli-Summary.csv", dir)), "and writes both sheets")
+		out, code = cli_run("info", fmt.tprintf("%s/cli.csv", dir), "--json")
+		ok_mark(tc, code == 0 && strings.contains(out, `"Summary"`) && strings.contains(out, `"Sales"`), fmt.tprintf("info on the exported path reads both sheets back (%d)", code))
+		out, code = cli_run("get", "Summary!B8", fmt.tprintf("%s/cli.csv", dir), "--json")
+		ok_mark(tc, code == 0 && strings.contains(out, `"number": 2781.05`), fmt.tprintf("with the summary's values in it, as numbers (%s)", out))
 		out, code = cli_run("export", fmt.tprintf("%s/one.csv", dir), "--sheet", "summary", "--json")
 		ok_mark(tc, code == 0 && os.exists(fmt.tprintf("%s/one.csv", dir)) && strings.contains(out, `"sheets": 1`), "--sheet writes one sheet to exactly the path")
 		_, code = cli_run("export", fmt.tprintf("%s/one.xlsx", dir), "--sheet", "Summary", "--json")

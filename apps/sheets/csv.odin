@@ -272,3 +272,124 @@ csv_write_sheet :: proc(sh: ^Sheet, path: string) -> bool {
 	text := csv_sheet_text(sh, delim_for(path))
 	return os.write_entire_file(path, transmute([]u8)text) == nil
 }
+
+// ---------------------------------------------------------------------------
+// ... and back
+//
+// The reverse of `csv_write_book`. Given the path the book was exported to,
+// `book.csv`, the files `book-<Sheet>.csv` beside it become one sheet each,
+// named by what follows `book-`. Two rules keep this from changing what an
+// existing command means:
+//
+//   - A path that exists is one file, imported as before. Only a path that
+//     does not exist — which is exactly what a several-sheet export leaves
+//     behind, since it never writes `book.csv` itself — is read as a book.
+//   - Only the export's own extension is matched, so `book.csv` never picks
+//     up `book-notes.txt`.
+//
+// What a set of CSV files cannot carry is lost, and that is a decision, not
+// an oversight. The *order* of the sheets: nothing in a directory records it
+// (modification times are written within one clock tick of each other), so
+// the sheets come back sorted by name, case-insensitively. Formulas: the
+// export wrote values. And a sheet name the export had to clean up
+// (`a/b` → `a_b`) or number (`A_b-2`) comes back as its file name says.
+// ---------------------------------------------------------------------------
+
+Csv_Sheet_File :: struct {
+	path:  string,
+	sheet: string,
+}
+
+// csv_book_files lists the `stem-<Sheet>.ext` files beside `path`, sorted by
+// sheet name. Empty when there are none.
+csv_book_files :: proc(path: string) -> []Csv_Sheet_File {
+	out := make([dynamic]Csv_Sheet_File, 0, 4, context.temp_allocator)
+	slash := strings.last_index_byte(path, '/')
+	dir := slash >= 0 ? path[:max(slash, 1)] : "."
+	base := path[slash + 1:]
+	stem, ext := base, ""
+	if dot := strings.last_index_byte(base, '.'); dot > 0 {
+		stem, ext = base[:dot], base[dot:]
+	}
+	prefix := strings.concatenate({stem, "-"}, context.temp_allocator)
+	infos, err := os.read_directory_by_path(dir, -1, context.temp_allocator)
+	if err != nil {
+		return out[:]
+	}
+	for fi in infos {
+		n := fi.name
+		if fi.type == .Directory || !strings.has_prefix(n, prefix) || !strings.has_suffix(n, ext) {
+			continue
+		}
+		sheet := n[len(prefix):len(n) - len(ext)]
+		if sheet == "" || (ext == "" && strings.index_byte(sheet, '.') >= 0) {
+			continue
+		}
+		full := slash >= 0 ? strings.concatenate({path[:slash + 1], n}, context.temp_allocator) : strings.clone(n, context.temp_allocator)
+		append(&out, Csv_Sheet_File{full, strings.clone(sheet, context.temp_allocator)})
+	}
+	// Insertion sort by name, ignoring case; ties by the exact spelling, so
+	// the order never depends on the directory's.
+	less :: proc(a, b: Csv_Sheet_File) -> bool {
+		la := strings.to_lower(a.sheet, context.temp_allocator)
+		lb := strings.to_lower(b.sheet, context.temp_allocator)
+		return la < lb || (la == lb && a.sheet < b.sheet)
+	}
+	for i in 1 ..< len(out) {
+		x := out[i]
+		j := i - 1
+		for j >= 0 && less(x, out[j]) {
+			out[j + 1] = out[j]
+			j -= 1
+		}
+		out[j + 1] = x
+	}
+	return out[:]
+}
+
+// csv_read_book imports the files of a several-sheet export into `bk`, one
+// sheet each. A book that is one empty sheet (a fresh window, the CLI's
+// blank book) has that sheet reused for the first file rather than kept as
+// an empty tab in front; otherwise the sheets are added after the ones
+// already there, their names made unique the way an added sheet's are.
+csv_read_book :: proc(bk: ^Book, path: string) -> (ok: bool, sheets, cells: int) {
+	files := csv_book_files(path)
+	if len(files) == 0 {
+		return false, 0, 0
+	}
+	reuse := len(bk.sheets) == 1 && len(bk.sheets[0].cells) == 0
+	for f, i in files {
+		data, err := os.read_entire_file(f.path, context.temp_allocator)
+		if err != nil {
+			continue
+		}
+		sh: ^Sheet
+		if i == 0 && reuse {
+			sh = bk.sheets[0]
+			book_rename_sheet(bk, 0, f.sheet)
+		} else {
+			sh = book_add_sheet(bk, f.sheet)
+		}
+		if sh == nil {
+			break
+		}
+		import_delim(sh, string(data), {0, 0}, delim_for(f.path))
+		sheets += 1
+		cells += len(sh.cells)
+	}
+	bk.graph_dirty = true
+	book_recalc_all(bk)
+	return sheets > 0, sheets, cells
+}
+
+// csv_open reads what a window or a command was handed: the file, if it
+// exists, into `sh` at `at`; otherwise the several-sheet export of that
+// name into the book. `sheets` is 0 for a single file.
+csv_open :: proc(sh: ^Sheet, path: string, at: Addr) -> (ok: bool, rows, cols, sheets: int) {
+	if os.exists(path) {
+		ok, rows, cols = csv_read_file(sh, path, at)
+		return
+	}
+	ok, sheets, _ = csv_read_book(sh.book, path)
+	return
+}
