@@ -77,6 +77,7 @@ package kit
 import "core:encoding/json"
 import "core:fmt"
 import "core:mem"
+import "core:mem/virtual"
 import "core:os"
 import "core:strconv"
 import "core:strings"
@@ -224,6 +225,23 @@ Param :: struct {
 	variadic: bool, // the last positional may swallow the rest
 	values:   []string, // Enum only
 	def:      string, // the default, as it would be typed
+
+	// secret says the value must never be repeated back: the audit log, the
+	// --json result, a refusal, --help and the schema's examples all show
+	// `<redacted>` where it was. `cli_str` still returns the real value.
+	secret:   bool,
+	// repeat says a flag may be given more than once. `cli_str` is the last
+	// value, as for any flag; `cli_all` is every value, in order.
+	repeat:   bool,
+	// unless makes the parameter required unless one of these other
+	// parameters (flag or argument names) was given: `--password` unless
+	// `--password-file`. A refusal names both.
+	unless:   []string,
+	// free marks a positional as free text: a word starting with '-' that
+	// names no flag is taken as its value (`slides add-text "- One"`
+	// already is, having a space; `-draft` needs this). Words with a space
+	// and negative numbers are always values, free or not.
+	free:     bool,
 }
 
 // Schema_Kind describes the shape of a field in a command's output.
@@ -267,6 +285,11 @@ Field :: struct {
 	help: string,
 	opt:  bool, // may be absent
 	of:   []Field,
+	// keyed declares an Object whose keys are data — package names, dates,
+	// account ids — rather than a fixed set. Every value has the shape `of`
+	// describes: a single unnamed `of` is a scalar, anything else an object
+	// with those fields.
+	keyed: bool,
 }
 
 // Command is one verb of one noun.
@@ -281,6 +304,20 @@ Command :: struct {
 	aliases:  []string, // kept so an old spelling such as `--export` still works
 	hidden:   bool, // works, but stays out of the index
 	run:      proc(c: ^Call) -> int,
+	// on_refuse is asked for the specific reason when the kit refuses this
+	// destructive command for want of --yes — `pkg remove` names the
+	// dependants. It runs with the guard armed as for an intent command, so
+	// it can execute nothing, and it can only add to the refusal: it may set
+	// fields (`cli_err_field`), replace the detail (`cli_err_detail`) or
+	// replace `c.err` outright, and the kit then puts the documented token,
+	// code and `pass` back. The exit code is 4 whatever it does.
+	on_refuse: proc(c: ^Call),
+	// private_args says this command's positional arguments are content
+	// that must not be recorded — `clipboard add <text>` — so the audit log
+	// and the --parse-only echo show <redacted> for each of them. The
+	// command's own result is the command's business; a `secret` argument
+	// is also scrubbed from that.
+	private_args: bool,
 }
 
 // Surface is everything one binary offers.
@@ -296,6 +333,16 @@ Surface :: struct {
 	// and, worse, a command that never returns to whatever ran it.
 	takes_path: bool,
 	notes:    string, // extra paragraph for --help
+	// flags every command of this surface takes, beside the base flags:
+	// `mail --data-dir PATH`. They are listed in each command's schema and
+	// help, so they are discoverable rather than stripped out of argv.
+	flags:    []Param,
+	// takes_word narrows takes_path: when set, a bare word that is not a verb
+	// opens the window only if this says so, and is otherwise a usage error.
+	// `cli_word_is_path` (exists on disk, or is a URI) is the usual answer.
+	// Unset, a takes_path surface lets every bare word through, as it always
+	// has — `settings network` names a page, not a file.
+	takes_word: proc(word: string) -> bool,
 }
 
 // ---------------------------------------------------------------------------
@@ -327,6 +374,15 @@ Call :: struct {
 	// what the command fills in and what it failed with
 	out:      ^Json,
 	err:      ^Json,
+
+	// every value of every flag, in order, for `cli_all` (a `repeat` flag)
+	multi:    map[string][dynamic]string,
+	// partial says `out` is worth printing although the command failed:
+	// the refusal carries it as `partial`. Set it with `cli_partial`.
+	partial:  bool,
+	// the values of this call's secret parameters, scrubbed from everything
+	// the kit prints or records
+	secrets:  []string,
 }
 
 // cli_has reports whether a flag or argument was given explicitly.
@@ -374,16 +430,45 @@ cli_rest :: proc(c: ^Call) -> []string {
 	return c.rest
 }
 
+// cli_all is every value a flag was given, in order: `--profile a --profile
+// b` is {"a", "b"}. A flag given once is one value; one never given is its
+// declared default, if it has one, and nothing otherwise. Meant for a
+// `repeat` flag, and correct for any.
+cli_all :: proc(c: ^Call, name: string) -> []string {
+	if vs, ok := c.multi[name]; ok && len(vs) > 0 {
+		return vs[:]
+	}
+	if v, ok := c.vals[name]; ok && v != "" && !c.seen[name] {
+		out := make([]string, 1, cli_mem())
+		out[0] = v
+		return out
+	}
+	return nil
+}
+
+// cli_partial says the command's `out` is worth having although it failed:
+// the refusal then carries it as `partial` (under --json), or it is printed
+// on stdout before the refusal (without). A sync that fetched three folders
+// of five says which three.
+cli_partial :: proc(c: ^Call) {
+	c.partial = true
+}
+
 // cli_note writes progress or a warning. It goes to stderr, always, so a
-// pipeline reading stdout under --json never sees it.
+// pipeline reading stdout under --json never sees it. A secret parameter's
+// value is scrubbed from it like from everything else the kit prints.
 cli_note :: proc(c: ^Call, format: string, args: ..any) {
-	fmt.eprintfln(format, ..args)
+	line := fmt.tprintf(format, ..args)
+	if c != nil {
+		line = scrub_text(line, c.secrets)
+	}
+	fmt.eprintln(line)
 }
 
 // cli_trace is cli_note, but only under --verbose.
 cli_trace :: proc(c: ^Call, format: string, args: ..any) {
 	if c != nil && c.verbose {
-		fmt.eprintfln(format, ..args)
+		cli_note(c, format, ..args)
 	}
 }
 
@@ -408,11 +493,46 @@ cli_failf :: proc(c: ^Call, code: int, format: string, args: ..any) -> int {
 
 // cli_err_field adds a machine-readable field to the refusal, next to the
 // token: `{"error":"out of scope","identity":"work","requested":"personal"}`.
-cli_err_field :: proc(c: ^Call, key, value: string) {
+// The value may be a string, an int, a bool, a list of strings, or any
+// `^Json` the kit's builders made — a refusal is data, not only text.
+cli_err_field :: proc {
+	cli_err_field_str,
+	cli_err_field_int,
+	cli_err_field_bool,
+	cli_err_field_strs,
+	cli_err_field_json,
+}
+
+cli_err_field_str :: proc(c: ^Call, key, value: string) {
+	cli_err_field_json(c, key, jstr(value))
+}
+
+cli_err_field_int :: proc(c: ^Call, key: string, value: int) {
+	cli_err_field_json(c, key, jint(value))
+}
+
+cli_err_field_bool :: proc(c: ^Call, key: string, value: bool) {
+	cli_err_field_json(c, key, jbool(value))
+}
+
+cli_err_field_strs :: proc(c: ^Call, key: string, values: []string) {
+	a := jarr()
+	for v in values {
+		jpush(a, jstr(v))
+	}
+	cli_err_field_json(c, key, a)
+}
+
+cli_err_field_json :: proc(c: ^Call, key: string, value: ^Json) {
 	if c.err == nil {
 		c.err = jobj()
 	}
-	jset_str(c.err, key, value)
+	jset(c.err, key, value)
+}
+
+// cli_err_detail replaces the refusal's `detail`, the sentence for a person.
+cli_err_detail :: proc(c: ^Call, detail: string) {
+	cli_err_field_str(c, "detail", detail)
 }
 
 // ---------------------------------------------------------------------------
@@ -469,7 +589,11 @@ cli_guard_check :: proc(argv: []string) -> (why: string) {
 //     which would take the session doing the work offline with it;
 //   - power and session actions are intent-only;
 //   - the login and model daemons are never started or stopped;
-//   - the camera and the microphone are never opened.
+//   - the camera and the microphone are never opened;
+//   - nothing asks for root (sudo needs a password a command cannot have),
+//     and the package manager and the snapshot tool are read-only: `pkg`'s
+//     planner is the one door through which they change the machine, and it
+//     execs its plan itself, after --yes, rather than through these helpers.
 cli_forbidden :: proc(argv: []string) -> (why: string) {
 	if len(argv) == 0 {
 		return ""
@@ -548,6 +672,16 @@ cli_forbidden :: proc(argv: []string) -> (why: string) {
 		if exe != "pactl" || has(argv, "load-module") {
 			return "the microphone is never captured; synthetic sources only"
 		}
+	case "sudo", "doas", "pkexec", "run0", "su":
+		return "nothing run from a command may ask for root; a person runs that line"
+	case "pacman", "yay", "paru":
+		if why := pacman_forbidden(exe, argv); why != "" {
+			return why
+		}
+	case "snapper":
+		if why := snapper_forbidden(argv); why != "" {
+			return why
+		}
 	case "ffmpeg", "ffplay", "gst-launch-1.0", "wf-recorder", "obs":
 		if has_sub(argv, "/dev/video") ||
 		   has(argv, "v4l2") ||
@@ -557,6 +691,123 @@ cli_forbidden :: proc(argv: []string) -> (why: string) {
 		   has(argv, "dshow") {
 			return "the camera and microphone are never captured; synthetic sources only"
 		}
+	}
+	return ""
+}
+
+// pacman_forbidden lets the read-only operations through — -Q, -T, -F
+// without a refresh, and -S used only to look (-Si, -Ss, -Sl, -Sg, -Sp) —
+// and refuses everything that changes the machine: -S that installs,
+// refreshes or cleans, -R, -U, -D, and yay or paru with no operation, which
+// is their interactive search-and-install.
+@(private = "file")
+pacman_forbidden :: proc(exe: string, argv: []string) -> string {
+	op: u8 = 0
+	mods := make(map[u8]bool, context.temp_allocator)
+	for a in argv[1:] {
+		if a == "--" {
+			break
+		}
+		if strings.has_prefix(a, "--") {
+			long := a[2:]
+			if eq := strings.index_byte(long, '='); eq >= 0 {
+				long = long[:eq]
+			}
+			switch long {
+			case "query":
+				op = 'Q'
+			case "sync":
+				op = 'S'
+			case "remove":
+				op = 'R'
+			case "upgrade":
+				op = 'U'
+			case "database":
+				op = 'D'
+			case "files":
+				op = 'F'
+			case "deptest":
+				op = 'T'
+			case "getpkgbuild":
+				op = 'G'
+			case "show":
+				op = 'P'
+			case "refresh":
+				mods['y'] = true
+			case "sysupgrade":
+				mods['u'] = true
+			case "clean":
+				mods['c'] = true
+			case "downloadonly":
+				mods['w'] = true
+			case "info":
+				mods['i'] = true
+			case "search":
+				mods['s'] = true
+			case "list":
+				mods['l'] = true
+			case "groups":
+				mods['g'] = true
+			case "print":
+				mods['p'] = true
+			}
+			continue
+		}
+		if strings.has_prefix(a, "-") && len(a) > 1 {
+			for ch in transmute([]u8)a[1:] {
+				if ch >= 'A' && ch <= 'Z' {
+					op = ch
+				} else {
+					mods[ch] = true
+				}
+			}
+		}
+	}
+	changes := "the package manager is read-only from a command; pkg plans the change and a person runs it"
+	switch op {
+	case 'Q', 'T', 'P', 'G':
+		return ""
+	case 'F':
+		if mods['y'] {
+			return changes
+		}
+		return ""
+	case 'S':
+		if mods['y'] || mods['u'] || mods['c'] || mods['w'] {
+			return changes
+		}
+		if mods['i'] || mods['s'] || mods['l'] || mods['g'] || mods['p'] {
+			return ""
+		}
+		return changes
+	case 0:
+		if exe == "pacman" {
+			return "" // pacman with no operation only prints its usage
+		}
+		return changes // `yay` alone is -Syu; `yay word` searches and installs
+	}
+	return changes
+}
+
+// snapper_forbidden lets the reading subcommands through and refuses the
+// ones that create, delete or roll back.
+@(private = "file")
+snapper_forbidden :: proc(argv: []string) -> string {
+	for i := 1; i < len(argv); i += 1 {
+		a := argv[i]
+		if strings.has_prefix(a, "-") {
+			// The global options that take a value as the next word.
+			switch a {
+			case "-c", "--config", "-r", "--root", "--machine-readable", "--csvout-separator":
+				i += 1
+			}
+			continue
+		}
+		switch a {
+		case "list", "ls", "list-configs", "get-config", "status", "diff", "xadiff", "help":
+			return ""
+		}
+		return fmt.tprintf("snapper %s changes the machine; pkg plans it and a person runs it", a)
 	}
 	return ""
 }
@@ -577,7 +828,7 @@ guard_disarm :: proc() {
 // records the reason and reports it on stderr, never stdout.
 @(private)
 cli_guard_refuse :: proc(argv: []string, why: string) {
-	line := strings.join(argv, " ", context.temp_allocator)
+	line := scrub_text(strings.join(argv, " ", context.temp_allocator), g_secrets)
 	g_guard_last = fmt.aprintf("%s: %s", line, why)
 	fmt.eprintfln("[kit] REFUSED, not executed: %s   (%s)", line, why)
 	audit_write_raw("refused", line, why)
@@ -660,6 +911,9 @@ audit_append :: proc(rec: ^Json) {
 			}
 		}
 	}
+	// Compact, one record per line. The keys and tokens are the ones --json
+	// prints; the spacing is not, deliberately: applications' self-tests grep
+	// this file for `"verb":"purge"`, and a log format is a contract.
 	line := fmt.tprintf("%s\n", json_text(rec, 0, context.temp_allocator))
 	f, oerr := os.open(path, {.Write, .Create, .Append}, os.perm(0o600))
 	if oerr != nil {
@@ -684,9 +938,9 @@ audit_write_raw :: proc(kind, command, detail: string) {
 	rec := jobj(context.temp_allocator)
 	jset_str(rec, "at", audit_now(), context.temp_allocator)
 	jset_str(rec, "kind", kind, context.temp_allocator)
-	jset_str(rec, "command", command, context.temp_allocator)
+	jset_str(rec, "command", scrub_text(command, g_secrets), context.temp_allocator)
 	if detail != "" {
-		jset_str(rec, "detail", detail, context.temp_allocator)
+		jset_str(rec, "detail", scrub_text(detail, g_secrets), context.temp_allocator)
 	}
 	jset_bool(rec, "executed", false, context.temp_allocator)
 	audit_append(rec)
@@ -706,12 +960,227 @@ audit_call :: proc(c: ^Call, code: int) {
 	jset_str(rec, "identity", c.identity == "" ? "unscoped" : c.identity, context.temp_allocator)
 	jset_bool(rec, "dry_run", c.dry_run, context.temp_allocator)
 	jset_int(rec, "code", code, context.temp_allocator)
+	if code != EXIT_OK {
+		// The same token the --json refusal carries, so a reader of the log
+		// branches on the same word a caller of the command does.
+		jset_str(rec, "error", cli_exit_reason(code), context.temp_allocator)
+	}
 	av := jarr(context.temp_allocator)
-	for a in c.argv {
+	for a in cli_redact_argv(c.surface, c.cmd, c.argv, c.secrets, context.temp_allocator) {
 		jpush(av, jstr(a, context.temp_allocator))
 	}
 	jset(rec, "argv", av, context.temp_allocator)
 	audit_append(rec)
+}
+
+// ---------------------------------------------------------------------------
+// Secrets
+//
+// A parameter declared `secret` is never repeated back. The kit knows the
+// values a call was given and scrubs them out of everything it prints or
+// records — the audit log, the --json result and refusal, a guard refusal,
+// cli_note — and the declaration's own examples are redacted wherever the
+// kit shows them (--help, --schema). Removing the value at the source is the
+// application's job (do not copy it into `out`); this is the net under that.
+// ---------------------------------------------------------------------------
+
+CLI_REDACTED :: "<redacted>"
+
+// the secrets of the call in progress, for the paths that have no Call in
+// hand (the guard, an intent record)
+@(private = "file")
+g_secrets: []string
+
+// cli_is_secret reports whether `name` is a secret parameter of `cmd` or a
+// secret surface-wide flag. With no command, any command's secret counts:
+// a line that failed to bind is redacted by every name it could have meant.
+cli_is_secret :: proc(s: ^Surface, cmd: ^Command, name: string) -> bool {
+	check :: proc(ps: []Param, name: string) -> bool {
+		for p in ps {
+			if p.secret && (p.name == name || (p.short != "" && p.short == name)) {
+				return true
+			}
+		}
+		return false
+	}
+	if s != nil && check(s.flags, name) {
+		return true
+	}
+	if cmd != nil {
+		return check(cmd.flags, name) || check(cmd.args, name)
+	}
+	if s != nil {
+		for &c in s.commands {
+			if check(c.flags, name) {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+// cli_redact_argv is argv with every secret value replaced by <redacted>:
+// the word after a secret flag, the part after `=` in `--secret=value`, any
+// word that is exactly a known secret value (a secret positional), and —
+// when the command declares `private_args` — every positional argument.
+cli_redact_argv :: proc(
+	s: ^Surface,
+	cmd: ^Command,
+	argv: []string,
+	secrets: []string = nil,
+	allocator := context.allocator,
+) -> []string {
+	out := make([]string, len(argv), allocator)
+	private := cmd != nil && cmd.private_args
+	next_secret := false
+	next_value := false
+	no_more_flags := false
+	for a, i in argv {
+		out[i] = a
+		if next_secret || next_value {
+			if next_secret {
+				out[i] = CLI_REDACTED
+			}
+			next_secret, next_value = false, false
+			continue
+		}
+		for v in secrets {
+			if v != "" && a == v {
+				out[i] = CLI_REDACTED
+			}
+		}
+		positional := i > 0 && (no_more_flags || !strings.has_prefix(a, "-") || a == "-" || strings.contains_any(a, " \t"))
+		if positional {
+			if private {
+				out[i] = CLI_REDACTED
+			}
+			continue
+		}
+		if i == 0 {
+			continue
+		}
+		if a == "--" {
+			no_more_flags = true
+			continue
+		}
+		bare := strings.trim_left(a, "-")
+		if eq := strings.index_byte(bare, '='); eq >= 0 {
+			if cli_is_secret(s, cmd, bare[:eq]) {
+				out[i] = strings.concatenate({a[:len(a) - len(bare) + eq + 1], CLI_REDACTED}, allocator)
+			}
+			continue
+		}
+		if cli_is_secret(s, cmd, bare) {
+			next_secret = true
+			continue
+		}
+		// A flag that takes a value: its value is not a positional.
+		if cmd != nil {
+			if p := find_flag(s, cmd, bare); p != nil {
+				next_value = p.kind != .Bool
+				continue
+			}
+			if strings.has_prefix(bare, "no-") && find_flag(s, cmd, bare[3:]) != nil {
+				continue
+			}
+		}
+		if bare == "identity" {
+			next_value = true
+			continue
+		}
+		// An unknown dash word in a free slot is a positional too; redact it
+		// when in doubt.
+		if private && cmd != nil && !is_base_flag(bare) {
+			out[i] = CLI_REDACTED
+		}
+	}
+	return out
+}
+
+@(private = "file")
+is_base_flag :: proc(bare: string) -> bool {
+	switch bare {
+	case "json", "dry-run", "dryrun", "yes", "verbose", "help", "identity", "y", "v", "h", "parse-only", "selftest", "self-test", "schema":
+		return true
+	}
+	return false
+}
+
+// scrub_text replaces every occurrence of a secret value in `text`. A value
+// shorter than three bytes is replaced only where it is the whole text, since
+// scrubbing every "a" out of a result would destroy it and protect nothing.
+@(private)
+scrub_text :: proc(text: string, secrets: []string, allocator := context.temp_allocator) -> string {
+	out := text
+	for v in secrets {
+		if v == "" {
+			continue
+		}
+		if out == v {
+			out = CLI_REDACTED
+			continue
+		}
+		if len(v) >= 3 && strings.contains(out, v) {
+			out, _ = strings.replace_all(out, v, CLI_REDACTED, allocator)
+		}
+	}
+	return out
+}
+
+// scrub_json does scrub_text to every string (and key) in a tree, in place.
+@(private = "file")
+scrub_json :: proc(v: ^Json, secrets: []string) {
+	if v == nil || len(secrets) == 0 {
+		return
+	}
+	switch v.kind {
+	case .String:
+		if t := scrub_text(v.s, secrets); t != v.s {
+			v.s = strings.clone(t)
+		}
+	case .Array, .Object:
+		for it in v.items {
+			scrub_json(it, secrets)
+		}
+		for &k in v.keys {
+			if t := scrub_text(k, secrets); t != k {
+				k = strings.clone(t)
+			}
+		}
+	case .Null, .Bool, .Int, .Float:
+	}
+}
+
+// cli_redact_example is an example command line with each secret flag's value
+// replaced, as --help and --schema show it. The placeholder is quoted so the
+// redacted example still parses as one word.
+cli_redact_example :: proc(s: ^Surface, cmd: ^Command, line: string, allocator := context.allocator) -> string {
+	words := cli_split_example(line, context.temp_allocator)
+	any_secret := false
+	red := cli_redact_argv(s, cmd, words, nil, context.temp_allocator)
+	for w, i in red {
+		if w != words[i] {
+			any_secret = true
+		}
+	}
+	if !any_secret {
+		return strings.clone(line, allocator)
+	}
+	sb := strings.builder_make(allocator)
+	for w, i in red {
+		if i > 0 {
+			strings.write_byte(&sb, ' ')
+		}
+		needs_quote := strings.contains_any(w, " \t'\"<>|&;$`()*?")
+		if needs_quote {
+			strings.write_byte(&sb, '\'')
+			strings.write_string(&sb, w)
+			strings.write_byte(&sb, '\'')
+		} else {
+			strings.write_string(&sb, w)
+		}
+	}
+	return strings.to_string(sb)
 }
 
 // ---------------------------------------------------------------------------
@@ -728,17 +1197,35 @@ cli_scope :: proc() -> string {
 	return os.get_env("PALM_IDENTITY", context.temp_allocator)
 }
 
-// cli_scope_require refuses unless the caller is already inside `owner`'s
-// scope. A secret, or anything else belonging to one identity, goes through
-// this. There is no argument that widens the scope: the only outcomes are the
-// caller's own identity and a refusal.
-cli_scope_require :: proc(c: ^Call, owner: string) -> (ok: bool) {
-	if c.identity == "" || c.identity == owner {
+// cli_scope_require refuses unless the caller is already inside the scope of
+// one of `owners`. A secret, or anything else belonging to one identity, goes
+// through this; a thing shared between identities (a calendar two people
+// edit) names each of them. There is no argument that widens the scope: the
+// only outcomes are the caller's own identity and a refusal. With one owner
+// the refusal's `requested` is that name, as it always was; with several it
+// is the list.
+cli_scope_require :: proc(c: ^Call, owners: ..string) -> (ok: bool) {
+	if c.identity == "" {
 		return true
 	}
-	cli_fail(c, EXIT_OUT_OF_SCOPE, fmt.tprintf("this belongs to %q", owner))
+	for o in owners {
+		if c.identity == o {
+			return true
+		}
+	}
+	if len(owners) == 1 {
+		cli_fail(c, EXIT_OUT_OF_SCOPE, fmt.tprintf("this belongs to %q", owners[0]))
+		cli_err_field(c, "identity", c.identity)
+		cli_err_field(c, "requested", owners[0])
+		return false
+	}
+	cli_fail(
+		c,
+		EXIT_OUT_OF_SCOPE,
+		fmt.tprintf("this belongs to %s", strings.join(owners, ", ", context.temp_allocator)),
+	)
 	cli_err_field(c, "identity", c.identity)
-	cli_err_field(c, "requested", owner)
+	cli_err_field(c, "requested", owners)
 	return false
 }
 
@@ -762,13 +1249,61 @@ find_command :: proc(s: ^Surface, token: string) -> ^Command {
 }
 
 @(private = "file")
-find_flag :: proc(cmd: ^Command, name: string) -> ^Param {
+find_flag :: proc(s: ^Surface, cmd: ^Command, name: string) -> ^Param {
 	for &f in cmd.flags {
 		if f.name == name || (f.short != "" && f.short == name) {
 			return &f
 		}
 	}
+	if s != nil {
+		for &f in s.flags {
+			if f.name == name || (f.short != "" && f.short == name) {
+				return &f
+			}
+		}
+	}
 	return nil
+}
+
+// ---------------------------------------------------------------------------
+// The kit's own memory
+//
+// What the kit parses lives here, not in the temp allocator: a command is
+// free to `free_all(context.temp_allocator)` — a long loop has to — and the
+// kit still reads the argv afterwards, to print the result and write the
+// audit record. That used to crash after printing (exit 133). The arena only
+// grows; a process runs one command, and a self-test that runs hundreds in
+// process holds a few kilobytes each.
+// ---------------------------------------------------------------------------
+
+@(private = "file")
+g_cli_arena: virtual.Arena
+@(private = "file")
+g_cli_arena_ok: bool
+
+// cli_mem is the allocator the kit's parse lives in.
+cli_mem :: proc() -> mem.Allocator {
+	if !g_cli_arena_ok {
+		if virtual.arena_init_growing(&g_cli_arena) == nil {
+			g_cli_arena_ok = true
+		} else {
+			return context.allocator
+		}
+	}
+	return virtual.arena_allocator(&g_cli_arena)
+}
+
+// clone_argv copies the words and the slice holding them, so an argv built in
+// the caller's temp allocator (one with secrets taken out, or a prefix
+// stripped) survives whatever the command does with that allocator.
+@(private = "file")
+clone_argv :: proc(argv: []string) -> []string {
+	a := cli_mem()
+	out := make([]string, len(argv), a)
+	for w, i in argv {
+		out[i] = strings.clone(w, a)
+	}
+	return out
 }
 
 @(private = "file")
@@ -812,11 +1347,14 @@ value_ok :: proc(p: ^Param, v: string) -> (why: string) {
 // cli_bind parses `argv` against the surface without running anything. It is
 // the whole of the validation, which is why `--parse-only` can use it to prove
 // an example in the schema still parses.
-cli_bind :: proc(s: ^Surface, argv: []string) -> (c: Call, code: int) {
+cli_bind :: proc(s: ^Surface, argv_in: []string) -> (c: Call, code: int) {
+	own := cli_mem()
+	argv := clone_argv(argv_in)
 	c.surface = s
 	c.argv = argv
-	c.vals = make(map[string]string)
-	c.seen = make(map[string]bool)
+	c.vals = make(map[string]string, own)
+	c.seen = make(map[string]bool, own)
+	c.multi = make(map[string][dynamic]string, own)
 	c.out = jobj()
 	c.identity = cli_scope()
 
@@ -856,15 +1394,38 @@ cli_bind :: proc(s: ^Surface, argv: []string) -> (c: Call, code: int) {
 			c.vals[p.name] = p.def
 		}
 	}
-	for p in c.cmd.flags {
-		if p.kind == .Bool {
-			c.vals[p.name] = p.def == "true" ? "true" : "false"
-		} else if p.def != "" {
-			c.vals[p.name] = p.def
+	defaults :: proc(c: ^Call, ps: []Param) {
+		for p in ps {
+			if p.kind == .Bool {
+				c.vals[p.name] = p.def == "true" ? "true" : "false"
+			} else if p.def != "" {
+				c.vals[p.name] = p.def
+			}
 		}
 	}
+	defaults(&c, s.flags)
+	defaults(&c, c.cmd.flags)
 
-	pos := make([dynamic]string, context.temp_allocator)
+	// A secret value is known as soon as it is read, so a refusal later in
+	// this same line is already scrubbed of it.
+	remember :: proc(c: ^Call, p: ^Param, v: string) {
+		if p.secret && v != "" {
+			list := make([dynamic]string, 0, len(c.secrets) + 1, cli_mem())
+			append(&list, ..c.secrets)
+			append(&list, v)
+			c.secrets = list[:]
+		}
+	}
+	// checked is value_ok, with a secret's refusal worded without its value.
+	checked :: proc(p: ^Param, v: string) -> string {
+		why := value_ok(p, v)
+		if why != "" && p.secret {
+			return fmt.tprintf("%s is not a valid %s", p.name, val_kind_name(p.kind))
+		}
+		return why
+	}
+
+	pos := make([dynamic]string, own)
 	if have_inline {
 		append(&pos, inline_val)
 	}
@@ -894,8 +1455,23 @@ cli_bind :: proc(s: ^Surface, argv: []string) -> (c: Call, code: int) {
 		}
 		bare := strings.trim_left(name, "-")
 
-		// The base flags, which every command accepts.
-		switch bare {
+		// The base flags, which every command accepts — unless the command
+		// declares a flag of exactly that name or short alias, which wins:
+		// `sheets ... --h 12` is a height. The one-letter aliases are only
+		// ever single-dash (`-y`, `-v`, `-h`): `--y` used to read as `--yes`,
+		// and a typo should not be able to confirm a destructive command.
+		base := ""
+		if find_flag(s, c.cmd, bare) == nil {
+			switch bare {
+			case "json", "dry-run", "dryrun", "yes", "verbose", "help", "identity":
+				base = bare
+			case "y", "v", "h":
+				if name == fmt.tprintf("-%s", bare) {
+					base = bare
+				}
+			}
+		}
+		switch base {
 		case "json":
 			c.json = true
 			continue
@@ -947,13 +1523,20 @@ cli_bind :: proc(s: ^Surface, argv: []string) -> (c: Call, code: int) {
 			neg = true
 			lookup = bare[3:]
 		}
-		p := find_flag(c.cmd, lookup)
+		p := find_flag(s, c.cmd, lookup)
 		if p == nil && neg {
-			p = find_flag(c.cmd, bare)
+			p = find_flag(s, c.cmd, bare)
 			neg = false
 			lookup = bare
 		}
 		if p == nil {
+			// Not a flag at all, but a value that happens to start with a
+			// dash: one with a space in it ("- One", which no flag has), a
+			// negative number, or anything in a slot declared `free`.
+			if dash_value(&c, len(pos), a) {
+				append(&pos, a)
+				continue
+			}
 			code = cli_fail(&c, EXIT_USAGE, fmt.tprintf("unknown flag %q", name))
 			cli_err_field(&c, "given", name)
 			return c, code
@@ -974,11 +1557,18 @@ cli_bind :: proc(s: ^Surface, argv: []string) -> (c: Call, code: int) {
 			val = argv[i]
 			i += 1
 		}
-		if why := value_ok(p, val); why != "" {
+		remember(&c, p, val)
+		if why := checked(p, val); why != "" {
 			return c, cli_fail(&c, EXIT_USAGE, why)
 		}
 		c.vals[p.name] = val
 		c.seen[p.name] = true
+		list, have := c.multi[p.name]
+		if !have {
+			list = make([dynamic]string, own)
+		}
+		append(&list, val)
+		c.multi[p.name] = list
 	}
 
 	// Asking for help is not a failed command line: stop before the rules
@@ -992,11 +1582,14 @@ cli_bind :: proc(s: ^Surface, argv: []string) -> (c: Call, code: int) {
 	for p, pi in c.cmd.args {
 		if p.variadic {
 			if at < len(pos) {
-				tail := make([]string, len(pos) - at)
+				tail := make([]string, len(pos) - at, own)
 				copy(tail, pos[at:])
 				c.rest = tail
 				c.vals[p.name] = pos[at]
 				c.seen[p.name] = true
+				for t in tail {
+					remember(&c, &c.cmd.args[pi], t)
+				}
 				at = len(pos)
 			} else {
 				c.rest = nil
@@ -1004,7 +1597,8 @@ cli_bind :: proc(s: ^Surface, argv: []string) -> (c: Call, code: int) {
 			continue
 		}
 		if at < len(pos) {
-			if why := value_ok(&c.cmd.args[pi], pos[at]); why != "" {
+			remember(&c, &c.cmd.args[pi], pos[at])
+			if why := checked(&c.cmd.args[pi], pos[at]); why != "" {
 				return c, cli_fail(&c, EXIT_USAGE, why)
 			}
 			c.vals[p.name] = pos[at]
@@ -1022,19 +1616,55 @@ cli_bind :: proc(s: ^Surface, argv: []string) -> (c: Call, code: int) {
 		return c, code
 	}
 
-	// Required things.
+	// Required things. `unless` relaxes either kind: the parameter is needed
+	// only when none of the named alternatives was given.
+	excused :: proc(c: ^Call, p: Param) -> bool {
+		for alt in p.unless {
+			if c.seen[alt] || (c.vals[alt] != "" && c.vals[alt] != "false") {
+				return true
+			}
+		}
+		return false
+	}
+	needed :: proc(p: Param) -> bool {
+		return p.required || len(p.unless) > 0
+	}
+	missing :: proc(c: ^Call, p: Param, spelled: string) -> int {
+		code: int
+		if len(p.unless) > 0 {
+			alts := make([dynamic]string, context.temp_allocator)
+			for a in p.unless {
+				append(&alts, fmt.tprintf("--%s", a))
+			}
+			code = cli_fail(
+				c,
+				EXIT_USAGE,
+				fmt.tprintf(
+					"%s %s needs %s or %s",
+					c.surface.noun,
+					c.cmd.verb,
+					spelled,
+					strings.join(alts[:], " or ", context.temp_allocator),
+				),
+			)
+			cli_err_field(c, "missing", p.name)
+			cli_err_field(c, "unless", p.unless)
+			return code
+		}
+		code = cli_fail(c, EXIT_USAGE, fmt.tprintf("%s %s needs %s", c.surface.noun, c.cmd.verb, spelled))
+		cli_err_field(c, "missing", p.name)
+		return code
+	}
 	for p in c.cmd.args {
-		if p.required && cli_str(&c, p.name) == "" {
-			code = cli_fail(&c, EXIT_USAGE, fmt.tprintf("%s %s needs <%s>", s.noun, c.cmd.verb, p.name))
-			cli_err_field(&c, "missing", p.name)
-			return c, code
+		if needed(p) && cli_str(&c, p.name) == "" && !excused(&c, p) {
+			return c, missing(&c, p, fmt.tprintf("<%s>", p.name))
 		}
 	}
-	for p in c.cmd.flags {
-		if p.required && cli_str(&c, p.name) == "" {
-			code = cli_fail(&c, EXIT_USAGE, fmt.tprintf("%s %s needs --%s", s.noun, c.cmd.verb, p.name))
-			cli_err_field(&c, "missing", p.name)
-			return c, code
+	for ps in ([2][]Param{c.cmd.flags, s.flags}) {
+		for p in ps {
+			if needed(p) && cli_str(&c, p.name) == "" && !excused(&c, p) {
+				return c, missing(&c, p, fmt.tprintf("--%s", p.name))
+			}
 		}
 	}
 
@@ -1048,6 +1678,31 @@ cli_bind :: proc(s: ^Surface, argv: []string) -> (c: Call, code: int) {
 	}
 
 	return c, EXIT_OK
+}
+
+// dash_value says whether a word starting with '-' that names no flag is the
+// value of the positional slot `slot` instead.
+@(private = "file")
+dash_value :: proc(c: ^Call, slot: int, word: string) -> bool {
+	if strings.contains_any(word, " \t") {
+		return true
+	}
+	p: ^Param
+	if slot < len(c.cmd.args) {
+		p = &c.cmd.args[slot]
+	} else if n := len(c.cmd.args); n > 0 && c.cmd.args[n - 1].variadic {
+		p = &c.cmd.args[n - 1]
+	}
+	if p == nil {
+		return false
+	}
+	if p.free {
+		return true
+	}
+	if _, ok := strconv.parse_f64(word); ok && len(word) > 1 {
+		return true
+	}
+	return false
 }
 
 // cli_split_example splits an example command line into arguments the way a
@@ -1090,21 +1745,89 @@ cli_split_example :: proc(line: string, allocator := context.temp_allocator) -> 
 // Output
 // ---------------------------------------------------------------------------
 
+// While set, what the kit would print on stdout is appended here instead:
+// cli_capture's doing, so a self-test can run a command in process and read
+// the document it printed.
+@(private = "file")
+g_stdout: ^strings.Builder
+
+@(private = "file")
+say :: proc(text: string) {
+	if g_stdout != nil {
+		strings.write_string(g_stdout, text)
+		return
+	}
+	fmt.print(text)
+}
+
 @(private = "file")
 emit :: proc(c: ^Call, v: ^Json) {
+	scrub_json(v, c.secrets)
 	if c.json {
-		fmt.println(json_text(v, 2, context.temp_allocator))
+		say(json_text(v, 2, context.temp_allocator))
+		say("\n")
 		return
 	}
 	sb := strings.builder_make(context.temp_allocator)
 	text_render(&sb, v, 0)
 	s := strings.to_string(sb)
 	if strings.trim_space(s) != "" {
-		fmt.print(s)
+		say(s)
 		if !strings.has_suffix(s, "\n") {
-			fmt.println()
+			say("\n")
 		}
 	}
+}
+
+// cli_display_width is how many terminal columns `s` takes: one per
+// character, not per byte — `é` and `€` are one column though two and three
+// bytes — none for a combining mark, and two for a wide East Asian character
+// or an emoji. It is what the text tables pad by.
+cli_display_width :: proc(s: string) -> int {
+	w := 0
+	for r in s {
+		w += rune_width(r)
+	}
+	return w
+}
+
+@(private = "file")
+rune_width :: proc(r: rune) -> int {
+	switch {
+	case r == 0:
+		return 0
+	case r < 0x20 || (r >= 0x7f && r < 0xa0):
+		return 0
+	case r == 0x200b || r == 0x200c || r == 0x200d || r == 0xfeff:
+		return 0
+	case (r >= 0x0300 && r <= 0x036f) ||
+	     (r >= 0x0483 && r <= 0x0489) ||
+	     (r >= 0x0591 && r <= 0x05bd) ||
+	     (r >= 0x0610 && r <= 0x061a) ||
+	     (r >= 0x064b && r <= 0x065f) ||
+	     (r >= 0x1ab0 && r <= 0x1aff) ||
+	     (r >= 0x1dc0 && r <= 0x1dff) ||
+	     (r >= 0x20d0 && r <= 0x20ff) ||
+	     (r >= 0xfe00 && r <= 0xfe0f) ||
+	     (r >= 0xfe20 && r <= 0xfe2f):
+		return 0
+	case (r >= 0x1100 && r <= 0x115f) ||
+	     (r >= 0x2e80 && r <= 0x303e) ||
+	     (r >= 0x3041 && r <= 0x33ff) ||
+	     (r >= 0x3400 && r <= 0x4dbf) ||
+	     (r >= 0x4e00 && r <= 0x9fff) ||
+	     (r >= 0xa000 && r <= 0xa4cf) ||
+	     (r >= 0xac00 && r <= 0xd7a3) ||
+	     (r >= 0xf900 && r <= 0xfaff) ||
+	     (r >= 0xfe30 && r <= 0xfe4f) ||
+	     (r >= 0xff00 && r <= 0xff60) ||
+	     (r >= 0xffe0 && r <= 0xffe6) ||
+	     (r >= 0x1f300 && r <= 0x1f64f) ||
+	     (r >= 0x1f900 && r <= 0x1f9ff) ||
+	     (r >= 0x20000 && r <= 0x3fffd):
+		return 2
+	}
+	return 1
 }
 
 // text_render is the human rendering of the same object the machine gets, so
@@ -1148,7 +1871,7 @@ text_render :: proc(sb: ^strings.Builder, v: ^Json, depth: int) {
 	case .Object:
 		w := 0
 		for k in v.keys {
-			w = max(w, len(k))
+			w = max(w, cli_display_width(k))
 		}
 		for it, i in v.items {
 			k := v.keys[i]
@@ -1162,7 +1885,7 @@ text_render :: proc(sb: ^strings.Builder, v: ^Json, depth: int) {
 			pad(sb, depth)
 			strings.write_string(sb, k)
 			strings.write_byte(sb, ':')
-			for _ in 0 ..< w - len(k) + 1 {
+			for _ in 0 ..< w - cli_display_width(k) + 1 {
 				strings.write_byte(sb, ' ')
 			}
 			strings.write_string(sb, json_scalar(it))
@@ -1174,7 +1897,7 @@ text_render :: proc(sb: ^strings.Builder, v: ^Json, depth: int) {
 @(private = "file")
 table_render :: proc(sb: ^strings.Builder, arr: ^Json, depth: int) -> bool {
 	first := arr.items[0]
-	if first == nil || first.kind != .Object || len(first.keys) == 0 || len(first.keys) > 8 {
+	if first == nil || first.kind != .Object || len(first.keys) == 0 || len(first.keys) > 16 {
 		return false
 	}
 	for it in arr.items {
@@ -1194,11 +1917,11 @@ table_render :: proc(sb: ^strings.Builder, arr: ^Json, depth: int) -> bool {
 	cols := len(first.keys)
 	w := make([]int, cols, context.temp_allocator)
 	for k, i in first.keys {
-		w[i] = len(k)
+		w[i] = cli_display_width(k)
 	}
 	for it in arr.items {
 		for e, i in it.items {
-			w[i] = max(w[i], len(json_scalar(e)))
+			w[i] = max(w[i], cli_display_width(json_scalar(e)))
 		}
 	}
 	pad :: proc(sb: ^strings.Builder, depth: int) {
@@ -1209,7 +1932,7 @@ table_render :: proc(sb: ^strings.Builder, arr: ^Json, depth: int) -> bool {
 	cell :: proc(sb: ^strings.Builder, s: string, w: int, last: bool) {
 		strings.write_string(sb, s)
 		if !last {
-			for _ in 0 ..< w - len(s) + 2 {
+			for _ in 0 ..< w - cli_display_width(s) + 2 {
 				strings.write_byte(sb, ' ')
 			}
 		}
@@ -1352,7 +2075,28 @@ check_fields :: proc(
 				check_fields(out, eo, f.of, fmt.tprintf("%s[%d]", path, i), allocator)
 			}
 		}
-		if f.kind == .Object && len(f.of) > 0 {
+		if f.kind == .Object && f.keyed && len(f.of) > 0 {
+			// Keys are data; every value has the declared shape.
+			scalar := len(f.of) == 1 && f.of[0].name == ""
+			for k, e in v.(json.Object) {
+				at := fmt.tprintf("%s[%q]", path, k)
+				if scalar {
+					if !kind_matches(e, f.of[0].kind) {
+						append(
+							out,
+							fmt.aprintf("%s is declared %s but is not", at, schema_kind_name(f.of[0].kind), allocator = allocator),
+						)
+					}
+					continue
+				}
+				eo, is_obj := e.(json.Object)
+				if !is_obj {
+					append(out, fmt.aprintf("%s is not an object", at, allocator = allocator))
+					continue
+				}
+				check_fields(out, eo, f.of, at, allocator)
+			}
+		} else if f.kind == .Object && len(f.of) > 0 {
 			check_fields(out, v.(json.Object), f.of, path, allocator)
 		}
 	}
@@ -1379,10 +2123,11 @@ usage_line :: proc(sb: ^strings.Builder, noun: string, cmd: ^Command) {
 		if f.required {
 			open, close = "", ""
 		}
+		more := f.repeat ? "..." : ""
 		if f.kind == .Bool {
-			strings.write_string(sb, fmt.tprintf(" %s--%s%s", open, f.name, close))
+			strings.write_string(sb, fmt.tprintf(" %s--%s%s%s", open, f.name, close, more))
 		} else {
-			strings.write_string(sb, fmt.tprintf(" %s--%s %s%s", open, f.name, strings.to_upper(f.name, context.temp_allocator), close))
+			strings.write_string(sb, fmt.tprintf(" %s--%s %s%s%s", open, f.name, strings.to_upper(f.name, context.temp_allocator), close, more))
 		}
 	}
 	if cmd.effect == .Destructive {
@@ -1422,17 +2167,39 @@ cli_help_text :: proc(s: ^Surface, verb := "", allocator := context.temp_allocat
 				)
 			}
 		}
-		if len(cmd.flags) > 0 {
+		if len(cmd.flags) > 0 || len(s.flags) > 0 {
 			strings.write_string(&sb, "\nOptions:\n")
-			for f in cmd.flags {
+			option :: proc(sb: ^strings.Builder, f: Param, common: bool) {
 				extra := ""
 				if f.kind == .Enum {
 					extra = fmt.tprintf(" [%s]", strings.join(f.values, "|", context.temp_allocator))
 				}
-				if f.def != "" {
+				if f.def != "" && !f.secret {
 					extra = fmt.tprintf("%s (default %s)", extra, f.def)
 				}
-				strings.write_string(&sb, fmt.tprintf("  --%-16s %s%s\n", f.name, f.help, extra))
+				if len(f.unless) > 0 {
+					alts := make([dynamic]string, context.temp_allocator)
+					for a in f.unless {
+						append(&alts, fmt.tprintf("--%s", a))
+					}
+					extra = fmt.tprintf("%s (required unless %s)", extra, strings.join(alts[:], " or ", context.temp_allocator))
+				}
+				if f.repeat {
+					extra = fmt.tprintf("%s (may repeat)", extra)
+				}
+				if f.secret {
+					extra = fmt.tprintf("%s (secret: never echoed or logged)", extra)
+				}
+				if common {
+					extra = fmt.tprintf("%s (every command)", extra)
+				}
+				strings.write_string(sb, fmt.tprintf("  --%-16s %s%s\n", f.name, f.help, extra))
+			}
+			for f in cmd.flags {
+				option(&sb, f, false)
+			}
+			for f in s.flags {
+				option(&sb, f, true)
 			}
 		}
 		strings.write_string(
@@ -1451,7 +2218,7 @@ cli_help_text :: proc(s: ^Surface, verb := "", allocator := context.temp_allocat
 		if len(cmd.examples) > 0 {
 			strings.write_string(&sb, "\nExamples:\n")
 			for e in cmd.examples {
-				strings.write_string(&sb, fmt.tprintf("  %s\n", e))
+				strings.write_string(&sb, fmt.tprintf("  %s\n", cli_redact_example(s, cmd, e, context.temp_allocator)))
 			}
 		}
 		return strings.to_string(sb)
@@ -1509,10 +2276,25 @@ param_json :: proc(p: Param, positional: bool) -> ^Json {
 		}
 		jset(o, "values", vs)
 	}
-	if p.def != "" {
+	if p.def != "" && !p.secret {
 		jset_str(o, "default", p.def)
 	}
 	jset_str(o, "help", p.help)
+	// Only where set, so a declaration that uses none of these prints the
+	// same schema it always did.
+	if p.secret {
+		jset_bool(o, "secret", true)
+	}
+	if p.repeat {
+		jset_bool(o, "repeat", true)
+	}
+	if len(p.unless) > 0 {
+		u := jarr()
+		for n in p.unless {
+			jpush(u, jstr(n))
+		}
+		jset(o, "required_unless", u)
+	}
 	return o
 }
 
@@ -1530,6 +2312,9 @@ fields_json :: proc(fields: []Field) -> ^Json {
 		if len(f.of) > 0 {
 			jset(o, "of", fields_json(f.of))
 		}
+		if f.keyed {
+			jset_bool(o, "keyed", true)
+		}
 		jpush(a, o)
 	}
 	return a
@@ -1537,6 +2322,16 @@ fields_json :: proc(fields: []Field) -> ^Json {
 
 // cli_command_json is one command's declaration.
 cli_command_json :: proc(noun: string, cmd: Command) -> ^Json {
+	s := Surface {
+		noun = noun,
+	}
+	return cli_command_json_of(&s, cmd)
+}
+
+// cli_command_json_of is one command's declaration as its surface publishes
+// it: with the surface-wide flags among its own, and its examples redacted.
+cli_command_json_of :: proc(s: ^Surface, cmd: Command) -> ^Json {
+	noun := s.noun
 	o := jobj()
 	jset_str(o, "verb", cmd.verb)
 	jset_str(o, "summary", cmd.summary)
@@ -1551,14 +2346,20 @@ cli_command_json :: proc(noun: string, cmd: Command) -> ^Json {
 	for f in cmd.flags {
 		jpush(flags, param_json(f, false))
 	}
+	for f in s.flags {
+		pj := param_json(f, false)
+		jset_bool(pj, "common", true)
+		jpush(flags, pj)
+	}
 	jset(o, "flags", flags)
 	out := jobj()
 	jset_str(out, "type", "object")
 	jset(out, "fields", fields_json(cmd.out))
 	jset(o, "output", out)
 	ex := jarr()
+	c0 := cmd
 	for e in cmd.examples {
-		jpush(ex, jstr(e))
+		jpush(ex, jstr(cli_redact_example(s, &c0, e, context.temp_allocator)))
 	}
 	jset(o, "examples", ex)
 	al := jarr()
@@ -1583,9 +2384,16 @@ cli_schema_json :: proc(s: ^Surface) -> ^Json {
 	jset_bool(o, "selftest", s.selftest != nil)
 	cmds := jarr()
 	for cmd in s.commands {
-		jpush(cmds, cli_command_json(s.noun, cmd))
+		jpush(cmds, cli_command_json_of(s, cmd))
 	}
 	jset(o, "commands", cmds)
+	if len(s.flags) > 0 {
+		common := jarr()
+		for f in s.flags {
+			jpush(common, param_json(f, false))
+		}
+		jset(o, "flags", common)
+	}
 	base := jarr()
 	for b in ([?]string{"--json", "--dry-run", "--yes", "--identity", "--verbose", "--help", "--schema", "--parse-only", "--selftest"}) {
 		jpush(base, jstr(b))
@@ -1637,17 +2445,18 @@ cli_args :: proc(s: ^Surface, argv: []string) -> (code: int, handled: bool) {
 		return s.selftest(), true
 	}
 	if argv[0] == "--schema" {
-		fmt.println(json_text(cli_schema_json(s), 2, context.temp_allocator))
+		say(json_text(cli_schema_json(s), 2, context.temp_allocator))
+		say("\n")
 		return EXIT_OK, true
 	}
 	head := argv[0]
 	if head == "--help" || head == "-h" {
-		fmt.print(cli_help_text(s))
+		say(cli_help_text(s))
 		return EXIT_OK, true
 	}
 	if head == "help" {
 		verb := len(argv) > 1 ? argv[1] : ""
-		fmt.print(cli_help_text(s, verb))
+		say(cli_help_text(s, verb))
 		return EXIT_OK, true
 	}
 
@@ -1663,7 +2472,14 @@ cli_args :: proc(s: ^Surface, argv: []string) -> (code: int, handled: bool) {
 		}
 		if !inline_alias {
 			if s.gui && s.takes_path && !strings.has_prefix(head, "-") {
-				return 0, false
+				if s.takes_word == nil || s.takes_word(head) {
+					return 0, false
+				}
+				c, _ := cli_bind(s, argv)
+				code = cli_fail(&c, EXIT_USAGE, fmt.tprintf("%q is neither a command nor a file", head))
+				cli_err_field(&c, "given", head)
+				report(&c, code)
+				return code, true
 			}
 			c, bad := cli_bind(s, argv)
 			report(&c, bad)
@@ -1672,7 +2488,7 @@ cli_args :: proc(s: ^Surface, argv: []string) -> (code: int, handled: bool) {
 	}
 
 	parse_only := false
-	kept := make([dynamic]string, context.temp_allocator)
+	kept := make([dynamic]string, cli_mem())
 	for a in argv {
 		if a == "--parse-only" {
 			parse_only = true
@@ -1682,6 +2498,26 @@ cli_args :: proc(s: ^Surface, argv: []string) -> (code: int, handled: bool) {
 	}
 
 	c, bind_code := cli_bind(s, kept[:])
+	g_secrets = c.secrets
+	defer g_secrets = nil
+	if bind_code == EXIT_NEEDS_YES && !parse_only && c.cmd != nil && c.cmd.on_refuse != nil {
+		// The application's own reason, asked for with nothing able to run:
+		// the guard is armed as for an intent command while it answers.
+		guard_arm(true)
+		c.cmd.on_refuse(&c)
+		guard_disarm()
+		if c.err == nil {
+			c.err = jobj()
+		}
+		jset_str(c.err, "error", ERR_NEEDS_YES)
+		jset_int(c.err, "code", EXIT_NEEDS_YES)
+		if _, has := jget(c.err, "command"); !has {
+			jset_str(c.err, "command", fmt.tprintf("%s %s", s.noun, c.cmd.verb))
+		}
+		if _, has := jget(c.err, "pass"); !has {
+			jset_str(c.err, "pass", "--yes")
+		}
+	}
 	if bind_code != EXIT_OK {
 		report(&c, bind_code)
 		// A refusal is worth a record too: `palm audit` should be able to
@@ -1691,7 +2527,7 @@ cli_args :: proc(s: ^Surface, argv: []string) -> (code: int, handled: bool) {
 		return bind_code, true
 	}
 	if c.want_help {
-		fmt.print(cli_help_text(s, c.cmd.verb))
+		say(cli_help_text(s, c.cmd.verb))
 		return EXIT_OK, true
 	}
 	if parse_only {
@@ -1702,10 +2538,32 @@ cli_args :: proc(s: ^Surface, argv: []string) -> (code: int, handled: bool) {
 		args := jobj()
 		for p in c.cmd.args {
 			if v, got := c.vals[p.name]; got {
-				jset_str(args, p.name, v)
+				jset_str(args, p.name, p.secret || c.cmd.private_args ? CLI_REDACTED : v)
 			}
 		}
 		jset(ok, "args", args)
+		flags := jobj()
+		echo :: proc(c: ^Call, flags: ^Json, ps: []Param) {
+			for p in ps {
+				if !c.seen[p.name] {
+					continue
+				}
+				if p.secret {
+					jset_str(flags, p.name, CLI_REDACTED)
+				} else if p.repeat {
+					all := jarr()
+					for v in cli_all(c, p.name) {
+						jpush(all, jstr(v))
+					}
+					jset(flags, p.name, all)
+				} else {
+					jset_str(flags, p.name, c.vals[p.name])
+				}
+			}
+		}
+		echo(&c, flags, c.cmd.flags)
+		echo(&c, flags, s.flags)
+		jset(ok, "flags", flags)
 		c.out = ok
 		c.json = true
 		emit(&c, ok)
@@ -1722,7 +2580,13 @@ cli_args :: proc(s: ^Surface, argv: []string) -> (code: int, handled: bool) {
 
 	if code == EXIT_OK {
 		if c.dry_run && c.cmd.effect != .Read {
-			jset_bool(c.out, "dry_run", true)
+			if c.json {
+				jset_bool(c.out, "dry_run", true)
+			} else {
+				// A person reading text is told on stderr, where the
+				// result's own lines are not.
+				cli_note(&c, "%s %s: dry run, nothing was changed", s.noun, c.cmd.verb)
+			}
 		}
 		emit(&c, c.out)
 	} else {
@@ -1732,6 +2596,58 @@ cli_args :: proc(s: ^Surface, argv: []string) -> (code: int, handled: bool) {
 	return code, true
 }
 
+// cli_capture runs a command line in process, as cli_args does, and returns
+// what it printed on stdout instead of printing it — the in-process "run this
+// and give me its JSON" a self-test wants. Add `--json` to the argv for the
+// document; `cli_capture_json` does that and parses it. Only what the kit
+// prints is captured: a command that writes to stdout itself bypasses it.
+cli_capture :: proc(
+	s: ^Surface,
+	argv: []string,
+	allocator := context.allocator,
+) -> (
+	code: int,
+	stdout: string,
+	handled: bool,
+) {
+	sb := strings.builder_make(allocator)
+	prev := g_stdout
+	g_stdout = &sb
+	code, handled = cli_args(s, argv)
+	g_stdout = prev
+	return code, strings.to_string(sb), handled
+}
+
+// cli_capture_json is cli_capture with --json, parsed. `doc` is nil when the
+// command printed nothing that parses.
+cli_capture_json :: proc(
+	s: ^Surface,
+	argv: []string,
+	allocator := context.allocator,
+) -> (
+	code: int,
+	doc: json.Value,
+	text: string,
+) {
+	line := make([dynamic]string, 0, len(argv) + 1, context.temp_allocator)
+	append(&line, ..argv)
+	has := false
+	for a in argv {
+		if a == "--json" {
+			has = true
+		}
+	}
+	if !has {
+		append(&line, "--json")
+	}
+	code, text, _ = cli_capture(s, line[:], allocator)
+	v, err := json.parse_string(text, json.DEFAULT_SPECIFICATION, true, allocator)
+	if err == nil {
+		doc = v
+	}
+	return code, doc, text
+}
+
 // report prints a refusal. Under --json it is a document on stdout, because a
 // refusal is a result an agent parses; otherwise it is a line on stderr.
 @(private = "file")
@@ -1739,8 +2655,17 @@ report :: proc(c: ^Call, code: int) -> int {
 	if c.err == nil {
 		cli_fail(c, code)
 	}
+	if c.partial && c.out != nil && len(c.out.items) > 0 {
+		if c.json {
+			jset(c.err, "partial", c.out)
+		} else {
+			emit(c, c.out)
+		}
+	}
+	scrub_json(c.err, c.secrets)
 	if c.json {
-		fmt.println(json_text(c.err, 2, context.temp_allocator))
+		say(json_text(c.err, 2, context.temp_allocator))
+		say("\n")
 	} else {
 		reason, _ := jget(c.err, "error")
 		detail, has_detail := jget(c.err, "detail")
@@ -1756,4 +2681,35 @@ report :: proc(c: ^Call, code: int) -> int {
 		}
 	}
 	return code
+}
+
+// cli_word_is_path is the usual `takes_word`: a bare word opens the window if
+// it names something on disk, or is a URI (`magnet:?…`, `https://…`). A typo
+// of a verb is neither, and is a usage error instead of a window.
+cli_word_is_path :: proc(word: string) -> bool {
+	if word == "" {
+		return false
+	}
+	if os.exists(word) {
+		return true
+	}
+	if strings.contains(word, "://") {
+		return true
+	}
+	// scheme:rest, as in magnet:?xt=… or mailto:a@b — letters first, then
+	// letters, digits, + - . up to the colon.
+	colon := strings.index_byte(word, ':')
+	if colon <= 1 {
+		return false
+	}
+	for ch, i in transmute([]u8)word[:colon] {
+		alpha := (ch >= 'a' && ch <= 'z') || (ch >= 'A' && ch <= 'Z')
+		if i == 0 && !alpha {
+			return false
+		}
+		if !alpha && !(ch >= '0' && ch <= '9') && ch != '+' && ch != '-' && ch != '.' {
+			return false
+		}
+	}
+	return true
 }
