@@ -610,9 +610,14 @@ layout_xml :: proc(l: Layout, th: ^Theme) -> string {
 // transition_xml is a slide's `p:transition`, which follows `p:clrMapOvr` in
 // the slide part. `spd` is DrawingML's three speeds (PowerPoint plays them at
 // 0.5, 0.75 and 1 second); the nearest one to the slide's duration is used.
-// The directions are the ones LibreOffice's importer reads back as "push from
-// the right" and "wipe from the left", which is what the projector draws going
-// forward.
+//
+// The directions were settled against the one oracle in reach, LibreOffice
+// 24.2: it reads `<p:push dir="r"/>` as SMIL pushWipe "fromRight" (the new
+// slide enters from the right edge, which is what the projector draws going
+// forward) and `<p:wipe dir="r"/>` as barWipe "leftToRight" (the reveal
+// sweeps left to right, the projector's wipe). Its own export writes the
+// same attributes back for those two effects, so the round trip is stable.
+// PowerPoint itself could not be run here to confirm its reading.
 transition_xml :: proc(s: ^Slide) -> string {
 	if s.transition == .None {
 		return ""
@@ -625,7 +630,7 @@ transition_xml :: proc(s: ^Slide) -> string {
 	case .Fade:
 		inner = "<p:fade/>"
 	case .Push:
-		inner = `<p:push dir="l"/>`
+		inner = `<p:push dir="r"/>`
 	case .Wipe:
 		inner = `<p:wipe dir="r"/>`
 	}

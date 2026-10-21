@@ -238,7 +238,7 @@ t_runs :: proc(t: ^Checks, fonts: ^p.Fonts, imgs: ^Img_Cache) {
 		check(t, f[10 * 320 + 10] == rb[10 * 320 + 10] && f[10 * 320 + 310] == ra[10 * 320 + 310], "a wipe frame of the fixture is the new slide left, the old right")
 
 		x := transition_xml(&d.slides[1])
-		check(t, x == `<p:transition spd="fast"><p:push dir="l"/></p:transition>`, "slide 2's push is written as %s", x)
+		check(t, x == `<p:transition spd="fast"><p:push dir="r"/></p:transition>`, "slide 2's push is written as %s", x)
 		s4 := part_of(raw, "ppt/slides/slide4.xml")
 		check(t, strings.contains(s4, `<p:clrMapOvr><a:masterClrMapping/></p:clrMapOvr><p:transition spd="fast"><p:wipe dir="r"/></p:transition></p:sld>`), "and slide 4's wipe follows the colour map, where the schema puts it")
 		s1 := part_of(raw, "ppt/slides/slide1.xml")

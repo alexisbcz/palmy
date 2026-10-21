@@ -1553,10 +1553,15 @@ read_transition :: proc(im: ^Imp, sld: Node) -> (Transition, int) {
 		switch name_of(k) {
 		case "fade":
 			return .Fade, ms
-		case "push":
-			return .Push, ms
-		case "wipe":
-			return .Wipe, ms
+		case "push", "wipe":
+			// The projector has one direction for each: a push in from the
+			// right, a wipe from the left (dir="r" for both, as LibreOffice
+			// reads them). Any other direction plays that one.
+			d := attr(k, "dir")
+			if d != "" && d != "r" {
+				lose(im, fmt.tprintf("%s directions other than the projector's", name_of(k)))
+			}
+			return name_of(k) == "push" ? .Push : .Wipe, ms
 		case "cut":
 			return .None, 0
 		case "sndAc", "extLst":
