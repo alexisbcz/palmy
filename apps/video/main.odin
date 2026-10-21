@@ -83,6 +83,11 @@ St :: struct {
 }
 
 main :: proc() {
+	// The engine's stand-in sound device (sink.odin), started as a child of
+	// this binary; it never opens a window.
+	if bps, ok := null_sink_requested(); ok {
+		os.exit(null_sink_run(bps))
+	}
 	for a in os.args[1:] {
 		if a == "--selftest" {
 			run_selftest()

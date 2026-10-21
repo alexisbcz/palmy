@@ -20,10 +20,25 @@ check :: proc(ok: bool, what: string) {
 	if !ok {
 		failures += 1
 		fmt.printfln("  FAIL  %s", what)
+	} else if verbose {
+		fmt.printfln("  ok    %s", what)
 	}
 }
 
+// PALMY_SELFTEST_VERBOSE=1 prints the passing checks too, with their numbers.
+@(private = "file")
+verbose: bool
+
 run_selftest :: proc() {
+	// The audio clock needs a device whose clock runs. A headless machine has
+	// none, so unless the environment names a sink the engine runs against the
+	// null sink (sink.odin), a child process that takes PCM at the rate a sound
+	// card would.
+	if os.get_env("PALMY_AUDIO_SINK", context.temp_allocator) == "" {
+		os.set_env("PALMY_AUDIO_SINK", "null")
+	}
+	verbose = os.get_env("PALMY_SELFTEST_VERBOSE", context.temp_allocator) != ""
+	fmt.printfln("the audio clock uses the %v sink", sink_kind())
 	test_rate()
 	test_timecode()
 	test_sizes()

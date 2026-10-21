@@ -7,6 +7,7 @@ package main
 //   ffmpeg … -f rawvideo -pix_fmt bgra -vf scale=W:H -r FPS -    → RGBA frames
 //   ffmpeg … -vn -f s16le -ar 48000 -ac 2 -                      → PCM
 //   pw-cat -p --raw --format s16 --rate 48000 --channels 2 -     → the speakers
+//   (or `video --null-sink`, a paced stand-in for a device: sink.odin)
 //
 // Two threads keep them fed: one reads whole frames into a small ring, the
 // other pumps PCM from ffmpeg into pw-cat, scaling it by the volume on the way
@@ -253,31 +254,18 @@ start_audio :: proc(e: ^Engine) -> bool {
 	// the clock and the speaker, so it is worth making it as small as Linux
 	// allows.
 	_, _ = linux.fcntl(linux.Fd(os.fd(sw)), linux.F_SETPIPE_SZ, i32(PIPE_BYTES))
-	sink, perr := os.process_start(
-		{
-			command = {
-				"pw-cat",
-				"-p",
-				"--raw",
-				"--format",
-				"s16",
-				"--rate",
-				fmt.tprintf("%d", AUDIO_RATE),
-				"--channels",
-				fmt.tprintf("%d", AUDIO_CH),
-				"--latency",
-				PW_LATENCY,
-				"-",
-			},
-			stdin = sr,
-			stdout = nil,
-			stderr = nil,
-		},
-	)
+	sargv, why, have := sink_argv(AUDIO_RATE, AUDIO_CH, PW_LATENCY)
+	if !have {
+		os.close(sr)
+		os.close(sw)
+		e.audio_err = why
+		return false
+	}
+	sink, perr := os.process_start({command = sargv, stdin = sr, stdout = nil, stderr = nil})
 	os.close(sr)
 	if perr != nil {
 		os.close(sw)
-		e.audio_err = "pw-cat is not available"
+		e.audio_err = "the audio sink could not be started"
 		return false
 	}
 
