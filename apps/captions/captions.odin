@@ -262,6 +262,27 @@ shift_seg :: proc(segs: ^[dynamic]Seg, i: int, by: f64, duration: f64) {
 	s.end = start + d
 }
 
+// shift_all slides every caption by the same amount, which is how a file
+// whose timings are a constant offset from its media is fixed (a trimmed
+// intro, a different cut). Nothing is allowed to start before zero, so a
+// shift earlier is clamped to what the first caption can take; the amount
+// actually applied is returned.
+shift_all :: proc(segs: ^[dynamic]Seg, by: f64) -> f64 {
+	if len(segs) == 0 {
+		return 0
+	}
+	first := segs[0].start
+	for s in segs {
+		first = min(first, s.start)
+	}
+	d := max(by, -first)
+	for &s in segs {
+		s.start += d
+		s.end += d
+	}
+	return d
+}
+
 // set_seg_times is the drag handler: it places both edges at once and keeps
 // the neighbours intact.
 set_seg_times :: proc(segs: ^[dynamic]Seg, i: int, start, end: f64, duration: f64) {

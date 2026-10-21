@@ -216,10 +216,7 @@ apply_queue :: proc(m: ^App_State) {
 				m.dirty = true
 			}
 		case .Wrap_All:
-			for &sg in m.segs {
-				auto_wrap(&sg, m.limits.max_cpl, m.limits.max_lines)
-			}
-			m.dirty = true
+			wrap_all(m)
 		case .Open:
 			open_path(m, a.path)
 		}
@@ -232,20 +229,26 @@ apply_queue :: proc(m: ^App_State) {
 
 main :: proc() {
 	args := os.args[1:]
+	// `--shot` predates the shared convention and takes its output path in a
+	// shape the declaration does not describe, so it is looked for first.
 	for a in args {
-		if a == "--selftest" {
-			os.exit(selftest())
-		}
 		if a == "--shot" {
 			os.exit(shot_main(args))
 		}
-		if a == "--help" || a == "-h" {
-			fmt.println("captions [FILE]")
-			fmt.println("  FILE            a video or audio file, or an .srt/.vtt to edit")
-			fmt.println("  --selftest      transcribe a synthetic fixture and check every format")
-			fmt.println("  --shot OUT.png  render the interface with no compositor")
-			os.exit(0)
-		}
+	}
+
+	// The command line is the other front end over the same App_State: see
+	// cli.odin. `--selftest`, `--help` and `--schema` are answered there. With
+	// no command, or with a bare file, there is a window.
+	if code, handled := kit.cli(surface()); handled {
+		os.exit(code)
+	}
+	// A bare word reaches here as a file for the window. One that is not a
+	// file is far likelier a mistyped command than a document, and opening a
+	// window in answer would never return to whatever typed it.
+	if len(args) > 0 && !strings.has_prefix(args[0], "-") && !os.exists(args[0]) {
+		fmt.eprintfln("captions: no command or file called %q (captions --help lists the commands)", args[0])
+		os.exit(kit.EXIT_USAGE)
 	}
 
 	m := new(App_State)
@@ -353,13 +356,18 @@ state_destroy :: proc(m: ^App_State) {
 	}
 }
 
+// status_echo copies a failure to stderr for someone watching a terminal. The
+// command line turns it off: there the failure is the command's own result,
+// and a second copy of it on stderr is noise.
+status_echo := true
+
 set_status :: proc(m: ^App_State, text: string, bad: bool) {
 	if m.status != "" {
 		delete(m.status)
 	}
 	m.status = strings.clone(text)
 	m.status_bad = bad
-	if bad {
+	if bad && status_echo {
 		fmt.eprintfln("[captions] %s", text)
 	}
 }
@@ -485,83 +493,7 @@ tick :: proc(ui: ^p.Ctx, app: ^p.App, m: ^App_State) {
 
 collect_jobs :: proc(ui: ^p.Ctx, m: ^App_State) {
 	if res, got := job_collect(); got {
-		switch res.kind {
-		case .Import:
-			if !res.ok {
-				set_status(m, res.err, true)
-				break
-			}
-			m.info = res.info
-			m.loaded = true
-			if m.wav != "" && m.wav != res.wav {
-				delete(m.wav)
-			}
-			m.wav = res.wav
-			m.peaks^ = res.peaks^
-			m.view_from = 0
-			m.view_span = m.info.duration
-			m.pos = 0
-			m.preview_asked = -1
-			m.preview_due = 0
-			streams := fmt.tprintf("audio only, %s", m.info.acodec)
-			if m.info.has_video {
-				streams = fmt.tprintf("%dx%d %s", m.info.width, m.info.height, m.info.vcodec)
-			}
-			set_status(
-				m,
-				fmt.tprintf(
-					"%s · %s · %s",
-					filepath.base(m.info.path),
-					clock(m.info.duration),
-					streams,
-				),
-				false,
-			)
-			if m.info.has_video {
-				request_preview(m, 0)
-			}
-		case .Transcribe:
-			if !res.ok {
-				set_status(m, res.err, true)
-				break
-			}
-			clear_segments(m)
-			for s in res.tr.segs {
-				append(&m.segs, s)
-			}
-			for w in res.tr.words {
-				append(&m.words, w)
-			}
-			delete(res.tr.segs)
-			delete(res.tr.words)
-			m.heard_lang = res.tr.lang
-			m.sel = len(m.segs) > 0 ? 0 : -1
-			m.transcribed = true
-			m.decode_sec = res.seconds
-			m.rtf = res.media_sec / max(res.seconds, 0.0001)
-			m.pane = .Captions
-			set_status(
-				m,
-				fmt.tprintf(
-					"%d captions in %.1fs — %.1fx realtime",
-					len(m.segs),
-					res.seconds,
-					m.rtf,
-				),
-				false,
-			)
-		case .Burn:
-			if !res.ok {
-				set_status(m, res.err, true)
-				break
-			}
-			set_status(
-				m,
-				fmt.tprintf("burned in to %s in %.0fs", filepath.base(res.out_path), res.seconds),
-				false,
-			)
-		case .None:
-		}
+		apply_job_result(m, res)
 		p.redraw(ui)
 	}
 
@@ -578,6 +510,89 @@ collect_jobs :: proc(ui: ^p.Ctx, m: ^App_State) {
 			}
 		}
 		p.redraw(ui)
+	}
+}
+
+// apply_job_result takes a finished job into the model. It is the one place
+// an import, a transcription or a burn-in lands, for the window (collect_jobs,
+// once a frame) and for the command line (wait_job, in a loop) alike.
+apply_job_result :: proc(m: ^App_State, res: Job_Result) {
+	switch res.kind {
+	case .Import:
+		if !res.ok {
+			set_status(m, res.err, true)
+			break
+		}
+		m.info = res.info
+		m.loaded = true
+		if m.wav != "" && m.wav != res.wav {
+			delete(m.wav)
+		}
+		m.wav = res.wav
+		m.peaks^ = res.peaks^
+		m.view_from = 0
+		m.view_span = m.info.duration
+		m.pos = 0
+		m.preview_asked = -1
+		m.preview_due = 0
+		streams := fmt.tprintf("audio only, %s", m.info.acodec)
+		if m.info.has_video {
+			streams = fmt.tprintf("%dx%d %s", m.info.width, m.info.height, m.info.vcodec)
+		}
+		set_status(
+			m,
+			fmt.tprintf(
+				"%s · %s · %s",
+				filepath.base(m.info.path),
+				clock(m.info.duration),
+				streams,
+			),
+			false,
+		)
+		if m.info.has_video {
+			request_preview(m, 0)
+		}
+	case .Transcribe:
+		if !res.ok {
+			set_status(m, res.err, true)
+			break
+		}
+		clear_segments(m)
+		for s in res.tr.segs {
+			append(&m.segs, s)
+		}
+		for w in res.tr.words {
+			append(&m.words, w)
+		}
+		delete(res.tr.segs)
+		delete(res.tr.words)
+		m.heard_lang = res.tr.lang
+		m.sel = len(m.segs) > 0 ? 0 : -1
+		m.transcribed = true
+		m.decode_sec = res.seconds
+		m.rtf = res.media_sec / max(res.seconds, 0.0001)
+		m.pane = .Captions
+		set_status(
+			m,
+			fmt.tprintf(
+				"%d captions in %.1fs — %.1fx realtime",
+				len(m.segs),
+				res.seconds,
+				m.rtf,
+			),
+			false,
+		)
+	case .Burn:
+		if !res.ok {
+			set_status(m, res.err, true)
+			break
+		}
+		set_status(
+			m,
+			fmt.tprintf("burned in to %s in %.0fs", filepath.base(res.out_path), res.seconds),
+			false,
+		)
+	case .None:
 	}
 }
 
@@ -813,6 +828,21 @@ begin_burn :: proc(m: ^App_State) {
 	}
 }
 
+// wrap_all re-breaks every caption at the line limit. Shift+W, the panel's
+// button and `captions wrap` all come here.
+wrap_all :: proc(m: ^App_State) -> (changed: int) {
+	for &sg in m.segs {
+		before := strings.clone(seg_text(sg), context.temp_allocator)
+		auto_wrap(&sg, m.limits.max_cpl, m.limits.max_lines)
+		if seg_text(sg) != before {
+			changed += 1
+		}
+	}
+	m.dirty = true
+	set_status(m, "re-wrapped every caption", false)
+	return
+}
+
 do_split :: proc(m: ^App_State) {
 	if m.sel < 0 || m.sel >= len(m.segs) {
 		return
@@ -1023,11 +1053,7 @@ handle_keys :: proc(ui: ^p.Ctx, app: ^p.App, m: ^App_State) {
 	}
 	if p.key_pressed(ui, 'w', false) {
 		if shift {
-			for &s in m.segs {
-				auto_wrap(&s, m.limits.max_cpl, m.limits.max_lines)
-			}
-			m.dirty = true
-			set_status(m, "re-wrapped every caption", false)
+			wrap_all(m)
 		} else if m.sel >= 0 {
 			auto_wrap(&m.segs[m.sel], m.limits.max_cpl, m.limits.max_lines)
 			m.dirty = true

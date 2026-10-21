@@ -429,6 +429,8 @@ selftest :: proc() -> int {
 		check_eq("the default output never lands on the source", default_output("/v/in.mp4", ".captioned", "mp4"), "/v/in.captioned.mp4")
 	}
 
+	test_cli()
+
 	// -----------------------------------------------------------------------
 	rule("model discovery")
 	// -----------------------------------------------------------------------
@@ -728,4 +730,177 @@ report :: proc() -> int {
 	fmt.println(strings.repeat("=", 72, context.temp_allocator))
 	fmt.printfln("%d assertions: %d passed, %d failed", pass_n + fail_n, pass_n, fail_n)
 	return fail_n == 0 ? 0 : 1
+}
+
+// ---------------------------------------------------------------------------
+// The command line
+//
+// The binary is run again as a child, the way an agent would run it, against a
+// scratch directory: its own cache and audit log, a caption file written here,
+// and a clip made by ffmpeg's lavfi sources — a test pattern and a sine tone,
+// never a camera or a microphone. The display variables are cleared so a
+// mistake in the dispatcher could never open a window and hang the run.
+// ---------------------------------------------------------------------------
+
+@(private = "file")
+cli_dir: string
+
+@(private = "file")
+cli_run :: proc(args: ..string) -> (out: string, code: int) {
+	exe, eerr := os.get_executable_path(context.temp_allocator)
+	if eerr != nil {
+		exe = os.args[0]
+	}
+	line := strings.builder_make(context.temp_allocator)
+	strings.write_string(
+		&line,
+		fmt.tprintf(
+			"cd %q && WAYLAND_DISPLAY= DISPLAY= XDG_CACHE_HOME=%q PALM_AUDIT=%q %q",
+			cli_dir,
+			fmt.tprintf("%s/cache", cli_dir),
+			fmt.tprintf("%s/audit.jsonl", cli_dir),
+			exe,
+		),
+	)
+	for a in args {
+		strings.write_string(&line, fmt.tprintf(" %q", a))
+	}
+	strings.write_string(&line, " 2>/dev/null")
+	state, sout, _, err := os.process_exec({command = {"sh", "-c", strings.to_string(line)}}, context.temp_allocator)
+	if err != nil {
+		return "", -1
+	}
+	return string(sout), state.exit_code
+}
+
+@(private = "file")
+schema_ok :: proc(name: string, out: string, fields: []kit.Field) {
+	problems := kit.cli_validate_output(out, fields, context.temp_allocator)
+	check(name, len(problems) == 0, len(problems) > 0 ? problems[0] : "")
+}
+
+@(private = "file")
+test_cli :: proc() {
+	rule("the command line")
+	cli_dir = fmt.tprintf("/tmp/palmy-captions-cli-%d", os.get_pid())
+	os.make_directory_all(cli_dir)
+	defer os.remove_all(cli_dir)
+
+	sf := surface()
+	check_eq("the surface is named captions", sf.noun, "captions")
+	for cmd in sf.commands {
+		check(fmt.tprintf("%s is implemented and declares its output", cmd.verb), cmd.run != nil && len(cmd.out) > 0 && len(cmd.examples) > 0)
+		for ex in cmd.examples {
+			words := kit.cli_split_example(ex, context.temp_allocator)
+			args := make([dynamic]string, context.temp_allocator)
+			for w in words[1:] {
+				append(&args, w)
+			}
+			append(&args, "--parse-only")
+			_, code := cli_run(..args[:])
+			check(fmt.tprintf("the example parses: %s", ex), words[0] == "captions" && code == 0, fmt.tprintf("exit %d", code))
+		}
+	}
+
+	{
+		out, code := cli_run("tools", "--json")
+		check("tools --json exits 0", code == 0)
+		schema_ok("and matches its declared schema", out, TOOLS_FIELDS)
+	}
+
+	srt := fmt.tprintf("%s/t.srt", cli_dir)
+	_ = os.write_entire_file(
+		srt,
+		transmute([]u8)string("1\n00:00:01,000 --> 00:00:02,500\nA line that runs on far past the forty-two character limit\n\n2\n00:00:02,500 --> 00:00:02,900\nShort\n\n3\n00:00:03,000 --> 00:00:04,000\nThird\n"),
+	)
+	{
+		out, code := cli_run("show", "t.srt", "--json")
+		check("show exits 0", code == 0)
+		schema_ok("show matches its declared schema", out, SHOW_FIELDS)
+		check("and lists every caption", strings.contains(out, `"count": 3`))
+		check("with the window's own warnings", strings.contains(out, "line over the character limit"))
+	}
+	{
+		out, code := cli_run("lint", "t.srt", "--json")
+		check("lint exits 0 even with problems: it is a read", code == 0)
+		schema_ok("lint matches its declared schema", out, LINT_FIELDS)
+		check("and names the long line and the short caption", strings.contains(out, "long_line") && strings.contains(out, "too_short"))
+	}
+	{
+		out, code := cli_run("show", "missing.srt", "--json")
+		check("a missing file answers 3", code == kit.EXIT_NOT_FOUND)
+		schema_ok("with the documented error object", out, {{name = "error", kind = .String}, {name = "code", kind = .Int}, {name = "command", kind = .String}})
+	}
+	{
+		out, code := cli_run("convert", "t.srt", "--to", "vtt", "--json")
+		check("convert exits 0", code == 0)
+		schema_ok("convert matches its declared schema", out, WROTE_FIELDS)
+		segs, err := load_cues(fmt.tprintf("%s/t.vtt", cli_dir), context.temp_allocator)
+		check("the WebVTT it wrote reads back through the window's loader", err == "" && len(segs) == 3, err)
+		if len(segs) == 3 {
+			check("with the timings intact", near(segs[1].start, 2.5, 0.0005) && near(segs[2].end, 4, 0.0005))
+		}
+		_, same := cli_run("convert", "t.srt", "--to", "srt")
+		check("converting a file onto itself is refused", same == kit.EXIT_USAGE)
+	}
+	{
+		out, code := cli_run("shift", "t.srt", "--by", "1.5", "--out", "s.srt", "--json")
+		check("shift exits 0", code == 0)
+		schema_ok("shift matches its declared schema", out, WROTE_FIELDS)
+		segs, _ := load_cues(fmt.tprintf("%s/s.srt", cli_dir), context.temp_allocator)
+		check(
+			"every caption moved by the same amount",
+			len(segs) == 3 && near(segs[0].start, 2.5, 0.0005) && near(segs[1].start, 4, 0.0005) && near(segs[2].end, 5.5, 0.0005),
+		)
+		_, _ = cli_run("shift", "t.srt", "--by", "-5", "--out", "e.srt")
+		early, _ := load_cues(fmt.tprintf("%s/e.srt", cli_dir), context.temp_allocator)
+		check("a shift earlier stops at zero rather than going negative", len(early) == 3 && near(early[0].start, 0, 0.0005))
+		orig, _ := load_cues(srt, context.temp_allocator)
+		check("and --out left the input alone", len(orig) == 3 && near(orig[0].start, 1, 0.0005))
+	}
+	{
+		out, code := cli_run("wrap", "t.srt", "--out", "w.srt", "--json")
+		check("wrap exits 0", code == 0)
+		check("wrap says what it changed", strings.contains(out, `"rewrapped": 1`))
+		segs, _ := load_cues(fmt.tprintf("%s/w.srt", cli_dir), context.temp_allocator)
+		check("the long caption is now two lines", len(segs) == 3 && strings.contains(seg_text(segs[0]), "\n"))
+	}
+
+	tools := check_tools()
+	clip := fmt.tprintf("%s/clip.mp4", cli_dir)
+	if tools.ffmpeg && tools.ffprobe {
+		// Synthetic only: a test pattern and a tone.
+		_, made := kit.run(
+			{"ffmpeg", "-v", "error", "-y", "-f", "lavfi", "-i", "testsrc2=size=320x240:rate=25", "-f", "lavfi", "-i", "sine=frequency=440", "-t", "2", "-shortest", "-c:v", "libx264", "-c:a", "aac", clip},
+			context.temp_allocator,
+		)
+		if check("ffmpeg made a synthetic clip from lavfi sources", made && os.exists(clip)) {
+			out, code := cli_run("probe", "clip.mp4", "--json")
+			check("probe exits 0", code == 0)
+			schema_ok("probe matches its declared schema", out, PROBE_FIELDS)
+			check("and reports the clip's two seconds and both streams", strings.contains(out, `"duration": 2`) && strings.contains(out, `"has_video": true`) && strings.contains(out, `"has_audio": true`))
+
+			bout, bcode := cli_run("burn", "clip.mp4", "t.srt", "--out", "burned.mp4", "--json")
+			check("burn exits 0", bcode == 0, bout)
+			schema_ok("burn matches its declared schema", bout, BURN_FIELDS)
+			info, perr := probe(fmt.tprintf("%s/burned.mp4", cli_dir), context.temp_allocator)
+			check("the burned copy is a video of the same length", perr == "" && info.has_video && near(info.duration, 2, 0.1), perr)
+			_, over := cli_run("burn", "clip.mp4", "t.srt", "--out", "clip.mp4")
+			check("burning over the source is refused", over == kit.EXIT_USAGE)
+		}
+	}
+	{
+		out, code := cli_run("transcribe", "clip.mp4", "--json")
+		if len(find_models(context.temp_allocator)) == 0 || !tools.whisper {
+			check("transcribe with no whisper or no model answers 6, unavailable", code == kit.EXIT_UNAVAILABLE, fmt.tprintf("exit %d", code))
+			schema_ok("with the documented error object", out, {{name = "error", kind = .String}, {name = "code", kind = .Int}, {name = "command", kind = .String}})
+		} else {
+			check("transcribe exits 0", code == 0, out)
+			schema_ok("transcribe matches its declared schema", out, TRANSCRIBE_FIELDS)
+		}
+	}
+	{
+		_, code := cli_run("no-such-thing")
+		check("a word that is neither a command nor a file is a usage error, not a window", code == kit.EXIT_USAGE)
+	}
 }

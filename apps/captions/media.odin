@@ -28,7 +28,9 @@ work_dir :: proc() -> string {
 		base = fmt.tprintf("%s/.cache", home)
 	}
 	dir := fmt.tprintf("%s/palmy-captions", base)
-	os.make_directory(dir)
+	// All of it: a fresh $XDG_CACHE_HOME (a scratch one, under a test) may not
+	// exist yet, and a cache that cannot be created fails every import.
+	os.make_directory_all(dir)
 	return dir
 }
 
