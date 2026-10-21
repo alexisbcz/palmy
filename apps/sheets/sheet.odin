@@ -58,6 +58,13 @@ Sheet :: struct {
 	charts:    [dynamic]Chart,
 	merges:    [dynamic]Rect_I,
 
+	// Names scoped to this sheet, keyed by the upper-cased name, exactly like
+	// the book's own. Keeping them *on the sheet* rather than in the book's
+	// map under some composite key is what makes a rename or a reorder free
+	// (the scope is the sheet, not its name or its position) and a delete
+	// correct (they go with the sheet, which is what Excel does).
+	names:     map[string]Name_Def,
+
 	// Where the user last was on this sheet. Transient — it is not part of
 	// the document — but it has to live per sheet or switching tabs would
 	// leave the scroll position of the one you came from, which is wrong the
@@ -95,6 +102,7 @@ sheet_release :: proc(sh: ^Sheet) {
 	delete(sh.row_h)
 	delete(sh.charts)
 	delete(sh.merges)
+	delete(sh.names)
 	if sh.name != "" {
 		delete(sh.name, sh.heap)
 		sh.name = ""
@@ -139,6 +147,7 @@ sheet_clear :: proc(sh: ^Sheet) {
 	}
 	clear(&sh.charts)
 	clear(&sh.merges)
+	names_clear(&sh.names, sh.heap)
 	sh.frz_rows = 0
 	sh.frz_cols = 0
 	sh.max_row = -1

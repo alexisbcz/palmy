@@ -553,16 +553,9 @@ sheet_meta :: proc(sh: ^Sheet) -> string {
 }
 
 names_json :: proc(bk: ^Book) -> string {
-	if len(bk.names) == 0 {return ""}
-	keys := make([dynamic]string, 0, len(bk.names), context.temp_allocator)
-	for k in bk.names {append(&keys, k)}
-	slice.sort(keys[:])
-	out := make([dynamic]Name_JSON, 0, len(keys), context.temp_allocator)
-	for k in keys {
-		nd := bk.names[k]
-		append(&out, Name_JSON{name = k, sheet = nd.sheet, range = rect_text(nd.rect), abs = nd.abs})
-	}
-	data, _ := json.marshal(out[:], allocator = context.temp_allocator)
+	out := names_to_json(bk)
+	if len(out) == 0 {return ""}
+	data, _ := json.marshal(out, allocator = context.temp_allocator)
 	return string(data)
 }
 

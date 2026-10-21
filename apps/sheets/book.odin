@@ -46,6 +46,12 @@ Dep :: struct {
 
 // Name_Def is a named range. The sheet is kept by name, not by index, so a
 // reorder cannot silently repoint it.
+//
+// A name has a *scope* as well as a target: the whole book (`Book.names`),
+// or one sheet (`Sheet.names`). A formula looks in its own sheet's names
+// first and the book's second, so a sheet-local `Rate` shadows a workbook
+// `Rate` on that sheet and nowhere else — Excel's and LibreOffice's rule.
+// Another sheet's local name is reached by qualifying it, `Q2!Rate`.
 Name_Def :: struct {
 	sheet: string, // owned; "" means the book's first sheet
 	rect:  Rect_I,
@@ -125,12 +131,7 @@ book_destroy :: proc(bk: ^Book) {
 		}
 	}
 	delete(bk.sheets)
-	for _, nd in bk.names {
-		delete(nd.sheet, bk.heap)
-	}
-	for k in bk.names {
-		delete(k, bk.heap)
-	}
+	names_clear(&bk.names, bk.heap)
 	delete(bk.names)
 	for _, arr in bk.rdep {
 		delete(arr)
@@ -248,6 +249,16 @@ book_rename_sheet :: proc(bk: ^Book, i: int, want: string) -> bool {
 		if strings.equal_fold(nd.sheet, old) {
 			delete(nd.sheet, bk.heap)
 			nd.sheet = strings.clone(clean, bk.heap)
+		}
+	}
+	// A local name's *scope* needs nothing — it lives on the sheet — but its
+	// *target* is kept by name, on whichever sheet it was defined.
+	for s in bk.sheets {
+		for _, &nd in s.names {
+			if strings.equal_fold(nd.sheet, old) {
+				delete(nd.sheet, s.heap)
+				nd.sheet = strings.clone(clean, s.heap)
+			}
 		}
 	}
 	bk.graph_dirty = true
@@ -401,21 +412,85 @@ name_is_valid :: proc(s: string) -> bool {
 		}
 	}
 	// A name that reads as a cell reference would shadow it, which Excel
-	// refuses for the same reason.
+	// refuses for the same reason — and so does one *shaped* like a cell
+	// past the last column (`ZZZZ1`), or an R1C1 address, because either
+	// would read differently in another program.
 	if _, ok := ref_parse(s); ok {
+		return false
+	}
+	if looks_like_cell(s) || looks_r1c1(s) {
 		return false
 	}
 	return true
 }
 
-book_set_name :: proc(bk: ^Book, name: string, sheet: string, rect: Rect_I, abs := true) -> bool {
+// looks_like_cell is the *shape* of an A1 address, `$AB$12`, whether or not
+// the column exists.
+looks_like_cell :: proc(s: string) -> bool {
+	i := 0
+	if i < len(s) && s[i] == '$' {
+		i += 1
+	}
+	l := i
+	for i < len(s) && is_alpha(s[i]) {
+		i += 1
+	}
+	if i == l {
+		return false
+	}
+	if i < len(s) && s[i] == '$' {
+		i += 1
+	}
+	d := i
+	for i < len(s) && is_digit(s[i]) {
+		i += 1
+	}
+	return i > d && i == len(s)
+}
+
+names_clear :: proc(m: ^map[string]Name_Def, heap: mem.Allocator) {
+	for k, nd in m {
+		delete(nd.sheet, heap)
+		delete(k, heap)
+	}
+	clear(m)
+}
+
+// name_scope_map is where a name of this scope lives: the book's map for
+// "", a sheet's own for a sheet name, nil when no such sheet exists.
+@(private = "file")
+name_scope_map :: proc(bk: ^Book, scope: string) -> (m: ^map[string]Name_Def, heap: mem.Allocator, ok: bool) {
+	if scope == "" {
+		return &bk.names, bk.heap, true
+	}
+	sh := book_sheet(bk, book_find(bk, scope))
+	if sh == nil {
+		return nil, {}, false
+	}
+	return &sh.names, sh.heap, true
+}
+
+// book_set_name defines (or redefines) a name. `scope` is "" for the whole
+// book or a sheet's name for a name only that sheet sees.
+book_set_name :: proc(
+	bk: ^Book,
+	name: string,
+	sheet: string,
+	rect: Rect_I,
+	abs := true,
+	scope := "",
+) -> bool {
 	if !name_is_valid(name) {
 		return false
 	}
+	m, heap, ok := name_scope_map(bk, scope)
+	if !ok {
+		return false
+	}
 	key := strings.to_upper(name, context.temp_allocator)
-	book_drop_name(bk, key)
-	bk.names[strings.clone(key, bk.heap)] = Name_Def {
-		sheet = strings.clone(sheet, bk.heap),
+	book_drop_name(bk, key, scope)
+	m[strings.clone(key, heap)] = Name_Def {
+		sheet = strings.clone(sheet, heap),
 		rect  = rect,
 		abs   = abs,
 	}
@@ -423,14 +498,18 @@ book_set_name :: proc(bk: ^Book, name: string, sheet: string, rect: Rect_I, abs 
 	return true
 }
 
-book_drop_name :: proc(bk: ^Book, name: string) -> bool {
+book_drop_name :: proc(bk: ^Book, name: string, scope := "") -> bool {
+	m, heap, ok := name_scope_map(bk, scope)
+	if !ok {
+		return false
+	}
 	key := strings.to_upper(name, context.temp_allocator)
-	for k, nd in bk.names {
+	for k, nd in m {
 		if k == key {
-			delete(nd.sheet, bk.heap)
+			delete(nd.sheet, heap)
 			kk := k
-			delete_key(&bk.names, k)
-			delete(kk, bk.heap)
+			delete_key(m, k)
+			delete(kk, heap)
 			bk.graph_dirty = true
 			return true
 		}
@@ -438,13 +517,110 @@ book_drop_name :: proc(bk: ^Book, name: string) -> bool {
 	return false
 }
 
-book_get_name :: proc(bk: ^Book, name: string) -> (Name_Def, bool) {
+// book_get_name looks a name up in exactly one scope: the book's by default.
+book_get_name :: proc(bk: ^Book, name: string, scope := "") -> (Name_Def, bool) {
 	if bk == nil {
 		return {}, false
 	}
+	m, _, ok := name_scope_map(bk, scope)
+	if !ok {
+		return {}, false
+	}
 	key := strings.to_upper(name, context.temp_allocator)
-	nd, ok := bk.names[key]
-	return nd, ok
+	nd, found := m[key]
+	return nd, found
+}
+
+// book_resolve_name is what a formula on sheet `own` means by a bare name:
+// its own sheet's, if it has one, and the book's otherwise. `local` says
+// which won, for the status bar and the CLI.
+book_resolve_name :: proc(bk: ^Book, name: string, own: int) -> (nd: Name_Def, local: bool, ok: bool) {
+	if bk == nil {
+		return {}, false, false
+	}
+	key := strings.to_upper(name, context.temp_allocator)
+	if sh := book_sheet(bk, own); sh != nil {
+		if d, found := sh.names[key]; found {
+			return d, true, true
+		}
+	}
+	d, found := bk.names[key]
+	return d, false, found
+}
+
+// Name_Entry is one name with its scope, for everything that lists them:
+// the file formats, the CLI, the collaboration document.
+Name_Entry :: struct {
+	scope: string, // "" for the book, else the sheet's name
+	name:  string, // upper-cased, as stored
+	def:   Name_Def,
+}
+
+// book_name_entries lists every name — the book's, then each sheet's in
+// sheet order — each group sorted, so a saved file is stable.
+book_name_entries :: proc(bk: ^Book) -> [dynamic]Name_Entry {
+	out := make([dynamic]Name_Entry, 0, 8, context.temp_allocator)
+	group :: proc(out: ^[dynamic]Name_Entry, m: map[string]Name_Def, scope: string) {
+		keys := make([dynamic]string, 0, len(m), context.temp_allocator)
+		for k in m {
+			append(&keys, k)
+		}
+		sort_strings(keys[:])
+		for k in keys {
+			append(out, Name_Entry{scope, k, m[k]})
+		}
+	}
+	group(&out, bk.names, "")
+	for sh in bk.sheets {
+		group(&out, sh.names, sh.name)
+	}
+	return out
+}
+
+// book_clear_names drops every name of every scope.
+book_clear_names :: proc(bk: ^Book) {
+	names_clear(&bk.names, bk.heap)
+	for sh in bk.sheets {
+		names_clear(&sh.names, sh.heap)
+	}
+	bk.graph_dirty = true
+}
+
+// name_spec reads how a person or a script writes a name with its scope:
+// `Rate` for the book, `Q2!Rate` (or `'My Sheet'!Rate`) for one sheet. The
+// window's prompts and the CLI both go through it.
+name_spec :: proc(text: string) -> (scope, name: string) {
+	t := strings.trim_space(text)
+	if sc, rest, ok := split_sheet_ref(t); ok && sc != "" {
+		return sc, strings.trim_space(rest)
+	}
+	return "", t
+}
+
+// name_drop_spec removes the name a spec means. Qualified (`Q2!Rate`) it is
+// that sheet's; bare, it is whichever a formula on sheet `own` would see —
+// the local one first — and with no sheet in hand (`own < 0`, the CLI) the
+// book's. The window and `sheets name-delete` both come through here.
+name_drop_spec :: proc(bk: ^Book, spec: string, own: int) -> (scope, name: string, ok: bool) {
+	scope, name = name_spec(spec)
+	if scope == "" && own >= 0 {
+		if sh := book_sheet(bk, own); sh != nil {
+			if _, found := book_get_name(bk, name, sh.name); found {
+				scope = sh.name
+			}
+		}
+	}
+	if scope != "" {
+		if i := book_find(bk, scope); i >= 0 {
+			scope = bk.sheets[i].name // the sheet's own spelling
+		}
+	}
+	return scope, name, book_drop_name(bk, name, scope)
+}
+
+// name_label is the inverse of `name_spec`, for display.
+name_label :: proc(scope, name: string) -> string {
+	return strings.concatenate({sheet_prefix(scope), name}, context.temp_allocator)
 }
 
 // name_target renders a named range the way the file format wants it:

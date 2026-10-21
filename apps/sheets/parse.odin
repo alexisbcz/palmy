@@ -399,7 +399,7 @@ lex_sheet_body :: proc(lx: ^Lexer, sheet: string, sheet2 := "") -> (Token, bool)
 	start := lx.i
 	for lx.i < len(s) {
 		c := s[lx.i]
-		if is_alpha(c) || is_digit(c) || c == '$' {
+		if is_alpha(c) || is_digit(c) || c == '$' || c == '_' || c == '.' || c >= 0x80 {
 			lx.i += 1
 		} else {
 			break
@@ -409,11 +409,17 @@ lex_sheet_body :: proc(lx: ^Lexer, sheet: string, sheet2 := "") -> (Token, bool)
 		return {kind = .Bad}, false
 	}
 	word := s[start:lx.i]
-	r, ok := ref_parse(word)
-	if !ok {
-		return {kind = .Bad}, false
+	if r, ok := ref_parse(word); ok {
+		return {kind = .Ref, ref = r, text = word, sheet = sheet, sheet2 = far}, true
 	}
-	return {kind = .Ref, ref = r, text = word, sheet = sheet, sheet2 = far}, true
+	// `Q2!Rate` — another sheet's local name. Only a word that could be a
+	// name qualifies, so a typo shaped like a cell (`Sheet2!ZZZZ1`) is
+	// still a syntax error, and a call (`Sheet2!SUM(`) is not a thing. A
+	// name cannot span sheets.
+	if far == "" && name_is_valid(word) && !(lx.i < len(s) && s[lx.i] == '(') {
+		return {kind = .Ident, text = word, sheet = sheet}, true
+	}
+	return {kind = .Bad}, false
 }
 
 // ---------------------------------------------------------------------------
@@ -771,7 +777,12 @@ p_primary :: proc(ps: ^Parser) -> ^Ast {
 		if cur(ps).kind != .LParen {
 			n := ast_new(.Name)
 			n.str = strings.clone(t.text)
+			n.sheet = strings.clone(t.sheet)
 			return n
+		}
+		if t.sheet != "" {
+			ps.fail = true
+			return nil
 		}
 		advance(ps) // (
 		n := ast_new(.Call)
@@ -868,6 +879,7 @@ ast_print :: proc(n: ^Ast, b: ^strings.Builder) {
 	case .Err:
 		strings.write_string(b, err_text(n.err))
 	case .Name:
+		strings.write_string(b, sheet_prefix(n.sheet))
 		strings.write_string(b, n.str)
 	case .Ref:
 		strings.write_string(b, sheet_span_prefix(n.sheet, n.sheet2))
@@ -1009,7 +1021,7 @@ ast_rename_sheet :: proc(n: ^Ast, from, to: string) -> bool {
 		return false
 	}
 	hit := false
-	if (n.kind == .Ref || n.kind == .Range) && n.sheet != "" && strings.equal_fold(n.sheet, from) {
+	if (n.kind == .Ref || n.kind == .Range || n.kind == .Name) && n.sheet != "" && strings.equal_fold(n.sheet, from) {
 		delete(n.sheet)
 		n.sheet = strings.clone(to)
 		hit = true
@@ -1033,7 +1045,7 @@ ast_sheets :: proc(n: ^Ast, out: ^[dynamic]string) {
 	if n == nil {
 		return
 	}
-	if (n.kind == .Ref || n.kind == .Range) {
+	if (n.kind == .Ref || n.kind == .Range || n.kind == .Name) {
 		for want in ([2]string{n.sheet, n.sheet2}) {
 			if want == "" {
 				continue
@@ -1093,8 +1105,10 @@ ast_deps :: proc(n: ^Ast, out: ^[dynamic]Dep, max_row: int, bk: ^Book = nil, own
 			}
 		}
 	case .Name:
-		// A named range is a dependency on whatever it names.
-		if nd, ok := book_get_name(bk, n.str); ok {
+		// A named range is a dependency on whatever it names — resolved in
+		// the formula's own scope, so a local name and the workbook name it
+		// shadows are never confused.
+		if nd, ok, _ := name_lookup(bk, n, own); ok {
 			si := resolve_sheet(bk, nd.sheet, 0)
 			append(out, Dep{si, nd.rect})
 		}
@@ -1103,6 +1117,23 @@ ast_deps :: proc(n: ^Ast, out: ^[dynamic]Dep, max_row: int, bk: ^Book = nil, own
 	for k in n.kids {
 		ast_deps(k, out, max_row, bk, own)
 	}
+}
+
+// name_lookup resolves a Name node: `Q2!Rate` in Q2's own names only, a bare
+// `Rate` in the formula's sheet first and the book second. `bad_sheet`
+// reports that the qualifier named no sheet at all, which is #REF! rather
+// than #NAME?.
+name_lookup :: proc(bk: ^Book, n: ^Ast, own: int) -> (nd: Name_Def, ok: bool, bad_sheet: bool) {
+	if n.sheet != "" {
+		si := book_find(bk, n.sheet)
+		if si < 0 {
+			return {}, false, true
+		}
+		d, found := book_get_name(bk, n.str, bk.sheets[si].name)
+		return d, found, false
+	}
+	d, _, found := book_resolve_name(bk, n.str, own)
+	return d, found, false
 }
 
 // dep_sheets is the run of sheet indices a reference reads: one for an

@@ -61,6 +61,7 @@ Cmd :: enum u8 {
 	Chart_Pie,
 	Chart_Delete,
 	Name_Define,
+	Name_Define_Local,
 	Name_Delete,
 	New,
 	Open,
@@ -132,6 +133,7 @@ COMMANDS := [?]Cmd_Row {
 	{.Chart_Pie, "Insert a pie chart", "Alt+P"},
 	{.Chart_Delete, "Delete the chart here", "Alt+Shift+B"},
 	{.Name_Define, "Name the selection", "Ctrl+Shift+N"},
+	{.Name_Define_Local, "Name the selection, for this sheet only", "Ctrl+Alt+N"},
 	{.Name_Delete, "Delete a name", ""},
 	{.New, "New sheet", "Ctrl+N"},
 	{.Open, "Open sheet", "Ctrl+O"},
@@ -343,6 +345,8 @@ run_cmd :: proc(app: ^App, cmd: Cmd) {
 
 	case .Name_Define:
 		open_prompt(app, .Name_Define, "")
+	case .Name_Define_Local:
+		open_prompt(app, .Name_Define_Local, "")
 	case .Name_Delete:
 		open_prompt(app, .Name_Delete, "")
 
@@ -354,15 +358,7 @@ run_cmd :: proc(app: ^App, cmd: Cmd) {
 		}
 		sync_sheet(app)
 		sheet_clear(app.sh)
-		{
-			keys := make([dynamic]string, 0, len(app.book.names), context.temp_allocator)
-			for k in app.book.names {
-				append(&keys, strings.clone(k, context.temp_allocator))
-			}
-			for k in keys {
-				book_drop_name(app.book, k)
-			}
-		}
+		book_clear_names(app.book)
 		app.cur = {}
 		app.anchor = {}
 		app.top_row = 0

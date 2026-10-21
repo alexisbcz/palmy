@@ -430,6 +430,7 @@ HELP_SHEET := [?]Key_Row {
 	{"Alt+B / Alt+L / Alt+P", "bar / line / pie chart"},
 	{"Alt+Shift+B", "delete the chart under the cursor"},
 	{"Ctrl+Shift+N", "name the selection"},
+	{"Ctrl+Alt+N", "name it for this sheet only"},
 }
 
 HELP_DOC := [?]Key_Row {

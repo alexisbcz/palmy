@@ -368,7 +368,6 @@ sheet_needs_quote :: proc(name: string) -> bool {
 	return false
 }
 
-@(private = "file")
 looks_r1c1 :: proc(s: string) -> bool {
 	i := 0
 	if i >= len(s) || (s[i] != 'R' && s[i] != 'r') {

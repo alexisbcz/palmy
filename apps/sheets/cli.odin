@@ -145,6 +145,39 @@ COMMANDS := []kit.Command {
 		run = cmd_sheet_delete,
 	},
 	{
+		verb = "name-set",
+		summary = "name a range, for the whole book or (Sheet!Name, or --scope) for one sheet only",
+		effect = .Idempotent,
+		args = {
+			{name = "file", kind = .Path, help = "the book to change", required = true},
+			{name = "name", kind = .String, help = "Rate, or Q2!Rate for a name only Q2 sees", required = true},
+			{name = "target", kind = .String, help = "what it names: Data!B2:B9, or B2:B9 on the scope's sheet", required = true},
+		},
+		flags = {
+			{name = "scope", kind = .String, help = "the one sheet that sees the name"},
+			{name = "out", kind = .Path, help = "write here instead of over the input"},
+		},
+		out = NAME_FIELDS,
+		examples = {"sheets name-set book.sheet.json Rate Q2!B1 --scope Q2 --json", "sheets name-set book.sheet.json Rate Inputs!B1 --json"},
+		run = cmd_name_set,
+	},
+	{
+		verb = "name-delete",
+		summary = "drop a name: the book's, or with Sheet!Name (or --scope) one sheet's",
+		effect = .Mutate,
+		args = {
+			{name = "file", kind = .Path, help = "the book to change", required = true},
+			{name = "name", kind = .String, help = "Rate, or Q2!Rate", required = true},
+		},
+		flags = {
+			{name = "scope", kind = .String, help = "the sheet whose local name it is"},
+			{name = "out", kind = .Path, help = "write here instead of over the input"},
+		},
+		out = NAME_FIELDS,
+		examples = {"sheets name-delete book.sheet.json Q2!Rate --json"},
+		run = cmd_name_delete,
+	},
+	{
 		verb = "export",
 		summary = "write a book out as .xlsx, .csv or the native .sheet.json",
 		effect = .Mutate,
@@ -213,7 +246,10 @@ of the same name and keep working.
 A cell reference may name its sheet: Summary!B8. A formula may also span
 sheets, SUM(Jan:Mar!B2), which adds B2 on every sheet from Jan to Mar in the
 book's current order; sheet-add, sheet-move and sheet-delete change that span
-exactly as the window's commands do. Where no book is given, the
+exactly as the window's commands do. A name may belong to the whole book
+(Rate) or to one sheet (Q2!Rate, or --scope Q2): a formula on Q2 sees Q2's own
+Rate before the book's, and other sheets reach it only as Q2!Rate.
+Where no book is given, the
 demo book is used, so every read command works on a machine with no documents
 on it — which is also what makes them testable.`
 
@@ -243,7 +279,11 @@ INFO_FIELDS := []kit.Field {
 	{
 		name = "names",
 		kind = .Array,
-		of = {{name = "name", kind = .String}, {name = "target", kind = .String}},
+		of = {
+			{name = "name", kind = .String},
+			{name = "target", kind = .String},
+			{name = "scope", kind = .String, help = "\"\" for the whole book, else the one sheet that sees it"},
+		},
 	},
 	{name = "sheet_count", kind = .Int},
 	{name = "cell_count", kind = .Int},
@@ -297,6 +337,14 @@ SET_FIELDS := []kit.Field {
 	{name = "type", kind = .String},
 	{name = "value", kind = .String},
 	{name = "formatted", kind = .String},
+	{name = "written", kind = .Bool, help = "false under --dry-run"},
+}
+
+NAME_FIELDS := []kit.Field {
+	{name = "path", kind = .String, help = "the file that was (or would be) written"},
+	{name = "name", kind = .String, help = "upper-cased, as names are stored"},
+	{name = "scope", kind = .String, help = "\"\" for the whole book, else the sheet"},
+	{name = "target", kind = .String, help = "what it names, sheet-qualified"},
 	{name = "written", kind = .Bool, help = "false under --dry-run"},
 }
 
@@ -475,10 +523,11 @@ cmd_info :: proc(c: ^kit.Call) -> int {
 	kit.jset(c.out, "sheets", arr)
 
 	names := kit.jarr()
-	for key, nd in app.book.names {
+	for e in book_name_entries(app.book) {
 		o := kit.jobj()
-		kit.jset_str(o, "name", key)
-		kit.jset_str(o, "target", name_target(app.book, nd))
+		kit.jset_str(o, "name", e.name)
+		kit.jset_str(o, "target", name_target(app.book, e.def))
+		kit.jset_str(o, "scope", e.scope)
 		kit.jpush(names, o)
 	}
 	kit.jset(c.out, "names", names)
@@ -884,5 +933,86 @@ cmd_sheet_delete :: proc(c: ^kit.Call) -> int {
 	kit.jset_str(c.out, "sheet", gone)
 	put_sheet_list(c, app)
 	kit.jset_int(c.out, "rewritten", count_rewritten(app.book, before))
+	return commit_book(c, app, src)
+}
+
+// ---------------------------------------------------------------------------
+// Names
+//
+// `name_spec` reads `Q2!Rate` the same way the window's Ctrl+Shift+N prompt
+// does, and `book_set_name` / `name_drop_spec` are what that prompt calls.
+// ---------------------------------------------------------------------------
+
+@(private = "file")
+cli_name_scope :: proc(c: ^kit.Call, app: ^App) -> (scope, name: string, ok: bool) {
+	scope, name = name_spec(kit.cli_str(c, "name"))
+	if flag := kit.cli_str(c, "scope"); flag != "" {
+		scope = flag
+	}
+	if scope != "" {
+		i := book_find(app.book, scope)
+		if i < 0 {
+			return scope, name, false
+		}
+		scope = app.book.sheets[i].name
+	}
+	return scope, name, true
+}
+
+@(private = "file")
+cmd_name_set :: proc(c: ^kit.Call) -> int {
+	src := kit.cli_str(c, "file")
+	app, ok := open_book(src)
+	if !ok {
+		return no_book(c, src)
+	}
+	scope, name, sok := cli_name_scope(c, app)
+	if !sok {
+		return no_sheet(c, scope)
+	}
+	sheet, rect, abs, tok := parse_ref_target(kit.cli_str(c, "target"))
+	if !tok {
+		return kit.cli_failf(c, kit.EXIT_USAGE, "%q is not a range like Data!B2:B9", kit.cli_str(c, "target"))
+	}
+	if sheet == "" {
+		sheet = scope != "" ? scope : app.book.sheets[0].name
+	}
+	if book_find(app.book, sheet) < 0 {
+		return no_sheet(c, sheet)
+	}
+	if !book_set_name(app.book, name, sheet, rect, abs, scope) {
+		return kit.cli_failf(c, kit.EXIT_USAGE, "%q is not a usable name", name)
+	}
+	book_recalc_all(app.book)
+	nd, _ := book_get_name(app.book, name, scope)
+	kit.jset_str(c.out, "name", strings.to_upper(name, context.temp_allocator))
+	kit.jset_str(c.out, "scope", scope)
+	kit.jset_str(c.out, "target", name_target(app.book, nd))
+	return commit_book(c, app, src)
+}
+
+@(private = "file")
+cmd_name_delete :: proc(c: ^kit.Call) -> int {
+	src := kit.cli_str(c, "file")
+	app, ok := open_book(src)
+	if !ok {
+		return no_book(c, src)
+	}
+	scope, name, sok := cli_name_scope(c, app)
+	if !sok {
+		return no_sheet(c, scope)
+	}
+	nd, found := book_get_name(app.book, name, scope)
+	if !found {
+		code := kit.cli_failf(c, kit.EXIT_NOT_FOUND, "no name %s", name_label(scope, name))
+		kit.cli_err_field(c, "name", name_label(scope, name))
+		return code
+	}
+	target := strings.clone(name_target(app.book, nd), context.temp_allocator)
+	name_drop_spec(app.book, name_label(scope, name), -1)
+	book_recalc_all(app.book)
+	kit.jset_str(c.out, "name", strings.to_upper(name, context.temp_allocator))
+	kit.jset_str(c.out, "scope", scope)
+	kit.jset_str(c.out, "target", target)
 	return commit_book(c, app, src)
 }

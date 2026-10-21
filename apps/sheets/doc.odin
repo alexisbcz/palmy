@@ -50,6 +50,10 @@ Name_JSON :: struct {
 	sheet: string,
 	range: string,
 	abs:   bool,
+	// "" for a name the whole book sees; a sheet's name for one only that
+	// sheet sees. Absent in files written before scopes existed, which reads
+	// as "" — exactly what those names were.
+	scope: string,
 }
 
 Sheet_JSON :: struct {
@@ -164,20 +168,7 @@ doc_save_string :: proc(
 		append(&sheets, sheet_json(s))
 	}
 
-	// Names, sorted, so the file is stable.
-	keys := make([dynamic]string, 0, len(bk.names), context.temp_allocator)
-	for k in bk.names {
-		append(&keys, k)
-	}
-	sort_strings(keys[:])
-	names := make([dynamic]Name_JSON, 0, len(keys), context.temp_allocator)
-	for k in keys {
-		nd := bk.names[k]
-		append(
-			&names,
-			Name_JSON{name = k, sheet = nd.sheet, range = rect_text(nd.rect), abs = nd.abs},
-		)
-	}
+	names := names_to_json(bk)
 
 	doc := Doc_JSON {
 		kind    = "palmy.sheets",
@@ -308,12 +299,7 @@ doc_load_string :: proc(
 	}
 	sh.index = 0
 	sheet_clear(sh)
-	for k, nd in bk.names {
-		delete(nd.sheet, bk.heap)
-		kk := k
-		delete_key(&bk.names, k)
-		delete(kk, bk.heap)
-	}
+	book_clear_names(bk)
 
 	if len(doc.sheets) > 0 {
 		for sj, i in doc.sheets {
@@ -333,11 +319,7 @@ doc_load_string :: proc(
 		load_sheet_json(sh, Sheet_JSON{cells = doc.cells, cols = doc.cols, rows = doc.rows})
 	}
 
-	for nj in doc.names {
-		if r, good := parse_a1_range(nj.range); good {
-			book_set_name(bk, nj.name, nj.sheet, r, nj.abs)
-		}
-	}
+	names_from_json(bk, doc.names)
 
 	bk.active = clamp(doc.active, 0, len(bk.sheets) - 1)
 	clear(&bk.seeds)
@@ -369,6 +351,36 @@ doc_load_file :: proc(sh: ^Sheet, path: string) -> (cursor, anchor: Addr, ok: bo
 	}
 	_, c, a, good := doc_load_string(sh, string(data))
 	return c, a, good
+}
+
+// names_to_json lists every name of every scope, sorted, so the file is
+// stable. The collaboration document stores the very same list.
+names_to_json :: proc(bk: ^Book) -> []Name_JSON {
+	entries := book_name_entries(bk)
+	out := make([dynamic]Name_JSON, 0, len(entries), context.temp_allocator)
+	for e in entries {
+		append(
+			&out,
+			Name_JSON {
+				name = e.name,
+				sheet = e.def.sheet,
+				range = rect_text(e.def.rect),
+				abs = e.def.abs,
+				scope = e.scope,
+			},
+		)
+	}
+	return out[:]
+}
+
+// names_from_json defines them again. The sheets must exist first, since a
+// local name lives on its sheet; one whose sheet is missing is dropped.
+names_from_json :: proc(bk: ^Book, names: []Name_JSON) {
+	for nj in names {
+		if r, good := parse_a1_range(nj.range); good {
+			book_set_name(bk, nj.name, nj.sheet, r, nj.abs, nj.scope)
+		}
+	}
 }
 
 // ---------------------------------------------------------------------------

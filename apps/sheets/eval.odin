@@ -55,9 +55,13 @@ eval_ast :: proc(sh: ^Sheet, n: ^Ast, at: Addr) -> Res {
 	case .Err:
 		return rv(verr(n.err))
 	case .Name:
-		// A bare name is a named range if the book has one, and #NAME?
-		// otherwise.
-		if nd, ok := book_get_name(sh.book, n.str); ok {
+		// A bare name is a named range if one is in scope — this sheet's
+		// own first, then the book's — and #NAME? otherwise.
+		nd, ok, bad_sheet := name_lookup(sh.book, n, sh.index)
+		if bad_sheet {
+			return rv(verr(.Ref))
+		}
+		if ok {
 			ts := book_sheet(sh.book, resolve_sheet(sh.book, nd.sheet, 0))
 			if ts == nil {
 				return rv(verr(.Ref))

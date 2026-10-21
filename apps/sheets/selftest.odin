@@ -286,6 +286,7 @@ selftest :: proc() -> int {
 	t_merges(&tc)
 	t_names(&tc)
 	t_spans(&tc)
+	t_local_names(&tc)
 	t_charts(&tc)
 	t_book_document(&tc)
 	t_xlsx_book(&tc)

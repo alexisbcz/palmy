@@ -34,6 +34,7 @@ Prompt_Kind :: enum u8 {
 	Goto,
 	Sheet_Name,
 	Name_Define,
+	Name_Define_Local,
 	Name_Delete,
 	// collaboration
 	Comment,

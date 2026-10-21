@@ -221,6 +221,7 @@ handle_keys :: proc(ui: ^p.Ctx, app: ^App) {
 		{'p', {.Alt}, .Chart_Pie},
 		{'B', {.Alt, .Shift}, .Chart_Delete},
 		{'N', {.Ctrl, .Shift}, .Name_Define},
+		{'n', {.Ctrl, .Alt}, .Name_Define_Local},
 	}
 	for b in BINDS {
 		if once(ui, b.sym, b.mods) {
@@ -396,9 +397,11 @@ prompt_title :: proc(k: Prompt_Kind) -> string {
 	case .Sheet_Name:
 		return "Rename this sheet"
 	case .Name_Define:
-		return "Name the selection"
+		return "Name the selection (Sheet!Name scopes it to one sheet)"
+	case .Name_Define_Local:
+		return "Name the selection, for this sheet only"
 	case .Name_Delete:
-		return "Delete which name"
+		return "Delete which name (Sheet!Name for a local one)"
 	case .Comment:
 		return "Comment on this cell"
 	case .Share:
@@ -479,7 +482,7 @@ run_prompt :: proc(app: ^App, text: string) {
 			set_status(app, "Went to %s", arg)
 			return
 		}
-		if nd, ok := book_get_name(app.book, arg); ok {
+		if nd, _, ok := book_resolve_name(app.book, arg, app.book.active); ok {
 			if i := book_find(app.book, nd.sheet); i >= 0 {
 				use_sheet(app, i)
 			}
@@ -507,14 +510,25 @@ run_prompt :: proc(app: ^App, text: string) {
 		} else {
 			set_status(app, "Cannot rename to %s", arg)
 		}
-	case .Name_Define:
+	case .Name_Define, .Name_Define_Local:
 		if arg == "" {
 			return
 		}
+		// `Rate` names it for the whole book and `Q2!Rate` for sheet Q2
+		// only — the spelling `sheets name-set` takes too. The local command
+		// scopes a bare name to the sheet you are on.
+		scope, name := name_spec(arg)
+		if app.prompt == .Name_Define_Local && scope == "" {
+			scope = app.sh.name
+		}
 		undo_push(app)
-		if book_set_name(app.book, arg, app.sh.name, work_rect(app)) {
+		if book_set_name(app.book, name, app.sh.name, work_rect(app), true, scope) {
 			recalc_all(app.sh)
-			set_status(app, "%s names %s", arg, rect_text(work_rect(app)))
+			if scope != "" {
+				set_status(app, "%s names %s, on %s only", name, rect_text(work_rect(app)), scope)
+			} else {
+				set_status(app, "%s names %s", name, rect_text(work_rect(app)))
+			}
 		} else {
 			set_status(app, "%s is not a usable name", arg)
 		}
@@ -523,9 +537,9 @@ run_prompt :: proc(app: ^App, text: string) {
 			return
 		}
 		undo_push(app)
-		if book_drop_name(app.book, arg) {
+		if scope, name, ok := name_drop_spec(app.book, arg, app.book.active); ok {
 			recalc_all(app.sh)
-			set_status(app, "Dropped the name %s", arg)
+			set_status(app, "Dropped the name %s", name_label(scope, name))
 		} else {
 			set_status(app, "There is no name %s", arg)
 		}

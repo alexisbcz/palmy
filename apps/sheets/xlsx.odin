@@ -723,23 +723,50 @@ xlsx_compose :: proc(
 		)
 	}
 	strings.write_string(&wbb, "</sheets>")
-	if bk != nil && len(bk.names) > 0 {
-		keys := make([dynamic]string, 0, len(bk.names), context.temp_allocator)
-		for k in bk.names {
-			append(&keys, k)
+	if bk != nil {
+		// A sheet-local name carries `localSheetId`, the 0-based position of
+		// its sheet *in this package* — so a name scoped to a sheet that is
+		// not being written (a one-sheet export) is left out rather than
+		// pinned to the wrong tab.
+		entries := book_name_entries(bk)
+		wrote := false
+		for e in entries {
+			local := -1
+			if e.scope != "" {
+				for s, j in sheets {
+					if strings.equal_fold(s.name, e.scope) {
+						local = j
+						break
+					}
+				}
+				if local < 0 {
+					continue
+				}
+			}
+			if !wrote {
+				strings.write_string(&wbb, "<definedNames>")
+				wrote = true
+			}
+			if local >= 0 {
+				fmt.sbprintf(
+					&wbb,
+					"<definedName name=\"%s\" localSheetId=\"%d\">%s</definedName>",
+					xml_escape(e.name),
+					local,
+					xml_escape(name_target(bk, e.def)),
+				)
+			} else {
+				fmt.sbprintf(
+					&wbb,
+					"<definedName name=\"%s\">%s</definedName>",
+					xml_escape(e.name),
+					xml_escape(name_target(bk, e.def)),
+				)
+			}
 		}
-		sort_strings(keys[:])
-		strings.write_string(&wbb, "<definedNames>")
-		for k in keys {
-			nd := bk.names[k]
-			fmt.sbprintf(
-				&wbb,
-				"<definedName name=\"%s\">%s</definedName>",
-				xml_escape(k),
-				xml_escape(name_target(bk, nd)),
-			)
+		if wrote {
+			strings.write_string(&wbb, "</definedNames>")
 		}
-		strings.write_string(&wbb, "</definedNames>")
 	}
 	strings.write_string(&wbb, "<calcPr calcId=\"124519\" fullCalcOnLoad=\"1\"/></workbook>")
 
@@ -1722,12 +1749,7 @@ xlsx_read_book_bytes :: proc(bk: ^Book, raw: []u8) -> (ok: bool, sheets, cells: 
 		}
 	}
 	sheet_clear(keep)
-	for k, nd in bk.names {
-		delete(nd.sheet, bk.heap)
-		kk := k
-		delete_key(&bk.names, k)
-		delete(kk, bk.heap)
-	}
+	book_clear_names(bk)
 
 	// Name every sheet *before* loading any of them: a formula on sheet 1 can
 	// name sheet 3, and the graph resolves names, not order.
@@ -1761,8 +1783,17 @@ xlsx_read_book_bytes :: proc(bk: ^Book, raw: []u8) -> (ok: bool, sheets, cells: 
 				if nm == "" || strings.has_prefix(nm, "_xlnm.") {
 					continue
 				}
+				// `localSheetId` scopes the name to one tab, by position.
+				scope := ""
+				if ls := x_attr(wb, d, "localSheetId"); ls != "" {
+					li, lok := strconv.parse_int(ls)
+					if !lok || li < 0 || li >= len(bk.sheets) {
+						continue
+					}
+					scope = bk.sheets[li].name
+				}
 				if sn, rect, abs, gok := parse_ref_target(x_text(wb, d)); gok {
-					book_set_name(bk, nm, sn, rect, abs)
+					book_set_name(bk, nm, sn, rect, abs, scope)
 				}
 			}
 		}
