@@ -1,0 +1,43 @@
+# Recorded with apps/tools/headless-record.sh; whisper-cli and the models came from
+# $PATH and $PALMY_WHISPER_MODELS, the media is a smptehdbars clip over espeak-ng speech.
+# captions: transcribe, karaoke in the preview, undo and redo
+wait 3.0
+type t
+wait 30
+type 3
+wait 1.0
+type a
+wait 1.5
+type 2
+wait 1.0
+key Down
+wait 0.8
+key Right
+wait 1.2
+key Right
+wait 1.2
+key Right
+wait 1.2
+key Left
+wait 1.2
+# edit: type into a caption, delete another, then undo both and redo one
+key Return
+wait 0.5
+type  (edited)
+wait 0.8
+key Escape
+wait 0.8
+key Down
+wait 0.6
+type d
+wait 1.2
+chord ctrl+z
+wait 1.5
+chord ctrl+z
+wait 1.5
+chord ctrl+shift+z
+wait 2.0
+key question
+wait 2.5
+key Escape
+wait 1.0
