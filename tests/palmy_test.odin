@@ -638,6 +638,9 @@ test_image_draws_into_canvas :: proc(t: ^testing.T) {
 	testing.expect(t, mid.r > 200 && mid.g < 60 && mid.b < 60, "the red image landed")
 }
 
+// Linux only: it hands the keymap over in a memfd, as a compositor does;
+// macOS has neither (palmy/window_darwin.odin reads keys from NSEvents).
+when ODIN_OS != .Darwin {
 @(test)
 test_keymap_text_survives_load :: proc(t: ^testing.T) {
 	// Regression: `keymap_load` used to clone the keymap text and then call
@@ -670,6 +673,7 @@ test_keymap_text_survives_load :: proc(t: ^testing.T) {
 	text := p.keymap_text(&km)
 	testing.expect(t, len(text) > 0, "the keymap text is retained after loading")
 	testing.expect(t, strings.contains(text, "xkb_keymap"), "and it is the keymap we handed over")
+}
 }
 
 @(test)

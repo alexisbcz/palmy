@@ -18,23 +18,33 @@ import "core:thread"
 import "core:time"
 import p "../palmy"
 
-@(private = "file")
-eventfd :: proc(t: ^testing.T) -> linux.Fd {
-	fd, err := linux.eventfd(0, {.CLOEXEC, .NONBLOCK})
-	testing.expect_value(t, err, linux.Errno.NONE)
-	return fd
-}
+when ODIN_OS == .Darwin {
+	// macOS has no eventfd: eventfd, poke and close_fd are a kqueue user
+	// event there, in frame_loop_test_darwin.odin.
+} else {
+	@(private = "file")
+	eventfd :: proc(t: ^testing.T) -> linux.Fd {
+		fd, err := linux.eventfd(0, {.CLOEXEC, .NONBLOCK})
+		testing.expect_value(t, err, linux.Errno.NONE)
+		return fd
+	}
 
-@(private = "file")
-poke :: proc(fd: linux.Fd) {
-	one := u64(1)
-	linux.write(fd, (cast([^]u8)&one)[:8])
+	@(private = "file")
+	poke :: proc(fd: linux.Fd) {
+		one := u64(1)
+		linux.write(fd, (cast([^]u8)&one)[:8])
+	}
+
+	@(private = "file")
+	close_fd :: proc(fd: linux.Fd) {
+		linux.close(fd)
+	}
 }
 
 @(test)
 test_poll_forever_waits_for_the_event :: proc(t: ^testing.T) {
 	fd := eventfd(t)
-	defer linux.close(fd)
+	defer close_fd(fd)
 
 	// Nothing ready, no timeout: it must block until another thread writes,
 	// not fail at once (which is what EINVAL looked like).
@@ -67,7 +77,7 @@ test_poll_forever_waits_for_the_event :: proc(t: ^testing.T) {
 @(test)
 test_poll_timeouts_are_milliseconds :: proc(t: ^testing.T) {
 	fd := eventfd(t)
-	defer linux.close(fd)
+	defer close_fd(fd)
 	pfd := [1]linux.Poll_Fd{{fd = fd, events = {.IN}}}
 
 	start := time.tick_now()
