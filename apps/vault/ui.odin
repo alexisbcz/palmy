@@ -357,7 +357,7 @@ header :: proc(ui: ^p.Ctx, st: ^St) {
 	// The clipboard countdown. This is the only place the app admits to having
 	// put a secret somewhere it does not control, so it says so loudly.
 	if st.clip_until > 0 {
-		left := math.max(f32(st.clip_until - f64(ui.now)), 0)
+		left := math.max(f32(st.clip_until - clock(ui)), 0)
 		p.row(ui, "shrink-0 items-center gap-2 h-8 px-3 rounded-lg bg-amber-500/15")
 		p.icon(ui, IC_CLIPBOARD_CHECK, "size-4 shrink-0 text-amber-600")
 		p.textf(
@@ -373,7 +373,7 @@ header :: proc(ui: ^p.Ctx, st: ^St) {
 
 	// Idle countdown, once it is close enough to matter.
 	if st.idle_limit > 0 {
-		left := st.idle_limit - (f64(ui.now) - st.last_input)
+		left := st.idle_limit - (clock(ui) - st.last_input)
 		if left <= math.min(30.0, st.idle_limit) {
 			p.row(ui, "shrink-0 items-center gap-1.5 h-8 px-3 rounded-lg bg-muted")
 			p.icon(ui, IC_TIMER, "size-3.5 shrink-0 text-muted-foreground")
@@ -401,7 +401,7 @@ header :: proc(ui: ^p.Ctx, st: ^St) {
 	hbtn(ui, st, IC_DOWNLOAD, "Import", proc(st: ^St, ui: ^p.Ctx) {begin_pick(st, .Import)})
 	hbtn(ui, st, IC_WAND, "Generate", proc(st: ^St, ui: ^p.Ctx) {open_generator(ui, st)})
 	pbtn(ui, IC_PLUS, "New item", "new", proc(st: ^St, ui: ^p.Ctx) {begin_edit(st, true)}, st)
-	hbtn(ui, st, IC_LOCK, "Lock", proc(st: ^St, ui: ^p.Ctx) {lock(st, "Locked", ui.now)})
+	hbtn(ui, st, IC_LOCK, "Lock", proc(st: ^St, ui: ^p.Ctx) {lock(st, "Locked", clock(ui))})
 }
 
 hbtn :: proc(ui: ^p.Ctx, st: ^St, ic: p.Icon, label: string, act: proc(st: ^St, ui: ^p.Ctx), disabled := false) {
@@ -1100,6 +1100,7 @@ copy_btn :: proc(ui: ^p.Ctx, st: ^St, key, label, value: string) {
 }
 
 totp_card :: proc(ui: ^p.Ctx, st: ^St, e: ^Entry) {
+	st.totp_shown = true
 	now := now_unix()
 	code, ok := totp_code(e.totp, now, e.totp_period, int(e.totp_digits), e.totp_algo)
 	left := totp_remaining(now, e.totp_period)
@@ -1977,7 +1978,7 @@ toast_view :: proc(ui: ^p.Ctx, st: ^St) {
 		return
 	}
 	if st.toast_t > 1e17 {
-		st.toast_t = f64(ui.now) + 3.0
+		st.toast_t = clock(ui) + 3.0
 	}
 	idx := p.div(ui, "absolute z-50 flex-row items-center gap-2 h-9 px-3.5 rounded-lg border border-border bg-popover shadow-md")
 	s := p.style(ui, idx)

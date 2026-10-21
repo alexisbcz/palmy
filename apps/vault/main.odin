@@ -186,7 +186,7 @@ St :: struct {
 	clip_until: f64,
 	clip_total: f64,
 
-	// Auto-lock
+	// Auto-lock. Every time here is on `clock`, in seconds.
 	last_input: f64,
 	idle_limit: f64,
 	clip_limit: f64,
@@ -198,6 +198,7 @@ St :: struct {
 	confirm_del: bool,
 	toast:      string,
 	toast_t:    f64,
+	totp_shown: bool, // a TOTP countdown was drawn this frame
 	have_clip:  bool,
 
 	pick:       kit.Pick,
@@ -316,6 +317,7 @@ main :: proc() {
 
 	register_theme(dark)
 	g.have_clip = clip_available()
+	g_trace = os.get_env("VAULT_TRACE_TIMERS", context.temp_allocator) == "1"
 
 	for ui in p.frames(app) {
 		free_all(context.temp_allocator)
@@ -356,12 +358,14 @@ st_new :: proc(path: string) -> St {
 frame :: proc(ui: ^p.Ctx, app: ^p.App, st: ^St) {
 	// Any input at all is a sign of life, which is what the idle timer is
 	// measuring. A frame drawn because a timer ticked is not.
+	now := clock(ui)
 	if len(ui.input.keys) > 0 || len(p.typed_text(ui)) > 0 || ui.input.pressed != {} {
-		st.last_input = ui.now
+		st.last_input = now
 	}
 	if st.last_input == 0 {
-		st.last_input = ui.now
+		st.last_input = now
 	}
+	st.totp_shown = false // set again by the TOTP card if it is drawn
 
 	tick_timers(ui, st)
 	autofill_tick(ui, st)
@@ -376,30 +380,143 @@ frame :: proc(ui: ^p.Ctx, app: ^p.App, st: ^St) {
 		refilter(st)
 	}
 
-	// While a vault is open there are three things that must happen without
-	// anybody touching the keyboard: the idle lock, the clipboard clear, and
-	// the TOTP countdown. palmy has no timer and no way to wake the frame loop
-	// from outside, so the loop has to keep running.
-	if st.screen == .Open || st.busy != .None || st.clip_until > 0 {
-		ui.animating = true
-	}
-	// The autofill socket is read every frame; while it is listening, keep
-	// the loop ticking at a gentle rate even when locked, so "unlock to fill"
-	// reaches the person.
-	if st.af.running && st.screen != .Open && app != nil {
-		p.wake_after(ui, 250 * time.Millisecond)
-	}
-	// An automatic lock is the one state change nobody is watching for, so
-	// hold the frame loop open for a moment afterwards. Otherwise the window
-	// repaints once and goes to sleep, and on a recording the last thing on
-	// screen is the instant *before* it locked.
-	if st.screen != .Open && st.lock_at > 0 && ui.now - st.lock_at < 3 {
-		ui.animating = true
-	}
-	if st.toast != "" && ui.now > st.toast_t {
+	if st.toast != "" && clock(ui) >= st.toast_t {
 		delete(st.toast)
 		st.toast = ""
 	}
+
+	schedule(ui, app, st)
+}
+
+// ---------------------------------------------------------------------------
+// Timers
+//
+// Three things must happen while nobody touches the keyboard: the idle lock,
+// the clipboard clear and the TOTP countdown. The first two are security
+// timers. They used to be served by holding the frame loop at the display
+// rate for as long as a vault was open -- a third of a core, all day -- on
+// the belief that palmy had no way to wake the loop from outside. It has:
+// `wake_after` parks the loop until a deadline and runs exactly one frame
+// then. So every frame ends by working out the next instant anything here is
+// due and arming the loop for it, and between those instants the window costs
+// nothing.
+//
+// The deadlines are kept on `clock`, a real monotonic clock. `ui.now` cannot
+// be used: palmy clamps each frame's `dt` to 0.1 s so an animation does not
+// jump after a stall, which means `ui.now` only advances 0.1 s per frame. With
+// the loop asleep between frames, a 300-second idle limit measured on it
+// would take thousands of seconds -- the lock would effectively never fire.
+// ---------------------------------------------------------------------------
+
+// clock is the time, in seconds, that every timer in this file is kept on: a
+// monotonic clock in a live window (the wall clock can be stepped, and must
+// not move a deadline), and the renderer's synthetic time offscreen, so the
+// self-test can step through a 300-second limit in a handful of frames.
+clock :: proc(ui: ^p.Ctx) -> f64 {
+	if ui == nil {
+		return 0
+	}
+	if ui.app == nil {
+		return ui.now
+	}
+	return time.duration_seconds(time.tick_diff(time.Tick{}, time.tick_now()))
+}
+
+// NEVER is the answer `next_due` gives when nothing is waiting.
+NEVER :: max(f64)
+
+// next_due is the next instant, on `clock`, at which a frame has something to
+// do: a timer fires, or a countdown on screen shows a different number.
+// Separate from `schedule` so the self-test can check it without a window.
+next_due :: proc(st: ^St, now: f64) -> f64 {
+	due := NEVER
+	// The next instant a countdown of `left` seconds, shown rounded up,
+	// changes its number.
+	next_digit :: proc(now, left: f64) -> f64 {
+		if left <= 0 {
+			return now
+		}
+		frac := left - f64(i64(left))
+		if frac <= 0 {
+			frac = 1
+		}
+		return now + frac
+	}
+
+	if st.clip_until > 0 {
+		due = min(due, st.clip_until, next_digit(now, st.clip_until - now))
+	}
+	if st.screen == .Open && st.idle_limit > 0 {
+		at := st.last_input + st.idle_limit
+		due = min(due, at)
+		// The "locks in Ns" chip appears for the last 30 seconds and counts.
+		show := at - min(30.0, st.idle_limit)
+		if now >= show {
+			due = min(due, next_digit(now, at - now))
+		} else {
+			due = min(due, show)
+		}
+	}
+	if st.screen == .Open && st.mode == .Account && st.sync_at > 0 && !g_test {
+		due = min(due, st.sync_at + SYNC_EVERY)
+	}
+	if st.toast != "" && st.toast_t < 1e17 {
+		due = min(due, st.toast_t)
+	}
+	return due
+}
+
+// schedule arms the frame loop for whatever is due next and lets it sleep
+// until then.
+schedule :: proc(ui: ^p.Ctx, app: ^p.App, st: ^St) {
+	// Work deferred to the next frame -- the Argon2id derivation, a sync --
+	// needs exactly that one frame.
+	if st.busy != .None {
+		p.wake(ui)
+	}
+	// An autofill request queued behind a prompt that was answered this
+	// frame is served on the next one.
+	if st.af.running && len(st.af.queue) > 0 && st.af.prompt.kind == .None {
+		p.wake(ui)
+	}
+	// The autofill socket used to be read only because the loop was spinning.
+	// Now a thread sleeps on it and wakes the loop when a client writes.
+	if st.af.running && !st.af.watching && app != nil {
+		af_watch(&st.af, app)
+	}
+
+	now := clock(ui)
+	if due := next_due(st, now); due != NEVER {
+		// A millisecond past the deadline, so the frame it buys is never the
+		// one just before it.
+		p.wake_after(ui, time.Duration((max(due - now, 0) + 0.001) * f64(time.Second)))
+	}
+	// The TOTP code and its countdown follow the wall clock, as the server
+	// that checks them does, so the next second is a wall-clock second.
+	if st.totp_shown {
+		ns := i64(time.Second) - time.time_to_unix_nano(time.now()) % i64(time.Second)
+		p.wake_after(ui, time.Duration(ns) + 2 * time.Millisecond)
+	}
+}
+
+// VAULT_TRACE_TIMERS=1 prints, to stderr, each security timer as it fires:
+// when it was due, when it ran, and how late. It is how the claim "the lock
+// fires on time with the window idle" was measured, and it prints nothing
+// secret -- no titles, no values.
+g_trace: bool
+
+timer_trace :: proc(what: string, due, now: f64) {
+	if !g_trace {
+		return
+	}
+	fmt.eprintfln(
+		"vault-timer: %s  wall=%v  due=%.3f  ran=%.3f  late=%.1fms",
+		what,
+		time.now(),
+		due,
+		now,
+		(now - due) * 1000,
+	)
 }
 
 tick_timers :: proc(ui: ^p.Ctx, st: ^St) {
@@ -425,15 +542,18 @@ tick_timers :: proc(ui: ^p.Ctx, st: ^St) {
 		do_sync(st, ui)
 	}
 
-	if st.clip_until > 0 && ui.now >= st.clip_until {
+	now := clock(ui)
+	if st.clip_until > 0 && now >= st.clip_until {
+		timer_trace("clipboard clear", st.clip_until, now)
 		clear_clipboard(st, "The clipboard has been cleared")
 	}
 
-	if st.screen == .Open && st.idle_limit > 0 && ui.now - st.last_input >= st.idle_limit {
-		lock(st, fmt.tprintf("Locked after %.0f seconds idle", st.idle_limit), ui.now)
+	if st.screen == .Open && st.idle_limit > 0 && now - st.last_input >= st.idle_limit {
+		timer_trace("idle lock", st.last_input + st.idle_limit, now)
+		lock(st, fmt.tprintf("Locked after %.0f seconds idle", st.idle_limit), now)
 	}
 
-	if st.screen == .Open && st.mode == .Account && st.busy == .None && st.sync_at > 0 && ui.now - st.sync_at > SYNC_EVERY && !g_test {
+	if st.screen == .Open && st.mode == .Account && st.busy == .None && st.sync_at > 0 && now - st.sync_at >= SYNC_EVERY && !g_test {
 		st.busy = .Syncing
 	}
 }
@@ -454,7 +574,7 @@ note :: proc(st: ^St, ui: ^p.Ctx, msg: string) {
 		delete(st.toast)
 	}
 	st.toast = strings.clone(msg)
-	st.toast_t = (ui == nil ? 0 : ui.now) + 3.5
+	st.toast_t = clock(ui) + 3.5
 }
 
 // wipe_buf zeroes a password buffer. A text field's backing store is where the
@@ -548,7 +668,7 @@ do_sync :: proc(st: ^St, ui: ^p.Ctx) {
 	case:
 		st.sync_msg = fmt.aprintf("synced %s", clock_text(now_unix()))
 	}
-	st.sync_at = ui != nil ? ui.now : 1
+	st.sync_at = ui != nil ? clock(ui) : 1
 	st.health_ok = false
 	refilter(st)
 	select_id(st, keep)
@@ -725,7 +845,7 @@ copy_secret :: proc(st: ^St, ui: ^p.Ctx, label: string, value: string) {
 	st.clip_value = clone_secret(value)
 	st.clip_label = strings.clone(label)
 	st.clip_total = st.clip_limit
-	st.clip_until = (ui == nil ? 0 : ui.now) + st.clip_limit
+	st.clip_until = clock(ui) + st.clip_limit
 }
 
 clear_clipboard :: proc(st: ^St, msg: string) {
@@ -1123,9 +1243,6 @@ autofill_tick :: proc(ui: ^p.Ctx, st: ^St) {
 			af_send(&st.af, r.conn, resp)
 		}
 	}
-	if st.af.prompt.kind != .None {
-		ui.animating = true
-	}
 }
 
 // ---------------------------------------------------------------------------
@@ -1228,7 +1345,7 @@ keys :: proc(ui: ^p.Ctx, app: ^p.App, st: ^St) {
 	}
 
 	if p.shortcut(ui, 'l', {.Ctrl}) {
-		lock(st, "Locked", ui.now)
+		lock(st, "Locked", clock(ui))
 		return
 	}
 

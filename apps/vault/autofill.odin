@@ -47,8 +47,10 @@ import "core:fmt"
 import "core:os"
 import "core:strings"
 import "core:sys/linux"
+import "core:thread"
 import "core:time"
 import kit "kit:."
+import p "palmy:."
 
 AF_VERSION :: 1
 AF_MAX_LINE :: 64 * 1024
@@ -118,6 +120,14 @@ Af_Server :: struct {
 	prompt:     Af_Prompt,
 	served:     int,
 	running:    bool,
+
+	// The watcher (af_watch): a thread asleep in epoll on the listening
+	// socket and every connection, which wakes the window's frame loop when
+	// any of them has something to read.
+	watching:   bool,
+	ep:         linux.Fd,
+	ep_stop:    linux.Fd,
+	watcher:    ^thread.Thread,
 }
 
 af_socket_path :: proc(allocator := context.allocator) -> string {
@@ -254,6 +264,7 @@ af_start :: proc(s: ^Af_Server, path := "") -> string {
 }
 
 af_stop :: proc(s: ^Af_Server) {
+	af_unwatch(s)
 	if s.running {
 		linux.close(s.listen)
 		linux.unlink(strings.clone_to_cstring(s.path, context.temp_allocator))
@@ -340,6 +351,7 @@ af_service :: proc(s: ^Af_Server, timeout_ms: i32 = 0) {
 				continue
 			}
 			c := Af_Conn{fd = cfd, pid = cred.pid, uid = cred.uid, exe = proc_exe(cred.pid), alive = true}
+			af_watch_fd(s, cfd)
 			c.inbuf = make([dynamic]u8)
 			crypto.rand_bytes(c.challenge[:])
 			append(&s.conns, c)
@@ -383,6 +395,92 @@ af_service :: proc(s: ^Af_Server, timeout_ms: i32 = 0) {
 			remove_range(&c.inbuf, 0, nl + 1)
 		}
 	}
+}
+
+// af_watch starts the watcher, so the window can sleep while the socket is
+// quiet and still answer a client the moment it writes.
+//
+// The descriptors are registered edge-triggered, and that is what keeps the
+// watcher from spinning: a level-triggered descriptor would report "readable"
+// again and again until the frame it woke had read it. An edge is reported
+// once per arrival, and `af_service` always reads to EAGAIN (accepts to
+// EAGAIN on the listener), so anything that arrives after that read is a new
+// edge and a new wake. A wake for data the frame already read costs one
+// frame, nothing more.
+//
+// Closing a connection's descriptor takes it out of the epoll set by itself.
+af_watch :: proc(s: ^Af_Server, app: ^p.App) {
+	if s.watching || !s.running {
+		return
+	}
+	ep, e := linux.epoll_create1({.FDCLOEXEC})
+	if e != .NONE {
+		return
+	}
+	stop, e2 := linux.eventfd(0, {.CLOEXEC, .NONBLOCK})
+	if e2 != .NONE {
+		linux.close(ep)
+		return
+	}
+	s.ep = ep
+	s.ep_stop = stop
+	s.watching = true
+	ev := linux.EPoll_Event {
+		events = {.IN},
+		data = {fd = stop},
+	}
+	linux.epoll_ctl(ep, .ADD, stop, &ev)
+	af_watch_fd(s, s.listen)
+	for c in s.conns {
+		if c.alive {
+			af_watch_fd(s, c.fd)
+		}
+	}
+	s.watcher = thread.create_and_start_with_poly_data3(ep, stop, app, proc(ep, stop: linux.Fd, app: ^p.App) {
+		evs: [16]linux.EPoll_Event
+		for {
+			n, err := linux.epoll_wait(ep, &evs[0], len(evs), -1)
+			if err == .EINTR {
+				continue
+			}
+			if err != .NONE {
+				return
+			}
+			for ev in evs[:n] {
+				if ev.data.fd == stop {
+					return
+				}
+			}
+			if n > 0 {
+				p.wake(app)
+			}
+		}
+	})
+}
+
+af_watch_fd :: proc(s: ^Af_Server, fd: linux.Fd) {
+	if !s.watching {
+		return
+	}
+	ev := linux.EPoll_Event {
+		events = {.IN, .RDHUP, .ET},
+		data = {fd = fd},
+	}
+	linux.epoll_ctl(s.ep, .ADD, fd, &ev)
+}
+
+af_unwatch :: proc(s: ^Af_Server) {
+	if !s.watching {
+		return
+	}
+	one := u64(1)
+	linux.write(s.ep_stop, (cast([^]u8)&one)[:8])
+	thread.join(s.watcher)
+	thread.destroy(s.watcher)
+	linux.close(s.ep)
+	linux.close(s.ep_stop)
+	s.watcher = nil
+	s.watching = false
 }
 
 af_send :: proc(s: ^Af_Server, conn: int, text: string) {

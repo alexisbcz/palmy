@@ -134,6 +134,7 @@ selftest :: proc() -> int {
 	// Before t_ui, which registers the theme: the field has to be legible on
 	// its built-in fallback palette too.
 	t_text_area()
+	t_timers()
 	t_ui()
 	t_kdf_cost()
 
@@ -1234,6 +1235,79 @@ t_rekey :: proc() {
 // The UI, through palmy's offscreen renderer
 // ---------------------------------------------------------------------------
 
+// ---------------------------------------------------------------------------
+// The timers: what the frame loop is armed for
+// ---------------------------------------------------------------------------
+
+t_timers :: proc() {
+	section("the timers: real deadlines, and nothing armed when nothing is due")
+
+	// The clock the deadlines are kept on is a real one in a live window,
+	// not `ctx.now`, which palmy advances by a clamped `dt` per frame and
+	// which therefore stands still while the loop sleeps. A Ctx with an app
+	// (never dereferenced) is all `clock` looks at to tell the two apart.
+	{
+		fake: p.Ctx
+		fake.app = (^p.App)(uintptr(64))
+		fake.now = 5
+		c1 := clock(&fake)
+		time.sleep(60 * time.Millisecond)
+		c2 := clock(&fake)
+		ok(c2 - c1 >= 0.055 && c2 - c1 < 1, "the timers' clock moved %.3f s across a 60 ms sleep", c2 - c1)
+		ok(c1 != 5, "a live window's timers read ctx.now")
+		off: p.Ctx
+		off.now = 7.5
+		ok(clock(&off) == 7.5, "offscreen, the timers must read the renderer's synthetic time")
+		ok(clock(nil) == 0, "clock(nil) should be 0")
+	}
+
+	st := st_new(strings.clone("/nonexistent/timers.pvz"))
+	defer shutdown(&st)
+
+	// Locked, nothing on the clipboard: nothing is due, and the loop sleeps
+	// until someone types.
+	st.screen = .Unlock
+	ok(next_due(&st, 100) == NEVER, "a locked vault with nothing pending asked to be woken at %v", next_due(&st, 100))
+	st.screen = .Open
+	st.idle_limit = 0
+	ok(next_due(&st, 100) == NEVER, "with the idle lock off and nothing pending, a wake was armed")
+
+	// The idle lock: nothing until the countdown chip appears 30 s before,
+	// then each second the number changes, then the deadline itself.
+	st.idle_limit = 300
+	st.last_input = 1000
+	ok(next_due(&st, 1000) == 1270, "open and just touched: next wake at %.3f, not when the countdown appears (1270)", next_due(&st, 1000))
+	ok(next_due(&st, 1100.5) == 1270, "the idle wake moved: %.3f", next_due(&st, 1100.5))
+	ok(next_due(&st, 1280) == 1281, "the countdown's next second: %.3f, not 1281", next_due(&st, 1280))
+	ok(abs(next_due(&st, 1280.4) - 1281) < 1e-9, "the countdown's next second from 1280.4: %.3f", next_due(&st, 1280.4))
+	ok(abs(next_due(&st, 1299.9) - 1300) < 1e-9, "the last wake before the lock is not the lock deadline: %.3f", next_due(&st, 1299.9))
+	ok(next_due(&st, 1300.5) <= 1300.5, "a missed deadline must be due at once, got %.3f", next_due(&st, 1300.5))
+	// Input pushes the deadline out.
+	st.last_input = 1290
+	ok(next_due(&st, 1290) == 1560, "input did not push the idle wake out: %.3f", next_due(&st, 1290))
+	// A short limit shows its countdown from the start.
+	st.idle_limit = 4
+	ok(next_due(&st, 1290) == 1291, "a 4 s limit should count each second: %.3f", next_due(&st, 1290))
+	st.idle_limit = 300
+
+	// The clipboard: each second of the countdown, and the deadline.
+	st.clip_until = 1300
+	ok(abs(next_due(&st, 1290.25) - 1291) < 1e-9, "the clipboard countdown's next second: %.3f", next_due(&st, 1290.25))
+	ok(abs(next_due(&st, 1299.5) - 1300) < 1e-9, "the clipboard deadline: %.3f", next_due(&st, 1299.5))
+	// ... and it holds while locked, which is when it matters most.
+	st.screen = .Unlock
+	ok(abs(next_due(&st, 1299.5) - 1300) < 1e-9, "a locked vault forgot the clipboard deadline: %.3f", next_due(&st, 1299.5))
+	st.clip_until = 0
+	ok(next_due(&st, 1299.5) == NEVER, "a locked vault with the clipboard cleared still asks for frames")
+
+	// A toast goes away on time; the "no clock yet" sentinel is not a deadline.
+	st.toast = strings.clone("x")
+	st.toast_t = 1e18
+	ok(next_due(&st, 10) == NEVER, "the toast sentinel was taken for a deadline")
+	st.toast_t = 13.5
+	ok(next_due(&st, 10) == 13.5, "the toast's expiry: %.3f", next_due(&st, 10))
+}
+
 @(private = "file")
 drive :: proc(off: ^p.Offscreen, st: ^St) {
 	ui := p.offscreen_begin(off)
@@ -1311,6 +1385,24 @@ t_ui :: proc() {
 	ok(len(st.pw) == 0, "the master password is still in the field buffer after unlocking")
 	ok(st.sess.unlocked, "the session is not marked unlocked")
 
+	// Open and idle, the app no longer holds the loop at the display rate.
+	// It arms a deadline instead: the next second of the idle countdown
+	// (this test's limit is 4 s, so the countdown is showing).
+	{
+		for _ in 0 ..< 40 {
+			drive(off, &st)
+		}
+		ui := p.offscreen_begin(off)
+		frame(ui, nil, &st)
+		anim := ui.animating
+		p.offscreen_end(off)
+		ok(!anim, "an open, idle vault still marks the UI animating")
+		now := clock(&off.ctx)
+		due := next_due(&st, now)
+		ok(due > now && due - now <= 1.0001, "open and idle, the next wake is %.3f s away, not within the second", due - now)
+		ok(due <= st.last_input + st.idle_limit, "the next wake is after the idle deadline")
+	}
+
 	// Search. The sorted vault is Bank, Forge, Mail; "mail" should leave one.
 	p.press_key(off, 'f', {.Ctrl})
 	drive(off, &st)
@@ -1347,6 +1439,11 @@ t_ui :: proc() {
 	drive(off, &st)
 	ok(secret_eq(g_test_clip, st.gen_pw), "Ctrl C did not put the generated password on the clipboard")
 	ok(st.clip_until > 0, "copying did not arm the clearing timer")
+	{
+		now := clock(&off.ctx)
+		due := next_due(&st, now)
+		ok(due > now && due <= st.clip_until && due - now <= 1.0001, "with a copy on the clipboard the next wake is %.3f s away", due - now)
+	}
 	ok(st.clip_label != "", "copying did not say what was copied")
 
 	// ... and it clears itself. The offscreen clock advances 1/60 s a frame,
