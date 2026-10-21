@@ -146,6 +146,7 @@ surface :: proc() -> ^kit.Surface {
 			summary    = "local speech to text with whisper.cpp, and a caption editor around it",
 			gui        = true,
 			takes_path = true, // `captions talk.mp4` opens it in the window
+			takes_word = kit.cli_word_is_path, // and `captions lsit` is a usage error
 			selftest   = selftest,
 			notes      = SURFACE_NOTES,
 			commands   = COMMANDS,

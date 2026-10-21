@@ -243,13 +243,6 @@ main :: proc() {
 	if code, handled := kit.cli(surface()); handled {
 		os.exit(code)
 	}
-	// A bare word reaches here as a file for the window. One that is not a
-	// file is far likelier a mistyped command than a document, and opening a
-	// window in answer would never return to whatever typed it.
-	if len(args) > 0 && !strings.has_prefix(args[0], "-") && !os.exists(args[0]) {
-		fmt.eprintfln("captions: no command or file called %q (captions --help lists the commands)", args[0])
-		os.exit(kit.EXIT_USAGE)
-	}
 
 	m := new(App_State)
 	state_init(m)
