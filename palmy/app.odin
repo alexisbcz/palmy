@@ -2,6 +2,7 @@ package palmy
 
 import "core:fmt"
 import "core:mem/virtual"
+import "core:os"
 import "core:strings"
 import "core:time"
 
@@ -52,6 +53,8 @@ App :: struct {
 	logic:      bool, // this frame runs the app's code but paints nothing
 	canvas_buf: ^Shm_Buffer, // the buffer `canvas` points into this frame
 	reported:   bool, // the loop's fatal error has been written to stderr
+	trace:      bool, // PALMY_TRACE_LOOP=1: each loop decision on stderr
+	trace_t0:   time.Tick,
 	frames_shown: u64,
 	fps:        f32,
 	fps_accum:  f32,
@@ -119,6 +122,8 @@ create :: proc(cfg: Config) -> (app: ^App, err: string) {
 	app.ctx.fonts = &app.fonts
 	app.ctx.input = &app.win.input
 	app.first = true
+	app.trace = os.get_env("PALMY_TRACE_LOOP", context.temp_allocator) == "1"
+	app.trace_t0 = time.tick_now()
 	app.last = time.tick_now()
 	return app, ""
 }
@@ -428,7 +433,7 @@ frame_step :: proc(app: ^App) -> Frame_Step {
 		return {.Wait, timeout}
 	}
 
-	if !w.frame_pending && next_buffer(w) != nil {
+	if !w.frame_pending && next_buffer(w) != nil && (x11_visible(w) || app.first) {
 		// Wayland paces frames with a frame callback. The X11 core protocol
 		// has no vsync at all, so `frame_hold_ms` supplies the floor that
 		// keeps an animating app from repainting as fast as the server can
@@ -440,7 +445,8 @@ frame_step :: proc(app: ^App) -> Frame_Step {
 	}
 
 	// The server is not ready for pixels: a frame callback or a completion
-	// is outstanding, or both buffers are still the server's.
+	// is outstanding, both buffers are still the server's, or (X11) nothing
+	// of the window can be seen.
 	if run && !app.direct && !app.first {
 		since := w.last_present
 		if time.diff(since, w.last_logic) > 0 {
@@ -452,12 +458,25 @@ frame_step :: proc(app: ^App) -> Frame_Step {
 		}
 		timeout = shorter(timeout, left)
 	}
-	if w.backend == .X11 {
+	if w.backend == .X11 && w.frame_pending {
 		timeout = shorter(timeout, X11_PENDING_POLL_MS)
 	}
 	// On Wayland the callback and the buffer release both arrive on the
 	// socket, which wakes the poll; there is nothing to time out for.
 	return {.Wait, timeout}
+}
+
+// x11_visible is false while an X11 window cannot be seen at all: unmapped
+// (iconified, on another desktop, withdrawn) or fully covered. X11 has no
+// frame callback to withhold, and ShmCompletion arrives for a window nobody
+// can see, so without this an animating window kept painting sixty frames a
+// second while minimised. Hidden, it is treated the way a Wayland window is
+// whose callback is withheld: due wakes and input run logic frames, paint
+// waits, and MapNotify, Expose or VisibilityNotify bring the owed frame.
+// Always true on Wayland, where the compositor decides.
+@(private)
+x11_visible :: proc(w: ^Window) -> bool {
+	return w.backend != .X11 || (w.x.mapped && !w.x.obscured)
 }
 
 @(private)
@@ -477,6 +496,9 @@ wait_for_frame :: proc(app: ^App) -> bool {
 		step := frame_step(app)
 		switch step.kind {
 		case .Frame, .Logic:
+			if app.trace {
+				trace_loop(app, step.kind == .Logic ? "logic" : "frame", "wake=%v input=%v redraw=%v animating=%v owed=%v", w.wake_pending, w.input_dirty, app.ctx.redraw, app.ctx.animating, w.paint_owed)
+			}
 			// The wake is spent on this frame, not on the next one too.
 			w.wake_pending = false
 			w.input_dirty = false
@@ -487,12 +509,26 @@ wait_for_frame :: proc(app: ^App) -> bool {
 			}
 			return true
 		case .Wait:
+			was_pending := w.frame_pending
 			if !window_wait(w, step.timeout_ms) {
 				return false
+			}
+			if app.trace && was_pending && !w.frame_pending {
+				trace_loop(app, "ready", "%.1f ms after the last present", time.duration_milliseconds(time.since(w.last_present)))
 			}
 			pump_key_repeat(app)
 		}
 	}
+}
+
+// trace_loop writes one line of PALMY_TRACE_LOOP=1 output: milliseconds since
+// the window opened, what happened, and why. It exists to verify the loop on
+// compositors palmy's tests cannot run: how often a hidden window runs, how
+// often it commits, and when the server lets it paint again.
+@(private)
+trace_loop :: proc(app: ^App, what: string, format: string, args: ..any) {
+	ms := time.duration_milliseconds(time.tick_since(app.trace_t0))
+	fmt.eprintfln("palmy-loop %10.1f %-7s %s", ms, what, fmt.tprintf(format, ..args))
 }
 
 // key_repeat_timeout is how long an app that blocks on descriptors of its
@@ -618,6 +654,9 @@ finish_frame :: proc(app: ^App) {
 
 	b := painted_buffer(app)
 	if b == nil {
+		if app.trace {
+			trace_loop(app, "nobuf", "the frame had no buffer to paint into")
+		}
 		clear(&ctx.stack)
 		return
 	}
@@ -625,6 +664,11 @@ finish_frame :: proc(app: ^App) {
 	end_ui(ctx, &app.canvas)
 	if present(w, b) {
 		app.frames_shown += 1
+		if app.trace {
+			trace_loop(app, "sent", "buffer %d, %d damage rects, first %v", b == &w.buffers[0] ? 0 : 1, len(w.damage.rects), len(w.damage.rects) > 0 ? w.damage.rects[0] : Damage_Rect{})
+		}
+	} else if app.trace {
+		trace_loop(app, "skipped", "unchanged")
 	}
 
 	clear_edges(&w.input)

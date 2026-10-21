@@ -226,3 +226,48 @@ test_frame_step_direct_never_runs_logic_frames :: proc(t: ^testing.T) {
 	app.win.wake_pending = true
 	testing.expect_value(t, p.frame_step(app), p.Frame_Step{.Wait, -1})
 }
+
+@(test)
+test_frame_step_hidden_x11_window_parks :: proc(t: ^testing.T) {
+	// X11 has no frame callback to withhold and acknowledges a put to a
+	// window nobody can see, so an animating window kept painting at the
+	// 16 ms floor while minimised (measured under openbox: ~50 frames a
+	// second, 7% of a core). Unmapped or fully obscured, it parks like a
+	// Wayland window whose callback is withheld.
+	for hide in 0 ..< 2 {
+		app := fake_app(.X11)
+		defer free(app)
+		w := &app.win
+		w.last_present = time.time_add(time.now(), -LONG_AGO)
+		w.x.mapped = hide != 0
+		w.x.obscured = hide != 0
+
+		app.ctx.animating = true
+		testing.expect_value(t, p.frame_step(app), p.Frame_Step{.Wait, -1})
+		app.ctx.animating = false
+		w.paint_owed = true
+		testing.expect_value(t, p.frame_step(app), p.Frame_Step{.Wait, -1})
+
+		// A due wake still runs, as a logic frame.
+		w.wake_pending = true
+		testing.expect_value(t, p.frame_step(app), p.Frame_Step{.Logic, 0})
+		w.wake_pending = false
+
+		// Back in view, the owed frame is painted.
+		w.x.mapped = true
+		w.x.obscured = false
+		testing.expect_value(t, p.frame_step(app).kind, p.Frame_Step_Kind.Frame)
+	}
+}
+
+@(test)
+test_frame_step_first_frame_paints_even_when_hidden :: proc(t: ^testing.T) {
+	// The first frame is never a logic frame, so it must not wait for the
+	// window to be seen either: an app started behind another window would
+	// otherwise run no code at all.
+	app := fake_app(.X11)
+	defer free(app)
+	app.first = true
+	app.win.last_present = time.time_add(time.now(), -LONG_AGO)
+	testing.expect_value(t, p.frame_step(app).kind, p.Frame_Step_Kind.Frame)
+}

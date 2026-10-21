@@ -87,6 +87,8 @@ X_FOCUS_OUT :: 10
 @(private)
 X_EXPOSE :: 12
 @(private)
+X_VISIBILITY_NOTIFY :: 15
+@(private)
 X_DESTROY_NOTIFY :: 17
 @(private)
 X_UNMAP_NOTIFY :: 18
@@ -142,6 +144,7 @@ X_EVENT_MASK ::
 	u32(0x20) | // LeaveWindow
 	u32(0x40) | // PointerMotion
 	u32(0x8000) | // Exposure
+	u32(0x10000) | // VisibilityChange
 	u32(0x20000) | // StructureNotify
 	u32(0x200000) | // FocusChange
 	u32(0x400000) // PropertyChange
@@ -189,6 +192,9 @@ X11_State :: struct {
 	window:           u32,
 	gc:               u32,
 	mapped:           bool,
+	// VisibilityNotify said FullyObscured: another window covers all of this
+	// one. Under a compositing manager the server never says so.
+	obscured:         bool,
 
 	// Interned atoms.
 	a_wm_protocols:   u32,
@@ -841,12 +847,25 @@ x_event :: proc(w: ^Window, rec: []u8, avail: int) -> int {
 	case X_EXPOSE:
 		w.input_dirty = true
 
+	case X_VISIBILITY_NOTIFY:
+		// state: 0 Unobscured, 1 PartiallyObscured, 2 FullyObscured. Coming
+		// back into view also brings Expose events; the frame is asked for
+		// here as well so a server with backing store still gets the frame
+		// the window owes it (see x_ready_for_pixels).
+		was := x.obscured
+		x.obscured = xr8(rec, 8) == 2
+		if was && !x.obscured {
+			w.input_dirty = true
+		}
+
 	case X_MAP_NOTIFY:
 		x.mapped = true
 		w.configured = true
 		w.input_dirty = true
 
 	case X_UNMAP_NOTIFY:
+		// Iconified, on another desktop, or withdrawn: nothing of the window
+		// is visible until MapNotify.
 		x.mapped = false
 
 	case X_DESTROY_NOTIFY:
