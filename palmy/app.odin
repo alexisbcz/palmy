@@ -50,6 +50,7 @@ App :: struct {
 	last:       time.Tick,
 	direct:     bool,
 	logic:      bool, // this frame runs the app's code but paints nothing
+	canvas_buf: ^Shm_Buffer, // the buffer `canvas` points into this frame
 	reported:   bool, // the loop's fatal error has been written to stderr
 	frames_shown: u64,
 	fps:        f32,
@@ -529,10 +530,12 @@ prepare_canvas :: proc(app: ^App) -> bool {
 		w.conn.fatal = strings.clone(e)
 		return false
 	}
+	app.canvas_buf = nil
 	b := next_buffer(w)
 	if b == nil {
 		return false
 	}
+	app.canvas_buf = b
 	app.canvas.px = b.px
 	app.canvas.w = b.w
 	app.canvas.h = b.h
@@ -613,8 +616,8 @@ finish_frame :: proc(app: ^App) {
 		return
 	}
 
-	b := next_buffer(w)
-	if b == nil || app.canvas.px == nil {
+	b := painted_buffer(app)
+	if b == nil {
 		clear(&ctx.stack)
 		return
 	}
@@ -637,7 +640,7 @@ finish_frame :: proc(app: ^App) {
 @(private)
 present_direct :: proc(app: ^App) {
 	w := &app.win
-	b := next_buffer(w)
+	b := painted_buffer(app)
 	if b == nil {
 		return
 	}
@@ -648,6 +651,23 @@ present_direct :: proc(app: ^App) {
 	restore_late(w)
 	app.first = false
 	free_all(context.temp_allocator)
+}
+
+// painted_buffer is the buffer this frame was drawn into, which is the one to
+// present — not whichever is free *now*. They differ when a release arrives
+// mid-frame: a clipboard read on Wayland dispatches events while it waits, and
+// a buffer the server has just let go of comes first in `next_buffer`. Asking
+// again here used to present that other buffer, holding a frame from two
+// frames ago, while the new pixels sat unsent in this one; an idle window then
+// showed the stale frame until something else changed.
+@(private)
+painted_buffer :: proc(app: ^App) -> ^Shm_Buffer {
+	b := app.canvas_buf
+	app.canvas_buf = nil
+	if b == nil || b.busy || app.canvas.px == nil || raw_data(b.px) != raw_data(app.canvas.px) {
+		return nil
+	}
+	return b
 }
 
 @(private)
