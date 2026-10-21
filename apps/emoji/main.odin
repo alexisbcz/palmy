@@ -63,10 +63,12 @@ g_test: bool
 g_test_clip: string
 
 main :: proc() {
+	// `--shots <dir>` predates the convention and renders offscreen; it is
+	// looked for before the kit, which would take it for an unknown flag.
 	args := os.args[1:]
 	for a, i in args {
-		if a == "--selftest" || a == "-selftest" {
-			os.exit(selftest() == 0 ? 0 : 1)
+		if a == "-selftest" {
+			os.exit(cli_selftest())
 		}
 		if a == "--shots" || a == "-shots" {
 			if i + 1 >= len(args) {
@@ -75,6 +77,12 @@ main :: proc() {
 			}
 			os.exit(shots(args[i + 1]))
 		}
+	}
+	// Then the command line: `emoji search arrow --json`, `emoji use →`,
+	// `--selftest`, `--schema`. With no arguments it is not handled and the
+	// window opens.
+	if code, handled := kit.cli(surface()); handled {
+		os.exit(code)
 	}
 
 	app, err := kit.start(
@@ -112,7 +120,7 @@ main :: proc() {
 		glyphs  = glyphs,
 	}
 	build_index(&st)
-	load_recent(&st)
+	recent_load(&st.recent)
 	refilter(&st)
 
 	for ui in p.frames(app) {
@@ -167,105 +175,18 @@ register_dark_theme :: proc() {
 // ---------------------------------------------------------------------------
 
 build_index :: proc(st: ^St) {
-	st.lows = make([]string, len(CHARS))
-	for c, i in CHARS {
-		st.lows[i] = strings.to_lower(
-			fmt.tprintf("%s %s %s", c.name, c.alias, CATEGORIES[c.cat]),
-		)
-	}
+	st.lows = char_lows()
 }
 
 query_text :: proc(st: ^St) -> string {
 	return string(st.query[:])
 }
 
-// match requires every whitespace-separated term to appear, which is what makes
-// "down arrow" find U+2193 without matching every arrow in the block.
-match :: proc(hay: string, terms: []string) -> bool {
-	for t in terms {
-		if !strings.contains(hay, t) {
-			return false
-		}
-	}
-	return true
-}
-
-// parse_codepoint recognises "2192", "u+2192" and "0x2192", so a codepoint you
-// already know is one search away.
-parse_codepoint :: proc(q: string) -> (rune, bool) {
-	s := strings.trim_space(q)
-	s = strings.trim_prefix(s, "u+")
-	s = strings.trim_prefix(s, "U+")
-	s = strings.trim_prefix(s, "0x")
-	if len(s) < 2 || len(s) > 6 {
-		return 0, false
-	}
-	v: u32
-	for i in 0 ..< len(s) {
-		d: u32
-		switch s[i] {
-		case '0' ..= '9':
-			d = u32(s[i] - '0')
-		case 'a' ..= 'f':
-			d = u32(s[i] - 'a' + 10)
-		case 'A' ..= 'F':
-			d = u32(s[i] - 'A' + 10)
-		case:
-			return 0, false
-		}
-		v = v * 16 + d
-	}
-	return rune(v), true
-}
-
+// refilter is the grid's half of search_chars (core.odin): the same procedure
+// `emoji search` and `emoji list` answer with.
 refilter :: proc(st: ^St) {
-	clear(&st.hits)
-	q := strings.to_lower(strings.trim_space(query_text(st)), context.temp_allocator)
-
-	if q == "" {
-		if st.cat == CAT_RECENT {
-			for r in st.recent {
-				if i, ok := index_of_rune(r); ok {
-					append(&st.hits, i)
-				}
-			}
-		} else {
-			for c, i in CHARS {
-				if c.cat == st.cat {
-					append(&st.hits, i)
-				}
-			}
-		}
-		st.sel = clamp(st.sel, 0, max(0, len(st.hits) - 1))
-		return
-	}
-
-	// A literal codepoint wins, and is put first.
-	if cp, ok := parse_codepoint(q); ok {
-		if i, found := index_of_rune(cp); found {
-			append(&st.hits, i)
-		}
-	}
-
-	terms := strings.fields(q, context.temp_allocator)
-	for i in 0 ..< len(CHARS) {
-		if len(st.hits) > 0 && st.hits[0] == i {
-			continue
-		}
-		if match(st.lows[i], terms) {
-			append(&st.hits, i)
-		}
-	}
+	search_chars(&st.hits, query_text(st), st.cat, st.recent[:])
 	st.sel = clamp(st.sel, 0, max(0, len(st.hits) - 1))
-}
-
-index_of_rune :: proc(r: rune) -> (int, bool) {
-	for c, i in CHARS {
-		if c.cp == r {
-			return i, true
-		}
-	}
-	return 0, false
 }
 
 current :: proc(st: ^St) -> (Char, bool) {
@@ -497,66 +418,11 @@ copy_detached :: proc(text: string) -> bool {
 	return kit.launch({"wl-copy", "--", text})
 }
 
+// remember is choosing a character: it goes to the front of Recently used and
+// the list is written at once. `emoji use` is the same two calls.
 remember :: proc(st: ^St, r: rune) {
-	for c, i in st.recent {
-		if c == r {
-			ordered_remove(&st.recent, i)
-			break
-		}
-	}
-	inject_at(&st.recent, 0, r)
-	for len(st.recent) > RECENT_CAP {
-		pop(&st.recent)
-	}
-	save_recent(st)
-}
-
-recent_path :: proc(al := context.temp_allocator) -> string {
-	home, err := os.user_home_dir(context.temp_allocator)
-	if err != nil {
-		return ""
-	}
-	return fmt.aprintf("%s/.local/share/palmy-emoji", home, allocator = al)
-}
-
-load_recent :: proc(st: ^St) {
-	dir := recent_path()
-	if dir == "" {
-		return
-	}
-	data, err := os.read_entire_file_from_path(
-		fmt.tprintf("%s/recent", dir),
-		context.temp_allocator,
-	)
-	if err != nil {
-		return
-	}
-	it := string(data)
-	for line in strings.split_lines_iterator(&it) {
-		if cp, ok := parse_codepoint(strings.trim_space(line)); ok {
-			if _, found := index_of_rune(cp); found {
-				append(&st.recent, cp)
-			}
-		}
-		if len(st.recent) >= RECENT_CAP {
-			break
-		}
-	}
-}
-
-save_recent :: proc(st: ^St) {
-	dir := recent_path()
-	if dir == "" {
-		return
-	}
-	_ = os.make_directory_all(dir)
-	_ = os.chmod(dir, os.perm_number(0o700))
-	b := strings.builder_make(context.temp_allocator)
-	for r in st.recent {
-		fmt.sbprintfln(&b, "U+%04X", r)
-	}
-	path := fmt.tprintf("%s/recent", dir)
-	_ = os.write_entire_file(path, transmute([]u8)strings.to_string(b), os.perm_number(0o600))
+	recent_remember(&st.recent, r)
+	recent_save(st.recent[:])
 }
 
 // ---------------------------------------------------------------------------
