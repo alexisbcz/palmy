@@ -1,0 +1,109 @@
+# The four gaps closed in sheets, as a headless-record.sh take:
+#   bash apps/tools/headless-record.sh apps/sheets/sheets.bin out.mp4 apps/sheets/demo-gaps.txt 1240 760
+# Chart labels and resize, a 3-D total that narrows when the end of its span
+# is deleted, and a sheet-local name. The waits after each typed word and
+# each Return are not decoration: wtype delivers text and key events close
+# enough together that, without them, a character typed just before Return
+# lands after it.
+wait 1.5
+
+# Summary, and the cursor onto its chart: the chart outlines itself.
+chord ctrl+Next
+wait 0.8
+key Right
+key Right
+key Right
+wait 1.0
+# Alt+D: data labels, in the cells' own currency format.
+chord alt+d
+wait 1.4
+# Alt+Shift+Arrows resize it from the corner handle.
+chord alt+shift+Right
+wait 0.4
+chord alt+shift+Right
+wait 0.4
+chord alt+shift+Down
+wait 0.4
+chord alt+shift+Down
+wait 0.4
+chord alt+shift+Down
+wait 1.4
+
+# A third sheet, with a number in B9 like Sales has, moved between Sales and
+# Summary.
+chord alt+s
+wait 0.8
+chord ctrl+g
+wait 0.4
+type B9
+wait 0.35
+key Return
+wait 0.35
+type 340
+wait 0.35
+key Return
+wait 0.35
+wait 0.6
+chord ctrl+shift+Prior
+wait 1.0
+
+# On Summary, a 3-D total: Sales!B9 + Sheet3!B9.
+chord ctrl+Next
+wait 0.6
+chord ctrl+g
+wait 0.4
+type B13
+wait 0.35
+key Return
+wait 0.35
+type =SUM(Sales:Sheet3!B9)
+wait 0.35
+key Return
+wait 0.35
+wait 0.5
+key Up
+wait 1.8
+
+# Delete Sheet3, the span's end: the formula narrows to SUM(Sales!B9).
+chord ctrl+Prior
+wait 0.6
+key F10
+wait 0.4
+type delete this sheet
+wait 0.5
+key Return
+wait 0.8
+chord ctrl+g
+wait 0.4
+type B13
+wait 0.35
+key Return
+wait 0.35
+wait 2.0
+
+# A name only Summary sees: Ctrl+Alt+N on B11 (Units sold), then use it.
+chord ctrl+g
+wait 0.4
+type B11
+wait 0.35
+key Return
+wait 0.35
+chord ctrl+alt+n
+wait 0.4
+type Units
+wait 0.35
+key Return
+wait 0.35
+wait 0.6
+chord ctrl+g
+wait 0.4
+type B14
+wait 0.35
+key Return
+wait 0.35
+type =Units*2
+wait 0.35
+key Return
+wait 0.35
+key Up
+wait 2.0

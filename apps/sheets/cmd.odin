@@ -283,10 +283,17 @@ run_cmd :: proc(app: ^App, cmd: Cmd) {
 		}
 		undo_push(app)
 		gone := strings.clone(app.sh.name, context.temp_allocator)
+		// Narrowing the 3-D spans that end on this sheet happens inside the
+		// delete too; doing it first here only lets the status bar count it.
+		narrowed := book_fix_spans_for_delete(app.book, app.book.active)
 		book_delete_sheet(app.book, app.book.active)
 		sync_sheet(app)
 		follow_cursor(app)
-		set_status(app, "Deleted %s — references to it are now #REF!", gone)
+		if narrowed > 0 {
+			set_status(app, "Deleted %s — %d formula(s) spanning to it now stop short of it", gone, narrowed)
+		} else {
+			set_status(app, "Deleted %s — references to it are now #REF!", gone)
+		}
 	case .Sheet_Next:
 		use_sheet(app, (app.book.active + 1) % len(app.book.sheets))
 		set_status(app, "Sheet %s", app.sh.name)

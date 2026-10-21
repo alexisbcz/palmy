@@ -48,6 +48,16 @@ handle_keys :: proc(ui: ^p.Ctx, app: ^App) {
 	// arrive in the same frame.
 	typed := p.typed_text(ui)
 	alt_held := .Alt in ui.input.mods
+	// A chord's letter can also arrive as text, and when the modifier is
+	// released within the same frame (a scripted Alt+S does exactly that)
+	// the held-modifier test above misses it: Alt+S added a sheet *and*
+	// started typing "s" into A1 of it. A frame whose key events carried a
+	// command modifier is a command frame, not a typing one.
+	for k in ui.input.keys {
+		if k.mods & {.Alt, .Ctrl, .Super} != {} {
+			alt_held = true
+		}
+	}
 
 	if once(ui, 'q', {.Ctrl}) {
 		app.quit = true
