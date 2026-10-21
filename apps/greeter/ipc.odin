@@ -20,6 +20,7 @@ import "core:encoding/json"
 import "core:fmt"
 import "core:strings"
 import "core:sys/linux"
+import p "palmy:."
 
 Auth_Kind :: enum u8 {
 	Visible,
@@ -165,7 +166,7 @@ readable :: proc(c: ^Client, timeout_ms: i32 = 0) -> bool {
 		return false
 	}
 	fds := [1]linux.Poll_Fd{{fd = c.fd, events = {.IN}}}
-	n, e := linux.poll(fds[:], timeout_ms)
+	n, e := p.poll_fds(fds[:], int(timeout_ms)) // -1 must mean forever on arm64 too
 	if e != .NONE || n <= 0 {
 		return false
 	}
