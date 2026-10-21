@@ -45,6 +45,7 @@ Step :: enum {
 	Scroll,
 	Wake_Thread,
 	Wake_After,
+	Clipboard_Do,
 	Clipboard,
 	Resize,
 	Hide,
@@ -129,6 +130,18 @@ foreign cg {
 	CFRelease :: proc "c" (obj: rawptr) ---
 }
 
+start_wake_thread :: proc(app: ^p.App, s: ^State) {
+	advance(s, .Wake_Thread)
+	// A worker wakes the idle loop 200 ms from now.
+	s.wake_sent = time.tick_now()
+	t := thread.create_and_start_with_poly_data2(app, s, proc(app: ^p.App, s: ^State) {
+		time.sleep(200 * time.Millisecond)
+		s.waked_at = time.tick_now()
+		p.wake(app)
+	}, self_cleanup = true)
+	_ = t
+}
+
 advance :: proc(s: ^State, to: Step) {
 	s.step = to
 	s.step_frame = s.frame
@@ -198,9 +211,10 @@ main :: proc() {
 		case .Click_Button:
 			if s.clicks > 0 || time.tick_since(s.t_step) > time.Second {
 				check(s.clicks == 1, "the posted click pressed the button once (%d)", s.clicks)
-				advance(&s, .Click_Field)
-				post(mouse_event(app, .LeftMouseDown, 100, 60))
-				post(mouse_event(app, .LeftMouseUp, 100, 60))
+				// The wakes first, while no field is focused: a focused
+				// field's caret blink arms its own nearer wake_after, and
+				// arming is earliest-wins.
+				start_wake_thread(app, &s)
 			}
 
 		case .Click_Field:
@@ -268,15 +282,8 @@ main :: proc() {
 		case .Scroll:
 			if s.scrolled.y != 0 || time.tick_since(s.t_step) > time.Second {
 				check(s.scrolled.y > 0, "content scrolled down 30px reads as positive y (%v)", s.scrolled)
-				advance(&s, .Wake_Thread)
-				// A worker wakes the idle loop 200 ms from now.
-				s.wake_sent = time.tick_now()
-				t := thread.create_and_start_with_poly_data2(app, &s, proc(app: ^p.App, s: ^State) {
-					time.sleep(200 * time.Millisecond)
-					s.waked_at = time.tick_now()
-					p.wake(app)
-				}, self_cleanup = true)
-				_ = t
+				advance(&s, .Clipboard_Do)
+				p.wake(app)
 			}
 
 		case .Wake_Thread:
@@ -291,10 +298,19 @@ main :: proc() {
 			}
 
 		case .Wake_After:
+			// Other events (pointer, occlusion) can run frames meanwhile; the
+			// one that counts is the first at or after the deadline.
 			ms := time.duration_milliseconds(time.tick_since(s.t_step))
-			if ms >= 250 {
-				check(ms >= 295 && ms < 360, "wake_after(300 ms) fired after %.1f ms", ms)
+			if ms >= 299 {
+				check(ms < 360, "wake_after(300 ms) fired after %.1f ms", ms)
 				fmt.printfln("macos-check: wake_after(300 ms) ran its frame after %.1f ms", ms)
+				advance(&s, .Click_Field)
+				post(mouse_event(app, .LeftMouseDown, 100, 60))
+				post(mouse_event(app, .LeftMouseUp, 100, 60))
+			}
+
+		case .Clipboard_Do:
+			{
 				advance(&s, .Clipboard)
 				ok := p.clipboard_set(ui, "palmy ↔ macOS")
 				check(ok, "clipboard_set on a named pasteboard")
@@ -328,9 +344,19 @@ main :: proc() {
 				p.set_title(app, "palmy macOS check: retitled")
 				t := msg(^NS.String, win_of(app), "title")
 				check(string(NS.String_UTF8String(t)) == "palmy macOS check: retitled", "title set")
-				advance(&s, .Hide)
-				s.presents_at = 0
-				NS.Window_orderOut(win_of(app), nil)
+				// The occlusion checks need the window to be on the screen
+				// to begin with: on another Space, or behind a full-screen
+				// application, AppKit already reports it occluded.
+				occl := msg(NS.UInteger, win_of(app), "occlusionState")
+				if occl & 2 == 0 {
+					fmt.println("macos-check: the window is not on the visible screen (another Space?); skipping the hide/show checks")
+					advance(&s, .Close)
+					msg(nil, win_of(app), "performClose:", NS.id(nil))
+				} else {
+					advance(&s, .Hide)
+					s.presents_at = 0
+					NS.Window_orderOut(win_of(app), nil)
+				}
 			}
 
 		case .Hide:

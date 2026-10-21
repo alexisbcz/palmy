@@ -86,6 +86,9 @@ Cocoa_State :: struct {
 	frame_due:   i64, // mono_ns at which `frame_pending` lapses
 	interval:    i64, // one refresh of the window's screen, in ns
 	cursor:      Cursor,
+	// An NSProcessInfo activity held while a wake deadline is armed; see
+	// cocoa_timer_precision.
+	activity:    ^NS.Object,
 	in_key_down: bool,
 	clicks:      u32,
 	presents:    int,
@@ -590,6 +593,8 @@ cocoa_close :: proc(w: ^Window) {
 	}
 	NS.scoped_autoreleasepool()
 	cocoa_wake_detach(w)
+	intrinsics.atomic_store(&w.wake_deadline, 0)
+	cocoa_timer_precision(w)
 	for x, i in g_cocoa.windows {
 		if x == w {
 			unordered_remove(&g_cocoa.windows, i)
@@ -745,6 +750,7 @@ cocoa_wait :: proc(w: ^Window, timeout_ms: int) -> bool {
 	if cs.wake_cf != nil {
 		CFFileDescriptorEnableCallBacks(cs.wake_cf, CF_READ_CALLBACK)
 	}
+	cocoa_timer_precision(w)
 	until := timeout < 0 ? NS.Date_distantFuture() : NS.Date_dateWithTimeIntervalSinceNow(NS.TimeInterval(f64(timeout) / 1000))
 	ev := NS.Application_nextEventMatchingMask(g_cocoa.app, NS.EventMaskAny, until, NS.DefaultRunLoopMode, true)
 	for ev != nil {
@@ -758,6 +764,33 @@ cocoa_wait :: proc(w: ^Window, timeout_ms: int) -> bool {
 	pace(w)
 	clip_poll(w)
 	return w.conn.fatal == "" && cs.open
+}
+
+// cocoa_timer_precision keeps an armed `wake_after` on time.
+//
+// When none of an application's windows can be seen, App Nap coalesces its
+// timers: measured with a window on another Space for 45 s, six
+// wake_after(500 ms) ran 98-118 ms late without this and 1-2 ms late with it.
+// A password manager's clipboard clear is exactly a deadline on a window
+// nobody is looking at. So while a deadline is armed the process
+// holds a user-initiated, latency-critical activity, which exempts it from
+// App Nap; with no deadline it holds none, and an idle window naps (it is
+// parked with no timer at all then, so there is nothing to coalesce).
+@(private)
+cocoa_timer_precision :: proc(w: ^Window) {
+	cs := &w.cocoa
+	armed := intrinsics.atomic_load(&w.wake_deadline) != 0
+	pi := NS.ProcessInfo_processInfo()
+	if armed && cs.activity == nil {
+		// NSActivityUserInitiatedAllowingIdleSystemSleep | NSActivityLatencyCritical
+		opts := u64(0x00FF_FFFF) &~ u64(1 << 20) | u64(0xFF_0000_0000)
+		a := msg(^NS.Object, pi, "beginActivityWithOptions:reason:", opts, ns_string("palmy: a wake_after deadline is armed"))
+		cs.activity = msg(^NS.Object, a, "retain")
+	} else if !armed && cs.activity != nil {
+		msg(nil, pi, "endActivity:", cs.activity)
+		msg(nil, cs.activity, "release")
+		cs.activity = nil
+	}
 }
 
 // The wake descriptor (window.odin): a kqueue with one user event.
