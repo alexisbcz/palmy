@@ -48,6 +48,7 @@ View :: enum u8 {
 	Chat,
 	Log,
 	Settings,
+	Prompts,
 }
 
 Item_Kind :: enum u8 {
@@ -142,6 +143,16 @@ St :: struct {
 	fixture:      bool, // a screenshot: no network, no worker
 	remote_ask:   bool, // the opt-in dialog is up
 	started_at:   f64,
+	// Editing in place (library.odin).
+	editing:      Editing,
+	ed:           Line_Edit, // the search field, or a title being renamed
+	search_q:     string, // the query whose hits the sidebar shows; "" for the list
+	hits:         [dynamic]Conv_Hit,
+	prompts:      [dynamic]Prompt,
+	psel:         int,
+	pedit_from:   string, // the name the prompt being edited had
+	ped_name:     Line_Edit,
+	ped_body:     Line_Edit,
 }
 
 main :: proc() {
@@ -236,6 +247,11 @@ st_init :: proc(st: ^St) {
 	st.sh.lines = make([dynamic]string)
 	st.sel = -1
 	st.pinned = true
+	st.hits = make([dynamic]Conv_Hit)
+	st.prompts = make([dynamic]Prompt)
+	st.ed.buf = make([dynamic]u8)
+	st.ped_name.buf = make([dynamic]u8)
+	st.ped_body.buf = make([dynamic]u8)
 }
 
 toast :: proc(st: ^St, msg: string) {
@@ -303,6 +319,7 @@ select_identity :: proc(st: ^St, k: int) {
 		return
 	}
 	st.sel = k
+	end_search(st)
 	clear(&st.convs)
 	clear(&st.items)
 	clear(&st.log)
@@ -663,9 +680,33 @@ handle_keys :: proc(ui: ^p.Ctx, app: ^p.App, st: ^St) {
 		p.quit_app(app)
 		return
 	}
+	// An edit in place has the keys until Enter or Esc (library.odin).
+	if edit_keys(ui, st) {return}
 	if p.key_pressed(ui, p.KEY_ESCAPE) {
-		stop(st)
+		if st.sh.running {
+			stop(st)
+		} else if st.search_q != "" {
+			end_search(st)
+		}
 		return
+	}
+	if cur_ident(st) != nil {
+		if p.shortcut(ui, 'p', {.Ctrl}) || p.key_pressed(ui, p.KEY_F7) {
+			if st.view == .Prompts {st.view = .Chat} else {open_prompts(st)}
+			return
+		}
+		if p.shortcut(ui, 'f', {.Ctrl}) || p.key_pressed(ui, p.KEY_F8) {
+			begin_search(st)
+			return
+		}
+		if p.shortcut(ui, 'r', {.Ctrl}) || p.key_pressed(ui, p.KEY_F9) {
+			begin_rename(st)
+			return
+		}
+		if st.view == .Chat && p.shortcut(ui, 's', {.Ctrl}) {
+			new_prompt(st, string(st.input[:]))
+			return
+		}
 	}
 	// Ctrl+0 is All identities; Ctrl+1..9 an identity, as in the shell.
 	for d in 0 ..= 9 {
@@ -708,6 +749,9 @@ handle_keys :: proc(ui: ^p.Ctx, app: ^p.App, st: ^St) {
 	}
 	if st.view == .Chat && cur_ident(st) != nil {
 		composer_keys(ui, st)
+	}
+	if st.view == .Prompts && cur_ident(st) != nil {
+		prompts_keys(ui, st)
 	}
 }
 

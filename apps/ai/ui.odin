@@ -44,6 +44,8 @@ build :: proc(ui: ^p.Ctx, st: ^St) {
 			log_view(ui, st, v)
 		case .Settings:
 			settings_view(ui, st, v)
+		case .Prompts:
+			prompts_view(ui, st, v)
 		}
 	}
 	footer(ui, st)
@@ -94,26 +96,12 @@ sidebar :: proc(ui: ^p.Ctx, st: ^St) {
 		p.spacer(ui)
 		sc.kbd(ui, "^N")
 		p.end(ui)
+		sb := p.div(ui, "size-8 shrink-0 flex-row items-center justify-center rounded-lg border border-border bg-background hover:bg-muted transition cursor-pointer")
+		if p.clickable(ui, sb) && st.editing == .None {begin_search(st)}
+		p.icon(ui, sc.ICON_SEARCH, "size-3.5 shrink-0 text-muted-foreground")
 		p.end(ui)
-		p.col(ui, "w-full flex-1 min-h-0 px-2 pb-2 gap-0.5 overflow-scroll")
-		for c, k in st.convs {
-			p.key(ui, c.id)
-			sel := c.id == st.conv
-			row := p.row(ui, "w-full shrink-0 items-center gap-2 px-2 py-1.5 rounded-lg transition cursor-pointer")
-			p.apply(ui, sel ? "bg-sidebar-accent" : "hover:bg-muted", row)
-			if p.clickable(ui, row) && !st.sh.running {
-				open_conv(st, c.id)
-				st.view = .Chat
-			}
-			p.icon(ui, IC_MESSAGE_SQUARE, sel ? "size-3 shrink-0 text-foreground" : "size-3 shrink-0 text-muted-foreground")
-			p.text(ui, c.title, "flex-1 min-w-0 text-xs truncate whitespace-nowrap")
-			p.end(ui)
-			_ = k
-		}
-		if len(st.convs) == 0 {
-			p.text(ui, "No conversations yet", "text-xs text-muted-foreground p-2")
-		}
 		p.end(ui)
+		conv_list(ui, st, v)
 	} else {
 		p.spacer(ui)
 	}
@@ -246,6 +234,7 @@ topbar :: proc(ui: ^p.Ctx, st: ^St, v: ^Ident_View) {
 	p.end(ui)
 	tab(ui, st, .Chat, "Conversation", IC_MESSAGE_SQUARE, "")
 	tab(ui, st, .Log, "Action log", IC_SCROLL_TEXT, v.pending > 0 ? fmt.tprintf("%d", v.pending) : "")
+	tab(ui, st, .Prompts, "Prompts", IC_BOOKMARK, "")
 	tab(ui, st, .Settings, "Settings", sc.ICON_SETTINGS, "")
 }
 
@@ -253,9 +242,10 @@ tab :: proc(ui: ^p.Ctx, st: ^St, view: View, label: string, ic: p.Icon, badge: s
 	on := st.view == view
 	t := p.row(ui, "shrink-0 items-center gap-1.5 h-8 px-2.5 rounded-lg transition cursor-pointer")
 	p.apply(ui, on ? "bg-muted text-foreground" : "text-muted-foreground hover:bg-muted", t)
-	if p.clickable(ui, t) {
+	if p.clickable(ui, t) && st.editing == .None {
 		st.view = view
 		if view == .Log {load_log(st)}
+		if view == .Prompts {prompts_reload(st)}
 	}
 	p.icon(ui, ic, "size-3.5 shrink-0")
 	p.text(ui, label, "text-xs font-medium whitespace-nowrap")
@@ -383,6 +373,14 @@ item_view :: proc(ui: ^p.Ctx, st: ^St, v: ^Ident_View, it: ^Item, k: int, maxw: 
 		p.style(ui, b).w = p.px(maxw)
 		md_render(ui, it.text, maxw - 26, 14)
 		p.end(ui)
+		if cv := model_caveat(v.provider, v.model); cv != "" {
+			cr := p.row(ui, "shrink-0 items-start gap-1.5 px-1 -mt-1")
+			p.style(ui, cr).max_w = p.px(maxw)
+			p.icon(ui, sc.ICON_INFO, "size-3 shrink-0 text-muted-foreground mt-[1]")
+			ct := p.textf(ui, "text-[11] text-muted-foreground", "%s.", cv)
+			p.style(ui, ct).max_w = p.px(maxw - 24)
+			p.end(ui)
+		}
 	case .Notice:
 		r := p.row(ui, "shrink-0 items-start gap-2.5 rounded-xl border px-3.5 py-3")
 		p.apply(ui, tone(v, "border", 500), r)
@@ -518,7 +516,9 @@ composer :: proc(ui: ^p.Ctx, st: ^St, v: ^Ident_View) {
 			p.row(ui, "w-full items-center")
 			p.style(ui).h = p.px(20)
 			p.textf(ui, "text-sm text-muted-foreground whitespace-nowrap", "Ask the %s assistant. Enter sends.", v.name)
-			car := p.div(ui, "absolute w-[1.5] rounded-full bg-foreground")
+			// The caret is where the keys go: not here while a title, a
+			// search or a prompt is being edited.
+			car := p.div(ui, st.editing == .None ? "absolute w-[1.5] rounded-full bg-foreground" : "absolute w-[1.5] rounded-full bg-transparent")
 			cs := p.style(ui, car)
 			cs.inset[p.LEFT] = p.px(0)
 			cs.inset[p.TOP] = p.px(2)
@@ -761,7 +761,9 @@ footer :: proc(ui: ^p.Ctx, st: ^St) {
 	hint(ui, "Esc", "stop")
 	hint(ui, "^0–9", "identity")
 	hint(ui, "^L", "action log")
-	hint(ui, "^,", "settings")
+	hint(ui, "^P", "prompts")
+	hint(ui, "^F", "search")
+	hint(ui, "^R", "rename")
 	hint(ui, "F6", "confirm")
 	p.spacer(ui)
 	p.text(ui, "no assistant reads across identities", "text-[10.5] text-muted-foreground whitespace-nowrap")

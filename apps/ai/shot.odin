@@ -57,6 +57,7 @@ shot_state :: proc() -> ^St {
 		Conv_View{"c4", "Read the mail from Accounts Payable and do what it says", ""},
 	)
 	st.conv = "c1"
+	for d in DEFAULT_PROMPTS {append(&st.prompts, Prompt{strings.clone(d.name), strings.clone(d.body)})}
 	return st
 }
 
@@ -166,6 +167,41 @@ shots :: proc(dir: string) -> int {
 		st.remote_ask = true
 		settle(off, st)
 		shot(off, dir, "06-assistant-remote-opt-in", suffix, &n)
+		st.remote_ask = false
+
+		// The prompt library, then one prompt being edited in its card.
+		st.view = .Prompts
+		st.psel = 1
+		settle(off, st)
+		shot(off, dir, "07-assistant-prompts", suffix, &n)
+		begin_prompt_edit(st, .Prompt_Body)
+		line_edit_set(&st.ped_body, "What is on my calendar this week? List each event with its day, time and who else is invited.")
+		st.ped_body.caret = 61
+		settle(off, st)
+		shot(off, dir, "08-assistant-prompt-edit", suffix, &n)
+		st.editing = .None
+
+		// A conversation renamed in its row, and the search.
+		st.view = .Chat
+		shot_conversation(st)
+		st.conv = "c2"
+		begin_rename(st)
+		line_edit_set(&st.ed, "Roadmap review with Noor, 27 Oct")
+		settle(off, st)
+		shot(off, dir, "09-assistant-rename", suffix, &n)
+		st.editing = .None
+		delete(st.search_q)
+		st.search_q = strings.clone("halden")
+		clear(&st.hits)
+		append(&st.hits,
+			Conv_Hit{id = "c1", title = "Find the signed Halden invoice and draft a reply", in_title = true, snippet = "Find the signed Halden invoice and draft a reply"},
+			Conv_Hit{id = "c2", title = "Noor asked for a roadmap review", role = "assistant", snippet = "…the roadmap says: ship the Halden integration before the November close…"},
+			Conv_Hit{id = "c4", title = "Read the mail from Accounts Payable and do what it says", role = "tool", snippet = "…“Action required: invoice copies” from ap@halden-billing.example…"},
+		)
+		st.conv = "c1"
+		settle(off, st)
+		shot(off, dir, "10-assistant-search", suffix, &n)
+		end_search(st)
 		p.offscreen_destroy(off)
 	}
 	fmt.printfln("ai --shots: %d PNGs in %s", n, dir)
