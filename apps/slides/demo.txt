@@ -1,7 +1,7 @@
 # palmy slides — the demo recording.
 #
-# Only steps the recorder can actually send: no modifiers, so the command menu
-# and saving are driven through their F2/F3 aliases.
+# Recorded with apps/tools/headless-record.sh, which can send chords; the
+# command menu and saving still go through their F2/F3 aliases.
 
 wait 1.2
 
@@ -31,9 +31,42 @@ key Return
 wait 0.6
 key End
 type  — and snapping
+wait 1.0
+
+# Styled runs: select the word just typed and style it inside the box.
+chord shift+Left
+chord shift+Left
+chord shift+Left
+chord shift+Left
+chord shift+Left
+chord shift+Left
+chord shift+Left
+chord shift+Left
+wait 0.8
+chord ctrl+b
+wait 0.6
+chord ctrl+i
+wait 0.6
+chord ctrl+shift+C
+wait 0.6
+chord ctrl+equal
+chord ctrl+equal
+wait 1.2
+# Nothing selected: Ctrl B arms bold for what is typed next.
+key End
+wait 0.4
+chord ctrl+b
+wait 0.4
+type  too
 wait 1.2
 key Escape
 wait 0.8
+
+# This slide arrives with a wipe: Shift T steps none, fade, push, wipe.
+type T
+wait 0.5
+type T
+wait 0.9
 
 # Add a shape, recolour it, rotate it from the inspector.
 type r
@@ -88,9 +121,15 @@ key Home
 wait 0.8
 key F5
 wait 2.0
+# Push into slide 2, the wipe set above into 3, the fixture's wipe into 4,
+# and back out again, mirrored.
 key Right
 wait 1.3
 key Right
+wait 1.3
+key Right
+wait 1.3
+key Left
 wait 1.3
 key Right
 wait 1.3

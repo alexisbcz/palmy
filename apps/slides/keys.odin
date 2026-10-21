@@ -1007,6 +1007,7 @@ text_keys :: proc(ui: ^p.Ctx, st: ^St) {
 		{'b', {.Ctrl}, .Run_Bold},
 		{'i', {.Ctrl}, .Run_Italic},
 		{'C', {.Ctrl, .Shift}, .Run_Colour},
+		{'c', {.Ctrl, .Shift}, .Run_Colour}, // as some keymaps deliver it
 		{'=', {.Ctrl}, .Run_Bigger},
 		{'+', {.Ctrl, .Shift}, .Run_Bigger},
 		{'-', {.Ctrl}, .Run_Smaller},
@@ -1120,7 +1121,14 @@ ed_keys :: proc(ui: ^p.Ctx, ed: ^Editor, multiline: bool, selecting := false) ->
 	if !selecting {
 		ed.anchor = ed.caret
 	}
-	if typed := p.typed_text(ui); len(typed) > 0 {
+	// The frame's typed text and its keys arrive separately, so their order
+	// within one frame is lost. Typing first is right for a caret (a fast
+	// "ab" then Left), but with a selection up it would replace the selection
+	// even when the person moved off it first — End, then typing, landing in
+	// one frame. So with a selection the keys go first.
+	typed := p.typed_text(ui)
+	keys_first := ed.anchor != ed.caret
+	if !keys_first && len(typed) > 0 {
 		a, b := ed_sel(ed)
 		ed_replace(ed, a, b, transmute([]u8)typed, true)
 		changed = true
@@ -1243,6 +1251,11 @@ ed_keys :: proc(ui: ^p.Ctx, ed: ^Editor, multiline: bool, selecting := false) ->
 	}
 	ed.caret = clamp(ed.caret, 0, len(ed.buf))
 	ed.anchor = clamp(ed.anchor, 0, len(ed.buf))
+	if keys_first && len(typed) > 0 {
+		a, b := ed_sel(ed)
+		ed_replace(ed, a, b, transmute([]u8)typed, true)
+		changed = true
+	}
 	return
 }
 
