@@ -178,16 +178,11 @@ main :: proc() {
 		if st.toast != "" {
 			left := time.tick_diff(time.tick_now(), st.toast_until)
 			if left <= 0 {
-				// This frame was built with the toast still in it, so another
-				// is needed to take it off the screen. Two, in fact: measured
-				// on headless sway, the first frame after the clear is
-				// presented and the screen still shows the toast (palmy's
-				// damage tracking; with PALMY_DAMAGE=off one is enough), so a
-				// second is asked for shortly after.
+				// This frame was built with the toast still in it, so one
+				// more takes it off the screen.
 				delete(st.toast)
 				st.toast = ""
 				p.redraw(ui)
-				p.wake_after(ui, 50 * time.Millisecond)
 			} else {
 				p.wake_after(ui, left + time.Millisecond)
 			}

@@ -15,7 +15,6 @@ import "core:net"
 import "core:os"
 import "core:strconv"
 import "core:strings"
-import "core:time"
 import ck "../cloudkit"
 import kit "kit:."
 import p "palmy:."
@@ -439,13 +438,10 @@ run_ui :: proc(a: ^App) {
 		pin_to_bottom(a, ui)
 
 		if a.toast != "" && a.now > a.toast_t {
-			// This frame still drew the toast. Two more take it off the
-			// screen: measured on headless sway, the first frame after a
-			// clear is presented and the toast stays visible (palmy's damage
-			// tracking; PALMY_DAMAGE=off needs only one).
+			// This frame still drew the toast; one more takes it off the
+			// screen.
 			a.toast = ""
 			p.redraw(ui)
-			p.wake_after(ui, 50 * time.Millisecond)
 		}
 		// Anything sent this frame (a key, a read cursor) may have a reply
 		// already on its way; the watcher sees it. Deadlines are armed here.
