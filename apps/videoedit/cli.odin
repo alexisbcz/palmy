@@ -185,6 +185,7 @@ surface :: proc() -> ^kit.Surface {
 			summary    = "a non-linear video editor: projects, clips, titles, captions, export",
 			gui        = true,
 			takes_path = true,
+			takes_word = kit.cli_word_is_path, // a file opens; a typo is a usage error
 			selftest   = cli_selftest,
 			notes      = SURFACE_NOTES,
 			commands   = COMMANDS,

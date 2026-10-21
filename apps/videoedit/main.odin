@@ -175,17 +175,6 @@ main :: proc() {
 	if code, handled := kit.cli(surface()); handled {
 		os.exit(code)
 	}
-	// takes_path lets a bare word through to the window, which is right for a
-	// file and wrong for a mistyped verb: a window instead of an answer is a
-	// command that never returns to whatever ran it. So the window only takes
-	// words that name something on disk; anything else is a usage error.
-	for a in args {
-		if !strings.has_prefix(a, "-") && !os.exists(a) {
-			fmt.eprintfln("videoedit: %q is neither a command nor a file", a)
-			fmt.eprint(kit.cli_help_text(surface()))
-			os.exit(kit.EXIT_USAGE)
-		}
-	}
 
 	ed := new(Editor)
 	defer free(ed)
