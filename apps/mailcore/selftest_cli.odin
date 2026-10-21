@@ -111,7 +111,7 @@ test_cli :: proc(t: ^T) {
 			if !tcheck(t, fmt.tprintf("%q is typed as the binary is named", ex), len(words) > 1 && words[0] == "mailcore") {
 				continue
 			}
-			call, code := kit.cli_bind(s, scrub_secrets(words[1:]))
+			call, code := kit.cli_bind(s, words[1:])
 			teq_int(t, fmt.tprintf("%q parses", ex), code, kit.EXIT_OK)
 			tcheck(t, fmt.tprintf("and binds to %s", c.verb), call.cmd != nil && call.cmd.verb == c.verb)
 			examples += 1
@@ -277,7 +277,18 @@ test_cli :: proc(t: ^T) {
 		log, _ := os.read_entire_file_from_path(audit, context.temp_allocator)
 		tcheck(t, "the login is in the audit log", strings.contains(string(log), `"verb":"login"`))
 		tcheck(t, "but its password is not", !strings.contains(string(log), "synthetic-secret-42"))
-		tcheck(t, "only a placeholder", strings.contains(string(log), REDACTED))
+		tcheck(t, "only a placeholder", strings.contains(string(log), kit.CLI_REDACTED))
+		out, code = run_self(env, "login", "--email", "ada@example.test", "--password=synthetic-secret-43", "--nope", "--json")
+		teq_int(t, "a login line the kit refuses", code, kit.EXIT_USAGE)
+		tcheck(t, "does not repeat its password", !strings.contains(out, "synthetic-secret-43"))
+		log, _ = os.read_entire_file_from_path(audit, context.temp_allocator)
+		tcheck(t, "nor log it, though the line never bound", !strings.contains(string(log), "synthetic-secret-43"))
+		out, code = run_self(env, "login", "--email", "ada@example.test", "--json")
+		teq_int(t, "login with neither --password nor --password-file is a usage error", code, kit.EXIT_USAGE)
+		tcheck(t, "which names both", strings.contains(out, "--password-file"))
+		schema, _ := run_self(env, "--schema")
+		tcheck(t, "the schema says the password is secret", strings.contains(schema, `"secret": true`))
+		tcheck(t, "and its examples do not carry one", !strings.contains(schema, "alice-pw"))
 		tcheck(t, "and no session was written", !os.exists(fmt.tprintf("%s/palmy-mail/.palmy/session", xdg)))
 	}
 

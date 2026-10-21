@@ -17,8 +17,9 @@ package main
 //     (resolve_root), and the reads — folders, list, thread — never create
 //     anything: a mailbox that is not there is "not found", not an empty one
 //     made on the spot;
-//   - passwords and tokens are taken out of the command line before the kit
-//     sees it (see scrub_secrets), so the audit log never holds one.
+//   - passwords and tokens are declared `secret`, so the kit never repeats
+//     one back: the audit log, --json, a refusal and the schema's examples
+//     all show <redacted> where it was.
 
 import "core:fmt"
 import "core:os"
@@ -205,8 +206,8 @@ COMMANDS := []kit.Command {
 			{name = "port", kind = .Int, help = "the server's port; there are no defaults", required = true},
 			{name = "host", kind = .String, help = "a 127.0.0.0/8 address; nothing else is dialled", def = "127.0.0.1"},
 			{name = "user", kind = .String, help = "the login"},
-			{name = "password", kind = .String, help = "the password (kept out of the audit log)"},
-			{name = "token", kind = .String, help = "a bearer token instead of a password (JMAP)"},
+			{name = "password", kind = .String, secret = true, help = "the password (kept out of the audit log)"},
+			{name = "token", kind = .String, secret = true, help = "a bearer token instead of a password (JMAP)"},
 			{name = "token-file", kind = .Path, help = "read the token from this file"},
 			{name = "account", kind = .String, help = "which JMAP account, by id or name"},
 			{name = "folder", kind = .String, help = "the folder, or * for all of them", def = INBOX},
@@ -241,8 +242,8 @@ COMMANDS := []kit.Command {
 			{name = "to", kind = .String, help = "the recipient", required = true},
 			{name = "host", kind = .String, help = "a 127.0.0.0/8 address", def = "127.0.0.1"},
 			{name = "user", kind = .String, help = "the login, and the From address"},
-			{name = "password", kind = .String, help = "the password (kept out of the audit log)"},
-			{name = "token", kind = .String, help = "an access token, used as the password"},
+			{name = "password", kind = .String, secret = true, help = "the password (kept out of the audit log)"},
+			{name = "token", kind = .String, secret = true, help = "an access token, used as the password"},
 			{name = "token-file", kind = .Path, help = "read the token from this file"},
 			{name = "subject", kind = .String},
 			{name = "text", kind = .String, help = "the body"},
@@ -268,7 +269,13 @@ COMMANDS := []kit.Command {
 		effect = .Mutate,
 		flags = {
 			{name = "email", kind = .String, help = "the account", required = true},
-			{name = "password", kind = .String, help = "the password (kept out of the audit log)"},
+			{
+				name = "password",
+				kind = .String,
+				secret = true,
+				unless = {"password-file"},
+				help = "the password (kept out of the audit log)",
+			},
 			{name = "password-file", kind = .Path, help = "read the password from this file"},
 			{name = "auth-port", kind = .Int, def = "55529", help = "GoTrue on 127.0.0.1"},
 			{name = "jmap-port", kind = .Int, def = "55580", help = "palm-maild's JMAP on 127.0.0.1"},
@@ -365,9 +372,8 @@ cli_selftest :: proc() -> int {
 	return cmd_selftest(rest[:])
 }
 
-// cli_main is main. The two legacy shapes are folded into the declared ones
-// here and nowhere else: `palm <verb>` loses its prefix, and secrets leave the
-// command line.
+// cli_main is main. The legacy shape is folded into the declared one here and
+// nowhere else: `palm <verb>` loses its prefix.
 cli_main :: proc(args: []string) -> int {
 	argv := args
 	if len(argv) == 0 {
@@ -381,7 +387,6 @@ cli_main :: proc(args: []string) -> int {
 		}
 		argv = argv[1:]
 	}
-	argv = scrub_secrets(argv)
 	code, _ := kit.cli_args(surface(), argv)
 	return code
 }
@@ -389,54 +394,16 @@ cli_main :: proc(args: []string) -> int {
 // ---------------------------------------------------------------------------
 // Secrets
 //
-// kit writes the argv of every command that is not a read into the audit log,
-// and a password given as --password would land there in clear. The kit has
-// no notion of a secret parameter, so the value is lifted out here, before
-// the kit ever sees it, and the command line carries a placeholder instead.
+// The kit writes the argv of every command that is not a read into the audit
+// log. --password and --token are declared `secret`, so it writes
+// <redacted> in their place (and scrubs them from everything it prints);
+// what reaches the commands is the real value.
 // ---------------------------------------------------------------------------
 
-SECRET_FLAGS :: [?]string{"password", "token"}
-REDACTED :: "<redacted>"
-
-@(private = "file")
-g_secrets: map[string]string
-
-scrub_secrets :: proc(args: []string) -> []string {
-	out := make([dynamic]string, 0, len(args), context.allocator)
-	for i := 0; i < len(args); i += 1 {
-		a := args[i]
-		matched := false
-		for name in SECRET_FLAGS {
-			flag := fmt.tprintf("--%s", name)
-			if a == flag && i + 1 < len(args) {
-				g_secrets[name] = args[i + 1]
-				append(&out, flag, REDACTED)
-				i += 1
-				matched = true
-				break
-			}
-			if strings.has_prefix(a, fmt.tprintf("%s=", flag)) {
-				g_secrets[name] = a[len(flag) + 1:]
-				append(&out, fmt.aprintf("%s=%s", flag, REDACTED))
-				matched = true
-				break
-			}
-		}
-		if !matched {
-			append(&out, a)
-		}
-	}
-	return out[:]
-}
-
-// secret is a secret flag's real value.
+// secret is a secret flag's value.
 @(private = "file")
 secret :: proc(c: ^kit.Call, name: string) -> string {
-	v := kit.cli_str(c, name)
-	if v == REDACTED {
-		return g_secrets[name]
-	}
-	return v
+	return kit.cli_str(c, name)
 }
 
 // secret_or_file is a secret flag, or the trimmed contents of its -file twin.
