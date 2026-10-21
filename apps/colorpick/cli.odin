@@ -104,7 +104,7 @@ COMMANDS := []kit.Command {
 		effect = .Read,
 		args = {{name = "color", kind = .String, required = true, help = "#3b82f6, 3b82f6, #38f, rgb(59 130 246), hsl(217 91% 60%), oklch(0.62 0.19 260)"}},
 		out = COLOR_FIELDS,
-		examples = {"color convert \"#3b82f6\" --json", "color convert \"oklch(0.7 0.4 150)\" --json"},
+		examples = {"colorpick convert \"#3b82f6\" --json", "colorpick convert \"oklch(0.7 0.4 150)\" --json"},
 		run = cmd_convert,
 	},
 	{
@@ -116,7 +116,7 @@ COMMANDS := []kit.Command {
 			{name = "background", kind = .String, required = true},
 		},
 		out = CONTRAST_FIELDS,
-		examples = {"color contrast \"#767676\" white --json", "color contrast \"rgb(255 255 255)\" \"#3b82f6\" --json"},
+		examples = {"colorpick contrast \"#767676\" white --json", "colorpick contrast \"rgb(255 255 255)\" \"#3b82f6\" --json"},
 		run = cmd_contrast,
 	},
 	{
@@ -125,7 +125,7 @@ COMMANDS := []kit.Command {
 		effect = .Read,
 		aliases = {"list"},
 		out = PALETTE_FIELDS,
-		examples = {"color palette --json"},
+		examples = {"colorpick palette --json"},
 		run = cmd_palette,
 	},
 	{
@@ -135,7 +135,7 @@ COMMANDS := []kit.Command {
 		aliases = {"add"},
 		args = {{name = "color", kind = .String, required = true}},
 		out = SAVED_FIELDS,
-		examples = {"color save \"#e11d48\" --json"},
+		examples = {"colorpick save \"#e11d48\" --json"},
 		run = cmd_save,
 	},
 	{
@@ -145,7 +145,7 @@ COMMANDS := []kit.Command {
 		aliases = {"rm"},
 		args = {{name = "color", kind = .String, required = true, help = "a colour, matched by its 8-bit value"}},
 		out = REMOVED_FIELDS,
-		examples = {"color remove \"#e11d48\" --json"},
+		examples = {"colorpick remove \"#e11d48\" --json"},
 		run = cmd_remove,
 	},
 	{
@@ -153,7 +153,7 @@ COMMANDS := []kit.Command {
 		summary = "empty the palette",
 		effect = .Destructive,
 		out = CLEARED_FIELDS,
-		examples = {"color clear --yes --json"},
+		examples = {"colorpick clear --yes --json"},
 		run = cmd_clear,
 	},
 	{
@@ -167,7 +167,7 @@ COMMANDS := []kit.Command {
 			{name = "top", kind = .Int, def = "0", help = "y, from the top edge"},
 		},
 		out = SAMPLE_FIELDS,
-		examples = {"color sample screenshot.png --left 40 --top 12 --json"},
+		examples = {"colorpick sample screenshot.png --left 40 --top 12 --json"},
 		run = cmd_sample,
 	},
 	{
@@ -179,7 +179,7 @@ COMMANDS := []kit.Command {
 			{name = "top", kind = .Int, help = "y in the capture"},
 		},
 		out = SAMPLE_FIELDS,
-		examples = {"color pick --json", "color pick --left 100 --top 100 --json"},
+		examples = {"colorpick pick --json", "colorpick pick --left 100 --top 100 --json"},
 		run = cmd_pick,
 	},
 }
