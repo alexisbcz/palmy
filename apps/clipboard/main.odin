@@ -57,6 +57,7 @@ g_test_clip: string
 Capture :: enum u8 {
 	None, // no way to: no data control and no wl-paste
 	Offers, // palmy's offer API with data control: every change, focused or not
+	Offers_Focused, // the same offers without data control: one at each focus
 	Wl_Paste, // the fallback: `wl-paste --watch` and its spool (store.odin)
 }
 
@@ -104,10 +105,25 @@ main :: proc() {
 		st.capture = .Offers
 		sync.atomic_store(&g.enabled, true)
 		set_status("watching the selection (data control, focused or not)")
-	case .Focused, .Unsupported:
-		// `.Focused` would hand this window an offer only when it gains
-		// focus; a clipboard manager that misses everything copied while it
-		// is in the background is not one. Stop watching and fall back.
+	case .Focused:
+		// GNOME (mutter, gnome-shell) has no data control, and shows the
+		// selection to the focused window only — by design, so a background
+		// program cannot read every copy. This window therefore records the
+		// selection each time it is focused: the latest copy made while it
+		// was in the background, not every one. That used to fall back to
+		// `wl-paste --watch`, which on the same compositors refuses to run
+		// ("Watch mode requires ... data-control"), so the window recorded
+		// nothing at all while saying it was watching; and wl-paste's
+		// one-shot reads there work by flashing a surface to steal focus.
+		// The offer path keeps the sensitivity gate and the read on one offer,
+		// as with data control. Tested for real on mutter and gnome-shell by
+		// focused-test.sh, which fails six of its checks without this.
+		st.capture = .Offers_Focused
+		sync.atomic_store(&g.enabled, true)
+		set_status("recording the selection each time this window is focused (no data control here)")
+	case .Unsupported:
+		// No window protocol to watch with at all: wl-paste is the last
+		// resort, where it can run.
 		p.clipboard_watch(app, {})
 		if st.have_wl {
 			st.capture = .Wl_Paste
@@ -135,7 +151,7 @@ main :: proc() {
 
 		// Offers first, before the frame takes the store: storing one takes
 		// the lock itself.
-		if st.capture == .Offers {
+		if st.capture == .Offers || st.capture == .Offers_Focused {
 			drain_offers(ui)
 		}
 
@@ -580,6 +596,15 @@ header :: proc(ui: ^p.Ctx, st: ^St) {
 	if st.capture == .None {
 		// No data control and no wl-paste: nothing can be recorded.
 		sc.badge(ui, "cannot watch the clipboard", .Destructive)
+	} else if on && st.capture == .Offers_Focused {
+		// Honest about what it can see: the selection at each focus, not
+		// every copy made while it was in the background.
+		p.row(ui, "shrink-0 items-center gap-1.5 h-5 px-2 rounded-4xl bg-amber-500/15")
+		p.div(ui, "size-1.5 rounded-full bg-amber-400")
+		p.end(ui)
+		p.text(ui, "Recording when focused", "text-xs font-medium text-amber-400 whitespace-nowrap")
+		p.style(ui).shrink = 0
+		p.end(ui)
 	} else if on {
 		p.row(ui, "shrink-0 items-center gap-1.5 h-5 px-2 rounded-4xl bg-emerald-500/15")
 		p.div(ui, "size-1.5 rounded-full bg-emerald-400")
@@ -804,13 +829,13 @@ empty_state :: proc(ui: ^p.Ctx, st: ^St) {
 
 	if len(g.items) == 0 {
 		p.text(ui, "Nothing copied yet", "text-sm font-medium")
-		p.text(
-			ui,
-			sync.atomic_load(&g.enabled) \
-			? "Copy something anywhere and it will appear here within a second" \
-			: "Monitoring is paused — Ctrl+M starts recording",
-			"text-xs text-muted-foreground",
-		)
+		hint := "Copy something anywhere and it will appear here within a second"
+		if !sync.atomic_load(&g.enabled) {
+			hint = "Monitoring is paused — Ctrl+M starts recording"
+		} else if st.capture == .Offers_Focused {
+			hint = "Copy something anywhere; it is recorded when you come back to this window"
+		}
+		p.text(ui, hint, "text-xs text-muted-foreground")
 		return
 	}
 

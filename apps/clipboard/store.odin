@@ -10,10 +10,11 @@ package main
 // most — whether the owner has flagged the selection as a secret, in which
 // case nothing is read at all. See "The offer path" below.
 //
-// Where the display server cannot show this window every change (palmy says
-// `.Focused` or `.Unsupported`), the older path runs instead: `wl-paste
-// --watch` writing a spool that a worker thread drains, read by the frame
-// under `mu`. The frame never shells out.
+// Where the display server shows this window the selection only while it is
+// focused (palmy says `.Focused`: GNOME), the same offers are used, one per
+// focus (main.odin). Where palmy cannot watch at all (`.Unsupported`), the
+// older path runs instead: `wl-paste --watch` writing a spool that a worker
+// thread drains, read by the frame under `mu`. The frame never shells out.
 
 import "core:fmt"
 import "core:os"
@@ -300,8 +301,10 @@ pick_type :: proc(types: string) -> (mime: string, kind: Kind, ok: bool) {
 // If the selection changes between the two, the verdict (including the
 // `is_sensitive` gate) describes one selection and the bytes another. The
 // offer path below closes it — the gate and the read are on one offer by
-// construction — and this path now runs only where palmy cannot watch every
-// change (`.Focused`: GNOME's wl_data_device alone; `.Unsupported`).
+// construction — and this path now runs only where palmy cannot watch at all
+// (`.Unsupported`). It used to run for `.Focused` (GNOME) too, where
+// `wl-paste --watch` refuses to start without data control, so nothing was
+// ever recorded there.
 //
 // THE SPOOL AND PRIVACY
 //
