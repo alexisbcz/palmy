@@ -196,6 +196,38 @@ engine_open :: proc(e: ^Engine, at: f64, w, h: int) {
 	}
 }
 
+// Hardware decode: decided, not built — blocked on having hardware to test it.
+//
+// What it would be. ffmpeg already has the decoders; the change is one flag on
+// the command above, `-hwaccel vaapi` (or `vulkan`, or `auto`), put before
+// `-i`. With no `-hwaccel_output_format` the ffmpeg CLI downloads each decoded
+// surface back to system memory before the filter graph, so `scale` and the
+// bgra pipe into this engine are unchanged, and a device that fails to
+// initialise falls back to software by itself (seen here: "Failed setup for
+// format vulkan … hwaccel initialisation returned error", then 39 of 39
+// frames decoded on the CPU). It would sit behind PALMY_VIDEO_HWACCEL, off by
+// default, and the stats overlay would say which decoder ran.
+//
+// Who it is for. Only video. Audio decode is a few percent of a core and has
+// no hardware path worth the name; image decode is stb_image in-process on a
+// worker thread, a few hundred milliseconds for a 4K PNG, with no ffmpeg in
+// the way to hand a flag to. For video, measured in the build VM (one thread,
+// decode + scale to 1280×720 + bgra, a loaded machine so these are upper
+// bounds): 1080p30 H.264 costs 4.3 s of CPU per 10 s of video, 43% of a core;
+// 2160p30 HEVC 8.6 s per 5 s, 172% — the case hardware decode is for. The
+// readback costs a copy per frame either way, which is why the gain is
+// smaller than "the GPU decodes it" suggests and needs measuring on a real one.
+//
+// Why it is not built. The rule is that it goes in only behind a flag that
+// has been exercised, and nothing here can exercise it: the build VM (OrbStack,
+// arm64) has no /dev/dri and no DRM modules in its kernel, so no VA-API or
+// VDPAU driver can load and vkms/vgem cannot be added; Mesa's lavapipe (the
+// software Vulkan, 25.2.8) exposes no video decode queue, which is the
+// "Failed setup" above. A flag whose only tested behaviour is the fallback is
+// a flag nobody knows works. What a person with a GPU runs to unblock it:
+//   ffmpeg -hwaccel vaapi -i clip.mp4 -an -vf scale=1280:720 -f rawvideo -pix_fmt bgra - > /dev/null
+// and then this engine with the flag added, comparing `video --shot`'s
+// decode numbers and the frame error with and without.
 @(private)
 start_video :: proc(e: ^Engine) -> bool {
 	r, w, err := os.pipe()
