@@ -67,6 +67,7 @@ Dnd_State :: struct {
 	offer_types: [dynamic]string,
 	serial:    u32,
 	pos:       [2]f32,
+	origin:    [2]f32, // of the surface the drag is over, in window coordinates
 	over:      bool,
 	chosen:    string, // the type accepted for the current offer, or ""
 	drop:      Drop,
@@ -277,10 +278,11 @@ dnd_device_event :: proc(w: ^Window, opcode: u16, r: ^Reader) -> bool {
 	d := &w.clip.dnd
 	switch opcode {
 	case 1:
-		// enter(serial, surface, x, y, offer)
+		// enter(serial, surface, x, y, offer). Over one of this window's
+		// popups the coordinates are the popup's; palmy's are the window's.
 		d.serial = r_u32(r)
-		r_u32(r)
-		d.pos = {r_fixed(r), r_fixed(r)}
+		d.origin, _ = wl_popup_origin(w, r_u32(r))
+		d.pos = [2]f32{r_fixed(r), r_fixed(r)} + d.origin
 		oid := r_u32(r)
 		dnd_drop_offer(w)
 		d.offer = oid
@@ -314,7 +316,7 @@ dnd_device_event :: proc(w: ^Window, opcode: u16, r: ^Reader) -> bool {
 	case 3:
 		// motion(time, x, y)
 		r_u32(r)
-		d.pos = {r_fixed(r), r_fixed(r)}
+		d.pos = [2]f32{r_fixed(r), r_fixed(r)} + d.origin
 		if d.offer != 0 {
 			dnd_send_accept(w)
 		}
