@@ -6,6 +6,7 @@
 // drifting.
 package main
 
+import "core:mem"
 import "core:strings"
 
 Clip_Cell :: struct {
@@ -304,6 +305,37 @@ structural_op :: proc(sh: ^Sheet, insert: bool, axis_row: bool, at, n: int) {
 				}
 			}
 		}
+	}
+
+	// Named ranges, of every scope, that point into the edited sheet move
+	// with their cells, as Excel's and LibreOffice's do: `Rate` naming B5
+	// names B6 after a row goes in above it. A name whose every cell was
+	// deleted is dropped — Excel keeps it as `=#REF!`, which this program
+	// has no way to hold, and a name that silently pointed at the cells
+	// that slid into its place would be worse than none.
+	shift_names :: proc(bk: ^Book, m: ^map[string]Name_Def, heap: mem.Allocator, target: int, insert, axis_row: bool, at, n: int) {
+		gone := make([dynamic]string, 0, 4, context.temp_allocator)
+		for k, &nd in m {
+			if resolve_sheet(bk, nd.sheet, 0) != target {
+				continue
+			}
+			if r, ok := rect_structural(nd.rect, insert, axis_row, at, n); ok {
+				nd.rect = r
+			} else {
+				append(&gone, k)
+			}
+		}
+		for k in gone {
+			nd := m[k]
+			delete(nd.sheet, heap)
+			kk := k
+			delete_key(m, k)
+			delete(kk, heap)
+		}
+	}
+	shift_names(bk, &bk.names, bk.heap, target, insert, axis_row, at, n)
+	for s in bk.sheets {
+		shift_names(bk, &s.names, s.heap, target, insert, axis_row, at, n)
 	}
 
 	refresh_bounds(sh)

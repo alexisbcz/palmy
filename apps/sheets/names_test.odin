@@ -139,6 +139,31 @@ t_local_names :: proc(tc: ^TC) {
 		at_num(tc, q1, "C2", 1)
 	}
 
+	// --- names follow the cells they name ----------------------------------
+	{
+		b := names_book()
+		defer bk_free(b)
+		q1, q2 := b.sheets[1], b.sheets[2]
+		put(q1, "C1", "=Rate")
+		put(q2, "C1", "=Rate")
+		book_recalc_all(b)
+		insert_rows(b.sheets[0], 0, 2) // above the workbook Rate on Data
+		nd, _ := book_get_name(b, "Rate")
+		ok_mark(tc, nd.rect == Rect_I{2, 0, 2, 0}, "a row inserted above a workbook name's cell moves the name")
+		at_num(tc, q1, "C1", 0.1)
+		insert_cols(q2, 0, 1) // before the local Rate on Q2
+		nd, _ = book_get_name(b, "Rate", "Q2")
+		ok_mark(tc, nd.rect == Rect_I{0, 2, 0, 2}, "so does a column inserted before a local one")
+		at_num(tc, b.sheets[2], "D1", 0.3)
+		nd, _ = book_get_name(b, "Rate")
+		ok_mark(tc, nd.rect == Rect_I{2, 0, 2, 0}, "and an edit on another sheet leaves a name alone")
+		delete_cols(q2, 2, 1)
+		_, still := book_get_name(b, "Rate", "Q2")
+		ok_mark(tc, !still, "a name whose cells are all deleted goes")
+		book_recalc_all(b)
+		at_num(tc, b.sheets[2], "C1", 0.1) // and Q2 falls back to the book's
+	}
+
 	// --- the native document, undo's snapshot, and .xlsx ---------------------
 	{
 		b := names_book()
