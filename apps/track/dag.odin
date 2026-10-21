@@ -37,6 +37,7 @@
 package main
 
 import "core:math"
+import "core:slice"
 import "core:strings"
 import p "palmy:."
 
@@ -232,15 +233,15 @@ dag_build :: proc(st: ^Store, g: ^Graph, visible: []bool) -> Dag {
 	for k in 0 ..< len(d.nodes) {
 		d.nodes[k].order = best_order[k]
 	}
+	// Each layer's orders are a permutation of its positions, so putting the
+	// nodes back is a placement, not a sort.
 	for l in 0 ..< len(d.layers) {
 		arr := d.layers[l]
-		for a in 1 ..< len(arr) {
-			j := a
-			for j > 0 && d.nodes[arr[j]].order < d.nodes[arr[j - 1]].order {
-				arr[j], arr[j - 1] = arr[j - 1], arr[j]
-				j -= 1
-			}
+		placed := make([]int, len(arr), context.temp_allocator)
+		for k in arr {
+			placed[d.nodes[k].order] = k
 		}
+		copy(arr, placed)
 	}
 	dag_renumber(&d)
 	d.crossings = best_cross
@@ -323,27 +324,32 @@ dag_renumber :: proc(d: ^Dag) {
 // keeps the place it had, which is what stops isolated nodes drifting to the
 // top on every pass.
 dag_sort_by_barycentre :: proc(d: ^Dag, layer: []int, adj: [][dynamic]int) {
-	bary := make([]f32, len(layer), context.temp_allocator)
+	Keyed :: struct {
+		node: int,
+		bary: f32,
+	}
+	keyed := make([]Keyed, len(layer), context.temp_allocator)
 	for k, i in layer {
+		keyed[i].node = k
 		if len(adj[k]) == 0 {
-			bary[i] = f32(d.nodes[k].order)
+			keyed[i].bary = f32(d.nodes[k].order)
 			continue
 		}
 		sum := f32(0)
 		for m in adj[k] {
 			sum += f32(d.nodes[m].order)
 		}
-		bary[i] = sum / f32(len(adj[k]))
+		keyed[i].bary = sum / f32(len(adj[k]))
 	}
-	// Insertion sort, stable, which keeps equal barycentres in their current
-	// order and therefore keeps the layout stable between frames.
-	for a in 1 ..< len(layer) {
-		j := a
-		for j > 0 && bary[j] < bary[j - 1] {
-			layer[j], layer[j - 1] = layer[j - 1], layer[j]
-			bary[j], bary[j - 1] = bary[j - 1], bary[j]
-			j -= 1
-		}
+	// Stable, which keeps equal barycentres in their current order and
+	// therefore keeps the layout stable between frames. It was an insertion
+	// sort, quadratic in a layer's width; a wide layer (a few hundred issues
+	// waiting on the same handful) is exactly where that showed.
+	slice.stable_sort_by(keyed, proc(a, b: Keyed) -> bool {
+		return a.bary < b.bary
+	})
+	for kv, i in keyed {
+		layer[i] = kv.node
 	}
 	// Renumber THIS layer now, not after the whole sweep. The next layer's
 	// barycentres are read off these positions, and computing them from the
@@ -357,27 +363,61 @@ dag_sort_by_barycentre :: proc(d: ^Dag, layer: []int, adj: [][dynamic]int) {
 
 // dag_crossings counts, exactly, how many pairs of edges cross between each
 // adjacent pair of layers. Two edges (a->b) and (c->d) cross when a is above
-// c and b is below d. Quadratic in the edges between two layers, which for a
-// graph a person is going to look at is nothing.
+// c and b is below d.
+//
+// It used to compare every pair of edges between two layers, which is
+// quadratic in them; it runs after every one of the sixteen ordering passes,
+// and a long edge adds a hop to every layer it spans, so on a few hundred
+// issues that was most of the layout. This is the usual O(E log V) count
+// (Barth, Jünger and Mutzel, "Simple and efficient bilayer cross counting",
+// 2002): sort the hops by their right end and then their left end, and the
+// crossings are the inversions among the left ends — each one is a hop
+// further down on the left than a hop that comes after it on the right. A
+// Fenwick tree over the left layer's positions counts them as they go by.
+// Hops that share an end never cross, and the tie-break in the sort is what
+// keeps them from being counted. The old pairwise count is kept in the
+// selftest as the reference this is checked against.
 dag_crossings :: proc(d: ^Dag, left: [][dynamic]int) -> int {
 	total := 0
+	pairs := make([dynamic][2]int, 0, 64, context.temp_allocator)
 	for l in 1 ..< len(d.layers) {
-		pairs := make([dynamic][2]int, 0, 32, context.temp_allocator)
+		clear(&pairs)
 		for k in d.layers[l] {
 			for m in left[k] {
 				append(&pairs, [2]int{d.nodes[k].order, d.nodes[m].order})
 			}
 		}
-		for a in 0 ..< len(pairs) {
-			for b in a + 1 ..< len(pairs) {
-				x, y := pairs[a], pairs[b]
-				if (x[0] - y[0]) * (x[1] - y[1]) < 0 {
-					total += 1
-				}
-			}
+		if len(pairs) < 2 {
+			continue
 		}
+		slice.sort_by(pairs[:], proc(x, y: [2]int) -> bool {
+			return x[0] < y[0] || (x[0] == y[0] && x[1] < y[1])
+		})
+		total += count_inversions(pairs[:], len(d.layers[l - 1]))
 	}
 	return total
+}
+
+// count_inversions counts the pairs i < j with pairs[i][1] > pairs[j][1],
+// where every [1] is in 0 ..< n, with a Fenwick tree.
+@(private = "file")
+count_inversions :: proc(pairs: [][2]int, n: int) -> int {
+	tree := make([]int, n + 1, context.temp_allocator)
+	seen, inv := 0, 0
+	for pr in pairs {
+		// How many already seen are at or above this one (<= its position)...
+		at_or_above := 0
+		for i := pr[1] + 1; i > 0; i -= i & -i {
+			at_or_above += tree[i]
+		}
+		// ...so the rest are strictly below it on the left, and cross it.
+		inv += seen - at_or_above
+		for i := pr[1] + 1; i <= n; i += i & -i {
+			tree[i] += 1
+		}
+		seen += 1
+	}
+	return inv
 }
 
 // dag_separate pushes a layer's nodes apart until none overlaps, preserving
@@ -521,6 +561,16 @@ dag_draw :: proc(c: ^p.Canvas, r: p.Rect, v: ^Dag_View) {
 		label := l == 0 ? "unblocked now" : tfmt("after %d", l)
 		// A fixed 11px, not 11*z: a heading scaled down with the graph stops
 		// being readable exactly when the graph is big enough to need it.
+		// Which means that, zoomed out far enough (a few hundred issues fit
+		// at 0.3), a heading is wider than its column and runs into the next
+		// one; then it drops to its short form, and to nothing below that.
+		room := (NODE_W + COL_GAP) * z - 6
+		if p.text_width(v.fonts, label, 11, .Sans, .Semibold, 0.4) > room {
+			label = l == 0 ? "now" : tfmt("+%d", l)
+			if p.text_width(v.fonts, label, 11, .Sans, .Semibold, 0.4) > room {
+				continue
+			}
+		}
 		p.draw_text(c, v.fonts, label, x0, r.y + 19, 11, th.muted, .Sans, .Semibold, 0.4)
 	}
 

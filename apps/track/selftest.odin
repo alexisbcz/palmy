@@ -25,6 +25,7 @@ import "core:fmt"
 import "core:os"
 import "core:strings"
 import linux "core:sys/linux"
+import "core:time"
 import kit "kit:."
 
 @(private = "file")
@@ -137,6 +138,7 @@ selftest :: proc() -> int {
 	test_verify_gate()
 	test_cli_surface()
 	test_layout()
+	test_layout_scale()
 
 	fmt.printf("\n%d checks, %d failures\n", checks, failures)
 	return failures == 0 ? 0 : 1
@@ -1176,5 +1178,265 @@ test_layout :: proc() {
 			st.issues[e.from].id != "D" && st.issues[e.to].id != "D",
 			"and no edge still points at it",
 		)
+	}
+}
+
+// ---------------------------------------------------------------------------
+// The layout at a few hundred issues, and the crossing count it relies on
+// ---------------------------------------------------------------------------
+
+// gen_store makes `n` issues whose dependencies look like a real tracker's:
+// mostly on something filed shortly before, now and then on something far
+// back (which is what makes long edges, and so dummy nodes), never forward,
+// so there is no cycle. Deterministic: the same n and seed give the same
+// graph.
+gen_store :: proc(n: int, seed: u64) -> Store {
+	x := seed | 1
+	next :: proc(x: ^u64) -> int {
+		x^ ~= x^ << 13
+		x^ ~= x^ >> 7
+		x^ ~= x^ << 17
+		return int(x^ >> 33)
+	}
+	spec := make([]struct {
+			id, state, deps: string,
+		}, n, context.temp_allocator)
+	for i in 0 ..< n {
+		spec[i].id = fmt.tprintf("T%04d", i)
+		spec[i].state = next(&x) % 5 == 0 ? "done" : "todo"
+		b := strings.builder_make(context.temp_allocator)
+		k := i == 0 ? 0 : next(&x) % 4 // 0..3 dependencies
+		for _ in 0 ..< k {
+			j: int
+			if next(&x) % 8 == 0 {
+				j = next(&x) % i // far back
+			} else {
+				j = max(0, i - 1 - next(&x) % 12) // recent
+			}
+			if strings.builder_len(b) > 0 {
+				strings.write_string(&b, ", ")
+			}
+			strings.write_string(&b, fmt.tprintf("T%04d", j))
+		}
+		spec[i].deps = strings.to_string(b)
+	}
+	return mkstore(spec)
+}
+
+// dag_left rebuilds the one-column adjacency dag_build orders by.
+@(private = "file")
+dag_left :: proc(d: ^Dag) -> [][dynamic]int {
+	left := make([][dynamic]int, len(d.nodes), context.temp_allocator)
+	for k in 0 ..< len(d.nodes) {
+		left[k] = make([dynamic]int, 0, 2, context.temp_allocator)
+	}
+	for e in d.edges {
+		for k in 0 ..< len(e.chain) - 1 {
+			append(&left[e.chain[k]], e.chain[k + 1])
+		}
+	}
+	return left
+}
+
+// crossings_pairwise is the count dag_crossings used to make: every pair of
+// hops between two adjacent layers, compared. Quadratic, and obviously right,
+// which is what makes it the reference.
+@(private = "file")
+crossings_pairwise :: proc(d: ^Dag, left: [][dynamic]int) -> int {
+	total := 0
+	for l in 1 ..< len(d.layers) {
+		pairs := make([dynamic][2]int, 0, 32, context.temp_allocator)
+		for k in d.layers[l] {
+			for m in left[k] {
+				append(&pairs, [2]int{d.nodes[k].order, d.nodes[m].order})
+			}
+		}
+		for a in 0 ..< len(pairs) {
+			for b in a + 1 ..< len(pairs) {
+				x, y := pairs[a], pairs[b]
+				if (x[0] - y[0]) * (x[1] - y[1]) < 0 {
+					total += 1
+				}
+			}
+		}
+	}
+	return total
+}
+
+@(private = "file")
+thread_cpu_ms :: proc() -> f64 {
+	ts, _ := linux.clock_gettime(.THREAD_CPUTIME_ID)
+	return f64(ts.time_sec) * 1000 + f64(ts.time_nsec) / 1e6
+}
+
+test_layout_scale :: proc() {
+	section("the graph layout at scale")
+
+	// 1. The fast crossing count against the pairwise one: on the layouts
+	// themselves, and on the same layers shuffled, where crossings are many.
+	agree, compared := 0, 0
+	for seed in ([?]u64{1, 7, 42}) {
+		for n in ([?]int{20, 60, 250}) {
+			st := gen_store(n, seed)
+			g := graph_build(&st)
+			vis := make([]bool, n, context.temp_allocator)
+			for i in 0 ..< n {
+				vis[i] = true
+			}
+			d := dag_build(&st, &g, vis)
+			left := dag_left(&d)
+			for round in 0 ..< 3 {
+				if round > 0 {
+					x := seed * 2654435761 + u64(round)
+					for l in d.layers {
+						for i := len(l) - 1; i > 0; i -= 1 {
+							x ~= x << 13; x ~= x >> 7; x ~= x << 17
+							j := int(x % u64(i + 1))
+							l[i], l[j] = l[j], l[i]
+						}
+					}
+					dag_renumber(&d)
+				}
+				fast, slow := dag_crossings(&d, left), crossings_pairwise(&d, left)
+				compared += 1
+				if fast == slow {
+					agree += 1
+				} else {
+					check(false, "n=%d seed=%d round %d: %d crossings counted, %d pairwise", n, seed, round, fast, slow)
+				}
+			}
+			dag_free(&d)
+			graph_free(&g)
+		}
+	}
+	eq_i(agree, compared, "the O(E log V) crossing count agrees with the pairwise one on every layout and shuffle")
+
+	// Ties: hops sharing an end never cross, however they are listed.
+	{
+		st := mkstore({{"A", "todo", ""}, {"B", "todo", ""}, {"C", "todo", "A, B"}, {"D", "todo", "A, B"}})
+		g := graph_build(&st)
+		defer graph_free(&g)
+		vis := []bool{true, true, true, true}
+		d := dag_build(&st, &g, vis)
+		defer dag_free(&d)
+		left := dag_left(&d)
+		eq_i(dag_crossings(&d, left), crossings_pairwise(&d, left), "a complete bipartite pair of layers counts the same both ways")
+		eq_i(dag_crossings(&d, left), 1, "and K2,2 crosses exactly once")
+	}
+
+	// 2. Real sizes, timed. Wall time is printed for a person; the bound
+	// is on this thread's CPU time, which a loaded machine does not inflate
+	// (the lesson vault's KDF check learned), and it is generous: it is
+	// there to catch the layout going quadratic again, not to benchmark.
+	for n in ([?]int{20, 200, 250, 500, 1000}) {
+		st := gen_store(n, 42)
+		g := graph_build(&st)
+		vis := make([]bool, n, context.temp_allocator)
+		for i in 0 ..< n {
+			vis[i] = true
+		}
+		t0 := time.tick_now()
+		c0 := thread_cpu_ms()
+		d := dag_build(&st, &g, vis)
+		cpu := thread_cpu_ms() - c0
+		wall := time.duration_milliseconds(time.tick_since(t0))
+		fmt.printfln(
+			"      %d issues: %d nodes with the dummies, %d columns, %d crossings, laid out in %.1f ms (%.1f ms of CPU)",
+			n,
+			len(d.nodes),
+			len(d.layers),
+			d.crossings,
+			wall,
+			cpu,
+		)
+
+		// What a person sees has to hold at every size: every hop one column
+		// leftward, no two boxes in a column overlapping, everything inside
+		// the extent the scroll range is taken from.
+		bad_hop, overlap, outside := 0, 0, 0
+		for e in d.edges {
+			for k in 0 ..< len(e.chain) - 1 {
+				if d.nodes[e.chain[k]].layer - d.nodes[e.chain[k + 1]].layer != 1 {
+					bad_hop += 1
+				}
+			}
+		}
+		for l in d.layers {
+			for i in 1 ..< len(l) {
+				a, b := d.nodes[l[i - 1]], d.nodes[l[i]]
+				ha := a.issue >= 0 ? f32(NODE_H) : 10
+				if b.y < a.y + ha {
+					overlap += 1
+				}
+			}
+		}
+		for nd in d.nodes {
+			h := nd.issue >= 0 ? f32(NODE_H) : 10
+			if nd.y < 0 || nd.y + h > d.h + 0.01 || nd.x < 0 || nd.x + NODE_W > d.w + 0.01 {
+				outside += 1
+			}
+		}
+		eq_i(bad_hop, 0, fmt.tprintf("%d issues: every hop spans one column leftward", n))
+		eq_i(overlap, 0, fmt.tprintf("%d issues: no two nodes in a column overlap", n))
+		eq_i(outside, 0, fmt.tprintf("%d issues: every node is inside the reported extent", n))
+		if n <= 250 {
+			left := dag_left(&d)
+			eq_i(d.crossings, crossings_pairwise(&d, left), fmt.tprintf("%d issues: the reported crossings are the real ones", n))
+		}
+		if n == 250 {
+			check(cpu < 1000, "250 issues lay out in under a second of CPU (%.1f ms)", cpu)
+		}
+		if n == 1000 {
+			check(cpu < 5000, "1000 issues lay out in under five seconds of CPU (%.1f ms)", cpu)
+		}
+		dag_free(&d)
+		graph_free(&g)
+	}
+
+	// 3. The shape where both quadratic steps used to bite: one wide layer.
+	// 1500 issues, each waiting on two of the first 30, so ~2900 hops run
+	// between two columns. Pairwise counting compared ~4 million pairs per
+	// count, seventeen counts a layout; the insertion sort moved a 1470-wide
+	// layer one slot at a time.
+	{
+		spec := make([]struct {
+				id, state, deps: string,
+			}, 1500, context.temp_allocator)
+		x: u64 = 0x9e3779b97f4a7c15
+		for i in 0 ..< len(spec) {
+			spec[i].id = fmt.tprintf("W%04d", i)
+			spec[i].state = "todo"
+			if i >= 30 {
+				x ~= x << 13; x ~= x >> 7; x ~= x << 17
+				a := int(x % 30)
+				b := (a + 1 + int((x >> 20) % 29)) % 30
+				spec[i].deps = fmt.tprintf("W%04d, W%04d", a, b)
+			}
+		}
+		st := mkstore(spec)
+		g := graph_build(&st)
+		vis := make([]bool, len(spec), context.temp_allocator)
+		for i in 0 ..< len(vis) {
+			vis[i] = true
+		}
+		t0 := time.tick_now()
+		c0 := thread_cpu_ms()
+		d := dag_build(&st, &g, vis)
+		cpu := thread_cpu_ms() - c0
+		wall := time.duration_milliseconds(time.tick_since(t0))
+		fmt.printfln(
+			"      1500 issues in two columns (%d wide): %d crossings, laid out in %.1f ms (%.1f ms of CPU)",
+			len(d.layers) > 1 ? len(d.layers[1]) : 0,
+			d.crossings,
+			wall,
+			cpu,
+		)
+		eq_i(len(d.layers), 2, "the wide graph has two columns")
+		// 27 ms of CPU when this was written, 854 ms with the pairwise count
+		// and the insertion sort; the bound sits between with room for a
+		// loaded machine on either side.
+		check(cpu < 300, "1500 issues in one wide column lay out in under 300 ms of CPU (%.1f ms)", cpu)
+		dag_free(&d)
+		graph_free(&g)
 	}
 }

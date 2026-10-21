@@ -167,6 +167,43 @@ shots :: proc(dir: string, identity: string) -> int {
 	settle(off, a)
 	shot(off, dir, "08-track-stale.png", &n)
 
+	// The layout at a size nobody draws by hand: 250 generated issues
+	// (selftest.odin's gen_store), fitted, and then at 1:1 around the
+	// busiest node, which is where crossings would show if the ordering had
+	// given up.
+	{
+		// gen_store builds in the temp allocator, which a frame frees; these
+		// strings must outlive every frame below.
+		context.temp_allocator = context.allocator
+		a.store = gen_store(250, 42)
+	}
+	a.graph = graph_build(&a.store)
+	a.show_closed = true
+	app_rebuild_dag(a)
+	a.view = .Graph
+	a.sel = -1
+	a.zoom = 0
+	settle(off, a)
+	shot(off, dir, "09-track-graph-250.png", &n)
+	{
+		best, most := 0, -1
+		for i in 0 ..< len(a.store.issues) {
+			score := len(a.graph.dependants[i]) + len(a.graph.deps[i])
+			if score > most {
+				best, most = i, score
+			}
+		}
+		a.sel = best
+		a.zoom = 1
+		if k, ok := a.dag.of_issue[best]; ok {
+			a.scroll = {max(a.dag.nodes[k].x - 260, 0), max(a.dag.nodes[k].y - 300, 0)}
+		}
+		settle(off, a)
+		shot(off, dir, "10-track-graph-250-focus.png", &n)
+		a.zoom = 0
+		a.scroll = {}
+	}
+
 	return n
 }
 
