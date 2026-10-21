@@ -145,6 +145,36 @@ job_collect :: proc() -> (kind: Job_Kind, label, subject, out: string, ok: bool,
 	return
 }
 
+// action_words is the command each action runs, built in one place. The
+// window's jobs clone it with argv_own and run it; `bluetooth power`,
+// `connect`, `pair` and the rest on the command line are intent class and only
+// print it. Both front ends therefore name the same command for the same
+// action, and the command line cannot drift into a different one. `on` is the
+// state asked for by power, discoverable and scan, and ignored elsewhere.
+action_words :: proc(kind: Job_Kind, addr: string, on: bool, al := context.temp_allocator) -> []string {
+	w := make([dynamic]string, 0, 5, al)
+	switch kind {
+	case .Scan:
+		append(&w, "bluetoothctl", "--timeout", fmt.aprintf("%d", SCAN_SECS, allocator = al), "scan", "on")
+	case .Power:
+		append(&w, "bluetoothctl", "power", on ? "on" : "off")
+	case .Discoverable:
+		append(&w, "bluetoothctl", "discoverable", on ? "on" : "off")
+	case .Connect:
+		append(&w, "bluetoothctl", "connect", addr)
+	case .Disconnect:
+		append(&w, "bluetoothctl", "disconnect", addr)
+	case .Pair:
+		append(&w, "bluetoothctl", "pair", addr)
+	case .Trust:
+		append(&w, "bluetoothctl", "trust", addr)
+	case .Copy:
+		append(&w, "wl-copy", addr)
+	case .None:
+	}
+	return w[:]
+}
+
 // argv_own clones the words of a command onto the heap, because the worker
 // thread outlives the frame arena they were built in.
 argv_own :: proc(words: ..string) -> []string {

@@ -101,6 +101,12 @@ main :: proc() {
 			os.exit(shots(rest[i + 1]))
 		}
 	}
+	// Everything else on the command line is the other front end, declared
+	// in cli.odin and parsed by the shared convention in apps/kit. With no
+	// command there is a window.
+	if code, handled := kit.cli(surface()); handled {
+		os.exit(code)
+	}
 
 	app, err := kit.start(
 		{
@@ -505,12 +511,11 @@ start_scan :: proc(m: ^Model) {
 		note(m, "Turn Bluetooth on before scanning", true)
 		return
 	}
-	secs := fmt.tprintf("%d", SCAN_SECS)
 	if job_start(
 		.Scan,
 		"Scan complete",
 		"",
-		argv_own("bluetoothctl", "--timeout", secs, "scan", "on"),
+		argv_own(..action_words(.Scan, "", true)),
 	) {
 		m.scanning = true
 		m.scan_until = g_now + f64(SCAN_SECS)
@@ -544,7 +549,7 @@ exec_power :: proc(m: ^Model, on: bool) {
 		.Power,
 		on ? "Bluetooth on" : "Bluetooth off",
 		"",
-		argv_own("bluetoothctl", "power", on ? "on" : "off"),
+		argv_own(..action_words(.Power, "", on)),
 	)
 }
 
@@ -571,7 +576,7 @@ toggle_discoverable :: proc(m: ^Model) {
 		.Discoverable,
 		on ? "Discoverable" : "Not discoverable",
 		"",
-		argv_own("bluetoothctl", "discoverable", on ? "on" : "off"),
+		argv_own(..action_words(.Discoverable, "", on)),
 	)
 }
 
@@ -612,7 +617,7 @@ exec_action :: proc(m: ^Model, act: Job_Kind, v: View) {
 			return
 		}
 		busy(m, "Connecting")
-		job_start(.Connect, "Connected", d.addr, argv_own("bluetoothctl", "connect", d.addr))
+		job_start(.Connect, "Connected", d.addr, argv_own(..action_words(.Connect, d.addr, true)))
 	case .Disconnect:
 		if !d.connected {
 			note(m, "Not connected", true)
@@ -623,7 +628,7 @@ exec_action :: proc(m: ^Model, act: Job_Kind, v: View) {
 			.Disconnect,
 			"Disconnected",
 			d.addr,
-			argv_own("bluetoothctl", "disconnect", d.addr),
+			argv_own(..action_words(.Disconnect, d.addr, true)),
 		)
 	case .Pair:
 		if d.paired {
@@ -631,14 +636,14 @@ exec_action :: proc(m: ^Model, act: Job_Kind, v: View) {
 			return
 		}
 		busy(m, "Pairing")
-		job_start(.Pair, "Paired", d.addr, argv_own("bluetoothctl", "pair", d.addr))
+		job_start(.Pair, "Paired", d.addr, argv_own(..action_words(.Pair, d.addr, true)))
 	case .Trust:
 		if d.trusted {
 			note(m, "Already trusted", true)
 			return
 		}
 		busy(m, "Trusting")
-		job_start(.Trust, "Trusted", d.addr, argv_own("bluetoothctl", "trust", d.addr))
+		job_start(.Trust, "Trusted", d.addr, argv_own(..action_words(.Trust, d.addr, true)))
 	case .Copy:
 		// palmy has no clipboard, so the address goes out through wl-copy.
 		busy(m, "Copying address")
