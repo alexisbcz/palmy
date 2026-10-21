@@ -213,6 +213,10 @@ not:
   `apps/power` already uses, with fake `systemctl`/`reboot` binaries on `PATH`
   writing to a sentinel file that must stay empty.
 - The scope rule above gets the assertion the README asks for.
+- `palm --selftest` runs every child with a private `$HOME` and XDG
+  directories (a blind `clipboard list` must not read the real history) and
+  under a timeout (`$PALM_SELFTEST_TIMEOUT`, 30 s): a read that never returns
+  is reported as timed out and counted as unavailable, not left hanging.
 
 ## The shared convention
 

@@ -113,6 +113,14 @@ The rest of what you need:
   `flags` are taken by every command and published in each command's schema
   (`mail --data-dir`). An output `Field` with `keyed = true` is an object
   whose keys are data; `of` is the shape of each value.
+  A positional declared `free` takes a word starting with `-` that names no
+  flag (a word with a space, like `"- One"`, or a negative number always
+  does). A command with `private_args = true` has every positional replaced
+  by `<redacted>` in the audit log (`clipboard add <text>`).
+- **Base flags never shadow yours**: a command's own flag of the same name or
+  short alias wins (`--h 12` is a height where `h` is declared), and the
+  one-letter aliases are single-dash only (`-y`, `-v`, `-h`; `--y` is not
+  `--yes`).
 - **Destructive refusals with a reason**: `on_refuse = proc(c)` on a
   destructive command is asked why when the kit refuses it for want of
   `--yes` — `pkg remove` names the dependants. It runs under the guard as an
