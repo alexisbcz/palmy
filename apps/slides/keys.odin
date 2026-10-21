@@ -173,7 +173,7 @@ push_history :: proc(st: ^St, ui: ^p.Ctx, coalesce := false) {
 			commit_text(st, e)
 		}
 	}
-	if coalesce && ui != nil && ui.now - st.last_push < 1.2 {
+	if coalesce && ui != nil && now_s(ui) - st.last_push < 1.2 {
 		return
 	}
 	if st.undo == nil {
@@ -191,7 +191,7 @@ push_history :: proc(st: ^St, ui: ^p.Ctx, coalesce := false) {
 	}
 	clear(&st.redo)
 	if ui != nil {
-		st.last_push = ui.now
+		st.last_push = now_s(ui)
 	}
 }
 

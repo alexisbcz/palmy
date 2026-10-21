@@ -11,6 +11,7 @@ package main
 
 import "core:math"
 import "core:strings"
+import "core:time"
 import p "palmy:."
 import collabui "../../cloud/collab/ui"
 import sc "shadcn:."
@@ -20,7 +21,10 @@ FOOT_H :: 34
 NOTES_H :: 132
 
 build :: proc(ui: ^p.Ctx, st: ^St) {
-	clock = ui.now
+	// Asked once per frame, and only while a caret is up: `caret_on` arms the
+	// wake for the next blink edge, so an editor with nothing being typed
+	// into sleeps.
+	caret_lit = st.mode == .Text || st.mode == .Notes ? p.caret_on(ui) : true
 	size := p.size(ui)
 
 	// Hyprland tiles, so the window is whatever the compositor says. The two
@@ -248,7 +252,7 @@ canvas_draw :: proc(c: ^p.Canvas, r: p.Rect, st: ^St) {
 	p.drop_shadow(c, slide, {2, 2, 2, 2}, 36 * c.scale, 2 * c.scale, {0, 10 * c.scale}, p.hexa(0x00000099))
 
 	blink := st.mode == .Text
-	on := !blink || math.mod_f32(f32(elapsed_now(st)), 1.1) < 0.62
+	on := !blink || caret_lit
 	draw_slide(
 		c,
 		slide,
@@ -275,14 +279,15 @@ canvas_draw :: proc(c: ^p.Canvas, r: p.Rect, st: ^St) {
 	p.stroke_round_rect(c, p.rect_inset(slide, -0.5), {2, 2, 2, 2}, max(1, c.scale), p.hexa(0xffffff1c))
 }
 
-// elapsed_now is the caret clock. The canvas draw callback has no Ctx, so the
-// time is taken from the last frame the editor built.
+// caret_lit is whether the blinking caret is lit this frame. The canvas draw
+// callback has no Ctx, so it is decided when the editor builds the frame.
 @(private = "file")
-clock: f64
+caret_lit: bool
 
-elapsed_now :: proc(st: ^St) -> f64 {
-	return clock
-}
+// pres_clock is the presenter view's elapsed-time reading, for the same
+// reason: the projector draws on a canvas with no Ctx.
+@(private = "file")
+pres_clock: f64
 
 // ---------------------------------------------------------------------------
 // Notes
@@ -322,7 +327,7 @@ notes_pane :: proc(ui: ^p.Ctx, st: ^St) {
 notes_with_caret :: proc(st: ^St) -> string {
 	t := ed_text(st)
 	at := clamp(st.ed.caret, 0, len(t))
-	if math.mod_f32(f32(clock), 1.1) > 0.62 {
+	if !caret_lit {
 		return t
 	}
 	return strings.concatenate({t[:at], "|", t[at:]}, context.temp_allocator)
@@ -791,12 +796,14 @@ help_overlay :: proc(ui: ^p.Ctx, st: ^St) {
 // ---------------------------------------------------------------------------
 
 build_present :: proc(ui: ^p.Ctx, st: ^St) {
-	clock = ui.now
-	// The audience view is drawn once per slide and then the loop sleeps; the
-	// presenter view has a running clock on it, so it asks for frames. That is
-	// the one place in this application that spends CPU while nothing happens.
+	// The audience view is drawn once per slide and then the loop sleeps. The
+	// presenter view has a running mm:ss clock on it, which changes once a
+	// second, so it asks for exactly that: one wake at the next whole second
+	// on a real clock, rather than every frame at the display rate.
+	pres_clock = now_s(ui)
 	if st.pres_notes && !st.pres_black {
-		ui.animating = true
+		el := max(0, pres_clock - st.pres_start)
+		p.wake_after(ui, secs(math.floor(el) + 1 - el) + 2 * time.Millisecond)
 	}
 	p.pixels(ui, "w-full h-full", st, present_draw)
 }
@@ -917,8 +924,8 @@ present_notes :: proc(c: ^p.Canvas, r: p.Rect, st: ^St) {
 
 	// Slide counter and the elapsed time, which is the other half of why a
 	// presenter view exists.
-	secs := int(max(0, clock - st.pres_start))
-	counter := tprintf("%d / %d     %02d:%02d", st.slide + 1, len(st.deck.slides), secs / 60, secs % 60)
+	sec := int(max(0, pres_clock - st.pres_start))
+	counter := tprintf("%d / %d     %02d:%02d", st.slide + 1, len(st.deck.slides), sec / 60, sec % 60)
 	p.draw_text(c, st.fonts, counter, r.x + gap, p.rect_bottom(r) - gap * 0.6, 14 * s, p.hexa(0xffffff88), .Sans, .Medium)
 	hintt := "Space advances · Tab leaves the presenter view · Escape exits"
 	hw := p.text_width(st.fonts, hintt, 12 * s, .Sans, .Regular)

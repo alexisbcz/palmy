@@ -19,6 +19,7 @@ package main
 import "core:fmt"
 import "core:os"
 import "core:strings"
+import "core:time"
 import kit "kit:."
 import p "palmy:."
 import collabui "../../cloud/collab/ui"
@@ -348,16 +349,21 @@ run_editor :: proc(st: ^St) {
 		build(ui, st)
 		mouse_edit(ui, st)
 
-		if st.mode == .Text || st.mode == .Notes {
-			// The caret blinks, which is the only thing in the editor that
-			// animates.
-			ui.animating = true
-		}
+		// The caret blinks through `caret_on` (see `build`), which wakes the
+		// loop once per blink edge; the toast expires with one wake at its
+		// deadline. Both used to hold the editor at vsync.
 		if st.toast != "" {
-			if ui.now > st.toast_t {
+			left := st.toast_t - now_s(ui)
+			if left <= 0 {
+				// This frame still drew the toast. Two more take it off the
+				// screen: measured on headless sway, the first frame after a
+				// clear is presented and the toast stays visible (palmy's
+				// damage tracking; PALMY_DAMAGE=off needs only one).
 				st.toast = ""
-			} else {
 				p.redraw(ui)
+				p.wake_after(ui, 50 * time.Millisecond)
+			} else {
+				p.wake_after(ui, secs(left) + time.Millisecond)
 			}
 		}
 		if st.want_present || st.quit {
@@ -403,7 +409,27 @@ cur_elem :: proc(st: ^St) -> ^Element {
 // commands the keyboard does.
 toast :: proc(st: ^St, ui: ^p.Ctx, msg: string) {
 	st.toast = strings.clone(msg, context.allocator)
-	st.toast_t = ui == nil ? 0 : ui.now + 3.5
+	st.toast_t = ui == nil ? 0 : now_s(ui) + 3.5
+}
+
+// Nothing that times anything here reads `ui.now` in a window: palmy clamps
+// `dt` to 0.1 s so a stalled frame cannot teleport an animation, which means
+// `ui.now` only tracks real time while frames are frequent, and this window
+// now sleeps between events. A presenter clock run off it would gain a tenth
+// of a second per tick. Offscreen there is no window to wake and `ui.now` is
+// the renderer's synthetic time, which keeps the tests deterministic.
+START_TICK := time.tick_now()
+
+now_s :: proc(ui: ^p.Ctx) -> f64 {
+	if ui == nil || ui.app == nil {
+		return ui == nil ? 0 : ui.now
+	}
+	return time.duration_seconds(time.tick_since(START_TICK))
+}
+
+// secs turns a number of seconds into a wake delay.
+secs :: proc(s: f64) -> time.Duration {
+	return time.Duration(max(s, 0) * f64(time.Second))
 }
 
 // register_chrome_theme is the shadcn dark palette with a workspace colour
@@ -513,7 +539,7 @@ run_present :: proc(st: ^St) {
 		}
 		st.sel = -1
 		if st.pres_start == 0 {
-			st.pres_start = ui.now
+			st.pres_start = max(now_s(ui), 1e-9)
 		}
 
 		build_present(ui, st)
