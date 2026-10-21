@@ -91,14 +91,12 @@ main :: proc() {
 	}
 
 	// The command line: everything else. `--data-dir`, `--maildir` and
-	// `--save-dir` are the surface's flags, so `mail list --data-dir=X` reads
-	// X. A line of nothing but those is the window's (`mail --maildir=X`, as
-	// home and the index open it): the kit takes a surface flag only after a
-	// verb.
-	if !window_options_only(os.args[1:]) {
-		if code, handled := kit.cli(surface()); handled {
-			os.exit(code)
-		}
+	// `--save-dir` are the surface's flags, so `mail list --data-dir=X` and
+	// `mail --data-dir=X list` read X. A line of nothing but those is the
+	// window's (`mail --maildir=X`, as home and the index open it), and the
+	// kit hands it back.
+	if code, handled := kit.cli(surface()); handled {
+		os.exit(code)
 	}
 
 	app, err := kit.start(
@@ -140,39 +138,21 @@ main :: proc() {
 	}
 }
 
-// window_options_only says every word is one of the window's path options,
-// spelled with `=` as init_state reads them.
-window_options_only :: proc(args: []string) -> bool {
-	for a in args {
-		if !strings.has_prefix(a, "--data-dir=") && !strings.has_prefix(a, "--maildir=") && !strings.has_prefix(a, "--save-dir=") {
-			return false
-		}
-	}
-	return true
-}
-
 init_state :: proc(st: ^State) {
-	// `--data-dir=PATH` points the whole app at another data directory — a
+	// The window's options are the surface's flags, read off the line the
+	// same way a command reads them (`--maildir X` or `--maildir=X`).
+	//
+	// `--data-dir PATH` points the whole app at another data directory — a
 	// demo account's synced identities, say — instead of the default one.
-	for arg in os.args[1:] {
-		if strings.has_prefix(arg, "--data-dir=") {
-			data_dir_override = strings.clone(arg[len("--data-dir="):])
-			data_dir_explicit = true
-		}
+	if dir, ok := kit.cli_surface_flag(surface(), os.args[1:], "data-dir"); ok {
+		data_dir_override = strings.clone(dir)
+		data_dir_explicit = true
 	}
-	// `--maildir=PATH` makes one ad-hoc account out of a tree on disk, which
+	// `--maildir PATH` makes one ad-hoc account out of a tree on disk, which
 	// is how to point the UI at whatever the engine has just written without
 	// editing a config file. It is still only ever read.
-	override := ""
-	save_dir := ""
-	for arg in os.args[1:] {
-		if strings.has_prefix(arg, "--maildir=") {
-			override = arg[len("--maildir="):]
-		}
-		if strings.has_prefix(arg, "--save-dir=") {
-			save_dir = arg[len("--save-dir="):]
-		}
-	}
+	override, _ := kit.cli_surface_flag(surface(), os.args[1:], "maildir")
+	save_dir, _ := kit.cli_surface_flag(surface(), os.args[1:], "save-dir")
 	model_open(st, override)
 	st.save_dir = strings.clone(save_dir != "" ? save_dir : default_save_dir(context.temp_allocator))
 

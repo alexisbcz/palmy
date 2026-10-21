@@ -136,6 +136,24 @@ test_cli :: proc() {
 		ok(strings.contains(out3, "Only here") && strings.contains(out3, `"count": 1`), "and searches that one tree")
 		_, code4 := run_cli(data, scratch, {}, "accounts", "--data-dir")
 		eq_int(code4, kit.EXIT_USAGE, "--data-dir with no value is a usage error")
+
+		// Before the verb, too: the kit moves them after it.
+		out5, code5 := run_cli(empty, scratch, {}, "--data-dir", data, "accounts", "--json")
+		eq_int(code5, 0, "--data-dir PATH accounts exits 0")
+		ok(strings.contains(out5, `"count": 3`) && strings.contains(out5, data), "and reads that directory")
+		out6, code6 := run_cli(data, scratch, {}, fmt.tprintf("--maildir=%s", tree), "search", "only here", "--json")
+		eq_int(code6, 0, "--maildir=PATH search exits 0")
+		ok(strings.contains(out6, `"count": 1`), "and searches that one tree")
+		// A line of nothing but them is the window's, in either spelling,
+		// and the window reads the value the way a command does.
+		_, handled := kit.cli_args(surface(), {"--maildir", tree})
+		ok(!handled, "mail --maildir PATH is the window's line")
+		_, handled = kit.cli_args(surface(), {fmt.tprintf("--maildir=%s", tree), "--save-dir=/x"})
+		ok(!handled, "so is mail --maildir=PATH --save-dir=PATH")
+		v, got := kit.cli_surface_flag(surface(), {"--save-dir=/x", "--maildir", tree}, "maildir")
+		ok(got && v == tree, "and the window reads --maildir PATH as --maildir=PATH")
+		_, code7 := run_cli(data, scratch, {}, "--maildir", tree, "lsit")
+		eq_int(code7, kit.EXIT_USAGE, "a typo after the window's flags is still a usage error, not a window")
 	}
 
 	// --- reads ------------------------------------------------------------
