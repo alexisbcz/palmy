@@ -47,11 +47,16 @@ Model :: struct {
 	name:         string, // ggml-base.en
 	bytes:        i64,
 	multilingual: bool,
+	// A tinydiarize model (ggml-small.en-tdrz): whisper-cli -tdrz marks where
+	// the speaker changes. It marks turns, not who is speaking.
+	diarize:      bool,
 }
 
-// MODEL_DIRS is searched in order. The first two are where whisper.cpp
-// front-ends on this distribution keep their weights; the rest are the
-// conventional spots. Nothing is ever written to any of them.
+// MODEL_DIRS is searched in order, after $PALMY_WHISPER_MODELS when that is
+// set (a directory, for weights kept somewhere unconventional — the build VM
+// keeps its test models in a scratch directory). The first two are where
+// whisper.cpp front-ends on this distribution keep their weights; the rest
+// are the conventional spots. Nothing is ever written to any of them.
 MODEL_DIRS := [?]string {
 	"$XDG_DATA_HOME/voxtype/models",
 	"$HOME/.local/share/voxtype/models",
@@ -64,6 +69,20 @@ MODEL_DIRS := [?]string {
 	"/usr/share/ggml/models",
 	"/opt/whisper.cpp/models",
 	"./models",
+}
+
+MODELS_ENV :: "PALMY_WHISPER_MODELS"
+
+// model_dirs is MODEL_DIRS with the environment's directory first.
+model_dirs :: proc(al := context.temp_allocator) -> []string {
+	out := make([dynamic]string, al)
+	if v := os.get_env(MODELS_ENV, context.temp_allocator); v != "" {
+		append(&out, strings.clone(v, al))
+	}
+	for d in MODEL_DIRS {
+		append(&out, d)
+	}
+	return out[:]
 }
 
 expand_path :: proc(p: string, al := context.temp_allocator) -> string {
@@ -98,7 +117,7 @@ find_models :: proc(al := context.allocator) -> []Model {
 	out := make([dynamic]Model, al)
 	seen := make(map[string]bool, 16, context.temp_allocator)
 
-	for raw in MODEL_DIRS {
+	for raw in model_dirs() {
 		dir := expand_path(raw, context.temp_allocator)
 		entries, rerr := os.read_directory_by_path(dir, -1, context.temp_allocator)
 		if rerr != nil {
@@ -130,6 +149,7 @@ find_models :: proc(al := context.allocator) -> []Model {
 					name = strings.clone(stem, al),
 					bytes = e.size,
 					multilingual = !strings.contains(stem, ".en"),
+					diarize = strings.contains(stem, "tdrz"),
 				},
 			)
 		}
@@ -140,7 +160,7 @@ find_models :: proc(al := context.allocator) -> []Model {
 // find_vad_model returns the silero weights when they are sitting next to the
 // speech models, so the VAD option can be offered instead of greyed out.
 find_vad_model :: proc(al := context.allocator) -> (path: string, ok: bool) {
-	for raw in MODEL_DIRS {
+	for raw in model_dirs() {
 		dir := expand_path(raw, context.temp_allocator)
 		entries, rerr := os.read_directory_by_path(dir, -1, context.temp_allocator)
 		if rerr != nil {

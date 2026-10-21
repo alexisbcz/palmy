@@ -239,6 +239,7 @@ start_transcribe :: proc(opts: Transcribe_Opts, duration: f64) -> bool {
 		max_len    = opts.max_len,
 		split_word = opts.split_word,
 		translate  = opts.translate,
+		diarize    = opts.diarize,
 		vad        = opts.vad,
 		vad_model  = strings.clone(opts.vad_model),
 		wav        = strings.clone(opts.wav),
@@ -618,13 +619,32 @@ Tools :: struct {
 	ffprobe: bool,
 	ffplay:  bool,
 	whisper: bool,
+	// libass, which burning in needs (the `ass` filter). palmy's own ffmpeg
+	// is built without it (distro/recipes/runtime/src/ffmpeg.build), so it is
+	// asked about rather than assumed: without it, burning in is unavailable
+	// and says why, and every caption format still exports.
+	libass:  bool,
 }
 
 check_tools :: proc() -> Tools {
-	return Tools {
+	t := Tools {
 		ffmpeg = kit.has_tool("ffmpeg"),
 		ffprobe = kit.has_tool("ffprobe"),
 		ffplay = kit.has_tool("ffplay"),
 		whisper = kit.has_tool(WHISPER_BIN),
 	}
+	if t.ffmpeg {
+		if out, ok := kit.run({"ffmpeg", "-hide_banner", "-filters"}, context.temp_allocator); ok {
+			body := out
+			for line in strings.split_lines_iterator(&body) {
+				f := strings.fields(line, context.temp_allocator)
+				if len(f) >= 2 && f[1] == "ass" {
+					t.libass = true
+				}
+			}
+		}
+	}
+	return t
 }
+
+NO_LIBASS :: "this ffmpeg has no libass, so it cannot burn captions in; export them (e) and add them to the video as a subtitle track instead"

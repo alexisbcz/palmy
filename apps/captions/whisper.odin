@@ -52,6 +52,7 @@ Transcribe_Opts :: struct {
 	max_len:     int, // characters per segment, 0 to let whisper decide
 	split_word:  bool,
 	translate:   bool,
+	diarize:     bool, // -tdrz, with a tinydiarize model
 	vad:         bool,
 	vad_model:   string,
 	// Where the WAV lives and where the JSON goes (without its extension).
@@ -86,6 +87,9 @@ whisper_argv :: proc(o: Transcribe_Opts, al := context.temp_allocator) -> []stri
 	}
 	if o.translate {
 		append(&a, "-tr")
+	}
+	if o.diarize {
+		append(&a, "-tdrz")
 	}
 	if o.vad && o.vad_model != "" {
 		append(&a, "--vad", "-vm", o.vad_model)
@@ -189,10 +193,20 @@ parse_transcript :: proc(
 		return tr, "whisper's transcription is not an array"
 	}
 
+	// tinydiarize puts `"speaker_turn_next": true` on the segment *before* a
+	// change of speaker; the caption that gets the mark is the one after.
+	turn_next := false
 	for item in arr {
 		from, to, ok := offsets_of(item)
 		if !ok {
 			continue
+		}
+		turn_here := turn_next
+		turn_next = false
+		if tv, got_tv := obj_get(item, "speaker_turn_next"); got_tv {
+			if b, is_b := tv.(json.Boolean); is_b && bool(b) {
+				turn_next = true
+			}
 		}
 		text_v, got_text := obj_get(item, "text")
 		if !got_text {
@@ -204,10 +218,12 @@ parse_transcript :: proc(
 		}
 		body := strings.trim_space(raw)
 		if body == "" {
+			turn_next = turn_next || turn_here // the change carries to the next caption
 			continue
 		}
 
 		seg := seg_make(from, max(to, from), body)
+		seg.turn = turn_here
 
 		// Average token probability, skipping the specials, as a confidence.
 		psum, pn := f64(0), 0

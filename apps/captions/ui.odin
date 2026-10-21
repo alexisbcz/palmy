@@ -44,6 +44,9 @@ Preview_Ctx :: struct {
 	src_w:    int,
 	src_h:    int,
 	selected: bool,
+	// Karaoke: bytes of `text` before `sung` are drawn in the highlight.
+	karaoke:  bool,
+	sung:     int,
 }
 
 Wave_Ctx :: struct {
@@ -183,11 +186,19 @@ preview_panel :: proc(ui: ^p.Ctx, fonts: ^p.Fonts, m: ^App_State) {
 	ctx.src_h = m.info.height > 0 ? m.info.height : 1080
 	ctx.selected = active >= 0
 	ctx.text_n = 0
+	ctx.karaoke = false
+	ctx.sung = 0
 	if active >= 0 {
 		body := seg_text(m.segs[active])
 		n := min(len(body), len(ctx.text))
 		copy(ctx.text[:], body[:n])
 		ctx.text_n = n
+		if m.style.karaoke {
+			// The words begun by the playhead, in the highlight — the same
+			// rule the ASS `\k` tags give the burn-in.
+			ctx.karaoke = true
+			ctx.sung = karaoke_sung(seg_word_spans(m.words[:], m.segs[active]), m.pos)
+		}
 	} else if m.loaded {
 		s := "no caption at the playhead"
 		copy(ctx.text[:], s)
@@ -324,7 +335,9 @@ preview_draw :: proc(c: ^p.Canvas, r: p.Rect, u: ^Preview_Ctx) {
 		)
 	}
 
+	line_off := 0
 	for l, i in lines {
+		defer line_off += len(l) + 1
 		w := p.text_width(u.fonts, l, size, .Sans, wt)
 		x := box_left(al, dst, mx, w)
 		y := top + line_h * f32(i) + metrics.ascent
@@ -362,7 +375,13 @@ preview_draw :: proc(c: ^p.Canvas, r: p.Rect, u: ^Preview_Ctx) {
 				wt,
 			)
 		}
-		p.draw_text(c, u.fonts, l, x, y, size, fill, .Sans, wt)
+		if u.karaoke {
+			k := clamp(u.sung - line_off, 0, len(l))
+			p.draw_text(c, u.fonts, l[:k], x, y, size, p.hex(st.karaoke_rgb), .Sans, wt)
+			p.draw_text(c, u.fonts, l[k:], x + p.text_width(u.fonts, l[:k], size, .Sans, wt), y, size, fill, .Sans, wt)
+		} else {
+			p.draw_text(c, u.fonts, l, x, y, size, fill, .Sans, wt)
+		}
 	}
 }
 
@@ -1134,7 +1153,7 @@ pane_transcribe :: proc(ui: ^p.Ctx, m: ^App_State) {
 		p.text(ui, "No whisper model found", "text-[12] font-semibold text-destructive")
 		p.end(ui)
 		p.text(ui, "Put a ggml-*.bin in one of these directories, or install one with whisper.cpp's download script:", "text-[11] text-muted-foreground")
-		for d in MODEL_DIRS {
+		for d in model_dirs() {
 			p.text(ui, expand_path(d), "font-mono text-[10] text-muted-foreground")
 		}
 		p.end(ui)
@@ -1524,6 +1543,19 @@ pane_style :: proc(ui: ^p.Ctx, m: ^App_State) {
 		p.text(ui, "ASS carries a box as BorderStyle 3, which replaces the outline rather than sitting behind it.", "text-[10] text-muted-foreground")
 	}
 
+	section(ui, "KARAOKE  (a)")
+	if toggle_row(ui, "Highlight each word as it is spoken", m.style.karaoke) {
+		m.style.karaoke = !m.style.karaoke
+	}
+	if m.style.karaoke {
+		swatches(ui, &m.style.karaoke_rgb)
+		p.text(
+			ui,
+			len(m.words) > 0 ? fmt.tprintf("From whisper's timings for %d words; a word you typed is timed between its neighbours.", len(m.words)) : "No word timings yet (they come from a transcription): each caption's words are spread evenly over it.",
+			"text-[10] text-muted-foreground",
+		)
+	}
+
 	section(ui, "POSITION  (p)")
 	p.col(ui, "w-full gap-1")
 	for pos in Position {
@@ -1824,6 +1856,9 @@ HELP := [?][2]string {
 	{"1 2 3 4", "Transcribe, Captions, Style, Export"},
 	{"f", "cycle the export format"},
 	{"e / Ctrl-S", "export"},
+	{"Ctrl-Z", "undo — typing in one caption is one step"},
+	{"Ctrl-Shift-Z / Ctrl-Y", "redo"},
+	{"a", "karaoke: light each word as it is spoken (Style pane)"},
 	{"b", "burn the captions into a new video"},
 	{"Ctrl-Q", "quit"},
 }

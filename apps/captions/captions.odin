@@ -20,6 +20,10 @@ Seg :: struct {
 	// Mean token probability whisper reported for this segment, 0 when
 	// unknown. Shown so a human knows which lines to check first.
 	conf:       f32,
+	// A different person starts speaking at this caption. tinydiarize marks
+	// turns, not identities, so this is a boundary and not a name; it is
+	// written out with the subtitling convention for one, a leading dash.
+	turn:       bool,
 }
 
 seg_make :: proc(start, end: f64, text: string) -> Seg {
@@ -601,6 +605,10 @@ Caption_Style :: struct {
 	pos:         Position,
 	margin_x:    int,
 	margin_y:    int,
+	// Karaoke: each word turns to `karaoke_rgb` as it is spoken (ASS `\k`
+	// with the fill as SecondaryColour), from whisper's word timings.
+	karaoke:     bool,
+	karaoke_rgb: u32,
 }
 
 default_style :: proc() -> Caption_Style {
@@ -619,6 +627,8 @@ default_style :: proc() -> Caption_Style {
 		pos = .Bottom,
 		margin_x = 48,
 		margin_y = 54,
+		karaoke = false,
+		karaoke_rgb = 0xffe066, // the second fill swatch
 	}
 }
 
@@ -676,4 +686,148 @@ write_int :: proc(b: ^strings.Builder, v: int) {
 		buf[i] = '-'
 	}
 	strings.write_string(b, string(buf[i:]))
+}
+
+// ---------------------------------------------------------------------------
+// Karaoke: which word is being spoken
+//
+// whisper's words are its own tokens, reassembled, and the caption text is
+// whatever the user has made of them since — corrected, re-punctuated,
+// re-wrapped, split. So the word timings cannot be indexed by position. Each
+// word of the caption's *current* text is matched against the whisper words
+// inside the caption's time range, in order, by its letters alone; a word
+// that matches nothing (the user typed it) is given a time interpolated
+// between the matched words either side, by character count. A caption with
+// no word data at all is spread evenly over its duration, and says so
+// (`timed` is false), so the highlight still moves but is not claimed to be
+// whisper's.
+// ---------------------------------------------------------------------------
+
+Word_Span :: struct {
+	lo, hi:     int, // byte range of the word in the caption text
+	start, end: f64,
+	timed:      bool, // from whisper, rather than interpolated
+}
+
+@(private = "file")
+word_key :: proc(s: string, al := context.temp_allocator) -> string {
+	b := strings.builder_make(al)
+	for r in s {
+		if unicode.is_letter(r) || unicode.is_digit(r) {
+			strings.write_rune(&b, unicode.to_lower(r))
+		}
+	}
+	return strings.to_string(b)
+}
+
+seg_word_spans :: proc(words: []Word, s: Seg, al := context.temp_allocator) -> []Word_Span {
+	return word_spans(words, seg_text(s), s.start, s.end, al)
+}
+
+word_spans :: proc(words: []Word, body: string, seg_start, seg_end: f64, al := context.temp_allocator) -> []Word_Span {
+	s := struct {
+		start, end: f64,
+	}{seg_start, seg_end}
+	spans := make([dynamic]Word_Span, al)
+	i := 0
+	for i < len(body) {
+		for i < len(body) && (body[i] == ' ' || body[i] == '\n' || body[i] == '\t') {
+			i += 1
+		}
+		if i >= len(body) {
+			break
+		}
+		j := i
+		for j < len(body) && body[j] != ' ' && body[j] != '\n' && body[j] != '\t' {
+			j += 1
+		}
+		append(&spans, Word_Span{lo = i, hi = j, start = -1, end = -1})
+		i = j
+	}
+	if len(spans) == 0 {
+		return spans[:]
+	}
+
+	// Match in order against the whisper words inside this caption.
+	cand := make([dynamic]Word, 0, 32, context.temp_allocator)
+	for w in words {
+		if w.end < s.start - 0.25 || w.start > s.end + 0.25 {
+			continue
+		}
+		append(&cand, w)
+	}
+	k := 0
+	for &sp in spans {
+		key := word_key(body[sp.lo:sp.hi])
+		if key == "" {
+			continue
+		}
+		// Look a few words ahead, so one inserted or deleted word does not
+		// throw the rest of the caption off.
+		for look in 0 ..< 4 {
+			if k + look >= len(cand) {
+				break
+			}
+			if word_key(cand[k + look].text) == key {
+				w := cand[k + look]
+				sp.start = clamp(w.start, s.start, s.end)
+				sp.end = clamp(max(w.end, w.start), s.start, s.end)
+				sp.timed = true
+				k += look + 1
+				break
+			}
+		}
+	}
+
+	// Fill the gaps by character count between the anchors either side.
+	n := len(spans)
+	idx := 0
+	for idx < n {
+		if spans[idx].timed {
+			idx += 1
+			continue
+		}
+		a := idx
+		for idx < n && !spans[idx].timed {
+			idx += 1
+		}
+		b := idx // first timed after the run, or n
+		t0 := a > 0 ? spans[a - 1].end : s.start
+		t1 := b < n ? spans[b].start : s.end
+		if t1 < t0 {
+			t1 = t0
+		}
+		chars := 0
+		for q in a ..< b {
+			chars += spans[q].hi - spans[q].lo
+		}
+		acc := 0
+		for q in a ..< b {
+			w := spans[q].hi - spans[q].lo
+			spans[q].start = t0 + (t1 - t0) * f64(acc) / f64(max(chars, 1))
+			acc += w
+			spans[q].end = t0 + (t1 - t0) * f64(acc) / f64(max(chars, 1))
+		}
+	}
+	// Starts must not run backwards, whatever whisper said.
+	for q in 1 ..< n {
+		spans[q].start = max(spans[q].start, spans[q - 1].start)
+		spans[q].end = max(spans[q].end, spans[q].start)
+	}
+	return spans[:]
+}
+
+// karaoke_sung is the byte offset in the caption text up to which words have
+// begun by time `t`: everything before it is drawn in the highlight. 0 before
+// the first word, the end of the last word once it has started.
+karaoke_sung :: proc(spans: []Word_Span, t: f64) -> int {
+	out := 0
+	for sp in spans {
+		if sp.start <= t {
+			out = sp.hi
+		} else {
+			break
+		}
+	}
+	return out
 }

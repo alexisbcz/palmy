@@ -19,6 +19,7 @@ package main
 import "core:fmt"
 import "core:math"
 import "core:os"
+import "core:strconv"
 import "core:strings"
 import "core:time"
 import kit "kit:."
@@ -429,6 +430,148 @@ selftest :: proc() -> int {
 		check_eq("the default output never lands on the source", default_output("/v/in.mp4", ".captioned", "mp4"), "/v/in.captioned.mp4")
 	}
 
+	// -----------------------------------------------------------------------
+	rule("karaoke: word timings on the caption's own text")
+	// -----------------------------------------------------------------------
+	{
+		// whisper heard "Hello world again"; the user has since made it
+		// "Hello, big world again." — a typed word and new punctuation.
+		words := [?]Word{{0.1, 0.4, "Hello"}, {0.6, 0.9, "world"}, {1.2, 1.6, "again"}}
+		sg := seg_make(0, 2, "Hello, big world again.")
+		defer seg_destroy(&sg)
+		sp := seg_word_spans(words[:], sg)
+		check("four words in the caption's own text", len(sp) == 4, fmt.tprintf("%d", len(sp)))
+		if len(sp) == 4 {
+			check("\"Hello,\" matches whisper's Hello despite the comma", sp[0].timed && near(sp[0].start, 0.1, 1e-9))
+			check("\"big\" was typed, so it is placed between its neighbours", !sp[1].timed && sp[1].start >= 0.4 - 1e-9 && sp[1].start <= 0.6 + 1e-9, fmt.tprintf("%.3f", sp[1].start))
+			check("\"world\" and \"again.\" keep whisper's times", sp[2].timed && near(sp[2].start, 0.6, 1e-9) && sp[3].timed && near(sp[3].start, 1.2, 1e-9))
+			check_eq("spans index the caption's bytes", seg_text(sg)[sp[2].lo:sp[2].hi], "world")
+			check("before the first word nothing is sung", karaoke_sung(sp, 0.05) == 0)
+			check_eq("at 0.7s the highlight runs through \"world\"", seg_text(sg)[:karaoke_sung(sp, 0.7)], "Hello, big world")
+			check("after the last word starts, all of it", karaoke_sung(sp, 1.9) == len(seg_text(sg)))
+		}
+		// No word data: spread evenly, and flagged as such.
+		bare := seg_make(10, 12, "one two three four")
+		defer seg_destroy(&bare)
+		even := seg_word_spans(nil, bare)
+		mono := true
+		for x, i in even {
+			if x.timed || (i > 0 && x.start < even[i - 1].start) {
+				mono = false
+			}
+		}
+		check("without word data the words are spread over the caption, untimed", len(even) == 4 && mono && near(even[0].start, 10, 1e-9) && even[3].start < 12)
+
+		// The ASS script: one \k per word plus the lead-in, summing to the
+		// caption's length, and the karaoke colours in the style.
+		kst := default_style()
+		kst.karaoke = true
+		segs1 := [?]Seg{sg}
+		ass := write_ass(segs1[:], kst, 1920, 1080, context.temp_allocator, words[:])
+		line := ""
+		for l in strings.split_lines(ass, context.temp_allocator) {
+			if strings.has_prefix(l, "Dialogue:") {
+				line = l
+			}
+		}
+		n_k := strings.count(line, "{\\k")
+		check("a \\k tag per word, after a lead-in for the silence before the first", n_k == 5, line)
+		total := 0
+		rest := line
+		for {
+			at := strings.index(rest, "{\\k")
+			if at < 0 {
+				break
+			}
+			rest = rest[at + 3:]
+			end := strings.index(rest, "}")
+			v, _ := strconv.parse_int(rest[:end])
+			total += v
+		}
+		check("the durations add up to the caption, in centiseconds", total == 200, fmt.tprintf("%d", total))
+		check("the text survives between the tags", strings.contains(line, "Hello,") && strings.contains(line, " big") && strings.contains(line, " again."), line)
+		sty := ass_style_line(ass)
+		check(
+			"karaoke: PrimaryColour is the highlight, SecondaryColour the fill",
+			strings.contains(sty, fmt.tprintf("%s,%s", ass_colour(kst.karaoke_rgb, 1), ass_colour(kst.fill, 1))),
+			sty,
+		)
+		plain := write_ass(segs1[:], default_style(), 1920, 1080, context.temp_allocator, words[:])
+		check("without karaoke there are no \\k tags", !strings.contains(plain, "{\\k"))
+		braces := seg_make(0, 1, "a {b}")
+		defer seg_destroy(&braces)
+		bk := ass_karaoke_body(braces, nil)
+		check("a brace in the text is escaped, not taken for a tag", strings.contains(bk, "\\{b\\}"), bk)
+	}
+
+	// -----------------------------------------------------------------------
+	rule("speaker turns")
+	// -----------------------------------------------------------------------
+	{
+		// tinydiarize marks the segment *before* a change.
+		js := `{"result":{"language":"en"},"transcription":[` +
+			`{"offsets":{"from":0,"to":1000},"text":" Did you bring it?","speaker_turn_next":true},` +
+			`{"offsets":{"from":1000,"to":2000},"text":" Yes, here.","speaker_turn_next":false},` +
+			`{"offsets":{"from":2000,"to":3000},"text":" Thanks.","speaker_turn_next":true},` +
+			`{"offsets":{"from":3000,"to":4000},"text":" ","speaker_turn_next":false},` +
+			`{"offsets":{"from":4000,"to":5000},"text":" Any time."}]}`
+		tr, err := parse_transcript(js, context.temp_allocator)
+		check("the diarized JSON parses", err == "" && len(tr.segs) == 4, err)
+		if len(tr.segs) == 4 {
+			check("the caption after a marked one starts a turn", tr.segs[1].turn && !tr.segs[0].turn && !tr.segs[2].turn)
+			check("a turn on an empty segment carries to the next caption", tr.segs[3].turn)
+			srt := write_srt(tr.segs[:])
+			check("SRT writes a turn as a leading dash", strings.contains(srt, "\n- Yes, here.\n") && strings.contains(srt, "\nDid you bring it?\n"), srt)
+			tr.segs[1].text[0] = '-'
+			check("and never doubles one the text already has", !strings.contains(write_srt(tr.segs[:]), "- -"))
+			vtt := write_vtt(tr.segs[:])
+			check("so does WebVTT", strings.contains(vtt, "\n- Any time.\n"))
+		}
+		argv := whisper_argv(Transcribe_Opts{model = "/m/ggml-small.en-tdrz.bin", diarize = true, translate = false, wav = "/w/a.wav", out_prefix = "/w/o"})
+		check("diarizing passes -tdrz", slice_has(argv, "-tdrz"))
+		argv2 := whisper_argv(Transcribe_Opts{model = "/m/ggml-base.bin", translate = true, wav = "/w/a.wav", out_prefix = "/w/o"})
+		check("translating passes -tr and not -tdrz", slice_has(argv2, "-tr") && !slice_has(argv2, "-tdrz"))
+	}
+
+	// -----------------------------------------------------------------------
+	rule("where models are looked for")
+	// -----------------------------------------------------------------------
+	{
+		old := os.get_env(MODELS_ENV, context.temp_allocator)
+		tmp := fmt.tprintf("%s/selftest-models-%d", work_dir(), os.get_pid())
+		os.make_directory_all(tmp)
+		fake := fmt.tprintf("%s/ggml-fake.en-tdrz.bin", tmp)
+		_, made := kit.run({"truncate", "-s", "21M", fake}, context.temp_allocator)
+		os.set_env(MODELS_ENV, tmp)
+		dirs := model_dirs()
+		check(fmt.tprintf("$%s is searched first", MODELS_ENV), len(dirs) > 0 && dirs[0] == tmp)
+		found := false
+		for mm in find_models(context.temp_allocator) {
+			if mm.name == "fake.en-tdrz" {
+				found = mm.diarize && !mm.multilingual
+			}
+		}
+		check("a model there is found, and a -tdrz one is known to diarize", made && found)
+		os.unset_env(MODELS_ENV)
+		gone := true
+		for mm in find_models(context.temp_allocator) {
+			if mm.name == "fake.en-tdrz" {
+				gone = false
+			}
+		}
+		check("and unset, it is not searched", gone)
+		if old != "" {
+			os.set_env(MODELS_ENV, old)
+		}
+		os.remove(fake)
+		os.remove(tmp)
+	}
+
+	// -----------------------------------------------------------------------
+	rule("undo and redo")
+	// -----------------------------------------------------------------------
+	test_history()
+
 	test_cli()
 
 	// -----------------------------------------------------------------------
@@ -437,7 +580,7 @@ selftest :: proc() -> int {
 	models := find_models(context.allocator)
 	if !check("at least one whisper model is on disk", len(models) > 0, fmt.tprintf("%d found", len(models))) {
 		fmt.println("\nno models found — nothing to transcribe with. Searched:")
-		for d in MODEL_DIRS {
+		for d in model_dirs() {
 			fmt.printfln("  %s", expand_path(d))
 		}
 		return report()
@@ -676,7 +819,9 @@ selftest :: proc() -> int {
 			)
 		}
 	}
-	{
+	if !tools.libass {
+		fmt.println("      skipped the libass checks: this ffmpeg has no libass (it cannot burn in)")
+	} else {
 		// ffmpeg is the real consumer of the ASS, so let it be the judge.
 		ass_path := fmt.tprintf("%s/selftest.ass", dir)
 		probe_out := fmt.tprintf("%s/selftest-ass.mkv", dir)
@@ -702,8 +847,182 @@ selftest :: proc() -> int {
 		os.remove(probe_out)
 	}
 
+	// -----------------------------------------------------------------------
+	rule("karaoke on a real transcript")
+	// -----------------------------------------------------------------------
+	{
+		timed, total := 0, 0
+		for s in tr.segs {
+			for sp in seg_word_spans(tr.words[:], s) {
+				total += 1
+				if sp.timed {
+					timed += 1
+				}
+			}
+		}
+		check("most of the transcript's words carry whisper's own time", total > 0 && f64(timed) >= 0.8 * f64(total), fmt.tprintf("%d of %d", timed, total))
+		kst := default_style()
+		kst.karaoke = true
+		kst.size = 30
+		ass := write_ass(tr.segs[:], kst, 640, 360, context.temp_allocator, tr.words[:])
+		kpath := fmt.tprintf("%s/selftest-karaoke.ass", dir)
+		_ = os.write_entire_file(kpath, transmute([]u8)ass)
+		if !tools.libass {
+			fmt.println("      skipped the burned frame: this ffmpeg has no libass")
+		}
+		// A frame from the middle of the first caption, burned by libass:
+		// some of the line must be in the highlight and some still in the
+		// fill. That is what "word by word" looks like in pixels.
+		s0 := tr.segs[0]
+		sp0 := seg_word_spans(tr.words[:], s0)
+		at := s0.start + (s0.end - s0.start) * 0.5
+		if len(sp0) >= 3 {
+			at = (sp0[1].start + sp0[2].start) / 2 // after the second word starts
+		}
+		raw, ok := kit.run(
+			{
+				"sh", "-c",
+				fmt.tprintf(
+					"ffmpeg -v error -f lavfi -i color=c=black:s=640x360:d=%.2f -vf ass=%s -ss %.3f -frames:v 1 -f rawvideo -pix_fmt rgb24 - | od -An -v -tu1 -w3",
+					info.duration,
+					kpath,
+					at,
+				),
+			},
+			context.temp_allocator,
+		)
+		hi, fill := 0, 0
+		if ok && tools.libass {
+			body := raw
+			for line in strings.split_lines_iterator(&body) {
+				f := strings.fields(line, context.temp_allocator)
+				if len(f) != 3 {
+					continue
+				}
+				r, _ := strconv.parse_int(f[0])
+				g, _ := strconv.parse_int(f[1])
+				b, _ := strconv.parse_int(f[2])
+				if r > 200 && g > 150 && b < 110 {
+					hi += 1 // the karaoke yellow, 0xffe066
+				} else if r > 200 && g > 200 && b > 200 {
+					fill += 1 // still white
+				}
+			}
+		}
+		if tools.libass {
+			check("libass draws the spoken words in the highlight", ok && hi > 50, fmt.tprintf("%d highlight pixels at %.2fs", hi, at))
+			check("and the words still to come in the fill", fill > 50, fmt.tprintf("%d fill pixels", fill))
+		}
+	}
+
+	// -----------------------------------------------------------------------
+	rule("translation, end to end")
+	// -----------------------------------------------------------------------
+	// The largest multilingual model: measured on this fixture, base turns
+	// espeak-ng's French into "Be careful! ... I'll see you later" and small
+	// into "Today, we will talk about the meteor. It's going to rain
+	// tomorrow, but the sun will come in the afternoon."
+	ml := -1
+	for mm, i in models {
+		if mm.multilingual && (ml < 0 || mm.bytes > models[ml].bytes) {
+			ml = i
+		}
+	}
+	if ml < 0 {
+		fmt.println("      skipped: no multilingual model here, and -tr needs one (an .en model cannot translate)")
+	} else {
+		fr := fmt.tprintf("%s/selftest-fr.wav", dir)
+		fr16 := fmt.tprintf("%s/selftest-fr16.wav", dir)
+		_, spoke_fr := kit.run({"espeak-ng", "-v", "fr", "-s", "125", "-w", fr, FRENCH_TEXT})
+		ok16, _ := extract_wav(fr, fr16)
+		check("espeak-ng spoke the French fixture", spoke_fr && ok16)
+		fpre := fmt.tprintf("%s/selftest-tr", dir)
+		t1 := time.tick_now()
+		fargv := whisper_argv(
+			Transcribe_Opts{model = models[ml].path, lang = "auto", threads = 8, max_len = 42, split_word = true, translate = true, wav = fr16, out_prefix = fpre},
+			context.temp_allocator,
+		)
+		_, fran := kit.run(fargv, context.temp_allocator)
+		ftr, ferr := load_transcript(fmt.tprintf("%s.json", fpre), context.allocator)
+		check(fmt.tprintf("whisper -tr ran with %s", models[ml].name), fran && ferr == "", ferr)
+		fb := strings.builder_make(context.temp_allocator)
+		for s in ftr.segs {
+			strings.write_string(&fb, seg_text(s))
+			strings.write_byte(&fb, ' ')
+		}
+		heard_en := normalise(strings.to_string(fb))
+		fmt.printfln("      said (fr): %s", FRENCH_TEXT)
+		fmt.printfln("      heard (en): %s   [%.0fs]", heard_en, time.duration_seconds(time.tick_since(t1)))
+		check_eq("whisper detected French", ftr.lang, "fr")
+		en := 0
+		for w in ([?]string{"weather", "rain", "tomorrow", "morning", "sun", "afternoon", "today", "talk"}) {
+			if strings.contains(heard_en, w) {
+				en += 1
+			}
+		}
+		check("the captions are English: at least two of the content words came through", en >= 2, fmt.tprintf("%d of 8", en))
+		fr_left := false
+		for w in ([?]string{"demain", "pluie", "soleil", "aujourd", "bonjour", "parler"}) {
+			if strings.contains(heard_en, w) {
+				fr_left = true
+			}
+		}
+		check("and none of the French is left", !fr_left)
+	}
+
+	// -----------------------------------------------------------------------
+	rule("speaker turns, end to end")
+	// -----------------------------------------------------------------------
+	td := -1
+	for mm, i in models {
+		if mm.diarize {
+			td = i
+			break
+		}
+	}
+	if td < 0 {
+		fmt.println("      skipped: no tinydiarize model here (ggml-small.en-tdrz.bin)")
+	} else {
+		// Two synthetic voices taking turns. tinydiarize was trained on real
+		// meetings and, measured, marks no turns between espeak-ng (or flite)
+		// voices however different they are made; what is asserted here is
+		// the pipeline — -tdrz accepted, the JSON read, the turns counted —
+		// and the count is reported rather than asserted.
+		parts := [?][2]string {
+			{"en-us+m1", "Good morning. Did you bring the report about the river project?"},
+			{"en+f5", "Yes, I finished it last night. The water levels are much higher than we expected."},
+			{"en-us+m1", "That is worrying. We should call the engineers this afternoon."},
+		}
+		files := make([dynamic]string, context.temp_allocator)
+		for part, i in parts {
+			f := fmt.tprintf("%s/selftest-turn%d.wav", dir, i)
+			_, _ = kit.run({"espeak-ng", "-v", part[0], "-s", "150", "-w", f, part[1]})
+			append(&files, f)
+		}
+		dlg := fmt.tprintf("%s/selftest-dialog.wav", dir)
+		cat := fmt.tprintf("ffmpeg -v error -y -i %s -i %s -i %s -filter_complex concat=n=3:v=0:a=1 -ar 16000 -ac 1 %s", files[0], files[1], files[2], dlg)
+		_, cok := kit.run({"sh", "-c", cat})
+		dpre := fmt.tprintf("%s/selftest-tdrz", dir)
+		dargv := whisper_argv(Transcribe_Opts{model = models[td].path, threads = 8, diarize = true, wav = dlg, out_prefix = dpre}, context.temp_allocator)
+		_, dran := kit.run(dargv, context.temp_allocator)
+		dtr, derr := load_transcript(fmt.tprintf("%s.json", dpre), context.allocator)
+		check(fmt.tprintf("whisper -tdrz ran with %s and its JSON parses", models[td].name), cok && dran && derr == "", derr)
+		check("the dialogue came back as captions", len(dtr.segs) >= 3, fmt.tprintf("%d", len(dtr.segs)))
+		turns := 0
+		for s in dtr.segs {
+			if s.turn {
+				turns += 1
+			}
+		}
+		fmt.printfln("      %d captions, %d speaker turns marked (synthetic voices; see the note above)", len(dtr.segs), turns)
+	}
+
 	return report()
 }
+
+// FRENCH_TEXT is the translation fixture: about the weather, so the English
+// that comes back has content words that cannot be guessed from nothing.
+FRENCH_TEXT :: "Bonjour à tous. Aujourd'hui, nous allons parler de la météo. Il va pleuvoir demain matin, mais le soleil reviendra l'après-midi."
 
 // ass_style_line pulls the Style line out of a script, for an assertion's
 // failure detail.
@@ -868,12 +1187,20 @@ test_cli :: proc() {
 
 	tools := check_tools()
 	clip := fmt.tprintf("%s/clip.mp4", cli_dir)
+	spoke := false
 	if tools.ffmpeg && tools.ffprobe {
-		// Synthetic only: a test pattern and a tone.
-		_, made := kit.run(
-			{"ffmpeg", "-v", "error", "-y", "-f", "lavfi", "-i", "testsrc2=size=320x240:rate=25", "-f", "lavfi", "-i", "sine=frequency=440", "-t", "2", "-shortest", "-c:v", "libx264", "-c:a", "aac", clip},
-			context.temp_allocator,
-		)
+		// Synthetic only: a test pattern, and espeak-ng saying two words (a
+		// tone when there is no espeak-ng). It used to be a tone always, and
+		// the transcribe check below — which only runs where there is a
+		// model — then failed on "no speech in this file", which was true.
+		speech := fmt.tprintf("%s/hello.wav", cli_dir)
+		_, spoke = kit.run({"espeak-ng", "-s", "150", "-w", speech, "Hello there."}, context.temp_allocator)
+		audio_in := spoke ? []string{"-i", speech} : []string{"-f", "lavfi", "-i", "sine=frequency=440"}
+		argv := make([dynamic]string, context.temp_allocator)
+		append(&argv, "ffmpeg", "-v", "error", "-y", "-f", "lavfi", "-i", "testsrc2=size=320x240:rate=25")
+		append(&argv, ..audio_in)
+		append(&argv, "-af", "apad", "-t", "2", "-c:v", "libx264", "-c:a", "aac", clip)
+		_, made := kit.run(argv[:], context.temp_allocator)
 		if check("ffmpeg made a synthetic clip from lavfi sources", made && os.exists(clip)) {
 			out, code := cli_run("probe", "clip.mp4", "--json")
 			check("probe exits 0", code == 0)
@@ -881,10 +1208,16 @@ test_cli :: proc() {
 			check("and reports the clip's two seconds and both streams", strings.contains(out, `"duration": 2`) && strings.contains(out, `"has_video": true`) && strings.contains(out, `"has_audio": true`))
 
 			bout, bcode := cli_run("burn", "clip.mp4", "t.srt", "--out", "burned.mp4", "--json")
-			check("burn exits 0", bcode == 0, bout)
-			schema_ok("burn matches its declared schema", bout, BURN_FIELDS)
-			info, perr := probe(fmt.tprintf("%s/burned.mp4", cli_dir), context.temp_allocator)
-			check("the burned copy is a video of the same length", perr == "" && info.has_video && near(info.duration, 2, 0.1), perr)
+			if tools.libass {
+				check("burn exits 0", bcode == 0, bout)
+				schema_ok("burn matches its declared schema", bout, BURN_FIELDS)
+				info, perr := probe(fmt.tprintf("%s/burned.mp4", cli_dir), context.temp_allocator)
+				check("the burned copy is a video of the same length", perr == "" && info.has_video && near(info.duration, 2, 0.1), perr)
+			} else {
+				// palmy's own ffmpeg: no libass, so no burn-in — said, not failed.
+				check("without libass, burn answers 6, unavailable, and says why", bcode == kit.EXIT_UNAVAILABLE && strings.contains(bout, "libass"), fmt.tprintf("exit %d", bcode))
+				check("and writes nothing", !os.exists(fmt.tprintf("%s/burned.mp4", cli_dir)))
+			}
 			_, over := cli_run("burn", "clip.mp4", "t.srt", "--out", "clip.mp4")
 			check("burning over the source is refused", over == kit.EXIT_USAGE)
 		}
@@ -894,13 +1227,258 @@ test_cli :: proc() {
 		if len(find_models(context.temp_allocator)) == 0 || !tools.whisper {
 			check("transcribe with no whisper or no model answers 6, unavailable", code == kit.EXIT_UNAVAILABLE, fmt.tprintf("exit %d", code))
 			schema_ok("with the documented error object", out, {{name = "error", kind = .String}, {name = "code", kind = .Int}, {name = "command", kind = .String}})
-		} else {
+		} else if spoke {
 			check("transcribe exits 0", code == 0, out)
 			schema_ok("transcribe matches its declared schema", out, TRANSCRIBE_FIELDS)
+		} else {
+			check("transcribe of a tone says there is no speech in it", code == kit.EXIT_FAILED && strings.contains(out, "no speech"), out)
 		}
+	}
+	{
+		// The new transcribe flags refuse what cannot work before looking for
+		// a model, so these answer the same on any machine.
+		_, both := cli_run("transcribe", "clip.mp4", "--translate", "--diarize", "--json")
+		check("--translate with --diarize is a usage error (they need different models)", both == kit.EXIT_USAGE, fmt.tprintf("exit %d", both))
+		_, kar := cli_run("transcribe", "clip.mp4", "--karaoke", "--json")
+		check("--karaoke without --format ass is a usage error", kar == kit.EXIT_USAGE, fmt.tprintf("exit %d", kar))
+		models := find_models(context.temp_allocator)
+		has_ml, has_tdrz := false, false
+		for mm in models {
+			has_ml |= mm.multilingual
+			has_tdrz |= mm.diarize
+		}
+		if tools.whisper && !has_tdrz {
+			out, code := cli_run("transcribe", "clip.mp4", "--diarize", "--json")
+			check("--diarize with no tinydiarize model answers 6 and names the model it needs", code == kit.EXIT_UNAVAILABLE && strings.contains(out, "tdrz"), fmt.tprintf("exit %d", code))
+		}
+		if tools.whisper && len(models) > 0 {
+			name := strings.concatenate({"ggml-", models[0].name}, context.temp_allocator)
+			_, code := cli_run("transcribe", "clip.mp4", "--model", name, "--dry-run", "--json")
+			check(fmt.tprintf("--model takes the ggml- spelling the help shows (%s)", name), code == 0, fmt.tprintf("exit %d", code))
+		}
+		_ = has_ml
 	}
 	{
 		_, code := cli_run("no-such-thing")
 		check("a word that is neither a command nor a file is a usage error, not a window", code == kit.EXIT_USAGE)
 	}
+}
+
+// ---------------------------------------------------------------------------
+// Undo and redo, asserted the way videoedit's are: not per operation, but as
+// a property. After any edit, undo must give back the bytes from before it
+// and redo the bytes from after, over a long random sequence through the very
+// procedures the keys call; then the whole stack unwinds to the start and
+// replays to the end.
+// ---------------------------------------------------------------------------
+
+@(private = "file")
+slice_has :: proc(a: []string, x: string) -> bool {
+	for s in a {
+		if s == x {
+			return true
+		}
+	}
+	return false
+}
+
+// hist_bytes is everything a snapshot is meant to restore, as text.
+@(private = "file")
+hist_bytes :: proc(m: ^App_State) -> string {
+	b := strings.builder_make(context.temp_allocator)
+	for s in m.segs {
+		fmt.sbprintf(&b, "%.6f|%.6f|%v|%.3f|%s\n", s.start, s.end, s.turn, s.conf, seg_text(s))
+	}
+	return strings.to_string(b)
+}
+
+@(private = "file")
+Hrng :: struct {
+	s: u64,
+}
+
+@(private = "file")
+hnext :: proc(r: ^Hrng, n: int) -> int {
+	r.s ~= r.s << 13
+	r.s ~= r.s >> 7
+	r.s ~= r.s << 17
+	return int(r.s % u64(max(n, 1)))
+}
+
+// hist_frame is one frame of the window, as far as history is concerned: the
+// deferred queue, then the tracker.
+@(private = "file")
+hist_frame :: proc(m: ^App_State) {
+	apply_queue(m)
+	history_track(m)
+}
+
+test_history :: proc() {
+	m := new(App_State)
+	defer free(m)
+	m.segs = make([dynamic]Seg)
+	m.words = make([dynamic]Word)
+	m.queue = make([dynamic]Act)
+	m.limits = default_limits()
+	m.info.duration = 60
+	status_echo = false
+	defer {
+		for &s in m.segs {
+			seg_destroy(&s)
+		}
+		delete(m.segs)
+		delete(m.words)
+		delete(m.queue)
+		history_destroy(m)
+	}
+	for i in 0 ..< 6 {
+		sg := seg_make(f64(i) * 3, f64(i) * 3 + 2.5, fmt.tprintf("caption number %d has a few words in it", i))
+		sg.turn = i == 3
+		append(&m.segs, sg)
+	}
+	m.sel = 0
+	hist_frame(m)
+	start := strings.clone(hist_bytes(m), context.temp_allocator)
+
+	// Typing a word into a caption, one key per frame, is one step.
+	m.focus = .Caption
+	m.sel = 2
+	for ch in "hello" {
+		append(&m.segs[2].text, u8(ch))
+		hist_frame(m)
+	}
+	m.focus = .Browse
+	check("five keystrokes in one caption are one undo step", len(m.hist.undo) == 1, fmt.tprintf("%d steps", len(m.hist.undo)))
+	check_eq("and it is labelled as typing", undo_label(m), "type")
+	queue_act(m, .Undo)
+	hist_frame(m)
+	check("undo takes the whole word back", hist_bytes(m) == start)
+	queue_act(m, .Redo)
+	hist_frame(m)
+	check("redo puts it back", strings.contains(seg_text(m.segs[2]), "in ithello"))
+	queue_act(m, .Undo)
+	hist_frame(m)
+
+	// A split through the procedure the `s` key calls, labelled by it.
+	m.sel = 1
+	do_split(m)
+	hist_frame(m)
+	check_eq("a split is its own step, by name", undo_label(m), "split")
+	check("and makes seven captions", len(m.segs) == 7)
+	queue_act(m, .Undo)
+	hist_frame(m)
+	check("undoing the split restores six, byte for byte", len(m.segs) == 6 && hist_bytes(m) == start)
+	check("the turn mark survived the round trip", m.segs[3].turn)
+	check_eq("and redo knows what it would redo", redo_label(m), "split")
+
+	// Holding `]` walks the in point: one step, while it is one caption.
+	history_break(m)
+	m.sel = 4
+	for _ in 0 ..< 4 {
+		m.act_label = "nudge"
+		nudge_start(&m.segs, m.sel, 0.1, m.limits)
+		hist_frame(m)
+	}
+	before_nudges := len(m.hist.undo)
+	m.sel = 5
+	m.act_label = "nudge"
+	nudge_start(&m.segs, m.sel, 0.1, m.limits)
+	hist_frame(m)
+	check("a run of nudges on one caption coalesces, a nudge on another does not", len(m.hist.undo) == before_nudges + 1, fmt.tprintf("%d then %d", before_nudges, len(m.hist.undo)))
+
+	// A fresh edit after an undo throws the redo branch away.
+	queue_act(m, .Undo)
+	hist_frame(m)
+	check("one step to redo after an undo", len(m.hist.redo) == 1)
+	m.sel = 0
+	if delete_seg(&m.segs, 0) {
+		m.act_label = "delete"
+	}
+	hist_frame(m)
+	check("a new edit drops the redo branch, as every editor does", len(m.hist.redo) == 0)
+
+	// The property, over a long random sequence.
+	r := Hrng{0x9E3779B97F4A7C15}
+	edits, bad := 0, 0
+	first_bad := ""
+	for _ in 0 ..< 160 {
+		history_break(m)
+		before := strings.clone(hist_bytes(m), context.temp_allocator)
+		n := len(m.segs)
+		if n == 0 {
+			queue_act(m, .Insert, -1)
+			hist_frame(m)
+			continue
+		}
+		m.sel = hnext(&r, n)
+		m.caret = 0
+		what := ""
+		switch hnext(&r, 9) {
+		case 0:
+			queue_act(m, .Split, m.sel)
+			what = "split"
+		case 1:
+			queue_act(m, .Merge, m.sel)
+			what = "merge"
+		case 2:
+			if n > 3 {
+				queue_act(m, .Delete, m.sel)
+				what = "delete"
+			}
+		case 3:
+			queue_act(m, .Insert, m.sel)
+			what = "insert"
+		case 4:
+			m.act_label = "nudge"
+			nudge_end(&m.segs, m.sel, hnext(&r, 2) == 0 ? -0.1 : 0.1, m.limits, m.info.duration)
+			what = "nudge"
+		case 5:
+			m.act_label = "slide"
+			shift_seg(&m.segs, m.sel, hnext(&r, 2) == 0 ? -0.5 : 0.5, m.info.duration)
+			what = "slide"
+		case 6:
+			m.focus = .Caption
+			append(&m.segs[m.sel].text, " and more")
+			what = "type"
+		case 7:
+			m.segs[m.sel].turn = !m.segs[m.sel].turn
+			what = "turn"
+		case 8:
+			queue_act(m, .Wrap, m.sel)
+			what = "wrap"
+		}
+		hist_frame(m)
+		m.focus = .Browse
+		after := strings.clone(hist_bytes(m), context.temp_allocator)
+		if after == before {
+			continue // a refused edit (a merge at the end, a clamped nudge)
+		}
+		edits += 1
+		queue_act(m, .Undo)
+		hist_frame(m)
+		u := hist_bytes(m) == before
+		queue_act(m, .Redo)
+		hist_frame(m)
+		rd := hist_bytes(m) == after
+		if !u || !rd {
+			bad += 1
+			if first_bad == "" {
+				first_bad = fmt.tprintf("%s: undo %v redo %v", what, u, rd)
+			}
+		}
+	}
+	check(fmt.tprintf("over %d random edits, undo gives back the bytes from before and redo the bytes after", edits), bad == 0 && edits > 80, first_bad)
+	final := strings.clone(hist_bytes(m), context.temp_allocator)
+	depth := 0
+	for len(m.hist.undo) > 0 {
+		queue_act(m, .Undo)
+		hist_frame(m)
+		depth += 1
+	}
+	check(fmt.tprintf("unwinding all %d steps lands on the first state", depth), hist_bytes(m) == start, fmt.tprintf("cap %d", HIST_MAX))
+	for len(m.hist.redo) > 0 {
+		queue_act(m, .Redo)
+		hist_frame(m)
+	}
+	check("and replaying them lands on the last, byte for byte", hist_bytes(m) == final)
 }

@@ -265,11 +265,83 @@ ass_colour :: proc(rgb: u32, opacity: f32, al := context.temp_allocator) -> stri
 // Writers
 // ---------------------------------------------------------------------------
 
+// with_turn marks a change of speaker the way subtitles do when they cannot
+// name the speaker: a leading dash. A caption that already starts with one
+// (it was typed, or read back from a file this wrote) is left alone.
+with_turn :: proc(s: Seg, body: string, al := context.temp_allocator) -> string {
+	if !s.turn || body == "" || strings.has_prefix(body, "-") || strings.has_prefix(body, "–") {
+		return body
+	}
+	return strings.concatenate({"- ", body}, al)
+}
+
+// ass_escape is ass_body for a piece of a line: the same escapes, but spaces
+// stay ordinary spaces, because a word's leading space is between words, not
+// at the edge of the line.
+@(private = "file")
+ass_escape :: proc(b: ^strings.Builder, text: string) {
+	for i in 0 ..< len(text) {
+		c := text[i]
+		switch c {
+		case '\n':
+			strings.write_string(b, "\\N")
+		case '\\':
+			strings.write_string(b, "\\\\")
+		case '{':
+			strings.write_string(b, "\\{")
+		case '}':
+			strings.write_string(b, "\\}")
+		case '\r':
+		case:
+			strings.write_byte(b, c)
+		}
+	}
+}
+
+// ass_karaoke_body is one Dialogue's text with a `{\k}` before every word.
+// Under `\k` the line is drawn in SecondaryColour and each word switches to
+// PrimaryColour when its turn comes, which is at the sum of the durations
+// before it: so an empty lead-in syllable carries the silence from the
+// caption's start to its first word, and each word's duration runs to the
+// next word's start. Centiseconds are taken from cumulative boundaries, not
+// rounded per word, so a long caption does not drift.
+ass_karaoke_body :: proc(s: Seg, words: []Word, al := context.temp_allocator) -> string {
+	text := srt_body(seg_text(s), context.temp_allocator)
+	spans := word_spans(words, text, s.start, s.end, context.temp_allocator)
+	b := strings.builder_make(al)
+	if s.turn && !strings.has_prefix(text, "-") {
+		strings.write_string(&b, "- ")
+	}
+	if len(spans) == 0 {
+		strings.write_string(&b, ass_body(text, context.temp_allocator))
+		return strings.to_string(b)
+	}
+	cs :: proc(t: f64) -> int {
+		return int(math.round(t * 100))
+	}
+	done := 0
+	if lead := cs(spans[0].start - s.start); lead > 0 {
+		fmt.sbprintf(&b, "{{\\k%d}}", lead)
+		done = lead
+	}
+	prev := 0
+	for sp, i in spans {
+		next := i + 1 < len(spans) ? spans[i + 1].start : s.end
+		upto := max(done, cs(next - s.start))
+		fmt.sbprintf(&b, "{{\\k%d}}", upto - done)
+		done = upto
+		ass_escape(&b, text[prev:sp.hi])
+		prev = sp.hi
+	}
+	ass_escape(&b, text[prev:])
+	return strings.to_string(b)
+}
+
 write_srt :: proc(segs: []Seg, al := context.temp_allocator) -> string {
 	b := strings.builder_make(al)
 	n := 0
 	for s in segs {
-		body := srt_body(seg_text(s), context.temp_allocator)
+		body := with_turn(s, srt_body(seg_text(s), context.temp_allocator))
 		if body == "" {
 			continue
 		}
@@ -292,7 +364,7 @@ write_vtt :: proc(segs: []Seg, al := context.temp_allocator) -> string {
 	strings.write_string(&b, "WEBVTT\n\n")
 	n := 0
 	for s in segs {
-		body := vtt_body(seg_text(s), context.temp_allocator)
+		body := with_turn(s, vtt_body(seg_text(s), context.temp_allocator))
 		if body == "" {
 			continue
 		}
@@ -313,7 +385,7 @@ write_vtt :: proc(segs: []Seg, al := context.temp_allocator) -> string {
 write_txt :: proc(segs: []Seg, al := context.temp_allocator) -> string {
 	b := strings.builder_make(al)
 	for s in segs {
-		body := srt_body(seg_text(s), context.temp_allocator)
+		body := with_turn(s, srt_body(seg_text(s), context.temp_allocator))
 		if body == "" {
 			continue
 		}
@@ -360,6 +432,7 @@ write_ass :: proc(
 	st: Caption_Style,
 	play_w, play_h: int,
 	al := context.temp_allocator,
+	words: []Word = nil,
 ) -> string {
 	b := strings.builder_make(al)
 
@@ -407,7 +480,9 @@ write_ass :: proc(
 		"Style: Default,%s,%d,%s,%s,%s,%s,%d,0,0,0,100,100,0,0,%d,%.1f,%.1f,%d,%d,%d,%d,1\n\n",
 		st.font,
 		int(math.round(f64(st.size))),
-		ass_colour(st.fill, 1, context.temp_allocator),
+		// Under karaoke a word is drawn in SecondaryColour until it is spoken
+		// and PrimaryColour after; otherwise both are the fill.
+		ass_colour(st.karaoke ? st.karaoke_rgb : st.fill, 1, context.temp_allocator),
 		ass_colour(st.fill, 1, context.temp_allocator),
 		outline_col,
 		back_col,
@@ -427,8 +502,8 @@ write_ass :: proc(
 		"Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text\n",
 	)
 	for s in segs {
-		body := ass_body(seg_text(s), context.temp_allocator)
-		if body == "" {
+		body := st.karaoke ? ass_karaoke_body(s, words, context.temp_allocator) : ass_body(with_turn(s, seg_text(s)), context.temp_allocator)
+		if strings.trim_space(seg_text(s)) == "" {
 			continue
 		}
 		fmt.sbprintf(
@@ -449,6 +524,7 @@ render_subtitles :: proc(
 	st: Caption_Style,
 	play_w, play_h: int,
 	al := context.temp_allocator,
+	words: []Word = nil,
 ) -> string {
 	switch f {
 	case .SRT:
@@ -456,7 +532,7 @@ render_subtitles :: proc(
 	case .VTT:
 		return write_vtt(segs, al)
 	case .ASS:
-		return write_ass(segs, st, play_w, play_h, al)
+		return write_ass(segs, st, play_w, play_h, al, words)
 	case .TXT:
 		return write_txt(segs, al)
 	}
@@ -469,11 +545,12 @@ save_subtitles :: proc(
 	segs: []Seg,
 	st: Caption_Style,
 	play_w, play_h: int,
+	words: []Word = nil,
 ) -> (
 	ok: bool,
 	err: string,
 ) {
-	text := render_subtitles(f, segs, st, play_w, play_h, context.temp_allocator)
+	text := render_subtitles(f, segs, st, play_w, play_h, context.temp_allocator, words)
 	werr := os.write_entire_file(path, transmute([]u8)text)
 	if werr != nil {
 		return false, fmt.tprintf("%v", werr)

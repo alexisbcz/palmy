@@ -116,9 +116,18 @@ COMMANDS := []kit.Command {
 			{name = "threads", kind = .Int, help = "whisper threads", def = "4"},
 			{name = "format", kind = .Enum, values = {"srt", "vtt", "ass", "txt"}, def = "srt", help = "what to write"},
 			{name = "out", kind = .Path, help = "where to write it; default: beside the media"},
+			{name = "translate", kind = .Bool, help = "write English, whatever is spoken (whisper -tr; needs a multilingual model)"},
+			{name = "diarize", kind = .Bool, help = "mark where the speaker changes (whisper -tdrz; needs a tinydiarize model, ggml-*-tdrz.bin)"},
+			{name = "karaoke", kind = .Bool, help = "with --format ass, light each word as it is spoken"},
 		},
 		out = TRANSCRIBE_FIELDS,
-		examples = {"captions transcribe talk.mp4 --json", "captions transcribe interview.wav --lang fr --format vtt --json"},
+		examples = {
+			"captions transcribe talk.mp4 --json",
+			"captions transcribe interview.wav --lang fr --format vtt --json",
+			"captions transcribe interview.wav --lang fr --translate --json",
+			"captions transcribe meeting.wav --diarize --json",
+			"captions transcribe song.wav --format ass --karaoke --json",
+		},
 		run = cmd_transcribe,
 	},
 	{
@@ -173,6 +182,7 @@ TOOLS_FIELDS := []kit.Field {
 	{name = "ffmpeg", kind = .Bool},
 	{name = "ffprobe", kind = .Bool},
 	{name = "ffplay", kind = .Bool, help = "playback only; the command line never plays anything"},
+	{name = "libass", kind = .Bool, help = "ffmpeg can burn captions in (its ass filter)"},
 	{name = "whisper", kind = .Bool, help = "whisper-cli on PATH"},
 	{
 		name = "models",
@@ -182,6 +192,7 @@ TOOLS_FIELDS := []kit.Field {
 			{name = "path", kind = .String},
 			{name = "bytes", kind = .Int},
 			{name = "multilingual", kind = .Bool},
+			{name = "diarize", kind = .Bool, help = "a tinydiarize model: can mark speaker changes"},
 		},
 	},
 	{name = "vad_model", kind = .String, help = "the voice-activity model, \"\" when there is none"},
@@ -257,6 +268,11 @@ TRANSCRIBE_FIELDS := []kit.Field {
 	{name = "duration", kind = .Float, help = "media seconds"},
 	{name = "seconds", kind = .Float, opt = true, help = "how long whisper took"},
 	{name = "realtime", kind = .Float, opt = true, help = "media seconds per second of work"},
+	{name = "translated", kind = .Bool, help = "the text is whisper's English translation"},
+	{name = "diarized", kind = .Bool, help = "speaker changes were asked for"},
+	{name = "speaker_turns", kind = .Int, help = "captions where a different speaker starts"},
+	{name = "words", kind = .Int, help = "words with their own timings"},
+	{name = "karaoke", kind = .Bool},
 }
 
 BURN_FIELDS := []kit.Field {
@@ -373,6 +389,7 @@ cmd_tools :: proc(c: ^kit.Call) -> int {
 	kit.jset_bool(c.out, "ffmpeg", m.tools.ffmpeg)
 	kit.jset_bool(c.out, "ffprobe", m.tools.ffprobe)
 	kit.jset_bool(c.out, "ffplay", m.tools.ffplay)
+	kit.jset_bool(c.out, "libass", m.tools.libass)
 	kit.jset_bool(c.out, "whisper", m.tools.whisper)
 	arr := kit.jarr()
 	for mm in m.models {
@@ -381,12 +398,13 @@ cmd_tools :: proc(c: ^kit.Call) -> int {
 		kit.jset_str(o, "path", mm.path)
 		kit.jset_int(o, "bytes", int(mm.bytes))
 		kit.jset_bool(o, "multilingual", mm.multilingual)
+		kit.jset_bool(o, "diarize", mm.diarize)
 		kit.jpush(arr, o)
 	}
 	kit.jset(c.out, "models", arr)
 	kit.jset_str(c.out, "vad_model", m.has_vad ? m.vad_model : "")
 	dirs := kit.jarr()
-	for d in MODEL_DIRS {
+	for d in model_dirs() {
 		kit.jpush(dirs, kit.jstr(expand_path(d)))
 	}
 	kit.jset(c.out, "searched", dirs)
@@ -595,6 +613,15 @@ cmd_transcribe :: proc(c: ^kit.Call) -> int {
 	if !is_media_path(media) {
 		return kit.cli_failf(c, kit.EXIT_USAGE, "%s is not a media file this reads", media)
 	}
+	translate := kit.cli_bool(c, "translate")
+	diarize := kit.cli_bool(c, "diarize")
+	karaoke := kit.cli_bool(c, "karaoke")
+	if translate && diarize {
+		return kit.cli_fail(c, kit.EXIT_USAGE, "--translate needs a multilingual model and --diarize an English-only tinydiarize one; ask for one at a time")
+	}
+	if karaoke && kit.cli_str(c, "format") != "ass" {
+		return kit.cli_fail(c, kit.EXIT_USAGE, "--karaoke is an ASS feature; add --format ass")
+	}
 	m := cli_state()
 	switch {
 	case !m.tools.ffmpeg || !m.tools.ffprobe:
@@ -605,11 +632,33 @@ cmd_transcribe :: proc(c: ^kit.Call) -> int {
 		return kit.cli_fail(c, kit.EXIT_UNAVAILABLE, "no whisper model on this disk; `captions tools` lists where it looked")
 	}
 
+	// With no --model, a flag that needs a particular kind of model picks the
+	// first of that kind, the way the window's default picks the English one.
+	if kit.cli_str(c, "model") == "" && (translate || diarize) {
+		found := -1
+		for mm, i in m.models {
+			if (translate && mm.multilingual) || (diarize && mm.diarize) {
+				found = i
+				break
+			}
+		}
+		if found < 0 {
+			return kit.cli_fail(
+				c,
+				kit.EXIT_UNAVAILABLE,
+				translate ? "--translate needs a multilingual model (ggml-base.bin, not .en); `captions tools` lists what is here" : "--diarize needs a tinydiarize model (ggml-small.en-tdrz.bin); `captions tools` lists what is here",
+			)
+		}
+		m.model_i = found
+	}
+
 	// The same three settings the Transcribe pane cycles through.
 	if want := kit.cli_str(c, "model"); want != "" {
 		found := -1
 		for mm, i in m.models {
-			if mm.name == want || mm.path == want || filepath.base(mm.path) == want {
+			// The help says "ggml-base.en", the list says "base.en" and the
+			// file is ggml-base.en.bin: all three name the same model.
+			if mm.name == want || mm.path == want || filepath.base(mm.path) == want || strings.concatenate({"ggml-", mm.name}, context.temp_allocator) == want {
 				found = i
 			}
 		}
@@ -633,6 +682,18 @@ cmd_transcribe :: proc(c: ^kit.Call) -> int {
 		m.lang_i = found
 	}
 	m.threads = max(1, kit.cli_int(c, "threads", 4))
+	sel_model := m.models[m.model_i]
+	if translate && !sel_model.multilingual {
+		return kit.cli_failf(c, kit.EXIT_USAGE, "%s is English-only and cannot translate", sel_model.name)
+	}
+	if diarize && !sel_model.diarize {
+		return kit.cli_failf(c, kit.EXIT_USAGE, "%s is not a tinydiarize model and cannot mark speakers", sel_model.name)
+	}
+	m.translate = translate
+	m.style.karaoke = karaoke
+	if translate && kit.cli_str(c, "lang") == "" {
+		m.lang_i = 0 // auto: the point of translating is not knowing it is English
+	}
 	f := format_of(kit.cli_str(c, "format"))
 	out := kit.cli_str(c, "out")
 	if out == "" {
@@ -650,6 +711,7 @@ cmd_transcribe :: proc(c: ^kit.Call) -> int {
 		kit.jset_str(c.out, "language", LANGUAGES[m.lang_i].code)
 		kit.jset_int(c.out, "count", 0)
 		kit.jset_num(c.out, "duration", 0)
+		transcribe_extras(c, m, translate, diarize)
 		return kit.EXIT_OK
 	}
 
@@ -672,6 +734,7 @@ cmd_transcribe :: proc(c: ^kit.Call) -> int {
 	kit.jset_num(c.out, "duration", m.info.duration)
 	kit.jset_num(c.out, "seconds", m.decode_sec)
 	kit.jset_num(c.out, "realtime", m.rtf)
+	transcribe_extras(c, m, translate, diarize)
 	return kit.EXIT_OK
 }
 
@@ -688,6 +751,9 @@ cmd_burn :: proc(c: ^kit.Call) -> int {
 	m := cli_state()
 	if !m.tools.ffmpeg || !m.tools.ffprobe {
 		return kit.cli_fail(c, kit.EXIT_UNAVAILABLE, "ffmpeg and ffprobe are required")
+	}
+	if !m.tools.libass {
+		return kit.cli_fail(c, kit.EXIT_UNAVAILABLE, NO_LIBASS)
 	}
 	// The same default the window's begin_burn takes, computed here so the
 	// result can name it.
@@ -727,4 +793,19 @@ cmd_burn :: proc(c: ^kit.Call) -> int {
 	}
 	kit.jset_num(c.out, "seconds", time.duration_seconds(time.tick_since(t0)))
 	return kit.EXIT_OK
+}
+
+@(private = "file")
+transcribe_extras :: proc(c: ^kit.Call, m: ^App_State, translate, diarize: bool) {
+	turns := 0
+	for s in m.segs {
+		if s.turn {
+			turns += 1
+		}
+	}
+	kit.jset_bool(c.out, "translated", translate)
+	kit.jset_bool(c.out, "diarized", diarize)
+	kit.jset_int(c.out, "speaker_turns", turns)
+	kit.jset_int(c.out, "words", len(m.words))
+	kit.jset_bool(c.out, "karaoke", m.style.karaoke)
 }

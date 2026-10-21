@@ -150,6 +150,11 @@ App_State :: struct {
 	// Deferred structural edits — see `Act`.
 	queue:         [dynamic]Act,
 
+	// Undo and redo (history.odin). `act_label` is what the edit this frame
+	// was, when the code that made it knows; the history reads and clears it.
+	hist:          History,
+	act_label:     string,
+
 	// The shared file dialog, and what it was opened for. See pick.odin.
 	pick:          kit.Pick,
 	pick_use:      Pick_Use,
@@ -175,6 +180,8 @@ Act_Kind :: enum {
 	Wrap,
 	Wrap_All,
 	Open,
+	Undo,
+	Redo,
 }
 
 Act :: struct {
@@ -201,11 +208,13 @@ apply_queue :: proc(m: ^App_State) {
 			do_merge(m)
 		case .Delete:
 			if delete_seg(&m.segs, a.i) {
+				m.act_label = "delete"
 				m.dirty = true
 				select_seg(m, min(a.i, len(m.segs) - 1))
 			}
 		case .Insert:
 			at := insert_seg(&m.segs, a.i, 2)
+			m.act_label = "insert"
 			m.dirty = true
 			select_seg(m, at)
 			m.focus = .Caption
@@ -213,12 +222,25 @@ apply_queue :: proc(m: ^App_State) {
 		case .Wrap:
 			if a.i >= 0 && a.i < len(m.segs) {
 				auto_wrap(&m.segs[a.i], m.limits.max_cpl, m.limits.max_lines)
+				m.act_label = "wrap"
 				m.dirty = true
 			}
 		case .Wrap_All:
 			wrap_all(m)
 		case .Open:
 			open_path(m, a.path)
+		case .Undo:
+			if label, ok := history_undo(m); ok {
+				set_status(m, fmt.tprintf("undid: %s", label), false)
+			} else {
+				set_status(m, "nothing to undo", false)
+			}
+		case .Redo:
+			if label, ok := history_redo(m); ok {
+				set_status(m, fmt.tprintf("redid: %s", label), false)
+			} else {
+				set_status(m, "nothing to redo", false)
+			}
 		}
 		if a.path != "" {
 			delete(a.path)
@@ -336,6 +358,7 @@ state_init :: proc(m: ^App_State) {
 
 state_destroy :: proc(m: ^App_State) {
 	player_stop(&m.player)
+	history_destroy(m)
 	for &s in m.segs {
 		seg_destroy(&s)
 	}
@@ -444,6 +467,7 @@ load_subtitle :: proc(m: ^App_State, path: string) {
 		return
 	}
 	clear_segments(m)
+	m.act_label = "open captions"
 	for s in segs {
 		append(&m.segs, s)
 	}
@@ -472,6 +496,7 @@ clear_segments :: proc(m: ^App_State) {
 
 tick :: proc(ui: ^p.Ctx, app: ^p.App, m: ^App_State) {
 	apply_queue(m)
+	history_track(m)
 	collect_jobs(ui, m)
 	advance_playhead(ui, app, m)
 	refresh_preview(m)
@@ -551,6 +576,7 @@ apply_job_result :: proc(m: ^App_State, res: Job_Result) {
 			break
 		}
 		clear_segments(m)
+		m.act_label = "transcribe"
 		for s in res.tr.segs {
 			append(&m.segs, s)
 		}
@@ -738,6 +764,7 @@ begin_transcribe :: proc(m: ^App_State) {
 		max_len    = m.max_len,
 		split_word = m.split_word,
 		translate  = m.translate && mdl.multilingual,
+		diarize    = mdl.diarize,
 		vad        = m.use_vad && m.has_vad,
 		vad_model  = m.vad_model,
 		wav        = m.wav,
@@ -745,7 +772,7 @@ begin_transcribe :: proc(m: ^App_State) {
 		log        = work_path("whisper.log", context.temp_allocator),
 	}
 	if start_transcribe(opts, m.info.duration) {
-		set_status(m, fmt.tprintf("transcribing with %s", mdl.name), false)
+		set_status(m, fmt.tprintf("transcribing with %s%s%s", mdl.name, opts.translate ? ", translating to English" : "", opts.diarize ? ", marking speaker changes" : ""), false)
 	}
 }
 
@@ -780,6 +807,7 @@ export_now :: proc(m: ^App_State) {
 		m.style,
 		m.info.width,
 		m.info.height,
+		m.words[:],
 	)
 	if ok {
 		m.dirty = false
@@ -796,6 +824,10 @@ begin_burn :: proc(m: ^App_State) {
 	}
 	if len(m.segs) == 0 {
 		set_status(m, "there are no captions to burn in", true)
+		return
+	}
+	if !m.tools.libass {
+		set_status(m, NO_LIBASS, true)
 		return
 	}
 	if job_busy() {
@@ -815,7 +847,7 @@ begin_burn :: proc(m: ^App_State) {
 		append(&sorted, s)
 	}
 	sort_segs(&sorted)
-	ass := write_ass(sorted[:], m.style, m.info.width, m.info.height, context.temp_allocator)
+	ass := write_ass(sorted[:], m.style, m.info.width, m.info.height, context.temp_allocator, m.words[:])
 	if start_burn(m.info.path, ass, dst, m.info.duration) {
 		set_status(m, fmt.tprintf("burning captions into %s", filepath.base(dst)), false)
 	}
@@ -831,6 +863,7 @@ wrap_all :: proc(m: ^App_State) -> (changed: int) {
 			changed += 1
 		}
 	}
+	m.act_label = "wrap every caption"
 	m.dirty = true
 	set_status(m, "re-wrapped every caption", false)
 	return
@@ -850,6 +883,7 @@ do_split :: proc(m: ^App_State) {
 		}
 	}
 	if split_seg(&m.segs, m.sel, at, m.words[:]) {
+		m.act_label = "split"
 		m.dirty = true
 		m.caret = 0
 		set_status(m, "split", false)
@@ -864,6 +898,7 @@ do_merge :: proc(m: ^App_State) {
 		return
 	}
 	merge_segs(&m.segs, m.sel)
+	m.act_label = "merge"
 	m.dirty = true
 	m.caret = min(m.caret, len(m.segs[m.sel].text))
 	set_status(m, "merged with the next caption", false)
@@ -893,6 +928,17 @@ handle_keys :: proc(ui: ^p.Ctx, app: ^p.App, m: ^App_State) {
 	}
 	if p.shortcut(ui, 's', {.Ctrl}) {
 		export_now(m)
+		return
+	}
+	// Undo and redo work in every focus: Ctrl-Z while typing a caption takes
+	// back the typing. Both are deferred, because restoring a snapshot
+	// replaces the caption array (see history.odin).
+	if p.shortcut(ui, 'z', {.Ctrl}, true) {
+		queue_act(m, .Undo)
+		return
+	}
+	if p.shortcut(ui, 'z', {.Ctrl, .Shift}, true) || p.shortcut(ui, 'Z', {.Ctrl, .Shift}, true) || p.shortcut(ui, 'y', {.Ctrl}, true) {
+		queue_act(m, .Redo)
 		return
 	}
 
@@ -1032,6 +1078,7 @@ handle_keys :: proc(ui: ^p.Ctx, app: ^p.App, m: ^App_State) {
 	}
 	if p.key_pressed(ui, 'd', false) {
 		if m.sel >= 0 && delete_seg(&m.segs, m.sel) {
+			m.act_label = "delete"
 			m.dirty = true
 			select_seg(m, min(m.sel, len(m.segs) - 1))
 			set_status(m, "deleted", false)
@@ -1039,6 +1086,7 @@ handle_keys :: proc(ui: ^p.Ctx, app: ^p.App, m: ^App_State) {
 	}
 	if p.key_pressed(ui, 'n', false) {
 		at := insert_seg(&m.segs, m.sel, 2.0)
+		m.act_label = "insert"
 		m.dirty = true
 		select_seg(m, at)
 		m.focus = .Caption
@@ -1049,6 +1097,7 @@ handle_keys :: proc(ui: ^p.Ctx, app: ^p.App, m: ^App_State) {
 			wrap_all(m)
 		} else if m.sel >= 0 {
 			auto_wrap(&m.segs[m.sel], m.limits.max_cpl, m.limits.max_lines)
+			m.act_label = "wrap"
 			m.dirty = true
 		}
 	}
@@ -1057,26 +1106,32 @@ handle_keys :: proc(ui: ^p.Ctx, app: ^p.App, m: ^App_State) {
 	// out point, and the shifted versions slide the whole caption.
 	nudge := shift ? 0.5 : 0.1
 	if p.key_pressed(ui, '[') {
+		m.act_label = "nudge"
 		nudge_start(&m.segs, m.sel, -nudge, m.limits)
 		m.dirty = true
 	}
 	if p.key_pressed(ui, ']') {
+		m.act_label = "nudge"
 		nudge_start(&m.segs, m.sel, nudge, m.limits)
 		m.dirty = true
 	}
 	if p.key_pressed(ui, ',') {
+		m.act_label = "nudge"
 		nudge_end(&m.segs, m.sel, -nudge, m.limits, m.info.duration)
 		m.dirty = true
 	}
 	if p.key_pressed(ui, '.') {
+		m.act_label = "nudge"
 		nudge_end(&m.segs, m.sel, nudge, m.limits, m.info.duration)
 		m.dirty = true
 	}
 	if p.key_pressed(ui, '<') {
+		m.act_label = "slide"
 		shift_seg(&m.segs, m.sel, -nudge, m.info.duration)
 		m.dirty = true
 	}
 	if p.key_pressed(ui, '>') {
+		m.act_label = "slide"
 		shift_seg(&m.segs, m.sel, nudge, m.info.duration)
 		m.dirty = true
 	}
@@ -1085,11 +1140,13 @@ handle_keys :: proc(ui: ^p.Ctx, app: ^p.App, m: ^App_State) {
 	if p.key_pressed(ui, 'i', false) && m.sel >= 0 {
 		set_seg_times(&m.segs, m.sel, m.pos, m.segs[m.sel].end, m.info.duration)
 		m.dirty = true
+		m.act_label = "set the in point"
 		set_status(m, "in point set from the playhead", false)
 	}
 	if p.key_pressed(ui, 'u', false) && m.sel >= 0 {
 		set_seg_times(&m.segs, m.sel, m.segs[m.sel].start, m.pos, m.info.duration)
 		m.dirty = true
+		m.act_label = "set the out point"
 		set_status(m, "out point set from the playhead", false)
 	}
 
@@ -1126,6 +1183,10 @@ handle_keys :: proc(ui: ^p.Ctx, app: ^p.App, m: ^App_State) {
 		}
 		if p.key_pressed(ui, 'y', false) {
 			m.style.bold = !m.style.bold
+		}
+		if p.key_pressed(ui, 'a', false) {
+			m.style.karaoke = !m.style.karaoke
+			set_status(m, m.style.karaoke ? "karaoke: each word lights up as it is spoken" : "karaoke off", false)
 		}
 		if p.key_pressed(ui, 'h') {
 			m.style.outline = max(0, m.style.outline - 0.5)

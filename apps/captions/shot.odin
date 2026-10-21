@@ -13,6 +13,7 @@ package main
 //   --transcribe         run whisper before rendering
 //   --editing            put the caret in the selected caption
 //   --box                turn the background box on
+//   --karaoke            light the words already spoken at the playhead
 //   --help-overlay       draw the keyboard overlay
 //   --size WxH
 
@@ -32,6 +33,7 @@ shot_main :: proc(args: []string) -> int {
 	editing := false
 	overlay := false
 	box := false
+	karaoke := false
 	w, h := 1380, 900
 
 	i := 0
@@ -72,6 +74,8 @@ shot_main :: proc(args: []string) -> int {
 			editing = true
 		case a == "--box":
 			box = true
+		case a == "--karaoke":
+			karaoke = true
 		case a == "--help-overlay":
 			overlay = true
 		case !strings.has_prefix(a, "-"):
@@ -89,6 +93,7 @@ shot_main :: proc(args: []string) -> int {
 	m.pane = pane
 	m.help = overlay
 	m.style.box = box
+	m.style.karaoke = karaoke
 
 	// The import and the transcription are the jobs the window runs on a
 	// thread; here they are simply called in order, because there is no frame
