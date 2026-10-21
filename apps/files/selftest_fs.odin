@@ -9,6 +9,7 @@ import "core:encoding/json"
 import "core:fmt"
 import "core:os"
 import "core:strings"
+import "core:time"
 import kit "kit:."
 
 @(private = "file")
@@ -434,6 +435,8 @@ selftest_cli :: proc() {
 		out, code = run(env, "open", fmt.tprintf("%s/b.txt", docs), "--dry-run", "--json")
 		check(code == 0 && strings.contains(out, `"launched": false`), "cli: open --dry-run launches nothing")
 
+		selftest_open_for_real(env, root, docs)
+
 		audit := read(fmt.tprintf("%s/audit.jsonl", root))
 		check(strings.contains(audit, `"verb":"trash"`) && !strings.contains(audit, `"verb":"list"`), "cli: changes are audited, reads are not")
 	}
@@ -445,4 +448,117 @@ selftest_cli :: proc() {
 		_, code = run(env, "no-such-verb")
 		check(code == kit.EXIT_USAGE, "cli: an unknown word is a usage error, not a window (%d)", code)
 	}
+}
+
+// selftest_open_for_real runs `files open` without --dry-run, against a
+// stand-in xdg-open first on PATH that writes the arguments it was given, one
+// per line, to a sentinel and exits. Nothing real is opened: the stand-in is
+// the only xdg-open the child can find. This is what --dry-run could never
+// show: that the path reaches the opener as exactly one argument, whatever is
+// in it, and that a missing opener is reported rather than ignored.
+//
+// These children are started from an argv, not through `sh -c` as `run`
+// does: a file name with `$(...)` in it would otherwise be expanded by the
+// test's own shell, and the test would be measuring itself.
+@(private = "file")
+selftest_open_for_real :: proc(env, root, docs: string) {
+	bin := fmt.tprintf("%s/opener-bin", root)
+	_ = os.make_directory_all(bin)
+	sent := fmt.tprintf("%s/opener-args", root)
+	script := fmt.tprintf(
+		"#!/bin/sh\n: > '%s.tmp'\nfor a in \"$@\"; do printf '%%s\\n' \"$a\" >> '%s.tmp'; done\nmv '%s.tmp' '%s'\nexit ${OPENER_EXIT:-0}\n",
+		sent,
+		sent,
+		sent,
+		sent,
+	)
+	_ = os.write_entire_file(fmt.tprintf("%s/xdg-open", bin), transmute([]u8)script, os.Permissions_All)
+	with_opener := fmt.tprintf("PATH=%s:%s", bin, os.get_env("PATH", context.temp_allocator))
+
+	exec :: proc(env, extra: string, dir: string, args: ..string) -> (out: string, code: int) {
+		argv := make([dynamic]string, context.temp_allocator)
+		append(&argv, "env", "WAYLAND_DISPLAY=", "DISPLAY=")
+		for kv in strings.fields(env, context.temp_allocator) {
+			append(&argv, kv)
+		}
+		for kv in strings.fields(extra, context.temp_allocator) {
+			append(&argv, kv)
+		}
+		append(&argv, self_exe())
+		append(&argv, ..args)
+		state, sout, _, err := os.process_exec({command = argv[:], working_dir = dir}, context.temp_allocator)
+		if err != nil {
+			return "", -1
+		}
+		return string(sout), state.exit_code
+	}
+
+	// The opener is started detached, as the window's Enter does, so the
+	// sentinel may land a moment after the command returns.
+	await :: proc(sent: string) -> (args: []string, ok: bool) {
+		for _ in 0 ..< 100 {
+			if data, err := os.read_entire_file(sent, context.temp_allocator); err == nil {
+				return strings.split_lines(strings.trim_suffix(string(data), "\n"), context.temp_allocator), true
+			}
+			time.sleep(20 * time.Millisecond)
+		}
+		return nil, false
+	}
+
+	for name in ([?]string{"plain.txt", "a name with spaces — ü.txt", "--help", "-n", "semi;colon $(touch pwned).txt"}) {
+		target := fmt.tprintf("%s/%s", docs, name)
+		_ = os.write_entire_file(target, transmute([]u8)string("x"))
+		os.remove(sent)
+		out, code := exec(env, with_opener, "", "open", target, "--json")
+		check(code == 0 && strings.contains(out, `"launched": true`), "cli: open %q starts the opener and says so (%d)", name, code)
+		check(valid(out, OPEN_FIELDS), "cli: open --json matches its schema")
+		args, got := await(sent)
+		check(got, "cli: open %q reached the opener on PATH", name)
+		check(len(args) == 1 && args[0] == target, "cli: open %q handed it exactly one argument, the absolute path (got %v)", name, args)
+		os.remove(target)
+	}
+	check(!os.exists(fmt.tprintf("%s/pwned", docs)) && !os.exists("pwned"), "cli: a name with shell syntax in it ran nothing")
+
+	rel := fmt.tprintf("%s/rel.md", docs)
+	_ = os.write_entire_file(rel, transmute([]u8)string("# rel"))
+	defer os.remove(rel)
+
+	// A relative path is made absolute against the caller's directory.
+	{
+		os.remove(sent)
+		out, code := exec(env, with_opener, docs, "open", "rel.md", "--json")
+		args, got := await(sent)
+		check(code == 0 && strings.contains(out, `"launched": true`), "cli: open of a relative path (%d)", code)
+		check(got && len(args) == 1 && args[0] == rel, "cli: reaches the opener as an absolute path (got %v)", args)
+	}
+
+	// Nothing to open: the opener is never started.
+	{
+		os.remove(sent)
+		_, code := exec(env, with_opener, "", "open", fmt.tprintf("%s/not-there.pdf", docs), "--json")
+		check(code == kit.EXIT_NOT_FOUND, "cli: open of a missing file exits 3 (%d)", code)
+		time.sleep(150 * time.Millisecond)
+		check(!os.exists(sent), "cli: and the opener was never started")
+	}
+
+	// No opener at all: unavailable, in the documented form, not a silent 0.
+	{
+		empty := fmt.tprintf("%s/no-opener-bin", root)
+		_ = os.make_directory_all(empty)
+		out, code := exec(env, fmt.tprintf("PATH=%s", empty), "", "open", rel, "--json")
+		check(code == kit.EXIT_UNAVAILABLE && strings.contains(out, `"error": "unavailable"`), "cli: with no xdg-open, open exits 6 (%d)", code)
+	}
+
+	// The opener is fire-and-forget, as Enter is in the window: `launched`
+	// means it started, not that a handler took the file. xdg-open can block
+	// for as long as the application it runs stays open, so waiting on its
+	// status is not an option; this pins that meaning down.
+	{
+		os.remove(sent)
+		out, code := exec(env, fmt.tprintf("%s OPENER_EXIT=3", with_opener), "", "open", rel, "--json")
+		_, got := await(sent)
+		check(got && code == 0 && strings.contains(out, `"launched": true`), "cli: launched means started, even when the opener then fails")
+	}
+	audit := read(fmt.tprintf("%s/audit.jsonl", root))
+	check(strings.contains(audit, `"verb":"open"`), "cli: a real open is audited")
 }
