@@ -212,9 +212,10 @@ main :: proc() {
 	}
 
 	if deck_path != "" {
-		// `takes_path` hands any word that is not a command to the window. A
-		// typo must not become a window that never returns, so a deck that is
-		// not there is an error, not an empty editor.
+		// The kit's takes_word has refused a first word that is not a file,
+		// but a --collab line never reaches the kit, and the deck may be a
+		// later word. A deck that is not there is an error, not an empty
+		// editor.
 		if !os.exists(deck_path) {
 			fmt.eprintfln("slides: %q is neither a command nor a deck (slides --help lists the commands)", deck_path)
 			os.exit(kit.EXIT_USAGE)

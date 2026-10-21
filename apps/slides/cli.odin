@@ -528,6 +528,8 @@ surface :: proc() -> ^kit.Surface {
 			gui        = true,
 			// `slides talk.json` opens the deck in the window.
 			takes_path = true,
+			// and `slides talk.jsno` is the kit's usage error, not a window.
+			takes_word = kit.cli_word_is_path,
 			selftest   = cli_selftest,
 			notes      = SURFACE_NOTES,
 			commands   = COMMANDS,
