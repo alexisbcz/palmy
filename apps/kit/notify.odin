@@ -41,6 +41,7 @@ import "core:fmt"
 import "core:os"
 import "core:strings"
 import "core:sys/linux"
+import "core:sys/posix"
 import p "palmy:."
 
 Notify_Class :: enum u8 {
@@ -91,7 +92,7 @@ notify_socket_path :: proc(allocator := context.temp_allocator) -> string {
 	}
 	rt := os.get_env("XDG_RUNTIME_DIR", context.temp_allocator)
 	if rt == "" {
-		rt = fmt.tprintf("/tmp/palm-%d", linux.getuid())
+		rt = fmt.tprintf("/tmp/palm-%d", posix.getuid())
 	}
 	return fmt.aprintf("%s/palm/notify.sock", rt, allocator = allocator)
 }
@@ -99,23 +100,28 @@ notify_socket_path :: proc(allocator := context.temp_allocator) -> string {
 // notify_connect opens a connection to the daemon, or -1.
 notify_connect :: proc() -> linux.Fd {
 	path := notify_socket_path()
-	fd, serr := linux.socket(.UNIX, .STREAM, {.CLOEXEC}, linux.Protocol(0))
-	if serr != .NONE {
+	// core:sys/posix rather than core:sys/linux: the same calls, and they
+	// exist on macOS too.
+	fd := posix.socket(.UNIX, .STREAM)
+	if fd < 0 {
 		return -1
 	}
-	addr := linux.Sock_Addr_Un {
+	posix.fcntl(fd, .SETFD, posix.FD_CLOEXEC)
+	addr := posix.sockaddr_un {
 		sun_family = .UNIX,
 	}
 	if len(path) + 1 > len(addr.sun_path) {
-		linux.close(fd)
+		posix.close(fd)
 		return -1
 	}
-	copy(addr.sun_path[:], path)
-	if linux.connect(fd, &addr) != .NONE {
-		linux.close(fd)
+	for i in 0 ..< len(path) {
+		addr.sun_path[i] = auto_cast path[i]
+	}
+	if posix.connect(fd, (^posix.sockaddr)(&addr), posix.socklen_t(size_of(addr))) != .OK {
+		posix.close(fd)
 		return -1
 	}
-	return fd
+	return linux.Fd(fd)
 }
 
 // notify_send_line writes one request line.
@@ -125,14 +131,14 @@ notify_send_line :: proc(fd: linux.Fd, line: string) -> bool {
 	data[len(line)] = '\n'
 	sent := 0
 	for sent < len(data) {
-		n, err := linux.send(fd, data[sent:], {.NOSIGNAL})
-		if err == .EINTR {
+		n := posix.send(posix.FD(fd), raw_data(data[sent:]), uint(len(data)) - uint(sent), {.NOSIGNAL})
+		if n < 0 && posix.errno() == .EINTR {
 			continue
 		}
-		if err != .NONE || n <= 0 {
+		if n <= 0 {
 			return false
 		}
-		sent += n
+		sent += int(n)
 	}
 	return true
 }
@@ -162,11 +168,11 @@ notify_read_line :: proc(fd: linux.Fd, buf: ^[dynamic]u8, timeout_ms: int, alloc
 			return "", false
 		}
 		chunk: [4096]u8
-		got, rerr := linux.recv(fd, chunk[:], {})
-		if rerr == .EINTR {
+		got := int(posix.recv(posix.FD(fd), raw_data(chunk[:]), len(chunk), {}))
+		if got < 0 && posix.errno() == .EINTR {
 			continue
 		}
-		if rerr != .NONE || got <= 0 {
+		if got <= 0 {
 			return "", false
 		}
 		append(buf, ..chunk[:got])
@@ -180,7 +186,7 @@ notify_request :: proc(req: string, timeout_ms := 1500, allocator := context.tem
 	if fd < 0 {
 		return "", false
 	}
-	defer linux.close(fd)
+	defer posix.close(posix.FD(fd))
 	if !notify_send_line(fd, req) {
 		return "", false
 	}
@@ -361,7 +367,7 @@ notify_listen :: proc(app: string) -> Notify_Listener {
 	jset_str(o, "role", "listener", context.temp_allocator)
 	jset_str(o, "app", app, context.temp_allocator)
 	if !notify_send_line(l.fd, json_text(o, 0, context.temp_allocator)) {
-		linux.close(l.fd)
+		posix.close(posix.FD(l.fd))
 		l.fd = -1
 	}
 	return l
@@ -369,7 +375,7 @@ notify_listen :: proc(app: string) -> Notify_Listener {
 
 notify_listen_close :: proc(l: ^Notify_Listener) {
 	if l.fd >= 0 {
-		linux.close(l.fd)
+		posix.close(posix.FD(l.fd))
 	}
 	delete(l.buf)
 	l^ = {fd = -1}
