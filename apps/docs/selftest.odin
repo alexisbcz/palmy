@@ -5225,6 +5225,12 @@ test_cli :: proc() {
 	s := surface()
 	ok(len(s.commands) >= 10, "the surface declares its commands (%d)", len(s.commands))
 	ok(s.takes_path && s.gui, "a bare path still opens in the window")
+	{
+		// A bare word goes to the window only when it names a file; a typo
+		// of a verb answers with a usage error instead of opening a window.
+		code, _, handled := kit.cli_capture(s, {"convrt"}, context.temp_allocator)
+		ok(handled && code == kit.EXIT_USAGE, "a word that is neither a command nor a file is a usage error, not a window (%v %d)", handled, code)
+	}
 	for cmd in s.commands {
 		ok(cmd.summary != "" && len(cmd.out) > 0 && len(cmd.examples) > 0, "%s has a summary, an output and an example", cmd.verb)
 		for e in cmd.examples {
@@ -5247,8 +5253,11 @@ test_cli :: proc() {
 		ok(found, "the old spelling %s is still accepted", legacy)
 	}
 	{
-		_, handled := kit.cli_args(s, {"report.docx"})
-		ok(!handled, "`docs report.docx` is left to the window")
+		kit.run({"mkdir", "-p", SELFTEST_DIR})
+		report := fmt.tprintf("%s/report.docx", SELFTEST_DIR)
+		_ = os.write_entire_file(report, transmute([]u8)string("x"))
+		_, handled := kit.cli_args(s, {report})
+		ok(!handled, "`docs report.docx` is left to the window when the file exists")
 		c, code := kit.cli_bind(s, {"--convert", "a.md", "b.pdf"})
 		eq_int(code, kit.EXIT_OK, "`docs --convert a.md b.pdf` binds")
 		ok(c.cmd != nil && c.cmd.verb == "convert", "to the convert command")

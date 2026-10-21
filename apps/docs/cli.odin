@@ -340,8 +340,11 @@ surface :: proc() -> ^kit.Surface {
 			noun       = "docs",
 			summary    = "a word processor with a headless converter",
 			gui        = true,
-			// `docs report.docx` opens the file in the window.
+			// `docs report.docx` opens the file in the window; a word that
+			// names nothing on disk (`docs convrt`) is a usage error rather
+			// than a window that opens and says it could not read it.
 			takes_path = true,
+			takes_word = kit.cli_word_is_path,
 			selftest   = cli_selftest,
 			notes      = SURFACE_NOTES,
 			commands   = COMMANDS,
@@ -351,15 +354,15 @@ surface :: proc() -> ^kit.Surface {
 }
 
 @(private = "file")
-SURFACE_NOTES :: `With no command, docs opens a window; a path opens that file in it, and
+SURFACE_NOTES :: `With no command, docs opens a window; a path opens that file in it (a word
+that is neither a command nor a file is a usage error), and
 --collab <id|new> [--as NAME] [--offline] joins a shared document.
 The older spellings --convert, --export-png, --shots, --lint and --bench are
 aliases of the commands of the same name and keep working.
 
 A read command given no file reads the document a fresh window opens with.
 Formats: .json (native), .md, .docx, .odt and .rtf are read; those plus .html
-and .pdf are written. Run with ulimit -s unlimited for --selftest: its
-regular-expression section recurses past the default 8 MB stack.`
+and .pdf are written.`
 
 cli_selftest :: proc() -> int {
 	return run_selftest() ? 0 : 1
