@@ -266,7 +266,10 @@ run_cmd :: proc(app: ^App, cmd: Cmd) {
 
 	case .Sheet_Add:
 		undo_push(app)
-		sh := book_add_sheet(app.book, fmt.tprintf("Sheet%d", len(app.book.sheets) + 1))
+		// The CLI's sheet-add goes through the same procedure, which also
+		// recalculates: a formula that named this sheet before it existed
+		// (#REF!) now has something to read.
+		sh := book_insert_sheet(app.book, fmt.tprintf("Sheet%d", len(app.book.sheets) + 1), len(app.book.sheets))
 		if sh == nil {
 			set_status(app, "A book holds at most %d sheets", MAX_SHEETS)
 			break

@@ -301,6 +301,22 @@ t_spans :: proc(tc: ^TC) {
 		at_num(tc, app.book.sheets[3], "A1", 6)
 	}
 
+	{
+		// A span whose end did not exist yet resolves the moment the sheet
+		// is added from the window.
+		app := new(App)
+		defer free(app)
+		app_init(app)
+		defer app_destroy(app)
+		put(app.book.sheets[0], "A1", "5")
+		put(app.book.sheets[0], "B1", "=SUM(Sheet1:Sheet2!A1)")
+		book_recalc_all(app.book)
+		at_err(tc, app.book.sheets[0], "B1", .Ref)
+		run_cmd(app, .Sheet_Add)
+		ok_mark(tc, len(app.book.sheets) == 2 && app.book.sheets[1].name == "Sheet2", "Add a sheet appends Sheet2")
+		at_num(tc, app.book.sheets[0], "B1", 5)
+	}
+
 	// --- the same operations from the command line --------------------------
 	{
 		dir := fmt.tprintf("/tmp/palmy-sheets-span-%d", os.get_pid())
