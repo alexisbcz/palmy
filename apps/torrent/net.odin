@@ -36,6 +36,7 @@ import "core:strconv"
 import "core:strings"
 import "core:sync"
 import "core:sys/linux"
+import p "palmy:."
 
 // ---------------------------------------------------------------------------
 // The gate
@@ -432,8 +433,10 @@ udp_recv :: proc(
 // Polling
 // ---------------------------------------------------------------------------
 
+// p.poll_fds rather than linux.poll, whose arm64/riscv64 build fails a
+// negative timeout with EINVAL instead of waiting forever.
 poll_wait :: proc(fds: []linux.Poll_Fd, timeout_ms: i32) -> int {
-	n, err := linux.poll(fds, timeout_ms)
+	n, err := p.poll_fds(fds, int(timeout_ms))
 	if err != .NONE {
 		return 0
 	}
