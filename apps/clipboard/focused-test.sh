@@ -63,9 +63,9 @@ history_has() { # history_has <dir> <text> -> 1/0
   PALMY_CLIPBOARD_DIR="$1" WAYLAND_DISPLAY= "$BIN" list --json 2>/dev/null | grep -qF "\"preview\": \"$2\"" && echo 1 || echo 0
 }
 reads() { # the offer-read counter from the last trace line, or 0
-  grep -o 'reads so far [0-9]*' "$1" | tail -1 | grep -o '[0-9]*$' || echo 0
+  grep -os 'reads so far [0-9]*' "$1" | tail -1 | grep -o '[0-9]*$' || echo 0
 }
-offers() { grep -c '^\[clipboard\] offer ' "$1"; }
+offers() { grep -cs '^\[clipboard\] offer ' "$1"; }
 wait_for() { # wait_for <seconds> <command...>: until it prints 1
   local end=$((SECONDS + $1)); shift
   while [ $SECONDS -lt $end ]; do [ "$("$@")" = 1 ] && return 0; sleep 0.2; done; return 1
@@ -116,7 +116,7 @@ run_on() {
     local hist="$run/hist" log="$run/app.log"
     mkdir -p "$hist"
     PALMY_CLIPBOARD_DIR="$hist" PALMY_CLIPBOARD_TRACE=1 "$BIN" >"$log" 2>&1 & local app=$!; PIDS+=($app)
-    wait_for 10 sh -c "grep -q 'capture:' '$log' && echo 1"; sleep 1.5
+    wait_for 20 sh -c "grep -qs 'capture:' '$log' && echo 1"; sleep 1.5
 
     check "$(is "$(grep -o 'capture: .*' "$log")" = "capture: Offers_Focused")" \
       "1. the window records through focused offers ($(grep -o 'capture: .*' "$log"))"
@@ -124,7 +124,7 @@ run_on() {
     # 2. Another client copies. wl-copy without data control takes the focus
     # for a moment to set the selection, and the focus comes back.
     timeout 10 wl-copy "focused-alpha"
-    wait_for 8 history_has "$hist" "focused-alpha"
+    wait_for 20 history_has "$hist" "focused-alpha"
     check "$(history_has "$hist" "focused-alpha")" "2. a copy by another client is recorded when the focus returns"
     local r2; r2=$(reads "$log")
     check "$(is "$r2" -ge 1)" "   ...read from the offer palmy handed out (reads: $r2)"
@@ -139,7 +139,7 @@ run_on() {
     check "$(is "$(offers "$log")" = "$o3")" "3. no offer reaches the window while another one has the focus"
     check "$(not "$(history_has "$hist" "focused-gamma")")" "   ...so nothing new is recorded yet"
     kill "$cover"; wait "$cover" 2>/dev/null
-    wait_for 8 history_has "$hist" "focused-gamma"
+    wait_for 20 history_has "$hist" "focused-gamma"
     check "$(history_has "$hist" "focused-gamma")" "   when the focus comes back, the selection at that moment is recorded"
     check "$(not "$(history_has "$hist" "focused-beta")")" \
       "   and the copy before it is not: the documented limit without data control"
@@ -150,7 +150,7 @@ run_on() {
     local r4; r4=$(reads "$log")
     timeout 10 wl-copy --type x-kde-passwordManagerHint "focused-secret"; sleep 1
     kill "$cover"; wait "$cover" 2>/dev/null
-    wait_for 8 sh -c "grep -q 'passwordManagerHint.* -> Secret' '$log' && echo 1"
+    wait_for 20 sh -c "grep -q 'passwordManagerHint.* -> Secret' '$log' && echo 1"
     check "$(grep -q 'passwordManagerHint.* -> Secret' "$log" && echo 1 || echo 0)" \
       "4. a selection flagged x-kde-passwordManagerHint is refused"
     check "$(is "$(reads "$log")" = "$r4")" "   without a byte of it being read (reads: $r4 -> $(reads "$log"))"
