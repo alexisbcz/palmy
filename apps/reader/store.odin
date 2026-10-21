@@ -621,3 +621,193 @@ write_private :: proc(path, body: string) -> bool {
 	_ = os.chmod(path, os.perm_number(0o600))
 	return true
 }
+
+// ---------------------------------------------------------------------------
+// Operations shared by the window and the command line
+//
+// Each of these is the one implementation of something a person can do in the
+// window and an agent can do with `reader <verb>` (cli.odin). The window's
+// procedures in main.odin work out *where* from the layout on screen — the
+// page under the reader's eyes, the words under the drag — and then call
+// these; the command line works out where from its arguments and calls the
+// same ones. Neither writes library.tsv or a marks file any other way, so the
+// two front ends cannot disagree about what a bookmark or a position is.
+// ---------------------------------------------------------------------------
+
+// The ranges the window's controls move within. settings_load is deliberately
+// more tolerant (a hand-edited file is clamped, not rejected), but anything
+// either front end *sets* lands inside these.
+SET_SIZE_MIN :: f32(11)
+SET_SIZE_MAX :: f32(40)
+SET_LINE_MIN :: f32(1.08)
+SET_LINE_MAX :: f32(2.4)
+SET_MARGIN_MIN :: f32(0.03)
+SET_MARGIN_MAX :: f32(0.3)
+SET_ZOOM_MIN :: f32(0.3)
+SET_ZOOM_MAX :: f32(5)
+
+settings_clamp :: proc(s: Settings) -> Settings {
+	o := s
+	o.size = clamp(o.size, SET_SIZE_MIN, SET_SIZE_MAX)
+	o.line = clamp(o.line, SET_LINE_MIN, SET_LINE_MAX)
+	o.margin = clamp(o.margin, SET_MARGIN_MIN, SET_MARGIN_MAX)
+	o.zoom = clamp(o.zoom, SET_ZOOM_MIN, SET_ZOOM_MAX)
+	return o
+}
+
+// library_open_book opens a file and records it in the library: the cover is
+// stored and the marks are read. It is what opening a book in the window does
+// and what `reader add` does. On failure the index is -1 and b.err says why.
+library_open_book :: proc(
+	l: ^Library,
+	b: ^Book,
+	abs: string,
+	fonts: ^p.Fonts,
+	o: Reflow_Opts,
+) -> (
+	idx: int,
+	ok: bool,
+) {
+	if !book_open(b, abs, fonts, library_cache_dir(l), o) {
+		return -1, false
+	}
+	i := library_add(l, abs, b)
+	library_store_cover(l, i, b)
+	marks_load(l, i)
+	return i, true
+}
+
+// doc_progress is how far through a reflowable book a position is, from
+// chapter byte sizes, so that it does not move when the type size does.
+// `within` is the fraction of the chapter already read.
+doc_progress :: proc(d: ^Doc, chapter: int, within: f32) -> f32 {
+	total := doc_total_bytes(d)
+	if total <= 0 {
+		return 0
+	}
+	before := 0
+	for i in 0 ..< clamp(chapter, 0, len(d.chapters)) {
+		before += d.chapters[i].bytes
+	}
+	inside := f32(0)
+	if chapter >= 0 && chapter < len(d.chapters) {
+		inside = f32(d.chapters[chapter].bytes) * clamp(within, 0, 1)
+	}
+	return clamp((f32(before) + inside) / f32(total), 0, 1)
+}
+
+// fixed_progress is the same question for a page of a fixed document.
+fixed_progress :: proc(page, pages: int) -> f32 {
+	if pages <= 1 {
+		return 1
+	}
+	return clamp(f32(page - 1) / f32(pages - 1), 0, 1)
+}
+
+// library_set_position records where the reader is in one book. For a
+// reflowable book that is a chapter, a block and a byte offset into it; for a
+// fixed one, a page. A negative block leaves the stored block alone, which is
+// what the window wants when the layout could not name one.
+library_set_position :: proc(
+	l: ^Library,
+	i: int,
+	reflowable: bool,
+	chapter, block, off, page: int,
+	frac: f32,
+	pages: int,
+) {
+	if i < 0 || i >= len(l.books) {
+		return
+	}
+	e := &l.books[i]
+	e.opened = time.now()._nsec / 1_000_000_000
+	e.frac = frac
+	if reflowable {
+		e.chapter = chapter
+		if block >= 0 {
+			e.block, e.off = block, off
+		}
+	} else {
+		e.page = page
+	}
+	e.pages = pages
+}
+
+// marks_find_bookmark is the bookmark at a position, or -1. A reflowable
+// position is a chapter and a block; a fixed one, a page.
+marks_find_bookmark :: proc(l: ^Library, i: int, reflowable: bool, chapter, block, page: int) -> int {
+	if i < 0 || i >= len(l.books) {
+		return -1
+	}
+	for m, k in l.books[i].marks {
+		if m.kind != .Bookmark {
+			continue
+		}
+		same := reflowable ? (m.chapter == chapter && m.block == block) : (m.page == page)
+		if same {
+			return k
+		}
+	}
+	return -1
+}
+
+marks_add_bookmark :: proc(l: ^Library, i: int, chapter, block, off, page: int, label: string) {
+	if i < 0 || i >= len(l.books) {
+		return
+	}
+	append(
+		&l.books[i].marks,
+		Mark {
+			kind = .Bookmark,
+			chapter = chapter,
+			block = block,
+			off = off,
+			end = off,
+			page = page,
+			text = strings.clone(label),
+			added = time.now()._nsec / 1_000_000_000,
+		},
+	)
+	_ = marks_save(l, i)
+}
+
+// marks_find_highlight is a highlight overlapping a range of one block, or -1.
+marks_find_highlight :: proc(l: ^Library, i: int, block, from, to: int) -> int {
+	if i < 0 || i >= len(l.books) {
+		return -1
+	}
+	for m, k in l.books[i].marks {
+		if m.kind == .Highlight && m.block == block && !(m.end <= from || m.off >= to) {
+			return k
+		}
+	}
+	return -1
+}
+
+marks_add_highlight :: proc(l: ^Library, i: int, chapter, block, from, to: int, text: string) {
+	if i < 0 || i >= len(l.books) {
+		return
+	}
+	append(
+		&l.books[i].marks,
+		Mark {
+			kind = .Highlight,
+			chapter = chapter,
+			block = block,
+			off = from,
+			end = to,
+			text = strings.clone(text),
+			added = time.now()._nsec / 1_000_000_000,
+		},
+	)
+	_ = marks_save(l, i)
+}
+
+marks_remove :: proc(l: ^Library, i: int, k: int) {
+	if i < 0 || i >= len(l.books) || k < 0 || k >= len(l.books[i].marks) {
+		return
+	}
+	delete(l.books[i].marks[k].text)
+	ordered_remove(&l.books[i].marks, k)
+	_ = marks_save(l, i)
+}

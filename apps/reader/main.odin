@@ -108,11 +108,10 @@ Reader :: struct {
 
 main :: proc() {
 	args := os.args[1:]
+	// The developer modes, which are not commands an agent has any use for
+	// and keep the spellings they always had.
 	for a, i in args {
 		switch a {
-		case "--selftest":
-			selftest()
-			return
 		case "--shots":
 			dir := i + 1 < len(args) ? args[i + 1] : "apps/reader/shots"
 			shots(dir)
@@ -142,24 +141,15 @@ main :: proc() {
 				fmt.eprintln("reader --bench <file>")
 			}
 			return
-		case "--add":
-			// Put books in the library without opening the interface, which
-			// is how the recorded demo gets a library to show without any of
-			// the user's own books in it.
-			add_books(args[i + 1:])
-			return
-		case "--help", "-h":
-			fmt.println(
-				"reader [file]\n" +
-				"  --selftest             headless assertions\n" +
-				"  --shots <dir>          reference PNGs of every view\n" +
-				"  --fixtures <dir>       write the generated test books\n" +
-				"  --genbig <out> [c] [p] a novel-sized generated book\n" +
-				"  --add <file>...        add books to the library, no window\n" +
-				"  --bench <file>         open, turn and re-wrap timings",
-			)
-			return
 		}
+	}
+
+	// Everything else is the command line (cli.odin): the library, a book's
+	// text and search, positions, marks and settings, over the same store and
+	// the same procedures as the window. `--add` and `--selftest` are spellings
+	// it keeps. With no command, or a bare path, there is a window.
+	if code, handled := kit.cli(surface()); handled {
+		os.exit(code)
 	}
 
 	r := new(Reader)
@@ -370,16 +360,16 @@ reader_open :: proc(r: ^Reader, path: string) {
 	r.pd.hit_block = -1
 	r.pd.sel_block = -1
 
+	// The same call `reader add` makes: open, record, store the cover, read
+	// the marks.
 	opts := reader_opts(r)
-	if !book_open(&r.book, abs, &r.app.fonts, library_cache_dir(&r.lib), opts) {
+	idx, opened := library_open_book(&r.lib, &r.book, abs, &r.app.fonts, opts)
+	if !opened {
 		reader_say(r, tfmt("%s: %s", path_base(abs), r.book.err))
 		r.view = .Library
 		return
 	}
-
-	r.cur = library_add(&r.lib, abs, &r.book)
-	library_store_cover(&r.lib, r.cur, &r.book)
-	marks_load(&r.lib, r.cur)
+	r.cur = idx
 	e := &r.lib.books[r.cur]
 
 	// Restore the position. This is the feature people notice, so it is the
@@ -460,46 +450,33 @@ reader_progress :: proc(r: ^Reader) -> f32 {
 		return 0
 	}
 	if !format_is_reflowable(r.book.format) {
-		if r.book.fixed.pages <= 1 {
-			return 1
-		}
-		return clamp(f32(r.fpage - 1) / f32(r.book.fixed.pages - 1), 0, 1)
+		return fixed_progress(r.fpage, r.book.fixed.pages)
 	}
 	d := &r.book.doc
-	total := doc_total_bytes(d)
-	before := 0
-	for i in 0 ..< clamp(r.chapter, 0, len(d.chapters)) {
-		before += d.chapters[i].bytes
-	}
 	within := f32(0)
 	if r.chapter >= 0 && r.chapter < len(d.chapters) {
 		cl := reflow_chapter(&r.book.reflow, d, r.chapter)
 		if cl.pages > 0 {
-			within = f32(d.chapters[r.chapter].bytes) * f32(r.page) / f32(cl.pages)
+			within = f32(r.page) / f32(cl.pages)
 		}
 	}
-	return clamp((f32(before) + within) / f32(total), 0, 1)
+	return doc_progress(d, r.chapter, within)
 }
 
 reader_save_position :: proc(r: ^Reader) {
 	if !r.book.open || r.cur < 0 || r.cur >= len(r.lib.books) {
 		return
 	}
-	e := &r.lib.books[r.cur]
-	e.opened = time.now()._nsec / 1_000_000_000
-	e.frac = reader_progress(r)
+	// Where on screen becomes a position here; recording it is the same call
+	// `reader seek` makes.
+	frac := reader_progress(r)
 	if format_is_reflowable(r.book.format) {
-		e.chapter = r.chapter
 		cl := reflow_chapter(&r.book.reflow, &r.book.doc, r.chapter)
 		pg := r.set.mode == .Continuous ? reader_page_from_scroll(r, cl) : r.page
 		blk, off := layout_pos_at(cl, clamp(pg, 0, max(0, cl.pages - 1)))
-		if blk >= 0 {
-			e.block, e.off = blk, off
-		}
-		e.pages = len(r.book.doc.chapters)
+		library_set_position(&r.lib, r.cur, true, r.chapter, blk, off, 0, frac, len(r.book.doc.chapters))
 	} else {
-		e.page = r.fpage
-		e.pages = r.book.fixed.pages
+		library_set_position(&r.lib, r.cur, false, 0, -1, 0, r.fpage, frac, r.book.fixed.pages)
 	}
 	_ = marks_save(&r.lib, r.cur)
 }
@@ -691,7 +668,7 @@ reader_keep_place :: proc(r: ^Reader, apply: proc(r: ^Reader)) {
 }
 
 reader_set_size :: proc(r: ^Reader, delta: f32) {
-	target := clamp(r.set.size + delta, 11, 40)
+	target := clamp(r.set.size + delta, SET_SIZE_MIN, SET_SIZE_MAX)
 	if target == r.set.size {
 		return
 	}
@@ -712,7 +689,7 @@ mode_ctx: Read_Mode
 para_ctx: Para_Style
 
 reader_set_line :: proc(r: ^Reader, delta: f32) {
-	target := clamp(r.set.line + delta, 1.08, 2.4)
+	target := clamp(r.set.line + delta, SET_LINE_MIN, SET_LINE_MAX)
 	if target == r.set.line {
 		return
 	}
@@ -725,7 +702,7 @@ reader_set_line :: proc(r: ^Reader, delta: f32) {
 }
 
 reader_set_margin :: proc(r: ^Reader, delta: f32) {
-	target := clamp(r.set.margin + delta, 0.03, 0.3)
+	target := clamp(r.set.margin + delta, SET_MARGIN_MIN, SET_MARGIN_MAX)
 	if target == r.set.margin {
 		return
 	}
@@ -790,7 +767,7 @@ reader_set_fit :: proc(r: ^Reader, f: Fit_Mode) {
 }
 
 reader_zoom :: proc(r: ^Reader, mul: f32) {
-	r.set.zoom = clamp(r.set.zoom * mul, 0.3, 5)
+	r.set.zoom = clamp(r.set.zoom * mul, SET_ZOOM_MIN, SET_ZOOM_MAX)
 	r.set.fit = .Zoom
 	reader_say(r, tfmt("Zoom %.0f%%", r.set.zoom * 100))
 	_ = settings_save(&r.lib, r.set)
@@ -804,9 +781,9 @@ reader_toggle_bookmark :: proc(r: ^Reader) {
 	if !r.book.open || r.cur < 0 {
 		return
 	}
-	e := &r.lib.books[r.cur]
+	reflowable := format_is_reflowable(r.book.format)
 	blk, off, page := -1, 0, 0
-	if format_is_reflowable(r.book.format) {
+	if reflowable {
 		cl := reflow_chapter(&r.book.reflow, &r.book.doc, r.chapter)
 		blk, off = layout_pos_at(cl, r.page)
 		if blk < 0 {
@@ -815,44 +792,35 @@ reader_toggle_bookmark :: proc(r: ^Reader) {
 	} else {
 		page = r.fpage
 	}
-	for m, i in e.marks {
-		if m.kind != .Bookmark {
-			continue
-		}
-		same :=
-			format_is_reflowable(r.book.format) \
-			? (m.chapter == r.chapter && m.block == blk) \
-			: (m.page == page)
-		if same {
-			delete(e.marks[i].text)
-			ordered_remove(&e.marks, i)
-			_ = marks_save(&r.lib, r.cur)
-			reader_say(r, "Bookmark removed")
-			return
-		}
+	// The page on screen becomes a position; finding, adding and removing the
+	// bookmark at it are the calls `reader bookmark` makes.
+	if k := marks_find_bookmark(&r.lib, r.cur, reflowable, r.chapter, blk, page); k >= 0 {
+		marks_remove(&r.lib, r.cur, k)
+		reader_say(r, "Bookmark removed")
+		return
 	}
-	label := ""
-	if format_is_reflowable(r.book.format) {
-		t := block_text(&r.book.doc, blk)
-		label = strings.clone(t[:min(len(t), 72)], context.temp_allocator)
-	} else {
-		label = tfmt("Page %d", page)
-	}
-	append(
-		&e.marks,
-		Mark {
-			kind = .Bookmark,
-			chapter = r.chapter,
-			block = blk,
-			off = off,
-			end = off,
-			page = page,
-			text = strings.clone(label),
-			added = time.now()._nsec / 1_000_000_000,
-		},
-	)
-	_ = marks_save(&r.lib, r.cur)
+	marks_add_bookmark(&r.lib, r.cur, r.chapter, blk, off, page, bookmark_label(&r.book, blk, page))
 	reader_say(r, "Bookmarked")
+}
+
+// bookmark_label is what a bookmark is called in the marks panel: the start of
+// the paragraph it is on, or the page number of a fixed document.
+bookmark_label :: proc(b: ^Book, block, page: int) -> string {
+	if format_is_reflowable(b.format) {
+		t := block_text(&b.doc, block)
+		return t[:utf8_floor(t, min(len(t), 72))]
+	}
+	return tfmt("Page %d", page)
+}
+
+// utf8_floor backs a byte count off to the start of a character, so a label
+// cut at 72 bytes never ends in half of one.
+utf8_floor :: proc(s: string, n: int) -> int {
+	k := n
+	for k > 0 && k < len(s) && (s[k] & 0xC0) == 0x80 {
+		k -= 1
+	}
+	return k
 }
 
 reader_highlight :: proc(r: ^Reader) {
@@ -864,33 +832,23 @@ reader_highlight :: proc(r: ^Reader) {
 		reader_say(r, "Select some words first: drag across them")
 		return
 	}
-	e := &r.lib.books[r.cur]
 	// A highlight over an existing one removes it, which is how every reader
-	// behaves and saves inventing a delete gesture.
-	for m, i in e.marks {
-		if m.kind == .Highlight &&
-		   m.block == r.sel_block &&
-		   !(m.end <= r.sel_a || m.off >= r.sel_b) {
-			delete(e.marks[i].text)
-			ordered_remove(&e.marks, i)
-			_ = marks_save(&r.lib, r.cur)
-			reader_say(r, "Highlight removed")
-			return
-		}
+	// behaves and saves inventing a delete gesture. The selection on screen
+	// becomes a range; the rest is the calls `reader highlight` makes.
+	if k := marks_find_highlight(&r.lib, r.cur, r.sel_block, r.sel_a, r.sel_b); k >= 0 {
+		marks_remove(&r.lib, r.cur, k)
+		reader_say(r, "Highlight removed")
+		return
 	}
-	append(
-		&e.marks,
-		Mark {
-			kind = .Highlight,
-			chapter = r.chapter,
-			block = r.sel_block,
-			off = r.sel_a,
-			end = r.sel_b,
-			text = range_text(&r.book.doc, r.sel_block, r.sel_a, r.sel_b),
-			added = time.now()._nsec / 1_000_000_000,
-		},
+	marks_add_highlight(
+		&r.lib,
+		r.cur,
+		r.chapter,
+		r.sel_block,
+		r.sel_a,
+		r.sel_b,
+		range_text(&r.book.doc, r.sel_block, r.sel_a, r.sel_b, context.temp_allocator),
 	)
-	_ = marks_save(&r.lib, r.cur)
 	r.sel_block = -1
 	reader_say(r, "Highlighted")
 }
@@ -1109,48 +1067,6 @@ bench :: proc(path: string) {
 		len(s.hits),
 		SEARCH_MAX,
 	)
-}
-
-// add_books opens each file far enough to read its metadata and cover, records
-// it in the library, and exits. No window, and nothing on screen.
-add_books :: proc(paths: []string) {
-	lib: Library
-	library_init(&lib)
-	defer library_destroy(&lib)
-	library_load(&lib)
-
-	off := p.offscreen_create(800, 600)
-	defer p.offscreen_destroy(off)
-	load_test_fonts(&off.fonts)
-
-	o := Reflow_Opts {
-		size    = 17,
-		line    = 1.62,
-		measure = 620,
-		page_h  = 640,
-	}
-	for path in paths {
-		if strings.has_prefix(path, "-") {
-			continue
-		}
-		abs := path
-		if !strings.has_prefix(abs, "/") {
-			if cwd, err := os.get_working_directory(context.temp_allocator); err == nil {
-				abs = tfmt("%s/%s", cwd, abs)
-			}
-		}
-		abs = path_normalize_abs(abs, context.temp_allocator)
-		b: Book
-		if !book_open(&b, abs, &off.fonts, library_cache_dir(&lib), o) {
-			fmt.eprintfln("reader --add: %s: %s", path_base(abs), b.err)
-			continue
-		}
-		i := library_add(&lib, abs, &b)
-		library_store_cover(&lib, i, &b)
-		fmt.printfln("added %s (%s)", book_title(&b), format_name(b.format))
-		book_close(&b)
-	}
-	_ = library_save(&lib)
 }
 
 bench_fonts :: proc(off: ^p.Offscreen) -> ^p.Fonts {

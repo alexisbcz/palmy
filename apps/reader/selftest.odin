@@ -210,6 +210,7 @@ selftest :: proc() {
 	test_fixed(&t, dir, fonts)
 	test_store(&t, dir)
 	test_resume(&t, dir, png, fonts)
+	test_cli(&t, png)
 
 	ms := time.duration_milliseconds(time.since(start))
 	fmt.printfln("")
