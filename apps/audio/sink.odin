@@ -55,6 +55,11 @@ pw_raw_checked: bool
 @(private = "file")
 pw_why: string
 
+// sink_name is what the status line calls the sink.
+sink_name :: proc() -> string {
+	return sink_kind() == .Null ? "null sink" : "pw-cat"
+}
+
 // sink_argv is the command the pump writes into. `ok` is false with a reason
 // when no sink can be started, so the engine reports it instead of starting
 // something that will accept one pipeful and stop.

@@ -3,9 +3,10 @@ package main
 // palmy audio — a music player.
 //
 // ffmpeg decodes, pw-cat plays, and the position comes back as a byte count
-// (engine.odin). Separately the whole track is decoded once to 16 kHz mono so
-// the waveform, the spectrum and the oscilloscope are drawn from the real
-// samples rather than from an animation (wave.odin).
+// (engine.odin). Separately the whole track is decoded once at 48 kHz into a
+// 16 kHz mono copy and a full-band spectrogram, so the waveform, the spectrum
+// and the oscilloscope are drawn from the real samples rather than from an
+// animation (wave.odin).
 //
 // Playback is gapless: the sink is started once and kept, the next track's
 // decoder *and* its analysis are started two seconds before the boundary, and

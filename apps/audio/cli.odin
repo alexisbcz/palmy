@@ -140,7 +140,7 @@ PROBE_FIELDS := []kit.Field {
 
 ANALYZE_FIELDS := []kit.Field {
 	{name = "path", kind = .String},
-	{name = "samples", kind = .Int, help = "decoded at 16 kHz mono"},
+	{name = "samples", kind = .Int, help = "of the 16 kHz mono copy the envelope is drawn from"},
 	{name = "seconds", kind = .Float},
 	{name = "decode_ms", kind = .Float},
 	{name = "gain", kind = .Float, help = "how far the envelope was lifted to fill the strip"},
@@ -241,11 +241,7 @@ cmd_probe :: proc(c: ^kit.Call) -> int {
 // bar_hz is the centre of analyser bar `k`, on the same logarithmic scale
 // from 40 Hz to Nyquist that `spectrum` folds the transform into.
 bar_hz :: proc(k: int) -> f64 {
-	lo := 40.0
-	hi := f64(WAVE_RATE) / 2
-	f0 := lo * math.pow(hi / lo, f64(k) / f64(BARS))
-	f1 := lo * math.pow(hi / lo, f64(k + 1) / f64(BARS))
-	return math.sqrt(f0 * f1)
+	return math.sqrt(f64(bar_edge_hz(k)) * f64(bar_edge_hz(k + 1)))
 }
 
 @(private = "file")

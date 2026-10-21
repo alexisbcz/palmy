@@ -312,7 +312,7 @@ stats_overlay :: proc(ui: ^p.Ctx, st: ^St) {
 
 	p.text(ui, "A/V SYNC", "text-[10] font-semibold uppercase tracking-widest text-muted-foreground/70 pt-1")
 	if st.e.have_audio {
-		stat(ui, "Clock", "pw-cat byte count")
+		stat(ui, "Clock", fmt.tprintf("%s byte count", sink_name()))
 		stat(
 			ui,
 			"Sink buffer",
@@ -862,7 +862,7 @@ info_panel :: proc(ui: ^p.Ctx, st: ^St) {
 		group(ui, "Audio")
 		stat(ui, "Codec", m.acodec)
 		stat(ui, "Sample rate", fmt.tprintf("%d Hz · %d ch", m.sample_rate, m.channels))
-		stat(ui, "Output", st.e.have_audio ? "pw-cat · s16 48 kHz" : "unavailable")
+		stat(ui, "Output", st.e.have_audio ? fmt.tprintf("%s · s16 48 kHz", sink_name()) : "unavailable")
 		if !st.e.have_audio && st.e.audio_err != "" {
 			p.text(ui, st.e.audio_err, "text-[11] text-destructive")
 		}

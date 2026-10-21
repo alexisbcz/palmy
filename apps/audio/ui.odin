@@ -132,16 +132,27 @@ vis_label :: proc(ui: ^p.Ctx, st: ^St) {
 		st.vis_mode == .Spectrum ? IC_AUDIO_LINES : IC_ACTIVITY,
 		"size-3.5 text-muted-foreground shrink-0",
 	)
-	p.textf(
-		ui,
-		"text-[11] text-muted-foreground whitespace-nowrap",
-		"%s · %d samples @ %d kHz · 0–%d kHz · decoded in %.0f ms",
-		st.vis_mode == .Spectrum ? fmt.tprintf("%d-point FFT", FFT_N) : "Oscilloscope",
-		n,
-		WAVE_RATE / 1000,
-		WAVE_RATE / 2000,
-		ms,
-	)
+	if st.vis_mode == .Spectrum {
+		p.textf(
+			ui,
+			"text-[11] text-muted-foreground whitespace-nowrap",
+			"%d-point FFT @ %d kHz · %d Hz–%d kHz · decoded in %.0f ms",
+			FFT_N,
+			SPEC_RATE / 1000,
+			int(SPEC_LO),
+			SPEC_RATE / 2000,
+			ms,
+		)
+	} else {
+		p.textf(
+			ui,
+			"text-[11] text-muted-foreground whitespace-nowrap",
+			"Oscilloscope · %d samples @ %d kHz · decoded in %.0f ms",
+			n,
+			WAVE_RATE / 1000,
+			ms,
+		)
+	}
 	p.style(ui).shrink = 0
 }
 
@@ -613,7 +624,8 @@ status_bar :: proc(ui: ^p.Ctx, st: ^St) {
 		p.textf(
 			ui,
 			"shrink-0 text-[11] text-muted-foreground tabular-nums whitespace-nowrap",
-			"pw-cat · s16 48 kHz stereo · %.2f s written · %d gapless %s",
+			"%s · s16 48 kHz stereo · %.2f s written · %d gapless %s",
+			sink_name(),
 			written,
 			joins,
 			joins == 1 ? "join" : "joins",

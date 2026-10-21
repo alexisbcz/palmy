@@ -10,6 +10,7 @@ import "core:fmt"
 import "core:math"
 import "core:os"
 import "core:strings"
+import "core:sync"
 import "core:time"
 import kit "kit:."
 
@@ -125,6 +126,28 @@ test_fft :: proc() {
 		abs(freq_energy / f32(N) - time_energy) < time_energy * 0.01,
 		"Parseval holds, so the transform is correctly scaled",
 	)
+
+	// The table form the spectrogram runs is the same transform, on a complex
+	// input (it is fed two real frames at once).
+	tab := new(Fft_Table)
+	defer free(tab)
+	fft_table_init(tab)
+	re2, im2: [N]f32
+	seed := u32(12345)
+	for i in 0 ..< N {
+		seed = seed * 1664525 + 1013904223
+		re[i] = f32(seed >> 8) / f32(1 << 24) - 0.5
+		seed = seed * 1664525 + 1013904223
+		im[i] = f32(seed >> 8) / f32(1 << 24) - 0.5
+		re2[i], im2[i] = re[i], im[i]
+	}
+	fft(re[:], im[:])
+	fft_tab(re2[:], im2[:], tab)
+	worst := f32(0)
+	for i in 0 ..< N {
+		worst = max(worst, abs(re[i] - re2[i]), abs(im[i] - im2[i]))
+	}
+	check(worst < 1e-2, fmt.tprintf("the table FFT matches the plain one (worst %.2g)", worst))
 }
 
 // ---------------------------------------------------------------------------
@@ -134,16 +157,63 @@ test_fft :: proc() {
 // bar_for is which spectrum bar holds a frequency — the same log mapping the
 // drawing uses, so a test can say where a tone is supposed to appear.
 bar_for :: proc(hz: f32) -> int {
-	lo := f32(40)
-	hi := f32(WAVE_RATE / 2)
 	for k in 0 ..< BARS {
-		f0 := lo * math.pow(hi / lo, f32(k) / f32(BARS))
-		f1 := lo * math.pow(hi / lo, f32(k + 1) / f32(BARS))
-		if hz >= f0 && hz < f1 {
+		if hz >= bar_edge_hz(k) && hz < bar_edge_hz(k + 1) {
 			return k
 		}
 	}
 	return -1
+}
+
+// built_analysis runs 48 kHz samples through the same builder the decode
+// worker feeds, in uneven pieces the way a pipe hands them over, so the
+// spectrogram and the 16 kHz copy under test are the real ones.
+built_analysis :: proc(pcm48: []i16) -> Analysis {
+	b := new(Wave_Builder)
+	defer free(b)
+	wb_init(b)
+	defer wb_destroy(b)
+	i := 0
+	piece := 777
+	for i < len(pcm48) {
+		j := min(len(pcm48), i + piece)
+		wb_feed(b, pcm48[i:j])
+		i = j
+		piece = piece * 7 % 9001 + 1
+	}
+	wb_finish(b)
+	a: Analysis
+	a.pcm = wb_take_pcm(b)
+	a.spec, a.frames = wb_take_spec(b)
+	a.done = true
+	a.ok = true
+	return a
+}
+
+// tone48 is `secs` of a sine at `hz`, at the decode rate.
+tone48 :: proc(hz: f32, secs: f32, amp: f32 = 28000) -> []i16 {
+	n := int(secs * SPEC_RATE)
+	out := make([]i16, n)
+	for i in 0 ..< n {
+		// f64: an f32 phase at 48 000 samples is noisy enough to light up
+		// every bar 60 dB down, which is exactly the floor being tested.
+		out[i] = i16(f64(amp) * math.sin(2 * math.PI * f64(hz) * f64(i) / f64(SPEC_RATE)))
+	}
+	return out
+}
+
+drop_analysis :: proc(a: ^Analysis) {
+	delete(a.pcm)
+	delete(a.spec)
+	a^ = {}
+}
+
+loudest_bar :: proc(bars: []f32) -> int {
+	peak := 0
+	for k in 0 ..< len(bars) {
+		if bars[k] > bars[peak] {peak = k}
+	}
+	return peak
 }
 
 fake_analysis :: proc(pcm: []i16) -> Analysis {
@@ -231,23 +301,19 @@ test_peaks :: proc() {
 }
 
 test_spectrum :: proc() {
-	// One second of a 1 kHz tone at the analysis rate.
-	n := WAVE_RATE
-	pcm := make([]i16, n)
+	// One second of a 1 kHz tone at the decode rate.
+	pcm := tone48(1000, 1)
 	defer delete(pcm)
-	for i in 0 ..< n {
-		pcm[i] = i16(28000 * math.sin(2 * math.PI * 1000 * f32(i) / f32(WAVE_RATE)))
-	}
-	a := fake_analysis(pcm)
+	a := built_analysis(pcm)
+	defer drop_analysis(&a)
 	bars: [BARS]f32
 	check(spectrum(&a, 0.5, bars[:]), "a full window produces a spectrum")
+	check(a.frames == 30, fmt.tprintf("one spectrogram frame every 33 ms (%d for a second)", a.frames))
+	check(abs(len(a.pcm) - WAVE_RATE) <= 1, "and the copy beside it is 16 kHz")
 
 	// Find which bar should hold 1 kHz, and check that it is the loudest.
 	want := bar_for(1000)
-	peak := 0
-	for k in 0 ..< BARS {
-		if bars[k] > bars[peak] {peak = k}
-	}
+	peak := loudest_bar(bars[:])
 	check(want >= 0, "1 kHz falls inside the plotted range")
 	check(abs(peak - want) <= 1, "the loudest bar is the one holding 1 kHz")
 	check(bars[peak] > 0.8, "a full-scale tone nearly fills its bar")
@@ -258,10 +324,25 @@ test_spectrum :: proc() {
 	}
 	check(bad == 0, "every bar is between 0 and 1")
 
+	// The scale is dB full scale: a tone 20 dB down reads two thirds of the
+	// −60…0 dB range, and one 40 dB down a third. The old raw-magnitude scale
+	// pinned both at the top.
+	for db in ([?]f32{-20, -40}) {
+		q := tone48(1000, 1, 32768 * math.pow(10, db / 20))
+		defer delete(q)
+		qa := built_analysis(q)
+		defer drop_analysis(&qa)
+		qb: [BARS]f32
+		spectrum(&qa, 0.5, qb[:])
+		lv := qb[loudest_bar(qb[:])]
+		check(abs(lv - (60 + db) / 60) < 0.03, fmt.tprintf("a %.0f dBFS tone reads %.2f of the range (%.3f)", db, (60 + db) / 60, lv))
+	}
+
 	// Silence sits on the floor rather than lighting everything up.
-	quiet := make([]i16, n)
+	quiet := make([]i16, SPEC_RATE)
 	defer delete(quiet)
-	qa := fake_analysis(quiet)
+	qa := built_analysis(quiet)
+	defer drop_analysis(&qa)
 	qbars: [BARS]f32
 	check(spectrum(&qa, 0.5, qbars[:]), "silence still produces a spectrum")
 	top := f32(0)
@@ -270,59 +351,97 @@ test_spectrum :: proc() {
 	}
 	check(top < 0.01, "silence leaves every bar on the floor")
 
-	// The point of moving to 16 kHz: a tone the old rate could not represent
-	// at all now lands in the right bar. 6 kHz was above the old 4 kHz
-	// ceiling, so at 8 kHz it was not merely in the wrong bar — it was
-	// outside the plotted range entirely.
-	check(f32(WAVE_RATE / 2) > 4000, "the analyser reaches past the old 4 kHz ceiling")
-	hi6 := make([]i16, n)
-	defer delete(hi6)
-	for i in 0 ..< n {
-		hi6[i] = i16(28000 * math.sin(2 * math.PI * 6000 * f32(i) / f32(WAVE_RATE)))
+	// The point of the full-rate decode: tones the 16 kHz analysis could not
+	// represent at all — above its 8 kHz Nyquist, and above the 4 kHz of the
+	// 8 kHz one before it — land in their own bars. At the old rates they were
+	// not merely in the wrong bar but outside the plotted range entirely, or
+	// folded down into the mids.
+	check(f32(SPEC_RATE / 2) >= 20000, "the analyser reaches the top of human hearing")
+	for hz in ([?]f32{6000, 12000, 18000}) {
+		hi := tone48(hz, 1)
+		defer delete(hi)
+		ha := built_analysis(hi)
+		defer drop_analysis(&ha)
+		hbars: [BARS]f32
+		check(spectrum(&ha, 0.5, hbars[:]), fmt.tprintf("a %.0f Hz tone produces a spectrum", hz))
+		w := bar_for(hz)
+		check(w >= 0, fmt.tprintf("%.0f Hz falls inside the plotted range", hz))
+		hpeak := loudest_bar(hbars[:])
+		check(abs(hpeak - w) <= 1, fmt.tprintf("and the loudest bar is the one holding %.0f Hz (bar %d, want %d)", hz, hpeak, w))
+		check(hbars[hpeak] > 0.8, fmt.tprintf("a full-scale %.0f Hz tone nearly fills its bar", hz))
+		// It must not be mistaken for something low: an alias at the old rates
+		// would have landed down in the mids.
+		low := f32(0)
+		for k in 0 ..< BARS / 2 {
+			low = max(low, hbars[k])
+		}
+		check(low < hbars[hpeak] * 0.5, fmt.tprintf("with nothing of %.0f Hz showing in the lower half", hz))
 	}
-	ha := fake_analysis(hi6)
-	hbars: [BARS]f32
-	check(spectrum(&ha, 0.5, hbars[:]), "a 6 kHz tone produces a spectrum")
-	w6 := bar_for(6000)
-	check(w6 >= 0, "6 kHz falls inside the plotted range")
-	hpeak := 0
-	for k in 0 ..< BARS {
-		if hbars[k] > hbars[hpeak] {hpeak = k}
+
+	// The spectrogram follows the playhead: a 500 Hz second then a 15 kHz
+	// second must read as two different spectra either side of the change.
+	{
+		lo_ := tone48(500, 1)
+		defer delete(lo_)
+		hi_ := tone48(15000, 1)
+		defer delete(hi_)
+		both := make([]i16, len(lo_) + len(hi_))
+		defer delete(both)
+		copy(both, lo_)
+		copy(both[len(lo_):], hi_)
+		ba := built_analysis(both)
+		defer drop_analysis(&ba)
+		b0, b1: [BARS]f32
+		spectrum(&ba, 0.5, b0[:])
+		spectrum(&ba, 1.5, b1[:])
+		check(abs(loudest_bar(b0[:]) - bar_for(500)) <= 1, "at 0.5 s the spectrum shows the 500 Hz half")
+		check(abs(loudest_bar(b1[:]) - bar_for(15000)) <= 1, "at 1.5 s it shows the 15 kHz half")
 	}
-	check(abs(hpeak - w6) <= 1, "and the loudest bar is the one holding 6 kHz")
-	check(hbars[hpeak] > 0.8, "a full-scale tone above 4 kHz nearly fills its bar")
-	// It must not be mistaken for something low: an alias of 6 kHz at the old
-	// rate would have landed down in the mids.
-	low := f32(0)
-	for k in 0 ..< BARS / 2 {
-		low = max(low, hbars[k])
-	}
-	check(low < hbars[hpeak] * 0.5, "with nothing of it showing in the lower half")
 
 	// The Nyquist edge: alternating full-scale samples are a tone at exactly
-	// WAVE_RATE/2. It has to come out at the top of the display without
+	// SPEC_RATE/2. It has to come out at the top of the display without
 	// blowing anything up.
-	nyq := make([]i16, n)
+	nyq := make([]i16, SPEC_RATE)
 	defer delete(nyq)
-	for i in 0 ..< n {
+	for i in 0 ..< len(nyq) {
 		nyq[i] = i % 2 == 0 ? 28000 : -28000
 	}
-	na := fake_analysis(nyq)
+	na := built_analysis(nyq)
+	defer drop_analysis(&na)
 	nbars: [BARS]f32
 	check(spectrum(&na, 0.5, nbars[:]), "a tone at Nyquist produces a spectrum")
-	npeak := 0
 	nbad := 0
 	for k in 0 ..< BARS {
-		if nbars[k] > nbars[npeak] {npeak = k}
 		if nbars[k] < 0 || nbars[k] > 1 {nbad += 1}
 	}
 	check(nbad == 0, "every bar stays in range at the Nyquist edge")
-	check(npeak >= BARS - 3, "and the energy shows in the topmost bars")
+	check(loudest_bar(nbars[:]) >= BARS - 3, "and the energy shows in the topmost bars")
+
+	// The 16 kHz copy is low-passed before it is decimated: a 12 kHz tone, which
+	// would fold to 4 kHz in a plain 3:1 pick, is gone from the envelope, while
+	// a 1 kHz one keeps its level.
+	{
+		h12 := tone48(12000, 0.5)
+		defer delete(h12)
+		ha := built_analysis(h12)
+		defer drop_analysis(&ha)
+		mx := 0
+		for v in ha.pcm[200:len(ha.pcm) - 200] {
+			mx = max(mx, abs(int(v)))
+		}
+		check(mx < 28000 / 100, fmt.tprintf("a 12 kHz tone is filtered out of the 16 kHz copy (peak %d of 28000)", mx))
+		mp := 0
+		for v in a.pcm[200:len(a.pcm) - 200] {
+			mp = max(mp, abs(int(v)))
+		}
+		check(abs(mp - 28000) < 28000 / 50, fmt.tprintf("while a 1 kHz tone keeps its level (peak %d of 28000)", mp))
+	}
 
 	// Too few samples to transform: refuse rather than read past the end.
 	short := make([]i16, 64)
 	defer delete(short)
-	sa := fake_analysis(short)
+	sa := built_analysis(short)
+	defer drop_analysis(&sa)
 	check(!spectrum(&sa, 0, bars[:]), "a buffer shorter than the window is refused")
 
 	// A playhead past the end must clamp, not index out of range.
@@ -591,7 +710,8 @@ test_engine :: proc() {
 	check(m.artist == "lavfi", "and its artist tag")
 	check(abs(m.duration - 3) < 0.3, "and its duration")
 
-	// The analysis decodes the whole track to 8 kHz mono on a worker thread.
+	// The analysis decodes the whole track at 48 kHz on a worker thread, into a
+	// 16 kHz copy and a spectrogram.
 	a: Analysis
 	analysis_start(&a, track)
 	ready, ok, ms, samples: = false, false, f64(0), 0
@@ -612,17 +732,44 @@ test_engine :: proc() {
 	bars: [BARS]f32
 	if ok {
 		check(spectrum(&a, 1.5, bars[:]), "the decoded track produces a spectrum")
-		peak := 0
-		for k in 0 ..< BARS {
-			if bars[k] > bars[peak] {peak = k}
-		}
-		lo := f32(40)
-		hi := f32(WAVE_RATE / 2)
-		f0 := lo * math.pow(hi / lo, f32(peak) / f32(BARS))
-		f1 := lo * math.pow(hi / lo, f32(peak + 1) / f32(BARS))
+		peak := loudest_bar(bars[:])
+		f0 := bar_edge_hz(peak)
+		f1 := bar_edge_hz(peak + 1)
 		check(1000 >= f0 * 0.8 && 1000 <= f1 * 1.25, "a real 1 kHz tone peaks near 1 kHz")
 	}
 	analysis_stop(&a)
+
+	// And a real file with nothing below 8 kHz: the old analysis decoded it to
+	// silence. FLAC, because an MP3 encoder may low-pass it away.
+	high := fmt.tprintf("%s/high.flac", dir)
+	if _, hm := kit.run({"ffmpeg", "-y", "-v", "error", "-f", "lavfi", "-i", "sine=frequency=16000:sample_rate=48000:duration=2", high}, context.temp_allocator); hm {
+		ha: Analysis
+		analysis_start(&ha, high)
+		hready, hok := false, false
+		for _ in 0 ..< 600 {
+			hready, hok, _, _ = analysis_ready(&ha)
+			if hready {break}
+			kit_sleep(5)
+		}
+		hb: [BARS]f32
+		check(hok && spectrum(&ha, 1, hb[:]), "a decoded 16 kHz tone produces a spectrum")
+		hp := loudest_bar(hb[:])
+		check(abs(hp - bar_for(16000)) <= 1 && hb[hp] > 0.5, fmt.tprintf("and it peaks at 16 kHz (bar %d, want %d, level %.2f)", hp, bar_for(16000), hb[hp]))
+		analysis_stop(&ha)
+	}
+
+	// Stopping an analysis mid-decode kills ffmpeg rather than waiting for the
+	// whole file: a skip must not freeze on a long track.
+	long := fmt.tprintf("%s/long.flac", dir)
+	if _, lm := kit.run({"ffmpeg", "-y", "-v", "error", "-f", "lavfi", "-i", "anoisesrc=d=600:c=pink:a=0.3:r=44100", long}, context.temp_allocator); lm {
+		la: Analysis
+		analysis_start(&la, long)
+		kit_sleep(50)
+		w0 := time.now()
+		analysis_stop(&la)
+		took := time.duration_milliseconds(time.since(w0))
+		check(took < 1000, fmt.tprintf("stopping a ten-minute decode midway returns at once (%.0f ms)", took))
+	}
 
 	// The sink: only run it where PipeWire is available, or against the null sink.
 	if sink_kind() == .PipeWire && !kit.has_tool("pw-cat") {
@@ -761,9 +908,16 @@ test_gapless :: proc() {
 	check(starve < engine_buffered(&e), "which is less than the sink had buffered, so nothing was audible")
 	check(engine_clock(&e) < 1.5, "the clock restarts inside the new track")
 
-	// Written bytes keep running across the join rather than resetting.
+	// Written bytes keep running across the join rather than resetting: the
+	// new track's segment starts where about three seconds of the old one
+	// ended, and the count is past it. (This used to be `written > 3`, which
+	// sits within a sink's buffering of the moment the flip is seen and so
+	// failed whenever the sink buffered less than the MP3 seek fell short.)
 	written, _ := engine_stats(&e)
-	check(written > 3, "the byte count is a running total across both tracks")
+	sync.lock(&e.mu)
+	join := e.nseg >= 2 ? f64(e.segs[e.nseg - 1].byte_start) / f64(BPS) : 0
+	sync.unlock(&e.mu)
+	check(join > 2.5 && written > join, fmt.tprintf("the byte count is a running total across both tracks (join at %.2fs, %.2fs written)", join, written))
 
 	engine_stop(&e)
 	check(!e.live && !e.sink_live, "an explicit stop does tear the sink down")
