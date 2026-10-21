@@ -28,6 +28,12 @@ expect :: proc(cond: bool, format: string, args: ..any) {
 	}
 }
 
+// check is `expect` for the command-line tests in selftest_cli.odin, so
+// their assertions land in the same count.
+check :: proc(cond: bool, format: string, args: ..any) {
+	expect(cond, format, ..args)
+}
+
 @(private = "file")
 near :: proc(a, b: f32, tol: f32, format: string, args: ..any) {
 	checks += 1
@@ -78,6 +84,7 @@ selftest :: proc() -> bool {
 	test_color()
 	test_png_roundtrip()
 	test_sampling()
+	test_cli()
 
 	fmt.printfln("%d assertions, %d failures", checks, fails)
 	if fails == 0 {

@@ -191,16 +191,19 @@ st_init :: proc(st: ^St) {
 
 main :: proc() {
 	args := os.args[1:]
+	// The two older offscreen modes come first: the kit would read either as
+	// a flag nobody declared. Everything else — the commands, --help,
+	// --schema, --selftest — is the shared convention's (cli.odin).
 	for a, i in args {
-		if a == "--selftest" {
-			os.exit(selftest() ? 0 : 1)
-		}
 		if a == "--shot" {
 			os.exit(shot_main(args[i:]) ? 0 : 1)
 		}
 		if a == "--bench" {
 			os.exit(bench_main() ? 0 : 1)
 		}
+	}
+	if code, handled := kit.cli(surface()); handled {
+		os.exit(code)
 	}
 
 	app, err := kit.start(
@@ -646,6 +649,50 @@ preview_cancel :: proc(st: ^St) {
 	copy(d.pool[st.prev_pool].px, st.prev_base)
 	layer_touch(d, st.prev_pool, {0, 0, d.w, d.h})
 	st.prev_pool = -1
+}
+
+// ---------------------------------------------------------------------------
+// The dialogs without the dialog
+//
+// The Adjust and Filter dialogs commit through three steps spread over
+// frames: preview_begin when they open, refresh_preview each time a slider
+// moves, preview_commit on Apply. These run the same three in one go, which is
+// what the command line does (`photoshop adjust`, `photoshop filter`): the
+// pixels written are the pixels Apply would have left, with the same undo
+// entry, because nothing here is a second implementation.
+// ---------------------------------------------------------------------------
+
+commit_adjust :: proc(st: ^St, k: Adjust_Kind, v: [MAX_PARAMS]f32) {
+	st.adj_kind = k
+	st.adj_v = v
+	st.ov = .Adjust
+	preview_begin(st)
+	refresh_preview(st)
+	preview_commit(st, ADJUST_NAMES[k])
+	st.ov = .None
+}
+
+commit_filter :: proc(st: ^St, k: Filter_Kind, v: [MAX_PARAMS]f32) {
+	st.flt_kind = k
+	st.flt_v = v
+	st.ov = .Filter
+	preview_begin(st)
+	refresh_preview(st)
+	preview_commit(st, FILTER_NAMES[k])
+	st.ov = .None
+}
+
+// select_rect is the marquee, given as numbers: the rectangle is clipped to
+// the document, and an empty one leaves nothing selected.
+select_rect :: proc(st: ^St, x, y, w, h: int) -> bool {
+	r := rect_i_clip({x, y, x + w, y + h}, st.doc.w, st.doc.h)
+	if rect_i_empty(r) {
+		deselect(st)
+		return false
+	}
+	st.sel = r
+	st.has_sel = true
+	return true
 }
 
 // ---------------------------------------------------------------------------
@@ -1254,11 +1301,13 @@ canvas_input :: proc(ui: ^p.Ctx, st: ^St, idx: int) {
 	}
 }
 
-do_fill :: proc(st: ^St, x, y: int) {
+// do_fill is the paint bucket. It returns the rectangle it changed, empty
+// when there was nothing to fill.
+do_fill :: proc(st: ^St, x, y: int) -> Rect_I {
 	d := &st.doc
 	pool := active_pool(d)
 	if pool < 0 || x < 0 || y < 0 || x >= d.w || y >= d.h {
-		return
+		return {}
 	}
 	clip := clip_rect(st)
 	// The tolerance test runs against the layer's own pixels, so a fill behaves
@@ -1275,21 +1324,24 @@ do_fill :: proc(st: ^St, x, y: int) {
 	r := flood_fill(d.pool[pool].px, d.w, d.h, x, y, color, u32(st.brush.flow_tol), clip, &st.fill_stack)
 	if rect_i_empty(r) {
 		toast(st, "nothing to fill there")
-		return
+		return {}
 	}
 	before := copy_region(before_full, d.w, r)
 	layer_touch(d, pool, r)
 	push_pixel_edit(&st.hist, d, pool, r, before, "Fill")
 	toast(st, fmt.tprintf("filled %d px", rect_i_area(r)))
+	return r
 }
 
-pick_at :: proc(st: ^St, x, y: int) {
+// pick_at is the eyedropper. It reports what it took, so `photoshop pick`
+// can say the same thing the toast does.
+pick_at :: proc(st: ^St, x, y: int) -> (v: u32, ok: bool) {
 	d := &st.doc
 	if x < 0 || y < 0 || x >= d.w || y >= d.h {
 		return
 	}
 	// The eyedropper samples the composite, which is what the user sees.
-	v := d.comp[y * d.w + x]
+	v = d.comp[y * d.w + x]
 	if (v >> 24) & 0xff == 0 {
 		return
 	}
@@ -1301,6 +1353,7 @@ pick_at :: proc(st: ^St, x, y: int) {
 	}
 	sync_picker_from(st, v)
 	toast(st, hex_string(v, context.temp_allocator))
+	return v, true
 }
 
 sync_picker_from :: proc(st: ^St, v: u32) {
