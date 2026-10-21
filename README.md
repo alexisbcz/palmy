@@ -33,7 +33,7 @@ for ui in palmy.frames(app) {
 
 	palmy.textf(ui, "text-5xl font-bold text-white", "%d", count)
 
-	if palmy.button(ui, "Add one", "bg-indigo-500 hover:bg-indigo-400 border-indigo-400") {
+	if palmy.button(ui, "Add one", "bg-indigo-600 hover:bg-indigo-700 border-indigo-500") {
 		count += 1
 	}
 }

@@ -116,7 +116,7 @@ BUTTON_BASE :: "flex-row items-center justify-center shrink-0 px-4 py-2 rounded-
 
 // button draws a pressable button and returns true on the frame it is clicked.
 //
-//	if palmy.button(ui, "Save", "bg-indigo-500 hover:bg-indigo-400 border-indigo-400") {
+//	if palmy.button(ui, "Save", "bg-indigo-600 hover:bg-indigo-700 border-indigo-500") {
 //		save()
 //	}
 button :: proc(ctx: ^Ctx, label: string, class: string = "", disabled := false) -> bool {
