@@ -30,6 +30,8 @@ run_selftest :: proc() {
 	test_downscale()
 	test_rotate()
 	test_transform()
+	test_core() // selftest_core.odin: the core with no window
+	test_cli()
 
 	fmt.printfln(
 		"image selftest: %d checks, %d failures",

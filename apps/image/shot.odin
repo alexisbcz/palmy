@@ -53,7 +53,10 @@ shot_strip :: proc(args: []string) -> []string {
 	return args
 }
 
-run_shot :: proc(st: ^St, out: string, seconds: f64, keys: string) {
+// run_shot draws the viewer for `seconds` and writes the last frame. `quiet`
+// sends its report to stderr, which is what `image render` wants: under
+// --json, stdout is the document and nothing else.
+run_shot :: proc(st: ^St, out: string, seconds: f64, keys: string, quiet := false) {
 	off := p.offscreen_create(
 		WIN_W,
 		WIN_H,
@@ -102,14 +105,15 @@ run_shot :: proc(st: ^St, out: string, seconds: f64, keys: string) {
 		}
 	}
 	if p.offscreen_write_png(off, out) {
-		fmt.printfln("wrote %s", out)
-		fmt.printfln(
+		say := quiet ? fmt.eprintfln : fmt.printfln
+		say("wrote %s", out)
+		say(
 			"ui: %.1f fps, paint %.2f ms/frame",
 			f64(ticks) / seconds,
 			paint_ms / f64(max(ticks, 1)),
 		)
 		done, total, avg := loader_stats(&st.ld)
-		fmt.printfln(
+		say(
 			"thumbs=%d/%d avg=%.1fms current_decode=%.1fms scale=%.0f%% rot=%d",
 			done,
 			total,

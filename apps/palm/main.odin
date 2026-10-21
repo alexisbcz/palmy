@@ -104,7 +104,7 @@ NOUNS := []Noun {
 	{"capture", "screenshot", "screenshots, on a private headless compositor", true, ""},
 	{"clipboard", "clipboard", "the clipboard history", true, ""},
 	{"editor", "editor", "a text editor", true, ""},
-	{"image", "image", "an image viewer", false, ""},
+	{"image", "image", "an image viewer", true, ""},
 	{"prose", "prose", "a Vale-compatible prose linter", true, ""},
 	{"pkg", "pkg", "packages: list, search, install, sync, rollback", true, ""},
 	{"captions", "captions", "local speech to text, and caption files: show, lint, convert, shift, burn in", true, ""},

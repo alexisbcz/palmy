@@ -446,8 +446,23 @@ info_panel :: proc(ui: ^p.Ctx, st: ^St) {
 		meta_line(ui, "Dimensions", human_pixels(s.w, s.h))
 		meta_line(ui, "Aspect", aspect_label(s.w, s.h))
 		meta_line(ui, "Channels", channels_label(s.ch))
-		bpp := s.w > 0 && s.h > 0 ? f64(s.size) * 8 / (f64(s.w) * f64(s.h)) : 0
+		bpp := bits_per_pixel({size = s.size, w = s.w, h = s.h})
 		meta_line(ui, "Stored at", fmt.tprintf("%.2f bits/px", bpp))
+	}
+
+	// What the file says about itself, the entries `image metadata` prints
+	// (core.odin). Only the ones a person scans for; the command has the rest.
+	shown := 0
+	for key in ([?]string{"make", "model", "date_taken", "date_time", "exposure", "f_number", "iso", "focal_length", "orientation", "dpi", "gps", "software"}) {
+		for e in s.meta {
+			if e.key == key && shown < 7 {
+				if shown == 0 {
+					meta_group(ui, "Metadata")
+				}
+				meta_line(ui, e.label, e.value)
+				shown += 1
+			}
+		}
 	}
 
 	meta_group(ui, "View")

@@ -117,14 +117,24 @@ St :: struct {
 }
 
 main :: proc() {
-	for a in os.args[1:] {
-		if a == "--selftest" {
-			run_selftest()
-			os.exit(failures == 0 ? 0 : 1)
-		}
+	// The command line is the other front end over the same core (core.odin,
+	// cli.odin). `--selftest` is routed by it, as it always was; a bare path
+	// — and the older `<media> --shot out.png [seconds] [keys]` — comes back
+	// here.
+	if code, handled := kit.cli(surface()); handled {
+		os.exit(code)
 	}
-
 	shot_out, shot_secs, shot_keys, want_shot := shot_requested()
+	// takes_path hands over any word that is not a verb (C3: the kit does not
+	// check it). A word that names nothing is a mistyped command, not a
+	// picture, and must not open a window.
+	// A path that is merely missing still opens the library with "no such
+	// file", as it always has.
+	if first := first_target(shot_strip(os.args[1:])); first != "" && !os.exists(first) && strings.index_any(first, "./~") < 0 {
+		fmt.eprintfln("image: %q is not a command or a file that exists", first)
+		fmt.eprint(kit.cli_help_text(surface()))
+		os.exit(kit.EXIT_USAGE)
+	}
 
 	app: ^p.App
 	if !want_shot {
@@ -148,66 +158,13 @@ main :: proc() {
 	defer if app != nil {p.destroy(app)}
 	register_dark_theme()
 
-	st := St {
-		cur_idx   = -1,
-		rot_for   = -1,
-		rot_of    = -1,
-		fit       = true,
-		scale     = 1,
-		strip     = true,
-		info      = true,
-		grid_cols = 5,
-		scale_px  = 1,
-	}
-
-	// Argv decides where we land: a file opens in the viewer, a folder in the
-	// grid, nothing at all in the library.
-	args := shot_strip(os.args[1:])
-	target := ""
-	for a in args {
-		if !strings.has_prefix(a, "-") {
-			target = a
-			break
-		}
-	}
-	if target != "" {
-		abs := absolute(target)
-		if fi, serr := os.stat(abs, context.allocator); serr == nil {
-			if fi.type == .Directory {
-				open_folder(&st, abs, "")
-				st.view = .Grid
-			} else {
-				open_folder(&st, dir_of(abs), abs)
-				st.view = .Viewer
-				if st.sel < 0 || len(st.shots) == 0 {
-					// Something that is not an image at all: say so, and stay
-					// on the library so there is somewhere to go.
-					st.cur_err = fmt.aprintf(
-						"%s is not an image palmy can decode",
-						base_of(abs),
-					)
-					build_library(&st)
-					st.view = .Library
-				}
-			}
-		} else {
-			st.cur_err = fmt.aprintf("%s: no such file", target)
-			build_library(&st)
-			st.view = .Library
-		}
-	} else {
-		build_library(&st)
-	}
+	st := st_make()
+	st_open(&st, first_target(shot_strip(os.args[1:])))
 	defer loader_destroy(&st.ld)
 	defer kit.pick_destroy(&st.pick)
 
 	if want_shot {
-		st.view_rect = {
-			0,
-			TOPBAR_H,
-			f32(WIN_W) - PANEL_W - 1,
-			f32(WIN_H) - TOPBAR_H - STATUS_H - STRIP_H - 1,
-		}
+		st.view_rect = shot_view_rect()
 		run_shot(&st, shot_out, shot_secs, shot_keys)
 		return
 	}
@@ -246,6 +203,69 @@ main :: proc() {
 	}
 }
 
+// st_make is the viewer's starting state, for the window and for `image
+// render` alike.
+st_make :: proc() -> St {
+	return St {
+		cur_idx = -1,
+		rot_for = -1,
+		rot_of = -1,
+		fit = true,
+		scale = 1,
+		strip = true,
+		info = true,
+		grid_cols = 5,
+		scale_px = 1,
+	}
+}
+
+// first_target is the first word on the line that is not a flag.
+first_target :: proc(args: []string) -> string {
+	for a in args {
+		if !strings.has_prefix(a, "-") {
+			return a
+		}
+	}
+	return ""
+}
+
+// shot_view_rect is the canvas an offscreen render paints into: the window
+// less its chrome, which the frame loop would otherwise measure.
+shot_view_rect :: proc() -> p.Rect {
+	return {0, TOPBAR_H, f32(WIN_W) - PANEL_W - 1, f32(WIN_H) - TOPBAR_H - STATUS_H - STRIP_H - 1}
+}
+
+// st_open decides where the viewer lands: a file opens in the viewer, a folder
+// in the grid, nothing at all in the library.
+st_open :: proc(st: ^St, target: string) {
+	if target == "" {
+		build_library(st)
+		return
+	}
+	abs := absolute(target)
+	fi, serr := os.stat(abs, context.allocator)
+	if serr != nil {
+		st.cur_err = fmt.aprintf("%s: no such file", target)
+		build_library(st)
+		st.view = .Library
+		return
+	}
+	if fi.type == .Directory {
+		open_folder(st, abs, "")
+		st.view = .Grid
+		return
+	}
+	open_folder(st, dir_of(abs), abs)
+	st.view = .Viewer
+	if st.sel < 0 || len(st.shots) == 0 {
+		// Something that is not an image at all: say so, and stay on the
+		// library so there is somewhere to go.
+		st.cur_err = fmt.aprintf("%s is not an image palmy can decode", base_of(abs))
+		build_library(st)
+		st.view = .Library
+	}
+}
+
 register_dark_theme :: proc() {
 	c :: p.hex
 	p.register_color("background", c(0x09090b))
@@ -279,7 +299,10 @@ absolute :: proc(path: string) -> string {
 		}
 	}
 	cwd, _ := os.get_working_directory(context.temp_allocator)
-	return fmt.aprintf("%s/%s", cwd, path)
+	if path == "." || path == "./" {
+		return strings.clone(cwd)
+	}
+	return fmt.aprintf("%s/%s", cwd, strings.trim_prefix(path, "./"))
 }
 
 // ---------------------------------------------------------------------------
@@ -597,6 +620,17 @@ viewer_keys :: proc(ui: ^p.Ctx, app: ^p.App, st: ^St) {
 		st.fit = true
 		st.pan = {}
 		loader_want(&st.ld, st.sel)
+	}
+	// Ctrl-S keeps what is on screen: a PNG copy next to the original, turned
+	// the way it is shown, through the same encoder `image rotate` uses.
+	if p.shortcut(ui, 's', {.Ctrl}) {
+		if s := current_shot(st); s != nil {
+			if out, ok, why := save_copy(st); ok {
+				toast(st, ui, fmt.tprintf("Saved %s", base_of(out)))
+			} else {
+				toast(st, ui, fmt.tprintf("Not saved: %s", why))
+			}
+		}
 	}
 	if p.shortcut(ui, 'c', {.Ctrl}) {
 		if s := current_shot(st); s != nil {

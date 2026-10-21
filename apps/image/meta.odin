@@ -24,6 +24,7 @@ Shot :: struct {
 	format: string,
 	probed: bool,
 	broken: bool,
+	meta:   [dynamic]Meta_Entry, // EXIF, PNG text: image_metadata (core.odin)
 }
 
 // ---------------------------------------------------------------------------
@@ -177,22 +178,23 @@ sniff_format :: proc(path: string) -> string {
 	return ""
 }
 
-// probe fills in what can be known without decoding the pixels.
+// probe fills in what can be known without decoding the pixels, through the
+// core's image_info and image_metadata (core.odin) — the same answers `image
+// info` and `image metadata` print.
 probe :: proc(s: ^Shot) {
 	if s.probed {
 		return
 	}
 	s.probed = true
-	s.format = sniff_format(s.path)
-	w, h, ch, ok := p.image_size(s.path)
-	if !ok {
+	info, ok := image_info(s.path)
+	s.meta = image_metadata(s.path)
+	if !ok || !info.decodable {
+		s.format = strings.clone(info.format)
 		s.broken = true
 		return
 	}
-	s.w, s.h, s.ch = w, h, ch
-	if s.format == "" {
-		s.format = strings.to_upper(ext_of(s.path), context.allocator)
-	}
+	s.w, s.h, s.ch = info.w, info.h, info.channels
+	s.format = strings.clone(info.format)
 }
 
 // ---------------------------------------------------------------------------
