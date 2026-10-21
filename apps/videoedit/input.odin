@@ -131,8 +131,14 @@ handle_keys :: proc(ed: ^Editor, ui: ^p.Ctx) {
 	}
 	// Playback rate: `<` slower, `>` faster, through RATES. Changing it while
 	// playing is a seek to where the ear is, so the new rate starts at once.
-	if p.shortcut(ui, '>', {.Shift}) || p.shortcut(ui, '<', {.Shift}) {
-		ed.rate = rate_step(ed_rate(ed), p.shortcut(ui, '>', {.Shift}) ? +1 : -1)
+	// A shifted character arrives with Shift on a US keymap, without it on
+	// one where it has its own key (`<` on a German keyboard) or from a
+	// virtual keyboard that maps every character it types to a key of its
+	// own (wtype). Both spellings are the same keystroke to a person.
+	faster := p.shortcut(ui, '>', {.Shift}) || p.shortcut(ui, '>', {})
+	slower := p.shortcut(ui, '<', {.Shift}) || p.shortcut(ui, '<', {})
+	if faster || slower {
+		ed.rate = rate_step(ed_rate(ed), faster ? +1 : -1)
 		if ed.playing {
 			ed.seek_req = true
 		}
@@ -318,9 +324,10 @@ handle_keys :: proc(ed: ^Editor, ui: ^p.Ctx) {
 			)
 		}
 	}
-	if p.shortcut(ui, 'g', {}, true) || p.shortcut(ui, 'G', {.Shift}, true) {
+	gain_up := p.shortcut(ui, 'G', {.Shift}, true) || p.shortcut(ui, 'G', {}, true)
+	if p.shortcut(ui, 'g', {}, true) || gain_up {
 		if t, i, ok := sel_find(ed); ok {
-			up := p.shortcut(ui, 'G', {.Shift}, true)
+			up := gain_up
 			was := pr.tracks[t].clips[i].gain
 			fresh := undo_mark(ed, .Gain, "change the gain", ed.sel)
 			c := &pr.tracks[t].clips[i]

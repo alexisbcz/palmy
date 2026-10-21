@@ -46,4 +46,6 @@ if command -v wtype >/dev/null; then
   ( while kill -0 "$$" 2>/dev/null; do sleep 2; done; kill "$HOLD" 2>/dev/null ) &
 fi
 sleep 0.6
-exec env VE_RECORD=1 /home/alex/Work/palmy/apps/videoedit/videoedit.bin "$@"
+# The binary beside this script, not a fixed checkout: a worktree's take must
+# film the worktree's build.
+exec env VE_RECORD=1 "$(cd "$(dirname "$0")" && pwd)/videoedit.bin" "$@"
