@@ -9,7 +9,6 @@ package main
 import "core:fmt"
 import "core:os"
 import "core:strings"
-import "core:time"
 import kit "kit:."
 import p "palmy:."
 import collabui "../../cloud/collab/ui"
@@ -106,19 +105,6 @@ main :: proc() {
 		}
 		frame(ui, app)
 		retitle(app_win, app)
-		// On arm64 and riscv64, core:sys/linux implements `poll` through
-		// `ppoll` and turns palmy's "wait forever" (-1 ms) into a timespec
-		// with a negative nanosecond field, which the kernel refuses with
-		// EINVAL; palmy treats that as fatal and the window closes after its
-		// first idle frame ("poll failed: EINVAL", measured in the arm64 VM —
-		// main @ 4bd8315 does the same). A spreadsheet idles more than it
-		// does anything else, so it never waits forever there: a one-shot
-		// wake two seconds out keeps the timeout finite, at the cost of one
-		// unchanged frame, which palmy's damage tracking skips. The real fix
-		// belongs in core:sys/linux (or palmy's wait), not here.
-		when ODIN_ARCH == .arm64 || ODIN_ARCH == .riscv64 {
-			p.wake_after(ui, 2 * time.Second)
-		}
 	}
 }
 
