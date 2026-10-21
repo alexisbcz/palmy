@@ -39,14 +39,23 @@ apply.
   and the parity suite build against `palmy/`. Breaking it blocks everyone, and
   it has happened twice. The count is whatever `ls -d apps/*/ | wc -l` reports
   minus `kit/`, `tools/` and `prose/`, which have no top-level `main` — it was
-  45 buildable when this line was written and grows; do not trust a number
-  quoted in a brief over that command.
-- **The 182-case parity suite must stay at mean mae 2.953.** `cd parity && bash
+  58 when this line was written and grows; do not trust a number quoted in a
+  brief over that command. `drive`, `forge` and `installer` need their own
+  collections (`drive:`, `forge:`, `install:`) on the command line.
+- **The 182-case parity suite must not move.** `cd parity && bash
   tools/diff-all.sh`. It compares against real browser captures and is the
-  instrument that says whether something changed that was not meant to. It
-  prints `measuring <tree>` first; check that line is the tree you meant.
+  instrument that says whether something changed that was not meant to. The
+  mean mae depends on the machine's fonts and browser — 2.953 on the old Arch
+  host, 3.472 in the build VM — so compare against a baseline taken on the
+  same machine, not against a number in a brief. It prints `measuring <tree>`
+  first; check that line is the tree you meant. **The browser captures
+  (`parity/out/web/*.png`) are gitignored and absent from a fresh clone**, and
+  the renderer sizes each canvas from them: without them 53 cases render a
+  pixel off and every comparison is meaningless. Until they are re-captured,
+  render against stand-ins (the committed `.json` files plus a baseline's own
+  renders, via `PARITY_WEB`) and byte-compare the renders to that baseline.
 - **The unit tests must pass**: `odin test tests -collection:shadcn=$PWD/shadcn`
-  — **121 tests**. Note that `tests/` imports `"../palmy"` by *relative path*,
+  — **152 tests**. Note that `tests/` imports `"../palmy"` by *relative path*,
   not as a collection, so `-collection:palmy=` is silently ignored and the
   suite always measures the `palmy/` sitting beside it.
 - **Rebuild every app** after touching shared code: `for d in apps/*/`.
@@ -85,197 +94,49 @@ any prompt they touch:**
 
 # Toolkit
 
-## K1 — `[12px]` is silently dropped
-
-> **Done.** `[12px]` is the bare number, `[N%]` is a percentage wherever a
-> dimension is expected (`w-`, `h-`, `min-`/`max-`, insets), and `rem`/`em`
-> are refused rather than guessed: palmy has no root font size, and 16 would
-> be right on some screens and silently wrong on others. A dropped numeric
-> bracket value is reported once on stderr (`palmy: dropped the class value
-> [3rem]: ...`); colour brackets are not. `tests/bracket_units_test.odin`.
-> Parity unchanged, metrics byte-identical. What the grep finds now: the 41
-> `text-[9px]`/`[10px]`/`[11px]` in `apps/track/ui.odin` now render at the
-> size asked for (they were at the inherited size, so `track` will look
-> smaller); `apps/track/repro/flexwrap` and the `[420px]` in
-> `apps/track/selftest.odin` now really constrain the row, so that repro now
-> reproduces; `max-h-[86%]` at `apps/captions/ui.odin` now applies. None
-> relied on being dropped in a way that should stay.
-
-`scale` in `palmy/class.odin:296` parses a bracket value with
-`strconv.parse_f32` at line 305, which rejects a unit suffix:
-`parse_f32("420px")` returns `ok=false`, so **the whole class is discarded with
-no warning**. `max-w-[420px]` does nothing. `text-[11px]` renders at the
-inherited size.
-
-This is the real Tailwind spelling, and the README promises "the class names you
-already know", so it will keep being written. **44 live instances today**, found
-with
-
-```sh
-grep -rnoE '\[[0-9.]+(px|rem|em|%)\]' --include=*.odin apps/ palmy/ shadcn/
-```
-
-after discarding comment lines — most of `shadcn/`'s hits are header comments
-quoting the original `.tsx`, and `palmy/` and `shadcn/` have none that are live.
-41 of the 44 are `text-[Npx]` in `apps/track/ui.odin`, so that application's
-typography is rendering at the inherited size rather than what it asked for. The
-rest are two `[420px]` in `apps/track`'s own flex-wrap repro and a pre-existing
-`max-h-[86%]` at `apps/captions/ui.odin:1838`. `apps/term` had one and fixed it
-by deriving the class from its constant, which is the pattern to copy.
-
-It also produced a false negative in `apps/track`'s own verification of a real
-bug: the repro wrote `max-w-[420px]`, the class vanished, the row became an
-ordinary full-width one with no measure/arrange gap, the bug correctly did not
-reproduce, and the tracker reported a live bug as fixed.
-
-> **Prompt.** Make `palmy`'s bracket values accept a unit suffix, in
-> `palmy/class.odin`.
->
-> You own `palmy/class.odin`. Work in a git worktree. Do not touch `apps/`,
-> `shadcn/` or `parity/`.
->
-> `scale` at line 305 hands `[420px]` straight to `strconv.parse_f32`, which
-> fails on the suffix and drops the class. Accept `px` as an explicit synonym
-> for the bare number, since palmy's bracket values are already exact pixels.
-> Decide deliberately what to do with `rem`, `em` and `%` and say why — `%` has
-> a real meaning that `pct()` already expresses and may belong here; `rem` and
-> `em` need a root size this toolkit does not have, so refusing them loudly may
-> be better than guessing.
->
-> **A dropped class must stop being silent.** That is the actual defect: the
-> parse failure is recoverable, the silence is not. Whatever you decide about
-> the units, make an unparseable bracket value visible — at minimum behind the
-> existing verbose logging, so a developer can find it.
->
-> Then grep the tree for `\[[0-9.]+(px|rem|em|%)\]` and report which are now
-> correct and which were relying on being dropped. Do not fix them; they are
-> other directories.
->
-> Parity must stay at 182 / 2.953 with metrics byte-identical — if a case moves,
-> a parity case was itself relying on a dropped class, which is worth knowing.
-> 121 unit tests, every app builds, assertion count reported.
-
-## K2 — `p.slider`'s knob walks off the end of its track
-
-> **Done.** Track, fill and knob are placed with `inset`; the knob's centre
-> travels between half a knob in from each end and the pointer maps onto the
-> same span. `tests/slider_test.odin` asserts the geometry and the painted
-> pixels at 0, 25, 50 and 100; rendered and looked at.
-
-`slider` offsets its knob with `margin[LEFT] = -8`, and **a negative margin does
-not apply to an absolutely positioned child**. Measured on a 248px track: at
-value 25 the knob rect sits at x=78 where its *centre* should be 78, and at
-value 100 the rect is 264..280 while the track ends at 264 — painted pixels
-265..278, entirely outside the control. Confirmed by rendering and looking.
-
-`palmy/widgets.odin`'s `text_area` positions its caret and selection with
-`inset` for exactly this reason, with a comment naming this bug.
-
-> **Prompt.** Fix `p.slider`'s knob position, in `palmy/widgets.odin`.
->
-> You own `palmy/widgets.odin`. Work in a git worktree. Do not touch `apps/`,
-> `shadcn/` or `parity/`.
->
-> The knob is centred with a negative left margin, which an absolutely
-> positioned child ignores. Use `inset` as `text_area` in the same file does.
-> Assert the knob's painted pixels stay inside the track at 0, 50 and 100, and
-> that its centre tracks the value — and **render it and look**, because the
-> existing assertions passed while it was visibly wrong.
->
-> Check whether `sc.slider` in `shadcn/` has the same shape before you start; it
-> was written against the browser's geometry and may not. Report, do not fix.
->
-> Parity byte-identical, 121 tests, every app builds.
-
 ## K3 — small gaps, each reported by a real application
-
-> **Mostly done**: `window_size(app)`; `push_styled` resolves `current` in the
-> caller's classes; `Key_Event.unshifted` (the key's first-level keysym in the
-> active layout, from `xkb_keymap_key_get_syms_by_level` / the X11 core
-> mapping; `term` uses it); text direction on `Style`; and a `wl_data_device`
-> client. Left: the note on `kit.clipboard_*` (kit is not palmy's), `xdg_popup`,
-> ZWJ, the asynchronous keyboard re-bind, the contrast decision, and the
-> clipboard app's type-aware API (rows below).
 
 | gap | reported by | note |
 | --- | --- | --- |
-| ~~no window size accessor outside a frame~~ **done**, `window_size(app)` | `reader` | reads `app.win.width`/`height` directly. `offscreen_size` exists for the offscreen half; this is the `app.odin` half |
-| ~~`push_styled` does not resolve `text-current`~~ **done** | `call` | it applies the caller's class *after* `push_node`, so `palmy.button(ui, "Save", "border-current")` leaves the sentinel and draws nothing. Everything from `div`/`row`/`col`/`apply`/`text`/`icon`/`image` is already right. One line: capture `style.fg` before `apply_classes`, then `resolve_current` |
-| ~~`Key_Event` carries no unshifted codepoint~~ **done**, `Key_Event.unshifted` | `term` | the VT key encoder needs it to tell `Ctrl+Shift+2` from `Ctrl+@`; libghostty and the Kitty protocol both take both. `apps/term/keymap.odin` recovers it from a US-layout reverse table, exact on US and UK and wrong for one chord elsewhere. Fill it from `xkb_state_key_get_one_sym` with the shift level forced to 0 |
-| ~~no text direction on `Style`~~ | `palmy` itself | **done**: `Style.text_dir`, from `dir-ltr`/`dir-rtl`/`dir-auto`, reaches `wrap_text`, and `text_area` draws each row at its paragraph's direction |
-| `kit.clipboard_set`/`get` fork a process | `term` | calling them inside the frame while a reader thread wants the same mutex is a once-a-month deadlock. `term` now goes through `palmy.clipboard_*`, which does not fork; kit's should too (see *The system*) and say they fork in the fallback |
-| `wl_data_device` client: text only | `clipboard` | **the client exists now** (`palmy/clipboard.odin`), but its API is text: set, get. The `clipboard` app needs a selection-changed notification carrying the offer's type list and a read of one type from that same offer, which is what removes the two-call race — **including the sensitivity gate** — between `wl-paste --watch` and `--list-types`. The offer and its types are already tracked per selection; exposing them is the remaining work |
-| `text-slate-100` on `bg-indigo-500` is 4.08:1 | tests | under WCAG AA for body text. A toolkit design decision, not something a test should silently enforce |
-| no `xdg_popup` | several | menus and tooltips are drawn in-window; a real constraint, not a bug |
+| `text-slate-100` on `bg-indigo-500` is 4.08:1 | tests | under WCAG AA for body text. A toolkit design decision, not something a test should silently enforce (`tests/widgets_test.odin:446`) |
+| no `xdg_popup` | several | menus and tooltips are drawn in-window; a real constraint, not a bug. `apps/wm` serves `xdg_popup` to other clients now, so the server side exists |
 | ZWJ emoji sequences not composed | typography | needs GSUB; a skin-tone modifier renders as a swatch after the base emoji |
 | a client's keyboard re-bind is asynchronous | editor, mail, vault | fixed in the recorder, still a latent toolkit issue — see *Known-unfixed* |
 
-> **Prompt.** Clear the gaps in the table in `TODO.md` section K3.
->
-> You own `palmy/`. Work in a git worktree. Do not touch `apps/`, `shadcn/` or
-> `parity/`. Read the table first — each row names the application that hit the
-> gap, and reading that app's workaround will usually tell you what the API
-> should have been.
->
-> Take the four one-liners first: the window size accessor, `push_styled`'s
-> `text-current` hole, `Key_Event.unshifted`, and the doc note on
-> `clipboard_set`. Then the text-direction field on `Style`, which is the only
-> one with design in it and which unblocks correct RTL in `text_area`.
->
-> Leave `xdg_popup`, ZWJ composition and the `wl_data_device` client alone
-> unless everything else is done: each is a project rather than a gap, and
-> `xdg_popup` may be a deliberate constraint.
->
-> Every change additive — no existing signature changes. Parity at 182 / 2.953
-> with metrics byte-identical, 121 tests, every app building, assertion count
-> reported.
+The clipboard offer API is done (`clipboard_watch`, `clipboard_next_offer`,
+`clipboard_offer_read`; `tests/clipboard_offer_test.odin`). `apps/clipboard`
+has not adopted it yet — that belongs with its C2 conversion. The order of
+operations is in the comment above `clipboard_watch`. Its edges are untested:
+`ext_data_control_v1` (only wlroots' older protocol has run), the `.Focused`
+fallback on a compositor without data control, X11 reads larger than one
+request, and X11 owners other than palmy.
 
-## K4 — eight applications still pin the frame loop at vsync
+## K4 — frame-loop follow-ups
 
-> **palmy's site and `launcher` are done**: the text field caret already
-> used `caret_on`; `launcher`'s caret and toast timer now do too, idle CPU
-> 39.6% → 1.0% of a core on headless sway. Seven remain: `archive`, `chat`,
-> `clipboard`, `emoji`, `kit`, `slides`, `vault`.
+No application holds the loop at vsync any more except `term`, deliberately
+(it blocks in `wait_for_work`), and spinners while real work runs. palmy's
+`poll_fds` replaced `core:sys/linux.poll`, whose arm64/riscv64 build turns an
+infinite timeout into EINVAL — that had every idle palmy app quitting silently
+on arm64. A due wake now runs a logic-only frame while the compositor withholds
+frame callbacks, so timers fire in hidden windows. What is left:
 
-`wake(app)`, `wake_after`, `wake_at` and `wake_cancel` exist now and work on
-both backends. Two applications were converted as the proof — `colorpick` went
-from 33% of a core to 0.9%, `ai` from 43% to 8.2% while streaming. Eight have
-not been: `archive`, `chat`, `clipboard`, `emoji`, `kit`, `launcher`, `slides`,
-`vault`.
-
-The highest-leverage single site is not in an application at all.
-`palmy/widgets.odin:510` sets `ctx.animating = true` unconditionally while a
-text field has focus, purely to blink a caret, so **any** application with a
-focused field sits at vsync. That is what cost `colorpick` a third of a core
-from the moment it opened. `text_area` in the same file draws a steady caret
-instead and has the exact replacement written in a comment at its caret site.
-
-> **Prompt.** Retire the permanent `animating = true` from `palmy/widgets.odin`
-> and from the eight applications that still carry it.
->
-> Start with `palmy/widgets.odin:510`, in a git worktree, and do that one alone
-> first — it is shared code and it changes every application at once. The
-> replacement pattern is in the comment at `text_area`'s caret:
->
->     phase := monotonic_now() % BLINK_PERIOD
->     visible := phase < BLINK_ON
->     wake_after(ctx, (visible ? BLINK_ON : BLINK_PERIOD) - phase)
->
-> **The trap, which bit both converted applications: `ctx.now` cannot drive a
-> timer.** `tick` clamps `dt` to 0.1 s so a stalled frame cannot teleport an
-> animation, which means a four-second interval measured against it lasts
-> twelve seconds at two frames a second. Read a real monotonic clock.
->
-> Then take the applications in separate passes, one directory each, measuring
-> idle CPU before and after from `/proc/<pid>/stat` across all threads on a
-> private headless compositor. `vault` is the one that matters most: its idle
-> auto-lock, clipboard countdown and TOTP countdown are *security* timers that
-> only fire while the loop happens to be running.
->
-> Leave the bounded `ctx.animating` sites in palmy alone — `widgets.odin:182`,
-> `node.odin:434`, `paint.odin:72` all settle and stop.
->
-> Report measured idle CPU per application, before and after.
+- **Poll sites outside palmy** may pass a negative timeout or use
+  `linux.epoll_wait`, which on arm64 passes a pointer where the kernel expects
+  milliseconds: vault's autofill thread (`epoll_wait(-1)`), and possibly
+  notify, term, wm, `kit/notify.odin`, torrent, browser, index's feed, mail
+  and greeter. Each should use `palmy.poll_fds`. Check on arm64, where it bites.
+- **A cleared toast that stayed on screen** was seen once in `archive` and not
+  reproduced in 13 later runs; a buffer-reuse bug in the same path was fixed
+  (a frame now presents the buffer it was painted into). `archive`, `emoji`,
+  `clipboard`, `slides` and `chat` still ask for one extra frame 50 ms after a
+  toast clears. Remove those once someone has seen the clear hold without them.
+- **The loop exits 0 when the connection dies**; it now says why on stderr and
+  through `window_error(app)`, but no application checks it.
+- **A caret blink repaints the whole window in software** — most of the 2–8%
+  of a core a focused field still costs.
+- **Unverified**: the new loop on a real X11 server, on a GPU compositor that
+  throttles covered windows rather than withholding callbacks, and a full
+  palmy build on amd64 or riscv64 (only `poll_fds` was run there).
 
 ---
 
@@ -322,16 +183,6 @@ passes 173 of 173. What W1 asked for and did not happen:
   commit at all for an unchanged frame: `palmy/damage.odin`), but wm folds
   them into one box, and the CPU numbers in `distro/notes/wm.md` were
   measured before the client side changed.
-- Done in the integration round: palm-login hands wm the VT (tty1 lent to
-  the session's user, `XDG_VTNR=1`), and Ctrl+Alt+F2/F1 switch on the
-  image; palmy's key repeat runs at 25/s under wm (it ran at ~2/s in term,
-  which blocks between frames in its own poll); term scrolls back on a wheel
-  turned up.
-- Done in this round (details in `distro/notes/wm.md`): input hotplug,
-  VT switching without logind, real key press/release with client-side
-  repeat, damage tracking, `xdg_popup` with a real positioner (a browser's
-  `<select>` no longer kills it), window geometry, `set_parent` dialogs,
-  subsurface sync/desync, `axis_value120`/`axis_stop`.
 
 ---
 
@@ -365,11 +216,6 @@ the areas' notes name.
   as UEFI asks; no such BIOS was at hand.
 - **Not exercised:** MMC partition naming and 4 KiB-sector devices outside
   image files; real hardware, and a real USB stick.
-- **`apps/term` drops legacy keysyms.** Its `keysym_codepoint` covers only
-  Latin-1 and `0x01xxxxxx` Unicode keysyms. With a Cyrillic, Greek, Arabic
-  or Hebrew layout, or for the euro sign, wm delivers the keysym and term
-  types nothing. The launcher shows the same keys correctly
-  (`distro/notes/wm.md`).
 - **The Japanese subset on the live medium is generated by hand.**
   `distro/live/subset-cjk.py` needs fontTools, which the build host does not
   have by default; `live/build.sh` refuses a subset missing a character of
@@ -428,31 +274,24 @@ the areas' notes name.
 
 # The command surface
 
-`docs/PALM-CLI.md` has the design, and **its opening line saying none of it
-exists is now false** — the convention is in `apps/kit/cli.odin`, the dispatcher
-is `apps/palm`, and `notes`, `sheets` and `power` are converted. `apps/APPS.md`
-documents `kit.start` and `kit.run` but not `kit.cli`, which is where the next
-agent will look first. Both want a pass.
+The design is `docs/PALM-CLI.md`, the convention `apps/kit/cli.odin` (documented
+in `apps/APPS.md` under `kit.cli`), the dispatcher `apps/palm`. **34 of 39 nouns
+are on it**; the `NOUNS` table in `apps/palm/main.odin` is the source of truth and
+`palm --selftest` holds it honest. `mail` routes to the cloud's `palm-mail`; the
+desktop client `apps/mail` has a full CLI but no noun yet — `mailbox` is the
+proposed one.
 
-## C2 — bring the rest of the applications up to it
+## C2 — the last five
 
-Forty-two applications, in the order an agent would reach for them. **Do not
-give one agent all of them.** Four agents, one per group, each owning only its
-own directories.
+`slides`, `files`, `editor`, `image`, `clipboard` (and, with no noun yet,
+`colorpick`, `emoji`, `photoshop`, `archive`). UI-shaped: each needs its core
+lifted out of the window, which is the real work and worth doing for its own
+sake — it is what makes them testable headlessly. One agent per two or three
+directories. `clipboard` should adopt palmy's offer API at the same time (see
+K3).
 
-1. **Already close** — `mailcore`, `torrent`, `docs`, `slides`, `money`, `chat`,
-   `vault`. Mostly renaming onto the convention and adding `--json`.
-2. **Have an engine but no CLI over it** — `mail`, `calendar`, `reader`, `shop`,
-   `maps`, `captions`, `videoedit`.
-3. **UI-shaped, needing a core lifted out** — `files`, `editor`, `image`,
-   `clipboard`, `colorpick`, `emoji`, `photoshop`, `archive`. The real work, and
-   worth doing for its own sake: lifting the core out is what makes them
-   testable headlessly.
-4. **System applets** — `audio`, `power`, `sysmon`, `network`, `bluetooth`,
-   `screenshot`, `mixer`. Small surfaces, and the safety rules bite hardest.
-
-> **Prompt** (adapt the group). Bring *group N* up to the `palm` CLI
-> convention: `<list the directories>`. Those directories are yours; nothing
+> **Prompt** (C2). Bring `<list the directories>` up to the `palm` CLI
+> convention. Those directories are yours; nothing
 > else.
 >
 > Read `docs/PALM-CLI.md`, then `apps/kit/cli.odin`'s declaration API, then one
@@ -466,7 +305,7 @@ own directories.
 >
 > A thing is done when **the GUI uses the same entry points the CLI does**. If
 > `palm notes write` goes through a different path than typing in the window,
-> the two will diverge and the CLI will be the one that rots. For group 3 that
+> the two will diverge and the CLI will be the one that rots. For these that
 > means genuinely separating the core from the UI, which is the point.
 >
 > Two Odin facts that each cost a debugging cycle, documented at the top of
@@ -479,6 +318,33 @@ own directories.
 > Keep each command-line path argument working — the CLI is an addition. Report
 > which applications you converted fully, which partially, and what each still
 > cannot do headlessly.
+
+
+## C3 — gaps in `kit.cli`, each worked around inside an application
+
+- **No secret flags**: the audit log records `--password` in clear. `mailcore`
+  swaps the value out before the kit sees argv.
+- **The parsed argv lives in the temp allocator**, so a command that frees it
+  crashes the kit after printing (exit 133). `torrent` uses its own allocator.
+- **No repeatable flags** (the last value wins; `pkg` re-reads raw argv), no
+  "required unless", no flag every command takes (`mail` strips `--data-dir`, so
+  the schema omits it), `cli_err_field` takes only strings, and
+  `cli_scope_require` checks a single owner.
+- **`takes_path` opens a window on any unrecognised bare word**; six apps now
+  guard against it themselves. The kit could check the file exists.
+- **Destructive refusal happens before the app runs**, so `pkg remove` without
+  `--yes` can no longer name the dependants (only `--dry-run` does).
+- **Text tables pad by bytes**, so accented labels and `€` misalign; a
+  successful dry run always prints `dry_run: true`, even in text mode.
+- No partial results on failure; no in-process "run and give me the JSON" for
+  self-tests; no shared background-job helper or progress reporting; an output
+  shape with varying keys cannot be declared; the audit log is compact JSON
+  while `--json` is indented.
+- **The CLI guard does not cover pacman, sudo, yay or snapper**; `pkg`'s planner
+  is the only protection there.
+- `palm` expects `apps/prose/prose.bin`, which nothing builds by default
+  (`odin build apps/prose/cli … -out:apps/prose/prose.bin`), and its example
+  checker treats a shell redirect as part of the command.
 
 ---
 
@@ -521,11 +387,13 @@ box emission, the caret walk, selection, merge/split commands, six exporters
 flattening rule for Markdown, span fields in JSON) and three importers all read
 it. Vertical spans also need the row-height loop to redistribute, which the
 current single-pass measurement does not do.
-**`sheets`** — 3-D ranges (`Sheet1:Sheet3!A1`), sheet-local names, multi-sheet
-CSV export, chart resize and data labels.
+**`sheets`** — charts resize from the keyboard and CLI only (the grid has no
+pointer handling); a 3-D reference is plain text in shared editing, so a
+collaborator's sheet rename does not rewrite it; a name cannot be a 3-D range;
+a deleted name's references vanish rather than becoming `=#REF!`; multi-sheet
+CSV is export-only; the frozen-pane line is drawn across charts.
 **`slides`** — styled runs inside one text box, transitions, `.pptx`/PDF import,
-real placeholders so PowerPoint's outline view is not empty. Its self-test has 8
-pre-existing failures, all about embedded PNG and picture shapes.
+real placeholders so PowerPoint's outline view is not empty.
 **`videoedit`** — a live gain change costs ~87 ms of silence because honouring it
 rebuilds the graph; scrubbing is silent; no playback rate but 1×.
 **`captions`** — word-level karaoke highlight, diarization (needs a tinydiarize
@@ -563,17 +431,16 @@ between adjacent layers and has only been laid out at 20 nodes.
 
 # Test and tooling debt
 
-- **`parity/` still hardcodes `/home/alex/Work/palmy` in six places**:
-  `run.sh:16`, `odin/showcase/main.odin`, `harness/interact.mjs`,
-  `tools/make-comparison-video.sh`, `tools/record-demo.sh`, `tools/gen-icons.mjs`,
-  and a path in `CONTRACT.md`. `tools/diff-all.sh`, `odin/render/main.odin`,
-  `tools/report.mjs` and `tools/geomdiff.mjs` were fixed; these were not, and
-  they fail the same way — silently measuring the wrong tree.
-- **`tests/test_theme_tokens` mutates the global token table at run time**,
-  which races every other rendering test under the parallel runner. It produced
-  bad frees and one segfault in seven full-suite runs before the new tests were
-  restructured to register from `@(init)` instead. The existing test was left
-  alone.
+- **The parity browser captures are gone** from the current checkout (see the
+  standing rules) and Playwright's Chromium download returns 403 from the build
+  VM. Re-capturing needs the pinned Chromium on a machine that can fetch it, or
+  the old captures copied in from the Arch host.
+- **`apps/APPS.md`'s *Building* section** still hardcodes
+  `/home/alex/Work/palmy` in its build command.
+- **Self-tests with known, environment-free failures**: `docs` segfaults on the
+  default 8 MB stack in "find: regular expressions" (run with `ulimit -s
+  unlimited`); `pickdemo` fails 3 symlink-loop checks; `audio` fails 8 playback
+  checks because its clock does not advance headless.
 - **`vault --selftest` is not reliable under parallel load.** Its Argon2id
   derivation is wall-clock asserted: 1991 ms on a quiet machine, 3672 ms under a
   dozen concurrent agents, and the timing checks cascade into dozens of

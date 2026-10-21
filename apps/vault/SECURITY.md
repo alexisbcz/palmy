@@ -178,20 +178,18 @@ cleared — but only if it is still *ours*, compared in constant time against wh
 was put there, so a clear never destroys something you copied in the meantime.
 The clipboard is also cleared when the vault locks, idles, or exits.
 
-**How those two timers fire, and where they do not.** Both are deadlines on a
+**How those two timers fire.** Both are deadlines on a
 monotonic clock: the window sleeps until the next one and palmy's `wake_after`
 runs one frame at that instant. On headless sway with the window idle and
-unfocused, they were measured firing 1–3 ms after their deadline. **They do
-not fire while the window is on a workspace that is not shown.** The compositor
-then stops sending frame callbacks, palmy's frame loop does not run a frame
-until it gets one, and nothing in the frame runs, the timers included. Measured: a
-copy made, then the vault's workspace hidden. The secret was still on the
-clipboard (and could still be pasted) 18 s after its deadline, and the idle lock
-was 6 s late. Both fired on the first frame after the workspace came back,
-before anything was drawn, so nobody looking at the window sees it unlocked.
-The fix belongs in palmy: when a wake falls due, run the frame even if a frame
-callback is outstanding. Before this was converted it was worse: the timers
-ran on the clamped frame clock, so time spent hidden did not count at all.
+unfocused, they were measured firing 1–3 ms after their deadline. They also fire
+while the window is on a workspace that is not shown: the compositor then
+withholds frame callbacks, and palmy runs a logic-only frame (app code, no
+paint) when a wake falls due. Measured with the workspace hidden right after a
+copy: the clipboard clear 7.0 ms and the idle lock 7.9 ms after their
+deadlines, and `wl-paste` empty afterwards. Before palmy did that, the same run
+left the secret pasteable 18 s past its deadline. Not yet measured on a
+compositor that throttles covered windows rather than withholding callbacks
+entirely, or on X11.
 
 **The server reading or changing your vault.** It holds ciphertext under keys
 it never sees. It cannot add an item to a vault (it has no vault key), cannot
