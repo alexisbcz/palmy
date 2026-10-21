@@ -313,6 +313,18 @@ draw_grid :: proc(c: ^p.Canvas, r: p.Rect, app: ^App) {
 		}
 	}
 
+	// --- the split, in the body: over the cells, under the charts ---
+	// A chart that straddles a frozen edge is one object floating over the
+	// sheet; the pinned edge belongs to the cells, so it is drawn before the
+	// charts and they cover it (and in the headers, after them, below).
+	split := max(2 * s, 2)
+	if sh.frz_cols > 0 && g.nfz_c > 0 {
+		p.fill_rect(c, {g.split_x - split, body.y, split, body.h}, pal.sel_edge)
+	}
+	if sh.frz_rows > 0 && g.nfz_r > 0 {
+		p.fill_rect(c, {body.x, g.split_y - split, body.w, split}, pal.sel_edge)
+	}
+
 	// --- charts, over the cells they cover ---
 	for ch in sh.charts {
 		box, ok := chart_box(app, ch, g_ptr(&g))
@@ -450,13 +462,12 @@ draw_grid :: proc(c: ^p.Canvas, r: p.Rect, app: ^App) {
 	}
 	p.pop_clip(c)
 
-	// --- the split, drawn over everything so it reads as a pinned edge ---
-	split := max(2 * s, 2)
+	// --- the split, in the headers, over them so it reads as a pinned edge ---
 	if sh.frz_cols > 0 && g.nfz_c > 0 {
-		p.fill_rect(c, {g.split_x - split, r.y, split, r.h}, pal.sel_edge)
+		p.fill_rect(c, {g.split_x - split, r.y, split, hdr_h}, pal.sel_edge)
 	}
 	if sh.frz_rows > 0 && g.nfz_r > 0 {
-		p.fill_rect(c, {r.x, g.split_y - split, r.w, split}, pal.sel_edge)
+		p.fill_rect(c, {r.x, g.split_y - split, hdr_w, split}, pal.sel_edge)
 	}
 }
 

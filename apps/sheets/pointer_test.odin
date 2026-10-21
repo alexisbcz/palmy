@@ -213,4 +213,33 @@ t_pointer :: proc(tc: ^TC) {
 		c3 := app.sh.charts[0]
 		ok_mark(tc, c3.w == CHART_MIN_W && c3.h == CHART_MIN_H, "and never smaller than a chart can be")
 	}
+
+	// --- the frozen-pane line and a chart ---------------------------------------
+	// Sales freezes two rows and a column. A chart dragged over the split
+	// covers the line; the line goes on below and beside it.
+	{
+		r := rig_make()
+		defer rig_free(&r)
+		app := r.app
+		append(&app.sh.charts, Chart{kind = .Bar, title = strings.clone("", app.sh.heap), sheet = strings.clone("", app.sh.heap), rect = {2, 0, 6, 1}, at = {6, 3}, w = 4, h = 6})
+		step(&r)
+		n := len(app.sh.charts) - 1
+		drag(&r, centre(&r, {7, 4}), centre(&r, {1, 0}))
+		ch := app.sh.charts[n]
+		ok_mark(tc, ch.at == Addr{0, 0}, fmt.tprintf("the chart is dragged over both frozen edges (%v)", ch.at))
+		step(&r)
+		g, _ := pointer_geom(app)
+		box, _ := chart_box(app, ch, &g)
+		edge := app.pal.sel_edge
+		x := int(g.split_x) - 1
+		y := int(g.split_y) - 1
+		inside_v := p.offscreen_pixel(r.off, x, int(box.y + box.h / 2))
+		inside_h := p.offscreen_pixel(r.off, int(box.x + box.w / 2), y)
+		below := p.offscreen_pixel(r.off, x, int(p.rect_bottom(box) + 30))
+		beside := p.offscreen_pixel(r.off, int(p.rect_right(box) + 30), y)
+		ok_mark(tc, !same_color(inside_v, edge) && !same_color(inside_h, edge), fmt.tprintf("neither frozen line is drawn across the chart (%v %v)", inside_v, inside_h))
+		ok_mark(tc, same_color(below, edge) && same_color(beside, edge), fmt.tprintf("and both are drawn where it is not (%v %v)", below, beside))
+		hdr := p.offscreen_pixel(r.off, x, int(g.body.y - HDR_H / 2))
+		ok_mark(tc, same_color(hdr, edge), "the split still marks the column header")
+	}
 }
