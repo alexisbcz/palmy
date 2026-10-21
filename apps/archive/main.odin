@@ -26,6 +26,7 @@ import "core:fmt"
 import "core:os"
 import "core:slice"
 import "core:strings"
+import "core:time"
 import kit "kit:."
 import p "palmy:."
 import sc "shadcn:."
@@ -97,7 +98,7 @@ St :: struct {
 	result_ok: bool,
 
 	toast:     string,
-	toast_t:   f64,
+	toast_until: time.Tick, // on a real monotonic clock; see the frame loop
 	have_tar:  bool,
 }
 
@@ -159,6 +160,9 @@ main :: proc() {
 	for ui in p.frames(app) {
 		free_all(context.temp_allocator)
 
+		// A job in flight is the one time this window animates: the spinner
+		// turns and the progress bar is read from the worker each frame. It
+		// stops the frame the job is collected.
 		if job_busy() {
 			ui.animating = true
 		}
@@ -168,11 +172,24 @@ main :: proc() {
 		rebuild_rows(&st)
 		build(ui, &st)
 
+		// The toast expires on a real clock with one wake at its deadline.
+		// `ui.now` is clamped per frame and cannot time anything, and asking
+		// for a redraw every frame to watch it held the loop at vsync.
 		if st.toast != "" {
-			if ui.now > st.toast_t {
+			left := time.tick_diff(time.tick_now(), st.toast_until)
+			if left <= 0 {
+				// This frame was built with the toast still in it, so another
+				// is needed to take it off the screen. Two, in fact: measured
+				// on headless sway, the first frame after the clear is
+				// presented and the screen still shows the toast (palmy's
+				// damage tracking; with PALMY_DAMAGE=off one is enough), so a
+				// second is asked for shortly after.
+				delete(st.toast)
 				st.toast = ""
-			} else {
 				p.redraw(ui)
+				p.wake_after(ui, 50 * time.Millisecond)
+			} else {
+				p.wake_after(ui, left + time.Millisecond)
 			}
 		}
 	}
@@ -860,7 +877,7 @@ toast :: proc(st: ^St, ui: ^p.Ctx, msg: string) {
 		delete(st.toast)
 	}
 	st.toast = strings.clone(msg)
-	st.toast_t = ui.now + 4
+	st.toast_until = time.tick_add(time.tick_now(), 4 * time.Second)
 }
 
 // ---------------------------------------------------------------------------
