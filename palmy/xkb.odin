@@ -165,12 +165,20 @@ keymap_load :: proc(k: ^Keymap, fd: linux.Fd, size: int) {
 		return
 	}
 
-	mem, merr := linux.mmap(0, uint(size), {.READ}, {.PRIVATE}, fd, 0)
-	if merr != .NONE {
+	// macOS has no keymap descriptor (keys arrive as NSEvents, see
+	// window_darwin.odin) and core:sys/linux has no mmap there.
+	when ODIN_OS == .Darwin {
+		mem: rawptr
 		k.fallback = true
 		return
+	} else {
+		mem, merr := linux.mmap(0, uint(size), {.READ}, {.PRIVATE}, fd, 0)
+		if merr != .NONE {
+			k.fallback = true
+			return
+		}
+		defer linux.munmap(mem, uint(size))
 	}
-	defer linux.munmap(mem, uint(size))
 
 	// Tear down the previous keymap first: `keymap_destroy` frees the retained
 	// text, so copying before this point would throw the copy away.

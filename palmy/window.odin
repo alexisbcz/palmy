@@ -26,6 +26,14 @@ Backend :: enum {
 	X11,
 }
 
+// macOS is a third backend, but not a third value above: every switch on
+// Backend would have to grow a case that is dead on Linux. On Darwin the
+// procedures below hand over to `palmy/window_darwin.odin` before their
+// switch, and `backend` keeps its zero value. Elsewhere its state is empty.
+when ODIN_OS != .Darwin {
+	Cocoa_State :: struct {}
+}
+
 // Layer picks which stratum of the compositor's scene the surface sits in.
 Layer :: enum u32 {
 	Background = 0,
@@ -120,6 +128,7 @@ Window :: struct {
 	conn:              Conn,
 	wl:                Wl_State,
 	x:                 X11_State,
+	cocoa:             Cocoa_State,
 
 	// The double-buffered pixel store, backed by shared memory on both
 	// backends when the server supports it.
@@ -234,6 +243,9 @@ pick_backend :: proc() -> (be: Backend, err: string) {
 
 // backend_name is the backend in use, for diagnostics.
 backend_name :: proc(app: ^App) -> string {
+	when ODIN_OS == .Darwin {
+		return "cocoa"
+	}
 	return app.win.backend == .X11 ? "x11" : "wayland"
 }
 
@@ -254,6 +266,10 @@ window_open :: proc(w: ^Window, title, app_id: string, width, height: int, decor
 	// `x_open` already poll a complete descriptor set.
 	wake_init(w)
 
+	when ODIN_OS == .Darwin {
+		return cocoa_open(w, decorate)
+	}
+
 	be, berr := pick_backend()
 	if berr != "" {
 		return berr
@@ -270,6 +286,9 @@ window_open :: proc(w: ^Window, title, app_id: string, width, height: int, decor
 }
 
 window_close :: proc(w: ^Window) {
+	when ODIN_OS == .Darwin {
+		cocoa_close(w)
+	}
 	switch w.backend {
 	case .Wayland:
 		wl_close(w)
@@ -293,6 +312,10 @@ window_close :: proc(w: ^Window) {
 
 @(private)
 destroy_buffers :: proc(w: ^Window) {
+	when ODIN_OS == .Darwin {
+		cocoa_destroy_buffers(w)
+		return
+	}
 	switch w.backend {
 	case .Wayland:
 		wl_destroy_buffers(w)
@@ -303,6 +326,9 @@ destroy_buffers :: proc(w: ^Window) {
 
 @(private)
 alloc_buffers :: proc(w: ^Window) -> (err: string) {
+	when ODIN_OS == .Darwin {
+		return cocoa_alloc_buffers(w)
+	}
 	switch w.backend {
 	case .Wayland:
 		return wl_alloc_buffers(w)
@@ -350,6 +376,9 @@ apply_pending :: proc(w: ^Window) -> (resized: bool, err: string) {
 // commit; present then returns false and the buffer stays free.
 @(private)
 present :: proc(w: ^Window, b: ^Shm_Buffer) -> bool {
+	when ODIN_OS == .Darwin {
+		return cocoa_present(w, b)
+	}
 	switch w.backend {
 	case .Wayland:
 		if !frame_damage(&w.damage, b.px, b.w, b.h) && !w.need_configure_ack {
@@ -449,7 +478,11 @@ wake_init :: proc(w: ^Window) {
 	w.wake_flag = 0
 	w.wake_deadline = 0
 	w.wake_pending = false
-	fd, err := linux.eventfd(0, {.CLOEXEC, .NONBLOCK})
+	when ODIN_OS == .Darwin {
+		fd, err := cocoa_wake_fd()
+	} else {
+		fd, err := linux.eventfd(0, {.CLOEXEC, .NONBLOCK})
+	}
 	if err != .NONE {
 		// Not fatal. Without it the loop behaves exactly as it did before
 		// this existed: it wakes for the display server and for nothing else.
@@ -462,7 +495,11 @@ wake_init :: proc(w: ^Window) {
 @(private)
 wake_close :: proc(w: ^Window) {
 	if w.wake_fd > 0 {
-		linux.close(w.wake_fd)
+		when ODIN_OS == .Darwin {
+			cocoa_wake_fd_close(w.wake_fd)
+		} else {
+			linux.close(w.wake_fd)
+		}
 	}
 	w.wake_fd = -1
 }
@@ -480,7 +517,11 @@ wake_poke :: proc(w: ^Window) {
 	// The only failure a non-blocking eventfd can give is EAGAIN, at a
 	// counter of 2^64-2 — which would mean the loop has not run for longer
 	// than the universe has. Either way there is already a wake queued.
-	linux.write(w.wake_fd, buf)
+	when ODIN_OS == .Darwin {
+		cocoa_wake_fd_poke(w.wake_fd)
+	} else {
+		linux.write(w.wake_fd, buf)
+	}
 }
 
 // mono_ns is nanoseconds on a monotonic clock since the window opened. A
@@ -592,7 +633,11 @@ drain_wake :: proc(w: ^Window) {
 		// EAGAIN that proves it is empty.
 		buf: [8]u8
 		for {
-			n, err := linux.read(w.wake_fd, buf[:])
+			when ODIN_OS == .Darwin {
+				n, err := cocoa_wake_fd_read(w.wake_fd, buf[:])
+			} else {
+				n, err := linux.read(w.wake_fd, buf[:])
+			}
 			if err != .NONE || n <= 0 {
 				break
 			}
@@ -629,20 +674,29 @@ drain_wake :: proc(w: ^Window) {
 // nil timespec, so that is what this passes; it uses ppoll on every
 // architecture so there is one path, not one per ISA.
 poll_fds :: proc(fds: []linux.Poll_Fd, timeout_ms: int) -> (i32, linux.Errno) {
-	if timeout_ms < 0 {
-		return linux.ppoll(fds, nil, nil)
+	when ODIN_OS == .Darwin {
+		// Darwin's poll(2) takes the same struct and the same bits, and
+		// means forever by a negative timeout. See window_darwin.odin.
+		return darwin_poll(fds, timeout_ms)
+	} else {
+		if timeout_ms < 0 {
+			return linux.ppoll(fds, nil, nil)
+		}
+		ts := linux.Time_Spec {
+			time_sec  = uint(timeout_ms / 1000),
+			time_nsec = uint(timeout_ms % 1000) * 1_000_000,
+		}
+		return linux.ppoll(fds, &ts, nil)
 	}
-	ts := linux.Time_Spec {
-		time_sec  = uint(timeout_ms / 1000),
-		time_nsec = uint(timeout_ms % 1000) * 1_000_000,
-	}
-	return linux.ppoll(fds, &ts, nil)
 }
 
 // window_wait blocks until the server sends something, until somebody wakes
 // the window, until an armed one-shot comes due, or until the timeout expires.
 // A negative timeout waits forever — or until one of the first three happens.
 window_wait :: proc(w: ^Window, timeout_ms: int) -> bool {
+	when ODIN_OS == .Darwin {
+		return cocoa_wait(w, timeout_ms)
+	}
 	c := &w.conn
 	if c.fatal != "" {
 		return false
@@ -742,6 +796,10 @@ feed_key :: proc(w: ^Window, code: u32, repeat: bool) {
 set_title_window :: proc(w: ^Window, title: string) {
 	delete(w.title)
 	w.title = strings.clone(title)
+	when ODIN_OS == .Darwin {
+		cocoa_set_title(w)
+		return
+	}
 	switch w.backend {
 	case .Wayland:
 		wl_set_title(w)
@@ -752,6 +810,10 @@ set_title_window :: proc(w: ^Window, title: string) {
 
 @(private)
 set_min_size_window :: proc(w: ^Window, width, height: int) {
+	when ODIN_OS == .Darwin {
+		cocoa_set_min_size(w, width, height)
+		return
+	}
 	switch w.backend {
 	case .Wayland:
 		wl_set_min_size(w, width, height)
@@ -762,6 +824,10 @@ set_min_size_window :: proc(w: ^Window, width, height: int) {
 
 @(private)
 set_fullscreen_window :: proc(w: ^Window, on: bool) {
+	when ODIN_OS == .Darwin {
+		cocoa_set_fullscreen(w, on)
+		return
+	}
 	switch w.backend {
 	case .Wayland:
 		wl_set_fullscreen(w, on)
@@ -774,6 +840,10 @@ set_fullscreen_window :: proc(w: ^Window, on: bool) {
 // when the server offers no way to set one.
 window_set_cursor :: proc(w: ^Window, shape: Cursor) {
 	want := shape == .Inherit ? Cursor.Default : shape
+	when ODIN_OS == .Darwin {
+		cocoa_set_cursor(w, want)
+		return
+	}
 	switch w.backend {
 	case .Wayland:
 		wl_set_cursor(w, want)
