@@ -88,6 +88,63 @@ COMMANDS := []kit.Command {
 		run = cmd_set,
 	},
 	{
+		verb = "sheet-add",
+		summary = "add a sheet, at the end or at a position — inside a 3-D span if that is where it lands",
+		effect = .Mutate,
+		args = {
+			{name = "file", kind = .Path, help = "the book to change", required = true},
+			{name = "name", kind = .String, help = "the new sheet's name", required = true},
+		},
+		flags = {
+			{name = "at", kind = .Int, help = "0-based position; the end when absent"},
+			{name = "out", kind = .Path, help = "write here instead of over the input"},
+		},
+		out = SHEET_OP_FIELDS,
+		examples = {"sheets sheet-add book.sheet.json Feb --at 1 --json"},
+		run = cmd_sheet_add,
+	},
+	{
+		verb = "sheet-move",
+		summary = "move a sheet to a 0-based position; 3-D references that span it follow the new order",
+		effect = .Idempotent,
+		args = {
+			{name = "file", kind = .Path, help = "the book to change", required = true},
+			{name = "sheet", kind = .String, help = "which sheet, by name", required = true},
+			{name = "index", kind = .Int, help = "where it goes, 0-based", required = true},
+		},
+		flags = {{name = "out", kind = .Path, help = "write here instead of over the input"}},
+		out = SHEET_OP_FIELDS,
+		examples = {"sheets sheet-move book.sheet.json Mar 0 --json"},
+		run = cmd_sheet_move,
+	},
+	{
+		verb = "sheet-rename",
+		summary = "rename a sheet and every formula and name that refers to it",
+		effect = .Mutate,
+		args = {
+			{name = "file", kind = .Path, help = "the book to change", required = true},
+			{name = "sheet", kind = .String, help = "which sheet, by name", required = true},
+			{name = "name", kind = .String, help = "its new name (no colon)", required = true},
+		},
+		flags = {{name = "out", kind = .Path, help = "write here instead of over the input"}},
+		out = SHEET_OP_FIELDS,
+		examples = {"sheets sheet-rename book.sheet.json Sheet2 Feb --json"},
+		run = cmd_sheet_rename,
+	},
+	{
+		verb = "sheet-delete",
+		summary = "delete a sheet; a 3-D span that ended on it narrows, other references to it become #REF!",
+		effect = .Destructive,
+		args = {
+			{name = "file", kind = .Path, help = "the book to change", required = true},
+			{name = "sheet", kind = .String, help = "which sheet, by name", required = true},
+		},
+		flags = {{name = "out", kind = .Path, help = "write here instead of over the input"}},
+		out = SHEET_OP_FIELDS,
+		examples = {"sheets sheet-delete book.sheet.json Jan --yes --json"},
+		run = cmd_sheet_delete,
+	},
+	{
 		verb = "export",
 		summary = "write a book out as .xlsx, .csv or the native .sheet.json",
 		effect = .Mutate,
@@ -153,7 +210,10 @@ SURFACE_NOTES :: `With no command, sheets opens a window; a path opens that file
 The older spellings --export, --shot and --film are aliases of the commands
 of the same name and keep working.
 
-A cell reference may name its sheet: Summary!B8. Where no book is given, the
+A cell reference may name its sheet: Summary!B8. A formula may also span
+sheets, SUM(Jan:Mar!B2), which adds B2 on every sheet from Jan to Mar in the
+book's current order; sheet-add, sheet-move and sheet-delete change that span
+exactly as the window's commands do. Where no book is given, the
 demo book is used, so every read command works on a machine with no documents
 on it — which is also what makes them testable.`
 
@@ -237,6 +297,14 @@ SET_FIELDS := []kit.Field {
 	{name = "type", kind = .String},
 	{name = "value", kind = .String},
 	{name = "formatted", kind = .String},
+	{name = "written", kind = .Bool, help = "false under --dry-run"},
+}
+
+SHEET_OP_FIELDS := []kit.Field {
+	{name = "path", kind = .String, help = "the file that was (or would be) written"},
+	{name = "sheet", kind = .String, help = "the sheet acted on, under its name afterwards"},
+	{name = "sheets", kind = .Array, of = {{kind = .String}}, help = "every sheet, in order, afterwards"},
+	{name = "rewritten", kind = .Int, help = "formulas whose text changed (rename, delete)"},
 	{name = "written", kind = .Bool, help = "false under --dry-run"},
 }
 
@@ -660,4 +728,161 @@ cmd_film :: proc(c: ^kit.Call) -> int {
 		return kit.cli_failf(c, kit.EXIT_FAILED, "could not render %s", prefix)
 	}
 	return kit.EXIT_OK
+}
+
+// ---------------------------------------------------------------------------
+// Sheet operations
+//
+// Each one is the very procedure the window's command runs — `book_add_sheet`
+// and `book_move_sheet` (as `book_insert_sheet`), `book_move_sheet`,
+// `book_rename_sheet`, `book_delete_sheet` — so a 3-D reference behaves the
+// same whether its span was rearranged with Ctrl+Shift+PgUp or from a script.
+// ---------------------------------------------------------------------------
+
+// commit_book is the tail every mutating command shares: report where it
+// goes, honour --dry-run, write through the one writer.
+@(private = "file")
+commit_book :: proc(c: ^kit.Call, app: ^App, src: string) -> int {
+	out := kit.cli_str(c, "out")
+	if out == "" {
+		out = src
+	}
+	kit.jset_str(c.out, "path", out)
+	if c.dry_run {
+		kit.jset_bool(c.out, "written", false)
+		return kit.EXIT_OK
+	}
+	if !write_book(app, out) {
+		kit.jset_bool(c.out, "written", false)
+		return kit.cli_failf(c, kit.EXIT_FAILED, "could not write %s", out)
+	}
+	kit.jset_bool(c.out, "written", true)
+	return kit.EXIT_OK
+}
+
+@(private = "file")
+put_sheet_list :: proc(c: ^kit.Call, app: ^App) {
+	arr := kit.jarr()
+	for sh in app.book.sheets {
+		kit.jpush(arr, kit.jstr(sh.name))
+	}
+	kit.jset(c.out, "sheets", arr)
+}
+
+// count_inputs_changed compares every formula's text with a snapshot, which
+// is how a command reports what a rename or a delete rewrote without each
+// book procedure having to count.
+@(private = "file")
+snapshot_inputs :: proc(bk: ^Book) -> map[^Cell]string {
+	m := make(map[^Cell]string, 64, context.temp_allocator)
+	for sh in bk.sheets {
+		for _, cell in sh.cells {
+			if cell.ast != nil {
+				m[cell] = strings.clone(cell.input, context.temp_allocator)
+			}
+		}
+	}
+	return m
+}
+
+@(private = "file")
+count_rewritten :: proc(bk: ^Book, before: map[^Cell]string) -> int {
+	n := 0
+	for sh in bk.sheets {
+		for _, cell in sh.cells {
+			if was, ok := before[cell]; ok && was != cell.input {
+				n += 1
+			}
+		}
+	}
+	return n
+}
+
+@(private = "file")
+cmd_sheet_add :: proc(c: ^kit.Call) -> int {
+	src := kit.cli_str(c, "file")
+	app, ok := open_book(src)
+	if !ok {
+		return no_book(c, src)
+	}
+	at := kit.cli_has(c, "at") ? kit.cli_int(c, "at") : len(app.book.sheets)
+	sh := book_insert_sheet(app.book, kit.cli_str(c, "name"), at)
+	if sh == nil {
+		return kit.cli_failf(c, kit.EXIT_FAILED, "a book holds at most %d sheets", MAX_SHEETS)
+	}
+	kit.jset_str(c.out, "sheet", sh.name)
+	put_sheet_list(c, app)
+	kit.jset_int(c.out, "rewritten", 0)
+	return commit_book(c, app, src)
+}
+
+@(private = "file")
+cmd_sheet_move :: proc(c: ^kit.Call) -> int {
+	src := kit.cli_str(c, "file")
+	app, ok := open_book(src)
+	if !ok {
+		return no_book(c, src)
+	}
+	name := kit.cli_str(c, "sheet")
+	i := book_find(app.book, name)
+	if i < 0 {
+		return no_sheet(c, name)
+	}
+	to := kit.cli_int(c, "index")
+	if to < 0 || to >= len(app.book.sheets) {
+		return kit.cli_failf(c, kit.EXIT_USAGE, "index %d is outside 0..%d", to, len(app.book.sheets) - 1)
+	}
+	book_move_sheet(app.book, i, to) // false only when it is already there
+	kit.jset_str(c.out, "sheet", app.book.sheets[to].name)
+	put_sheet_list(c, app)
+	kit.jset_int(c.out, "rewritten", 0)
+	return commit_book(c, app, src)
+}
+
+@(private = "file")
+cmd_sheet_rename :: proc(c: ^kit.Call) -> int {
+	src := kit.cli_str(c, "file")
+	app, ok := open_book(src)
+	if !ok {
+		return no_book(c, src)
+	}
+	name := kit.cli_str(c, "sheet")
+	i := book_find(app.book, name)
+	if i < 0 {
+		return no_sheet(c, name)
+	}
+	before := snapshot_inputs(app.book)
+	if !book_rename_sheet(app.book, i, kit.cli_str(c, "name")) {
+		return kit.cli_failf(c, kit.EXIT_USAGE, "cannot rename %s to %q (taken, empty, or holds a colon)", name, kit.cli_str(c, "name"))
+	}
+	book_recalc_all(app.book)
+	kit.jset_str(c.out, "sheet", app.book.sheets[i].name)
+	put_sheet_list(c, app)
+	kit.jset_int(c.out, "rewritten", count_rewritten(app.book, before))
+	return commit_book(c, app, src)
+}
+
+@(private = "file")
+cmd_sheet_delete :: proc(c: ^kit.Call) -> int {
+	src := kit.cli_str(c, "file")
+	app, ok := open_book(src)
+	if !ok {
+		return no_book(c, src)
+	}
+	name := kit.cli_str(c, "sheet")
+	i := book_find(app.book, name)
+	if i < 0 {
+		return no_sheet(c, name)
+	}
+	if len(app.book.sheets) <= 1 {
+		return kit.cli_failf(c, kit.EXIT_USAGE, "a book needs at least one sheet")
+	}
+	gone := strings.clone(app.book.sheets[i].name, context.temp_allocator)
+	before := snapshot_inputs(app.book)
+	book_delete_sheet(app.book, i)
+	sync_sheet(app)
+	kit.jset_str(c.out, "sheet", gone)
+	put_sheet_list(c, app)
+	kit.jset_int(c.out, "rewritten", count_rewritten(app.book, before))
+	return commit_book(c, app, src)
 }

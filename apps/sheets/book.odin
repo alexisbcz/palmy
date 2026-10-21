@@ -211,6 +211,11 @@ book_rename_sheet :: proc(bk: ^Book, i: int, want: string) -> bool {
 	if clean == "" {
 		return false
 	}
+	// A colon is what separates the two ends of `'Jan:Mar'!A1`, so a sheet
+	// name may not hold one — Excel's rule too, and for the same reason.
+	if strings.index_byte(clean, ':') >= 0 {
+		return false
+	}
 	if strings.equal_fold(clean, sh.name) {
 		// Only the spelling changed; no reference has to move.
 		old := sh.name
@@ -256,6 +261,7 @@ book_delete_sheet :: proc(bk: ^Book, i: int) -> bool {
 	if len(bk.sheets) <= 1 || i < 0 || i >= len(bk.sheets) {
 		return false
 	}
+	book_fix_spans_for_delete(bk, i)
 	sh := bk.sheets[i]
 	ordered_remove(&bk.sheets, i)
 	sheet_release(sh)
@@ -271,6 +277,11 @@ book_delete_sheet :: proc(bk: ^Book, i: int) -> bool {
 	return true
 }
 
+// book_move_sheet reorders the book. Order is meaningful now: a 3-D
+// reference spans every sheet between its two ends *by position*, so a move
+// can change what `SUM(Jan:Mar!B2)` adds up without touching a formula. The
+// graph is rebuilt and every formula recomputed for that reason; a book is
+// small enough that being right is cheaper than being clever.
 book_move_sheet :: proc(bk: ^Book, from, to: int) -> bool {
 	if from < 0 || from >= len(bk.sheets) {
 		return false
@@ -286,7 +297,90 @@ book_move_sheet :: proc(bk: ^Book, from, to: int) -> bool {
 		s.index = k
 	}
 	bk.graph_dirty = true
+	book_recalc_all(bk)
 	return true
+}
+
+// book_insert_sheet adds a sheet at a position rather than at the end, which
+// is how a sheet lands *inside* a 3-D span. It is `book_add_sheet` followed
+// by `book_move_sheet`, so there is no second path that could disagree.
+book_insert_sheet :: proc(bk: ^Book, name: string, at: int) -> ^Sheet {
+	sh := book_add_sheet(bk, name)
+	if sh == nil {
+		return nil
+	}
+	if at >= 0 && at < len(bk.sheets) - 1 {
+		book_move_sheet(bk, len(bk.sheets) - 1, at)
+	} else {
+		book_recalc_all(bk)
+	}
+	return sh
+}
+
+// book_fix_spans_for_delete narrows every 3-D reference that has the sheet
+// about to be deleted as one of its ends, before it goes.
+//
+// This is the one sheet operation that has to rewrite formulas, and both
+// Excel and LibreOffice do it: delete `Jan` from `SUM(Jan:Mar!B2)` and the
+// formula becomes `SUM(Feb:Mar!B2)`, not #REF!. The new end is the next sheet
+// inward. A span left with one sheet becomes an ordinary reference to it. A
+// sheet deleted from the *middle* of a span needs nothing: the span is
+// positional, so it simply stops being in it.
+book_fix_spans_for_delete :: proc(bk: ^Book, gone: int) -> (rewritten: int) {
+	for s, si in bk.sheets {
+		if si == gone {
+			continue
+		}
+		for _, c in s.cells {
+			if c.ast == nil {
+				continue
+			}
+			if !ast_fix_spans(c.ast, bk, gone) {
+				continue
+			}
+			src := ast_source(c.ast, context.temp_allocator)
+			delete(c.input, s.heap)
+			c.input = strings.clone(src, s.heap)
+			c.state = .Dirty
+			rewritten += 1
+		}
+	}
+	if rewritten > 0 {
+		bk.graph_dirty = true
+	}
+	return
+}
+
+@(private = "file")
+ast_fix_spans :: proc(n: ^Ast, bk: ^Book, gone: int) -> bool {
+	if n == nil {
+		return false
+	}
+	hit := false
+	if (n.kind == .Ref || n.kind == .Range) && n.sheet2 != "" {
+		a := book_find(bk, n.sheet)
+		b := book_find(bk, n.sheet2)
+		if a >= 0 && b >= 0 && (a == gone || b == gone) {
+			lo, hi := min(a, b), max(a, b)
+			if lo == gone {
+				lo += 1
+			}
+			if hi == gone {
+				hi -= 1
+			}
+			delete(n.sheet)
+			delete(n.sheet2)
+			n.sheet = strings.clone(bk.sheets[lo].name)
+			n.sheet2 = lo == hi ? "" : strings.clone(bk.sheets[hi].name)
+			hit = true
+		}
+	}
+	for k in n.kids {
+		if ast_fix_spans(k, bk, gone) {
+			hit = true
+		}
+	}
+	return hit
 }
 
 // ---------------------------------------------------------------------------

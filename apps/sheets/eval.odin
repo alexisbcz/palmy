@@ -70,6 +70,9 @@ eval_ast :: proc(sh: ^Sheet, n: ^Ast, at: Addr) -> Res {
 		if n.ref.bad || n.ref.row < 0 || n.ref.col < 0 {
 			return rv(verr(.Ref))
 		}
+		if n.sheet2 != "" {
+			return rv(verr(span_misuse(sh, n)))
+		}
 		ts := ref_sheet(sh, n)
 		if ts == nil {
 			return rv(verr(.Ref)) // the sheet was renamed away or deleted
@@ -83,6 +86,9 @@ eval_ast :: proc(sh: ^Sheet, n: ^Ast, at: Addr) -> Res {
 		}
 
 	case .Range:
+		if n.sheet2 != "" {
+			return rv(verr(span_misuse(sh, n)))
+		}
 		ts := ref_sheet(sh, n)
 		if ts == nil {
 			return rv(verr(.Ref))
@@ -116,6 +122,90 @@ eval_ast :: proc(sh: ^Sheet, n: ^Ast, at: Addr) -> Res {
 		return eval_call(sh, n, at)
 	}
 	return rv(verr(.Value))
+}
+
+// ---------------------------------------------------------------------------
+// 3-D references
+//
+// `Sheet1:Sheet3!A1` is not one rectangle but one per sheet, so it cannot
+// travel as a `Res`. Rather than teach every consumer of a range about a
+// third dimension, a 3-D reference is legal in exactly the places Excel
+// allows it — the aggregates (SUM, AVERAGE, COUNT, COUNTA, MIN, MAX, PRODUCT,
+// STDEV here) — which read it through `span_each` below. Anywhere else it is
+// #VALUE!, which is Excel's answer for `=Sheet1:Sheet3!A1` on its own and
+// LibreOffice's for a 3-D range used where one value is wanted.
+//
+// The span is resolved by *position* on every read: the two named sheets are
+// looked up, and every sheet between them, in the book's current order, is
+// in. So a sheet inserted or moved between the ends joins the sum, one moved
+// outside leaves it, and moving an end widens or narrows the span — the
+// behaviour both Excel and LibreOffice document. Deleting an end is the one
+// case that rewrites the formula; see `book_fix_spans_for_delete`.
+// ---------------------------------------------------------------------------
+
+// is_span reports whether a node is a 3-D reference.
+is_span :: proc(n: ^Ast) -> bool {
+	return n != nil && (n.kind == .Ref || n.kind == .Range) && n.sheet2 != ""
+}
+
+// span_bounds resolves a 3-D reference to its first and last sheet index.
+span_bounds :: proc(sh: ^Sheet, n: ^Ast) -> (lo, hi: int, ok: bool) {
+	a := book_find(sh.book, n.sheet)
+	b := book_find(sh.book, n.sheet2)
+	if a < 0 || b < 0 {
+		return 0, 0, false
+	}
+	return min(a, b), max(a, b), true
+}
+
+// span_misuse is the error for a 3-D reference where one value is wanted:
+// #REF! if an end no longer exists, #VALUE! otherwise.
+span_misuse :: proc(sh: ^Sheet, n: ^Ast) -> Err {
+	if _, _, ok := span_bounds(sh, n); !ok {
+		return .Ref
+	}
+	return .Value
+}
+
+// span_rect is the rectangle a 3-D reference covers on one sheet of its span.
+span_rect :: proc(ts: ^Sheet, n: ^Ast) -> (Rect_I, bool) {
+	if n.kind == .Ref {
+		if n.ref.bad || n.ref.row < 0 || n.ref.col < 0 {
+			return {}, false
+		}
+		return {n.ref.row, n.ref.col, n.ref.row, n.ref.col}, true
+	}
+	return range_rect(ts, n)
+}
+
+// span_values appends every value a 3-D reference reads, sheet by sheet in
+// book order and row-major within each, skipping cells that do not exist —
+// the same order and the same rule as a range on one sheet.
+span_values :: proc(sh: ^Sheet, n: ^Ast, out: ^[dynamic]Value) -> Err {
+	lo, hi, ok := span_bounds(sh, n)
+	if !ok {
+		return .Ref
+	}
+	for si in lo ..= hi {
+		ts := sh.book.sheets[si]
+		rect, good := span_rect(ts, n)
+		if !good {
+			return .Ref
+		}
+		r, any := clamp_rect(ts, rect)
+		if !any {
+			continue
+		}
+		for row in r.r0 ..= r.r1 {
+			for col in r.c0 ..= r.c1 {
+				if cell_at(ts, {row, col}) == nil {
+					continue
+				}
+				append(out, ensure_value(ts, {row, col}))
+			}
+		}
+	}
+	return .None
 }
 
 // ref_sheet is the sheet a reference points at: another one when it is
@@ -367,6 +457,20 @@ agg_number :: proc(ag: ^Agg, x: f64) {
 
 // agg_walk folds one argument into the accumulator, expanding a range.
 agg_walk :: proc(sh: ^Sheet, n: ^Ast, at: Addr, ag: ^Agg) {
+	if is_span(n) {
+		vals := make([dynamic]Value, 0, 16)
+		if e := span_values(sh, n, &vals); e != .None {
+			ag.err = e
+			return
+		}
+		for v in vals {
+			agg_add(ag, v, true)
+			if ag.err != .None {
+				return
+			}
+		}
+		return
+	}
 	r := eval_ast(sh, n, at)
 	if !r.rng {
 		agg_add(ag, r.v, false)
@@ -828,7 +932,8 @@ agg_function :: proc(sh: ^Sheet, name: string, k: []^Ast, at: Addr) -> Res {
 		clear(&nums)
 		for arg in k {
 			vals := make([dynamic]Value, 0, 16)
-			if e := range_values(sh, arg, at, &vals); e != .None {
+			e := is_span(arg) ? span_values(sh, arg, &vals) : range_values(sh, arg, at, &vals)
+			if e != .None {
 				return rv(verr(e))
 			}
 			for v in vals {

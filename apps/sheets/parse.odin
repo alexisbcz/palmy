@@ -89,6 +89,9 @@ Token :: struct {
 	op:    Op_Kind,
 	ref:   Ref,
 	sheet: string, // the `Sheet2` of `Sheet2!A1`; "" when unqualified
+	// The far end of a 3-D reference: the `Sheet3` of `Sheet1:Sheet3!A1`.
+	// "" for an ordinary one.
+	sheet2: string,
 	err:   Err,
 	b:     bool,
 }
@@ -306,6 +309,23 @@ lex_word :: proc(lx: ^Lexer) -> (Token, bool) {
 		return lex_sheet_body(lx, word)
 	}
 
+	// `Sheet1:Sheet3!A1` — a 3-D reference. It is only one when the second
+	// name runs straight into a `!`, and only when both names would be
+	// written bare; a name that needs quotes (`Q1`, which is a cell) has to
+	// come in the quoted form `'Q1:Q4'!A1`, exactly as in Excel. Without
+	// that rule `A1:B2!C3` would silently stop being a range.
+	if lx.i < len(s) && s[lx.i] == ':' {
+		k := lx.i + 1
+		for k < len(s) && (is_alpha(s[k]) || is_digit(s[k]) || s[k] == '_' || s[k] == '.' || s[k] >= 0x80) {
+			k += 1
+		}
+		word2 := s[lx.i + 1:k]
+		if k < len(s) && s[k] == '!' && word2 != "" && !sheet_needs_quote(word) && !sheet_needs_quote(word2) {
+			lx.i = k + 1
+			return lex_sheet_body(lx, word, word2)
+		}
+	}
+
 	if r, ok := ref_parse(word); ok {
 		// `A` on its own is only a reference as part of `A:A`; otherwise it
 		// is a name, which evaluates to #NAME?.
@@ -352,13 +372,29 @@ lex_quoted_sheet :: proc(lx: ^Lexer) -> (Token, bool) {
 	if name == "" {
 		return {kind = .Bad}, false
 	}
+	// `'Jan 2026:Mar 2026'!A1` is how a 3-D span is quoted: one pair of
+	// quotes around the whole span. A sheet name may not contain a colon
+	// (Excel's rule, and `book_rename_sheet` enforces it), so the first one
+	// is the separator.
+	if c := strings.index_byte(name, ':'); c >= 0 {
+		a, z := name[:c], name[c + 1:]
+		if a == "" || z == "" {
+			return {kind = .Bad}, false
+		}
+		return lex_sheet_body(lx, a, z)
+	}
 	return lex_sheet_body(lx, name)
 }
 
 // lex_sheet_body reads the reference half of a sheet-qualified reference. It
 // is deliberately strict: after a `!` nothing but a reference is legal, so a
 // typo is a syntax error rather than a silently different formula.
-lex_sheet_body :: proc(lx: ^Lexer, sheet: string) -> (Token, bool) {
+lex_sheet_body :: proc(lx: ^Lexer, sheet: string, sheet2 := "") -> (Token, bool) {
+	// `Sheet2:Sheet2!A1` spans one sheet, so it is an ordinary reference.
+	far := sheet2
+	if strings.equal_fold(sheet, far) {
+		far = ""
+	}
 	s := lx.src
 	start := lx.i
 	for lx.i < len(s) {
@@ -377,7 +413,7 @@ lex_sheet_body :: proc(lx: ^Lexer, sheet: string) -> (Token, bool) {
 	if !ok {
 		return {kind = .Bad}, false
 	}
-	return {kind = .Ref, ref = r, text = word, sheet = sheet}, true
+	return {kind = .Ref, ref = r, text = word, sheet = sheet, sheet2 = far}, true
 }
 
 // ---------------------------------------------------------------------------
@@ -407,6 +443,10 @@ Ast :: struct {
 	ref:   Ref,
 	ref2:  Ref, // the second endpoint of a Range
 	sheet: string, // owned: the sheet a Ref or Range names; "" means this one
+	// owned: the far end of a 3-D reference, `Sheet3` in `Sheet1:Sheet3!A1`.
+	// The span is resolved by *position* every time it is read, so a sheet
+	// moved between the two ends joins it and one moved out leaves it.
+	sheet2: string,
 	op:    Op_Kind,
 	kids:  [dynamic]^Ast,
 }
@@ -430,6 +470,9 @@ ast_free :: proc(n: ^Ast) {
 	}
 	if n.sheet != "" {
 		delete(n.sheet)
+	}
+	if n.sheet2 != "" {
+		delete(n.sheet2)
 	}
 	free(n)
 }
@@ -699,6 +742,7 @@ p_primary :: proc(ps: ^Parser) -> ^Ast {
 			n.ref = t.ref
 			n.ref2 = t2.ref
 			n.sheet = strings.clone(t.sheet != "" ? t.sheet : t2.sheet)
+			n.sheet2 = strings.clone(t.sheet != "" ? t.sheet2 : t2.sheet2)
 			return n
 		}
 		if t.ref.row == NO_ROW || t.ref.col == NO_COL {
@@ -708,6 +752,7 @@ p_primary :: proc(ps: ^Parser) -> ^Ast {
 		n := ast_new(.Ref)
 		n.ref = t.ref
 		n.sheet = strings.clone(t.sheet)
+		n.sheet2 = strings.clone(t.sheet2)
 		return n
 
 	case .LParen:
@@ -825,10 +870,10 @@ ast_print :: proc(n: ^Ast, b: ^strings.Builder) {
 	case .Name:
 		strings.write_string(b, n.str)
 	case .Ref:
-		strings.write_string(b, sheet_prefix(n.sheet))
+		strings.write_string(b, sheet_span_prefix(n.sheet, n.sheet2))
 		strings.write_string(b, ref_text(n.ref))
 	case .Range:
-		strings.write_string(b, sheet_prefix(n.sheet))
+		strings.write_string(b, sheet_span_prefix(n.sheet, n.sheet2))
 		strings.write_string(b, ref_text(n.ref))
 		strings.write_byte(b, ':')
 		strings.write_string(b, ref_text(n.ref2))
@@ -922,6 +967,15 @@ ast_structural :: proc(
 	}
 	switch n.kind {
 	case .Ref, .Range:
+		// A 3-D reference spans at least two sheets, and a row inserted on
+		// one of them cannot move the same cells on the others — so it is
+		// not shifted at all. LibreOffice does the same (it adjusts a 3-D
+		// reference only when the edit covers every sheet in the span, which
+		// a one-sheet insert never does), and so does Excel unless the
+		// sheets are grouped, which this program has no notion of.
+		if n.sheet2 != "" {
+			break
+		}
 		if resolve_sheet(bk, n.sheet, own) != target {
 			break
 		}
@@ -960,6 +1014,11 @@ ast_rename_sheet :: proc(n: ^Ast, from, to: string) -> bool {
 		n.sheet = strings.clone(to)
 		hit = true
 	}
+	if (n.kind == .Ref || n.kind == .Range) && n.sheet2 != "" && strings.equal_fold(n.sheet2, from) {
+		delete(n.sheet2)
+		n.sheet2 = strings.clone(to)
+		hit = true
+	}
 	for k in n.kids {
 		if ast_rename_sheet(k, from, to) {
 			hit = true
@@ -974,16 +1033,21 @@ ast_sheets :: proc(n: ^Ast, out: ^[dynamic]string) {
 	if n == nil {
 		return
 	}
-	if (n.kind == .Ref || n.kind == .Range) && n.sheet != "" {
-		found := false
-		for s in out {
-			if strings.equal_fold(s, n.sheet) {
-				found = true
-				break
+	if (n.kind == .Ref || n.kind == .Range) {
+		for want in ([2]string{n.sheet, n.sheet2}) {
+			if want == "" {
+				continue
 			}
-		}
-		if !found {
-			append(out, n.sheet)
+			found := false
+			for s in out {
+				if strings.equal_fold(s, want) {
+					found = true
+					break
+				}
+			}
+			if !found {
+				append(out, want)
+			}
 		}
 	}
 	for k in n.kids {
@@ -1002,36 +1066,30 @@ ast_deps :: proc(n: ^Ast, out: ^[dynamic]Dep, max_row: int, bk: ^Book = nil, own
 	switch n.kind {
 	case .Ref:
 		if !n.ref.bad {
-			si := resolve_sheet(bk, n.sheet, own)
-			append(out, Dep{si, {n.ref.row, n.ref.col, n.ref.row, n.ref.col}})
+			lo, hi := dep_sheets(bk, n, own)
+			for si in lo ..= hi {
+				append(out, Dep{si, {n.ref.row, n.ref.col, n.ref.row, n.ref.col}})
+			}
 		}
 	case .Range:
 		if !n.ref.bad && !n.ref2.bad {
-			si := resolve_sheet(bk, n.sheet, own)
+			rect: Rect_I
 			switch ref_span(n.ref) {
 			case 1: // A:A — every row of those columns
-				append(out, Dep{si, {0, min(n.ref.col, n.ref2.col), max_row, max(n.ref.col, n.ref2.col)}})
+				rect = {0, min(n.ref.col, n.ref2.col), max_row, max(n.ref.col, n.ref2.col)}
 			case 2: // 1:1 — every column of those rows
-				append(
-					out,
-					Dep {
-						si,
-						{min(n.ref.row, n.ref2.row), 0, max(n.ref.row, n.ref2.row), MAX_COLS - 1},
-					},
-				)
+				rect = {min(n.ref.row, n.ref2.row), 0, max(n.ref.row, n.ref2.row), MAX_COLS - 1}
 			case:
-				append(
-					out,
-					Dep {
-						si,
-						{
-							min(n.ref.row, n.ref2.row),
-							min(n.ref.col, n.ref2.col),
-							max(n.ref.row, n.ref2.row),
-							max(n.ref.col, n.ref2.col),
-						},
-					},
-				)
+				rect = {
+					min(n.ref.row, n.ref2.row),
+					min(n.ref.col, n.ref2.col),
+					max(n.ref.row, n.ref2.row),
+					max(n.ref.col, n.ref2.col),
+				}
+			}
+			lo, hi := dep_sheets(bk, n, own)
+			for si in lo ..= hi {
+				append(out, Dep{si, rect})
 			}
 		}
 	case .Name:
@@ -1045,6 +1103,22 @@ ast_deps :: proc(n: ^Ast, out: ^[dynamic]Dep, max_row: int, bk: ^Book = nil, own
 	for k in n.kids {
 		ast_deps(k, out, max_row, bk, own)
 	}
+}
+
+// dep_sheets is the run of sheet indices a reference reads: one for an
+// ordinary reference, every sheet between the two ends (by position, now)
+// for a 3-D one, and the single unresolvable index -1 when a name does not
+// resolve, which the graph skips and the evaluator reports as #REF!.
+dep_sheets :: proc(bk: ^Book, n: ^Ast, own: int) -> (lo, hi: int) {
+	a := resolve_sheet(bk, n.sheet, own)
+	if n.sheet2 == "" {
+		return a, a
+	}
+	b := book_find(bk, n.sheet2)
+	if a < 0 || b < 0 {
+		return -1, -1
+	}
+	return min(a, b), max(a, b)
 }
 
 // ast_has_volatile reports whether a formula must be recomputed on every full

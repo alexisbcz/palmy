@@ -355,11 +355,37 @@ sheet_needs_quote :: proc(name: string) -> bool {
 			return true
 		}
 	}
-	// A name that reads as a reference would be ambiguous with one.
-	if _, ok := ref_parse(name); ok {
+	// A name that reads as a cell reference would be ambiguous with one, and
+	// so would an R1C1 address. A bare column (`Jan` is column JAN) is not:
+	// Excel writes `Jan!A1` and `SUM(Jan:Dec!B2)` unquoted, and the `!` is
+	// what tells it apart from the column range `JAN:DEC`.
+	if r, ok := ref_parse(name); ok && r.row != NO_ROW {
+		return true
+	}
+	if looks_r1c1(name) {
 		return true
 	}
 	return false
+}
+
+@(private = "file")
+looks_r1c1 :: proc(s: string) -> bool {
+	i := 0
+	if i >= len(s) || (s[i] != 'R' && s[i] != 'r') {
+		return false
+	}
+	i += 1
+	for i < len(s) && is_digit(s[i]) {
+		i += 1
+	}
+	if i >= len(s) || (s[i] != 'C' && s[i] != 'c') {
+		return i == len(s) // `R` or `R12` alone is a row in R1C1
+	}
+	i += 1
+	for i < len(s) && is_digit(s[i]) {
+		i += 1
+	}
+	return i == len(s)
 }
 
 // sheet_prefix renders `Sheet2!` or `'My Sheet'!`, or nothing for an
@@ -378,6 +404,34 @@ sheet_prefix :: proc(name: string) -> string {
 			strings.write_byte(&b, '\'')
 		}
 		strings.write_byte(&b, name[i])
+	}
+	strings.write_string(&b, "'!")
+	return strings.to_string(b)
+}
+
+// sheet_span_prefix renders the sheet part of a reference that may be 3-D:
+// `Sheet1:Sheet3!` when both names can go bare, and otherwise the whole span
+// in one pair of quotes, `'Jan 2026:Mar 2026'!`, which is Excel's spelling
+// and the only one its formula grammar accepts.
+sheet_span_prefix :: proc(first, last: string) -> string {
+	if last == "" {
+		return sheet_prefix(first)
+	}
+	if !sheet_needs_quote(first) && !sheet_needs_quote(last) {
+		return strings.concatenate({first, ":", last, "!"}, context.temp_allocator)
+	}
+	b := strings.builder_make(context.temp_allocator)
+	strings.write_byte(&b, '\'')
+	for name, k in ([2]string{first, last}) {
+		if k == 1 {
+			strings.write_byte(&b, ':')
+		}
+		for i in 0 ..< len(name) {
+			if name[i] == '\'' {
+				strings.write_byte(&b, '\'')
+			}
+			strings.write_byte(&b, name[i])
+		}
 	}
 	strings.write_string(&b, "'!")
 	return strings.to_string(b)

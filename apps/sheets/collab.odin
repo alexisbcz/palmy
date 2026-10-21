@@ -216,7 +216,13 @@ anchor_formula :: proc(bk: ^Book, own: int, ba: ^Book_Axes, text: string) -> str
 		if t.kind == .Ref {
 			target := own
 			qualified := t.sheet != ""
-			if qualified {
+			if t.sheet2 != "" {
+				// A 3-D reference names a run of sheets by position, which no
+				// single row/column anchor can hold. It stays as text, which
+				// loses nothing: a 3-D reference does not follow a one-sheet
+				// row insert locally either (see `ast_structural`).
+				target = -1
+			} else if qualified {
 				target = book_find(bk, t.sheet)
 			} else if prev_kind == .Colon {
 				target = prev_target // B5 in Sheet2!A1:B5 is on Sheet2

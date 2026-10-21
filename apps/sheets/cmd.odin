@@ -280,8 +280,15 @@ run_cmd :: proc(app: ^App, cmd: Cmd) {
 		set_status(app, "Sheet %s", app.sh.name)
 	case .Sheet_Move_Left, .Sheet_Move_Right:
 		d := cmd == .Sheet_Move_Left ? -1 : 1
-		if book_move_sheet(app.book, app.book.active, app.book.active + d) {
-			undo_push(app)
+		to := app.book.active + d
+		if to < 0 || to >= len(app.book.sheets) {
+			break
+		}
+		// The snapshot has to be taken *before* the move, or undo restores
+		// the moved order — which matters more now that the order decides
+		// what a 3-D reference adds up.
+		undo_push(app)
+		if book_move_sheet(app.book, app.book.active, to) {
 			app.book.active = clamp(app.book.active + d, 0, len(app.book.sheets) - 1)
 			sync_sheet(app)
 			set_status(app, "Moved %s to position %d", app.sh.name, app.book.active + 1)
