@@ -753,6 +753,14 @@ table_block_count :: proc(t: ^Table) -> int {
 // Row heights are measured from the wrapped cell paragraphs, so they are exact
 // before a single row is placed — the same property the rest of the pagination
 // pass relies on.
+//
+// Merged cells extend the rule rather than change it: rows joined by a
+// vertical merge are one atomic unit (Word's "do not break this row" applied
+// to the merged rows together), and the header that repeats is row 0 plus any
+// rows merged into it. A merged cell taller than the rows it spans shares the
+// difference evenly among them; LibreOffice gives it all to the last row, and
+// even sharing was chosen because it keeps the rows beside the merge looking
+// like one table rather than one tall row and some short ones.
 
 TABLE_MIN_ROW_H :: f32(26)
 
