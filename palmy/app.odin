@@ -612,6 +612,7 @@ begin_ui :: proc(ctx: ^Ctx, in_: ^Input, viewport: [2]f32, root_class: string) {
 	clear(&ctx.nodes)
 	clear(&ctx.stack)
 	clear(&ctx.seq)
+	popups_begin_frame(ctx)
 
 	route_input(ctx)
 
@@ -631,7 +632,8 @@ begin_ui :: proc(ctx: ^Ctx, in_: ^Input, viewport: [2]f32, root_class: string) {
 end_ui :: proc(ctx: ^Ctx, canvas: ^Canvas) {
 	clear(&ctx.stack)
 	layout_tree(ctx, {0, 0, ctx.viewport.x, ctx.viewport.y})
-	paint_tree(ctx, canvas)
+	popups_layout(ctx)
+	popups_paint(ctx, canvas)
 }
 
 @(private)
@@ -644,6 +646,7 @@ finish_frame :: proc(app: ^App) {
 		// are, but paint and send nothing: the server is not ready for it.
 		clear(&ctx.stack)
 		layout_tree(ctx, {0, 0, ctx.viewport.x, ctx.viewport.y})
+		popups_layout(ctx)
 		w.paint_owed = true
 		app.logic = false
 		clear_edges(&w.input)
@@ -859,12 +862,19 @@ route_input :: proc(ctx: ^Ctx) {
 	}
 	h: Hit
 	if in_.over_surface && len(ctx.prev) > 0 {
-		hit_test(ctx.prev[:], 0, at, &h)
+		// Popups first: they are on top, and a press outside them while a
+		// grabbing one is open dismisses it (popup.odin).
+		if !popup_route(ctx, at, &h) {
+			hit_test(ctx.prev[:], 0, at, &h)
+		}
 	}
 	ctx.hot = h.id
 
 	if ctx.app != nil && in_.over_surface && len(ctx.prev) > 0 {
-		deepest := deepest_at(ctx.prev[:], 0, in_.mouse)
+		deepest, in_popup := popup_deepest(ctx, in_.mouse)
+		if !in_popup {
+			deepest = deepest_at(ctx.prev[:], 0, in_.mouse)
+		}
 		shape := deepest >= 0 ? cursor_at(ctx.prev[:], deepest) : Cursor.Default
 		window_set_cursor(&ctx.app.win, shape)
 	}

@@ -129,6 +129,7 @@ Wl_State :: struct {
 	compositor_ver:     u32,
 	shm:                u32,
 	xdg_wm_base:        u32,
+	xdg_wm_base_ver:    u32,
 	seat:               u32,
 	decor_manager:      u32,
 	cursor_manager:     u32,
@@ -147,6 +148,12 @@ Wl_State :: struct {
 	pointer_serial:     u32,
 	// The serial of the last button press, which a drag must start from.
 	press_serial:       u32,
+	// The serial of the last press of a button or a key, which a popup's
+	// grab must name.
+	grab_serial:        u32,
+	// Where the surface the pointer is over has its (0, 0), in window
+	// coordinates: zero for the window, a popup's position for a popup.
+	pointer_origin:     [2]f32,
 	frame_cb:           u32,
 
 	// Keys held on a keyboard that appeared while the window was running,
@@ -288,6 +295,8 @@ wl_open :: proc(w: ^Window, decorate: bool) -> (err: string) {
 @(private)
 wl_close :: proc(w: ^Window) {
 	c := &w.conn
+	// Popups go first: a toplevel destroyed under a live popup is an error.
+	wl_popups_close(w)
 	wl_destroy_buffers(w)
 	if w.wl.layer_surface != 0 {
 		request(c, w.wl.layer_surface, LAYER_SURFACE_DESTROY)
@@ -367,7 +376,8 @@ wl_on_event :: proc(w: ^Window, id: u32, opcode: u16, r: ^Reader) {
 			case "wl_shm":
 				w.wl.shm = bind_global(w, name, iface, 1, .Shm)
 			case "xdg_wm_base":
-				w.wl.xdg_wm_base = bind_global(w, name, iface, min(version, 3), .Xdg_Wm_Base)
+				w.wl.xdg_wm_base_ver = min(version, 3)
+				w.wl.xdg_wm_base = bind_global(w, name, iface, w.wl.xdg_wm_base_ver, .Xdg_Wm_Base)
 			case "wl_seat":
 				if w.wl.seat == 0 {
 					w.wl.seat = bind_global(w, name, iface, min(version, 7), .Seat)
@@ -561,8 +571,10 @@ wl_on_event :: proc(w: ^Window, id: u32, opcode: u16, r: ^Reader) {
 		case 0:
 			// enter(serial, surface, x, y)
 			w.wl.pointer_serial = r_u32(r)
-			r_u32(r)
-			in_.mouse = {r_fixed(r), r_fixed(r)}
+			// A popup's coordinates are its own; everything above this
+			// layer works in the window's.
+			w.wl.pointer_origin, _ = wl_popup_origin(w, r_u32(r))
+			in_.mouse = [2]f32{r_fixed(r), r_fixed(r)} + w.wl.pointer_origin
 			in_.over_surface = true
 			// The shape has to be set again for every enter.
 			shape := w.cursor_shape
@@ -573,7 +585,7 @@ wl_on_event :: proc(w: ^Window, id: u32, opcode: u16, r: ^Reader) {
 		case 2:
 			// motion(time, x, y)
 			r_u32(r)
-			p := [2]f32{r_fixed(r), r_fixed(r)}
+			p := [2]f32{r_fixed(r), r_fixed(r)} + w.wl.pointer_origin
 			in_.mouse_delta += p - in_.mouse
 			in_.mouse = p
 			in_.over_surface = true
@@ -601,6 +613,7 @@ wl_on_event :: proc(w: ^Window, id: u32, opcode: u16, r: ^Reader) {
 				in_.pressed[mb] = true
 				in_.click_serial = serial
 				w.wl.press_serial = serial
+				w.wl.grab_serial = serial
 			} else {
 				in_.down[mb] = false
 				in_.released[mb] = true
@@ -657,6 +670,7 @@ wl_on_event :: proc(w: ^Window, id: u32, opcode: u16, r: ^Reader) {
 			code := r_u32(r)
 			state := r_u32(r)
 			if state == 1 {
+				w.wl.grab_serial = w.clip.serial
 				wl_key_press(w, code)
 			} else {
 				if w.repeat_key == code {
@@ -685,6 +699,9 @@ wl_on_event :: proc(w: ^Window, id: u32, opcode: u16, r: ^Reader) {
 
 	case .Drag_Source:
 		dnd_source_event(w, id, opcode, r)
+
+	case .Popup_Xdg_Surface, .Xdg_Popup, .Popup_Buffer:
+		wl_popup_event(w, kind_of(c, id), id, opcode, r)
 
 	case:
 		// Interfaces we create but never listen to.

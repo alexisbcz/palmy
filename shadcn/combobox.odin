@@ -79,3 +79,21 @@ combobox_chip :: proc(ui: ^p.Ctx, label: string) {
 combobox_chips_input :: proc(ui: ^p.Ctx, placeholder: string) {
 	p.text(ui, placeholder, "flex-1 min-w-16 text-sm text-foreground/50 whitespace-nowrap")
 }
+
+// combobox_popup_open opens a combobox's list as a popup under its input, at
+// least as wide as it, with the content box and list open; then
+// `combobox_popup_close`. Typing keeps going to the input: the popup takes the
+// keyboard grab, but palmy routes keys to the focused widget whichever of its
+// surfaces holds the keyboard. See `menu_popup_open`.
+combobox_popup_open :: proc(ui: ^p.Ctx, input: p.Rect) -> (dismissed: bool) {
+	dismissed = p.popup_begin(ui, input, p.POPUP_SELECT)
+	combobox_content_open(ui)
+	combobox_list_open(ui)
+	return
+}
+
+combobox_popup_close :: proc(ui: ^p.Ctx) {
+	p.end(ui)
+	p.end(ui)
+	p.popup_end(ui)
+}

@@ -64,6 +64,15 @@ Obj_Kind :: enum u8 {
 	// A wl_data_source offered for drag and drop rather than as a selection.
 	Drag_Source,
 
+	// Popups (popup.odin): an xdg_positioner, and a popup's own wl_surface,
+	// xdg_surface, xdg_popup and buffers, kept apart from the window's so
+	// their events cannot be mistaken for the toplevel's.
+	Positioner,
+	Popup_Surface,
+	Popup_Xdg_Surface,
+	Xdg_Popup,
+	Popup_Buffer,
+
 	// The object has been destroyed locally but the server has not confirmed
 	// it yet, so its id must not be handed out again.
 	Dead,

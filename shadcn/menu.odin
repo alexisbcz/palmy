@@ -81,3 +81,20 @@ menu_separator :: proc(ui: ^p.Ctx, pad: f32 = 4) {
 	st.margin[p.BOTTOM] = 4
 	p.end(ui)
 }
+
+// menu_popup_open opens a dropdown or context menu as a popup anchored to
+// `anchor` (the trigger's rect, or a 1x1 rect at the pointer for a context
+// menu), with its content box open: build the items, then `menu_popup_close`.
+// On Wayland it is a real xdg_popup that may extend past the window; elsewhere
+// it is drawn on top of the window. Returns true when it was dismissed by a
+// press elsewhere; stop opening it then.
+menu_popup_open :: proc(ui: ^p.Ctx, anchor: p.Rect, opts := p.POPUP_MENU) -> (dismissed: bool) {
+	dismissed = p.popup_begin(ui, anchor, opts)
+	menu_content_open(ui)
+	return
+}
+
+menu_popup_close :: proc(ui: ^p.Ctx) {
+	p.end(ui)
+	p.popup_end(ui)
+}

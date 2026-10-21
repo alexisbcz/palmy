@@ -151,6 +151,9 @@ Ctx :: struct {
 
 	// Index of the most recently created element, which `style` targets.
 	last:      int,
+
+	// This frame's popups and last frame's (popup.odin).
+	popups:    Popup_Ctx,
 }
 
 @(private)
@@ -179,6 +182,7 @@ ctx_destroy :: proc(ctx: ^Ctx) {
 	delete(ctx.prev)
 	delete(ctx.stack)
 	delete(ctx.seq)
+	popups_destroy(ctx)
 	virtual.arena_destroy(&ctx.arena)
 	virtual.arena_destroy(&ctx.arena_old)
 }

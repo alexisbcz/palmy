@@ -74,3 +74,40 @@ tooltip_kbd :: proc(ui: ^p.Ctx, s: string) {
 	p.style(ui).shrink = 0
 	p.end(ui)
 }
+
+// popover_popup_open opens a popover as a popup against `anchor`; then
+// `popover_popup_close`. It grabs, so a click away dismisses it.
+popover_popup_open :: proc(ui: ^p.Ctx, anchor: p.Rect, opts := p.POPUP_MENU) -> (dismissed: bool) {
+	dismissed = p.popup_begin(ui, anchor, opts)
+	popover_content_open(ui)
+	return
+}
+
+popover_popup_close :: proc(ui: ^p.Ctx) {
+	p.end(ui)
+	p.popup_end(ui)
+}
+
+// hover_card_popup_open is a popover that does not grab: it is shown while
+// the pointer is over its trigger, and the application closes it.
+hover_card_popup_open :: proc(ui: ^p.Ctx, anchor: p.Rect) {
+	p.popup_begin(ui, anchor, p.Popup{side = .Bottom, align = .Center, gap = 4})
+	hover_card_content_open(ui)
+}
+
+hover_card_popup_close :: proc(ui: ^p.Ctx) {
+	p.end(ui)
+	p.popup_end(ui)
+}
+
+// tooltip_popup_open shows a tooltip above `anchor`, centred, flipping below
+// when there is no room; it never grabs. Then `tooltip_popup_close`.
+tooltip_popup_open :: proc(ui: ^p.Ctx, anchor: p.Rect) {
+	p.popup_begin(ui, anchor, p.POPUP_TOOLTIP)
+	tooltip_content_open(ui)
+}
+
+tooltip_popup_close :: proc(ui: ^p.Ctx) {
+	p.end(ui)
+	p.popup_end(ui)
+}

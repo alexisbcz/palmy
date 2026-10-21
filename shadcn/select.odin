@@ -75,3 +75,19 @@ select_item :: proc(ui: ^p.Ctx, label: string, selected := false) {
 		menu_indicator(ui)
 	}
 }
+
+// select_popup_open opens a select's list as a popup under its trigger, at
+// least as wide as it, with the content box and list open: build the groups
+// and items, then `select_popup_close`. See `menu_popup_open`.
+select_popup_open :: proc(ui: ^p.Ctx, trigger: p.Rect) -> (dismissed: bool) {
+	dismissed = p.popup_begin(ui, trigger, p.POPUP_SELECT)
+	select_content_open(ui)
+	select_list_open(ui)
+	return
+}
+
+select_popup_close :: proc(ui: ^p.Ctx) {
+	p.end(ui)
+	p.end(ui)
+	p.popup_end(ui)
+}
