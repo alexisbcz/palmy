@@ -7,13 +7,11 @@
 // render.odin for the pixels.
 //
 //	docs [file.json | file.md | file.docx | file.odt | file.rtf]
+//	docs <command> ... [--json]          the command line; see cli.odin
 //	docs --selftest                      headless assertions over the model
-//	docs --convert <in> <out>            .json .md .docx .odt in; those plus
-//	                                     .html .pdf .odt .rtf out
-//	docs --export-png <file> <base>      render every page to <base>-pN.png
-//	docs --shots <dir>                   render the interface offscreen to PNGs
-//	docs --lint <file> [--json]          prose problems, through vale
-//	docs --bench [paragraphs]            layout and typing throughput
+//
+// The older spellings --convert, --export-png, --shots, --lint and --bench
+// are aliases of the commands of the same name in cli.odin and keep working.
 package main
 
 import "core:fmt"
@@ -72,61 +70,20 @@ relayout :: proc(st: ^State) {
 }
 
 main :: proc() {
-	if len(os.args) > 1 && os.args[1] == "--collab" {
-		if ca, rest := parse_collab_args(os.args[1:]); ca.script != "" {
-			os.exit(run_script(ca, ca.script, len(rest) > 0 ? rest[0] : ""))
+	// A collaboration session is the window's business (or a script's), and
+	// its flags predate the command line, so they are looked at first, the
+	// way sheets does it.
+	if pre, pre_rest := parse_collab_args(os.args[1:]); pre.doc != "" || pre.script != "" {
+		if len(os.args) > 1 && os.args[1] == "--collab" && pre.script != "" {
+			os.exit(run_script(pre, pre.script, len(pre_rest) > 0 ? pre_rest[0] : ""))
 		}
-	}
-	if len(os.args) > 1 && os.args[1] != "--collab" {
-		switch os.args[1] {
-		case "--selftest":
-			os.exit(run_selftest() ? 0 : 1)
-		case "--bench":
-			n := 400
-			if len(os.args) > 2 {
-				n = int_arg(os.args[2], 400)
-			}
-			run_bench(n)
-			return
-		case "--convert":
-			if len(os.args) < 4 {
-				fmt.eprintln("docs --convert <in.json|in.md> <out.json|out.md|out.html>")
-				os.exit(2)
-			}
-			os.exit(cli_convert(os.args[2], os.args[3]) ? 0 : 1)
-		case "--shots":
-			// Offscreen screenshots of the real editor. No compositor, no
-			// window, nothing on anybody's screen.
-			dir := len(os.args) > 2 ? os.args[2] : "docs-shots"
-			os.exit(shots(dir))
-		case "--lint":
-			if len(os.args) < 3 {
-				fmt.eprintln("docs --lint <file> [--json]")
-				os.exit(2)
-			}
-			as_json := false
-			for a in os.args[3:] {
-				if a == "--json" {as_json = true}
-			}
-			os.exit(cli_lint(os.args[2], as_json) ? 0 : 1)
-		case "--export-png":
-			if len(os.args) < 4 {
-				fmt.eprintln("docs --export-png <file> <base>")
-				os.exit(2)
-			}
-			os.exit(cli_export_png(os.args[2], os.args[3]) ? 0 : 1)
-		case "--help", "-h":
-			fmt.println(
-				"docs [file.json | file.md | file.docx | file.odt | file.rtf]\n" +
-				"  --selftest                 headless assertions\n" +
-				"  --bench [paragraphs]       layout and typing throughput\n" +
-				"  --convert <in> <out>       in: .json .md .docx .odt .rtf\n" +
-				"                             out: .json .md .html .pdf .docx .odt .rtf\n" +
-				"  --export-png <file> <base>\n" +
-				"  --lint <file> [--json]     prose problems, through vale\n" +
-				"  --shots <dir>              render the interface offscreen to PNGs",
-			)
-			return
+	} else {
+		// The command line is the other front end over the same document
+		// code: see cli.odin for the declaration and apps/kit/cli.odin for
+		// the convention it is parsed by. With no command, or with a path,
+		// there is a window.
+		if code, handled := kit.cli(surface()); handled {
+			os.exit(code)
 		}
 	}
 
@@ -241,93 +198,189 @@ int_arg :: proc(s: string, def: int) -> int {
 // Command line entry points
 // ---------------------------------------------------------------------------
 
-// cli_load reads either format, picked by extension.
-cli_load :: proc(path: string) -> (Doc, bool) {
-	switch {
-	case strings.has_suffix(path, ".md"), strings.has_suffix(path, ".markdown"):
-		return import_markdown(path)
-	case strings.has_suffix(path, ".docx"):
-		return import_docx(path)
-	case strings.has_suffix(path, ".odt"):
-		return import_odt(path)
-	case strings.has_suffix(path, ".rtf"):
-		return import_rtf(path)
-	}
-	return load_doc(path)
+// Doc_Format is what a file is, which decides how it is read and written.
+// The window picks it from the menu entry that was used; the command line
+// picks it from the extension. Both then go through doc_import and
+// doc_export, so the two front ends read and write a file the same way.
+Doc_Format :: enum u8 {
+	Json,
+	Markdown,
+	Html,
+	Pdf,
+	Docx,
+	Odt,
+	Rtf,
 }
 
-cli_convert :: proc(in_path, out_path: string) -> bool {
-	d, ok := cli_load(in_path)
-	if !ok {
-		fmt.eprintfln("docs: cannot read %s", in_path)
-		return false
-	}
-	defer doc_destroy(&d)
+FORMAT_NAMES := [Doc_Format]string {
+	.Json     = "json",
+	.Markdown = "markdown",
+	.Html     = "html",
+	.Pdf      = "pdf",
+	.Docx     = "docx",
+	.Odt      = "odt",
+	.Rtf      = "rtf",
+}
 
-	title := doc_display_title(&d, base_name(in_path))
-	wrote := false
+// FORMAT_READS says which formats can be read back into the model; HTML and
+// PDF are written only.
+FORMAT_READS := [Doc_Format]bool {
+	.Json     = true,
+	.Markdown = true,
+	.Html     = false,
+	.Pdf      = false,
+	.Docx     = true,
+	.Odt      = true,
+	.Rtf      = true,
+}
+
+format_of_path :: proc(path: string) -> Doc_Format {
+	l := strings.to_lower(path, context.temp_allocator)
 	switch {
-	case strings.has_suffix(out_path, ".md"), strings.has_suffix(out_path, ".markdown"):
-		wrote = export_markdown(&d, out_path)
-	case strings.has_suffix(out_path, ".html"), strings.has_suffix(out_path, ".htm"):
-		wrote = export_html(&d, out_path, base_name(out_path))
-	case strings.has_suffix(out_path, ".pdf"):
-		// A PDF is positioned from the layout, so this one conversion has to
-		// measure the document rather than just re-serialise it.
-		wrote = cli_export_pdf(&d, out_path, title)
-	case strings.has_suffix(out_path, ".docx"):
-		wrote = export_docx(&d, out_path, title)
-	case strings.has_suffix(out_path, ".odt"):
-		wrote = export_odt(&d, out_path, title)
-	case strings.has_suffix(out_path, ".rtf"):
-		wrote = export_rtf(&d, out_path, title)
-	case:
-		wrote = save_doc(&d, out_path)
+	case strings.has_suffix(l, ".md"), strings.has_suffix(l, ".markdown"):
+		return .Markdown
+	case strings.has_suffix(l, ".html"), strings.has_suffix(l, ".htm"):
+		return .Html
+	case strings.has_suffix(l, ".pdf"):
+		return .Pdf
+	case strings.has_suffix(l, ".docx"):
+		return .Docx
+	case strings.has_suffix(l, ".odt"):
+		return .Odt
+	case strings.has_suffix(l, ".rtf"):
+		return .Rtf
 	}
-	if !wrote {
-		fmt.eprintfln("docs: cannot write %s", out_path)
-		return false
+	return .Json
+}
+
+// doc_import is the one reader. A format that cannot be read (HTML, PDF)
+// reports failure rather than guessing.
+doc_import :: proc(path: string, f: Doc_Format) -> (Doc, bool) {
+	switch f {
+	case .Markdown:
+		return import_markdown(path)
+	case .Docx:
+		return import_docx(path)
+	case .Odt:
+		return import_odt(path)
+	case .Rtf:
+		return import_rtf(path)
+	case .Json:
+		return load_doc(path)
+	case .Html, .Pdf:
 	}
-	fmt.printfln("%s -> %s (%d paragraphs)", in_path, out_path, len(d.paras))
-	return true
+	return Doc{}, false
+}
+
+// doc_read reads a file in whatever format its extension says.
+doc_read :: proc(path: string) -> (Doc, bool) {
+	return doc_import(path, format_of_path(path))
+}
+
+// cli_load is the older name, kept for the self-tests that use it.
+cli_load :: doc_read
+
+// doc_export is the one writer. A PDF is positioned from the layout, so this
+// one format brings the layout up to date first; everything else re-serialises
+// the model.
+doc_export :: proc(st: ^State, path: string, f: Doc_Format, title: string) -> bool {
+	switch f {
+	case .Markdown:
+		return export_markdown(&st.doc, path)
+	case .Html:
+		return export_html(&st.doc, path, title)
+	case .Pdf:
+		if st.dirty || len(st.lay.lines) == 0 {
+			relayout(st)
+			st.dirty = false
+		}
+		return export_pdf(st, path, title)
+	case .Docx:
+		return export_docx(&st.doc, path, title)
+	case .Odt:
+		return export_odt(&st.doc, path, title)
+	case .Rtf:
+		return export_rtf(&st.doc, path, title)
+	case .Json:
+		return save_doc(&st.doc, path)
+	}
+	return false
+}
+
+// headless_open gives a document the same State the window would hold, laid
+// out with the same font table, and no window. Every command that needs pages
+// starts here, so a page count from the command line is the page count the
+// window shows.
+headless_open :: proc(st: ^State, d: Doc) {
+	fonts := new(p.Fonts)
+	headless_fonts(fonts)
+	layout_fonts = fonts
+	state_init(st, fonts)
+	replace_document(st, d)
+	relayout(st)
+	st.dirty = false
+}
+
+// convert_file is `docs convert`: read one file, write another, the format of
+// each picked by its extension.
+convert_file :: proc(in_path, out_path: string, dry_run := false) -> (paras, pages: int, err: string) {
+	if !FORMAT_READS[format_of_path(in_path)] {
+		return 0, 0, fmt.tprintf("%s cannot be read: %s is written only", in_path, FORMAT_NAMES[format_of_path(in_path)])
+	}
+	d, ok := doc_read(in_path)
+	if !ok {
+		return 0, 0, fmt.tprintf("cannot read %s", in_path)
+	}
+	st := State{}
+	headless_open(&st, d)
+	defer state_destroy(&st)
+
+	f := format_of_path(out_path)
+	// HTML has always been titled after the file it is written to; the rest
+	// carry the document's own title.
+	title := f == .Html ? base_name(out_path) : doc_display_title(&st.doc, base_name(in_path))
+	if !dry_run && !doc_export(&st, out_path, f, title) {
+		return len(st.doc.paras), st.lay.pages, fmt.tprintf("cannot write %s", out_path)
+	}
+	return len(st.doc.paras), st.lay.pages, ""
 }
 
 // cli_export_pdf lays the document out headlessly, with the same font table
 // the window would use, and writes the PDF from it. Nothing about the result
 // depends on a window ever having existed.
 cli_export_pdf :: proc(d: ^Doc, out_path, title: string) -> bool {
-	fonts: p.Fonts
-	headless_fonts(&fonts)
-	layout_fonts = &fonts
-
 	st := State{}
-	state_init(&st, &fonts)
+	headless_open(&st, doc_clone(d))
 	defer state_destroy(&st)
-	replace_document(&st, doc_clone(d))
-	relayout(&st)
-	return export_pdf(&st, out_path, title)
+	return doc_export(&st, out_path, .Pdf, title)
 }
 
-cli_export_png :: proc(in_path, base: string) -> bool {
-	fonts: p.Fonts
-	headless_fonts(&fonts)
-	layout_fonts = &fonts
-
-	st := State{}
-	state_init(&st, &fonts)
-	nd, ok := cli_load(in_path)
+// export_png_file renders every page of a file to <base>-pN.png.
+export_png_file :: proc(in_path, base: string, dry_run := false) -> (wrote, pages: int, err: string) {
+	d, ok := doc_read(in_path)
 	if !ok {
-		fmt.eprintfln("docs: cannot read %s", in_path)
-		return false
+		return 0, 0, fmt.tprintf("cannot read %s", in_path)
 	}
-	replace_document(&st, nd)
-	relayout(&st)
+	st := State{}
+	headless_open(&st, d)
+	defer state_destroy(&st)
+	if dry_run {
+		return 0, st.lay.pages, ""
+	}
 	n := export_all_pages_png(&st, base)
-	fmt.printfln("wrote %d of %d page images", n, st.lay.pages)
-	return n == st.lay.pages && n > 0
+	if n != st.lay.pages || n == 0 {
+		return n, st.lay.pages, fmt.tprintf("wrote %d of %d page images", n, st.lay.pages)
+	}
+	return n, st.lay.pages, ""
 }
 
-run_bench :: proc(n: int) {
+Bench_Result :: struct {
+	paragraphs, words, chars, lines, pages, runs, rewrapped, keys, undos: int,
+	first_ms, warm_ms, key_ms, undo_ms, draw_ms:                         f64,
+	draw_w, draw_h:                                                      int,
+}
+
+run_bench :: proc(n: int) -> (r: Bench_Result) {
 	fonts: p.Fonts
 	headless_fonts(&fonts)
 	layout_fonts = &fonts
@@ -413,19 +466,25 @@ run_bench :: proc(n: int) {
 	per_draw := time.duration_milliseconds(time.since(t4)) / f64(reps)
 
 	words, chars := doc_counts(&st.doc)
-	fmt.printfln("docs --bench")
-	fmt.printfln("  %d paragraphs, %d words, %d characters", len(st.doc.paras), words, chars)
-	fmt.printfln("  %d lines over %d pages", len(st.lay.lines), st.lay.pages)
-	fmt.printfln("  first layout     %.1f ms", time.duration_milliseconds(cold))
-	fmt.printfln(
-		"  layout (warm)    %.2f ms   (%d runs, %d paragraphs re-wrapped)",
-		warm,
-		run_total(&st.doc),
-		st.lay.wrapped,
-	)
-	fmt.printfln("  keystroke+layout %.2f ms   (%d keys)", per_key, keys)
-	fmt.printfln("  undo+layout      %.2f ms   (%d steps)", per_undo, undos)
-	fmt.printfln("  draw a %dx%d view %.2f ms", dw, dh, per_draw)
+	r = Bench_Result {
+		paragraphs = len(st.doc.paras),
+		words      = words,
+		chars      = chars,
+		lines      = len(st.lay.lines),
+		pages      = st.lay.pages,
+		runs       = run_total(&st.doc),
+		rewrapped  = st.lay.wrapped,
+		keys       = keys,
+		undos      = undos,
+		first_ms   = time.duration_milliseconds(cold),
+		warm_ms    = warm,
+		key_ms     = per_key,
+		undo_ms    = per_undo,
+		draw_ms    = per_draw,
+		draw_w     = dw,
+		draw_h     = dh,
+	}
+	return r
 }
 
 run_total :: proc(d: ^Doc) -> int {

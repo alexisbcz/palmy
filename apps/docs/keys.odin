@@ -728,9 +728,9 @@ run_prompt :: proc(st: ^State, kind: Prompt_Kind, path: string) {
 	case .Save_As:
 		do_save(st, full)
 	case .Export_Md:
-		note(st, export_markdown(&st.doc, full) ? "Exported Markdown" : "Export failed")
+		note(st, doc_export(st, full, .Markdown, doc_title(st)) ? "Exported Markdown" : "Export failed")
 	case .Import_Md:
-		nd, ok := import_markdown(full)
+		nd, ok := doc_import(full, .Markdown)
 		if ok {
 			replace_document(st, nd)
 			st.modified = true
@@ -739,54 +739,40 @@ run_prompt :: proc(st: ^State, kind: Prompt_Kind, path: string) {
 			note(st, "Import failed")
 		}
 	case .Export_Html:
-		note(st, export_html(&st.doc, full, doc_title(st)) ? "Exported HTML" : "Export failed")
+		note(st, doc_export(st, full, .Html, doc_title(st)) ? "Exported HTML" : "Export failed")
 	case .Export_Png:
 		n := export_all_pages_png(st, full)
 		note(st, n > 0 ? tfmt("Wrote %d page image%s", n, n == 1 ? "" : "s") : "PNG export failed")
+	// Every export below is the same doc_export `docs convert` calls; the
+	// window picks the format from the menu entry, the command line from the
+	// extension.
 	case .Export_Pdf:
-		// The PDF is written from the live layout, so it needs one that is
-		// current — the same object the window is drawing from.
-		if st.dirty {
-			relayout(st)
-			st.dirty = false
-		}
-		ok := export_pdf(st, full, doc_display_title(&st.doc, doc_title(st)))
+		ok := doc_export(st, full, .Pdf, doc_display_title(&st.doc, doc_title(st)))
 		note(st, ok ? tfmt("Exported %d page PDF", st.lay.pages) : "PDF export failed")
 	case .Export_Docx:
 		note(
 			st,
-			export_docx(&st.doc, full, doc_display_title(&st.doc, doc_title(st))) \
-			? "Exported .docx" \
-			: "Export failed",
+			doc_export(st, full, .Docx, doc_display_title(&st.doc, doc_title(st))) ? "Exported .docx" : "Export failed",
 		)
 	case .Export_Odt:
 		note(
 			st,
-			export_odt(&st.doc, full, doc_display_title(&st.doc, doc_title(st))) \
-			? "Exported .odt" \
-			: "Export failed",
+			doc_export(st, full, .Odt, doc_display_title(&st.doc, doc_title(st))) ? "Exported .odt" : "Export failed",
 		)
 	case .Export_Rtf:
 		note(
 			st,
-			export_rtf(&st.doc, full, doc_display_title(&st.doc, doc_title(st))) \
-			? "Exported .rtf" \
-			: "Export failed",
+			doc_export(st, full, .Rtf, doc_display_title(&st.doc, doc_title(st))) ? "Exported .rtf" : "Export failed",
 		)
 	case .Import_Docx, .Import_Odt, .Import_Rtf:
-		nd: Doc
-		ok: bool
-		switch kind {
-		case .Import_Docx:
-			nd, ok = import_docx(full)
+		f := Doc_Format.Docx
+		#partial switch kind {
 		case .Import_Odt:
-			nd, ok = import_odt(full)
+			f = .Odt
 		case .Import_Rtf:
-			nd, ok = import_rtf(full)
-		case .None, .Open, .Save_As, .Export_Md, .Import_Md, .Export_Html, .Export_Png,
-		     .Export_Pdf, .Export_Docx, .Export_Odt, .Export_Rtf, .Insert_Image, .Insert_Table,
-		     .Comment, .Reply, .Share, .Name_Version:
+			f = .Rtf
 		}
+		nd, ok := doc_import(full, f)
 		if ok {
 			replace_document(st, nd)
 			st.modified = true

@@ -810,7 +810,7 @@ prose_after :: proc(x, y: Prose_Alert) -> bool {
 }
 
 // ---------------------------------------------------------------------------
-// `docs --lint <file> [--json]`
+// `docs lint <file>` (and the older spelling `docs --lint`), declared in cli.odin
 //
 // The shape PALM-CLI.md asks for: one command, a documented object behind
 // `--json`, and an exit code that means something. Positions are reported in
@@ -819,196 +819,61 @@ prose_after :: proc(x, y: Prose_Alert) -> bool {
 // makes a mapping bug reportable against the file vale actually read.
 // ---------------------------------------------------------------------------
 
-cli_lint :: proc(path: string, as_json: bool) -> bool {
-	d, ok := cli_load(path)
-	if !ok {
-		if as_json {
-			prose_json_error(path, "cannot read the file")
-		} else {
-			fmt.eprintfln("docs: cannot read %s", path)
-		}
-		return false
-	}
-	defer doc_destroy(&d)
+// Lint_Result is one run of the linter over one document, whichever front end
+// asked for it.
+Lint_Result :: struct {
+	config:  string,
+	style:   string, // "Palm" when our own package applied, "" for a project's
+	blocks:  int,
+	skipped: int,
+	alerts:  []Prose_Alert,
+	errors, warnings, suggestions: int,
+}
 
-	avail, why := prose_probe(context.temp_allocator)
-	config := ""
-	if avail {
-		found := prose_project_config(path, context.temp_allocator)
-		if found != "" {
-			config = found
-		} else {
-			ini, err := prose_materialise(context.temp_allocator)
-			if err != "" {
-				avail, why = false, err
-			} else {
-				config = ini
-			}
-		}
-	}
+// prose_resolve_config is the choice the window makes in prose_setup and
+// prose_pick_config: the document's own project config when there is one,
+// the embedded Palm package otherwise. `why` is set when vale cannot run.
+prose_resolve_config :: proc(doc_path: string, alloc := context.temp_allocator) -> (config: string, why: string) {
+	avail, reason := prose_probe(alloc)
 	if !avail {
-		// The failure that matters: say the linter did not run. An empty list
-		// here would read as a clean document, and that is the one answer this
-		// command must never give by accident.
-		if as_json {
-			prose_json_error(path, why)
-		} else {
-			fmt.eprintfln("docs --lint: %s", why)
-		}
-		return false
+		return "", reason
 	}
-
-	alerts, skipped, err := prose_lint_text(&d, config, context.temp_allocator)
+	if found := prose_project_config(doc_path, alloc); found != "" {
+		return found, ""
+	}
+	ini, err := prose_materialise(alloc)
 	if err != "" {
-		if as_json {
-			prose_json_error(path, err)
-		} else {
-			fmt.eprintfln("docs --lint: %s", err)
-		}
-		return false
+		return "", err
 	}
+	return ini, ""
+}
 
-	errs, warns, sugs := 0, 0, 0
+// lint_document runs vale over a document. `unavailable` distinguishes "the
+// linter could not run" from a failure inside a run, because an empty list
+// must never be mistaken for a clean document.
+lint_document :: proc(d: ^Doc, doc_path: string, alloc := context.temp_allocator) -> (r: Lint_Result, err: string, unavailable: bool) {
+	config, why := prose_resolve_config(doc_path, alloc)
+	if why != "" {
+		return r, why, true
+	}
+	r.config = config
+	r.style = strings.contains(config, "palmy-docs") ? "Palm" : ""
+	r.blocks = len(doc_blocks(d, context.temp_allocator))
+	alerts, skipped, lerr := prose_lint_text(d, config, alloc)
+	if lerr != "" {
+		return r, lerr, false
+	}
+	r.alerts = alerts
+	r.skipped = skipped
 	for &a in alerts {
 		switch a.sev {
 		case .Error:
-			errs += 1
+			r.errors += 1
 		case .Warning:
-			warns += 1
+			r.warnings += 1
 		case .Suggestion:
-			sugs += 1
+			r.suggestions += 1
 		}
 	}
-
-	if as_json {
-		// Braces are written rather than formatted: Odin's `fmt` reads `{` as
-		// the head of an argument spec, so a format string cannot carry one.
-		b := strings.builder_make(context.temp_allocator)
-		strings.write_string(&b, "{\n")
-		fmt.sbprintf(&b, "  \"ok\": true,\n  \"file\": %s,\n", prose_quote(path))
-		fmt.sbprintf(&b, "  \"engine\": \"vale\",\n  \"config\": %s,\n", prose_quote(config))
-		fmt.sbprintf(
-			&b,
-			"  \"style\": %s,\n  \"blocks\": %d,\n  \"blocks_unchecked\": %d,\n",
-			strings.contains(config, "palmy-docs") ? "\"Palm\"" : "null",
-			len(doc_blocks(&d, context.temp_allocator)),
-			skipped,
-		)
-		fmt.sbprintf(&b, "  \"counts\": ")
-		strings.write_string(&b, "{ ")
-		fmt.sbprintf(&b, "\"error\": %d, \"warning\": %d, \"suggestion\": %d", errs, warns, sugs)
-		strings.write_string(&b, " },\n")
-		strings.write_string(&b, "  \"alerts\": [\n")
-		for &a, i in alerts {
-			strings.write_string(&b, "    { ")
-			fmt.sbprintf(
-				&b,
-				"\"rule\": %s, \"severity\": %s, \"message\": %s, \"match\": %s,\n",
-				prose_quote(a.check),
-				prose_quote(prose_sev_label(a.sev)),
-				prose_quote(a.message),
-				prose_quote(a.match),
-			)
-			strings.write_string(&b, "      \"block\": { ")
-			fmt.sbprintf(
-				&b,
-				"\"para\": %d, \"row\": %d, \"col\": %d, \"cpara\": %d",
-				a.blk.para,
-				a.blk.row,
-				a.blk.col,
-				a.blk.cpara,
-			)
-			strings.write_string(&b, " },\n")
-			fmt.sbprintf(
-				&b,
-				"      \"from\": %d, \"to\": %d, \"line\": %d, \"column\": %d, \"replacement\": %s",
-				a.from,
-				a.to,
-				a.line,
-				a.col,
-				a.fix == "" ? "null" : prose_quote(a.fix),
-			)
-			strings.write_string(&b, i + 1 < len(alerts) ? " },\n" : " }\n")
-		}
-		strings.write_string(&b, "  ]\n}\n")
-		fmt.print(strings.to_string(b))
-	} else {
-		fmt.printfln(
-			"%s — %s, %s, %s",
-			path,
-			prose_plural(errs, "error"),
-			prose_plural(warns, "warning"),
-			prose_plural(sugs, "suggestion"),
-		)
-		if skipped > 0 {
-			fmt.printfln("  (%s not checked: code, a picture or a grid)", prose_plural(skipped, "block"))
-		}
-		for &a in alerts {
-			fmt.printfln(
-				"  %d:%d  %-10s  %-16s %s",
-				a.line,
-				a.col,
-				prose_sev_label(a.sev),
-				a.check,
-				a.message,
-			)
-			fmt.printfln(
-				"        block %d+%d..%d  %q%s",
-				a.blk.para,
-				a.from,
-				a.to,
-				a.match,
-				a.fix == "" ? "" : fmt.tprintf("  →  %q", a.fix),
-			)
-		}
-	}
-	// Nonzero only for an error-level alert, so a warning does not fail a
-	// script that only cares about the things that are plainly wrong.
-	return errs == 0
-}
-
-// prose_quote is a JSON string literal. The document's own JSON writer keeps
-// its escaper file-private, and this one has to handle a path as well as a
-// message, so it is its own.
-prose_quote :: proc(s: string, alloc := context.temp_allocator) -> string {
-	b := strings.builder_make(alloc)
-	strings.write_byte(&b, '"')
-	for i in 0 ..< len(s) {
-		c := s[i]
-		switch c {
-		case '"':
-			strings.write_string(&b, "\\\"")
-		case '\\':
-			strings.write_string(&b, "\\\\")
-		case '\n':
-			strings.write_string(&b, "\\n")
-		case '\r':
-			strings.write_string(&b, "\\r")
-		case '\t':
-			strings.write_string(&b, "\\t")
-		case:
-			if c < 0x20 {
-				fmt.sbprintf(&b, "\\u%04x", int(c))
-			} else {
-				strings.write_byte(&b, c)
-			}
-		}
-	}
-	strings.write_byte(&b, '"')
-	return strings.to_string(b)
-}
-
-// prose_json_error is the one-line failure object. It exists so the four exit
-// paths above cannot disagree about its shape.
-prose_json_error :: proc(path, why: string) {
-	b := strings.builder_make(context.temp_allocator)
-	strings.write_string(&b, "{ ")
-	fmt.sbprintf(
-		&b,
-		"\"ok\": false, \"file\": %s, \"engine\": \"vale\", \"error\": %s",
-		prose_quote(path),
-		prose_quote(why),
-	)
-	strings.write_string(&b, " }\n")
-	fmt.print(strings.to_string(b))
+	return r, "", false
 }

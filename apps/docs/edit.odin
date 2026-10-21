@@ -1442,12 +1442,21 @@ find_from :: proc(st: ^State, from: Pos) -> (lo, hi: Pos, ok: bool) {
 	return {}, {}, false
 }
 
-count_hits :: proc(st: ^State) -> int {
+// Find_Hit is one match: the block it is in and its byte span there.
+Find_Hit :: struct {
+	blk:    Blk,
+	lo, hi: int,
+}
+
+// find_all walks every text block with the find box's own options. The hit
+// count in the find bar and `docs find` are both this walk, so the number the
+// window shows and the list an agent gets cannot disagree.
+find_all :: proc(st: ^State, limit := 0, alloc := context.temp_allocator) -> []Find_Hit {
+	out := make([dynamic]Find_Hit, alloc)
 	needle := string(st.find[:])
 	if len(needle) == 0 {
-		return 0
+		return out[:]
 	}
-	n := 0
 	for blk in doc_blocks(&st.doc) {
 		pa := blk_para(&st.doc, blk)
 		if pa == nil || !text_kind(pa.kind) {
@@ -1460,13 +1469,36 @@ count_hits :: proc(st: ^State) -> int {
 			if !hit {
 				break
 			}
-			n += 1
+			append(&out, Find_Hit{blk, lo, hi})
+			if limit > 0 && len(out) >= limit {
+				return out[:]
+			}
 			// An empty match — `a*` against "bbb" — must still make progress,
 			// or counting them never finishes.
 			at = hi > lo ? hi : lo + 1
 		}
 	}
-	return n
+	return out[:]
+}
+
+count_hits :: proc(st: ^State) -> int {
+	return len(find_all(st))
+}
+
+// find_set puts a term, a replacement and the three options into the find
+// box, exactly as typing them and pressing the toggles would, and reports a
+// pattern that does not compile.
+find_set :: proc(st: ^State, term, repl: string, match_case, whole_word, regex: bool) -> (rx_err: string) {
+	clear(&st.find)
+	append(&st.find, term)
+	clear(&st.repl)
+	append(&st.repl, repl)
+	st.find_case = match_case
+	st.find_word = whole_word
+	st.find_regex = regex
+	rx_recompile(st)
+	st.find_hits = count_hits(st)
+	return st.rx_err
 }
 
 find_next :: proc(st: ^State) -> bool {
@@ -1545,12 +1577,11 @@ replacement_at :: proc(st: ^State, hay: string, at: int, alloc := context.alloca
 // the last, so the entire sweep collapses into a single snapshot. Calling
 // `edit_begin` per replacement would make undo take the document back one word
 // at a time, which is both slower and wrong.
-replace_all :: proc(st: ^State) {
+replace_all :: proc(st: ^State) -> (count: int) {
 	if len(st.find) == 0 {
-		return
+		return 0
 	}
 	edit_begin(st, .Structural)
-	count := 0
 	// The block list is taken once: a replacement changes bytes, never the
 	// shape of the document, so the list stays valid for the whole sweep.
 	for blk in doc_blocks(&st.doc, context.temp_allocator) {
@@ -1584,6 +1615,7 @@ replace_all :: proc(st: ^State) {
 	history_break(&st.hist)
 	st.dirty = true
 	note(st, fmt.tprintf("Replaced %d occurrence%s", count, count == 1 ? "" : "s"))
+	return count
 }
 
 // ---------------------------------------------------------------------------
@@ -1675,7 +1707,7 @@ replace_document :: proc(st: ^State, nd: Doc) {
 
 do_save :: proc(st: ^State, path: string) {
 	full := expand_home(path, context.temp_allocator)
-	if save_doc(&st.doc, full) {
+	if doc_export(st, full, .Json, doc_title(st)) {
 		set_path(st, full)
 		st.modified = false
 		note(st, fmt.tprintf("Saved %s", doc_title(st)))
@@ -1702,18 +1734,8 @@ do_open :: proc(st: ^State, path: string) {
 		if !strings.has_suffix(full, imported.ext) {
 			continue
 		}
-		nd: Doc
-		ok: bool
-		switch imported.ext {
-		case ".docx":
-			nd, ok = import_docx(full)
-		case ".odt":
-			nd, ok = import_odt(full)
-		case ".rtf":
-			nd, ok = import_rtf(full)
-		case:
-			nd, ok = import_markdown(full)
-		}
+		// The same reader `docs convert` and every other command uses.
+		nd, ok := doc_read(full)
 		if !ok {
 			note(st, fmt.tprintf("Could not read %s", full))
 			return
@@ -1724,7 +1746,7 @@ do_open :: proc(st: ^State, path: string) {
 		note(st, fmt.tprintf("Imported %s", imported.label))
 		return
 	}
-	nd, ok := load_doc(full)
+	nd, ok := doc_import(full, .Json)
 	if !ok {
 		note(st, fmt.tprintf("Could not read %s", full))
 		return

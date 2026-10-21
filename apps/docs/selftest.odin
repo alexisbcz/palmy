@@ -126,6 +126,7 @@ run_selftest :: proc() -> bool {
 	test_rtf_import(&fonts)
 	test_cell_image(&fonts)
 	test_prose(&fonts)
+	test_cli()
 	{
 		cc, cf := test_collab(&fonts)
 		checks += cc
@@ -5166,5 +5167,168 @@ test_cell_image :: proc(fonts: ^p.Fonts) {
 		ok(found, "and the picture went into it rather than being refused")
 		ok(st2.caret.para == 0 && st2.caret.row == 1 && st2.caret.col == 1, "the caret stayed in the cell")
 		ok(!strings.contains(st2.toast, "cannot"), "and nothing was refused: %q", st2.toast)
+	}
+}
+
+// ---------------------------------------------------------------------------
+// The command line: the declaration, the old spellings, and each read's
+// output against the shape it declares. Commands are bound by the kit's own
+// parser and run in-process, so what is checked is what `docs <verb> --json`
+// would print.
+// ---------------------------------------------------------------------------
+
+@(private = "file")
+cli_run :: proc(argv: ..string) -> (code: int, out: string) {
+	c, bind := kit.cli_bind(surface(), argv)
+	if bind != kit.EXIT_OK {
+		return bind, ""
+	}
+	code = c.cmd.run(&c)
+	if code != kit.EXIT_OK {
+		return code, kit.json_text(c.err, 0, context.temp_allocator)
+	}
+	return code, kit.json_text(c.out, 0, context.temp_allocator)
+}
+
+@(private = "file")
+cli_fields_of :: proc(verb: string) -> []kit.Field {
+	for cmd in surface().commands {
+		if cmd.verb == verb {
+			return cmd.out
+		}
+	}
+	return nil
+}
+
+@(private = "file")
+cli_schema_ok :: proc(verb, out: string) {
+	problems := kit.cli_validate_output(out, cli_fields_of(verb), context.temp_allocator)
+	ok(len(problems) == 0, "docs %s --json matches its declared schema%s", verb, len(problems) > 0 ? fmt.tprintf(" (%s)", problems[0]) : "")
+}
+
+test_cli :: proc() {
+	section("command line: the declaration, the old spellings, the outputs")
+
+	s := surface()
+	ok(len(s.commands) >= 10, "the surface declares its commands (%d)", len(s.commands))
+	ok(s.takes_path && s.gui, "a bare path still opens in the window")
+	for cmd in s.commands {
+		ok(cmd.summary != "" && len(cmd.out) > 0 && len(cmd.examples) > 0, "%s has a summary, an output and an example", cmd.verb)
+		for e in cmd.examples {
+			words := kit.cli_split_example(e)
+			ok(len(words) > 0 && words[0] == "docs", "the example %q is typed as the binary is named", e)
+			if len(words) < 2 {
+				continue
+			}
+			_, code := kit.cli_bind(s, words[1:])
+			eq_int(code, kit.EXIT_OK, "the example %q parses", e)
+		}
+	}
+	for legacy in ([?]string{"--convert", "--export-png", "--shots", "--lint", "--bench"}) {
+		found := false
+		for cmd in s.commands {
+			for a in cmd.aliases {
+				if a == legacy {found = true}
+			}
+		}
+		ok(found, "the old spelling %s is still accepted", legacy)
+	}
+	{
+		_, handled := kit.cli_args(s, {"report.docx"})
+		ok(!handled, "`docs report.docx` is left to the window")
+		c, code := kit.cli_bind(s, {"--convert", "a.md", "b.pdf"})
+		eq_int(code, kit.EXIT_OK, "`docs --convert a.md b.pdf` binds")
+		ok(c.cmd != nil && c.cmd.verb == "convert", "to the convert command")
+	}
+
+	// Reads over the welcome document, which needs no file.
+	code, out := cli_run("info")
+	eq_int(code, 0, "docs info runs with no file")
+	cli_schema_ok("info", out)
+	ok(strings.contains(out, `"title":"The Anatomy of a Page"`), "and reads the welcome document")
+	code, out = cli_run("text", "--format", "markdown")
+	eq_int(code, 0, "docs text --format markdown runs")
+	cli_schema_ok("text", out)
+	code, out = cli_run("formats")
+	eq_int(code, 0, "docs formats runs")
+	cli_schema_ok("formats", out)
+	code, out = cli_run("bench", "20")
+	eq_int(code, 0, "docs bench 20 runs")
+	cli_schema_ok("bench", out)
+
+	// find is the find bar's own walk: the count it reports is find_hits.
+	code, out = cli_run("find", "pagination")
+	eq_int(code, 0, "docs find runs")
+	cli_schema_ok("find", out)
+	ok(strings.contains(out, `"count":2`), "and finds both mentions of pagination")
+	code, out = cli_run("find", "\\bpage\\w*", "--regex", "--limit", "1")
+	eq_int(code, 0, "docs find --regex runs")
+	ok(strings.contains(out, `"mode":".*"`), "under the find bar's regex mode")
+	ok(strings.count(out, `"match":`) == 1, "and --limit caps the list, not the count")
+	code, out = cli_run("find", "(", "--regex")
+	eq_int(code, kit.EXIT_USAGE, "a pattern that does not compile is a usage error")
+	code, _ = cli_run("info", "/nonexistent/palmy-docs.md")
+	eq_int(code, kit.EXIT_NOT_FOUND, "a missing file is not found")
+
+	// The mutating commands, on files in a private directory.
+	dir := fmt.tprintf("/tmp/palmy-docs-cli-%d", os.get_pid())
+	os.make_directory_all(dir)
+	defer os.remove_all(dir)
+	md := fmt.tprintf("%s/memo.md", dir)
+	code, out = cli_run("new", md, "--markdown", "# Memo\\n\\nThe colour of the colour chart.")
+	eq_int(code, 0, "docs new writes a document")
+	cli_schema_ok("new", out)
+	code, _ = cli_run("new", md, "--markdown", "x")
+	eq_int(code, kit.EXIT_USAGE, "and will not overwrite one without --force")
+
+	code, out = cli_run("replace", "colour", "color", md, "--dry-run")
+	eq_int(code, 0, "docs replace --dry-run runs")
+	cli_schema_ok("replace", out)
+	ok(strings.contains(out, `"replaced":2`) && strings.contains(out, `"written":false`), "and counts without writing")
+	{
+		data, _ := os.read_entire_file_from_path(md, context.temp_allocator)
+		ok(strings.contains(string(data), "colour"), "the file is untouched by a dry run")
+	}
+	code, out = cli_run("replace", "colour", "color", md)
+	eq_int(code, 0, "docs replace runs")
+	{
+		data, _ := os.read_entire_file_from_path(md, context.temp_allocator)
+		eq_str(string(data), "# Memo\n\nThe color of the color chart.\n", "and writes Replace All's result")
+	}
+	// The same replace through the window's own procedure gives the same text.
+	{
+		fonts := new(p.Fonts)
+		headless_fonts(fonts)
+		st := State{}
+		state_init(&st, fonts)
+		defer state_destroy(&st)
+		do_open(&st, md)
+		find_set(&st, "color", "colour", false, false, false)
+		replace_all(&st)
+		code2, out2 := cli_run("replace", "color", "colour", md, "--out", fmt.tprintf("%s/cli.md", dir))
+		eq_int(code2, 0, "docs replace --out runs")
+		_ = out2
+		data, _ := os.read_entire_file_from_path(fmt.tprintf("%s/cli.md", dir), context.temp_allocator)
+		eq_str(string(data), doc_to_markdown(&st.doc, context.temp_allocator), "and agrees with the window's Replace All")
+	}
+
+	pdf := fmt.tprintf("%s/memo.pdf", dir)
+	code, out = cli_run("--convert", md, pdf)
+	eq_int(code, 0, "docs --convert still converts")
+	cli_schema_ok("convert", out)
+	ok(os.exists(pdf), "and the PDF is there")
+	code, out = cli_run("export-png", md, fmt.tprintf("%s/memo", dir))
+	eq_int(code, 0, "docs export-png runs")
+	cli_schema_ok("export-png", out)
+	ok(os.exists(fmt.tprintf("%s/memo-p1.png", dir)), "and page one is on disk")
+
+	// lint answers either way: a result of its declared shape, or unavailable
+	// when vale is not installed — never an empty "clean" list in its place.
+	code, out = cli_run("lint", md)
+	ok(code == 0 || code == kit.EXIT_UNAVAILABLE, "docs lint runs or says vale is unavailable (%d)", code)
+	if code == 0 {
+		cli_schema_ok("lint", out)
+	} else {
+		ok(strings.contains(out, `"error":"unavailable"`), "with the documented token")
 	}
 }

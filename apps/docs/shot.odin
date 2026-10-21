@@ -127,6 +127,11 @@ shot_fonts :: proc(f: ^p.Fonts) {
 	load_italics(f)
 }
 
+// shots_written is every PNG the last `shots` call wrote, which is what
+// `docs shots --json` reports; the paths go to stderr as they are written, so
+// stdout stays the document.
+shots_written: [dynamic]string
+
 shots :: proc(dir: string) -> int {
 	if err := os.make_directory_all(dir, os.perm(0o755)); err != nil && !os.exists(dir) {
 		fmt.eprintfln("docs --shots: cannot create %s", dir)
@@ -189,7 +194,8 @@ shots :: proc(dir: string) -> int {
 		step(off, st, app)
 		path := fmt.tprintf("%s/%s.png", dir, name)
 		if p.offscreen_write_png(off, path) {
-			fmt.printfln("  %s", path)
+			append(&shots_written, strings.clone(path))
+			fmt.eprintfln("  %s", path)
 		} else {
 			fmt.eprintfln("  could not write %s", path)
 		}
@@ -312,6 +318,6 @@ shots :: proc(dir: string) -> int {
 	relayout(&st)
 	shot(off, &st, app, dir, "08-docs-prose-accepted")
 
-	fmt.printfln("docs --shots: wrote PNGs to %s", dir)
+	fmt.eprintfln("docs --shots: wrote PNGs to %s", dir)
 	return 0
 }
