@@ -4,6 +4,7 @@ package main
 //
 //   ffmpeg -ss T -i FILE -vn -f s16le -ar 48000 -ac 2 -   → PCM
 //   pw-cat -p --raw --format s16 --rate 48000 -           → the speakers
+//   (or `audio --null-sink`, a paced stand-in for a device: sink.odin)
 //
 // A pump thread moves bytes between them, scaling by the volume on the way. It
 // blocks when PipeWire is full, so the running total of bytes handed over is
@@ -259,31 +260,18 @@ engine_ensure_sink :: proc(e: ^Engine) -> bool {
 		return false
 	}
 	_, _ = linux.fcntl(linux.Fd(os.fd(sw)), linux.F_SETPIPE_SZ, i32(PIPE_BYTES))
-	sink, perr := os.process_start(
-		{
-			command = {
-				"pw-cat",
-				"-p",
-				"--raw",
-				"--format",
-				"s16",
-				"--rate",
-				fmt.tprintf("%d", RATE),
-				"--channels",
-				fmt.tprintf("%d", CH),
-				"--latency",
-				PW_LATENCY,
-				"-",
-			},
-			stdin = sr,
-			stdout = nil,
-			stderr = nil,
-		},
-	)
+	argv, why, have := sink_argv(RATE, CH, PW_LATENCY)
+	if !have {
+		os.close(sr)
+		os.close(sw)
+		e.err = why
+		return false
+	}
+	sink, perr := os.process_start({command = argv, stdin = sr, stdout = nil, stderr = nil})
 	os.close(sr)
 	if perr != nil {
 		os.close(sw)
-		e.err = "pw-cat is not installed — no sound output"
+		e.err = "the audio sink could not be started — no sound output"
 		return false
 	}
 	e.sproc = sink

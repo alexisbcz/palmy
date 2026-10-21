@@ -21,10 +21,25 @@ check :: proc(ok: bool, what: string) {
 	if !ok {
 		failures += 1
 		fmt.printfln("  FAIL  %s", what)
+	} else if verbose {
+		fmt.printfln("  ok    %s", what)
 	}
 }
 
+// PALMY_SELFTEST_VERBOSE=1 prints the passing checks too, with their numbers.
+@(private = "file")
+verbose: bool
+
 run_selftest :: proc() {
+	// The playback checks need a device whose clock runs. A headless machine
+	// has none, so unless the environment names a sink they run against the
+	// null sink (sink.odin): the real engine, the real pipe and back-pressure,
+	// and a child process that takes bytes at the rate a sound card would.
+	if os.get_env("PALMY_AUDIO_SINK", context.temp_allocator) == "" {
+		os.set_env("PALMY_AUDIO_SINK", "null")
+	}
+	verbose = os.get_env("PALMY_SELFTEST_VERBOSE", context.temp_allocator) != ""
+	fmt.printfln("playback checks use the %v sink", sink_kind())
 	test_fft()
 	test_peaks()
 	test_spectrum()
@@ -609,8 +624,8 @@ test_engine :: proc() {
 	}
 	analysis_stop(&a)
 
-	// The sink: only run it where PipeWire is available.
-	if !kit.has_tool("pw-cat") {
+	// The sink: only run it where PipeWire is available, or against the null sink.
+	if sink_kind() == .PipeWire && !kit.has_tool("pw-cat") {
 		fmt.println("  skip  pw-cat is not installed; sink checks not run")
 		return
 	}
@@ -627,10 +642,31 @@ test_engine :: proc() {
 	t := engine_clock(&e)
 	check(t > 0.1, "the byte-count clock advances")
 	check(t < m.duration + 1, "and stays inside the track")
+	// The clock is the sink's consumption, so over a second of wall time it
+	// moves by about a second: not a burst of whatever the pipe could hold.
+	{
+		w0 := time.now()
+		c0 := engine_clock(&e)
+		for time.duration_seconds(time.since(w0)) < 1.0 {
+			engine_tick(&e)
+			kit_sleep(10)
+		}
+		rate := (engine_clock(&e) - c0) / time.duration_seconds(time.since(w0))
+		check(rate > 0.8 && rate < 1.25, fmt.tprintf("the clock runs at the device's rate (%.2fx wall time)", rate))
+	}
 	engine_pause(&e, true)
 	frozen := engine_clock(&e)
 	kit_sleep(120)
 	check(abs(engine_clock(&e) - frozen) < 0.02, "pausing freezes the clock")
+	// A device that ran dry during the pause plays silence, not the missed
+	// interval: resuming carries on from where it stopped. The pause is
+	// stretched to most of a second so that a sink which swallowed it would
+	// land well past the bound.
+	kit_sleep(600)
+	engine_pause(&e, false)
+	kit_sleep(300)
+	resumed := engine_clock(&e)
+	check(resumed > frozen && resumed - frozen < 0.5, fmt.tprintf("resuming carries on from the frozen position (+%.2fs after 0.3s)", resumed - frozen))
 	engine_stop(&e)
 	check(!e.live, "stopping tears the pipeline down")
 }
@@ -643,7 +679,7 @@ test_gapless :: proc() {
 		fmt.println("  skip  ffmpeg is not installed; gapless checks not run")
 		return
 	}
-	if !kit.has_tool("pw-cat") {
+	if sink_kind() == .PipeWire && !kit.has_tool("pw-cat") {
 		fmt.println("  skip  pw-cat is not installed; gapless checks not run")
 		return
 	}
