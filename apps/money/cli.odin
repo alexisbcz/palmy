@@ -278,6 +278,9 @@ surface :: proc() -> ^kit.Surface {
 			summary    = "accounts, statement imports and budgets, read from files only",
 			gui        = true,
 			takes_path = true,
+			// `money statement.csv` imports a file that is there; `money
+			// lsit` is a typo, not an import of nothing.
+			takes_word = kit.cli_word_is_path,
 			selftest   = selftest_mode,
 			commands   = COMMANDS,
 			notes      = `Every command names its book: the reads as their first argument, the

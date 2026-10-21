@@ -243,6 +243,7 @@ surface :: proc() -> ^kit.Surface {
 		summary    = "a web browser: Palmy's chrome, Chromium's or Firefox's engine",
 		gui        = true,
 		takes_path = true,
+		takes_word = browser_takes_word,
 		selftest   = selftest,
 		notes      = NOTES,
 		commands   = COMMANDS,
@@ -307,11 +308,29 @@ gui_line :: proc(args: []string) -> (gui: bool, opt: Gui_Options) {
 			if a == "help" {
 				return false, {}
 			}
+			// Not something to open: the kit refuses it as a typo.
+			if !browser_takes_word(a) {
+				return false, {}
+			}
 			append(&urls, a)
 		}
 	}
 	opt.urls = urls[:]
 	return true, opt
+}
+
+// browser_takes_word says a bare word on the command line is something to
+// open: a file or a URI, an address the location bar would load rather than
+// search for (`example.org`, `localhost:8080`, `10.0.0.1`), or a phrase with
+// a space in it, which is a search nobody types by accident. A single word
+// that is none of those (`browser lsit`) is a mistyped verb, and a usage
+// error instead of a window searching the web for it.
+browser_takes_word :: proc(word: string) -> bool {
+	if kit.cli_word_is_path(word) || strings.contains_any(word, " \t") {
+		return true
+	}
+	_, is_search := resolve_input(word, Search_Engine{query = "%s"}, context.temp_allocator)
+	return !is_search
 }
 
 // ---------------------------------------------------------------------------

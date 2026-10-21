@@ -32,9 +32,12 @@ main :: proc() {
 	// The command line is the other front end over the same book: see cli.odin
 	// for the declaration and apps/kit/cli.odin for the convention it is parsed
 	// by. A declared verb, `help`, --help, --schema and --selftest go there.
-	// The older spellings below — and a bare FILE — keep their exact old
-	// behaviour, so nothing that already drives this program changes.
-	if len(args) > 0 && is_cli_head(args[0]) {
+	// The older spellings below keep their exact old behaviour, so nothing
+	// that already drives this program changes. A bare FILE goes past the
+	// kit first, which hands it back only when every bare word on the line
+	// names a file (takes_word): a mistyped verb is a usage error rather
+	// than a window that tries to import it.
+	if len(args) > 0 && (is_cli_head(args[0]) || !strings.has_prefix(args[0], "-")) {
 		if code, handled := kit.cli(surface()); handled {
 			os.exit(code)
 		}
