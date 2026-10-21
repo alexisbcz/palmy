@@ -350,27 +350,16 @@ selection_messages :: proc(st: ^State, allocator := context.temp_allocator) -> [
 }
 
 // archive_selection files the selection into Archive, creating it if the
-// account has never had one.
+// account has never had one. It is the E key; `mail archive` is the same
+// archive_paths over one message.
 archive_selection :: proc(st: ^State) {
-	msgs := selection_messages(st, context.temp_allocator)
-	if len(msgs) == 0 {
+	if len(selection_messages(st, context.temp_allocator)) == 0 {
 		note(st, "Nothing to archive")
-		return
-	}
-	ai := st.messages[msgs[0]].account
-	if ok, why := can_file(st, ai); !ok {
-		note(st, why)
 		return
 	}
 	// Taken before the folder is created, because creating one reloads the
 	// tree and renumbers everything in it.
-	paths := selection_paths(st, context.temp_allocator)
-	target := ensure_role_folder(st, ai, .Archive, "Archive")
-	if target < 0 {
-		note(st, "Could not create an Archive folder")
-		return
-	}
-	n, err := file_selection_of(st, messages_at_paths(st, paths), target)
+	n, err := archive_paths(st, selection_paths(st, context.temp_allocator))
 	if err != "" {
 		note(st, err)
 		return
@@ -378,13 +367,51 @@ archive_selection :: proc(st: ^State) {
 	note(st, tfmt("Archived %d message%s  ·  %s", n, plural(n), undo_phrase(n)))
 }
 
-// delete_selection is "move to Trash" for a protocol that has one, and the
-// local Trashed flag for POP3, which does not.
-delete_selection :: proc(st: ^State) {
-	msgs := selection_messages(st, context.temp_allocator)
+// archive_paths is archiving over messages named by path, which is the one
+// form that survives the reload creating an Archive folder causes. The window
+// and the command line both come through here.
+archive_paths :: proc(st: ^State, paths: []string) -> (moved: int, err: string) {
+	msgs := messages_at_paths(st, paths)
 	if len(msgs) == 0 {
+		return 0, "Nothing to archive"
+	}
+	ai := st.messages[msgs[0]].account
+	if ok, why := can_file(st, ai); !ok {
+		return 0, why
+	}
+	target := ensure_role_folder(st, ai, .Archive, "Archive")
+	if target < 0 {
+		return 0, "Could not create an Archive folder"
+	}
+	return file_selection_of(st, messages_at_paths(st, paths), target)
+}
+
+// delete_selection is "move to Trash" for a protocol that has one, and the
+// local Trashed flag for POP3, which does not. It is the D key; `mail trash`
+// is the same trash_paths over one message.
+delete_selection :: proc(st: ^State) {
+	if len(selection_messages(st, context.temp_allocator)) == 0 {
 		note(st, "Nothing to delete")
 		return
+	}
+	n, local, err := trash_paths(st, selection_paths(st, context.temp_allocator))
+	if err != "" {
+		note(st, err)
+		return
+	}
+	if local {
+		note(st, tfmt("Deleted %d message%s on this machine — POP3 has no server-side Trash", n, plural(n)))
+		return
+	}
+	note(st, tfmt("Moved %d message%s to Trash  ·  %s", n, plural(n), undo_phrase(n)))
+}
+
+// trash_paths deletes to Trash. `local` says the account was POP3 and the
+// delete is the local Trashed flag, the file left exactly where it was.
+trash_paths :: proc(st: ^State, paths: []string) -> (moved: int, local: bool, err: string) {
+	msgs := messages_at_paths(st, paths)
+	if len(msgs) == 0 {
+		return 0, false, "Nothing to delete"
 	}
 	ai := st.messages[msgs[0]].account
 
@@ -399,26 +426,18 @@ delete_selection :: proc(st: ^State) {
 		}
 		recount_folders(st)
 		rebuild_list(st)
-		note(st, tfmt("Deleted %d message%s on this machine — POP3 has no server-side Trash", n, plural(n)))
-		return
+		return n, true, ""
 	}
 
 	if st.folders[st.messages[msgs[0]].folder].role == .Trash {
-		note(st, "Already in Trash. Shift+D deletes it from disk.")
-		return
+		return 0, false, "Already in Trash. Shift+D deletes it from disk."
 	}
-	paths := selection_paths(st, context.temp_allocator)
 	target := ensure_role_folder(st, ai, .Trash, "Trash")
 	if target < 0 {
-		note(st, "Could not create a Trash folder")
-		return
+		return 0, false, "Could not create a Trash folder"
 	}
-	n, err := file_selection_of(st, messages_at_paths(st, paths), target)
-	if err != "" {
-		note(st, err)
-		return
-	}
-	note(st, tfmt("Moved %d message%s to Trash  ·  %s", n, plural(n), undo_phrase(n)))
+	n, ferr := file_selection_of(st, messages_at_paths(st, paths), target)
+	return n, false, ferr
 }
 
 // undo_phrase is honest about what Z will do. Only the last move is

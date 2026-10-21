@@ -40,7 +40,9 @@ MONO_FONTS :: [?]string {
 }
 
 main :: proc() {
-	// Modes that do not need a window, handled before one is opened.
+	// Modes that do not need a window, handled before one is opened. These
+	// are the flags this program has always taken, kept exactly as they were;
+	// the command line proper (cli.odin) is an addition beside them.
 	for arg in os.args[1:] {
 		switch {
 		case arg == "--fixtures":
@@ -59,6 +61,17 @@ main :: proc() {
 				dir = arg[eq + 1:]
 			}
 			os.exit(run_uitest(dir, true))
+		case strings.has_prefix(arg, "--palm-shots"):
+			dir := "palm-shots"
+			if eq := strings.index_byte(arg, '='); eq > 0 {
+				dir = arg[eq + 1:]
+			}
+			for a in os.args[1:] {
+				if strings.has_prefix(a, "--data-dir=") {
+					data_dir_override = strings.clone(a[len("--data-dir="):])
+				}
+			}
+			os.exit(palm_shots(dir))
 		case strings.has_prefix(arg, "--shots"):
 			// Offscreen screenshots of the real interface, against a mailbox
 			// generated for the purpose. No compositor, no window.
@@ -74,21 +87,28 @@ main :: proc() {
 				}
 			}
 			os.exit(shots(dir))
-		case strings.has_prefix(arg, "--palm-shots"):
-			dir := "palm-shots"
-			if eq := strings.index_byte(arg, '='); eq > 0 {
-				dir = arg[eq + 1:]
-			}
-			for a in os.args[1:] {
-				if strings.has_prefix(a, "--data-dir=") {
-					data_dir_override = strings.clone(a[len("--data-dir="):])
-				}
-			}
-			os.exit(palm_shots(dir))
-		case arg == "--help" || arg == "-h":
-			print_usage()
-			os.exit(0)
 		}
+	}
+
+	// The command line: everything else that is not one of the window's own
+	// path options. `--data-dir=`, `--maildir=` and `--save-dir=` are taken
+	// out first so `mail list --data-dir=X --json` reads X, and so a bare
+	// `mail --maildir=X` still opens the window on X.
+	rest := make([dynamic]string, context.temp_allocator)
+	for arg in os.args[1:] {
+		switch {
+		case strings.has_prefix(arg, "--data-dir="):
+			data_dir_override = strings.clone(arg[len("--data-dir="):])
+			data_dir_explicit = true
+		case strings.has_prefix(arg, "--maildir="):
+			cli_maildir = strings.clone(arg[len("--maildir="):])
+		case strings.has_prefix(arg, "--save-dir="):
+		case:
+			append(&rest, arg)
+		}
+	}
+	if code, handled := kit.cli_args(surface(), rest[:]); handled {
+		os.exit(code)
 	}
 
 	app, err := kit.start(
@@ -130,49 +150,6 @@ main :: proc() {
 	}
 }
 
-print_usage :: proc() {
-	fmt.println(
-		`mail — a Maildir mail client on palmy
-
-  mail                 open the client
-  mail --fixtures      write a fixture Maildir and accounts.conf, then exit
-  mail --selftest      run the headless assertions, then exit
-  mail --maildir=PATH  read one Maildir tree instead of the configured accounts
-  mail --save-dir=PATH where the Save Attachment dialog opens
-  mail --shots DIR     render the interface offscreen into PNGs
-  mail --uitest=DIR    render the interface offscreen into PNGs and exit
-  mail --walkthrough=DIR  render the whole walkthrough as a PNG sequence
-  mail --data-dir=PATH use another data directory (e.g. a demo account's)
-  mail --palm-shots=DIR --data-dir=PATH
-                       sign in to a dev Palmy stack offscreen and render
-                       the identity views (see cloud/mail/dev/demo.sh)
-
-Palmy (one account, several identities, each its own mailbox):
-
-  P  sign in, or the account card (S sync · O sign out)
-  1-9  one identity      0  all identities
-  Shift+I  the unified inbox, a prototype: every identity's inbox in one list
-
-Keys, all unmodified so the keyboard alone is enough:
-
-  J K  move      Enter  open      C compose/continue a draft    / search
-  Shift+C  a new blank message      T  select · Shift+T clears
-  V W  choose an attachment, save it through the file dialog
-  E M D  archive · move to a folder · delete to Trash      Z  undo a move
-  Shift+D  delete from disk — the one irreversible thing, and it asks first
-
-The composer autosaves. Closing it keeps the draft; C picks it back up, and
-starting another composition files the unfinished one in Drafts rather than
-dropping it. Only the Discard button throws a draft away.
-
-This client has no network code. It reads a Maildir from disk; Send queues a
-message into the account's own local Outbox and transmits nothing (for a
-Palmy identity, the next sync hands it to the server, which delivers to
-local identities only). Signing in and syncing run mailcore. Saving an
-attachment writes the decoded bytes to a file you choose, and nowhere else.`,
-	)
-}
-
 init_state :: proc(st: ^State) {
 	// `--data-dir=PATH` points the whole app at another data directory — a
 	// demo account's synced identities, say — instead of the default one.
@@ -182,14 +159,6 @@ init_state :: proc(st: ^State) {
 			data_dir_explicit = true
 		}
 	}
-	st.data_dir = default_data_dir()
-	st.tz_offset = local_offset()
-	st.now = time.now()
-	st.reader_msg = -1
-	st.list_scroll_to = -1
-	st.att_sel = -1
-	st.pane = .List
-
 	// `--maildir=PATH` makes one ad-hoc account out of a tree on disk, which
 	// is how to point the UI at whatever the engine has just written without
 	// editing a config file. It is still only ever read.
@@ -203,25 +172,8 @@ init_state :: proc(st: ^State) {
 			save_dir = arg[len("--save-dir="):]
 		}
 	}
+	model_open(st, override)
 	st.save_dir = strings.clone(save_dir != "" ? save_dir : default_save_dir(context.temp_allocator))
-
-	st.single_tree = override != ""
-	if override != "" {
-		append(
-			&st.accounts,
-			Account {
-				name = strings.clone("Maildir"),
-				protocol = .IMAP,
-				address = strings.clone("local@localhost"),
-				host = strings.clone("127.0.0.1"),
-				root = strings.clone(override),
-				loopback = true,
-			},
-		)
-	} else {
-		load_config(st)
-		discover_accounts(st)
-	}
 
 	// No fixtures yet and nothing configured on disk? Write them, rather than
 	// opening onto an empty window with no way forward.
@@ -255,6 +207,39 @@ init_state :: proc(st: ^State) {
 	draft_peek(st)
 	if st.draft_waiting {
 		note(st, tfmt("An unsent draft is waiting: %s  ·  press C", st.draft_label))
+	}
+}
+
+// model_open sets up everything the model needs and finds the accounts, and
+// nothing else: no window, no fixtures, no draft. The window's init_state
+// starts here and the command line (cli.odin) starts here, so the two see the
+// same accounts in the same order — which matters, because a POP3 account's
+// local flag sidecar is keyed by that order.
+model_open :: proc(st: ^State, maildir: string) {
+	st.data_dir = default_data_dir()
+	st.tz_offset = local_offset()
+	st.now = time.now()
+	st.reader_msg = -1
+	st.list_scroll_to = -1
+	st.att_sel = -1
+	st.pane = .List
+
+	st.single_tree = maildir != ""
+	if maildir != "" {
+		append(
+			&st.accounts,
+			Account {
+				name = strings.clone("Maildir"),
+				protocol = .IMAP,
+				address = strings.clone("local@localhost"),
+				host = strings.clone("127.0.0.1"),
+				root = strings.clone(maildir),
+				loopback = true,
+			},
+		)
+	} else {
+		load_config(st)
+		discover_accounts(st)
 	}
 }
 

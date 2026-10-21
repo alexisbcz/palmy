@@ -71,6 +71,7 @@ run_selftest :: proc() -> int {
 	test_autocomplete()
 	test_palmy()
 	test_fixtures_and_threading()
+	test_cli()
 
 	fmt.printfln("")
 	if failures == 0 {

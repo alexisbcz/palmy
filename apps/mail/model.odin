@@ -634,6 +634,12 @@ default_data_dir :: proc(allocator := context.allocator) -> string {
 	if data_dir_override != "" {
 		return strings.clone(data_dir_override, allocator)
 	}
+	// $PALMY_MAIL_DIR does the same from the environment, which is how the
+	// command line's self-test and any agent driving it keep every run inside
+	// a scratch tree: a variable reaches every child, a flag only one.
+	if env := os.get_env("PALMY_MAIL_DIR", context.temp_allocator); env != "" {
+		return strings.clone(env, allocator)
+	}
 	home := os.get_env("HOME", context.temp_allocator)
 	if home == "" {
 		home = "/tmp"
