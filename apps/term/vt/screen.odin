@@ -96,6 +96,9 @@ Row :: struct {
 	// one logical line rather than two.
 	wrapped: bool,
 	dirty:   bool,
+	// The images on this row, if any: see graphics.odin. Nil for almost
+	// every row, so a row of text pays one empty slice for the feature.
+	frags:   []Frag,
 }
 
 Screen :: struct {
@@ -128,10 +131,10 @@ screen_init :: proc(s: ^Screen, cols, rows, sb_limit: int) {
 
 screen_destroy :: proc(s: ^Screen) {
 	for &r in s.lines {
-		delete(r.cells)
+		row_free(&r)
 	}
 	for &r in s.scrollback {
-		delete(r.cells)
+		row_free(&r)
 	}
 	delete(s.lines)
 	delete(s.scrollback)
@@ -158,7 +161,15 @@ make_row :: proc(cols: int, pen: Pen) -> Row {
 	return Row{cells = cells, dirty = true}
 }
 
+// row_free releases everything a row owns: its cells and its images.
+row_free :: proc(r: ^Row) {
+	row_release(r)
+	delete(r.cells)
+	r.cells = nil
+}
+
 row_clear :: proc(r: ^Row, pen: Pen) {
+	row_release(r)
 	b := blank_cell(pen)
 	for i in 0 ..< len(r.cells) {
 		r.cells[i] = b
@@ -188,21 +199,23 @@ row_used :: proc(r: Row) -> int {
 @(private = "file")
 push_scrollback :: proc(s: ^Screen, r: Row) {
 	if s.sb_limit <= 0 {
-		delete(r.cells)
+		r := r
+		row_free(&r)
 		return
 	}
 	used := row_used(r)
 	trimmed := make([]Cell, used)
 	copy(trimmed, r.cells[:used])
 	delete(r.cells)
-	append(&s.scrollback, Row{cells = trimmed, wrapped = r.wrapped})
+	append(&s.scrollback, Row{cells = trimmed, wrapped = r.wrapped, frags = r.frags})
 	if len(s.scrollback) > s.sb_limit {
 		// Dropping from the front of a dynamic array is O(n), so drop a
 		// block at a time: an eighth of the limit, amortised to nothing.
 		drop := max(1, s.sb_limit / 8)
 		drop = min(drop, len(s.scrollback))
 		for i in 0 ..< drop {
-			delete(s.scrollback[i].cells)
+			// This is where an image scrolled out of the history is let go.
+			row_free(&s.scrollback[i])
 		}
 		copy(s.scrollback[:], s.scrollback[drop:])
 		resize(&s.scrollback, len(s.scrollback) - drop)
@@ -223,7 +236,7 @@ screen_scroll_up :: proc(s: ^Screen, top, bot, n: int, pen: Pen, history: bool) 
 		if history && top == 0 {
 			push_scrollback(s, r)
 		} else {
-			delete(r.cells)
+			row_free(&r)
 		}
 	}
 	// Shift the survivors up and fill the hole at the bottom.
@@ -242,7 +255,7 @@ screen_scroll_down :: proc(s: ^Screen, top, bot, n: int, pen: Pen) {
 	}
 	count := min(n, bot - top + 1)
 	for i in 0 ..< count {
-		delete(s.lines[bot - i].cells)
+		row_free(&s.lines[bot - i])
 	}
 	for i := bot; i - count >= top; i -= 1 {
 		s.lines[i] = s.lines[i - count]

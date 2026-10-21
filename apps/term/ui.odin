@@ -125,6 +125,13 @@ frame :: proc(a: ^Term_App, ui: ^p.Ctx) {
 		renderer_metrics(&a.rend, a.font_size, scale)
 		a.rend.full = true
 	}
+	// Images are measured in cells of the size the font gives.
+	for tb in a.sess.tabs {
+		if tb.term.gfx.cell_w != a.rend.cell_w || tb.term.gfx.cell_h != a.rend.cell_h {
+			vt.terminal_set_cell_size(&tb.term, a.rend.cell_w, a.rend.cell_h)
+			pty_resize(&tb.pty, tb.term.cols, tb.term.rows, a.rend.cell_w, a.rend.cell_h)
+		}
+	}
 	cols, rows := renderer_fit(&a.rend, int(grid_w * scale), int(grid_h * scale))
 	if cols != a.sess.cols || rows != a.sess.rows {
 		session_resize(&a.sess, cols, rows)
@@ -158,6 +165,9 @@ frame :: proc(a: ^Term_App, ui: ^p.Ctx) {
 	}
 
 	if t != nil {
+		if vt.graphics_take_changed(&t.term) {
+			a.rend.full = true
+		}
 		renderer_draw(&a.rend, &t.term, a.sel, a.focused, a.blink_on)
 	}
 	p.pixels(ui, "flex-1 w-full", a, proc(c: ^p.Canvas, r: p.Rect, a: ^Term_App) {

@@ -20,6 +20,10 @@ MAX_PARAMS :: 32
 MAX_INTERMEDIATES :: 4
 MAX_OSC :: 8 * 1024
 MAX_DCS :: 8 * 1024
+// An APC carries one Kitty graphics command, and a client that does not
+// chunk sends a whole image in one. Past this the string is dropped rather
+// than acted on truncated; the graphics budget still applies after it.
+MAX_APC :: 48 * 1024 * 1024
 
 State :: enum u8 {
 	Ground,
@@ -35,7 +39,8 @@ State :: enum u8 {
 	Dcs_Passthrough,
 	Dcs_Ignore,
 	Osc_String,
-	Sos_Pm_Apc_String,
+	Sos_Pm_String,
+	Apc_String,
 }
 
 Action_Kind :: enum u8 {
@@ -47,6 +52,7 @@ Action_Kind :: enum u8 {
 	Dcs_Hook,     // a DCS began: params/intermediates/final are set
 	Dcs_Put,      // b is one byte of the DCS payload
 	Dcs_Unhook,   // the DCS ended
+	Apc_Dispatch, // osc holds the raw APC string (the Kitty graphics protocol)
 }
 
 Action :: struct {
@@ -96,12 +102,22 @@ Parser :: struct {
 	nosc:        int,
 	osc_full:    bool,
 
+	// APC strings are the one thing that can be large, so they go in a
+	// buffer that grows on demand instead of a fixed array.
+	apc:         [dynamic]u8,
+	apc_full:    bool,
+
 	sink:        Sink,
 }
 
 parser_init :: proc(p: ^Parser, sink: Sink) {
 	p^ = {}
 	p.sink = sink
+}
+
+parser_destroy :: proc(p: ^Parser) {
+	delete(p.apc)
+	p.apc = nil
 }
 
 @(private = "file")
@@ -230,7 +246,13 @@ parse_byte :: proc(p: ^Parser, b: u8) {
 			clear_state(p)
 			return
 		}
-		if p.state == .Sos_Pm_Apc_String {
+		if p.state == .Sos_Pm_String {
+			p.state = .Escape
+			clear_state(p)
+			return
+		}
+		if p.state == .Apc_String {
+			apc_finish(p)
 			p.state = .Escape
 			clear_state(p)
 			return
@@ -263,9 +285,13 @@ parse_byte :: proc(p: ^Parser, b: u8) {
 		case b == 'P':
 			clear_state(p)
 			p.state = .Dcs_Entry
-		case b == 'X' || b == '^' || b == '_':
+		case b == 'X' || b == '^':
 			clear_state(p)
-			p.state = .Sos_Pm_Apc_String
+			p.state = .Sos_Pm_String
+		case b == '_':
+			clear_state(p)
+			apc_begin(p)
+			p.state = .Apc_String
 		case b >= 0x30 && b <= 0x7E:
 			dispatch(p, .Esc_Dispatch, b)
 			p.state = .Ground
@@ -446,11 +472,42 @@ parse_byte :: proc(p: ^Parser, b: u8) {
 			}
 		}
 
-	case .Sos_Pm_Apc_String:
+	case .Sos_Pm_String:
 		if b == 0x9C {
 			p.state = .Ground
 		}
+
+	case .Apc_String:
+		if b == 0x9C {
+			apc_finish(p)
+			p.state = .Ground
+		} else if len(p.apc) < MAX_APC {
+			append(&p.apc, b)
+		} else {
+			p.apc_full = true
+		}
 	}
+}
+
+@(private = "file")
+apc_begin :: proc(p: ^Parser) {
+	clear(&p.apc)
+	p.apc_full = false
+}
+
+@(private = "file")
+apc_finish :: proc(p: ^Parser) {
+	if !p.apc_full {
+		emit(p, Action{kind = .Apc_Dispatch, osc = p.apc[:]})
+	}
+	clear(&p.apc)
+	// A big transfer leaves a big buffer behind; give it back rather than
+	// holding megabytes for the rest of the session.
+	if cap(p.apc) > 64 * 1024 {
+		delete(p.apc)
+		p.apc = nil
+	}
+	p.apc_full = false
 }
 
 @(private = "file")
@@ -512,9 +569,13 @@ c1_execute :: proc(p: ^Parser, b: u8) {
 	case 0x90: // DCS
 		clear_state(p)
 		p.state = .Dcs_Entry
-	case 0x98, 0x9E, 0x9F: // SOS, PM, APC
+	case 0x98, 0x9E: // SOS, PM
 		clear_state(p)
-		p.state = .Sos_Pm_Apc_String
+		p.state = .Sos_Pm_String
+	case 0x9F: // APC
+		clear_state(p)
+		apc_begin(p)
+		p.state = .Apc_String
 	case 0x9B: // CSI
 		clear_state(p)
 		p.state = .Csi_Entry

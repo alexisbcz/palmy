@@ -21,6 +21,12 @@ package vt
 // meantime produces a mess that then gets overwritten anyway.
 // ---------------------------------------------------------------------------
 
+@(private = "file")
+Moved_Frag :: struct {
+	f:   Frag,
+	off: int,
+}
+
 // Logical_Pos is a position expressed against the unwrapped text, which is the
 // only thing that stays meaningful across a resize.
 @(private = "file")
@@ -79,7 +85,7 @@ resize_plain :: proc(s: ^Screen, cols, rows: int, pen: Pen) {
 		r.dirty = true
 	}
 	for len(s.lines) > rows {
-		delete(s.lines[len(s.lines) - 1].cells)
+		row_free(&s.lines[len(s.lines) - 1])
 		pop(&s.lines)
 	}
 	for len(s.lines) < rows {
@@ -99,11 +105,17 @@ reflow_primary :: proc(t: ^Terminal, cols, rows: int) {
 		// True when the original text really did end here, as opposed to
 		// having been cut off by the right edge.
 		hard_break: bool,
+		// Image fragments, each with the offset into this logical line of
+		// the row it came from. Images are not re-wrapped -- a picture
+		// does not flow like text -- but they stay with the text they were
+		// next to.
+		frags:      [dynamic]Moved_Frag,
 	}
 	lines := make([dynamic]Logical, 0, screen_total_rows(s))
 	defer {
 		for &l in lines {
 			delete(l.cells)
+			delete(l.frags)
 		}
 		delete(lines)
 	}
@@ -136,6 +148,12 @@ reflow_primary :: proc(t: ^Terminal, cols, rows: int) {
 		if i == cursor_abs {
 			cursor_pos = {line = len(lines) - 1, off = len(cur.cells) + t.cursor.x, found = true}
 		}
+		for f in r.frags {
+			append(&cur.frags, Moved_Frag{f = f, off = len(cur.cells)})
+		}
+		// Ownership moves to the logical line; the row no longer holds them.
+		delete(r.frags)
+		r.frags = nil
 		for j in 0 ..< n {
 			append(&cur.cells, r.cells[j])
 		}
@@ -179,7 +197,24 @@ reflow_primary :: proc(t: ^Terminal, cols, rows: int) {
 				new_cursor_row = len(out)
 				new_cursor_col = min(cursor_pos.off - start, cols - 1)
 			}
-			append(&out, Row{cells = cells, wrapped = soft, dirty = true})
+			nr := Row{cells = cells, wrapped = soft, dirty = true}
+			nf := 0
+			for mf in l.frags {
+				if mf.off >= start && (mf.off < end || !soft) {
+					nf += 1
+				}
+			}
+			if nf > 0 {
+				nr.frags = make([]Frag, nf)
+				k := 0
+				for mf in l.frags {
+					if mf.off >= start && (mf.off < end || !soft) {
+						nr.frags[k] = mf.f
+						k += 1
+					}
+				}
+			}
+			append(&out, nr)
 			start = end
 			if !soft {
 				break
@@ -190,11 +225,11 @@ reflow_primary :: proc(t: ^Terminal, cols, rows: int) {
 	// 3. Split the result back into scrollback and active area, keeping the
 	//    cursor's row on screen.
 	for &r in s.lines {
-		delete(r.cells)
+		row_free(&r)
 	}
 	clear(&s.lines)
 	for &r in s.scrollback {
-		delete(r.cells)
+		row_free(&r)
 	}
 	clear(&s.scrollback)
 
@@ -204,7 +239,7 @@ reflow_primary :: proc(t: ^Terminal, cols, rows: int) {
 	// the window goes blank -- which is exactly the thing reflow exists to
 	// prevent.
 	last := len(out)
-	for last > rows && last > new_cursor_row + 1 && row_used(out[last - 1]) == 0 {
+	for last > rows && last > new_cursor_row + 1 && row_used(out[last - 1]) == 0 && out[last - 1].frags == nil {
 		delete(out[last - 1].cells)
 		last -= 1
 	}
@@ -229,7 +264,7 @@ reflow_primary :: proc(t: ^Terminal, cols, rows: int) {
 		trimmed := make([]Cell, used)
 		copy(trimmed, r.cells[:used])
 		delete(r.cells)
-		append(&s.scrollback, Row{cells = trimmed, wrapped = r.wrapped})
+		append(&s.scrollback, Row{cells = trimmed, wrapped = r.wrapped, frags = r.frags})
 	}
 	for i in first_active ..< first_active + rows {
 		append(&s.lines, out[i])
@@ -240,7 +275,7 @@ reflow_primary :: proc(t: ^Terminal, cols, rows: int) {
 	if s.sb_limit > 0 && len(s.scrollback) > s.sb_limit {
 		drop := len(s.scrollback) - s.sb_limit
 		for i in 0 ..< drop {
-			delete(s.scrollback[i].cells)
+			row_free(&s.scrollback[i])
 		}
 		copy(s.scrollback[:], s.scrollback[drop:])
 		resize(&s.scrollback, s.sb_limit)

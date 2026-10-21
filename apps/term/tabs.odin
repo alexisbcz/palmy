@@ -75,6 +75,7 @@ session_destroy :: proc(s: ^Session) {
 tab_open :: proc(s: ^Session, argv: []string = nil, cwd: string = "") -> (^Tab, string) {
 	t := new(Tab)
 	vt.terminal_init(&t.term, s.cols, s.rows, s.scrollback)
+	t.term.gfx.load_file = kitty_read_file
 	cmd := argv
 	if len(cmd) == 0 {
 		cmd = s.shell
@@ -261,7 +262,7 @@ session_resize :: proc(s: ^Session, cols, rows: int) {
 	s.rows = rows
 	for t in s.tabs {
 		vt.terminal_resize(&t.term, cols, rows)
-		pty_resize(&t.pty, cols, rows)
+		pty_resize(&t.pty, cols, rows, t.term.gfx.cell_w, t.term.gfx.cell_h)
 	}
 }
 

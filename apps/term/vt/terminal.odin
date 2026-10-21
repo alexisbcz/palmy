@@ -65,6 +65,7 @@ Modes :: struct {
 	linefeed_newline:  bool, // LNM
 	reverse_wrap:      bool, // 45
 	modify_other_keys: bool,
+	sixel_display:     bool, // 80  DECSDM: sixels at the top left, no scrolling
 }
 
 Terminal :: struct {
@@ -113,6 +114,10 @@ Terminal :: struct {
 	// Set whenever anything changed, so a sleeping frame loop knows there is
 	// something to draw.
 	damaged:       bool,
+
+	// Images: Sixel and the Kitty graphics protocol. See graphics.odin.
+	gfx:           Graphics,
+	sixel:         Sixel,
 }
 
 DEFAULT_SCROLLBACK :: 10_000
@@ -136,12 +141,18 @@ terminal_init :: proc(t: ^Terminal, cols, rows: int, scrollback := DEFAULT_SCROL
 	t.modes.cursor_visible = true
 	t.top = 0
 	t.bot = t.rows - 1
+	graphics_init(&t.gfx)
 	parser_init(&t.parser, Sink{user = t, fn = on_action})
 }
 
 terminal_destroy :: proc(t: ^Terminal) {
+	// The screens first: releasing their rows releases placements, which
+	// the image store has to still be there to receive.
 	screen_destroy(&t.primary)
 	screen_destroy(&t.alt)
+	graphics_destroy(&t.gfx)
+	sixel_reset(&t.sixel)
+	parser_destroy(&t.parser)
 	delete(t.tabs)
 	delete(t.out)
 	delete(t.dcs_buf)
@@ -229,15 +240,29 @@ on_action :: proc(user: rawptr, a: Action) {
 		}
 		if a.b == 'q' && len(a.intermediates) == 1 && a.intermediates[0] == '$' {
 			t.dcs_kind = 'Q' // DECRQSS
+		} else if a.b == 'q' && len(a.intermediates) == 0 {
+			t.dcs_kind = 'S' // Sixel
+			sixel_begin(t, a)
 		} else {
 			t.dcs_kind = 0
 		}
 	case .Dcs_Put:
-		if len(t.dcs_buf) < MAX_DCS {
+		if t.dcs_kind == 'S' {
+			sixel_put(&t.sixel, a.b)
+		} else if len(t.dcs_buf) < MAX_DCS {
 			append(&t.dcs_buf, a.b)
 		}
 	case .Dcs_Unhook:
-		dcs_finish(t)
+		if t.dcs_kind == 'S' {
+			t.dcs_kind = 0
+			sixel_end(t)
+		} else {
+			dcs_finish(t)
+		}
+	case .Apc_Dispatch:
+		if len(a.osc) > 0 && a.osc[0] == 'G' {
+			kitty_command(t, a.osc[1:])
+		}
 	}
 }
 
@@ -344,6 +369,11 @@ print_rune :: proc(t: ^Terminal, r0: rune) {
 				attrs = t.cursor.pen.attrs | {.Spacer},
 			}
 		}
+	}
+
+	// Text replaces the part of a Sixel image it lands on.
+	if row := &s.lines[t.cursor.y]; row.frags != nil {
+		row_cut(row, t.cursor.x, t.cursor.x + w)
 	}
 
 	t.cursor.x += w
@@ -490,7 +520,6 @@ execute :: proc(t: ^Terminal, b: u8) {
 	}
 }
 
-@(private = "file")
 cursor_down_scroll :: proc(t: ^Terminal) {
 	if t.cursor.y == t.bot {
 		screen_scroll_up(screen(t), t.top, t.bot, 1, t.cursor.pen, !t.on_alt)
@@ -623,6 +652,15 @@ terminal_reset :: proc(t: ^Terminal) {
 	t.view_offset = 0
 	t.fg_override = nil
 	t.bg_override = nil
+	// A full reset forgets every image, as kitty and xterm do.
+	for pl in t.gfx.placements {
+		pl.doomed = true
+	}
+	purge_doomed(t)
+	for len(t.gfx.images) > 0 {
+		image_delete(t, t.gfx.images[len(t.gfx.images) - 1])
+	}
+	kitty_load_reset(&t.gfx.kitty)
 	default_palette(&t.palette)
 	reset_tabs(t)
 	clear(&t.kitty_stack)
@@ -659,6 +697,8 @@ csi_dispatch :: proc(t: ^Terminal, a: Action) {
 			reply(t, "\x1b[?")
 			reply_u32(t, u32(kitty_flags(t)))
 			reply(t, "u")
+		case 'S':
+			xtsmgraphics(t, a)
 		case 'n':
 			if p0z == 6 {
 				// DECXCPR, the private cursor report.
@@ -806,8 +846,9 @@ csi_dispatch :: proc(t: ^Terminal, a: Action) {
 			y += t.top
 		}
 		move_cursor(t, t.cursor.x, y)
-	case 'c': // DA1 -- a VT220 with colour, which is what everything expects
-		reply(t, "\x1b[?62;22c")
+	case 'c': // DA1 -- a VT220 with colour and Sixel (the 4), which is what
+		// img2sixel, chafa and every other Sixel program look for.
+		reply(t, "\x1b[?62;4;22c")
 	case 'g': // TBC
 		switch p0z {
 		case 0:
@@ -900,8 +941,19 @@ soft_reset :: proc(t: ^Terminal) {
 @(private = "file")
 window_op :: proc(t: ^Terminal, a: Action) {
 	switch int(param(a, 0, 0)) {
-	case 14: // Report the text area in pixels. We do not know; say zero.
-		reply(t, "\x1b[4;0;0t")
+	case 14: // Report the text area in pixels: rows and columns of cells.
+		reply(t, "\x1b[4;")
+		reply_u32(t, u32(t.rows * t.gfx.cell_h))
+		reply(t, ";")
+		reply_u32(t, u32(t.cols * t.gfx.cell_w))
+		reply(t, "t")
+	case 16: // Report the cell size in pixels, which is what an image
+		// program sizes its output by.
+		reply(t, "\x1b[6;")
+		reply_u32(t, u32(t.gfx.cell_h))
+		reply(t, ";")
+		reply_u32(t, u32(t.gfx.cell_w))
+		reply(t, "t")
 	case 18: // Report the size in characters
 		reply(t, "\x1b[8;")
 		reply_u32(t, u32(t.rows))
@@ -990,6 +1042,7 @@ erase_chars :: proc(t: ^Terminal, n: int) {
 	for i in t.cursor.x ..< min(t.cursor.x + max(n, 1), t.cols) {
 		row.cells[i] = b
 	}
+	row_cut(row, t.cursor.x, min(t.cursor.x + max(n, 1), t.cols))
 }
 
 @(private = "file")
@@ -1007,10 +1060,12 @@ erase_line :: proc(t: ^Terminal, mode: int) {
 			row.cells[i] = b
 		}
 		row.wrapped = false
+		row_cut(row, t.cursor.x, t.cols)
 	case 1:
 		for i in 0 ..= min(t.cursor.x, t.cols - 1) {
 			row.cells[i] = b
 		}
+		row_cut(row, 0, min(t.cursor.x, t.cols - 1) + 1)
 	case 2:
 		row_clear(row, t.cursor.pen)
 	}
@@ -1037,7 +1092,7 @@ erase_screen :: proc(t: ^Terminal, mode: int) {
 	case 3:
 		// Erase the scrollback. This is what `clear` sends after the screen.
 		for &r in s.scrollback {
-			delete(r.cells)
+			row_free(&r)
 		}
 		clear(&s.scrollback)
 		t.view_offset = 0
@@ -1134,6 +1189,49 @@ set_dec_mode :: proc(t: ^Terminal, m: int, on: bool) {
 		t.modes.bracketed_paste = on
 	case 2026:
 		t.modes.synchronized = on
+	case 80:
+		t.modes.sixel_display = on
+	}
+}
+
+// xtsmgraphics answers XTSMGRAPHICS (CSI ? Pi ; Pa ; Pv S): how many colour
+// registers there are and how large a Sixel image may be. Nothing here can be
+// changed by it, so a set or reset answers with the values as they stand.
+@(private = "file")
+xtsmgraphics :: proc(t: ^Terminal, a: Action) {
+	item := int(param(a, 0, 0))
+	act := int(param(a, 1, 0))
+	reply(t, "\x1b[?")
+	reply_u32(t, u32(item))
+	switch item {
+	case 1:
+		if act < 1 || act > 4 {
+			reply(t, ";2;0S")
+			return
+		}
+		reply(t, ";0;")
+		reply_u32(t, SIXEL_REGISTERS)
+		reply(t, "S")
+	case 2:
+		if act < 1 || act > 4 {
+			reply(t, ";2;0S")
+			return
+		}
+		// The largest image that fits the budget and the screen is what
+		// is reported; a program sizes its output to it.
+		w := min(MAX_IMAGE_SIDE, t.cols * t.gfx.cell_w)
+		h := min(MAX_IMAGE_SIDE, t.rows * t.gfx.cell_h)
+		if act == 4 {
+			w = min(MAX_IMAGE_SIDE, 4096)
+			h = min(MAX_IMAGE_SIDE, t.gfx.budget / 4 / w)
+		}
+		reply(t, ";0;")
+		reply_u32(t, u32(w))
+		reply(t, ";")
+		reply_u32(t, u32(h))
+		reply(t, "S")
+	case:
+		reply(t, ";1;0S")
 	}
 }
 

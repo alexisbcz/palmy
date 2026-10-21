@@ -48,6 +48,10 @@ Pty_Config :: struct {
 	cwd:    string,
 	cols:   int,
 	rows:   int,
+	// The size of a cell in pixels, so TIOCGWINSZ can answer in pixels too.
+	// Image programs (kitten icat, chafa) size their output from it.
+	cell_w: int,
+	cell_h: int,
 }
 
 pty_spawn :: proc(cfg: Pty_Config) -> (p: Pty, err: string) {
@@ -70,10 +74,7 @@ pty_spawn :: proc(cfg: Pty_Config) -> (p: Pty, err: string) {
 	}
 	slave_path := fmt.aprintf("/dev/pts/%d", n)
 
-	ws := Winsize {
-		row = u16(max(cfg.rows, 1)),
-		col = u16(max(cfg.cols, 1)),
-	}
+	ws := winsize(cfg.cols, cfg.rows, cfg.cell_w, cfg.cell_h)
 	linux.ioctl(master, TIOCSWINSZ, uintptr(&ws))
 
 	// Everything the child needs has to be built before the fork: after it,
@@ -142,14 +143,23 @@ pty_spawn :: proc(cfg: Pty_Config) -> (p: Pty, err: string) {
 	return Pty{master = master, pid = pid, name = slave_path}, ""
 }
 
-pty_resize :: proc(p: ^Pty, cols, rows: int) {
+@(private = "file")
+winsize :: proc(cols, rows, cell_w, cell_h: int) -> Winsize {
+	c := max(cols, 1)
+	r := max(rows, 1)
+	return Winsize {
+		row = u16(min(r, 65535)),
+		col = u16(min(c, 65535)),
+		xpixel = u16(clamp(c * cell_w, 0, 65535)),
+		ypixel = u16(clamp(r * cell_h, 0, 65535)),
+	}
+}
+
+pty_resize :: proc(p: ^Pty, cols, rows: int, cell_w := 0, cell_h := 0) {
 	if p.master <= 0 {
 		return
 	}
-	ws := Winsize {
-		row = u16(max(rows, 1)),
-		col = u16(max(cols, 1)),
-	}
+	ws := winsize(cols, rows, cell_w, cell_h)
 	linux.ioctl(p.master, TIOCSWINSZ, uintptr(&ws))
 }
 

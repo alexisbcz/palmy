@@ -204,6 +204,16 @@ draw_row :: proc(
 	}
 	_ = bg_default
 
+	// Images below the text: negative z, which is every Sixel image and a
+	// Kitty image placed with z<0. They cover the cell backgrounds and the
+	// glyphs land on top, the way kitty draws them.
+	if row.frags != nil {
+		draw_frags(r, row, y, true)
+	}
+	defer if row.frags != nil {
+		draw_frags(r, row, y, false)
+	}
+
 	// Pass two: glyphs.
 	buf: [32]u8
 	for i in 0 ..< r.cols {
@@ -451,12 +461,15 @@ sel_contains :: proc(s: Selection, row, col: int) -> bool {
 }
 
 // blit copies the pixel cache into the window at `dst`.
-renderer_blit :: proc(r: ^Grid_Renderer, c: ^p.Canvas, dst: p.Rect) {
+// With `dim`, every pixel is pulled a third of the way towards the
+// background, which is how an unfocused pane is drawn.
+renderer_blit :: proc(r: ^Grid_Renderer, c: ^p.Canvas, dst: p.Rect, dim := false) {
 	if r.px == nil {
 		return
 	}
 	x0 := int(dst.x)
 	y0 := int(dst.y)
+	BG :: u32(0x0B1120)
 	for y in 0 ..< r.h {
 		dy := y0 + y
 		if dy < 0 || dy >= c.h {
@@ -468,7 +481,67 @@ renderer_blit :: proc(r: ^Grid_Renderer, c: ^p.Canvas, dst: p.Rect) {
 			if dx < 0 || dx >= c.w {
 				continue
 			}
-			c.px[dy * c.w + dx] = src[x]
+			v := src[x]
+			if dim {
+				rr := ((v >> 16 & 0xFF) * 2 + (BG >> 16 & 0xFF)) / 3
+				gg := ((v >> 8 & 0xFF) * 2 + (BG >> 8 & 0xFF)) / 3
+				bb := ((v & 0xFF) * 2 + (BG & 0xFF)) / 3
+				v = 0xFF00_0000 | rr << 16 | gg << 8 | bb
+			}
+			c.px[dy * c.w + dx] = v
+		}
+	}
+}
+
+// draw_frags paints the images on one text row into the pixel cache, scaled
+// from the cell size they were placed at to the one in use now, nearest
+// neighbour, with straight alpha blended over whatever is already there.
+@(private = "file")
+draw_frags :: proc(r: ^Grid_Renderer, row: vt.Row, y: int, below: bool) {
+	for f in row.frags {
+		pl := f.pl
+		if (pl.z < 0) != below || pl.img == nil || pl.img.px == nil {
+			continue
+		}
+		img := pl.img
+		fx := f32(r.cell_w) / f32(max(pl.cw, 1))
+		fy := f32(r.cell_h) / f32(max(pl.ch, 1))
+		left := int(f.col) * r.cell_w
+		cx0 := max(int(f.col + f.from) * r.cell_w, 0)
+		cx1 := min(int(f.col + f.to) * r.cell_w, r.w)
+		top := y * r.cell_h
+		for dy in 0 ..< r.cell_h {
+			if top + dy >= r.h {
+				break
+			}
+			py := (f32(int(f.row) * r.cell_h + dy) + 0.5) / fy - f32(pl.oy)
+			if py < 0 || py >= f32(pl.dh) {
+				continue
+			}
+			sy := pl.sy + min(int(py * f32(pl.sh) / f32(pl.dh)), pl.sh - 1)
+			src := img.px[sy * img.w:][:img.w]
+			dst := r.px[(top + dy) * r.w:][:r.w]
+			for dx in cx0 ..< cx1 {
+				px := (f32(dx - left) + 0.5) / fx - f32(pl.ox)
+				if px < 0 || px >= f32(pl.dw) {
+					continue
+				}
+				sx := pl.sx + min(int(px * f32(pl.sw) / f32(pl.dw)), pl.sw - 1)
+				v := src[sx]
+				a := v >> 24
+				switch a {
+				case 0:
+				case 255:
+					dst[dx] = v
+				case:
+					d := dst[dx]
+					ia := 255 - a
+					rr := ((v >> 16 & 0xFF) * a + (d >> 16 & 0xFF) * ia) / 255
+					gg := ((v >> 8 & 0xFF) * a + (d >> 8 & 0xFF) * ia) / 255
+					bb := ((v & 0xFF) * a + (d & 0xFF) * ia) / 255
+					dst[dx] = 0xFF00_0000 | rr << 16 | gg << 8 | bb
+				}
+			}
 		}
 	}
 }

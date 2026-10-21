@@ -3,6 +3,7 @@ package main
 import "core:os"
 import "core:time"
 import kit "kit:."
+import p "palmy:."
 import vt "./vt"
 
 // ---------------------------------------------------------------------------
@@ -35,6 +36,8 @@ grid_flags := [?]kit.Param {
 	{name = "rows", kind = .Int, help = "rows in the grid", def = "24"},
 	{name = "term", kind = .String, help = "what to set TERM to", def = "xterm-256color"},
 	{name = "timeout", kind = .Int, help = "seconds to wait for the program", def = "10"},
+	{name = "png", kind = .Path, help = "also draw the screen, images included, into this PNG"},
+	{name = "font-size", kind = .Int, help = "point size of the grid font, which sets the cell size images are measured in", def = "14"},
 }
 
 @(private = "file")
@@ -49,6 +52,8 @@ run_out := [?]kit.Field {
 		of = []kit.Field{{kind = .String}},
 	},
 	{name = "exit_code", kind = .Int, help = "what the program exited with", opt = true},
+	{name = "images", kind = .Int, help = "images held when the program finished (Sixel and Kitty)", opt = true},
+	{name = "png", kind = .String, help = "the PNG written, when --png was given", opt = true},
 }
 
 @(private = "file")
@@ -102,7 +107,11 @@ commands := [?]kit.Command {
 		args = run_args[:],
 		flags = grid_flags[:],
 		out = run_out[:],
-		examples = {"term run -- ls --color=always /usr", "term run --json --rows 40 -- htop -b -n 1"},
+		examples = {
+			"term run -- ls --color=always /usr",
+			"term run --json --rows 40 -- htop -b -n 1",
+			"term run --png /tmp/shot.png -- img2sixel picture.png",
+		},
 		run = cmd_run,
 	},
 	{
@@ -180,9 +189,39 @@ cmd_run :: proc(c: ^kit.Call) -> int {
 	t: vt.Terminal
 	vt.terminal_init(&t, opt.cols, opt.rows, opt.scrollback)
 	defer vt.terminal_destroy(&t)
+	t.gfx.load_file = kitty_read_file
+
+	// With a picture asked for, the cell size is the font's, so an image is
+	// measured in the cells it will be drawn in; without one it is the
+	// engine's default.
+	png_path := kit.cli_str(c, "png")
+	font_size := f32(max(kit.cli_int(c, "font-size", 14), 4))
+	fonts: p.Fonts
+	if png_path != "" {
+		p.fonts_init(&fonts)
+		r := Grid_Renderer {
+			fonts = &fonts,
+		}
+		renderer_metrics(&r, font_size, 1)
+		vt.terminal_set_cell_size(&t, r.cell_w, r.cell_h)
+	}
+	defer {
+		if png_path != "" {
+			p.fonts_destroy(&fonts)
+		}
+	}
 
 	env := child_env(opt.term, nil)
-	pty, err := pty_spawn({argv = argv, env = env, cols = opt.cols, rows = opt.rows})
+	pty, err := pty_spawn(
+		{
+			argv = argv,
+			env = env,
+			cols = opt.cols,
+			rows = opt.rows,
+			cell_w = t.gfx.cell_w,
+			cell_h = t.gfx.cell_h,
+		},
+	)
 	if err != "" {
 		return kit.cli_fail(c, kit.EXIT_FAILED, err)
 	}
@@ -220,6 +259,13 @@ cmd_run :: proc(c: ^kit.Call) -> int {
 	kit.jset(o, "lines", lines)
 	if code := pty_exit_code(&pty); code >= 0 {
 		kit.jset_int(o, "exit_code", code)
+	}
+	kit.jset_int(o, "images", len(t.gfx.images))
+	if png_path != "" {
+		if !shot_of(&t, &fonts, font_size, png_path) {
+			return kit.cli_failf(c, kit.EXIT_FAILED, "could not write %s", png_path)
+		}
+		kit.jset_str(o, "png", png_path)
 	}
 	c.out = o
 	// The kit prints it, in whichever form was asked for. A command

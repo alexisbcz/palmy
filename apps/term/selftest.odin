@@ -17,12 +17,9 @@ import vt "./vt"
 // link or open that library.
 // ---------------------------------------------------------------------------
 
-@(private = "file")
 checks: int
-@(private = "file")
 failures: int
 
-@(private = "file")
 check :: proc(ok: bool, format: string, args: ..any) {
 	checks += 1
 	if !ok {
@@ -31,7 +28,6 @@ check :: proc(ok: bool, format: string, args: ..any) {
 	}
 }
 
-@(private = "file")
 eq_s :: proc(got, want: string, what: string) {
 	checks += 1
 	if got != want {
@@ -40,7 +36,6 @@ eq_s :: proc(got, want: string, what: string) {
 	}
 }
 
-@(private = "file")
 eq_i :: proc(got, want: int, what: string) {
 	checks += 1
 	if got != want {
@@ -49,12 +44,10 @@ eq_i :: proc(got, want: int, what: string) {
 	}
 }
 
-@(private = "file")
 feed :: proc(t: ^vt.Terminal, s: string) {
 	vt.terminal_feed(t, transmute([]u8)s)
 }
 
-@(private = "file")
 line :: proc(t: ^vt.Terminal, y: int) -> string {
 	return vt.terminal_line(t, y, context.temp_allocator)
 }
@@ -85,6 +78,7 @@ selftest :: proc() -> int {
 	test_render_wide()
 	test_keysyms()
 	test_selection_click()
+	test_graphics()
 
 	ms := time.duration_milliseconds(time.since(t0))
 	fmt.printf("\n%d assertions, %d failures, %.0f ms\n", checks, failures, ms)
@@ -248,6 +242,8 @@ capture_sink :: proc(user: rawptr, a: vt.Action) {
 		append(&c.acts, fmt.aprintf("put %c", rune(a.b)))
 	case .Dcs_Unhook:
 		append(&c.acts, "unhook")
+	case .Apc_Dispatch:
+		append(&c.acts, fmt.aprintf("apc %s", string(a.osc)))
 	}
 }
 
@@ -693,7 +689,8 @@ test_replies :: proc() {
 
 	feed(&t, "\x1b[c")
 	out = vt.terminal_take_output(&t)
-	eq_s(string(out), "\x1b[?62;22c", "the primary device attributes")
+	// The 4 is Sixel, which programs look for before they send any.
+	eq_s(string(out), "\x1b[?62;4;22c", "the primary device attributes")
 	delete(out)
 
 	feed(&t, "\x1b[5n")
