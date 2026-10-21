@@ -239,9 +239,12 @@ clip_set :: proc(w: ^Window, kind: Clip_Kind, text: string) -> bool {
 }
 
 @(private)
-clip_get :: proc(w: ^Window, kind: Clip_Kind, allocator := context.allocator) -> (string, bool) {
+clip_get :: proc(w: ^Window, kind: Clip_Kind, allocator := context.allocator) -> (text: string, ok: bool) {
 	if w == nil || w.conn.fatal != "" {
 		return "", false
+	}
+	defer if w.web.log {
+		append(&w.web.clip_log, Web_Clip_Read{kind = kind, ok = ok, text = strings.clone(text)})
 	}
 	if kind == .Clipboard {
 		n := palmy_web_clip_read(i32(kind))
@@ -551,5 +554,10 @@ offscreen_clipboard_offer :: proc(kind: Clip_Kind, types: []string, payloads: []
 // Nothing waits on a display server mid-frame here -- input that arrives
 // while a clipboard read is suspended stays queued in the page until the next
 // `window_wait` -- so there is never late input to restore.
+//
+// app.odin calls it at the end of every frame, painted or logic, which makes
+// it where the web backend closes its frame log entry.
 @(private)
-restore_late :: proc(w: ^Window) {}
+restore_late :: proc(w: ^Window) {
+	web_frame_end(w)
+}

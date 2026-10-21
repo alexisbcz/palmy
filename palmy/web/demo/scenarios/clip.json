@@ -1,0 +1,21 @@
+{
+  "viewport": {"width": 800, "height": 480},
+  "steps": [
+    {"do": "click", "x": 300, "y": 150},
+    {"do": "type", "text": "copy me, palmy"},
+    {"do": "key", "key": "Shift+Home"},
+    {"do": "key", "key": "Control+c"},
+    {"do": "expect", "js": "navigator.clipboard.readText().then(t => t === 'copy me, palmy')"},
+    {"do": "capture", "name": "01-selected-copied"},
+    {"do": "key", "key": "End"},
+    {"do": "key", "key": "Enter"},
+    {"do": "js", "js": "navigator.clipboard.writeText('pasted from the page ✂')"},
+    {"do": "key", "key": "Control+v"},
+    {"do": "capture", "name": "02-pasted"},
+    {"do": "key", "key": "Control+Home"},
+    {"do": "key", "key": "Shift+End"},
+    {"do": "key", "key": "Control+x"},
+    {"do": "expect", "js": "navigator.clipboard.readText().then(t => t === 'copy me, palmy')"},
+    {"do": "capture", "name": "03-cut"}
+  ]
+}

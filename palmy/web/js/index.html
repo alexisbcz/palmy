@@ -15,7 +15,7 @@
 </style>
 </head>
 <body>
-<div id="host"><canvas id="palmy"></canvas></div>
+<div id="host"><canvas id="palmy-canvas"></canvas></div>
 <div id="status">loading…</div>
 <script type="module">
   import { run } from "./palmy-web.js";
@@ -24,7 +24,7 @@
   const fill = q.get("fill") === "1";
   if (fill) document.body.classList.add("fill");
   const opts = {
-    canvas: document.getElementById("palmy"),
+    canvas: document.getElementById("palmy-canvas"),
     fill,
     scale: q.get("scale") ? Number(q.get("scale")) : undefined,
     env: q.getAll("env"),

@@ -1,0 +1,17 @@
+{
+  "viewport": {"width": 1000, "height": 700},
+  "query": "fill=1",
+  "steps": [
+    {"do": "capture", "name": "01-fill-1000x700"},
+    {"do": "expect", "js": "document.getElementById('palmy-canvas').width === 1000 && document.getElementById('palmy-canvas').height === 700"},
+    {"do": "viewport", "width": 640, "height": 900},
+    {"do": "expect", "js": "document.getElementById('palmy-canvas').width === 640 && document.getElementById('palmy-canvas').height === 900"},
+    {"do": "capture", "name": "02-narrow-640x900"},
+    {"do": "click", "x": 60, "y": 230},
+    {"do": "viewport", "width": 1280, "height": 600},
+    {"do": "expect", "js": "document.getElementById('palmy-canvas').width === 1280"},
+    {"do": "capture", "name": "03-wide-1280x600"},
+    {"do": "js", "js": "document.querySelector('textarea').blur()"},
+    {"do": "capture", "name": "04-unfocused"}
+  ]
+}

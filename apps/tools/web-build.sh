@@ -59,6 +59,10 @@ while [ $# -gt 0 ]; do
 done
 
 ROOT=$(cd "$(dirname "$0")/../.." && pwd)
+# Every engine that has JSPI has these; the frame is byte-identical with and
+# without them (palmy/web/README.md) and about a quarter faster with.
+# WEB_FEATURES= (empty) builds plain wasm32.
+WEB_FEATURES=${WEB_FEATURES-bulk-memory,simd128,nontrapping-fptoint,sign-ext}
 ODIN=${ODIN:-$HOME/.local/share/mise/installs/odin/dev-2026-09/odin}
 for d in /usr/lib/llvm-18/bin /usr/lib/llvm/bin; do
 	[ -x "$d/wasm-ld" ] && PATH=$d:$PATH
@@ -214,7 +218,7 @@ fi
 cp "$ROOT"/palmy/web/odin-root/vendor/libc-shim/*.odin "$FIXED/vendor/libc-shim/"
 export ODIN_ROOT=$FIXED
 
-"$ODIN" build "$APP" -target:wasi_wasm32 "${OPT[@]}" \
+"$ODIN" build "$APP" -target:wasi_wasm32 "${OPT[@]}" ${WEB_FEATURES:+-target-features:"$WEB_FEATURES"} \
 	-collection:palmy="$STAGE/palmy" \
 	-collection:shadcn="$ROOT/shadcn" \
 	-collection:kit="$STAGE/kit" \

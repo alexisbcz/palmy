@@ -1,0 +1,19 @@
+{
+  "viewport": {"width": 1200, "height": 820},
+  "steps": [
+    {"do": "capture", "name": "01-first"},
+    {"do": "click", "x": 850, "y": 120},
+    {"do": "key", "key": "Backspace"}, {"do": "key", "key": "Backspace"}, {"do": "key", "key": "Backspace"},
+    {"do": "key", "key": "Backspace"}, {"do": "key", "key": "Backspace"}, {"do": "key", "key": "Backspace"},
+    {"do": "type", "text": "e11d48"},
+    {"do": "capture", "name": "02-hex-typed"},
+    {"do": "key", "key": "ArrowDown"},
+    {"do": "key", "key": "ArrowRight"}, {"do": "key", "key": "ArrowRight"}, {"do": "key", "key": "Shift+ArrowRight"},
+    {"do": "capture", "name": "03-spinner"},
+    {"do": "key", "key": "Control+s"},
+    {"do": "capture", "name": "04-saved"},
+    {"do": "key", "key": "Tab"},
+    {"do": "move", "x": 60, "y": 654, "steps": 3},
+    {"do": "capture", "name": "05-palette-pane"}
+  ]
+}

@@ -136,9 +136,31 @@ Window :: struct {
 
 @(private)
 Web_State :: struct {
-	presents: u64, // presents attempted, the frame number in the log
-	log:      bool, // PALMY_WEB_LOG=1: one JSON line per painted frame
+	frames:   u64, // frames run, logic frames included: the number in the log
+	painted:  bool, // this frame reached `present`
+	log:      bool, // PALMY_WEB_LOG=1: one JSON line per frame
 	log_buf:  strings.Builder,
+	// The input edges dispatched since the last frame ended, kept apart from
+	// `input` because the frame loop clears those before the log is written.
+	edge:     Web_Edges,
+	// What clipboard reads returned during this frame, for the log: the
+	// replay has no clipboard of the page's to read.
+	clip_log: [dynamic]Web_Clip_Read,
+}
+
+@(private)
+Web_Edges :: struct {
+	pressed, released: [Mouse_Button]bool,
+	scroll, mouse_delta: [2]f32,
+	keys: [dynamic]Key_Event,
+	text: strings.Builder,
+}
+
+@(private)
+Web_Clip_Read :: struct {
+	kind: Clip_Kind,
+	ok:   bool,
+	text: string,
 }
 
 backend_name :: proc(app: ^App) -> string {
@@ -185,7 +207,7 @@ foreign import web "palmy_web"
 foreign web {
 	palmy_web_open :: proc(width, height: i32, title: [^]u8, title_len: i32, out_size: ^[3]i32) -> i32 ---
 	palmy_web_buffer :: proc(dw, dh, lw, lh: i32) ---
-	palmy_web_present :: proc(px: [^]u32, bw, bh: i32, rects: [^]Damage_Rect, nrects: i32) ---
+	palmy_web_present :: proc(px: [^]u32, bw, bh: i32, rects: [^]Damage_Rect, nrects: i32, frame: i32) ---
 	palmy_web_wait :: proc(timeout_ms: i32) -> i32 ---
 	palmy_web_next_event :: proc(ev: ^Web_Event) -> i32 ---
 	palmy_web_take_frame_done :: proc() -> i32 ---
@@ -242,6 +264,12 @@ window_close :: proc(w: ^Window) {
 	delete(w.input.keys)
 	strings.builder_destroy(&w.input.text)
 	strings.builder_destroy(&w.web.log_buf)
+	delete(w.web.edge.keys)
+	strings.builder_destroy(&w.web.edge.text)
+	for c in w.web.clip_log {
+		delete(c.text)
+	}
+	delete(w.web.clip_log)
 	delete(w.title)
 	delete(w.app_id)
 }
@@ -311,10 +339,7 @@ apply_pending :: proc(w: ^Window) -> (resized: bool, err: string) {
 // loop for SKIP_HOLD_MS instead.
 @(private)
 present :: proc(w: ^Window, b: ^Shm_Buffer) -> bool {
-	w.web.presents += 1
-	if w.web.log {
-		web_log_frame(w)
-	}
+	w.web.painted = true
 	if !frame_damage(&w.damage, b.px, b.w, b.h) && !w.need_configure_ack {
 		w.damage.skipped += 1
 		w.damage.hold_until = time.time_add(time.now(), SKIP_HOLD_MS * time.Millisecond)
@@ -326,7 +351,7 @@ present :: proc(w: ^Window, b: ^Shm_Buffer) -> bool {
 	if len(rects) == 0 {
 		rects = ([^]Damage_Rect)(&full)[:1]
 	}
-	palmy_web_present(raw_data(b.px), i32(b.w), i32(b.h), raw_data(rects), i32(len(rects)))
+	palmy_web_present(raw_data(b.px), i32(b.w), i32(b.h), raw_data(rects), i32(len(rects)), i32(w.web.frames + 1))
 	w.frame_pending = true
 	w.last_present = time.now()
 	return true
@@ -461,6 +486,7 @@ web_dispatch :: proc(w: ^Window) {
 			p := [2]f32{ev.x, ev.y}
 			if in_.over_surface {
 				in_.mouse_delta += p - in_.mouse
+				w.web.edge.mouse_delta += p - in_.mouse
 			}
 			in_.mouse = p
 			in_.over_surface = true
@@ -481,25 +507,32 @@ web_dispatch :: proc(w: ^Window) {
 			if ev.b != 0 {
 				in_.down[mb] = true
 				in_.pressed[mb] = true
+				w.web.edge.pressed[mb] = true
 				in_.click_serial += 1
 			} else {
 				in_.down[mb] = false
 				in_.released[mb] = true
+				w.web.edge.released[mb] = true
 			}
 			w.input_dirty = true
 		case WEB_WHEEL:
 			in_.scroll += {ev.x, ev.y}
+			w.web.edge.scroll += {ev.x, ev.y}
 			w.input_dirty = true
 		case WEB_KEY:
-			append(
-				&in_.keys,
-				Key_Event{sym = u32(ev.a), mods = in_.mods, repeat = ev.c != 0, unshifted = u32(ev.b)},
-			)
+			k := Key_Event{sym = u32(ev.a), mods = in_.mods, repeat = ev.c != 0, unshifted = u32(ev.b)}
+			append(&in_.keys, k)
+			if w.web.log {
+				append(&w.web.edge.keys, k)
+			}
 			w.input_dirty = true
 		case WEB_TEXT:
 			buf: [4]u8
 			if n := encode_rune_into(rune(ev.a), buf[:]); n > 0 {
 				strings.write_string(&in_.text, string(buf[:n]))
+				if w.web.log {
+					strings.write_string(&w.web.edge.text, string(buf[:n]))
+				}
 			}
 			w.input_dirty = true
 		case WEB_MODS:
@@ -562,18 +595,38 @@ window_set_cursor :: proc(w: ^Window, shape: Cursor) {
 }
 
 // ---------------------------------------------------------------------------
-// The frame log: PALMY_WEB_LOG=1 writes, for every frame that reaches
-// `present`, everything the frame's code could have read -- the viewport,
+// The frame log: PALMY_WEB_LOG=1 writes, for every frame the loop runs --
+// painted or, when the page was not ready for pixels, logic only -- everything
+// the frame's code could have read -- the viewport,
 // the clock, the pointer, the buttons, the wheel, the keys and the text. The
 // native replay (palmy/web/demo/replay) feeds it to an offscreen renderer to
 // produce the same frames natively for the byte comparison. Floats travel as
 // their bit patterns so nothing is lost to formatting.
 // ---------------------------------------------------------------------------
 
+// web_frame_end runs at the end of every frame, logic frames included (it is
+// reached through `restore_late`, which app.odin calls from both). Input only
+// changes inside `window_wait`, between frames, so the level state now is
+// what the frame saw, and its edges are what `web_dispatch` gathered since
+// the previous frame ended.
+@(private)
+web_frame_end :: proc(w: ^Window) {
+	w.web.frames += 1
+	if w.web.log {
+		web_log_frame(w)
+	}
+	e := &w.web.edge
+	e.pressed, e.released, e.scroll, e.mouse_delta = {}, {}, {}, {}
+	clear(&e.keys)
+	strings.builder_reset(&e.text)
+	w.web.painted = false
+}
+
 @(private)
 web_log_frame :: proc(w: ^Window) {
 	app := (^App)(uintptr(w) - offset_of(App, win))
 	in_ := &w.input
+	e := &w.web.edge
 	b := &w.web.log_buf
 	if b.buf == nil {
 		w.web.log_buf = strings.builder_make()
@@ -591,8 +644,9 @@ web_log_frame :: proc(w: ^Window) {
 	}
 	fmt.sbprintf(
 		b,
-		`{{"n":%d,"w":%d,"h":%d,"s":%d,"dt":%d,"now":%d,"mx":%d,"my":%d,"mdx":%d,"mdy":%d,"down":%d,"pr":%d,"re":%d,"sx":%d,"sy":%d,"over":%d,"focused":%d,"mods":%d,"serial":%d,"keys":[`,
-		w.web.presents,
+		`{{"n":%d,"paint":%d,"w":%d,"h":%d,"s":%d,"dt":%d,"now":%d,"mx":%d,"my":%d,"mdx":%d,"mdy":%d,"down":%d,"pr":%d,"re":%d,"sx":%d,"sy":%d,"over":%d,"focused":%d,"mods":%d,"serial":%d,"keys":[`,
+		w.web.frames,
+		w.web.painted ? 1 : 0,
 		w.width,
 		w.height,
 		w.scale,
@@ -600,27 +654,37 @@ web_log_frame :: proc(w: ^Window) {
 		transmute(u64)app.ctx.now,
 		bits(in_.mouse.x),
 		bits(in_.mouse.y),
-		bits(in_.mouse_delta.x),
-		bits(in_.mouse_delta.y),
+		bits(e.mouse_delta.x),
+		bits(e.mouse_delta.y),
 		buttons(in_.down),
-		buttons(in_.pressed),
-		buttons(in_.released),
-		bits(in_.scroll.x),
-		bits(in_.scroll.y),
+		buttons(e.pressed),
+		buttons(e.released),
+		bits(e.scroll.x),
+		bits(e.scroll.y),
 		in_.over_surface ? 1 : 0,
 		in_.focused ? 1 : 0,
 		transmute(u8)in_.mods,
 		in_.click_serial,
 	)
-	for k, i in in_.keys {
+	for k, i in e.keys {
 		fmt.sbprintf(b, "%s[%d,%d,%d,%d]", i > 0 ? "," : "", k.sym, transmute(u8)k.mods, k.repeat ? 1 : 0, k.unshifted)
 	}
 	strings.write_string(b, `],"text":[`)
 	i := 0
-	for r in strings.to_string(in_.text) {
+	for r in strings.to_string(e.text) {
 		fmt.sbprintf(b, "%s%d", i > 0 ? "," : "", r)
 		i += 1
 	}
+	strings.write_string(b, `],"clip":[`)
+	for c, ci in w.web.clip_log {
+		fmt.sbprintf(b, "%s[%d,%d", ci > 0 ? "," : "", int(c.kind), c.ok ? 1 : 0)
+		for r in c.text {
+			fmt.sbprintf(b, ",%d", r)
+		}
+		strings.write_string(b, "]")
+		delete(c.text)
+	}
+	clear(&w.web.clip_log)
 	strings.write_string(b, "]}")
 	s := strings.to_string(b^)
 	palmy_web_log(raw_data(s), i32(len(s)))

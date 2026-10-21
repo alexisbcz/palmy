@@ -219,7 +219,16 @@ export async function run(opts) {
 		return [Math.max(1, Math.floor(host.clientWidth)), Math.max(1, Math.floor(host.clientHeight))];
 	}
 
-	canvas.tabIndex = 0;
+	// Keyboard input goes to a transparent textarea that holds the focus while
+	// the canvas is in use, not to the canvas itself: a canvas never receives
+	// composed text (IME, dead keys on some platforms, the emoji picker,
+	// insertText from automation), and a textarea does.
+	const ta = document.createElement("textarea");
+	for (const [k, v] of Object.entries({ autocapitalize: "off", autocomplete: "off", autocorrect: "off", spellcheck: "false", "aria-label": "palmy keyboard input" })) ta.setAttribute(k, v);
+	Object.assign(ta.style, { position: "fixed", left: "0", top: "0", width: "1px", height: "1px", opacity: "0", border: "0", padding: "0", resize: "none", pointerEvents: "none" });
+	document.body.appendChild(ta);
+	const focusInput = () => ta.focus({ preventScroll: true });
+
 	canvas.style.outline = "none";
 	canvas.style.touchAction = "none";
 	canvas.addEventListener("pointermove", (e) => {
@@ -235,7 +244,7 @@ export async function run(opts) {
 		push(8, modsOf(e));
 	});
 	canvas.addEventListener("pointerdown", (e) => {
-		canvas.focus();
+		focusInput();
 		canvas.setPointerCapture(e.pointerId);
 		const [x, y] = pos(e);
 		push(1, modsOf(e), 0, 0, 0, 0, x, y);
@@ -260,7 +269,14 @@ export async function run(opts) {
 	}, { passive: false });
 
 	const PASS = new Set(["F5", "F11", "F12"]);
-	canvas.addEventListener("keydown", (e) => {
+	const pushText = (str, m) => {
+		for (const ch of str) {
+			const cp = ch.codePointAt(0);
+			if (cp >= 0x20 && cp !== 0x7f) push(5, m, cp);
+		}
+	};
+	ta.addEventListener("keydown", (e) => {
+		if (e.isComposing || e.key === "Process") return; // the IME has it
 		if (PASS.has(e.key) || (e.ctrlKey && e.shiftKey && (e.key === "I" || e.key === "J"))) return;
 		const m = modsOf(e);
 		const sym = keysymOf(e);
@@ -271,17 +287,23 @@ export async function run(opts) {
 		}
 		// Text: what the key typed, unless Ctrl or Super is held -- the rule
 		// palmy's Wayland and X11 paths apply to xkb's output.
-		if (!e.ctrlKey && !e.metaKey && e.key.length > 0 && !(e.key in KEYSYM) && e.key !== "Dead" && e.key !== "Process" && e.key !== "Unidentified") {
-			for (const ch of e.key) {
-				const cp = ch.codePointAt(0);
-				if (cp >= 0x20 && cp !== 0x7f) push(5, m, cp);
-			}
-		}
+		if (e.key === "Dead" || e.key === "Unidentified") return; // arrives as input
+		if (!e.ctrlKey && !e.metaKey && e.key.length > 0 && !(e.key in KEYSYM)) pushText(e.key, m);
 		e.preventDefault();
 	});
-	canvas.addEventListener("keyup", (e) => push(9, modsOf(e)));
-	canvas.addEventListener("focus", () => push(7, 0, 1));
-	canvas.addEventListener("blur", () => push(7, 0, 0));
+	ta.addEventListener("keyup", (e) => push(9, modsOf(e)));
+	// Text that arrives without a key that typed it: a dead-key sequence, an
+	// emoji picker, insertText. Composition is taken whole at its end.
+	ta.addEventListener("input", (e) => {
+		if (!e.isComposing && e.inputType !== "insertCompositionText" && e.data) pushText(e.data, 0);
+		if (!e.isComposing) ta.value = "";
+	});
+	ta.addEventListener("compositionend", (e) => {
+		if (e.data) pushText(e.data, 0);
+		ta.value = "";
+	});
+	ta.addEventListener("focus", () => push(7, 0, 1));
+	ta.addEventListener("blur", () => push(7, 0, 0));
 
 	function reportSize() {
 		const [w, h] = viewSize();
@@ -324,7 +346,8 @@ export async function run(opts) {
 			image = ctx2d.createImageData(dw, dh);
 			image32 = new Uint32Array(image.data.buffer);
 		},
-		palmy_web_present(px, bw, bh, rp, nr) {
+		palmy_web_present(px, bw, bh, rp, nr, frame) {
+			const t0 = performance.now();
 			const src = new Uint32Array(memory.buffer, px, bw * bh);
 			const d = dv();
 			let area = 0;
@@ -347,7 +370,9 @@ export async function run(opts) {
 			}
 			stats.presents++;
 			const now = performance.now();
-			stats.frames.push({ n: stats.presents, ms: now - busySince, rects: nr, px: area, at: now });
+			// ms: the program's whole frame, from the wait that ended to the pixels
+			// being on the canvas; put: the copy and putImageData alone.
+			stats.frames.push({ n: frame, ms: now - busySince, put: now - t0, rects: nr, px: area, at: now });
 			stats.lastPresentAt = now;
 			if (!rafArmed) {
 				rafArmed = true;
@@ -850,7 +875,7 @@ export async function run(opts) {
 			throw e;
 		},
 	);
-	canvas.focus();
+	focusInput();
 	// parked: the program is waiting with nothing queued and no frame
 	// callback outstanding -- it has drawn everything it is going to.
 	const state = () => ({ parked: wake !== null, queued: queue.length, frameArmed: rafArmed, presents: stats.presents });
