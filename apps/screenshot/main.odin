@@ -14,6 +14,7 @@ import "core:fmt"
 import "core:os"
 import "core:strings"
 import "core:time"
+import kit "kit:."
 import p "palmy:."
 
 HEADER_H :: 88
@@ -89,24 +90,13 @@ Model :: struct {
 g_now: f64
 
 main :: proc() {
-	args := os.args[1:]
-	for a, i in args {
-		if a == "--selftest" {
-			selftest()
-			return
-		}
-		// `--shot out.png [key ...]` renders one frame offscreen, with any
-		// keys given after the path pressed first. No compositor involved.
-		if a == "--shot" && i + 1 < len(args) {
-			keys_wanted := make([dynamic]u32, context.allocator)
-			for extra in args[i + 2:] {
-				if len(extra) > 0 {
-					append(&keys_wanted, u32(extra[0]))
-				}
-			}
-			shot(args[i + 1], keys_wanted[:])
-			return
-		}
+	// The command line is the other front end, declared in cli.odin and
+	// parsed by the shared convention in apps/kit — `palm capture`.
+	// `--selftest` and `--shot out.png [key ...]` are commands there now, and
+	// both still work spelled the way they always were. With no command there
+	// is a window.
+	if code, handled := kit.cli(surface()); handled {
+		os.exit(code)
 	}
 
 	app, err := start_window()
@@ -233,11 +223,11 @@ fire :: proc(m: ^Model) {
 	switch m.mode {
 	case .Screen:
 		m.status = "grim is reading every output"
-		job_start(.Capture, path, argv_own("grim", path))
+		job_start(.Capture, path, argv_own(..capture_words(.Screen, "", {}, path)))
 	case .Output:
 		o := m.outputs[m.out_at % max(1, len(m.outputs))]
 		m.status = fmt.tprintf("grim is reading %s", o.name)
-		job_start(.Capture, path, argv_own("grim", "-o", o.name, path))
+		job_start(.Capture, path, argv_own(..capture_words(.Output, o.name, {}, path)))
 	case .Region:
 		// slurp draws an overlay and blocks until a rectangle is dragged.
 		// It is its own job, so its answer is a rectangle this program holds
@@ -270,7 +260,7 @@ fire_region :: proc(m: ^Model, r: Rect) {
 	m.seq += 1
 	m.phase = .Working
 	m.status = fmt.tprintf("grim is reading %s", geom_arg(want))
-	job_start(.Capture, path, argv_own("grim", "-g", geom_arg(want), path))
+	job_start(.Capture, path, argv_own(..capture_words(.Region, "", want, path)))
 }
 
 finish_job :: proc(m: ^Model, kind: Job_Kind, path, out: string, ok: bool) {

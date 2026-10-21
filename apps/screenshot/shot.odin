@@ -325,6 +325,25 @@ parse_geom :: proc(s: string) -> (r: Rect, ok: bool) {
 	return Rect{x, y, w, h}, true
 }
 
+// capture_words is the grim command for a capture of the live session, built
+// in one place. The window's capture jobs clone it and run it; `screenshot
+// screen` on the command line is intent class and only prints it, so the two
+// name the same command and cannot drift. `output` is used by .Output and
+// `region` by .Region; a region capture with no rectangle yet is slurp's job,
+// not grim's, and has no words here.
+capture_words :: proc(mode: Mode, output: string, region: Rect, path: string, al := context.temp_allocator) -> []string {
+	w := make([dynamic]string, 0, 4, al)
+	switch mode {
+	case .Screen:
+		append(&w, "grim", path)
+	case .Output:
+		append(&w, "grim", "-o", output, path)
+	case .Region:
+		append(&w, "grim", "-g", geom_arg(region, al), path)
+	}
+	return w[:]
+}
+
 output_rect :: proc(o: Output) -> Rect {
 	return Rect{o.x, o.y, o.w, o.h}
 }

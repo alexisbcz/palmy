@@ -15,6 +15,7 @@ import "core:math"
 import "core:os"
 import "core:strings"
 import "core:time"
+import kit "kit:."
 import p "palmy:."
 import sc "shadcn:."
 
@@ -86,6 +87,7 @@ selftest :: proc() {
 	test_save_copy()
 	test_sizes()
 	test_interface()
+	test_cli()
 
 	ms := time.duration_milliseconds(time.since(t0))
 	fmt.printf("\n%d assertions, %d failures, %.0f ms\n", checks, failures, ms)
@@ -788,4 +790,256 @@ load_selftest_fonts :: proc(f: ^p.Fonts) {
 			break
 		}
 	}
+}
+
+// ---------------------------------------------------------------------------
+// The command surface
+//
+// Run as real child processes of this binary with a trap first on PATH: fake
+// `grim`, `slurp` and `wl-copy` that write to a sentinel whatever they are
+// asked, and a fake `hyprctl` that answers `monitors -j` from the fixture
+// above. Every command that must not capture the session is run and the
+// sentinel has to stay empty.
+//
+// The private capture is then run for real where sway and grim exist, with a
+// different trap: a `grim` wrapper that records which display and which
+// runtime directory it was pointed at before handing over to the real grim.
+// The child is given a made-up session display; the wrapper has to have seen
+// the private one, in a private runtime directory, and never the session's.
+// ---------------------------------------------------------------------------
+
+@(private = "file")
+self_exe :: proc() -> string {
+	if path, err := os.get_executable_path(context.temp_allocator); err == nil {
+		return path
+	}
+	return os.args[0]
+}
+
+@(private = "file")
+cli_run :: proc(env: []string, args: ..string) -> (out: string, code: int) {
+	line := strings.builder_make(context.temp_allocator)
+	for e in env {
+		strings.write_string(&line, e)
+		strings.write_byte(&line, ' ')
+	}
+	strings.write_string(&line, fmt.tprintf("%q", self_exe()))
+	for a in args {
+		strings.write_string(&line, fmt.tprintf(" %q", a))
+	}
+	state, sout, _, err := os.process_exec({command = {"sh", "-c", strings.to_string(line)}}, context.temp_allocator)
+	if err != nil {
+		return "", -1
+	}
+	return string(sout), state.exit_code
+}
+
+@(private = "file")
+capture_dirs :: proc() -> int {
+	n := 0
+	f, err := os.open("/tmp")
+	if err != nil {
+		return 0
+	}
+	defer os.close(f)
+	it := os.read_directory_iterator_create(f)
+	defer os.read_directory_iterator_destroy(&it)
+	for fi in os.read_directory_iterator(&it) {
+		if strings.has_prefix(fi.name, "palmy-capture-") {
+			n += 1
+		}
+	}
+	return n
+}
+
+test_cli :: proc() {
+	section("the command surface")
+
+	sf := surface()
+	eq_s(sf.noun, "capture", "the surface is palm's noun, capture")
+	for cmd in sf.commands {
+		check(cmd.run != nil, "%q has an implementation", cmd.verb)
+		check(len(cmd.out) > 0, "%q declares what it prints", cmd.verb)
+		check(len(cmd.examples) > 0, "%q ships an example", cmd.verb)
+		switch cmd.verb {
+		case "screen":
+			check(cmd.effect == .Intent, "capturing the live session is intent class")
+		case "outputs", "tools":
+			check(cmd.effect == .Read, "%q is read class", cmd.verb)
+		case "screenshot", "record", "shot":
+			check(cmd.effect == .Mutate, "%q is mutate (it writes the file it is given)", cmd.verb)
+		case:
+			check(false, "%q is a verb this test does not know the class of", cmd.verb)
+		}
+		for f in cmd.flags {
+			for bad in ([?]string{"camera", "webcam", "microphone", "mic", "audio", "device", "display"}) {
+				check(f.name != bad, "%q takes no --%s", cmd.verb, bad)
+			}
+		}
+	}
+
+	root := fmt.tprintf("/tmp/palmy-screenshot-cli-%d", os.get_pid())
+	bin := fmt.tprintf("%s/fakebin", root)
+	_ = os.make_directory_all(bin)
+	defer _ = os.remove_all(root)
+	sentinel := fmt.tprintf("%s/fired", root)
+	audit := fmt.tprintf("PALM_AUDIT=%s/audit.jsonl", root)
+	any := fmt.tprintf("#!/bin/sh\nprintf '%%s %%s\\n' \"$0\" \"$*\" >> %s\nexit 0\n", sentinel)
+	for name in ([?]string{"grim", "slurp", "wl-copy", "wf-recorder", "ffmpeg"}) {
+		_ = os.write_entire_file(fmt.tprintf("%s/%s", bin, name), transmute([]u8)any, os.Permissions_All)
+	}
+	_ = os.write_entire_file(fmt.tprintf("%s/monitors.json", root), transmute([]u8)string(MONITORS))
+	hypr := fmt.tprintf("#!/bin/sh\ncase \"$*\" in \"monitors -j\") cat %s/monitors.json; exit 0 ;; esac\nprintf '%%s %%s\\n' \"$0\" \"$*\" >> %s\nexit 0\n", root, sentinel)
+	_ = os.write_entire_file(fmt.tprintf("%s/hyprctl", bin), transmute([]u8)hypr, os.Permissions_All)
+	trap_path := fmt.tprintf("PATH=%s:%s", bin, os.get_env("PATH", context.temp_allocator))
+	trap := []string{"WAYLAND_DISPLAY=", "DISPLAY=", trap_path, audit}
+
+	// Spring it once, so an empty sentinel means something.
+	{
+		_, _, _, err := os.process_exec({command = {"sh", "-c", fmt.tprintf("%s grim /tmp/x.png", trap_path)}}, context.temp_allocator)
+		check(err == nil && os.exists(sentinel), "the fake grim on PATH is reached (the trap works)")
+		os.remove(sentinel)
+	}
+
+	// --- screen: intent, and the window's own command --------------------
+	Case :: struct {
+		args: []string,
+		cmd:  string,
+	}
+	cases := [?]Case {
+		{{"screen", "/tmp/s.png", "--json"}, "grim /tmp/s.png"},
+		{{"screen", "/tmp/o.png", "--output", "HDMI-A-2", "--json"}, "grim -o HDMI-A-2 /tmp/o.png"},
+		{{"screen", "/tmp/r.png", "--region", "10,20 300x200", "--json"}, "grim -g 10,20 300x200 /tmp/r.png"},
+	}
+	for cs in cases {
+		out, code := cli_run(trap, ..cs.args)
+		eq_i(code, 0, fmt.tprintf("screenshot %s exits 0", strings.join(cs.args[1:len(cs.args) - 1], " ", context.temp_allocator)))
+		problems := kit.cli_validate_output(out, INTENT_FIELDS, context.temp_allocator)
+		check(len(problems) == 0, "screen --json matches the intent schema")
+		check(strings.contains(out, fmt.tprintf(`"intent": %q`, cs.cmd)), "it names %q", cs.cmd)
+		check(strings.contains(out, `"executed": false`), "and says executed: false")
+		check(!os.exists(sentinel), "screen %s captured NOTHING", strings.join(cs.args[1:len(cs.args) - 1], " ", context.temp_allocator))
+	}
+	// Those are the window's own words, from the window's own builder.
+	j :: proc(w: []string) -> string {return strings.join(w, " ", context.temp_allocator)}
+	eq_s(j(capture_words(.Screen, "", {}, "/tmp/s.png")), "grim /tmp/s.png", "the window's whole-screen job runs the same words")
+	eq_s(j(capture_words(.Output, "DP-1", {}, "/tmp/o.png")), "grim -o DP-1 /tmp/o.png", "and its per-output job")
+	eq_s(j(capture_words(.Region, "", {1, 2, 3, 4}, "/tmp/r.png")), "grim -g 1,2 3x4 /tmp/r.png", "and its region job")
+	{
+		out, code := cli_run(trap, "screen", "--json")
+		eq_i(code, 0, "screen with no path exits 0")
+		check(strings.contains(out, "/Pictures/screenshot-"), "and names the file the window would have saved")
+		_, c2 := cli_run(trap, "screen", "--region", "nonsense")
+		eq_i(c2, kit.EXIT_USAGE, "a region that is not one exits 2")
+		_, c3 := cli_run(trap, "screen", "--output", "DP-1", "--region", "0,0 1x1")
+		eq_i(c3, kit.EXIT_USAGE, "an output and a region at once exits 2")
+		check(!os.exists(sentinel), "none of them captured anything")
+	}
+
+	// --- the reads ----------------------------------------------------------
+	{
+		out, code := cli_run(trap, "outputs", "--json")
+		eq_i(code, 0, "screenshot outputs exits 0")
+		problems := kit.cli_validate_output(out, OUTPUTS_FIELDS, context.temp_allocator)
+		check(len(problems) == 0, "outputs --json matches its schema%s", len(problems) > 0 ? fmt.tprintf(" (%s)", problems[0]) : "")
+		check(strings.contains(out, `"name": "HDMI-A-2"`) && strings.contains(out, `"name": "DP-1"`), "both outputs of the fixture")
+		check(strings.contains(out, `"scale": 2`), "with DP-1's scale, past the nested workspace")
+	}
+	{
+		out, code := cli_run(trap, "tools", "--json")
+		eq_i(code, 0, "screenshot tools exits 0")
+		problems := kit.cli_validate_output(out, TOOLS_FIELDS, context.temp_allocator)
+		check(len(problems) == 0, "tools --json matches its schema")
+	}
+	{
+		empty := fmt.tprintf("%s/empty", root)
+		_ = os.make_directory_all(empty)
+		out, code := cli_run({fmt.tprintf("PATH=%s", empty)}, "outputs", "--json")
+		_ = out
+		check(code == kit.EXIT_UNAVAILABLE || code == 127, "with no hyprctl, outputs is unavailable (exit %d)", code)
+	}
+
+	// --- shot: the window's capture keys are refused ----------------------
+	for key in ([?]string{" ", "a", "s", "c", "x", "S"}) {
+		png := fmt.tprintf("%s/refused.png", root)
+		_, code := cli_run(trap, "shot", png, key)
+		eq_i(code, kit.EXIT_USAGE, fmt.tprintf("a shot that would press %q is refused", key))
+		check(!os.exists(png), "and draws nothing")
+	}
+	{
+		png := fmt.tprintf("%s/tool.png", root)
+		_, code := cli_run(trap, "shot", png, "?")
+		eq_i(code, 0, "a shot with a harmless key exits 0")
+		check(os.exists(png), "and writes the PNG")
+	}
+	check(!os.exists(sentinel), "after screen, the reads and the shots, nothing captured the session")
+
+	// --- the private capture --------------------------------------------
+	section("screenshot captures a private compositor, never the session")
+	{
+		png := fmt.tprintf("%s/dry.png", root)
+		out, code := cli_run(trap, "screenshot", png, "--dry-run", "--json")
+		eq_i(code, 0, "a dry run exits 0")
+		check(strings.contains(out, `"dry_run": true`) && !os.exists(png), "and writes nothing")
+		_, c2 := cli_run(trap, "screenshot", png, "--app", "/nonexistent/app")
+		eq_i(c2, kit.EXIT_NOT_FOUND, "an --app that does not exist exits 3")
+	}
+
+	real_grim, found := kit.run({"sh", "-c", "command -v grim"}, context.temp_allocator)
+	real_grim = strings.trim_space(real_grim)
+	if !found || real_grim == "" || !kit.has_tool("sway") {
+		out, code := cli_run({"WAYLAND_DISPLAY=", "DISPLAY="}, "screenshot", fmt.tprintf("%s/none.png", root), "--json")
+		eq_i(code, kit.EXIT_UNAVAILABLE, "without sway and grim, screenshot is unavailable")
+		check(strings.contains(out, `"error": "unavailable"`), "with the documented token")
+		fmt.println("  skip  sway or grim is not installed; the private capture was not run")
+		return
+	}
+
+	wrap := fmt.tprintf("%s/grimwrap", root)
+	_ = os.make_directory_all(wrap)
+	seen := fmt.tprintf("%s/grim-saw", root)
+	wrapper := fmt.tprintf("#!/bin/sh\necho \"$WAYLAND_DISPLAY $XDG_RUNTIME_DIR\" >> %s\nexec %s \"$@\"\n", seen, real_grim)
+	_ = os.write_entire_file(fmt.tprintf("%s/grim", wrap), transmute([]u8)wrapper, os.Permissions_All)
+	session_rt := os.get_env("XDG_RUNTIME_DIR", context.temp_allocator)
+	if session_rt == "" {
+		session_rt = "/run/user/selftest"
+	}
+	env := []string {
+		"WAYLAND_DISPLAY=wayland-THE-SESSION",
+		"DISPLAY=:99",
+		fmt.tprintf("XDG_RUNTIME_DIR=%s", session_rt),
+		fmt.tprintf("PATH=%s:%s", wrap, os.get_env("PATH", context.temp_allocator)),
+		audit,
+	}
+	before := capture_dirs()
+	{
+		png := fmt.tprintf("%s/empty.png", root)
+		out, code := cli_run(env, "screenshot", png, "--width", "640", "--height", "400", "--wait", "0.2", "--json")
+		eq_i(code, 0, "screenshot of an empty private compositor exits 0")
+		problems := kit.cli_validate_output(out, SCREENSHOT_FIELDS, context.temp_allocator)
+		check(len(problems) == 0, "screenshot --json matches its schema%s", len(problems) > 0 ? fmt.tprintf(" (%s)", problems[0]) : "")
+		check(strings.contains(out, `"width": 640`) && strings.contains(out, `"height": 400`), "the PNG is the private output's size, not the session's")
+		check(os.exists(png), "and it was written")
+	}
+	{
+		png := fmt.tprintf("%s/app.png", root)
+		app_env := make([dynamic]string, context.temp_allocator)
+		append(&app_env, ..env)
+		append(&app_env, "PALMY_CONTINUOUS=1")
+		out, code := cli_run(app_env[:], "screenshot", png, "--app", self_exe(), "--width", "1280", "--height", "800", "--wait", "0.5", "--json")
+		eq_i(code, 0, "screenshot with an application launched into the private compositor exits 0")
+		check(strings.contains(out, `"private": true`), "and says it was private")
+		empty_bytes := file_bytes(fmt.tprintf("%s/empty.png", root))
+		check(file_bytes(png) > empty_bytes * 4, "the application is in the picture (%d bytes against an empty %d)", file_bytes(png), empty_bytes)
+	}
+	saw, _ := os.read_entire_file_from_path(seen, context.temp_allocator)
+	lines := strings.split_lines(strings.trim_space(string(saw)), context.temp_allocator)
+	eq_i(len(lines), 2, "grim ran exactly once per screenshot")
+	for line in lines {
+		check(!strings.contains(line, "wayland-THE-SESSION"), "grim was never pointed at the session's display (%s)", line)
+		check(strings.contains(line, " /tmp/palmy-capture-"), "it was pointed at a private runtime directory (%s)", line)
+		fields := strings.fields(line, context.temp_allocator)
+		check(len(fields) == 2 && fields[1] != session_rt, "and never the session's (%s)", session_rt)
+	}
+	eq_i(capture_dirs(), before, "the private runtime directories were all removed afterwards")
 }
