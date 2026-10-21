@@ -105,6 +105,7 @@ selftest :: proc() -> int {
 	selftest_core()
 	fmt.println("files self-test (command line)")
 	selftest_cli()
+	selftest_drive_live()
 
 	fmt.printfln("%d checks, %d failed", g_checks, g_fails)
 	return g_fails == 0 ? 0 : 1
