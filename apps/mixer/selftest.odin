@@ -15,6 +15,7 @@ import "core:mem/virtual"
 import "core:os"
 import "core:strings"
 import "core:time"
+import kit "kit:."
 import p "palmy:."
 import sc "shadcn:."
 
@@ -78,6 +79,7 @@ selftest :: proc() {
 	test_level()
 	test_navigation()
 	test_interface()
+	test_cli()
 
 	ms := time.duration_milliseconds(time.since(t0))
 	fmt.printf("\n%d assertions, %d failures, %.0f ms\n", checks, failures, ms)
@@ -841,4 +843,250 @@ load_selftest_fonts :: proc(f: ^p.Fonts) {
 			break
 		}
 	}
+}
+
+// ---------------------------------------------------------------------------
+// The command surface
+//
+// Run as real child processes of this binary, with a private bin directory
+// first on PATH. In it:
+//
+//   * a fake `pactl` that answers the reads from the fixtures above, so
+//     `mixer status` is checked against a known graph without touching the
+//     machine's audio, and appends every invocation to a read log;
+//   * fake `wpctl`, `parec`, `pw-record`, `pw-cat`, `arecord` and `parecord`
+//     that append to a sentinel — the trap. Every intent command is run and
+//     the sentinel must stay empty: nothing changed a volume and nothing
+//     opened a source.
+// ---------------------------------------------------------------------------
+
+@(private = "file")
+self_exe :: proc() -> string {
+	if path, err := os.get_executable_path(context.temp_allocator); err == nil {
+		return path
+	}
+	return os.args[0]
+}
+
+@(private = "file")
+cli_run :: proc(env: []string, args: ..string) -> (out: string, code: int) {
+	line := strings.builder_make(context.temp_allocator)
+	strings.write_string(&line, "WAYLAND_DISPLAY= DISPLAY= ")
+	for e in env {
+		strings.write_string(&line, e)
+		strings.write_byte(&line, ' ')
+	}
+	strings.write_string(&line, fmt.tprintf("%q", self_exe()))
+	for a in args {
+		strings.write_string(&line, fmt.tprintf(" %q", a))
+	}
+	state, sout, _, err := os.process_exec({command = {"sh", "-c", strings.to_string(line)}}, context.temp_allocator)
+	if err != nil {
+		return "", -1
+	}
+	return string(sout), state.exit_code
+}
+
+@(private = "file")
+put_file :: proc(path, text: string, exec := false) {
+	perm := exec ? os.Permissions_All : os.Permissions_Read_All + {.Write_User}
+	if err := os.write_entire_file(path, transmute([]u8)text, perm); err != nil {
+		check(false, "could not write the fixture %s", path)
+	}
+}
+
+test_cli :: proc() {
+	section("the command surface")
+
+	sf := surface()
+	check(sf.noun == "mixer", "the surface is named mixer")
+	for cmd in sf.commands {
+		check(cmd.run != nil, "%q has an implementation", cmd.verb)
+		check(len(cmd.out) > 0, "%q declares what it prints", cmd.verb)
+		check(len(cmd.examples) > 0, "%q ships an example", cmd.verb)
+		// Every verb that would change the audio graph is intent class.
+		switch cmd.verb {
+		case "volume", "mute", "default":
+			check(cmd.effect == .Intent, "%q is intent class", cmd.verb)
+		case "shot":
+			check(cmd.effect == .Mutate, "shot is mutate (it writes the PNG it is given)")
+		case:
+			check(cmd.effect == .Read, "%q is read class", cmd.verb)
+		}
+		check(cmd.effect != .Destructive, "%q is not destructive", cmd.verb)
+		// The meter records from a source; it is absent here, not gated.
+		for bad in ([?]string{"meter", "level", "record", "listen", "capture"}) {
+			check(cmd.verb != bad, "there is no %q verb", bad)
+		}
+	}
+
+	root := fmt.tprintf("/tmp/palmy-mixer-selftest-%d", os.get_pid())
+	bin := fmt.tprintf("%s/fakebin", root)
+	_ = os.make_directory_all(bin)
+	defer _ = os.remove_all(root)
+	sentinel := fmt.tprintf("%s/fired", root)
+	reads := fmt.tprintf("%s/reads", root)
+
+	put_file(fmt.tprintf("%s/sinks.json", root), SINKS)
+	put_file(fmt.tprintf("%s/sources.json", root), SOURCES)
+	put_file(fmt.tprintf("%s/streams.json", root), STREAMS)
+	put_file(
+		fmt.tprintf("%s/pactl", bin),
+		fmt.tprintf(
+			`#!/bin/sh
+echo "$*" >> %s
+case "$*" in
+  *"list sinks"*) cat %s/sinks.json ;;
+  *"list sources"*) cat %s/sources.json ;;
+  *"list sink-inputs"*) cat %s/streams.json ;;
+  *"list source-outputs"*) echo "[]" ;;
+  get-default-sink) echo alsa_output.pci-0000_c1_00.6.analog-stereo ;;
+  get-default-source) echo alsa_input.pci-0000_c1_00.6.analog-stereo ;;
+  *) echo "pactl $* is not a read" >> %s; exit 1 ;;
+esac
+`,
+			reads,
+			root,
+			root,
+			root,
+			sentinel,
+		),
+		exec = true,
+	)
+	// wpctl's reads answer; anything else it is asked to do is the trap.
+	put_file(
+		fmt.tprintf("%s/wpctl", bin),
+		fmt.tprintf(
+			`#!/bin/sh
+case "$1" in
+  get-volume|status|inspect) echo "wpctl $*" >> %s; echo "Volume: 0.50"; exit 0 ;;
+esac
+printf '%%s %%s\n' "$0" "$*" >> %s
+exit 0
+`,
+			reads,
+			sentinel,
+		),
+		exec = true,
+	)
+	for name in ([?]string{"parec", "parecord", "pw-record", "pw-cat", "arecord", "pw-cli"}) {
+		put_file(
+			fmt.tprintf("%s/%s", bin, name),
+			fmt.tprintf("#!/bin/sh\nprintf '%%s %%s\\n' \"$0\" \"$*\" >> %s\nexit 0\n", sentinel),
+			exec = true,
+		)
+	}
+	path_env := fmt.tprintf("PATH=%s:%s", bin, os.get_env("PATH", context.temp_allocator))
+	audit_env := fmt.tprintf("PALM_AUDIT=%s/audit.jsonl", root)
+
+	// Spring the trap once, so that an empty sentinel below means something.
+	{
+		_, _, _, err := os.process_exec({command = {"sh", "-c", fmt.tprintf("%s wpctl set-volume 1 0.5", path_env)}}, context.temp_allocator)
+		check(err == nil && os.exists(sentinel), "the fake wpctl on PATH is reached (the trap works)")
+		os.remove(sentinel)
+	}
+
+	// --- the read, against the fixture graph ------------------------------
+	{
+		out, code := cli_run({path_env}, "status", "--json")
+		eq_i(code, 0, "mixer status exits 0")
+		problems := kit.cli_validate_output(out, STATUS_FIELDS, context.temp_allocator)
+		check(len(problems) == 0, "mixer status --json matches its schema%s", len(problems) > 0 ? fmt.tprintf(" (%s)", problems[0]) : "")
+		check(strings.contains(out, `"description": "CMF Headphone Pro"`), "it lists the fixture's Bluetooth headphones")
+		check(strings.contains(out, `"default_output": "alsa_output.pci-0000_c1_00.6.analog-stereo"`), "and names the default output")
+		check(strings.contains(out, `"node": 51,`), "with the node id wpctl takes")
+		check(!os.exists(sentinel), "reading ran no wpctl and opened no source")
+		log, _ := os.read_entire_file_from_path(reads, context.temp_allocator)
+		check(len(log) > 0, "the reads went through pactl")
+		for line in strings.split_lines(string(log), context.temp_allocator) {
+			if line == "" {continue}
+			check(strings.contains(line, "list") || strings.has_prefix(line, "get-default") || strings.has_prefix(line, "wpctl get-volume"), "only reads were run (%s)", line)
+		}
+	}
+	{
+		// No pactl at all: unavailable, in the documented form.
+		empty := fmt.tprintf("%s/empty", root)
+		_ = os.make_directory_all(empty)
+		out, code := cli_run({fmt.tprintf("PATH=%s:/usr/bin/nonexistent", empty)}, "status", "--json")
+		_ = out
+		check(code == kit.EXIT_UNAVAILABLE || code == -1 || code == 127, "with no pactl, status is unavailable (exit %d)", code)
+	}
+
+	// --- every write is intent, and executes nothing ----------------------
+	Case :: struct {
+		args: []string,
+		cmd:  string,
+	}
+	cases := [?]Case {
+		{{"volume", "default", "0.4", "--json"}, "wpctl set-volume @DEFAULT_AUDIO_SINK@ 0.40"},
+		{{"volume", "51", "1.7", "--json"}, "wpctl set-volume 51 1.00"},
+		{{"volume", "default-input", "0", "--json"}, "wpctl set-volume @DEFAULT_AUDIO_SOURCE@ 0.00"},
+		{{"mute", "default", "on", "--json"}, "wpctl set-mute @DEFAULT_AUDIO_SINK@ 1"},
+		{{"mute", "62", "off", "--json"}, "wpctl set-mute 62 0"},
+		{{"default", "62", "--json"}, "wpctl set-default 62"},
+	}
+	for cs in cases {
+		out, code := cli_run({path_env, audit_env}, ..cs.args)
+		eq_i(code, 0, fmt.tprintf("mixer %s %s exits 0", cs.args[0], cs.args[1]))
+		problems := kit.cli_validate_output(out, INTENT_FIELDS, context.temp_allocator)
+		check(len(problems) == 0, "mixer %s --json matches the intent schema", cs.args[0])
+		check(strings.contains(out, fmt.tprintf(`"intent": %q`, cs.cmd)), "it names %q, the command the window would run", cs.cmd)
+		check(strings.contains(out, `"executed": false`), "and says executed: false")
+		check(!os.exists(sentinel), "mixer %s %s executed NOTHING", cs.args[0], cs.args[1])
+	}
+	// The intent and the window's own write are the same argv, from the same
+	// builder: the clamp the window applies is the clamp the intent reports.
+	eq_s(strings.join(volume_argv("51", 1.7), " ", context.temp_allocator), "wpctl set-volume 51 1.00", "the window's volume argv clamps to 1.00 too")
+	eq_s(strings.join(mute_argv("62", false), " ", context.temp_allocator), "wpctl set-mute 62 0", "the window's mute argv")
+	eq_s(strings.join(default_argv("62"), " ", context.temp_allocator), "wpctl set-default 62", "the window's default argv")
+	{
+		audit, _ := os.read_entire_file_from_path(fmt.tprintf("%s/audit.jsonl", root), context.temp_allocator)
+		check(strings.count(string(audit), `"kind":"intent"`) + strings.count(string(audit), `"kind": "intent"`) >= len(cases), "every intent left an audit record")
+	}
+
+	// --- refusals ----------------------------------------------------------
+	{
+		_, code := cli_run({path_env}, "volume", "headphones", "0.5")
+		eq_i(code, kit.EXIT_USAGE, "a target that is not a node id or a default exits 2 (nothing is looked up)")
+		_, code2 := cli_run({path_env}, "mute", "default", "maybe")
+		eq_i(code2, kit.EXIT_USAGE, "a mute state that is not on|off exits 2")
+		_, code3 := cli_run({path_env}, "volume", "default", "loud")
+		eq_i(code3, kit.EXIT_USAGE, "a volume that is not a number exits 2")
+		check(!os.exists(sentinel), "and none of the refusals ran anything")
+	}
+	for key in ([?]string{"m", "d", "l", "u", "M"}) {
+		png := fmt.tprintf("%s/refused.png", root)
+		_, code := cli_run({path_env}, "shot", png, key)
+		eq_i(code, kit.EXIT_USAGE, fmt.tprintf("a shot that would press %q is refused", key))
+		check(!os.exists(png), "and draws nothing")
+	}
+	check(!os.exists(sentinel), "no refused shot changed a volume or opened a source")
+	{
+		png := fmt.tprintf("%s/ok.png", root)
+		_, code := cli_run({path_env}, "shot", png, "?")
+		eq_i(code, 0, "a shot with a harmless key exits 0")
+		check(os.exists(png), "and writes the PNG")
+		check(!os.exists(sentinel), "and changed nothing")
+	}
+
+	// --- the schema and the examples ---------------------------------------
+	{
+		out, code := cli_run(nil, "--schema")
+		eq_i(code, 0, "--schema exits 0")
+		check(strings.contains(out, `"effect": "intent"`), "and advertises the intent commands as intent")
+	}
+	for cmd in sf.commands {
+		for ex in cmd.examples {
+			words := kit.cli_split_example(ex, context.temp_allocator)
+			check(len(words) > 0 && words[0] == "mixer", "the example %q starts with the binary's name", ex)
+			args := make([dynamic]string, context.temp_allocator)
+			for w in words[1:] {
+				append(&args, w)
+			}
+			append(&args, "--parse-only")
+			_, code := cli_run({path_env}, ..args[:])
+			eq_i(code, 0, fmt.tprintf("the example %q parses", ex))
+		}
+	}
+	check(!os.exists(sentinel), "after the whole surface, the sentinel is still empty")
 }

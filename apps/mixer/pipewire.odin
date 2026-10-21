@@ -375,15 +375,38 @@ nudge_target :: proc(vol, delta: f32) -> f32 {
 	return vol_clamp(vol + delta)
 }
 
+// The argv each write runs, built in one place. The window's writes below run
+// them; `mixer volume`, `mixer mute` and `mixer default` on the command line
+// are intent class and only print them. Both front ends therefore name the
+// exact same command, and neither can drift into a different one. `id` is a
+// PipeWire object id, or one of wpctl's own @DEFAULT_AUDIO_SINK@ /
+// @DEFAULT_AUDIO_SOURCE@ names.
+volume_argv :: proc(id: string, v: f32, al := context.temp_allocator) -> []string {
+	out := make([]string, 4, al)
+	out[0], out[1], out[2] = "wpctl", "set-volume", id
+	out[3] = fmt.aprintf("%.2f", vol_clamp(v), allocator = al)
+	return out
+}
+
+mute_argv :: proc(id: string, on: bool, al := context.temp_allocator) -> []string {
+	out := make([]string, 4, al)
+	out[0], out[1], out[2], out[3] = "wpctl", "set-mute", id, on ? "1" : "0"
+	return out
+}
+
+default_argv :: proc(id: string, al := context.temp_allocator) -> []string {
+	out := make([]string, 3, al)
+	out[0], out[1], out[2] = "wpctl", "set-default", id
+	return out
+}
+
 set_volume :: proc(node: int, v: f32) -> (ok: bool) {
 	if node < 0 {
 		return false
 	}
-	clamped := vol_clamp(v)
-	arg := fmt.tprintf("%.2f", clamped)
-	id := fmt.tprintf("%d", node)
-	_, good := kit.run({"wpctl", "set-volume", id, arg}, context.temp_allocator)
-	log_cmd(fmt.tprintf("wpctl set-volume %s %s", id, arg), good)
+	argv := volume_argv(fmt.tprintf("%d", node), v)
+	_, good := kit.run(argv, context.temp_allocator)
+	log_cmd(strings.join(argv, " ", context.temp_allocator), good)
 	return good
 }
 
@@ -391,10 +414,9 @@ set_mute :: proc(node: int, on: bool) -> (ok: bool) {
 	if node < 0 {
 		return false
 	}
-	id := fmt.tprintf("%d", node)
-	arg := on ? "1" : "0"
-	_, good := kit.run({"wpctl", "set-mute", id, arg}, context.temp_allocator)
-	log_cmd(fmt.tprintf("wpctl set-mute %s %s", id, arg), good)
+	argv := mute_argv(fmt.tprintf("%d", node), on)
+	_, good := kit.run(argv, context.temp_allocator)
+	log_cmd(strings.join(argv, " ", context.temp_allocator), good)
 	return good
 }
 
@@ -402,9 +424,9 @@ set_default :: proc(node: int) -> (ok: bool) {
 	if node < 0 {
 		return false
 	}
-	id := fmt.tprintf("%d", node)
-	_, good := kit.run({"wpctl", "set-default", id}, context.temp_allocator)
-	log_cmd(fmt.tprintf("wpctl set-default %s", id), good)
+	argv := default_argv(fmt.tprintf("%d", node))
+	_, good := kit.run(argv, context.temp_allocator)
+	log_cmd(strings.join(argv, " ", context.temp_allocator), good)
 	return good
 }
 
