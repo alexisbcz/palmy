@@ -435,8 +435,19 @@ categorise_selected :: proc(app: ^App, category: int) -> bool {
 	if !ok {
 		return false
 	}
+	return categorise_txn(app, t.id, category)
+}
+
+// categorise_txn is that action on a transaction named by its id, which is
+// how the command line reaches it (`money categorize ID CATEGORY`). The
+// window's picker goes through here too, so the rule learned from a choice
+// is the same whichever front end made it.
+categorise_txn :: proc(app: ^App, id: int, category: int) -> bool {
+	t, ok := txn_get(&app.led, id)
+	if !ok {
+		return false
+	}
 	label := strings.clone(t.label, context.temp_allocator)
-	id := t.id
 	if !txn_categorise(&app.led, id, category) {
 		return false
 	}
@@ -445,6 +456,64 @@ categorise_selected :: proc(app: ^App, category: int) -> bool {
 	app.recs_stale = true
 	refilter(app)
 	return true
+}
+
+// rules_reapply runs the rule table over the book again — the `r` key, and
+// `money apply-rules`.
+rules_reapply :: proc(app: ^App) -> int {
+	n := apply_rules(&app.led, &app.cat)
+	app.recs_stale = true
+	if n > 0 {
+		app.dirty = true
+	}
+	refilter(app)
+	return n
+}
+
+// budget_suggest_all proposes an envelope for every expense category with
+// history that has none this month — the `s` key, and `money budget-suggest`.
+budget_suggest_all :: proc(app: ^App, y, m: int) -> (n: int) {
+	for c in category_list(app, context.temp_allocator) {
+		if app.led.accounts[c].kind != .Expense {
+			continue
+		}
+		if _, _, exists := budget_limit(app, c, y, m); exists {
+			continue
+		}
+		if s := budget_suggest(app, c, y, m); s > 0 {
+			budget_set(app, c, y, m, s, true)
+			n += 1
+		}
+	}
+	if n > 0 {
+		app.dirty = true
+	}
+	return n
+}
+
+// import_account is the account a statement without a recognisable IBAN is
+// booked into: the one the list is filtered to, else the first bank account.
+import_account :: proc(app: ^App) -> int {
+	account := app.filter.account
+	if account < 0 {
+		assets := asset_list(app, context.temp_allocator)
+		account = len(assets) > 0 ? assets[0] : -1
+	}
+	return account
+}
+
+// import_book is the whole of an import as both front ends run it: book the
+// file, then bring the derived state (recurrences, the visible list) up to
+// date. The window adds a status line; the command line prints the report.
+import_book :: proc(app: ^App, path: string, account: int) -> (rep: Import_Report, ok: bool) {
+	rep, ok = import_file(app, path, account)
+	app.recs_stale = true
+	app.sel = 0
+	refilter(app)
+	if ok || rep.added > 0 {
+		app.dirty = true
+	}
+	return
 }
 
 // recurrences keeps the detection result for the frame, recomputed only when

@@ -465,14 +465,23 @@ fixtures_mode :: proc(args: []string) -> int {
 		fmt.eprintln("money: --fixtures needs a directory")
 		return 2
 	}
-	dir := args[0]
+	n, err := fixtures_write(args[0])
+	if err != "" {
+		fmt.eprintfln("money: %s", err)
+		return 1
+	}
+	fmt.printfln("%d fixtures written to %s", n, args[0])
+	return 0
+}
+
+// fixtures_write is the writer behind both `--fixtures DIR` and
+// `money fixtures DIR`.
+fixtures_write :: proc(dir: string, allocator := context.temp_allocator) -> (n: int, err: string) {
 	if !os.is_dir(dir) {
-		if err := os.make_directory_all(dir); err != nil {
-			fmt.eprintfln("money: cannot create %s", dir)
-			return 1
+		if e := os.make_directory_all(dir); e != nil {
+			return 0, fmt.aprintf("cannot create %s", dir, allocator = allocator)
 		}
 	}
-	n := 0
 	for f in FIXTURES {
 		path := fmt.tprintf("%s/%s", dir, f.name)
 		data: []u8
@@ -482,13 +491,11 @@ fixtures_mode :: proc(args: []string) -> int {
 			data = transmute([]u8)f.body
 		}
 		if werr := os.write_entire_file(path, data); werr != nil {
-			fmt.eprintfln("money: cannot write %s", path)
-			return 1
+			return n, fmt.aprintf("cannot write %s", path, allocator = allocator)
 		}
 		n += 1
 	}
-	fmt.printfln("%d fixtures written to %s", n, dir)
-	return 0
+	return n, ""
 }
 
 // ---------------------------------------------------------------------------

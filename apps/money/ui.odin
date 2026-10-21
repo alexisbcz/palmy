@@ -1223,19 +1223,7 @@ keys :: proc(ui: ^p.Ctx, app: ^App) {
 		}
 	case p.key_pressed(ui, 's'):
 		// Suggest envelopes for every category with history.
-		n := 0
-		for c in category_list(app, context.temp_allocator) {
-			if app.led.accounts[c].kind != .Expense {
-				continue
-			}
-			if _, _, exists := budget_limit(app, c, app.month.y, app.month.m); exists {
-				continue
-			}
-			if s := budget_suggest(app, c, app.month.y, app.month.m); s > 0 {
-				budget_set(app, c, app.month.y, app.month.m, s, true)
-				n += 1
-			}
-		}
+		n := budget_suggest_all(app, app.month.y, app.month.m)
 		app.dirty = true
 		status(app, "%d enveloppes proposées depuis l'historique", n)
 	case p.key_pressed(ui, 'x'):
@@ -1254,9 +1242,7 @@ keys :: proc(ui: ^p.Ctx, app: ^App) {
 			}
 		}
 	case p.key_pressed(ui, 'r'):
-		n := apply_rules(&app.led, &app.cat)
-		app.recs_stale = true
-		refilter(app)
+		n := rules_reapply(app)
 		status(app, "%d opérations recatégorisées par les règles", n)
 	case p.key_pressed(ui, '?'):
 		app.modal = .Help
@@ -1787,20 +1773,11 @@ open_import :: proc(app: ^App) {
 // do_import books a file the user picked. Nothing else in this program opens
 // a file in the user's home directory.
 do_import :: proc(app: ^App, path: string) {
-	account := app.filter.account
-	if account < 0 {
-		assets := asset_list(app, context.temp_allocator)
-		account = len(assets) > 0 ? assets[0] : -1
-	}
-	rep, ok := import_file(app, path, account)
-	app.recs_stale = true
-	app.sel = 0
-	refilter(app)
+	rep, ok := import_book(app, path, import_account(app))
 	if !ok && rep.added == 0 {
 		status(app, "échec de l'import: %s", rep.problem != "" ? rep.problem : "aucune opération lue")
 		return
 	}
-	app.dirty = true
 	if rep.rows_bad > 0 {
 		status(
 			app,

@@ -237,9 +237,15 @@ store_save :: proc(app: ^App) -> bool {
 	if !mkdir_all(dir) {
 		return false
 	}
+	return store_save_to(app, fmt.tprintf("%s/%s", dir, STORE_FILE))
+}
+
+// store_save_to writes the book to a named file, the same way. It is what
+// `store_save` does for the application's own store, and what the command
+// line does for the book named by --book: one writer, two callers.
+store_save_to :: proc(app: ^App, final: string) -> bool {
 	text := store_text(app, context.temp_allocator)
-	tmp := fmt.tprintf("%s/%s.tmp", dir, STORE_FILE)
-	final := fmt.tprintf("%s/%s", dir, STORE_FILE)
+	tmp := fmt.tprintf("%s.tmp", final)
 	if werr := os.write_entire_file(tmp, transmute([]u8)text); werr != nil {
 		return false
 	}
@@ -463,13 +469,20 @@ store_parse :: proc(app: ^App, text: string) -> (loaded: int, problems: int) {
 // store_load reads the book if there is one. A missing file is not an error:
 // it is the first run.
 store_load :: proc(app: ^App) -> bool {
-	path := store_path(context.temp_allocator)
+	loaded, _ := store_load_from(app, store_path(context.temp_allocator))
+	return loaded
+}
+
+// store_load_from reads a named book: the window's own store through
+// `store_load`, or the book the command line was given with --book. `found`
+// is false only when there is no such file.
+store_load_from :: proc(app: ^App, path: string) -> (loaded: bool, found: bool) {
 	if !os.is_file(path) {
-		return false
+		return false, false
 	}
 	raw, rerr := os.read_entire_file_from_path(path, context.allocator)
 	if rerr != nil {
-		return false
+		return false, true
 	}
 	defer delete(raw)
 	text, _ := decode_text(raw, .UTF8, context.temp_allocator)
@@ -477,7 +490,7 @@ store_load :: proc(app: ^App) -> bool {
 	if problems > 0 {
 		app.status = fmt.aprintf("%d ligne(s) du fichier de données refusée(s)", problems)
 	}
-	return n > 0
+	return n > 0, true
 }
 
 // ---------------------------------------------------------------------------

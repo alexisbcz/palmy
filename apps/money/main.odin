@@ -21,18 +21,6 @@ import "core:strings"
 import kit "kit:."
 import p "palmy:."
 
-USAGE :: `money — comptes et budget, pour palmy
-
-  money                        open the application
-  money --selftest             run the test suite: no window, no files touched
-  money --shot OUT.png [steps] render one frame offscreen
-  money --bench [n]            import and search timings over n transactions
-  money --fixtures DIR         write the (fictitious) test fixtures to DIR
-  money --import FILE          import a statement headless and print a summary
-  money --start-dir DIR        where the import dialog opens
-  money FILE                   import FILE at startup
-  money --help`
-
 main :: proc() {
 	// Flags are read in a loop rather than only at args[0]: `--start-dir` is
 	// a setting and not a mode, so whatever follows it — including `--help`
@@ -40,13 +28,25 @@ main :: proc() {
 	// `money --start-dir X --help` silently opened a window, which is the
 	// one thing a tool should never do when it was asked a question.
 	args := os.args[1:]
+
+	// The command line is the other front end over the same book: see cli.odin
+	// for the declaration and apps/kit/cli.odin for the convention it is parsed
+	// by. A declared verb, `help`, --help, --schema and --selftest go there.
+	// The older spellings below — and a bare FILE — keep their exact old
+	// behaviour, so nothing that already drives this program changes.
+	if len(args) > 0 && is_cli_head(args[0]) {
+		if code, handled := kit.cli(surface()); handled {
+			os.exit(code)
+		}
+	}
+
 	start_dir := ""
 	files := make([dynamic]string, context.temp_allocator)
 	for i := 0; i < len(args); i += 1 {
 		a := args[i]
 		switch a {
 		case "--help", "-h":
-			fmt.println(USAGE)
+			fmt.print(kit.cli_help_text(surface()))
 			return
 		case "--selftest":
 			os.exit(selftest_mode())
@@ -68,7 +68,7 @@ main :: proc() {
 		case:
 			if strings.has_prefix(a, "-") {
 				fmt.eprintfln("money: unknown flag %s", a)
-				fmt.eprintln(USAGE)
+				fmt.eprint(kit.cli_help_text(surface()))
 				os.exit(2)
 			}
 			append(&files, a)
@@ -107,4 +107,24 @@ main :: proc() {
 		frame(ui, app)
 	}
 	store_save(app)
+}
+
+// is_cli_head says whether the first argument belongs to the convention
+// rather than to one of the older spellings handled in main.
+is_cli_head :: proc(a: string) -> bool {
+	switch a {
+	case "help", "--help", "-h", "--schema", "--selftest", "--self-test", "-t":
+		return true
+	}
+	for cmd in surface().commands {
+		if cmd.verb == a {
+			return true
+		}
+		for al in cmd.aliases {
+			if al == a {
+				return true
+			}
+		}
+	}
+	return false
 }

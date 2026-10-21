@@ -16,6 +16,7 @@ import "core:os"
 import "core:slice"
 import "core:strings"
 import "core:time"
+import kit "kit:."
 
 TC :: struct {
 	n:      int,
@@ -111,6 +112,7 @@ selftest_mode :: proc() -> int {
 	test_fuzz_money(&tc)
 	test_fuzz_csv(&tc)
 	test_fuzz_truncation(&tc)
+	test_cli(&tc)
 
 	ms := time.duration_milliseconds(time.since(start))
 	if tc.failed == 0 {
@@ -2734,3 +2736,175 @@ test_fuzz_truncation :: proc(tc: ^TC) {
 }
 
 _ :: os
+
+// ---------------------------------------------------------------------------
+// La ligne de commande
+//
+// La même déclaration que lit `palm schema`. Chaque commande est exécutée
+// ici sans rien imprimer : on lie la ligne, on appelle le corps, on valide
+// l'objet produit contre ce que la commande déclare. Tout se passe dans un
+// répertoire temporaire, sur le livre fictif que `money demo` écrit ; le
+// magasin de l'application n'est jamais ouvert.
+// ---------------------------------------------------------------------------
+
+@(private = "file")
+cli_run :: proc(tc: ^TC, line: string) -> (c: kit.Call, code: int) {
+	words := kit.cli_split_example(line)
+	c, code = kit.cli_bind(surface(), words)
+	if code != kit.EXIT_OK || c.cmd == nil || c.cmd.run == nil {
+		return
+	}
+	code = c.cmd.run(&c)
+	return
+}
+
+@(private = "file")
+cli_valid :: proc(tc: ^TC, line: string, what: string) -> (c: kit.Call, code: int) {
+	c, code = cli_run(tc, line)
+	eq_int(tc, code, kit.EXIT_OK, fmt.tprintf("%s : code 0", what))
+	if code == kit.EXIT_OK {
+		text := kit.json_text(c.out, 0, context.temp_allocator)
+		bad := kit.cli_validate_output(text, c.cmd.out, context.temp_allocator)
+		ok_mark(tc, len(bad) == 0, fmt.tprintf("%s : conforme au schéma déclaré%s", what, len(bad) > 0 ? fmt.tprintf(" (%s)", bad[0]) : ""))
+	}
+	return
+}
+
+@(private = "file")
+file_digest :: proc(path: string) -> string {
+	data, err := os.read_entire_file_from_path(path, context.temp_allocator)
+	if err != nil {
+		return ""
+	}
+	return string(data)
+}
+
+test_cli :: proc(tc: ^TC) {
+	s := surface()
+	ok_mark(tc, len(s.commands) >= 8, "cli : la déclaration n'est pas vide")
+	ok_mark(tc, s.gui && s.takes_path, "cli : sans commande, la fenêtre ; un chemin s'importe au démarrage")
+	ok_mark(tc, s.selftest != nil, "cli : --selftest est branché")
+	for cmd in s.commands {
+		ok_mark(tc, cmd.summary != "", fmt.tprintf("cli : %s a un résumé", cmd.verb))
+		ok_mark(tc, len(cmd.out) > 0, fmt.tprintf("cli : %s déclare ce qu'il imprime", cmd.verb))
+		ok_mark(tc, len(cmd.examples) > 0, fmt.tprintf("cli : %s a un exemple", cmd.verb))
+		for e in cmd.examples {
+			words := kit.cli_split_example(e)
+			ok_mark(tc, len(words) > 0 && words[0] == "money", fmt.tprintf("cli : l'exemple %q commence par money", e))
+			_, code := kit.cli_bind(s, words[1:])
+			eq_int(tc, code, kit.EXIT_OK, fmt.tprintf("cli : l'exemple %q se lit", e))
+		}
+		// Every command that opens a book requires it to be named: run blind,
+		// a read must not reach anybody's real accounts.
+		if cmd.effect == .Read {
+			_, code := kit.cli_bind(s, {cmd.verb})
+			eq_int(tc, code, kit.EXIT_USAGE, fmt.tprintf("cli : %s sans --book est refusé", cmd.verb))
+		}
+	}
+
+	// The older spellings stay with main.odin, with their old behaviour.
+	for legacy in ([?]string{"--import", "--fixtures", "--shot", "--bench", "--start-dir"}) {
+		ok_mark(tc, !is_cli_head(legacy), fmt.tprintf("cli : l'ancienne forme %s est toujours acceptée", legacy))
+	}
+	for head in ([?]string{"accounts", "list", "help", "--schema", "--help"}) {
+		ok_mark(tc, is_cli_head(head), fmt.tprintf("cli : %s va à la convention", head))
+	}
+
+	dir := fmt.tprintf("/tmp/palmy-money-cli-%d", os.get_pid())
+	os.remove_all(dir)
+	os.make_directory_all(dir)
+	defer os.remove_all(dir)
+	book := fmt.tprintf("%s/livre.money", dir)
+
+	{
+		_, code := cli_run(tc, fmt.tprintf("accounts --book %s/absent.money", dir))
+		eq_int(tc, code, kit.EXIT_NOT_FOUND, "cli : un livre absent répond 3")
+	}
+	cli_valid(tc, fmt.tprintf("demo --book %s", book), "cli demo")
+	ok_mark(tc, os.is_file(book), "cli demo : le livre est écrit")
+	{
+		_, code := cli_run(tc, fmt.tprintf("demo --book %s", book))
+		eq_int(tc, code, kit.EXIT_FAILED, "cli demo : n'écrase jamais un livre existant")
+	}
+	cli_valid(tc, fmt.tprintf("accounts --book %s", book), "cli accounts")
+	{
+		c, _ := cli_valid(tc, fmt.tprintf("transactions --book %s --limit 5", book), "cli transactions")
+		arr, _ := kit.jget(c.out, "transactions")
+		eq_int(tc, kit.jlen(arr), 5, "cli transactions : --limit est respecté")
+	}
+	cli_valid(tc, fmt.tprintf("transactions --book %s --match NETFLIX --from 2026-01-01", book), "cli transactions filtré")
+	cli_valid(tc, fmt.tprintf("budget --book %s", book), "cli budget")
+	cli_valid(tc, fmt.tprintf("recurring --book %s", book), "cli recurring")
+
+	// Import: --dry-run changes nothing, the real run changes the book, and a
+	// second run adds nothing — the importer's de-duplication, through the CLI.
+	fx := fmt.tprintf("%s/fx", dir)
+	cli_valid(tc, fmt.tprintf("fixtures %s", fx), "cli fixtures")
+	camt := fmt.tprintf("%s/octobre.camt.xml", fx)
+	before := file_digest(book)
+	{
+		c, code := cli_run(tc, fmt.tprintf("import %s --book %s --dry-run", camt, book))
+		c.dry_run = true
+		eq_int(tc, code, kit.EXIT_OK, "cli import --dry-run : code 0")
+		added, _ := kit.jget(c.out, "added")
+		ok_mark(tc, added != nil && kit.json_scalar(added) != "0", "cli import --dry-run : dit ce qui serait ajouté")
+		eq_str(tc, file_digest(book), before, "cli import --dry-run : le livre est inchangé")
+	}
+	{
+		c, _ := cli_valid(tc, fmt.tprintf("import %s --book %s", camt, book), "cli import")
+		ok_mark(tc, file_digest(book) != before, "cli import : le livre a changé")
+		saved, _ := kit.jget(c.out, "saved")
+		ok_mark(tc, saved != nil && saved.kind == .Bool && saved.b, "cli import : enregistré")
+	}
+	{
+		c, _ := cli_run(tc, fmt.tprintf("import %s --book %s", camt, book))
+		added, _ := kit.jget(c.out, "added")
+		eq_str(tc, kit.json_scalar(added), "0", "cli import : une deuxième fois n'ajoute rien")
+	}
+	{
+		_, code := cli_run(tc, fmt.tprintf("import %s/absent.csv --book %s", dir, book))
+		eq_int(tc, code, kit.EXIT_NOT_FOUND, "cli import : un relevé absent répond 3")
+	}
+
+	// Categorising through the CLI is the window's action: the transaction
+	// moves and the merchant becomes a learned rule, both saved.
+	{
+		c, _ := cli_run(tc, fmt.tprintf("transactions --book %s --limit 1", book))
+		arr, _ := kit.jget(c.out, "transactions")
+		first := arr != nil && kit.jlen(arr) > 0 ? arr.items[0] : nil
+		idv: ^kit.Json
+		if first != nil {
+			idv, _ = kit.jget(first, "id")
+		}
+		id := idv != nil ? kit.json_scalar(idv) : "-1"
+		cli_valid(tc, fmt.tprintf("categorize %s Loisirs --book %s", id, book), "cli categorize")
+		app := fresh_app()
+		defer drop_app(app)
+		store_load_from(app, book)
+		learned := false
+		for r in app.cat.rules {
+			if r.source != .Builtin && r.category == "Loisirs" {
+				learned = true
+			}
+		}
+		ok_mark(tc, learned, "cli categorize : la règle apprise est enregistrée")
+		_, code := cli_run(tc, fmt.tprintf("categorize 999999 Loisirs --book %s", book))
+		eq_int(tc, code, kit.EXIT_NOT_FOUND, "cli categorize : une opération absente répond 3")
+	}
+	cli_valid(tc, fmt.tprintf("budget-set Loisirs 120,50 --month 2026-10 --book %s", book), "cli budget-set")
+	{
+		app := fresh_app()
+		defer drop_app(app)
+		store_load_from(app, book)
+		cat, _ := account_find(&app.led, "Loisirs")
+		limit, _, ok := budget_limit(app, cat, 2026, 10)
+		ok_mark(tc, ok, "cli budget-set : l'enveloppe existe")
+		eq_cents(tc, limit, 12050, "cli budget-set : 120,50 € lu à la française")
+	}
+	cli_valid(tc, fmt.tprintf("budget-suggest --month 2026-12 --book %s", book), "cli budget-suggest")
+	{
+		before2 := file_digest(book)
+		cli_valid(tc, fmt.tprintf("apply-rules --book %s --dry-run", book), "cli apply-rules --dry-run")
+		eq_str(tc, file_digest(book), before2, "cli apply-rules --dry-run : le livre est inchangé")
+	}
+}
