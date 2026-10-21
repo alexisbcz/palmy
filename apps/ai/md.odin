@@ -530,7 +530,14 @@ words_of :: proc(spans: []Span, allocator := context.temp_allocator) -> [][]Frag
 		if s.kind == .Code {
 			// A code span is one unbreakable chip, whatever is inside it.
 			close_word(&words, &cur, allocator)
-			append(&words, []Frag{{kind = .Code, text = s.text}})
+			// Not `[]Frag{{...}}`: a slice literal's backing array lives in
+			// this procedure's stack frame, so the word would point into
+			// dead stack once words_of returns. With optimisation on, the
+			// next call overwrote it and frag_width read a garbage string —
+			// the "layout, headless" segfault in `ai --selftest`.
+			chip := make([]Frag, 1, allocator)
+			chip[0] = Frag{kind = .Code, text = s.text}
+			append(&words, chip)
 			continue
 		}
 		start := 0

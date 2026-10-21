@@ -818,6 +818,10 @@ test_layout :: proc() {
 		st := shot_state()
 		clear(&st.items)
 		for _ in 0 ..< reps {shot_conversation(st)}
+		// An answer in Markdown, inline code chips included: the case that
+		// crashed this section (md.odin's words_of once returned a code chip
+		// whose slice lived in its own stack frame; see the comment there).
+		if reps > 0 {append(&st.items, Item{kind = .Answer, text = LOREM})}
 		rc, rf, rm, tr: p.Rect
 		over: [2]f32
 		for _ in 0 ..< 3 {
