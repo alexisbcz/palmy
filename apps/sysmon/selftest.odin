@@ -21,6 +21,7 @@ import "core:os"
 import "core:strings"
 import "core:time"
 import "core:unicode/utf8"
+import kit "kit:."
 import p "palmy:."
 import sc "shadcn:."
 
@@ -102,6 +103,8 @@ selftest :: proc() {
 	test_filter_and_sort()
 	test_format()
 	test_no_signals()
+	test_cli_surface()
+	test_cli_no_signals()
 
 	_ = os.remove_all(fmt.tprintf("/tmp/palmy-sysmon-selftest-%d", os.get_pid()))
 
@@ -1109,4 +1112,217 @@ load_selftest_fonts :: proc(f: ^p.Fonts) {
 			break
 		}
 	}
+}
+
+// ---------------------------------------------------------------------------
+// The command surface
+//
+// The commands are run as real child processes of this binary, because what
+// has to hold is what a caller receives: the exit code, and stdout being one
+// JSON document of the declared shape and nothing else.
+// ---------------------------------------------------------------------------
+
+@(private = "file")
+self_exe :: proc() -> string {
+	if path, err := os.get_executable_path(context.temp_allocator); err == nil {
+		return path
+	}
+	return os.args[0]
+}
+
+// cli_run runs this binary again with `env` set for the child and hands back
+// stdout and the exit code. The display variables are cleared, so a command
+// that fell through to a window would fail rather than hang the test.
+@(private = "file")
+cli_run :: proc(env: []string, args: ..string) -> (out: string, code: int) {
+	line := strings.builder_make(context.temp_allocator)
+	strings.write_string(&line, "WAYLAND_DISPLAY= DISPLAY= ")
+	for e in env {
+		strings.write_string(&line, e)
+		strings.write_byte(&line, ' ')
+	}
+	strings.write_string(&line, fmt.tprintf("%q", self_exe()))
+	for a in args {
+		strings.write_string(&line, fmt.tprintf(" %q", a))
+	}
+	state, sout, _, err := os.process_exec({command = {"sh", "-c", strings.to_string(line)}}, context.temp_allocator)
+	if err != nil {
+		return "", -1
+	}
+	return string(sout), state.exit_code
+}
+
+test_cli_surface :: proc() {
+	section("the command surface")
+
+	sf := surface()
+	check(sf.noun == "sysmon", "the surface is named sysmon")
+	check(sf.selftest != nil, "--selftest is part of the declaration")
+	for cmd in sf.commands {
+		check(cmd.run != nil, "%q has an implementation", cmd.verb)
+		check(cmd.summary != "", "%q has a summary", cmd.verb)
+		check(len(cmd.out) > 0, "%q declares what it prints", cmd.verb)
+		check(len(cmd.examples) > 0, "%q ships an example", cmd.verb)
+		// A monitor looks. The only command that writes anything writes the
+		// PNG it was asked for; nothing is mutate on the system, nothing is
+		// destructive, and there is no signal verb to be intent class.
+		if cmd.verb == "shot" {
+			check(cmd.effect == .Mutate, "shot is mutate (it writes the file it is given)")
+		} else {
+			check(cmd.effect == .Read, "%q is read class", cmd.verb)
+		}
+		for bad in ([?]string{"kill", "signal", "renice", "stop", "terminate"}) {
+			check(cmd.verb != bad, "there is no %q verb", bad)
+		}
+	}
+
+	{
+		out, code := cli_run(nil, "--schema")
+		eq_i(code, 0, "--schema exits 0")
+		problems := kit.cli_validate_output(
+			out,
+			{
+				{name = "noun", kind = .String},
+				{name = "commands", kind = .Array, of = {{name = "verb", kind = .String}, {name = "effect", kind = .String}}},
+				{name = "exit_codes", kind = .Object},
+			},
+			context.temp_allocator,
+		)
+		check(len(problems) == 0, "--schema is one JSON document of the shape palm expects")
+	}
+
+	// Every example parses, through the real parser.
+	for cmd in sf.commands {
+		for ex in cmd.examples {
+			words := kit.cli_split_example(ex, context.temp_allocator)
+			check(len(words) > 0 && words[0] == "sysmon", "the example %q starts with the binary's name", ex)
+			args := make([dynamic]string, context.temp_allocator)
+			for w in words[1:] {
+				append(&args, w)
+			}
+			append(&args, "--parse-only")
+			_, code := cli_run(nil, ..args[:])
+			eq_i(code, 0, fmt.tprintf("the example %q parses", ex))
+		}
+	}
+
+	// The reads, run for real and held to their declarations.
+	{
+		out, code := cli_run(nil, "status", "--interval", "0.2", "--json")
+		eq_i(code, 0, "sysmon status exits 0")
+		problems := kit.cli_validate_output(out, STATUS_FIELDS, context.temp_allocator)
+		check(len(problems) == 0, "sysmon status --json matches its schema%s", len(problems) > 0 ? fmt.tprintf(" (%s)", problems[0]) : "")
+		check(strings.has_prefix(strings.trim_space(out), "{"), "and stdout is the document")
+	}
+
+	child, cerr := os.process_start({command = {"sleep", "30"}})
+	if cerr == nil {
+		defer {
+			_ = os.process_kill(child)
+			_, _ = os.process_wait(child, 0)
+		}
+		{
+			out, code := cli_run(nil, "ps", "--filter", "sleep", "--sort", "pid", "--limit", "0", "--interval", "0.2", "--json")
+			eq_i(code, 0, "sysmon ps exits 0")
+			problems := kit.cli_validate_output(out, PS_FIELDS, context.temp_allocator)
+			check(len(problems) == 0, "sysmon ps --json matches its schema%s", len(problems) > 0 ? fmt.tprintf(" (%s)", problems[0]) : "")
+			check(strings.contains(out, fmt.tprintf(`"pid": %d,`, child.pid)), "and the filter finds the sleep this test started")
+			check(strings.contains(out, `"sort": "pid"`), "sorted as asked")
+		}
+		{
+			out, code := cli_run(nil, "proc", fmt.tprintf("%d", child.pid), "--interval", "0.1", "--json")
+			eq_i(code, 0, "sysmon proc <pid> exits 0")
+			problems := kit.cli_validate_output(out, PROC_FIELDS, context.temp_allocator)
+			check(len(problems) == 0, "sysmon proc --json matches its schema%s", len(problems) > 0 ? fmt.tprintf(" (%s)", problems[0]) : "")
+			check(strings.contains(out, `"name": "sleep"`), "and names the process")
+		}
+	} else {
+		check(false, "could not start a child process for ps and proc to find")
+	}
+
+	// The documented refusals.
+	{
+		out, code := cli_run(nil, "proc", "999999999", "--interval", "0.05", "--json")
+		eq_i(code, kit.EXIT_NOT_FOUND, "a pid that does not exist exits 3")
+		check(strings.contains(out, `"error": "not found"`), "with the documented token")
+	}
+	{
+		_, code := cli_run(nil, "ps", "--sort", "sideways")
+		eq_i(code, kit.EXIT_USAGE, "a sort key that is not one exits 2")
+	}
+	{
+		_, code := cli_run(nil, "teleport")
+		eq_i(code, kit.EXIT_USAGE, "an unknown command exits 2")
+	}
+	{
+		out, code := cli_run({"PALM_IDENTITY=work"}, "status", "--identity", "personal", "--json")
+		eq_i(code, kit.EXIT_OUT_OF_SCOPE, "asking for another identity exits 5")
+		check(strings.contains(out, `"error": "out of scope"`), "with the documented token")
+	}
+	{
+		png := fmt.tprintf("/tmp/palmy-sysmon-selftest-%d/dry.png", os.get_pid())
+		_ = os.make_directory_all(fmt.tprintf("/tmp/palmy-sysmon-selftest-%d", os.get_pid()))
+		os.remove(png)
+		out, code := cli_run(nil, "shot", png, "--dry-run", "--json")
+		eq_i(code, 0, "a dry run of shot exits 0")
+		check(strings.contains(out, `"dry_run": true`), "and says it was a dry run")
+		check(!os.exists(png), "and wrote nothing")
+	}
+}
+
+// test_cli_no_signals is test_no_signals for the other front end. Every
+// command is run as a child with fake kill, pkill, killall, renice and
+// friends first on PATH, each writing to a sentinel; a process of our own is
+// alive throughout. The sentinel has to stay empty and the process alive.
+test_cli_no_signals :: proc() {
+	section("no command signals a process")
+
+	root := fmt.tprintf("/tmp/palmy-sysmon-selftest-%d", os.get_pid())
+	bin := fmt.tprintf("%s/fakebin", root)
+	_ = os.make_directory_all(bin)
+	sentinel := fmt.aprintf("%s/fired", bin)
+	defer delete(sentinel)
+	os.remove(sentinel)
+	for name in ([?]string{"kill", "pkill", "killall", "renice", "ionice", "taskset", "systemctl", "loginctl"}) {
+		path := fmt.tprintf("%s/%s", bin, name)
+		script := fmt.tprintf("#!/bin/sh\nprintf '%%s %%s\\n' \"$0\" \"$*\" >> %s\nexit 0\n", sentinel)
+		_ = os.write_entire_file(path, transmute([]u8)script, os.Permissions_All)
+	}
+	path_env := fmt.tprintf("PATH=%s:%s", bin, os.get_env("PATH", context.temp_allocator))
+
+	// Spring the trap once so that "the sentinel is empty" means something.
+	// (`kill` itself is a shell builtin, so the trap is sprung with pkill.)
+	{
+		_, _, _, err := os.process_exec({command = {"sh", "-c", fmt.tprintf("%s pkill --version", path_env)}}, context.temp_allocator)
+		check(err == nil && os.exists(sentinel), "the fake pkill on PATH is reached (the trap works)")
+	}
+	os.remove(sentinel)
+
+	child, cerr := os.process_start({command = {"sleep", "30"}})
+	if cerr != nil {
+		check(false, "could not start the child process to aim at")
+		return
+	}
+	defer {
+		_ = os.process_kill(child)
+		_, _ = os.process_wait(child, 0)
+	}
+	pid := fmt.tprintf("%d", child.pid)
+	png := fmt.tprintf("%s/cli.png", root)
+	for argv in ([][]string {
+		{"status", "--interval", "0.05", "--json"},
+		{"ps", "--filter", pid, "--interval", "0.05", "--json"},
+		{"ps", "--sort", "mem", "--limit", "3", "--interval", "0.05"},
+		{"proc", pid, "--interval", "0.05", "--json"},
+		{"shot", png, "k"},
+	}) {
+		_, code := cli_run({path_env}, ..argv)
+		eq_i(code, 0, fmt.tprintf("sysmon %s exits 0", argv[0]))
+		check(!os.exists(sentinel), "sysmon %s ran no kill, renice or systemctl", argv[0])
+	}
+	check(os.exists(png), "and the shot was written")
+
+	text, ok := slurp(fmt.tprintf("/proc/%d/stat", child.pid))
+	st, parsed := parse_proc_stat(text)
+	check(ok && parsed && st.state != 'Z' && st.state != 'X', "the process every command was aimed at is still alive")
 }

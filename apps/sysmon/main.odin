@@ -18,6 +18,7 @@ import "core:mem"
 import "core:mem/virtual"
 import "core:os"
 import "core:time"
+import kit "kit:."
 import p "palmy:."
 
 HEADER_H :: 92
@@ -126,24 +127,12 @@ Model :: struct {
 g_now: f64
 
 main :: proc() {
-	args := os.args[1:]
-	for a, i in args {
-		if a == "--selftest" {
-			selftest()
-			return
-		}
-		// `--shot out.png [key ...]` renders one frame offscreen, with any
-		// keys given after the path pressed first. No compositor involved.
-		if a == "--shot" && i + 1 < len(args) {
-			keys_wanted := make([dynamic]u32, context.allocator)
-			for extra in args[i + 2:] {
-				if len(extra) > 0 {
-					append(&keys_wanted, u32(extra[0]))
-				}
-			}
-			shot(args[i + 1], keys_wanted[:])
-			return
-		}
+	// The command line is the other front end, declared in cli.odin and
+	// parsed by the shared convention in apps/kit. `--selftest` and
+	// `--shot out.png [key ...]` are commands there now, and both still work
+	// spelled the way they always were. With no command there is a window.
+	if code, handled := kit.cli(surface()); handled {
+		os.exit(code)
 	}
 
 	// A live monitor has something new to draw every frame the graphs move, so
