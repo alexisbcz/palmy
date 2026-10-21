@@ -361,6 +361,42 @@ nm_intent_only :: proc(argv: []string, why: string) {
 	fmt.eprintfln("[network] INTENT ONLY, not executed: %s   (%s)", cmd, why)
 }
 
+// The reasons the two gated commands give, shared by both backends and both
+// front ends.
+WHY_RADIO_OFF :: "switching the radio off would take this machine offline"
+WHY_RADIO_ON :: "the command line changes no network state, not even to restore it"
+WHY_CONNECT :: "joining a network would drop the connection this machine is using"
+
+// radio_argv and connect_argv are the commands the gate logs, built in one
+// place for both backends. The window's radio-off and connect jobs log them
+// through nm_intent_only, and `network radio` / `network connect` on the
+// command line log exactly the same argv — so what the CLI says it did not
+// run is, word for word, what the window says it did not run. For iwd, `path`
+// is the device's object path; the "dbus ..." form is a description of a
+// D-Bus call, not a program, and nothing ever executes it.
+radio_argv :: proc(backend: Backend, path: string, on: bool, al := context.temp_allocator) -> []string {
+	if backend == .Iwd {
+		out := make([]string, 7, al)
+		out[0], out[1], out[2], out[3] = "dbus", IWD, path, "Properties.Set"
+		out[4], out[5], out[6] = IWD_DEVICE, "Powered", on ? "true" : "false"
+		return out
+	}
+	out := make([]string, 4, al)
+	out[0], out[1], out[2], out[3] = "nmcli", "radio", "wifi", on ? "on" : "off"
+	return out
+}
+
+connect_argv :: proc(backend: Backend, ssid: string, al := context.temp_allocator) -> []string {
+	if backend == .Iwd {
+		out := make([]string, 4, al)
+		out[0], out[1], out[2], out[3] = "dbus", IWD, "Network.Connect", ssid
+		return out
+	}
+	out := make([]string, 5, al)
+	out[0], out[1], out[2], out[3], out[4] = "nmcli", "device", "wifi", "connect", ssid
+	return out
+}
+
 // nm_free is `delete` that tolerates kit.run's "" on a failed spawn, which is
 // a literal rather than an allocation.
 nm_free :: proc(s: string) {
@@ -614,10 +650,7 @@ wifi_list :: proc(rescan: bool) -> ([]string, bool) {
 
 do_radio :: proc(s: ^Store, on: bool) {
 	if !on {
-		nm_intent_only(
-			{"nmcli", "radio", "wifi", "off"},
-			"switching the radio off would take this machine offline",
-		)
+		nm_intent_only(radio_argv(.Nm, "", false), WHY_RADIO_OFF)
 		set_message(s, .Info, "Turning the radio off is disabled: it would take this machine offline")
 	} else if !nm_do({"nmcli", "radio", "wifi", "on"}) {
 		set_message(s, .Bad, "nmcli refused to change the radio state")
@@ -648,10 +681,7 @@ do_connect :: proc(s: ^Store, ssid, pw: string) {
 	// logged intent rather than a command. The password is deliberately not part
 	// of the logged argv -- a secret does not belong in a log line.
 	_ = pw
-	nm_intent_only(
-		{"nmcli", "device", "wifi", "connect", ssid},
-		"joining a network would drop the connection this machine is using",
-	)
+	nm_intent_only(connect_argv(.Nm, ssid), WHY_CONNECT)
 	set_message(s, .Info, fmt.tprintf("Joining %s is disabled: it would drop the current connection", ssid))
 	do_refresh(s)
 	do_wifi(s, false)

@@ -84,6 +84,12 @@ main :: proc() {
 			os.exit(shots(rest[i + 1]))
 		}
 	}
+	// Everything else on the command line is the other front end, declared
+	// in cli.odin and parsed by the shared convention in apps/kit — `palm
+	// net`. With no command there is a window.
+	if code, handled := kit.cli(surface()); handled {
+		os.exit(code)
+	}
 
 	// The window class is "palmy" like every app here. NETWORK_APP_ID overrides
 	// it, which is only useful while several of these applets are being driven

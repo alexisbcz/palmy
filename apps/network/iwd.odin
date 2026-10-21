@@ -628,10 +628,7 @@ iwd_radio :: proc(s: ^Store, on: bool) {
 	}
 	if !on {
 		for wd in st.devices {
-			nm_intent_only(
-				{"dbus", IWD, wd.path, "Properties.Set", IWD_DEVICE, "Powered", "false"},
-				"switching the radio off would take this machine offline",
-			)
+			nm_intent_only(radio_argv(.Iwd, wd.path, false), WHY_RADIO_OFF)
 		}
 		set_message(s, .Info, "Turning the radio off is disabled: it would take this machine offline")
 	} else {
@@ -656,10 +653,7 @@ iwd_connect :: proc(s: ^Store, ssid, pw: string) {
 	// As with nmcli: joining a network drops the connection in use, so it is
 	// a logged intent. The passphrase is never part of the logged line.
 	_ = pw
-	nm_intent_only(
-		{"dbus", IWD, "Network.Connect", ssid},
-		"joining a network would drop the connection this machine is using",
-	)
+	nm_intent_only(connect_argv(.Iwd, ssid), WHY_CONNECT)
 	set_message(s, .Info, fmt.tprintf("Joining %s is disabled: it would drop the current connection", ssid))
 	iwd_refresh(s)
 	iwd_wifi(s, false)
