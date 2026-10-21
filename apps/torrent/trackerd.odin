@@ -12,7 +12,6 @@ package main
 // It binds 127.0.0.1 and nothing else, through the same `sock_listen` gate the
 // client uses. There is no configuration that would let it bind 0.0.0.0.
 
-import "base:runtime"
 import "core:fmt"
 import "core:strings"
 import "core:sys/linux"
@@ -115,22 +114,16 @@ trackerd_run :: proc(
 		}
 	}
 
-	// A temp allocator of its own, reset every step, so a tracker left
-	// running for half an hour does not grow, and the caller's — which may
-	// hold the command line it was started from — is left alone.
-	loop_temp: runtime.Default_Temp_Allocator
-	runtime.default_temp_allocator_init(&loop_temp, 1 << 20, context.allocator)
-	defer runtime.default_temp_allocator_destroy(&loop_temp)
-	{
-		context.temp_allocator = runtime.default_temp_allocator(&loop_temp)
-		started := now_s()
-		for !t.stop {
-			if run_for > 0 && now_s() - started > run_for {
-				break
-			}
-			trackerd_step(t, 200)
-			free_all(context.temp_allocator)
+	// The temp allocator is reset every step, so a tracker left running for
+	// half an hour does not grow. Nothing above lives in it once the ports
+	// file is written, and the command line is the kit's (its own arena).
+	started := now_s()
+	for !t.stop {
+		if run_for > 0 && now_s() - started > run_for {
+			break
 		}
+		trackerd_step(t, 200)
+		free_all(context.temp_allocator)
 	}
 	sock_close(t.listener)
 	udp_close(&t.udp)

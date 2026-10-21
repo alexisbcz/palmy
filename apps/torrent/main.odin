@@ -16,7 +16,6 @@ package main
 // 127.0.0.0/8. See the header of net.odin.
 
 import "core:fmt"
-import "base:runtime"
 import "core:os"
 import "core:strconv"
 import "core:strings"
@@ -362,14 +361,9 @@ run_headless :: proc(o: Headless_Opts) -> (r: Headless_Result, code: int, err: s
 		engine_add(e, o.torrent, dir, true)
 	}
 
-	// The loop gets a temp allocator of its own, reset every step. The
-	// caller's is not this procedure's to reset: the command line it was
-	// called from keeps its parsed arguments there until it has finished.
-	loop_temp: runtime.Default_Temp_Allocator
-	runtime.default_temp_allocator_init(&loop_temp, 1 << 20, context.allocator)
-	defer runtime.default_temp_allocator_destroy(&loop_temp)
-	outer_temp := context.temp_allocator
-	context.temp_allocator = runtime.default_temp_allocator(&loop_temp)
+	// The temp allocator is reset every step. Nothing above lives in it —
+	// the options are the kit's (its own arena) or cloned by prepare_add and
+	// engine_add — so the loop may own it.
 
 	started := now_s()
 	last_status := -1.0
@@ -411,7 +405,6 @@ run_headless :: proc(o: Headless_Opts) -> (r: Headless_Result, code: int, err: s
 	if o.status_file != "" {
 		write_status(e, o.status_file, r.elapsed)
 	}
-	context.temp_allocator = outer_temp
 	v := engine_snapshot(e, len(e.torrents) > 0 ? e.torrents[0].id : 0, context.allocator)
 	if len(v.torrents) > 0 {
 		r.view = v.torrents[0]
