@@ -54,6 +54,12 @@ Obj_Kind :: enum u8 {
 	Primary_Device,
 	Primary_Source,
 	Primary_Offer,
+	// Data control (ext_data_control_v1, or wlr's zwlr_data_control_v1
+	// before it): the selection seen whether or not this window has focus,
+	// which is what a clipboard watcher needs. Bound only on request.
+	Control_Manager,
+	Control_Device,
+	Control_Offer,
 
 	// The object has been destroyed locally but the server has not confirmed
 	// it yet, so its id must not be handed out again.

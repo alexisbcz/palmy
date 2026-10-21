@@ -890,6 +890,9 @@ x_event :: proc(w: ^Window, rec: []u8, avail: int) -> int {
 		x.remap = true
 
 	case:
+		if x_clip_xfixes_event(w, rec) {
+			break
+		}
 		if int(kind) == int(x.shm_first_event) && x.shm_in_use {
 			// ShmCompletion: the server has finished reading the buffer, which
 			// is exactly what wl_buffer.release means on the other backend.

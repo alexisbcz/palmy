@@ -364,7 +364,7 @@ wl_on_event :: proc(w: ^Window, id: u32, opcode: u16, r: ^Reader) {
 				w.wl.decor_manager = bind_global(w, name, iface, 1, .Decor_Manager)
 			case "zwlr_layer_shell_v1":
 				w.wl.layer_shell = bind_global(w, name, iface, min(version, 4), .Layer_Shell)
-			case "wl_data_device_manager", "zwp_primary_selection_device_manager_v1":
+			case "wl_data_device_manager", "zwp_primary_selection_device_manager_v1", "ext_data_control_manager_v1", "zwlr_data_control_manager_v1":
 				wl_clip_bind(w, name, iface, version)
 			case "wp_cursor_shape_manager_v1":
 				w.wl.cursor_manager_ver = min(version, 1)
@@ -654,7 +654,7 @@ wl_on_event :: proc(w: ^Window, id: u32, opcode: u16, r: ^Reader) {
 			w.repeat_delay = int(r_i32(r))
 		}
 
-	case .Data_Device, .Data_Source, .Data_Offer, .Primary_Device, .Primary_Source, .Primary_Offer:
+	case .Data_Device, .Data_Source, .Data_Offer, .Primary_Device, .Primary_Source, .Primary_Offer, .Control_Device, .Control_Offer:
 		wl_clip_event(w, kind_of(c, id), id, opcode, r)
 
 	case:
