@@ -59,8 +59,9 @@ while [ $# -gt 0 ]; do
 done
 
 ROOT=$(cd "$(dirname "$0")/../.." && pwd)
-# Every engine that has JSPI has these; the frame is byte-identical with and
-# without them (palmy/web/README.md) and about a quarter faster with.
+# Every engine that has JSPI has these. The frames are byte-identical with and
+# without them (wasm SIMD has no fused multiply-add); one showcase run on a
+# loaded VM measured a median frame of 11.0 ms without and 8.0 ms with.
 # WEB_FEATURES= (empty) builds plain wasm32.
 WEB_FEATURES=${WEB_FEATURES-bulk-memory,simd128,nontrapping-fptoint,sign-ext}
 ODIN=${ODIN:-$HOME/.local/share/mise/installs/odin/dev-2026-09/odin}
