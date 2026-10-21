@@ -70,6 +70,8 @@ run_selftest :: proc() {
 	test_grouped_undo()
 	test_carets()
 	test_file_round_trip()
+	test_doc_core() // selftest_doc.odin: the core with no window
+	test_cli()
 
 	if failures == 0 {
 		fmt.printfln("editor selftest: %d checks passed", checks)

@@ -157,42 +157,38 @@ byte_of :: proc(s: string, dcol: int) -> int {
 // ---------------------------------------------------------------------------
 
 main :: proc() {
-	args := os.args[1:]
-	// `--shots <dir>` renders the interface offscreen and writes PNGs, with
-	// no window and no compositor. See shot.odin.
-	for a, i in args {
-		if a == "--shots" || strings.has_prefix(a, "--shots=") {
-			dir := ""
-			if eq := strings.index_byte(a, '='); eq > 0 {
-				dir = a[eq + 1:]
-			} else if i + 1 < len(args) {
-				dir = args[i + 1]
-			}
-			if dir == "" {
-				fmt.eprintln("editor --shots <dir>")
-				os.exit(2)
-			}
-			os.exit(shots(dir))
-		}
+	// The command line is the other front end over the same buffer and the
+	// same edits (doc.odin, cli.odin). `--selftest`, `--shots <dir>` and
+	// `--bench <file>` are routed by it, as they always were.
+	if code, handled := kit.cli(surface()); handled {
+		os.exit(code)
 	}
+	args := os.args[1:]
 	path := ""
 	for a in args {
-		if a == "--bench" || a == "--selftest" {
+		if a == "--bench" {
 			continue
 		}
 		if path == "" {
 			path = a
 		}
 	}
+	// `editor <file> --bench`, the older order.
 	for a in args {
 		if a == "--bench" {
 			run_bench(path)
 			return
 		}
-		if a == "--selftest" {
-			run_selftest()
-			os.exit(failures == 0 ? 0 : 1)
-		}
+	}
+	// takes_path hands over any word that is not a verb (C3: the kit does not
+	// check it). A path that does not exist yet is a new file, so it cannot be
+	// refused outright — but a bare word with no dot and no slash that names
+	// nothing is a mistyped command far more often than a new file, and must
+	// not open a window. `./NAME` makes it a file.
+	if path != "" && !os.exists(path) && strings.index_any(path, "./") < 0 {
+		fmt.eprintfln("editor: %q is not a command or an existing file (to start a new file with that name, pass ./%s)", path, path)
+		fmt.eprint(kit.cli_help_text(surface()))
+		os.exit(kit.EXIT_USAGE)
 	}
 
 	app, err := kit.start(
@@ -217,10 +213,8 @@ main :: proc() {
 		syntax  = true,
 	}
 	if path != "" {
-		if !buf_load(&ed.buf, path) {
-			// A path that does not exist yet is a new file, not an error.
-			buf_init_empty(&ed.buf)
-			ed.buf.path = strings.clone(path)
+		// A path that does not exist yet is a new file, not an error (doc.odin).
+		if !doc_open(&ed.buf, path) {
 			note(&ed, tfmt("New file %s", base_of(path)))
 		}
 	} else {
@@ -273,7 +267,7 @@ dir_of :: proc(path: string) -> string {
 // relang re-detects the language and throws away the highlighter's per-line
 // state cache, which was computed under the old grammar.
 relang :: proc(ed: ^Editor) {
-	ed.lang = lang_detect(ed.buf.path, buf_line(&ed.buf, 0))
+	ed.lang = doc_lang(&ed.buf)
 	ed.buf.valid = 0
 	clear(&ed.extra)
 	ed.type_run = 0
@@ -511,10 +505,10 @@ do_save :: proc(ed: ^Editor, path: string) {
 		note(ed, "This buffer has no name yet")
 		return
 	}
-	if buf_save(&ed.buf, path) {
+	if ok, why := doc_write(&ed.buf, path); ok {
 		note(ed, tfmt("Saved %s, %d lines", base_of(path), buf_lines(&ed.buf)))
 	} else {
-		note(ed, tfmt("Could not write %s", path))
+		note(ed, tfmt("Could not save: %s", why))
 	}
 }
 
@@ -634,17 +628,11 @@ run_cmd :: proc(ed: ^Editor, c: Cmd) {
 		ed.has_sel = true
 		ensure_visible(ed)
 	case .Dup_Line:
-		l := buf_line(&ed.buf, ed.cur.line)
-		at := Pos{ed.cur.line, len(l)}
-		ed.cur = buf_apply(&ed.buf, at, at, tfmt("\n%s", l), ed.cur, .No)
-		ed.cur = Pos{ed.cur.line, min(ed.cur.col, len(buf_line(&ed.buf, ed.cur.line)))}
+		ed.cur = buf_dup_line(&ed.buf, ed.cur.line, ed.cur)
 		clear_sel(ed)
 		ensure_visible(ed)
 	case .Del_Line:
-		li := ed.cur.line
-		from := Pos{li, 0}
-		to := li + 1 < buf_lines(&ed.buf) ? Pos{li + 1, 0} : Pos{li, len(buf_line(&ed.buf, li))}
-		ed.cur = buf_apply(&ed.buf, from, to, "", ed.cur, .No)
+		ed.cur = buf_del_line(&ed.buf, ed.cur.line, ed.cur)
 		clear_sel(ed)
 		ensure_visible(ed)
 	case .Top:
@@ -1383,7 +1371,7 @@ prompt_keys :: proc(ui: ^p.Ctx, ed: ^Editor, swallow: bool) {
 			replace_one(ed)
 		case .Goto:
 			if n, ok := strconv.parse_int(string(ed.target[:])); ok {
-				ed.cur = pos_clamp(&ed.buf, {clamp(n - 1, 0, buf_lines(&ed.buf) - 1), 0})
+				ed.cur = buf_goto_line(&ed.buf, n)
 				clear_sel(ed)
 				ensure_visible(ed)
 				ed.mode = .Edit
@@ -1406,12 +1394,13 @@ replace_one :: proc(ed: ^Editor) {
 	if needle == "" {
 		return
 	}
-	lo, hi, has := sel_range(ed)
-	cur := buf_text(&ed.buf, lo, hi, context.temp_allocator)
-	if has && strings.equal_fold(cur, needle) {
-		ed.cur = buf_apply(&ed.buf, lo, hi, string(ed.repl[:]), ed.cur, .No)
-		clear_sel(ed)
-		ed.matches = buf_count(&ed.buf, needle, true)
+	// The window's search is case-insensitive; `editor replace -i` is this.
+	if lo, hi, has := sel_range(ed); has {
+		if end, done := buf_replace_if_match(&ed.buf, lo, hi, needle, string(ed.repl[:]), true, ed.cur); done {
+			ed.cur = end
+			clear_sel(ed)
+			ed.matches = buf_count(&ed.buf, needle, true)
+		}
 	}
 	do_find_step(ed, false)
 }
@@ -1421,22 +1410,10 @@ replace_all :: proc(ed: ^Editor) {
 	if needle == "" {
 		return
 	}
-	with := strings.clone(string(ed.repl[:]), context.temp_allocator)
-	n := 0
-	at := Pos{0, 0}
-	for {
-		found, ok := buf_search(&ed.buf, needle, at, true)
-		if !ok || (n > 0 && pos_less(found, at)) {
-			break
-		}
-		end := Pos{found.line, found.col + len(needle)}
-		buf_apply(&ed.buf, found, end, with, ed.cur, .No)
-		at = Pos{found.line, found.col + len(with)}
-		n += 1
-		if n > 200_000 {
-			break
-		}
-	}
+	// The same procedure `editor replace --ignore-case` runs (doc.odin), and
+	// one undo step for the lot.
+	n: int
+	n, ed.cur = buf_replace_all(&ed.buf, needle, string(ed.repl[:]), true, ed.cur)
 	ed.cur = pos_clamp(&ed.buf, ed.cur)
 	clear_sel(ed)
 	ed.matches = 0

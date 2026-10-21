@@ -103,7 +103,7 @@ NOUNS := []Noun {
 	{"sysmon", "sysmon", "processes, memory and load", true, ""},
 	{"capture", "screenshot", "screenshots, on a private headless compositor", true, ""},
 	{"clipboard", "clipboard", "the clipboard history", true, ""},
-	{"editor", "editor", "a text editor", false, ""},
+	{"editor", "editor", "a text editor", true, ""},
 	{"image", "image", "an image viewer", false, ""},
 	{"prose", "prose", "a Vale-compatible prose linter", true, ""},
 	{"pkg", "pkg", "packages: list, search, install, sync, rollback", true, ""},

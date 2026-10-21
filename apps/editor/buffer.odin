@@ -479,19 +479,9 @@ buf_load :: proc(b: ^Buffer, path: string) -> (ok: bool) {
 }
 
 buf_save :: proc(b: ^Buffer, path: string) -> (ok: bool) {
-	sb := strings.builder_make()
-	defer strings.builder_destroy(&sb)
-	nl := b.eol == .CRLF ? "\r\n" : "\n"
-	for i in 0 ..< len(b.lines) {
-		if i > 0 {
-			strings.write_string(&sb, nl)
-		}
-		strings.write_string(&sb, buf_line(b, i))
-	}
-	if b.final_nl && len(b.lines) > 0 && len(b.lines[len(b.lines) - 1].b) > 0 {
-		strings.write_string(&sb, nl)
-	}
-	if werr := os.write_entire_file(path, transmute([]u8)strings.to_string(sb)); werr != nil {
+	text := buf_serialize(b) // doc.odin: the bytes, which a dry run diffs
+	defer delete(text)
+	if werr := os.write_entire_file(path, transmute([]u8)text); werr != nil {
 		return false
 	}
 	if b.path != path {
