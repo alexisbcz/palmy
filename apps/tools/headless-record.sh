@@ -25,9 +25,15 @@
 #   chord <mods>+<key>        e.g. `chord ctrl+s`
 #   type <text>               literal text
 #   move <x> <y>              pointer, relative to the window
-#   click [button]            press and release (default left)
+#   click [button]            press and release (default left, or right/middle)
+#   down [button] / up [button]   press or release alone, for a drag
+#   wheel <dy>                scroll (10 per notch, positive is down)
 #   wait <seconds>
 #   # comment
+#
+# The seat has no real devices, so it holds one virtual keyboard
+# (`wtype -s`, asleep) and one virtual pointer (wl-pointer.py, beside this
+# script) for the whole take. See "Input" below for why that matters.
 
 set -uo pipefail
 
@@ -41,27 +47,27 @@ H="${5:-800}"
 [ -f "$STEPS" ] || { echo "no steps file: $STEPS"; exit 1; }
 
 command -v sway >/dev/null || { echo "sway is required for the headless compositor"; exit 1; }
-command -v wf-recorder >/dev/null || { echo "wf-recorder is required"; exit 1; }
+command -v grim >/dev/null || { echo "grim is required to capture frames"; exit 1; }
+command -v ffmpeg >/dev/null || { echo "ffmpeg is required to encode the take"; exit 1; }
 
 export XDG_RUNTIME_DIR="${XDG_RUNTIME_DIR:-/run/user/$(id -u)}"
 TMP="$(mktemp -d /tmp/palmy-headless-XXXXXX)"
 trap 'cleanup' EXIT
 
-APP=""; REC=""; SWAY=""
+APP=""; REC=""; SWAY=""; KBD=""; PTR=""; FRAMES=""
 
 cleanup() {
-  [ -n "$REC"  ] && kill -INT  "$REC"  2>/dev/null
-  # Give the encoder a moment to finalise the container, but do not hang on it.
-  for _ in $(seq 1 60); do kill -0 "$REC" 2>/dev/null || break; sleep 0.1; done
-  kill -9 "$REC" 2>/dev/null
+  stop_capture
   [ -n "$APP"  ] && kill "$APP"  2>/dev/null
+  [ -n "$KBD"  ] && kill "$KBD"  2>/dev/null
+  [ -n "$PTR"  ] && kill "$PTR"  2>/dev/null
   if [ -n "$SWAY" ]; then
     kill "$SWAY" 2>/dev/null
     for _ in $(seq 1 30); do kill -0 "$SWAY" 2>/dev/null || break; sleep 0.1; done
     kill -9 "$SWAY" 2>/dev/null
     wait "$SWAY" 2>/dev/null
   fi
-  rm -rf "$TMP"
+  [ -n "${KEEP_TMP:-}" ] && cp -r "$TMP" "$KEEP_TMP"; rm -rf "$TMP"
 }
 
 cat > "$TMP/sway.conf" <<CONF
@@ -109,6 +115,38 @@ if ! swaymsg -t get_version >/dev/null 2>&1; then
 fi
 echo "headless compositor on $WAYLAND_DISPLAY (${W}x${H}), invisible to the session"
 
+# Input. A headless seat has no keyboard and no pointer until a virtual one
+# attaches, and loses the capability again when it detaches. A tool that
+# attaches per step (wtype, wlrctl) therefore toggles the capability for every
+# keystroke: the client is told to drop its wl_keyboard and bind a new one, and
+# sway only flushes that news to it once its own loop goes idle -- after
+# wtype's press and release have both been processed and sent to nobody.
+# Measured at 79-82 keys in 100 lost, one wtype per key. palmy now recovers a
+# key still held when it re-binds, which brings that to 14-18 in 100; the rest
+# no client can recover. So the seat keeps one keyboard and one pointer
+# attached for the whole take, and the capability never changes: 0 of 200
+# keys lost with a wtype per key and no gap at all.
+#
+# Both start before the app, so it sees the seat complete from its first
+# frame.
+wtype -s 86400000 &
+KBD=$!
+PTR_IN="$TMP/pointer.in"; PTR_OUT="$TMP/pointer.out"
+mkfifo "$PTR_IN" "$PTR_OUT"
+python3 "$(dirname "$(readlink -f "$0")")/wl-pointer.py" --width "$W" --height "$H" \
+  < "$PTR_IN" > "$PTR_OUT" 2>"$TMP/pointer.log" &
+PTR=$!
+exec 3> "$PTR_IN" 4< "$PTR_OUT"
+read -r -t 5 ready <&4 || { echo "the virtual pointer did not start:"; cat "$TMP/pointer.log"; exit 1; }
+sleep 0.2
+
+# pointer sends one command to the virtual pointer and waits until the
+# compositor has acknowledged it, so steps stay in order with the keyboard's.
+pointer() {
+  printf '%s\n' "$*" >&3
+  read -r -t 5 ack <&4 || echo "warning: the virtual pointer did not acknowledge: $*" >&2
+}
+
 "$BIN" > "$TMP/app.log" 2>&1 &
 APP=$!
 
@@ -124,84 +162,90 @@ sleep 0.4
 # one -- no pid matching, no re-focusing, no class guessing.
 swaymsg '[app_id=".*"] fullscreen enable' >/dev/null 2>&1
 
-wf-recorder -f "$OUT" -c libx264 -p crf=20 -p preset=veryfast --overwrite \
-  > "$TMP/rec.log" 2>&1 &
-REC=$!
+# Capture. This used to be wf-recorder, and in the build VM it records almost
+# nothing: sway's headless output only renders when something is damaged, so
+# a take of an idle-between-steps app came back as 2 to 64 frames squeezed
+# into a second or so, and SIGINT never finalised it (it waits for a frame
+# that does not come). grim takes one screencopy per call whatever the damage,
+# so the loop below grabs a frame about ten times a second with the time it
+# was taken, and the encoder holds each frame for exactly as long as it was
+# on screen. RECORDER=wf-recorder brings the old path back where it works.
+FRAMES="$TMP/frames"
+mkdir -p "$FRAMES"
+start_capture() {
+  if [ "${RECORDER:-grim}" = wf-recorder ]; then
+    wf-recorder -f "$OUT" -c libx264 -p crf=20 -p preset=veryfast --overwrite > "$TMP/rec.log" 2>&1 &
+    REC=$!
+    return
+  fi
+  (
+    i=0
+    while [ ! -e "$FRAMES/stop" ]; do
+      f=$(printf '%s/%06d.png' "$FRAMES" "$i")
+      grim -c -l 1 "$f" 2>/dev/null && { date +%s.%N >> "$FRAMES/times"; i=$((i+1)); }
+      sleep 0.05
+    done
+  ) &
+  REC=$!
+}
+stop_capture() {
+  [ -z "$REC" ] && return
+  if [ "${RECORDER:-grim}" = wf-recorder ]; then
+    kill -INT "$REC" 2>/dev/null
+    for _ in $(seq 1 60); do kill -0 "$REC" 2>/dev/null || break; sleep 0.1; done
+    kill -9 "$REC" 2>/dev/null
+    REC=""
+    return
+  fi
+  touch "$FRAMES/stop"
+  wait "$REC" 2>/dev/null
+  REC=""
+  [ -s "$FRAMES/times" ] || return
+  # A concat list: every frame shown until the next one was taken.
+  awk -v d="$FRAMES" '
+    { t[NR] = $1 }
+    END {
+      for (i = 1; i <= NR; i++) {
+        dur = (i < NR) ? t[i+1] - t[i] : 0.1
+        printf "file '"'"'%s/%06d.png'"'"'\nduration %.4f\n", d, i - 1, dur
+      }
+      printf "file '"'"'%s/%06d.png'"'"'\n", d, NR - 1
+    }' "$FRAMES/times" > "$FRAMES/list.txt"
+  ffmpeg -v error -y -f concat -safe 0 -i "$FRAMES/list.txt" -vf fps=30,format=yuv420p \
+    -c:v libx264 -crf 20 -preset veryfast "$OUT" 2>"$TMP/rec.log" ||
+    { echo "encoding failed:"; tail -5 "$TMP/rec.log"; }
+}
+start_capture
 sleep 1.0
 
-# Drive the whole take through ONE wtype process.
-#
-# wtype attaches a virtual keyboard, sends, and detaches. Running it per step
-# means the seat's keyboard capability cycles for every keystroke, and the
-# client's re-bind is asynchronous -- it asks for a keyboard and the keymap and
-# focus arrive afterwards, so a key pressed in that window is simply gone.
-# Measured at roughly one key in five lost, which is worse than it sounds: a
-# dropped key does not just omit a step, it redirects the ones after it. One
-# take left a mail demo deleting the wrong conversation.
-#
-# Two agents measured the same thing independently, and driving the identical
-# keys by hand without the per-step loop works every time. So: translate the
-# whole steps file into a single argv, where `wait` becomes wtype's own `-s`
-# (sleep before the following options) and one keyboard stays attached from the
-# first key to the last.
-#
-# Pointer steps have to break the batch, so they flush what has accumulated,
-# act, and start a new one.
-argv=()
-flush_keys() {
-  [ ${#argv[@]} -eq 0 ] && return
-  # Lead with a shift press and release. The first event of an invocation is
-  # the one exposed to the re-bind window, and a bare `key` step that loses it
-  # loses the whole step; a modifier that is pressed and released produces no
-  # character whether it arrives or not, so it is the right thing to sacrifice.
-  # (`-M shift` is the modifier form; `-k shift` is a keysym lookup and fails,
-  # which is why an earlier attempt at this made things worse rather than
-  # better.)
-  wtype -M shift -m shift "${argv[@]}"
-  argv=()
-}
-
+# Drive the take one step at a time. This used to batch the whole steps file
+# into a single wtype process, because a wtype per step lost about one key in
+# five; with the resident keyboard above it loses none, and per-step keys keep
+# their order with pointer steps, which a batch could not.
 while IFS= read -r line || [ -n "$line" ]; do
   [ -z "$line" ] && continue
   case "$line" in
     \#*)      ;;
-    key\ *)   argv+=( -k "${line#key }" ) ;;
-    # No `--` here: it makes wtype treat everything after it as literal text,
-    # so the flags of later steps get typed into the window. Text therefore
-    # goes in as a plain positional, which means a step whose text starts with
-    # a dash is not supported -- say so rather than silently typing a flag.
+    key\ *)   wtype -k "${line#key }" ;;
+    # No `--`: it makes wtype treat everything after it as literal text. A
+    # step whose text starts with a dash is refused rather than typed as a flag.
     type\ *)  txt="${line#type }"
               case "$txt" in -*) echo "step text may not start with '-': $txt"; exit 1;; esac
-              argv+=( -d 8 "$txt" ) ;;
+              wtype -d 8 "$txt" ;;
     chord\ *) set -- $(printf '%s' "${line#chord }" | tr '+' ' ')
-              mods=(); while [ $# -gt 1 ]; do mods+=( "$1" ); shift; done
-              for m in "${mods[@]}"; do argv+=( -M "$m" ); done
-              argv+=( -k "$1" )
-              for m in "${mods[@]}"; do argv+=( -m "$m" ); done ;;
-    wait\ *)  ms=$(awk -v s="${line#wait }" 'BEGIN{printf "%d", s*1000}')
-              argv+=( -s "$ms" ) ;;
-    # POINTER STEPS DO NOT REACH THE CLIENT ON THIS SEAT, and they are kept
-    # only so an existing steps file does not fail outright. The compositor is
-    # started with WLR_LIBINPUT_NO_DEVICES=1, so the seat never gains a pointer
-    # capability and no client is ever sent motion or button. `swaymsg seat
-    # cursor` reports success regardless -- it is moving sway's own cursor --
-    # which is why these appeared to work for a long time and never did.
-    # wlrctl speaks the right protocol but its move is relative, and a click
-    # with no pointer capability still reaches nobody; verified by clicking a
-    # calculator keypad and watching nothing happen.
-    #
-    # Drive demos from the keyboard. Every application here is keyboard-usable
-    # because of this.
-    move\ *|click*)
-              flush_keys
-              if [ -z "${POINTER_WARNED:-}" ]; then
-                echo "warning: pointer steps do not reach the client on this seat; drive from the keyboard" >&2
-                POINTER_WARNED=1
-              fi ;;
+              args=(); mods=(); while [ $# -gt 1 ]; do mods+=( "$1" ); shift; done
+              for m in "${mods[@]}"; do args+=( -M "$m" ); done
+              args+=( -k "$1" )
+              for m in "${mods[@]}"; do args+=( -m "$m" ); done
+              wtype "${args[@]}" ;;
+    wait\ *)  sleep "${line#wait }" ;;
+    # The window is fullscreen on the only output, so window coordinates are
+    # output coordinates.
+    move\ *)  pointer move ${line#move } ;;
+    click*|down*|up*|wheel\ *) pointer $line ;;
     *)        echo "unknown step: $line" ;;
   esac
 done < "$STEPS"
-flush_keys
 
 sleep 0.8
 cleanup
