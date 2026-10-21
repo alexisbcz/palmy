@@ -1011,6 +1011,18 @@ video_receive :: proc(v: ^Video, s: ^Session, h: Header, payload: []u8, t: f64) 
 	if !done {
 		return
 	}
+	if h.flags & FLAG_E2EE != 0 {
+		// Opened before anything else reads it — the gap detector included,
+		// so a forged frame id cannot fake a loss either.
+		pt, ok := e2ee_open(&s.e2ee, h, ts, frame)
+		if !ok {
+			return
+		}
+		frame = pt
+	} else if s.e2ee.required {
+		s.e2ee.rx_clear += 1
+		return
+	}
 	kf := keyframed(h)
 	if kf {
 		v.keyframes_rx += 1

@@ -81,6 +81,10 @@ run_self_test :: proc() -> int {
 	test_keyframe_loss_path()
 	test_pcp2_library()
 	test_room_e2ee()
+	test_control_ext()
+	test_e2ee_direct()
+	test_rate()
+	test_aec()
 
 	fmt.printfln("\n%d checks, %d failures", T.checks, T.fails)
 	if T.fails == 0 {
@@ -1194,10 +1198,10 @@ test_codec_negotiation :: proc() {
 		c3, ok3 := read_control(kf)
 		check(ok3 && c3.kind == .Keyframe, "a keyframe request round trips")
 		bad := out[:4]
-		out[0] = u8(Control_Kind.Keyframe) + 1
+		out[0] = u8(Control_Kind.Feedback) + 1
 		put_u16(out[2:4], 0)
 		_, ok4 := read_control(bad)
-		check(!ok4, "a control kind above Keyframe is rejected")
+		check(!ok4, "a control kind above Feedback, the last one, is rejected")
 	}
 
 	// The flag's three spellings, because a typo here is a peer that silently

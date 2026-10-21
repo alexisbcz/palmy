@@ -101,6 +101,31 @@ Session :: struct {
 	drop_permille: int,
 	drop_state:    u64,
 	tx_dropped:    int,
+	drop_until:    f64, // --loss-until: the deliberate loss stops here (0 = never)
+
+	// End-to-end encryption of media (e2ee.odin).
+	e2ee: E2ee,
+
+	// Adaptive bitrate (rate.odin): what we measure about the peer's stream,
+	// what we report, and the controller that acts on the peer's reports.
+	adapt:        bool,
+	rate:         Rate_Ctl,
+	rx_seq_audio: Seq_Count,
+	rx_seq_video: Seq_Count,
+	rx_media_w:   int, // video bytes received in the current window
+	last_fb_tx:   f64,
+	fb_peer_ts:   u64, // capture timestamp of the peer's last FEEDBACK
+	fb_peer_at:   u64, // when it arrived, on our clock
+	rtt_ms:       f64, // the last round trip measured, -1 before any
+	rx_loss:      f64, // the loss we measured over the last window
+	peer_loss:    f64, // the loss the peer last reported of our stream
+	peer_kbps:    f64,
+	fb_rx:        int,
+	rate_log:     [dynamic]Rate_Event,
+
+	// --link-kbps: an emulated bottleneck on everything this end sends.
+	link:   Link,
+	link_q: [dynamic]Link_Packet,
 
 	seq_audio: u16,
 	seq_video: u16,
@@ -148,7 +173,28 @@ session_open :: proc(s: ^Session, bind_port, peer_port: int, name: string) -> st
 	s.drop_state = 0x5DEECE66D
 	s.peer_codecs = CODEC_MJPEG
 	s.state = .Idle
+	e2ee_init(&s.e2ee)
+	s.adapt = true
+	rate_init(&s.rate, f64(v_bitrate_kbps))
+	s.rtt_ms = -1
 	return ""
+}
+
+// Rate_Event is one move of the bitrate controller, kept for the summary.
+Rate_Event :: struct {
+	t:      f64,
+	kbps:   f64,
+	reason: Rate_Reason,
+	loss:   f64,
+	rtt_ms: f64,
+	applied: bool,
+}
+
+// Link_Packet is a datagram inside the emulated link, waiting to leave.
+Link_Packet :: struct {
+	at:  f64,
+	n:   int,
+	buf: [MAX_PACKET]u8,
 }
 
 session_close :: proc(s: ^Session) {
@@ -158,6 +204,9 @@ session_close :: proc(s: ^Session) {
 	}
 	delete(s.peer_name)
 	s.peer_name = ""
+	e2ee_destroy(&s.e2ee)
+	delete(s.rate_log)
+	delete(s.link_q)
 }
 
 // ---------------------------------------------------------------------------
@@ -168,6 +217,36 @@ send_datagram :: proc(s: ^Session, dg: []u8) {
 	if !s.open || len(dg) == 0 {
 		return
 	}
+	if s.link.kbps > 0 {
+		// Through the emulated bottleneck: queued with the time it would
+		// leave the far end of the link, or dropped at the tail.
+		at, ok := link_admit(&s.link, s.t, len(dg) + 28)
+		if ok && len(s.link_q) < 512 {
+			append(&s.link_q, Link_Packet{at = at, n = len(dg)})
+			copy(s.link_q[len(s.link_q) - 1].buf[:], dg)
+		}
+		return
+	}
+	send_now(s, dg)
+}
+
+// link_flush sends whatever the emulated link has finished carrying.
+link_flush :: proc(s: ^Session) {
+	if len(s.link_q) == 0 {
+		return
+	}
+	i := 0
+	for i < len(s.link_q) && s.link_q[i].at <= s.t {
+		send_now(s, s.link_q[i].buf[:s.link_q[i].n])
+		i += 1
+	}
+	if i > 0 {
+		remove_range(&s.link_q, 0, i)
+	}
+}
+
+@(private = "file")
+send_now :: proc(s: ^Session, dg: []u8) {
 	n, err := net.send_udp(s.sock, dg, s.peer)
 	if err != nil {
 		return
@@ -194,7 +273,12 @@ send_media :: proc(
 		room_send_media(s.room, ptype, data, ts_us, extra_flags, layer, level)
 		return
 	}
-	nf := fragment_count(len(data))
+	if s.e2ee.required && !e2ee_ready(&s.e2ee) {
+		// No key for the peer yet: the frame is held back, never sent in
+		// the clear. In practice this is the first frame or two of a call.
+		s.e2ee.tx_no_key += 1
+		return
+	}
 	frame: u32
 	switch ptype {
 	case .Audio_Opus, .Audio_PCM:
@@ -206,6 +290,15 @@ send_media :: proc(
 	case .Control:
 		return
 	}
+	data := data
+	extra_flags := extra_flags
+	if e2ee_ready(&s.e2ee) {
+		// The whole frame is sealed before it is cut up, as SFrame says:
+		// the reassembled frame is what authenticates.
+		data = e2ee_seal(&s.e2ee, ptype, extra_flags & FLAG_KEYFRAME != 0, ts_us, frame, data)
+		extra_flags |= FLAG_E2EE
+	}
+	nf := fragment_count(len(data))
 	for i in 0 ..< nf {
 		seq: u16
 		if is_video(ptype) {
@@ -216,7 +309,7 @@ send_media :: proc(
 			s.seq_audio += 1
 		}
 		dg := fragment_into(s.txbuf[:], data, i, ptype, seq, ts_us, frame, extra_flags)
-		if s.drop_permille > 0 && is_video(ptype) && draw_permille(s) < s.drop_permille {
+		if s.drop_permille > 0 && is_video(ptype) && (s.drop_until <= 0 || s.t < s.drop_until) && draw_permille(s) < s.drop_permille {
 			// Dropped on purpose, and counted. The sequence number and the
 			// frame id are already spent, which is exactly what a real loss
 			// looks like to the far end.
@@ -227,8 +320,8 @@ send_media :: proc(
 	}
 }
 
-send_control :: proc(s: ^Session, kind: Control_Kind, muted, cam_off: bool) {
-	body: [96]u8
+send_control :: proc(s: ^Session, kind: Control_Kind, muted, cam_off: bool, fb: ^Feedback = nil) {
+	body: [CONTROL_MAX]u8
 	flags: u8
 	if muted {
 		flags |= CTRL_MUTED
@@ -236,10 +329,21 @@ send_control :: proc(s: ^Session, kind: Control_Kind, muted, cam_off: bool) {
 	if cam_off {
 		flags |= CTRL_CAM_OFF
 	}
-	payload := write_control(
-		body[:],
-		{kind = kind, flags = flags, name = s.name, codecs = s.codecs},
-	)
+	c := Control{kind = kind, flags = flags, name = s.name, codecs = s.codecs}
+	// Our public key rides every message that can open or carry a call.
+	if s.e2ee.required {
+		switch kind {
+		case .Hello, .Invite, .Ringing, .Accept, .State:
+			c.has_pub = true
+			c.pub = s.e2ee.kp.public
+		case .Decline, .Bye, .Keyframe, .Feedback:
+		}
+	}
+	if fb != nil {
+		c.has_fb = true
+		c.fb = fb^
+	}
+	payload := write_control(body[:], c)
 	if payload == nil {
 		return
 	}
@@ -274,6 +378,17 @@ set_state :: proc(s: ^Session, st: Call_State, reason := "") {
 	}
 	if st == .Idle || st == .Ended {
 		s.connected_at = 0
+		// The call is over: its keys go with it, and the next call gets a
+		// keypair of its own.
+		if s.e2ee.required {
+			e2ee_new_call(&s.e2ee)
+		}
+		// So does the rate: each call starts at the ceiling again.
+		if s.adapt {
+			rate_init(&s.rate, s.rate.max_kbps)
+		}
+		s.rx_seq_audio, s.rx_seq_video = {}, {}
+		s.fb_peer_ts, s.fb_peer_at = 0, 0
 	}
 }
 
@@ -342,6 +457,7 @@ reset_call :: proc(s: ^Session) {
 // session_tick runs the timers. Called once per frame.
 session_tick :: proc(s: ^Session, t: f64, muted, cam_off: bool) {
 	s.t = t
+	link_flush(s)
 
 	if s.rate_at == 0 {
 		s.rate_at = t
@@ -374,6 +490,9 @@ session_tick :: proc(s: ^Session, t: f64, muted, cam_off: bool) {
 			s.last_state_tx = t
 			send_control(s, .State, muted, cam_off)
 		}
+		if t - s.last_fb_tx >= RATE_FEEDBACK_EVERY {
+			send_feedback(s, t)
+		}
 		if t - s.last_peer_rx > PEER_TIMEOUT {
 			set_state(s, .Ended, "Peer stopped responding")
 		}
@@ -388,6 +507,59 @@ session_tick :: proc(s: ^Session, t: f64, muted, cam_off: bool) {
 // branches are driven by the audio and video engines, which is why receive
 // lives in app.odin rather than here.
 // ---------------------------------------------------------------------------
+
+// send_feedback is the receiver report: what we got of the peer's stream in
+// the window just ended, and the echo that lets the peer time a round trip.
+send_feedback :: proc(s: ^Session, t: f64) {
+	dt := s.last_fb_tx > 0 ? t - s.last_fb_tx : RATE_FEEDBACK_EVERY
+	s.last_fb_tx = t
+	ea, ra := seq_count_window(&s.rx_seq_audio)
+	ev, rv := seq_count_window(&s.rx_seq_video)
+	// The worse of the two streams: the controller adapts video, and a
+	// video loss figure diluted by fifty clean audio packets a second would
+	// hide exactly the loss it needs to see.
+	la := ea > 0 ? max(0, 1 - f64(ra) / f64(ea)) : 0
+	lv := ev > 0 ? max(0, 1 - f64(rv) / f64(ev)) : 0
+	s.rx_loss = max(la, lv)
+	fb := Feedback {
+		loss_permille = u16(clamp(s.rx_loss * 1000, 0, 1000)),
+		recv_kbps     = u16(clamp(f64(s.rx_media_w) * 8 / 1000 / max(dt, 0.1), 0, 65535)),
+	}
+	s.rx_media_w = 0
+	if s.fb_peer_ts != 0 {
+		fb.echo_ts = s.fb_peer_ts
+		fb.hold_us = u32(min(now_us() - s.fb_peer_at, u64(max(u32))))
+	}
+	send_control(s, .Feedback, false, false, &fb)
+}
+
+// session_on_feedback folds a peer's report into the controller. Returns the
+// encoder rate to apply now, if there is one.
+session_on_feedback :: proc(s: ^Session, c: Control, sent_ts: u64) -> (kbps: int, apply: bool) {
+	if !c.has_fb {
+		return 0, false
+	}
+	now := now_us()
+	s.fb_rx += 1
+	s.fb_peer_ts = sent_ts
+	s.fb_peer_at = now
+	if c.fb.echo_ts != 0 && now > c.fb.echo_ts + u64(c.fb.hold_us) {
+		s.rtt_ms = f64(now - c.fb.echo_ts - u64(c.fb.hold_us)) / 1000
+		rate_on_rtt(&s.rate, s.rtt_ms)
+	}
+	s.peer_loss = f64(c.fb.loss_permille) / 1000
+	s.peer_kbps = f64(c.fb.recv_kbps)
+	if !s.adapt {
+		return 0, false
+	}
+	before := s.rate.kbps
+	reason := rate_on_feedback(&s.rate, s.t, s.peer_loss, s.peer_kbps)
+	kbps, apply = rate_should_apply(&s.rate, s.t)
+	if s.rate.kbps != before || apply {
+		append(&s.rate_log, Rate_Event{t = s.t, kbps = s.rate.kbps, reason = reason, loss = s.peer_loss, rtt_ms = s.rtt_ms, applied = apply})
+	}
+	return
+}
 
 handle_control :: proc(s: ^Session, c: Control, muted, cam_off: bool) {
 	if c.name != "" && c.kind != .Bye {
@@ -408,7 +580,7 @@ handle_control :: proc(s: ^Session, c: Control, muted, cam_off: bool) {
 	switch c.kind {
 	case .Hello, .Invite, .Ringing, .Accept, .State:
 		s.peer_codecs = c.codecs
-	case .Decline, .Bye, .Keyframe:
+	case .Decline, .Bye, .Keyframe, .Feedback:
 	}
 
 	switch c.kind {
@@ -449,6 +621,9 @@ handle_control :: proc(s: ^Session, c: Control, muted, cam_off: bool) {
 		if s.state != .Idle {
 			set_state(s, .Ended, "Peer hung up")
 		}
+	case .Feedback:
+		// A receiver report; the bitrate controller's, not the state
+		// machine's (`app_on_feedback`).
 	case .Keyframe:
 		// A PLI equivalent. It says nothing about the call's state and must
 		// not be mistaken for a keepalive from a peer we are not talking to;
@@ -466,6 +641,17 @@ handle_control :: proc(s: ^Session, c: Control, muted, cam_off: bool) {
 				send_control(s, .Bye, false, false)
 			}
 		case .Dialing, .Ringing, .Connected:
+		}
+	}
+
+	// The peer's key, taken only once the message has put us in a call:
+	// the key of a call is pinned for its length (e2ee.odin), and a stray
+	// from a call that is over must not pin the next one.
+	if c.has_pub && s.e2ee.required && s.state != .Idle && s.state != .Ended {
+		switch c.kind {
+		case .Invite, .Ringing, .Accept, .State:
+			e2ee_on_peer_key(&s.e2ee, c.pub)
+		case .Hello, .Decline, .Bye, .Keyframe, .Feedback:
 		}
 	}
 }

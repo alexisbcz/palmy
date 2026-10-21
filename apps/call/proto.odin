@@ -65,6 +65,11 @@ FLAG_MARKER :: u8(0x01)
 // below needs no special case for it.
 FLAG_KEYFRAME :: u8(0x02)
 
+// FLAG_E2EE says the reassembled frame is an SFrame ciphertext (RFC 9605),
+// not media: see `e2ee.odin`. The same bit PCP2 uses. A call whose two ends
+// have exchanged keys sends nothing without it and accepts nothing without it.
+FLAG_E2EE :: u8(0x04)
+
 Header :: struct {
 	ptype: Payload_Type,
 	flags: u8,
@@ -452,6 +457,9 @@ Control_Kind :: enum u8 {
 	Bye      = 5,
 	State    = 6,
 	Keyframe = 7,
+	// A receiver report: loss and received rate over the last 500 ms, and
+	// an RTT echo. What the sender's bitrate controller runs on (rate.odin).
+	Feedback = 8,
 }
 
 CTRL_MUTED :: u8(0x01)
@@ -462,7 +470,30 @@ Control :: struct {
 	flags:  u8,
 	name:   string, // the peer's display name; borrows the receive buffer
 	codecs: u8, // video codecs this peer can decode, as a CODEC_* bitmask
+
+	// Extensions, each optional (see write_control).
+	has_pub: bool,
+	pub:     [32]u8, // the sender's X25519 public key for this call
+	has_fb:  bool,
+	fb:      Feedback,
 }
+
+// Feedback is the body of a FEEDBACK message.
+Feedback :: struct {
+	loss_permille: u16, // of the packets expected in the window, both streams
+	recv_kbps:     u16, // video that arrived in the window, headers included
+	// The RTT echo, as RTCP's LSR/DLSR: the capture timestamp of the last
+	// FEEDBACK received from the peer, and how long it was held before this
+	// one was sent. The peer subtracts both from its clock and has the round
+	// trip without either end trusting the other's clock.
+	echo_ts: u64,
+	hold_us: u32,
+}
+
+EXT_PUB :: u8(1) // 32 bytes
+EXT_FEEDBACK :: u8(2) // 16 bytes
+FEEDBACK_BYTES :: 16
+CONTROL_MAX :: 5 + 64 + 2 + 32 + 2 + FEEDBACK_BYTES
 
 // write_control serialises into `out` and returns the used prefix.
 //   0      kind
@@ -478,9 +509,23 @@ Control :: struct {
 // fits, so the old parser accepts the new message, and the new parser reads a
 // missing offer as "MJPEG only" — which is the correct reading of silence,
 // because MJPEG is the one codec every version has carried.
+//
+// After the offer come extensions, each `type(1) length(1) value`, in any
+// order; a reader skips a type it does not know by its length, so the same
+// rule — append, never move — keeps holding:
+//   type 1   32 bytes   X25519 public key (end-to-end encryption, e2ee.odin)
+//   type 2   16 bytes   receiver report: loss u16, kbps u16, echo ts u64,
+//                       hold u32 (adaptive bitrate, rate.odin)
 write_control :: proc(out: []u8, c: Control) -> []u8 {
 	n := min(len(c.name), 64)
-	if len(out) < 5 + n {
+	need := 5 + n
+	if c.has_pub {
+		need += 2 + 32
+	}
+	if c.has_fb {
+		need += 2 + FEEDBACK_BYTES
+	}
+	if len(out) < need {
 		return nil
 	}
 	out[0] = u8(c.kind)
@@ -488,14 +533,32 @@ write_control :: proc(out: []u8, c: Control) -> []u8 {
 	put_u16(out[2:4], u16(n))
 	copy(out[4:4 + n], c.name[:n])
 	out[4 + n] = c.codecs
-	return out[:5 + n]
+	at := 5 + n
+	if c.has_pub {
+		out[at] = EXT_PUB
+		out[at + 1] = 32
+		pub := c.pub
+		copy(out[at + 2:at + 34], pub[:])
+		at += 34
+	}
+	if c.has_fb {
+		out[at] = EXT_FEEDBACK
+		out[at + 1] = FEEDBACK_BYTES
+		b := out[at + 2:at + 2 + FEEDBACK_BYTES]
+		put_u16(b[0:2], c.fb.loss_permille)
+		put_u16(b[2:4], c.fb.recv_kbps)
+		put_u64(b[4:12], c.fb.echo_ts)
+		put_u32(b[12:16], c.fb.hold_us)
+		at += 2 + FEEDBACK_BYTES
+	}
+	return out[:at]
 }
 
 read_control :: proc(b: []u8) -> (c: Control, ok: bool) {
 	if len(b) < 4 {
 		return {}, false
 	}
-	if b[0] > u8(Control_Kind.Keyframe) {
+	if b[0] > u8(Control_Kind.Feedback) {
 		return {}, false
 	}
 	c.kind = Control_Kind(b[0])
@@ -509,6 +572,32 @@ read_control :: proc(b: []u8) -> (c: Control, ok: bool) {
 	c.codecs = CODEC_MJPEG
 	if 4 + n < len(b) {
 		c.codecs = b[4 + n]
+	}
+	at := 5 + n
+	for at + 2 <= len(b) {
+		t, l := b[at], int(b[at + 1])
+		if at + 2 + l > len(b) {
+			return {}, false // an extension that runs off the end is a lie
+		}
+		v := b[at + 2:at + 2 + l]
+		switch t {
+		case EXT_PUB:
+			if l != 32 {
+				return {}, false
+			}
+			copy(c.pub[:], v)
+			c.has_pub = true
+		case EXT_FEEDBACK:
+			if l != FEEDBACK_BYTES {
+				return {}, false
+			}
+			c.fb.loss_permille = get_u16(v[0:2])
+			c.fb.recv_kbps = get_u16(v[2:4])
+			c.fb.echo_ts = get_u64(v[4:12])
+			c.fb.hold_us = get_u32(v[12:16])
+			c.has_fb = true
+		}
+		at += 2 + l
 	}
 	return c, true
 }

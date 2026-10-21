@@ -521,6 +521,34 @@ draw_stats :: proc(app: ^App, ui: ^p.Ctx) {
 		s.rx_bad > 0 ? "text-amber-400" : "text-muted-foreground",
 	)
 
+	section_title(ui, "Encryption and rate")
+	e := &s.e2ee
+	stat_row(
+		ui,
+		"Media",
+		!e.required ? "in the clear" : e2ee_ready(e) ? "SFrame · AES-GCM · X25519" : "waiting for a key",
+		!e.required ? "text-amber-400" : e2ee_ready(e) ? "text-emerald-400" : "text-muted-foreground",
+	)
+	if e.safety != "" {
+		stat_row(ui, "Safety code", e.safety)
+	}
+	refused := e.rx_clear + e.rx_auth + e.rx_replay + e.rx_malformed
+	if refused > 0 {
+		stat_row(ui, "Refused frames", fmt.tprintf("%d", refused), "text-amber-400")
+	}
+	stat_row(ui, "Video rate", fmt.tprintf("%s · %.0f kbit/s", s.adapt ? "adaptive" : "fixed", s.rate.applied))
+	if s.rtt_ms >= 0 {
+		stat_row(ui, "RTT · peer loss", fmt.tprintf("%.1f ms · %.1f %%", s.rtt_ms, s.peer_loss * 100))
+	}
+	switch {
+	case a.aec_on:
+		stat_row(ui, "Echo canceller", fmt.tprintf("in process · %.0f dB", aec_erle_estimate(&a.aec)))
+	case aec_nodes:
+		stat_row(ui, "Echo canceller", "PipeWire AEC3")
+	case:
+		stat_row(ui, "Echo canceller", "off", "text-muted-foreground")
+	}
+
 	section_title(ui, "Audio")
 	stat_row(ui, "Codec", short(a.codec, 28))
 	stat_row(ui, "Format", fmt.tprintf("%d Hz mono · %d ms", A_RATE, A_FRAME_MS))

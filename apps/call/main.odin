@@ -157,6 +157,17 @@ Args :: struct {
 	share_screen: bool,
 	allow_screen: bool,
 	echo_cancel:  bool,
+
+	// Echo cancellation in process, its synthetic test room, and the source
+	// of a synthetic voice to cancel.
+	aec:          bool,
+	echo_path:    string,
+	mic_source:   string,
+	// Adaptive bitrate, its emulated link, and the loss schedule.
+	fixed_bitrate: bool,
+	link_kbps:     f64,
+	loss_until:    f64,
+	no_e2ee:       bool,
 }
 
 // parse_codec_offer reads `--video-codec` into an offer bitmask. The flag is
@@ -379,6 +390,38 @@ parse_args :: proc() -> (a: Args, err: string) {
 			a.share_screen = true
 		case "--echo-cancel":
 			a.echo_cancel = true
+		case "--aec":
+			a.aec = true
+		case "--echo-path":
+			v, ok := next(args, &i)
+			if !ok {
+				return a, "--echo-path needs DELAY_MS:GAIN_DB, e.g. 40:-6"
+			}
+			a.echo_path = v
+		case "--mic-source":
+			v, ok := next(args, &i)
+			if !ok {
+				return a, "--mic-source needs an ffmpeg lavfi audio source"
+			}
+			a.mic_source = v
+		case "--fixed-bitrate":
+			a.fixed_bitrate = true
+		case "--link-kbps":
+			v, ok := next(args, &i)
+			f, good := strconv.parse_f64(v)
+			if !ok || !good || f < 10 || f > 100000 {
+				return a, "--link-kbps needs 10..100000"
+			}
+			a.link_kbps = f
+		case "--loss-until":
+			v, ok := next(args, &i)
+			f, good := strconv.parse_f64(v)
+			if !ok || !good || f < 0 {
+				return a, "--loss-until needs seconds"
+			}
+			a.loss_until = f
+		case "--no-e2ee":
+			a.no_e2ee = true
 		case "--allow-screen":
 			a.allow_screen = true
 		case "--light":
@@ -422,6 +465,18 @@ USAGE :: `call — real-time audio and video calling over loopback UDP
   --muted, --camera-off   join muted, or with the camera off
   --echo-cancel           record from / play to PipeWire's echo-cancel nodes
                           (module-echo-cancel, WebRTC AEC3) on real devices
+  --aec                   cancel echo in process (aec.odin; two-party calls)
+  --echo-path D:G[:R]     a synthetic room between what is played and the
+                          synthetic microphone: D ms of delay, G dB of gain,
+                          R ms of room (default 30), to give --aec something
+                          to cancel; the summary scores it (live ERLE)
+  --mic-source LAVFI      the synthetic microphone's ffmpeg lavfi source
+  --fixed-bitrate         do not adapt the H.264 rate to the peer's reports
+  --link-kbps N           send through an emulated N kbit/s bottleneck
+                          (FIFO, 250 ms of queue, then tail drop)
+  --loss-until S          --loss stops after S seconds
+  --no-e2ee               send and accept media in the clear (both ends must
+                          say so; for measuring the cost of encryption)
   --share-screen --allow-screen
                           send the screen instead of the camera (wlr-screencopy
                           compositors only: sway, Hyprland; not apps/wm yet)
@@ -472,6 +527,25 @@ USAGE :: `call — real-time audio and video calling over loopback UDP
 Keys: C call  Enter answer  H hang up  M mute  V camera  D devices
       R rescan  [ ] volume  Tab panel  Q quit
 `
+
+// parse_echo_path reads `--echo-path DELAY_MS:GAIN_DB[:ROOM_MS]`.
+parse_echo_path :: proc(spec: string) -> (delay, gain, room: f32, ok: bool) {
+	parts := strings.split(spec, ":", context.temp_allocator)
+	if len(parts) < 2 || len(parts) > 3 {
+		return
+	}
+	d, dok := strconv.parse_f64(parts[0])
+	g, gok := strconv.parse_f64(parts[1])
+	r := 30.0
+	rok := true
+	if len(parts) == 3 {
+		r, rok = strconv.parse_f64(parts[2])
+	}
+	if !dok || !gok || !rok || d < 0 || d > 500 || g > 20 || g < -60 || r <= 0 || r > 500 {
+		return
+	}
+	return f32(d), f32(g), f32(r), true
+}
 
 // parse_video_size reads `WxH@FPS` into the capture settings.
 parse_video_size :: proc(spec: string) -> string {
@@ -547,6 +621,9 @@ pump_receive :: proc(app: ^App) {
 			if before != app.s.state {
 				on_state_change(app, before)
 			}
+			if c.kind == .Feedback {
+				app_on_feedback(app, c, h.ts_us)
+			}
 			if c.kind == .Keyframe {
 				// The peer has lost something and cannot decode until it is
 				// given a frame that stands alone.
@@ -555,14 +632,30 @@ pump_receive :: proc(app: ^App) {
 				}
 			}
 		case .Audio_Opus, .Audio_PCM:
+			if !media_admit(&app.s, h, n) {
+				continue
+			}
+			seq_count_push(&app.s.rx_seq_audio, h.seq)
+			pl := payload
+			if h.flags & FLAG_E2EE != 0 {
+				pt, opened := e2ee_open(&app.s.e2ee, h, h.ts_us, payload)
+				if !opened {
+					continue
+				}
+				pl = pt
+			}
 			app.s.last_peer_rx = app.t
 			if app.s.state == .Connecting {
 				before := app.s.state
 				set_state(&app.s, .Connected)
 				on_state_change(app, before)
 			}
-			audio_receive(&app.a, h, payload)
+			audio_receive(&app.a, h, pl)
 		case .Video_JPEG, .Video_H264:
+			if !media_admit(&app.s, h, n) {
+				continue
+			}
+			seq_count_push(&app.s.rx_seq_video, h.seq)
 			app.s.last_peer_rx = app.t
 			if app.s.state == .Connecting {
 				before := app.s.state
@@ -572,6 +665,47 @@ pump_receive :: proc(app: ^App) {
 			video_receive(&app.v, &app.s, h, payload, app.t)
 		}
 	}
+}
+
+// media_admit is the receive side of the encryption rule: once this end
+// requires encryption, a media datagram without FLAG_E2EE is refused before
+// anything looks at it. It also counts what arrived for the receiver report.
+media_admit :: proc(s: ^Session, h: Header, n: int) -> bool {
+	if s.e2ee.required && h.flags & FLAG_E2EE == 0 {
+		s.e2ee.rx_clear += 1
+		return false
+	}
+	if is_video(h.ptype) {
+		// The report's rate is video's alone: it is the stream the
+		// controller sets, and the delay rule scales it from what arrived.
+		s.rx_media_w += n
+	}
+	return true
+}
+
+// app_on_feedback is the sender's half of the bitrate controller: the peer
+// reported, the controller moved, and if the encoder should follow, it does.
+app_on_feedback :: proc(app: ^App, c: Control, sent_ts: u64) {
+	kbps, apply := session_on_feedback(&app.s, c, sent_ts)
+	a := &app.a
+	if a.enc != nil {
+		loss_pct := i32(clamp(app.s.peer_loss * 100, 5, 30))
+		opus_encoder_ctl(a.enc, OPUS_SET_PACKET_LOSS_PERC_REQUEST, loss_pct)
+	}
+	if !apply {
+		return
+	}
+	if a.enc != nil {
+		opus_encoder_ctl(a.enc, OPUS_SET_BITRATE_REQUEST, rate_opus_bps(f64(kbps)))
+	}
+	v := &app.v
+	v.enc_kbps = kbps
+	if v.codec == .H264 && v.cap.running && !v.camera_off {
+		// The encoder takes its rate on the command line: a new rate is a
+		// new encoder, and its first frame is a keyframe (rate.odin).
+		video_spawn_capture(v)
+	}
+	log_line(app, "video rate %d kbit/s (%s: loss %.1f%%, rtt %.0f ms)", kbps, rate_reason_name(app.s.rate.last_reason), app.s.peer_loss * 100, app.s.rtt_ms)
 }
 
 // ---------------------------------------------------------------------------
@@ -1159,6 +1293,72 @@ print_summary :: proc(app: ^App) {
 			s.tx_dropped,
 		)
 	}
+	print_summary_more(app)
+}
+
+// print_summary_more is the part of the summary for encryption, the echo
+// canceller and the bitrate controller. Every line is parsed by
+// apps/call/measure.sh, so keep the words.
+print_summary_more :: proc(app: ^App) {
+	s := &app.s
+	a := &app.a
+	e := &s.e2ee
+	if e.required {
+		fmt.printfln("  encryption         %s, safety code %s", e2ee_status(e), e.safety == "" ? "-" : e.safety)
+		fmt.printfln(
+			"  e2ee frames        %d sealed, %d opened; refused: %d clear, %d failed auth, %d replayed, %d malformed, %d before the key; %d held back before the key",
+			e.sealed, e.opened, e.rx_clear, e.rx_auth, e.rx_replay, e.rx_malformed, e.rx_no_key, e.tx_no_key,
+		)
+	} else {
+		fmt.println("  encryption         off (--no-e2ee)")
+	}
+	if a.aec_on || a.echo_on {
+		fmt.printfln(
+			"  echo canceller     %s, tail %.0f ms, %d copies, %d resets; reference %d samples short, %d over",
+			a.aec_on ? "on" : "off",
+			aec_tail_ms(&a.aec),
+			a.aec.copies,
+			a.aec.resets,
+			a.far_short,
+			a.far_over,
+		)
+	}
+	if a.echo_on {
+		fmt.printfln(
+			"  live echo removal  %.1f dB over %.1f s (synthetic path %.0f ms, %.0f dB; scored from 3 s)",
+			audio_live_erle(a),
+			f64(a.live_frames) * A_FRAME_MS / 1000,
+			f64(a.echo.delay) * 1000 / A_RATE,
+			a.echo.gain_db,
+		)
+	}
+	rc := &s.rate
+	fmt.printfln(
+		"  bitrate            %s, video now %.0f kbit/s (ceiling %.0f), %d reports in, rtt %.1f ms (min %.1f), peer loss %.1f%%, our rx loss %.1f%%; %d down, %d up, %d encoder restarts",
+		s.adapt ? "adaptive" : "fixed",
+		rc.applied,
+		rc.max_kbps,
+		s.fb_rx,
+		s.rtt_ms,
+		rc.min_rtt_ms,
+		s.peer_loss * 100,
+		s.rx_loss * 100,
+		rc.decreases,
+		rc.increases,
+		rc.restarts,
+	)
+	if len(s.rate_log) > 0 {
+		b := strings.builder_make(context.temp_allocator)
+		for ev in s.rate_log {
+			if ev.applied {
+				fmt.sbprintf(&b, " %.1fs:%.0f(%s)", ev.t, ev.kbps, rate_reason_name(ev.reason))
+			}
+		}
+		fmt.printfln("  rate changes      %s", strings.to_string(b))
+	}
+	if s.link.kbps > 0 {
+		fmt.printfln("  emulated link      %.0f kbit/s, %d packets carried, %d dropped at the tail", s.link.kbps, s.link.accepted, s.link.dropped)
+	}
 }
 
 // ---------------------------------------------------------------------------
@@ -1166,6 +1366,12 @@ print_summary :: proc(app: ^App) {
 // ---------------------------------------------------------------------------
 
 main :: proc() {
+	// A verb is the shared convention's (cli.odin); everything else is the
+	// window's and the headless peer's own flags, unchanged.
+	if len(os.args) > 1 && is_cli_invocation(os.args[1]) {
+		code, _ := kit.cli(surface())
+		os.exit(code)
+	}
 	args, aerr := parse_args()
 	if aerr == "help" {
 		fmt.print(USAGE)
@@ -1182,6 +1388,9 @@ main :: proc() {
 	null_audio = args.null_audio
 	screen_share = args.share_screen
 	aec_nodes = args.echo_cancel
+	if args.mic_source != "" {
+		synth_tone = args.mic_source
+	}
 
 	app := new(App)
 	defer free(app)
@@ -1199,6 +1408,16 @@ main :: proc() {
 		app.a.volume = f32(args.volume)
 	}
 	defer audio_destroy(&app.a)
+	app.a.aec_on = args.aec
+	if args.echo_path != "" {
+		d, g, r, ok := parse_echo_path(args.echo_path)
+		if !ok {
+			fmt.eprintln("call: --echo-path needs DELAY_MS:GAIN_DB[:ROOM_MS], e.g. 40:-6")
+			os.exit(2)
+		}
+		app.a.echo = echo_path_make(d, r, g, 0xEC40)
+		app.a.echo_on = true
+	}
 	video_init(&app.v)
 	video_init(&app.v_lo)
 	defer video_destroy(&app.v_lo)
@@ -1277,6 +1496,12 @@ main :: proc() {
 	// can decode, so there is one source of truth for it.
 	app.s.codecs = app.v.offer
 	app.s.drop_permille = args.loss
+	app.s.drop_until = args.loss_until
+	app.s.adapt = !args.fixed_bitrate
+	app.s.link = Link{kbps = args.link_kbps, max_queue_ms = 250}
+	if args.no_e2ee {
+		app.s.e2ee.required = false
+	}
 
 	log_line(app, "bound 127.0.0.1:%d, peer 127.0.0.1:%d", args.bind, args.peer)
 	log_line(app, "%s", app.devs.note)

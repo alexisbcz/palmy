@@ -163,6 +163,26 @@ Audio :: struct {
 	cap_pipe_bytes:  int,
 	cap_backlog_us:  f64,
 	cap_backlog_max_us: f64,
+
+	// In-process echo cancellation (aec.odin), `--aec`. `far` is what was
+	// handed to the player, waiting for the microphone frame it echoes into.
+	aec_on: bool,
+	aec:    Aec,
+	far:    []f32, // one second, allocated when either is on
+	far_r, far_n: int,
+	far_short, far_over: int,
+	// `--echo-path`: a synthetic room between what is played and the
+	// synthetic microphone, so the canceller has an echo to cancel without a
+	// loudspeaker or a microphone. And the live score: echo energy against
+	// what is left of it, with the near end subtracted exactly because it is
+	// known exactly.
+	echo_on:  bool,
+	echo:     Echo_Path,
+	dl_near, dl_echo: [AEC_N]f32,
+	dl_pos:   int,
+	live_echo, live_res: f64,
+	live_from: u64,
+	live_frames: int,
 }
 
 // ---------------------------------------------------------------------------
@@ -300,6 +320,10 @@ audio_init :: proc(a: ^Audio) {
 
 audio_destroy :: proc(a: ^Audio) {
 	audio_stop(a)
+	aec_destroy(&a.aec)
+	echo_path_destroy(&a.echo)
+	delete(a.far)
+	a.far = nil
 	if a.enc != nil {
 		opus_encoder_destroy(a.enc)
 		a.enc = nil
@@ -317,6 +341,14 @@ audio_start :: proc(a: ^Audio, src, sink: Device) {
 	a.out_n = 0
 	a.out_off = 0
 	a.stats = {}
+	if a.aec_on {
+		aec_init(&a.aec)
+	}
+	if (a.aec_on || a.echo_on) && a.far == nil {
+		a.far = make([]f32, A_RATE)
+	}
+	a.far_r, a.far_n = 0, 0
+	a.live_echo, a.live_res, a.live_from, a.live_frames = 0, 0, 0, 0
 
 	argv := audio_capture_argv(src)
 	// Four frames of slack. Anything more is latency we cannot get back.
@@ -463,6 +495,10 @@ audio_pump_capture :: proc(a: ^Audio, s: ^Session, dt: f32) {
 				pcm[i] = 0
 			}
 		}
+
+		// Echo first, then mute: a muted microphone sends silence, not a
+		// cancelled echo.
+		audio_echo_frame(a, pcm)
 
 		// The RFC 6464 level octet rides in the clear in SFU mode, where the
 		// forwarder picks the dominant speaker from it without decoding.
@@ -617,6 +653,7 @@ audio_pump_playout :: proc(a: ^Audio, dt: f32) {
 
 		a.out_n = produced * 2
 		a.out_off = 0
+		audio_far_push(a, pcm[:produced])
 		level = frame_rms(pcm[:produced])
 		a.frames_played += 1
 		if !flush_out(a) {
@@ -710,4 +747,88 @@ conceal_silence :: proc(pcm: []i16) {
 		g := 1 - f32(i) / f32(RAMP)
 		pcm[i] = i16(f32(head) * g)
 	}
+}
+
+// ---------------------------------------------------------------------------
+// Echo: the far-end reference, the synthetic room, the canceller
+// ---------------------------------------------------------------------------
+
+// audio_far_push records a frame handed to the player as the canceller's
+// reference. It is pushed when it is handed over, and the microphone pulls it
+// one frame per captured frame; with real devices the echo then arrives
+// within the canceller's 170 ms tail as long as the player's queue and the
+// room fit in it (the queue is held to ~40 ms, PLAYOUT_TARGET_US).
+audio_far_push :: proc(a: ^Audio, pcm: []i16) {
+	if a.far == nil {
+		return
+	}
+	for v in pcm {
+		if a.far_n == len(a.far) {
+			a.far_r = (a.far_r + 1) % len(a.far)
+			a.far_n -= 1
+			a.far_over += 1
+		}
+		a.far[(a.far_r + a.far_n) % len(a.far)] = f32(v) / 32768
+		a.far_n += 1
+	}
+}
+
+// audio_echo_frame runs one captured frame through the synthetic room (if
+// any) and the canceller (if on), in place.
+audio_echo_frame :: proc(a: ^Audio, pcm: []i16) {
+	if a.far == nil {
+		return
+	}
+	near, far, mic, out, echo: [A_FRAME_SAMPLES]f32
+	for i in 0 ..< A_FRAME_SAMPLES {
+		near[i] = f32(pcm[i]) / 32768
+		if a.far_n > 0 {
+			far[i] = a.far[a.far_r]
+			a.far_r = (a.far_r + 1) % len(a.far)
+			a.far_n -= 1
+		} else {
+			a.far_short += 1
+		}
+	}
+	if a.echo_on {
+		echo_path_run(&a.echo, far[:], echo[:])
+	}
+	for i in 0 ..< A_FRAME_SAMPLES {
+		mic[i] = near[i] + echo[i]
+	}
+	if a.aec_on {
+		aec_frame(&a.aec, mic[:], far[:], out[:])
+	} else {
+		out = mic
+	}
+	if a.live_from == 0 {
+		a.live_from = now_us() + 3_000_000 // let it converge first
+	}
+	scoring := a.echo_on && now_us() >= a.live_from
+	for i in 0 ..< A_FRAME_SAMPLES {
+		dn, de := near[i], echo[i]
+		if a.aec_on {
+			// The canceller's output is one block late; so is the score.
+			dn, a.dl_near[a.dl_pos] = a.dl_near[a.dl_pos], near[i]
+			de, a.dl_echo[a.dl_pos] = a.dl_echo[a.dl_pos], echo[i]
+			a.dl_pos = (a.dl_pos + 1) % AEC_N
+		}
+		if scoring {
+			r := f64(out[i] - dn)
+			a.live_echo += f64(de) * f64(de)
+			a.live_res += r * r
+		}
+		pcm[i] = i16(clamp(out[i] * 32768, -32768, 32767))
+	}
+	if scoring {
+		a.live_frames += 1
+	}
+}
+
+// audio_live_erle is the echo removal measured live, in dB.
+audio_live_erle :: proc(a: ^Audio) -> f64 {
+	if a.live_echo <= 0 || a.live_res <= 0 {
+		return 0
+	}
+	return 10 * math.log10(a.live_echo / a.live_res)
 }
