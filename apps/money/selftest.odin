@@ -2798,7 +2798,7 @@ test_cli :: proc(tc: ^TC) {
 		// a read must not reach anybody's real accounts.
 		if cmd.effect == .Read {
 			_, code := kit.cli_bind(s, {cmd.verb})
-			eq_int(tc, code, kit.EXIT_USAGE, fmt.tprintf("cli : %s sans --book est refusé", cmd.verb))
+			eq_int(tc, code, kit.EXIT_USAGE, fmt.tprintf("cli : %s sans livre nommé est refusé", cmd.verb))
 		}
 	}
 
@@ -2817,7 +2817,7 @@ test_cli :: proc(tc: ^TC) {
 	book := fmt.tprintf("%s/livre.money", dir)
 
 	{
-		_, code := cli_run(tc, fmt.tprintf("accounts --book %s/absent.money", dir))
+		_, code := cli_run(tc, fmt.tprintf("accounts %s/absent.money", dir))
 		eq_int(tc, code, kit.EXIT_NOT_FOUND, "cli : un livre absent répond 3")
 	}
 	cli_valid(tc, fmt.tprintf("demo --book %s", book), "cli demo")
@@ -2826,15 +2826,15 @@ test_cli :: proc(tc: ^TC) {
 		_, code := cli_run(tc, fmt.tprintf("demo --book %s", book))
 		eq_int(tc, code, kit.EXIT_FAILED, "cli demo : n'écrase jamais un livre existant")
 	}
-	cli_valid(tc, fmt.tprintf("accounts --book %s", book), "cli accounts")
+	cli_valid(tc, fmt.tprintf("accounts %s", book), "cli accounts")
 	{
-		c, _ := cli_valid(tc, fmt.tprintf("transactions --book %s --limit 5", book), "cli transactions")
+		c, _ := cli_valid(tc, fmt.tprintf("transactions %s --limit 5", book), "cli transactions")
 		arr, _ := kit.jget(c.out, "transactions")
 		eq_int(tc, kit.jlen(arr), 5, "cli transactions : --limit est respecté")
 	}
-	cli_valid(tc, fmt.tprintf("transactions --book %s --match NETFLIX --from 2026-01-01", book), "cli transactions filtré")
-	cli_valid(tc, fmt.tprintf("budget --book %s", book), "cli budget")
-	cli_valid(tc, fmt.tprintf("recurring --book %s", book), "cli recurring")
+	cli_valid(tc, fmt.tprintf("transactions %s --match NETFLIX --from 2026-01-01", book), "cli transactions filtré")
+	cli_valid(tc, fmt.tprintf("budget %s", book), "cli budget")
+	cli_valid(tc, fmt.tprintf("recurring %s", book), "cli recurring")
 
 	// Import: --dry-run changes nothing, the real run changes the book, and a
 	// second run adds nothing — the importer's de-duplication, through the CLI.
@@ -2869,7 +2869,7 @@ test_cli :: proc(tc: ^TC) {
 	// Categorising through the CLI is the window's action: the transaction
 	// moves and the merchant becomes a learned rule, both saved.
 	{
-		c, _ := cli_run(tc, fmt.tprintf("transactions --book %s --limit 1", book))
+		c, _ := cli_run(tc, fmt.tprintf("transactions %s --limit 1", book))
 		arr, _ := kit.jget(c.out, "transactions")
 		first := arr != nil && kit.jlen(arr) > 0 ? arr.items[0] : nil
 		idv: ^kit.Json

@@ -11,10 +11,11 @@ package main
 // procedure a key or a dialog in the window calls. Two front ends over one
 // book cannot disagree about what is in it.
 //
-// Every command names its book with --book. There is deliberately no default:
-// a read run blind (which is how `palm --selftest` checks the surface) must
-// not open anybody's real accounts, so the only way to reach the window's own
-// store is to say so, with `--book default`. The examples point at the
+// Every command names its book — the reads as their first argument
+// (`money accounts BOOK`), the commands that change one with --book. There is
+// deliberately no default: a read run blind (which is how `palm --selftest`
+// checks the surface) must not open anybody's real accounts, so the only way
+// to reach the window's own store is to say so, with `default`. The examples point at the
 // fictitious book committed in apps/money/testdata/, which `money demo`
 // writes.
 //
@@ -36,8 +37,8 @@ COMMANDS := []kit.Command {
 		verb = "accounts",
 		summary = "the bank accounts in a book, with their balances",
 		effect = .Read,
+		args = {{name = "book", kind = .Path, help = "the book file; `default` is the window's own store", required = true}},
 		flags = {
-			{name = "book", kind = .Path, help = "the book file; `default` is the window's own store", required = true},
 			{name = "all", kind = .Bool, help = "categories and equity accounts too, not only bank accounts"},
 		},
 		out = {
@@ -56,7 +57,7 @@ COMMANDS := []kit.Command {
 			{name = "transactions", kind = .Int},
 			{name = "balanced", kind = .Bool, help = "the double-entry check over the whole book"},
 		},
-		examples = {"money accounts --book apps/money/testdata/demo.money --json", "money accounts --book default"},
+		examples = {"money accounts apps/money/testdata/demo.money --json", "money accounts default"},
 		run = cmd_accounts,
 	},
 	{
@@ -64,8 +65,8 @@ COMMANDS := []kit.Command {
 		summary = "transactions, newest first, through the window's own filter",
 		effect = .Read,
 		aliases = {"list"},
+		args = {{name = "book", kind = .Path, help = "the book file; `default` is the window's own store", required = true}},
 		flags = {
-			{name = "book", kind = .Path, help = "the book file; `default` is the window's own store", required = true},
 			{name = "account", kind = .String, help = "only this bank account, by name"},
 			{name = "category", kind = .String, help = "only this category, by name"},
 			{name = "match", kind = .String, help = "the search box: label, note, category or amount"},
@@ -91,9 +92,9 @@ COMMANDS := []kit.Command {
 			}},
 		},
 		examples = {
-			"money transactions --book apps/money/testdata/demo.money --limit 10 --json",
-			"money transactions --book apps/money/testdata/demo.money --match MONOPRIX --json",
-			"money list --book default --todo",
+			"money transactions apps/money/testdata/demo.money --limit 10 --json",
+			"money transactions apps/money/testdata/demo.money --match MONOPRIX --json",
+			"money list default --todo",
 		},
 		run = cmd_transactions,
 	},
@@ -101,8 +102,8 @@ COMMANDS := []kit.Command {
 		verb = "budget",
 		summary = "one month's envelopes: limit, carry, spent, left",
 		effect = .Read,
+		args = {{name = "book", kind = .Path, help = "the book file; `default` is the window's own store", required = true}},
 		flags = {
-			{name = "book", kind = .Path, help = "the book file; `default` is the window's own store", required = true},
 			{name = "month", kind = .String, help = "YYYY-MM; this month when omitted"},
 		},
 		out = {
@@ -123,15 +124,15 @@ COMMANDS := []kit.Command {
 			{name = "left", kind = .Int},
 			{name = "over", kind = .Int, help = "how many envelopes are over"},
 		},
-		examples = {"money budget --book apps/money/testdata/demo.money --json", "money budget --book default --month 2026-09"},
+		examples = {"money budget apps/money/testdata/demo.money --json", "money budget default --month 2026-09"},
 		run = cmd_budget,
 	},
 	{
 		verb = "recurring",
 		summary = "subscriptions and other recurring payments found in the history",
 		effect = .Read,
+		args = {{name = "book", kind = .Path, help = "the book file; `default` is the window's own store", required = true}},
 		flags = {
-			{name = "book", kind = .Path, help = "the book file; `default` is the window's own store", required = true},
 			{name = "min-confidence", kind = .Int, help = "0..100", def = "0"},
 		},
 		out = {
@@ -147,7 +148,7 @@ COMMANDS := []kit.Command {
 			{name = "monthly_out", kind = .Int},
 			{name = "monthly_in", kind = .Int},
 		},
-		examples = {"money recurring --book apps/money/testdata/demo.money --json"},
+		examples = {"money recurring apps/money/testdata/demo.money --json"},
 		run = cmd_recurring,
 	},
 	{
@@ -279,7 +280,8 @@ surface :: proc() -> ^kit.Surface {
 			takes_path = true,
 			selftest   = selftest_mode,
 			commands   = COMMANDS,
-			notes      = `Every command names its book with --book; ` + "`--book default`" + ` is the window's own
+			notes      = `Every command names its book: the reads as their first argument, the
+commands that change one with --book. ` + "`default`" + ` is the window's own
 store (~/.local/share/palmy-money/book.money). There is no network code in
 this program: statements are files the bank exported.
 
