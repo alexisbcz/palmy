@@ -633,7 +633,7 @@ cmd_list :: proc(c: ^kit.Call) -> int {
 		kit.jset_bool(o, "session_here", st.stored[x.handle])
 		kit.jpush(arr, o)
 		if !c.json {
-			fmt.printfln("%s %-24s %-22s %s%s", x.handle == st.current ? "*" : " ", x.handle, x.display_name, x.kind, x.archived ? " (archived)" : "")
+			fmt.printfln("%s %s %s %s%s", x.handle == st.current ? "*" : " ", kit.cli_pad(x.handle, 24), kit.cli_pad(x.display_name, 22), x.kind, x.archived ? " (archived)" : "")
 		}
 	}
 	kit.jset(c.out, "identities", arr)
@@ -790,7 +790,7 @@ cmd_devices :: proc(c: ^kit.Call) -> int {
 		}
 		kit.jpush(arr, o)
 		if !c.json {
-			fmt.printfln("%s  %-20s %-10s %-20s %s", d.id, d.name, d.kind, x.handle, d.active ? "active" : "ended")
+			fmt.printfln("%s  %s %s %s %s", d.id, kit.cli_pad(d.name, 20), kit.cli_pad(d.kind, 10), kit.cli_pad(x.handle, 20), d.active ? "active" : "ended")
 		}
 	}
 	kit.jset(c.out, "devices", arr)
@@ -848,7 +848,7 @@ cmd_sessions :: proc(c: ^kit.Call) -> int {
 		kit.jset_str(o, "refreshed_at", s.refreshed_at)
 		kit.jpush(arr, o)
 		if !c.json {
-			fmt.printfln("%s %s  %-28s %s", s.current ? "*" : " ", s.session_id, s.device_name != "" ? s.device_name : s.user_agent, x.handle != "" ? x.handle : "full account")
+			fmt.printfln("%s %s  %s %s", s.current ? "*" : " ", s.session_id, kit.cli_pad(s.device_name != "" ? s.device_name : s.user_agent, 28), x.handle != "" ? x.handle : "full account")
 		}
 	}
 	kit.jset(c.out, "sessions", arr)

@@ -138,7 +138,7 @@ cmd_styles :: proc(c: ^kit.Call) -> int {
 		return kit.EXIT_OK
 	}
 	for p in e.packs {
-		fmt.printfln("%-14s %d rules", p.name, len(p.rules))
+		fmt.printfln("%s %d rules", kit.cli_pad(p.name, 14), len(p.rules))
 		fmt.printfln("               %s", p.about)
 		kinds: [prose.Rule_Kind]int
 		for r in p.rules {
@@ -236,11 +236,11 @@ cmd_lint :: proc(c: ^kit.Call) -> int {
 	}
 	for a in res.alerts {
 		fmt.printfln(
-			"%s:%d:%d: %-10s %s  [%s]",
+			"%s:%d:%d: %s %s  [%s]",
 			path,
 			a.line,
 			a.col,
-			prose.SEVERITY_NAME[a.sev],
+			kit.cli_pad(prose.SEVERITY_NAME[a.sev], 10),
 			a.message,
 			a.rule,
 		)
@@ -321,16 +321,16 @@ cmd_report :: proc(c: ^kit.Call) -> int {
 	fmt.println("  Readability (estimates, see the note below)")
 	for g in rp.grades {
 		if !g.ok {
-			fmt.printfln("    %-24s  —      (not enough text)", prose.METRIC_NAME[g.metric])
+			fmt.printfln("    %s  —      (not enough text)", kit.cli_pad(prose.METRIC_NAME[g.metric], 24))
 			continue
 		}
-		fmt.printfln("    %-24s  %6s  %s", prose.METRIC_NAME[g.metric], fmt.tprintf("%.1f", g.value), g.band)
+		fmt.printfln("    %s  %s  %s", kit.cli_pad(prose.METRIC_NAME[g.metric], 24), kit.cli_pad_left(fmt.tprintf("%.1f", g.value), 6), g.band)
 	}
 	if rp.grade_ok {
 		fmt.printfln(
-			"    %-24s  %6s  %s",
-			"mean of the grades",
-			fmt.tprintf("%.1f", rp.grade_mean),
+			"    %s  %s  %s",
+			kit.cli_pad("mean of the grades", 24),
+			kit.cli_pad_left(fmt.tprintf("%.1f", rp.grade_mean), 6),
 			prose.band(rp.grade_mean),
 		)
 	}
@@ -349,13 +349,13 @@ cmd_report :: proc(c: ^kit.Call) -> int {
 			continue
 		}
 		bar := strings.repeat("#", min(n, 40), context.temp_allocator)
-		fmt.printfln("    %-6s %3d  %s", prose.BUCKET_LABEL[i], n, bar)
+		fmt.printfln("    %s %3d  %s", kit.cli_pad(prose.BUCKET_LABEL[i], 6), n, bar)
 	}
 	if len(rp.openers) > 0 {
 		fmt.println()
 		fmt.println("  Sentences starting with the same word")
 		for o2 in rp.openers {
-			fmt.printfln("    %-14s %d times", o2.word, o2.n)
+			fmt.printfln("    %s %d times", kit.cli_pad(o2.word, 14), o2.n)
 		}
 	}
 	if len(rp.issues) > 0 {
@@ -363,8 +363,8 @@ cmd_report :: proc(c: ^kit.Call) -> int {
 		fmt.println("  What recurs")
 		for t in rp.issues {
 			fmt.printfln(
-				"    %-30s %3d  %s%s",
-				t.rule,
+				"    %s %3d  %s%s",
+				kit.cli_pad(t.rule, 30),
 				t.n,
 				prose.SEVERITY_NAME[t.sev],
 				t.fix ? "  (rewrite offered)" : "",

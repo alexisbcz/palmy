@@ -129,7 +129,7 @@ cmd_get :: proc(c: ^kit.Call) -> int {
 			kit.jset_str(o, "source", s.source)
 			kit.jpush(arr, o)
 			if !c.json {
-				fmt.printfln("%-28s %s%s", k.name, s.value == "" ? "(none)" : s.value, s.set ? "" : "  (default)")
+				fmt.printfln("%s %s%s", kit.cli_pad(k.name, 28), s.value == "" ? "(none)" : s.value, s.set ? "" : "  (default)")
 			}
 		}
 		kit.jset(c.out, "settings", arr)
@@ -239,7 +239,7 @@ cmd_list :: proc(c: ^kit.Call) -> int {
 		kit.jpush(arr, o)
 		if !c.json {
 			vals := len(k.values) > 0 ? strings.join(k.values, "|", context.temp_allocator) : KIND_NAMES[k.kind]
-			fmt.printfln("%-28s %-22s %s", k.name, vals, k.help)
+			fmt.printfln("%s %s %s", kit.cli_pad(k.name, 28), kit.cli_pad(vals, 22), k.help)
 		}
 	}
 	kit.jset(c.out, "keys", arr)
@@ -269,7 +269,7 @@ cmd_show :: proc(c: ^kit.Call) -> int {
 			kit.jset_int(x, "y", d.y)
 			kit.jpush(arr, x)
 			if !c.json {
-				fmt.printfln("%-12s %dx%d @ %.2f Hz  scale %d  at %d,%d  %s", d.name, d.mode_w, d.mode_h, f64(d.refresh_mhz) / 1000, d.scale, d.x, d.y, d.desc)
+				fmt.printfln("%s %dx%d @ %.2f Hz  scale %d  at %d,%d  %s", kit.cli_pad(d.name, 12), d.mode_w, d.mode_h, f64(d.refresh_mhz) / 1000, d.scale, d.x, d.y, d.desc)
 			}
 		}
 		kit.jset(o, "displays", arr)
@@ -327,7 +327,7 @@ cmd_show :: proc(c: ^kit.Call) -> int {
 			kit.jset(x, "addresses", aa)
 			kit.jpush(arr, x)
 			if !c.json {
-				fmt.printfln("%-10s %-9s %-8s %s %s", i.name, i.kind, i.state, strings.join(i.addrs, " ", context.temp_allocator), i.ssid)
+				fmt.printfln("%s %s %s %s %s", kit.cli_pad(i.name, 10), kit.cli_pad(i.kind, 9), kit.cli_pad(i.state, 8), strings.join(i.addrs, " ", context.temp_allocator), i.ssid)
 			}
 		}
 		kit.jset(o, "interfaces", arr)
@@ -355,7 +355,7 @@ cmd_show :: proc(c: ^kit.Call) -> int {
 			kit.jset_bool(x, "administrator", admin)
 			kit.jpush(arr, x)
 			if !c.json {
-				fmt.printfln("%-12s %-5d %s%s", u.name, u.uid, strings.join(u.groups, ",", context.temp_allocator), admin ? "  (administrator)" : "")
+				fmt.printfln("%s %-5d %s%s", kit.cli_pad(u.name, 12), u.uid, strings.join(u.groups, ",", context.temp_allocator), admin ? "  (administrator)" : "")
 			}
 		}
 		kit.jset(o, "users", arr)

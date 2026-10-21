@@ -537,7 +537,7 @@ cmd_find :: proc(c: ^kit.Call) -> int {
 	if !c.json {
 		// One line per match, its path first: what to pass to the next verb.
 		for it in items {
-			fmt.printfln("%-6s %8s  %s", it.kind, it.kind == "file" ? dc.human_size(it.size) : "", paths[it.id])
+			fmt.printfln("%s %s  %s", kit.cli_pad(it.kind, 6), kit.cli_pad_left(it.kind == "file" ? dc.human_size(it.size) : "", 8), paths[it.id])
 		}
 		c.out = kit.jobj()
 	}

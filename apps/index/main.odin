@@ -363,7 +363,7 @@ print_results :: proc(o: ^kit.Json, out: []ic.Result, ids: []feed.Ident, st: ic.
 				name = x.name
 			}
 		}
-		fmt.printfln("%-6s %-22s  %s  ● %s", ic.KIND_NAME[r.kind], trunc(r.title, 60), iso(r.time)[:min(10, len(iso(r.time)))], name)
+		fmt.printfln("%s %s  %s  ● %s", kit.cli_pad(ic.KIND_NAME[r.kind], 6), kit.cli_pad(trunc(r.title, 60), 22), iso(r.time)[:min(10, len(iso(r.time)))], name)
 		if r.snippet != "" {
 			fmt.printfln("       %s", trunc(r.snippet, 100))
 		}
@@ -458,7 +458,7 @@ cmd_status :: proc(c: ^kit.Call) -> int {
 		for x in ids {
 			ix, ok := ic.index_open(paths.index, x.handle)
 			if ok {
-				fmt.printfln("%-14s %s items, %s, %d segment(s)", x.handle, fmt.tprint(ix.ndocs), size_words(ic.index_bytes(ix)), len(ix.segs))
+				fmt.printfln("%s %s items, %s, %d segment(s)", kit.cli_pad(x.handle, 14), fmt.tprint(ix.ndocs), size_words(ic.index_bytes(ix)), len(ix.segs))
 				ic.index_close(ix)
 			}
 		}

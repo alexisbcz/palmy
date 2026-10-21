@@ -467,7 +467,7 @@ cmd_setup :: proc(c: ^kit.Call) -> int {
 			failed = true
 		}
 		if !c.json {
-			fmt.printfln("%-16s %-12s %-15v %s", t.handle == "" ? "(computer)" : t.handle, fmt.tprintf("%v", t.what), t.state, t.detail)
+			fmt.printfln("%s %s %s %s", kit.cli_pad(t.handle == "" ? "(computer)" : t.handle, 16), kit.cli_pad(fmt.tprintf("%v", t.what), 12), kit.cli_pad(fmt.tprintf("%v", t.state), 15), t.detail)
 		}
 	}
 	kit.jset(c.out, "tasks", tasks)

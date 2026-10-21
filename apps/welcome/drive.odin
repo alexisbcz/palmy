@@ -14,6 +14,7 @@ import "core:fmt"
 import "core:os"
 import "core:strings"
 import "core:time"
+import kit "kit:."
 import p "palmy:."
 
 Drive_Result :: struct {
@@ -286,7 +287,7 @@ drive_flow :: proc(local: bool, email, shots_dir, lang, theme: string) -> Drive_
 
 	// What the run left behind, for the caller to check.
 	for t in st.tasks {
-		fmt.eprintfln("welcome drive: %-28s %-12v %-15v %s", t.handle == "" ? "(computer)" : t.handle, t.what, t.state, t.detail)
+		fmt.eprintfln("welcome drive: %s %s %s %s", kit.cli_pad(t.handle == "" ? "(computer)" : t.handle, 28), kit.cli_pad(fmt.tprintf("%v", t.what), 12), kit.cli_pad(fmt.tprintf("%v", t.state), 15), t.detail)
 	}
 	return res
 }
