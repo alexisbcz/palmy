@@ -41,6 +41,7 @@ Step :: enum {
 	Click_Button,
 	Click_Field,
 	Type,
+	Dead_Key,
 	Scroll,
 	Wake_Thread,
 	Wake_After,
@@ -230,6 +231,29 @@ main :: proc() {
 					check(s.keys_seen[3] == p.KEY_RETURN, "Return (%x)", s.keys_seen[3])
 					check(s.keys_seen[4] == p.KEY_LEFT, "Left (%x)", s.keys_seen[4])
 				}
+				advance(&s, .Dead_Key)
+				// The key left of Return's row on US (kVK_ANSI_LeftBracket)
+				// is ^ as a dead key on French AZERTY; Option+E is a dead
+				// acute on US/ABC. Whichever this layout makes of them, a
+				// composing input method turns them and the next 'e' into
+				// one character, and AppKit's text system, not palmy,
+				// decides which.
+				post(key_event(app, true, "", "^", 33))
+				post(key_event(app, true, "e", "e", 14))
+				post(key_event(app, true, "", "e", 14, 1 << 19))
+				post(key_event(app, true, "e", "e", 14))
+			}
+
+		case .Dead_Key:
+			if time.tick_since(s.t_step) > 300 * time.Millisecond {
+				text := string(s.field[:])
+				tail := text[min(3, len(text)):]
+				composed := 0
+				for r in tail {
+					if r > 0x7f {composed += 1}
+				}
+				fmt.printfln("macos-check: dead-key sequences typed %q", tail)
+				check(composed >= 1, "at least one dead-key sequence composed a single accented character: %q", tail)
 				advance(&s, .Scroll)
 				s.scrolled = {}
 				// A scroll event carries the real pointer's screen position, so
