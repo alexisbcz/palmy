@@ -88,7 +88,7 @@ wait_for_work :: proc(a: ^Term_App, timeout_ms: int) {
 		{fd = a.pump.wake_r, events = {.IN}},
 		{fd = a.app.win.conn.fd, events = {.IN}},
 	}
-	linux.poll(pfds[:], i32(timeout_ms))
+	p.poll_fds(pfds[:], timeout_ms) // -1 must mean forever on arm64 too
 	pump_drain(&a.pump)
 }
 
