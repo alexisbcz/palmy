@@ -68,6 +68,7 @@ Cmd :: enum u8 {
 	Save,
 	Save_As,
 	Export_CSV,
+	Export_CSV_All,
 	Import_CSV,
 	Export_XLSX,
 	Import_XLSX,
@@ -140,6 +141,7 @@ COMMANDS := [?]Cmd_Row {
 	{.Save, "Save", "Ctrl+S"},
 	{.Save_As, "Save as", "Ctrl+Shift+S"},
 	{.Export_CSV, "Export CSV", "Ctrl+E"},
+	{.Export_CSV_All, "Export every sheet as CSV", "Ctrl+Shift+E"},
 	{.Import_CSV, "Import CSV", "Ctrl+Shift+O"},
 	{.Export_XLSX, "Export Excel workbook", "Alt+E"},
 	{.Import_XLSX, "Import Excel workbook", "Alt+O"},
@@ -376,6 +378,8 @@ run_cmd :: proc(app: ^App, cmd: Cmd) {
 		open_prompt(app, .Save_As, app.path != "" ? app.path : default_path(app, ".sheet.json"))
 	case .Export_CSV:
 		open_prompt(app, .Export_CSV, default_path(app, ".csv"))
+	case .Export_CSV_All:
+		open_prompt(app, .Export_CSV_All, default_path(app, ".csv"))
 	case .Import_CSV:
 		open_prompt(app, .Import_CSV, default_path(app, ".csv"))
 	case .Export_XLSX:

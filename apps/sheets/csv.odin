@@ -165,3 +165,110 @@ csv_read_file :: proc(sh: ^Sheet, path: string, at: Addr) -> (ok: bool, rows, co
 	r, c := import_delim(sh, string(data), at, ',')
 	return true, r, c
 }
+
+// ---------------------------------------------------------------------------
+// A whole book as CSV
+//
+// CSV has no sheets, so a book of several has to become several files. The
+// shape chosen is LibreOffice's (`soffice --convert-to csv:...:-1`, which
+// exports every sheet): `book.csv` becomes `book-Sales.csv`,
+// `book-Summary.csv`, one per sheet, in sheet order, beside where `book.csv`
+// would have been. A book of one sheet writes `book.csv` itself, so the
+// common case is unchanged. The alternatives were worse: one file with the
+// sheets stacked and a marker row between them is not CSV any reader agrees
+// on; a directory changes what the path you typed *means*; a .zip of CSVs is
+// a format nobody asked for.
+//
+// Each file is what the single-sheet export writes: the used range, from A1,
+// as displayed values — a formula's result, not its text, because a CSV
+// reader cannot evaluate it, and `Jan:Mar!B2` would mean nothing to it. A
+// `.tsv` path writes tabs. An empty sheet writes an empty file rather than
+// being skipped, so the list of files is always the list of sheets.
+// ---------------------------------------------------------------------------
+
+delim_for :: proc(path: string) -> u8 {
+	return strings.has_suffix(path, ".tsv") ? '\t' : ','
+}
+
+// csv_sheet_text is one sheet's used range as delimited text.
+csv_sheet_text :: proc(sh: ^Sheet, delim: u8, allocator := context.temp_allocator) -> string {
+	if sh.max_row < 0 || sh.max_col < 0 {
+		return strings.clone("", allocator)
+	}
+	return delim_export(sh, {0, 0, sh.max_row, sh.max_col}, delim, false, allocator)
+}
+
+// csv_file_safe makes a sheet name usable in a file name. Only what a file
+// system or a shell would trip on is replaced; spaces and accents stay.
+csv_file_safe :: proc(name: string) -> string {
+	b := strings.builder_make(context.temp_allocator)
+	for i in 0 ..< len(name) {
+		c := name[i]
+		switch c {
+		case '/', '\\', ':', '*', '?', '"', '<', '>', '|':
+			strings.write_byte(&b, '_')
+		case:
+			strings.write_byte(&b, c < 0x20 || c == 0x7f ? '_' : c)
+		}
+	}
+	s := strings.to_string(b)
+	if s == "" || s == "." || s == ".." {
+		return "_"
+	}
+	return s
+}
+
+// csv_book_paths is where each sheet of the book goes when the book is
+// exported to `path`. Two sheets whose names clean up to the same file name
+// (`a/b` and `a_b`) get a counter, so no export overwrites itself.
+csv_book_paths :: proc(bk: ^Book, path: string) -> []string {
+	out := make([dynamic]string, 0, len(bk.sheets), context.temp_allocator)
+	if len(bk.sheets) == 1 {
+		append(&out, path)
+		return out[:]
+	}
+	stem, ext := path, ""
+	slash := strings.last_index_byte(path, '/')
+	if dot := strings.last_index_byte(path, '.'); dot > slash + 1 {
+		stem, ext = path[:dot], path[dot:]
+	}
+	for sh in bk.sheets {
+		cand := strings.concatenate({stem, "-", csv_file_safe(sh.name), ext}, context.temp_allocator)
+		for n := 2; ; n += 1 {
+			taken := false
+			for p in out {
+				if strings.equal_fold(p, cand) {
+					taken = true
+					break
+				}
+			}
+			if !taken {
+				break
+			}
+			cand = strings.concatenate({stem, "-", csv_file_safe(sh.name), "-", int_text(n), ext}, context.temp_allocator)
+		}
+		append(&out, cand)
+	}
+	return out[:]
+}
+
+// csv_write_book writes every sheet, the window's "Export every sheet as CSV"
+// and `sheets export book.csv` alike, and returns the files in sheet order.
+// It stops at the first file it cannot write and says so.
+csv_write_book :: proc(bk: ^Book, path: string) -> (files: []string, ok: bool) {
+	paths := csv_book_paths(bk, path)
+	delim := delim_for(path)
+	for sh, i in bk.sheets {
+		text := csv_sheet_text(sh, delim)
+		if os.write_entire_file(paths[i], transmute([]u8)text) != nil {
+			return paths[:i], false
+		}
+	}
+	return paths, true
+}
+
+// csv_write_sheet writes one whole sheet to exactly `path`.
+csv_write_sheet :: proc(sh: ^Sheet, path: string) -> bool {
+	text := csv_sheet_text(sh, delim_for(path))
+	return os.write_entire_file(path, transmute([]u8)text) == nil
+}

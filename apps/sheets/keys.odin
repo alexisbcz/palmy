@@ -206,6 +206,7 @@ handle_keys :: proc(ui: ^p.Ctx, app: ^App) {
 		{'s', {.Ctrl}, .Save},
 		{'S', {.Ctrl, .Shift}, .Save_As},
 		{'e', {.Ctrl}, .Export_CSV},
+		{'E', {.Ctrl, .Shift}, .Export_CSV_All},
 		{'O', {.Ctrl, .Shift}, .Import_CSV},
 		{'e', {.Alt}, .Export_XLSX},
 		{'o', {.Alt}, .Import_XLSX},
@@ -386,6 +387,8 @@ prompt_title :: proc(k: Prompt_Kind) -> string {
 		return "Open sheet"
 	case .Export_CSV:
 		return "Export CSV to"
+	case .Export_CSV_All:
+		return "Export every sheet as CSV, one file each, beside"
 	case .Import_CSV:
 		return "Import CSV from"
 	case .Export_XLSX:
@@ -590,6 +593,20 @@ run_prompt :: proc(app: ^App, text: string) {
 			)
 		} else {
 			set_status(app, "Could not write %s", arg)
+		}
+	case .Export_CSV_All:
+		if arg == "" {
+			return
+		}
+		files, ok := csv_write_book(app.book, arg)
+		if !ok {
+			set_status(app, "Could not write %s", len(files) < len(app.book.sheets) ? csv_book_paths(app.book, arg)[len(files)] : arg)
+			return
+		}
+		if len(files) == 1 {
+			set_status(app, "Exported %s to %s", app.book.sheets[0].name, files[0])
+		} else {
+			set_status(app, "Exported %d sheets: %s … %s", len(files), base_name(files[0]), base_name(files[len(files) - 1]))
 		}
 	case .Import_CSV:
 		if arg == "" {

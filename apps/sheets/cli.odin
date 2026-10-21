@@ -186,8 +186,15 @@ COMMANDS := []kit.Command {
 			{name = "out", kind = .Path, help = "the file to write", required = true},
 			{name = "in", kind = .Path, help = "the book to read; the demo book when absent"},
 		},
+		flags = {
+			{name = "sheet", kind = .String, help = "CSV/TSV only: just this sheet, to exactly <out>"},
+		},
 		out = EXPORT_FIELDS,
-		examples = {"sheets export /tmp/book.xlsx --json", "sheets export /tmp/book.csv --json"},
+		examples = {
+			"sheets export /tmp/book.xlsx --json",
+			"sheets export /tmp/book.csv --json",
+			"sheets export /tmp/summary.csv --sheet Summary --json",
+		},
 		run = cmd_export,
 	},
 	{
@@ -358,8 +365,14 @@ SHEET_OP_FIELDS := []kit.Field {
 
 EXPORT_FIELDS := []kit.Field {
 	{name = "path", kind = .String},
-	{name = "format", kind = .String, help = "xlsx, csv or sheet.json"},
-	{name = "sheets", kind = .Int},
+	{name = "format", kind = .String, help = "xlsx, csv, tsv or sheet.json"},
+	{name = "sheets", kind = .Int, help = "how many sheets went out"},
+	{
+		name = "files",
+		kind = .Array,
+		of = {{kind = .String}},
+		help = "every file written: one, except a CSV of a several-sheet book, which is <out>-<Sheet>.csv per sheet",
+	},
 	{name = "cells", kind = .Int},
 	{name = "written", kind = .Bool, help = "false under --dry-run"},
 }
@@ -688,18 +701,29 @@ cmd_set :: proc(c: ^kit.Call) -> int {
 	return kit.EXIT_OK
 }
 
-// write_book is the one writer, shared by `set` and `export`, so the format is
-// decided by the extension in exactly one place.
+// write_book is the one writer, shared by `set`, `export` and every command
+// that changes a book, so the format is decided by the extension in exactly
+// one place. A CSV of a several-sheet book is several files (see
+// `csv_write_book`); `files` lists what was written.
 @(private = "file")
-write_book :: proc(app: ^App, out: string) -> bool {
+write_book_files :: proc(app: ^App, out: string) -> (files: []string, ok: bool) {
 	switch {
 	case strings.has_suffix(out, ".xlsx"):
-		return xlsx_write_book(app.book, out)
+		ok = xlsx_write_book(app.book, out)
 	case strings.has_suffix(out, ".csv"), strings.has_suffix(out, ".tsv"):
-		rect := Rect_I{0, 0, max(app.sh.max_row, 0), max(app.sh.max_col, 0)}
-		return csv_write_file(app.sh, out, rect)
+		return csv_write_book(app.book, out)
+	case:
+		ok = doc_save_file(app.sh, out, base_name(out), {}, {})
 	}
-	return doc_save_file(app.sh, out, base_name(out), {}, {})
+	one := make([]string, 1, context.temp_allocator)
+	one[0] = out
+	return one[:ok ? 1 : 0], ok
+}
+
+@(private = "file")
+write_book :: proc(app: ^App, out: string) -> bool {
+	_, ok := write_book_files(app, out)
+	return ok
 }
 
 @(private = "file")
@@ -723,19 +747,62 @@ cmd_export :: proc(c: ^kit.Call) -> int {
 	if !ok {
 		return no_book(c, src)
 	}
-	n := 0
-	for s in app.book.sheets {
-		n += len(s.cells)
-	}
+	format := out_format(out)
 	kit.jset_str(c.out, "path", out)
-	kit.jset_str(c.out, "format", out_format(out))
-	kit.jset_int(c.out, "sheets", len(app.book.sheets))
+	kit.jset_str(c.out, "format", format)
+
+	// `--sheet` narrows a CSV to one sheet, written to exactly <out>. The
+	// formats that hold a whole book refuse it rather than quietly writing
+	// every sheet anyway.
+	one: ^Sheet
+	if name := kit.cli_str(c, "sheet"); name != "" {
+		if format != "csv" && format != "tsv" {
+			return kit.cli_failf(c, kit.EXIT_USAGE, "--sheet applies to .csv and .tsv; %s holds the whole book", format)
+		}
+		i := book_find(app.book, name)
+		if i < 0 {
+			return no_sheet(c, name)
+		}
+		one = app.book.sheets[i]
+	}
+	n := 0
+	planned: []string
+	if one != nil {
+		n = len(one.cells)
+		planned = []string{out}
+		kit.jset_int(c.out, "sheets", 1)
+	} else {
+		for s in app.book.sheets {
+			n += len(s.cells)
+		}
+		planned = format == "csv" || format == "tsv" ? csv_book_paths(app.book, out) : []string{out}
+		kit.jset_int(c.out, "sheets", len(app.book.sheets))
+	}
 	kit.jset_int(c.out, "cells", n)
+	put_files :: proc(c: ^kit.Call, files: []string) {
+		arr := kit.jarr()
+		for f in files {
+			kit.jpush(arr, kit.jstr(f))
+		}
+		kit.jset(c.out, "files", arr)
+	}
 	if c.dry_run {
+		// What would be written, exactly: the per-sheet names are decided
+		// here, by the same procedure the real write uses.
+		put_files(c, planned)
 		kit.jset_bool(c.out, "written", false)
 		return kit.EXIT_OK
 	}
-	if !write_book(app, out) {
+	files: []string
+	ok2: bool
+	if one != nil {
+		ok2 = csv_write_sheet(one, out)
+		files = ok2 ? planned : nil
+	} else {
+		files, ok2 = write_book_files(app, out)
+	}
+	put_files(c, files)
+	if !ok2 {
 		kit.jset_bool(c.out, "written", false)
 		return kit.cli_failf(c, kit.EXIT_FAILED, "could not write %s", out)
 	}

@@ -28,6 +28,7 @@ Prompt_Kind :: enum u8 {
 	Save_As,
 	Open,
 	Export_CSV,
+	Export_CSV_All,
 	Import_CSV,
 	Export_XLSX,
 	Import_XLSX,

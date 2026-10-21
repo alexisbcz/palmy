@@ -376,6 +376,13 @@ prompt_overlay :: proc(ui: ^p.Ctx, app: ^App) {
 			"text-xs text-muted-foreground",
 		)
 	}
+	if app.prompt == .Export_CSV_All && len(app.book.sheets) > 1 {
+		p.text(
+			ui,
+			fmt.tprintf("book.csv becomes book-%s.csv and %d more", app.book.sheets[0].name, len(app.book.sheets) - 1),
+			"text-xs text-muted-foreground",
+		)
+	}
 	p.end(ui)
 }
 
@@ -439,6 +446,7 @@ HELP_DOC := [?]Key_Row {
 	{"Ctrl+S / Ctrl+Shift+S", "save / save as (JSON)"},
 	{"Ctrl+O", "open"},
 	{"Ctrl+E / Ctrl+Shift+O", "export / import CSV"},
+	{"Ctrl+Shift+E", "every sheet as CSV, one file each"},
 	{"Ctrl+N", "new sheet"},
 	{"Ctrl+Q", "quit"},
 }
