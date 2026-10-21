@@ -3,7 +3,9 @@ package main
 // `pkg --selftest` -- headless, and it never touches this machine.
 //
 // The honest test of a package layer modifies a real system, so this one does
-// not try. It proves the parts that decide what *would* be run:
+// not try; apps/pkg/integration does, in an Arch Linux ARM container (real
+// pacman, sudo, snapper on btrfs, limine-snapper-sync), and NOTES.md there
+// records what it found. Where that run found a bug, an assertion here pins it. It proves the parts that decide what *would* be run:
 //
 //   * the declaration parser, including the name validation that stops a
 //     declaration file from smuggling a flag into an argv,
