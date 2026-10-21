@@ -7,9 +7,12 @@
 # dispatcher and keys are sent with wtype, so what lands in the video is the
 # compositor's own composite of palmy's shared-memory buffer.
 set -uo pipefail
-OUT="${1:-/home/alex/Work/palmy/parity/out/video/showcase.mp4}"
+# Paths come from where this script is, so a worktree records its own build.
+HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+ROOT="${PARITY_ROOT:-$(dirname "$HERE")}"
+OUT="${1:-$ROOT/out/video/showcase.mp4}"
 mkdir -p "$(dirname "$OUT")"
-BIN=/home/alex/Work/palmy/parity/odin/showcase.bin
+BIN=${BIN:-$ROOT/odin/showcase.bin}
 
 kill_palmy() {
   for pid in $(hyprctl clients -j | python3 -c '

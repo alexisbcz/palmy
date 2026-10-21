@@ -4,16 +4,22 @@
 #   ./run.sh              every case
 #   ./run.sh button-      only cases whose id starts with this
 set -uo pipefail
-cd "$(dirname "$0")"
+
+# Every path is derived from where this script is, so running it from a git
+# worktree builds and measures that worktree -- the same fix tools/diff-all.sh
+# carries. It used to build against a hardcoded /home/alex/Work/palmy.
+HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+REPO="$(dirname "$HERE")"
+cd "$HERE" || exit 1
 
 FILTER="${1:-}"
 BASE_URL="${BASE_URL:-http://localhost:5173}"
-ODIN=/home/alex/.local/share/mise/installs/odin/dev-2026-09/odin
+ODIN=${ODIN:-/home/alex/.local/share/mise/installs/odin/dev-2026-09/odin}
 
 say() { printf '\n\033[1m== %s\033[0m\n' "$1"; }
 
-say "building the odin side"
-"$ODIN" build odin/render -collection:palmy=/home/alex/Work/palmy/palmy -collection:shadcn=/home/alex/Work/palmy/shadcn -o:speed -out:odin/render.bin || exit 1
+say "building the odin side from $REPO"
+"$ODIN" build odin/render -collection:palmy="$REPO/palmy" -collection:shadcn="$REPO/shadcn" -o:speed -out:odin/render.bin || exit 1
 "$ODIN" build odin/pixdiff -o:speed -out:odin/pixdiff.bin || exit 1
 
 if ! curl -sf "$BASE_URL/parity/cases.json" -o /dev/null; then

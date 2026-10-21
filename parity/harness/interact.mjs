@@ -9,9 +9,15 @@
 import { chromium } from "playwright";
 import { mkdirSync, writeFileSync } from "node:fs";
 import { readFileSync } from "node:fs";
+import path from "node:path";
+import { fileURLToPath } from "node:url";
+
+// Paths are resolved from this file, so a worktree writes into its own out/web
+// (as harness/capture.mjs does). OUT_DIR overrides, as there.
+const HERE = path.dirname(fileURLToPath(import.meta.url));
 
 const BASE = process.argv[2] || process.env.BASE_URL || "http://localhost:5173";
-const OUT = "/home/alex/Work/palmy/parity/out/web";
+const OUT = process.env.OUT_DIR || path.resolve(HERE, "..", "out", "web");
 mkdirSync(OUT, { recursive: true });
 
 // What to do, per case. `type` sends keystrokes into the focused element.
@@ -30,7 +36,7 @@ const PLAN = [
 const TYPED_TEXT = "Hello";
 
 const collect = readFileSync(
-  "/home/alex/Work/palmy/parity/harness/capture.mjs",
+  path.join(HERE, "capture.mjs"),
   "utf8"
 ).includes("collectGeometry")
   ? null

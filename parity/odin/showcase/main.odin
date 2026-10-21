@@ -19,6 +19,15 @@ App_State :: struct {
 	volume:   [1]f32,
 }
 
+// FONT_DIR is the parity web app's pinned fonts, found from this source file's
+// own directory (`#directory` is ".../parity/odin/showcase/", resolved at
+// compile time) so a binary built from a git worktree loads that worktree's
+// fonts. It used to be a hardcoded /home/alex/Work/palmy/parity path, the same
+// mistake odin/render/main.odin had.
+@(private)
+SOURCE_DIR :: #directory
+FONT_DIR :: SOURCE_DIR[:len(SOURCE_DIR) - len("odin/showcase/")] + "web/public/fonts"
+
 main :: proc() {
 	app, err := p.create(
 		{title = "palmy · shadcn", app_id = "palmy", width = 980, height = 720, min_width = 560},
@@ -39,7 +48,7 @@ main :: proc() {
 		{"Geist-600.ttf", .Semibold},
 		{"Geist-700.ttf", .Bold},
 	}) {
-		path := fmt.tprintf("/home/alex/Work/palmy/parity/web/public/fonts/%s", pair.file)
+		path := fmt.tprintf("%s/%s", FONT_DIR, pair.file)
 		p.load_font(&app.fonts, path, .Sans, pair.wt)
 	}
 	sc.register_shadcn_theme()

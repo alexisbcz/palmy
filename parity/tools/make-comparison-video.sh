@@ -4,14 +4,18 @@
 #
 #   make-comparison-video.sh [out.mp4]
 set -uo pipefail
-cd /home/alex/Work/palmy/parity
+# The parity/ directory this script lives in, so a worktree films its own
+# measurements; PARITY_ROOT overrides, as in tools/diff-all.sh.
+HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+ROOT="${PARITY_ROOT:-$(dirname "$HERE")}"
+cd "$ROOT" || exit 1
 OUT="${1:-out/video/comparison.mp4}"
 WORK=$(mktemp -d)
 trap 'rm -rf "$WORK"' EXIT
 mkdir -p "$(dirname "$OUT")"
 
 W=1280; H=720
-FONT=/home/alex/Work/palmy/parity/web/public/fonts/Geist-500.ttf
+FONT="$ROOT/web/public/fonts/Geist-500.ttf"
 [ -f "$FONT" ] || FONT=$(fc-match -f "%{file}" sans)
 
 i=0

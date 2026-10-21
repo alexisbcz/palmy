@@ -174,10 +174,16 @@ Case ids must match `specs/case-ids.txt` exactly.
 ## 4. Measure, then fix
 
 ```sh
-odin build odin/render -collection:palmy=/home/alex/Work/palmy/palmy -out:odin/render-<you>.bin
+odin build odin/render -collection:palmy=$PWD/../palmy -collection:shadcn=$PWD/../shadcn -out:odin/render-<you>.bin
 ./odin/render-<you>.bin <case-id>
 ./odin/pixdiff.bin out/web/<case-id>.png out/odin/<case-id>.png --out out/diff/<case-id>.png --json
 ```
+
+Run these from the `parity/` directory of the checkout or worktree you are
+changing. The collections point at that tree, and the renderer writes into the
+tree it was built from (`#directory`), so nothing here reaches another
+checkout. Browser captures are gitignored: a fresh worktree has none until you
+capture or borrow them, as `tools/diff-all.sh` does.
 
 Then compare geometry numerically — this is where "pixel perfect" is actually
 winnable:
