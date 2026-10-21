@@ -334,7 +334,7 @@ af_service :: proc(s: ^Af_Server, timeout_ms: i32 = 0) {
 			append(&fds, linux.Poll_Fd{fd = c.fd, events = {.IN}})
 		}
 	}
-	n, _ := linux.poll(fds[:], timeout_ms)
+	n, _ := p.poll_fds(fds[:], int(timeout_ms)) // -1 is forever on arm64 too
 	if n <= 0 {
 		return
 	}
@@ -439,7 +439,11 @@ af_watch :: proc(s: ^Af_Server, app: ^p.App) {
 	s.watcher = thread.create_and_start_with_poly_data3(ep, stop, app, proc(ep, stop: linux.Fd, app: ^p.App) {
 		evs: [16]linux.EPoll_Event
 		for {
-			n, err := linux.epoll_wait(ep, &evs[0], len(evs), -1)
+			// epoll_pwait with no signal mask, not linux.epoll_wait: on arm64
+			// and riscv64 that one passes a pointer to a timespec where the
+			// kernel reads milliseconds, so the wait lasted however long the
+			// low half of a stack address said rather than forever.
+			n, err := linux.epoll_pwait(ep, &evs[0], len(evs), -1, nil)
 			if err == .EINTR {
 				continue
 			}
