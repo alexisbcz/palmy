@@ -1,52 +1,59 @@
 package main
 
-// A tiny JSON writer with the comma and colon bookkeeping done for you.
+// A tiny JSON builder with the comma and colon bookkeeping done for you.
 //
 // `palm pkg` has one hard output rule, from docs/PALM-CLI.md: machine output
-// goes to stdout and nothing else does. Hand-placed commas are where
-// hand-written JSON goes wrong, so the separator is the writer's problem.
+// goes to stdout and nothing else does. The verbs describe their result with
+// the calls below, and what those calls build is the kit's own JSON tree —
+// the object `kit.cli` prints under --json, validates against the declared
+// `out` fields, and renders for a person otherwise. There is one result per
+// command, not a hand-written string next to a schema that describes it.
 
-import "core:strconv"
-import "core:strings"
+import kit "kit:."
 
 JW :: struct {
-	sb:     strings.Builder,
-	first:  [32]bool,
+	root:   ^kit.Json,
+	stack:  [32]^kit.Json,
 	depth:  int,
+	key:    string,
 	in_key: bool,
 }
 
 jw_make :: proc(allocator := context.allocator) -> JW {
-	w := JW {
-		sb = strings.builder_make(allocator),
-	}
-	w.first[0] = true
-	return w
+	return JW{}
 }
 
+// jw_text is the compact rendering, `{"op":"list",...}`.
 jw_text :: proc(w: ^JW) -> string {
-	return strings.to_string(w.sb)
+	return kit.json_text(w.root, 0, context.temp_allocator)
 }
 
 @(private = "file")
-sep :: proc(w: ^JW) {
-	if w.in_key {
-		w.in_key = false
+attach :: proc(w: ^JW, v: ^kit.Json) {
+	if w.depth == 0 {
+		if w.root == nil {
+			w.root = v
+		}
 		return
 	}
-	if w.first[w.depth] {
-		w.first[w.depth] = false
-		return
+	top := w.stack[w.depth - 1]
+	if top.kind == .Object {
+		if w.in_key {
+			kit.jset(top, w.key, v)
+			w.in_key = false
+		}
+	} else {
+		kit.jpush(top, v)
 	}
-	strings.write_byte(&w.sb, ',')
 }
 
 @(private = "file")
-push :: proc(w: ^JW) {
+push :: proc(w: ^JW, v: ^kit.Json) {
+	attach(w, v)
+	if w.depth < len(w.stack) {
+		w.stack[w.depth] = v
+	}
 	w.depth += 1
-	if w.depth < len(w.first) {
-		w.first[w.depth] = true
-	}
 }
 
 @(private = "file")
@@ -56,82 +63,19 @@ pop :: proc(w: ^JW) {
 	}
 }
 
-jw_obj :: proc(w: ^JW) {
-	sep(w)
-	strings.write_byte(&w.sb, '{')
-	push(w)
-}
-
-jw_obj_end :: proc(w: ^JW) {
-	pop(w)
-	strings.write_byte(&w.sb, '}')
-}
-
-jw_arr :: proc(w: ^JW) {
-	sep(w)
-	strings.write_byte(&w.sb, '[')
-	push(w)
-}
-
-jw_arr_end :: proc(w: ^JW) {
-	pop(w)
-	strings.write_byte(&w.sb, ']')
-}
+jw_obj :: proc(w: ^JW) {push(w, kit.jobj())}
+jw_obj_end :: proc(w: ^JW) {pop(w)}
+jw_arr :: proc(w: ^JW) {push(w, kit.jarr())}
+jw_arr_end :: proc(w: ^JW) {pop(w)}
 
 jw_key :: proc(w: ^JW, k: string) {
-	sep(w)
-	jw_quote(w, k)
-	strings.write_byte(&w.sb, ':')
+	w.key = k
 	w.in_key = true
 }
 
-@(private = "file")
-jw_quote :: proc(w: ^JW, s: string) {
-	strings.write_byte(&w.sb, '"')
-	for i in 0 ..< len(s) {
-		c := s[i]
-		switch c {
-		case '"':
-			strings.write_string(&w.sb, "\\\"")
-		case '\\':
-			strings.write_string(&w.sb, "\\\\")
-		case '\n':
-			strings.write_string(&w.sb, "\\n")
-		case '\r':
-			strings.write_string(&w.sb, "\\r")
-		case '\t':
-			strings.write_string(&w.sb, "\\t")
-		case:
-			if c < 0x20 {
-				buf: [8]byte
-				strings.write_string(&w.sb, "\\u00")
-				hex := "0123456789abcdef"
-				buf[0] = hex[c >> 4]
-				buf[1] = hex[c & 0xf]
-				strings.write_bytes(&w.sb, buf[:2])
-			} else {
-				strings.write_byte(&w.sb, c)
-			}
-		}
-	}
-	strings.write_byte(&w.sb, '"')
-}
-
-jw_str :: proc(w: ^JW, s: string) {
-	sep(w)
-	jw_quote(w, s)
-}
-
-jw_int :: proc(w: ^JW, v: int) {
-	sep(w)
-	buf: [24]byte
-	strings.write_string(&w.sb, strconv.write_int(buf[:], i64(v), 10))
-}
-
-jw_bool :: proc(w: ^JW, v: bool) {
-	sep(w)
-	strings.write_string(&w.sb, v ? "true" : "false")
-}
+jw_str :: proc(w: ^JW, s: string) {attach(w, kit.jstr(s))}
+jw_int :: proc(w: ^JW, v: int) {attach(w, kit.jint(v))}
+jw_bool :: proc(w: ^JW, v: bool) {attach(w, kit.jbool(v))}
 
 jw_kstr :: proc(w: ^JW, k, v: string) {
 	jw_key(w, k)

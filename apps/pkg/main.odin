@@ -47,6 +47,7 @@ import "core:os"
 import "core:slice"
 import "core:strconv"
 import "core:strings"
+import kit "kit:."
 
 Opts :: struct {
 	json:      bool,
@@ -65,194 +66,43 @@ Opts :: struct {
 	verb:      string,
 }
 
+// The command line is parsed by the shared convention (apps/kit/cli.odin)
+// from the declaration in cli.odin. With nothing on the line there is no
+// window to open, so it is a usage error, as it always was.
 main :: proc() {
-	args := os.args[1:]
-	os.exit(dispatch(args))
+	os.exit(dispatch(os.args[1:]))
 }
 
-USAGE :: `palm pkg -- the declarative layer over pacman
-
-  pkg list      [--explicit]        what is installed
-  pkg search    <query> [--aur]     repos, and the AUR with --aur
-  pkg info      <name>
-  pkg diff                          how the machine differs from the declaration
-  pkg declare   <names...>          add to the declaration without installing
-  pkg undeclare <names...>
-  pkg install   <names...>          mutate; snapshots first; never refreshes
-  pkg remove    <names...> --yes    destructive
-  pkg sync      [--prune --yes]     converge toward the declaration
-  pkg upgrade                       full -Syu; a person has to start it
-  pkg snapshots                     the snapshots palm took
-  pkg rollback  <number> --yes      back to before an operation
-  pkg verbs                         this surface, as JSON
-  pkg --selftest
-
-Flags: --json --dry-run --yes --aur --recursive --prune --explicit
-       --identity NAME --profile A,B --file PATH --allow-protected CLASS
-
-The declaration lives in $XDG_CONFIG_HOME/palm/packages/<identity>.pkgs
-(override with PALM_PKG_DIR or --file).
-
-Exit: 0 ok  2 usage  3 not found  4 refused: needs --yes  5 out of scope
-      6 unavailable  7 failed`
-
 // dispatch is main() without the exit, so the self-test can drive every verb
-// the way an agent would -- by argv -- rather than by calling the internals.
+// the way an agent would -- by argv, through the same parser -- rather than
+// by calling the internals.
 dispatch :: proc(argv: []string) -> int {
 	args := argv
 	// Tolerate being reached as `palm pkg ...` as well as `pkg ...`.
 	if len(args) > 0 && args[0] == "pkg" {
 		args = args[1:]
 	}
-	if len(args) == 0 {
-		fmt.eprintln(USAGE)
+	code, handled := kit.cli_args(surface(), args)
+	if !handled {
+		fmt.eprint(kit.cli_help_text(surface()))
 		return EXIT_USAGE
 	}
+	return code
+}
 
-	o := Opts{}
-	rest := make([dynamic]string, context.temp_allocator)
-	allow := make([dynamic]Guard, context.temp_allocator)
-	profiles := make([dynamic]string, context.temp_allocator)
+// g_call is the command in progress. The verbs describe their result as a
+// JSON tree; jw_emit and emit_refusal hand that tree to the call, and the kit
+// prints it -- one document on stdout under --json, a refusal as the
+// documented error object.
+g_call: ^kit.Call
 
-	i := 0
-	for i < len(args) {
-		a := args[i]
-		i += 1
-		need :: proc(args: []string, i: ^int, flag: string) -> (string, bool) {
-			if i^ >= len(args) {
-				fmt.eprintfln("[pkg] %s needs a value", flag)
-				return "", false
-			}
-			v := args[i^]
-			i^ += 1
-			return v, true
-		}
-		switch a {
-		case "--help", "-h":
-			// Through out(), not fmt.println: --help is for a person and
-			// belongs on stdout, and routing it here lets the self-test read
-			// it back rather than printing it thirteen times.
-			outln("%s", USAGE)
-			return EXIT_OK
-		case "--selftest", "--self-test":
-			selftest()
-			return EXIT_OK
-		case "--json":
-			o.json = true
-		case "--dry-run":
-			o.dry_run = true
-		case "--yes":
-			o.yes = true
-		case "--aur":
-			o.aur = true
-		case "--recursive":
-			o.recursive = true
-		case "--prune":
-			o.prune = true
-		case "--refresh":
-			o.refresh = true
-		case "--explicit":
-			o.explicit = true
-		case "--identity":
-			v, ok := need(args, &i, "--identity");if !ok {return EXIT_USAGE}
-			o.identity = v
-		case "--profile":
-			v, ok := need(args, &i, "--profile");if !ok {return EXIT_USAGE}
-			for p in strings.split(v, ",", context.temp_allocator) {
-				t := strings.trim_space(p)
-				if t != "" {
-					append(&profiles, t)
-				}
-			}
-		case "--file":
-			v, ok := need(args, &i, "--file");if !ok {return EXIT_USAGE}
-			o.file = v
-		case "--allow-protected":
-			v, ok := need(args, &i, "--allow-protected");if !ok {return EXIT_USAGE}
-			g, good := guard_from_name(v)
-			if !good {
-				fmt.eprintfln(
-					"[pkg] unknown protected class %q: kernel, bootloader, display-manager, init, core",
-					v,
-				)
-				return EXIT_USAGE
-			}
-			append(&allow, g)
-		case:
-			if len(a) > 1 && a[0] == '-' {
-				fmt.eprintfln("[pkg] unknown flag %q", a)
-				return EXIT_USAGE
-			}
-			if o.verb == "" {
-				o.verb = a
-			} else {
-				append(&rest, a)
-			}
-		}
+// jw_emit hands a verb's result to the command in progress.
+jw_emit :: proc(w: ^JW) {
+	if g_call != nil {
+		g_call.out = w.root
+		return
 	}
-	o.args = rest[:]
-	o.allow = allow[:]
-	o.profiles = profiles[:]
-
-	if o.verb == "" {
-		fmt.eprintln(USAGE)
-		return EXIT_USAGE
-	}
-
-	// Scope, from docs/PALM-CLI.md: an identity read from the environment may
-	// only ever be narrowed by a flag, never widened. A process started inside
-	// a scope cannot leave it by asking.
-	env_identity := os.get_env("PALM_IDENTITY", context.temp_allocator)
-	if env_identity != "" && o.identity != "" && o.identity != env_identity {
-		w := jw_make(context.temp_allocator)
-		jw_obj(&w)
-		jw_kstr(&w, "error", "out of scope")
-		jw_kstr(&w, "identity", env_identity)
-		jw_kstr(&w, "requested", o.identity)
-		jw_obj_end(&w)
-		outln("%s", jw_text(&w))
-		return EXIT_SCOPE
-	}
-	if o.identity == "" {
-		o.identity = env_identity
-	}
-	if o.identity == "" {
-		o.identity = "default"
-	}
-
-	switch o.verb {
-	case "list":
-		return verb_list(&o)
-	case "search":
-		return verb_search(&o)
-	case "info":
-		return verb_info(&o)
-	case "diff":
-		return verb_diff(&o)
-	case "declare":
-		return verb_declare(&o, false)
-	case "undeclare":
-		return verb_declare(&o, true)
-	case "install":
-		return verb_install(&o)
-	case "remove":
-		return verb_remove(&o)
-	case "sync":
-		return verb_sync(&o)
-	case "upgrade":
-		return verb_upgrade(&o)
-	case "snapshots":
-		return verb_snapshots(&o)
-	case "rollback":
-		return verb_rollback(&o)
-	case "verbs":
-		return verb_verbs(&o)
-	case "help":
-		outln("%s", USAGE)
-		return EXIT_OK
-	}
-	fmt.eprintfln("[pkg] unknown verb %q; `pkg --help` lists them", o.verb)
-	return EXIT_USAGE
+	outln("%s", jw_text(w))
 }
 
 // ---------------------------------------------------------------------------
@@ -291,17 +141,35 @@ load_decl :: proc(o: ^Opts) -> (d: Decl, path: string, existed: bool) {
 // ---------------------------------------------------------------------------
 
 emit_refusal :: proc(o: ^Opts, op: string, r: Refusal) -> int {
+	// The documented error object (error, code, command) with pkg's own
+	// stable reason token and the subjects beside it, so a caller can branch
+	// on `has-dependants` as well as on exit 4.
+	w := jw_make(context.temp_allocator)
+	jw_obj(&w)
+	jw_kstr(&w, "error", kit.cli_exit_reason(r.code))
+	jw_kint(&w, "code", r.code)
+	jw_kstr(&w, "command", strings.trim_space(fmt.tprintf("pkg %s", op)))
+	jw_kstr(&w, "op", op)
+	jw_kbool(&w, "refused", true)
+	jw_kstr(&w, "reason", r.reason)
+	jw_kstr(&w, "detail", r.detail)
+	jw_kstrs(&w, "subjects", r.subjects)
+	jw_kint(&w, "exit", r.code)
+	jw_obj_end(&w)
+	if g_call != nil {
+		g_call.err = w.root
+		if !o.json {
+			// A person reads a refusal on stderr; the kit prints the error
+			// token and the detail, so the reason and subjects go there too.
+			note("refused: %s", r.reason)
+			if len(r.subjects) > 0 {
+				note("  %s", strings.join(r.subjects, " ", context.temp_allocator))
+			}
+		}
+		return r.code
+	}
 	if o.json {
-		w := jw_make(context.temp_allocator)
-		jw_obj(&w)
-		jw_kstr(&w, "op", op)
-		jw_kbool(&w, "refused", true)
-		jw_kstr(&w, "reason", r.reason)
-		jw_kstr(&w, "detail", r.detail)
-		jw_kstrs(&w, "subjects", r.subjects)
-		jw_kint(&w, "exit", r.code)
-		jw_obj_end(&w)
-		outln("%s", jw_text(&w))
+		jw_emit(&w)
 	} else {
 		outln("refused: %s", r.reason)
 		if len(r.subjects) > 0 {
@@ -337,7 +205,7 @@ emit_plan :: proc(o: ^Opts, p: ^Plan, executed: bool, ran: int) -> int {
 		jw_arr_end(&w)
 		jw_kstrs(&w, "notes", p.notes)
 		jw_obj_end(&w)
-		outln("%s", jw_text(&w))
+		jw_emit(&w)
 		return EXIT_OK
 	}
 
@@ -390,7 +258,37 @@ carry_out :: proc(o: ^Opts, p: ^Plan, r: Refusal) -> int {
 	}
 	ran, code := exec_plan(p)
 	emit_plan(o, p, true, ran)
+	return exec_failed(o, code)
+}
+
+// exec_failed keeps the plan in the answer when a step failed: the error
+// object carries the documented token beside steps_run, so a caller can see
+// how far it got.
+exec_failed :: proc(o: ^Opts, code: int) -> int {
+	if code == EXIT_OK || g_call == nil {
+		return code
+	}
+	e := g_call.out
+	if e == nil || e.kind != .Object {
+		e = kit.jobj()
+	}
+	kit.jset_str(e, "error", kit.cli_exit_reason(code))
+	kit.jset_int(e, "code", code)
+	kit.jset_str(e, "command", fmt.tprintf("pkg %s", o.verb))
+	g_call.err = e
 	return code
+}
+
+// have_tool says whether a program is on PATH, so a read on a machine with no
+// pacman answers "unavailable" rather than "not found".
+have_tool :: proc(name: string) -> bool {
+	path := os.get_env("PATH", context.temp_allocator)
+	for dir in strings.split(path, ":", context.temp_allocator) {
+		if dir != "" && os.exists(fmt.tprintf("%s/%s", dir, name)) {
+			return true
+		}
+	}
+	return false
 }
 
 // ---------------------------------------------------------------------------
@@ -446,7 +344,7 @@ verb_list :: proc(o: ^Opts) -> int {
 		}
 		jw_arr_end(&jw)
 		jw_obj_end(&jw)
-		outln("%s", jw_text(&jw))
+		jw_emit(&jw)
 		return EXIT_OK
 	}
 	for n in show {
@@ -466,6 +364,9 @@ verb_search :: proc(o: ^Opts) -> int {
 		return EXIT_USAGE
 	}
 	q := o.args[0]
+	if !have_tool("pacman") {
+		return unavailable(o, "pacman")
+	}
 	text, ok := run_query({"pacman", "-Ss", "--", q})
 	hits := parse_search(text)
 	aur_hits: []Search_Hit
@@ -474,18 +375,7 @@ verb_search :: proc(o: ^Opts) -> int {
 		aur_hits = parse_search(atext)
 	}
 	if !ok && len(hits) == 0 && len(aur_hits) == 0 {
-		if o.json {
-			jw := jw_make(context.temp_allocator)
-			jw_obj(&jw)
-			jw_kstr(&jw, "op", "search")
-			jw_kstr(&jw, "query", q)
-			jw_key(&jw, "results")
-			jw_arr(&jw)
-			jw_arr_end(&jw)
-			jw_obj_end(&jw)
-			outln("%s", jw_text(&jw))
-		}
-		return EXIT_NOT_FOUND
+		return emit_refusal(o, "search", refuse(EXIT_NOT_FOUND, "no-results", fmt.tprintf("nothing matches %q", q), {q}))
 	}
 	if o.json {
 		jw := jw_make(context.temp_allocator)
@@ -511,7 +401,7 @@ verb_search :: proc(o: ^Opts) -> int {
 		}
 		jw_arr_end(&jw)
 		jw_obj_end(&jw)
-		outln("%s", jw_text(&jw))
+		jw_emit(&jw)
 		return EXIT_OK
 	}
 	for h in hits {
@@ -538,6 +428,9 @@ verb_info :: proc(o: ^Opts) -> int {
 			"info",
 			refuse(EXIT_USAGE, "invalid-name", fmt.tprintf("%q is not a package name", name), {name}),
 		)
+	}
+	if !have_tool("pacman") {
+		return unavailable(o, "pacman")
 	}
 	text, ok := run_query({"pacman", "-Qi", "--", name})
 	installed := true
@@ -568,7 +461,7 @@ verb_info :: proc(o: ^Opts) -> int {
 		jw_kstrs(&jw, "optional_for", inf.optional_for)
 		jw_kstr(&jw, "protected", guard_name(g))
 		jw_obj_end(&jw)
-		outln("%s", jw_text(&jw))
+		jw_emit(&jw)
 		return EXIT_OK
 	}
 	outln("%s %s", inf.name, inf.version)
@@ -621,7 +514,7 @@ verb_diff :: proc(o: ^Opts) -> int {
 		jw_kbool(&jw, "in_sync", df.in_sync)
 		emit_problems(&jw, &d)
 		jw_obj_end(&jw)
-		outln("%s", jw_text(&jw))
+		jw_emit(&jw)
 		return EXIT_OK
 	}
 
@@ -704,7 +597,7 @@ verb_declare :: proc(o: ^Opts, remove: bool) -> int {
 		jw_kbool(&jw, "wrote", wrote)
 		jw_kstrs(&jw, "changed", changed)
 		jw_obj_end(&jw)
-		outln("%s", jw_text(&jw))
+		jw_emit(&jw)
 		return EXIT_OK
 	}
 	if len(changed) == 0 {
@@ -830,7 +723,7 @@ verb_upgrade :: proc(o: ^Opts) -> int {
 	note("a full upgrade can stop for a .pacnew or a keyring change; stay with it")
 	ran, code := exec_plan(&p)
 	emit_plan(o, &p, true, ran)
-	return code
+	return exec_failed(o, code)
 }
 
 verb_snapshots :: proc(o: ^Opts) -> int {
@@ -865,7 +758,7 @@ verb_snapshots :: proc(o: ^Opts) -> int {
 		}
 		jw_arr_end(&jw)
 		jw_obj_end(&jw)
-		outln("%s", jw_text(&jw))
+		jw_emit(&jw)
 		return EXIT_OK
 	}
 	for s in snaps {
@@ -893,44 +786,25 @@ verb_rollback :: proc(o: ^Opts) -> int {
 	}
 	ran, code := exec_plan(&p)
 	emit_plan(o, &p, true, ran)
-	return code
+	return exec_failed(o, code)
 }
 
-// verb_verbs is the machine-readable surface: an agent can plan from it
-// instead of discovering commands by trial, and it is asserted against the
-// dispatcher so the two cannot drift.
-VERBS := [?]struct {
-	name:  string,
-	class: string,
-	help:  string,
-}{
-	{"list", "read", "what is installed, and which of it was explicit"},
-	{"search", "read", "repos, and the AUR with --aur"},
-	{"info", "read", "one package"},
-	{"diff", "read", "how the machine differs from the declaration"},
-	{"declare", "mutate", "add to the declaration without installing now"},
-	{"undeclare", "mutate", "drop from the declaration without removing now"},
-	{"install", "mutate", "install; snapshots first; never refreshes the database"},
-	{"remove", "destructive", "remove; refuses without --yes"},
-	{"sync", "idempotent", "converge toward the declaration"},
-	{"upgrade", "mutate", "full -Syu; refuses without a person at a terminal"},
-	{"snapshots", "read", "the snapshots palm took"},
-	{"rollback", "destructive", "back to before a named operation"},
-	{"verbs", "read", "this surface"},
-}
-
+// verb_verbs is the machine-readable surface pkg had before the shared
+// convention, kept because agents already read it. It is generated from the
+// same declaration `--schema` prints (cli.odin), so the two cannot drift.
 verb_verbs :: proc(o: ^Opts) -> int {
+	cmds := surface().commands
 	if o.json {
 		jw := jw_make(context.temp_allocator)
 		jw_obj(&jw)
 		jw_kstr(&jw, "op", "verbs")
 		jw_key(&jw, "verbs")
 		jw_arr(&jw)
-		for v in VERBS {
+		for v in cmds {
 			jw_obj(&jw)
-			jw_kstr(&jw, "name", v.name)
-			jw_kstr(&jw, "class", v.class)
-			jw_kstr(&jw, "help", v.help)
+			jw_kstr(&jw, "name", v.verb)
+			jw_kstr(&jw, "class", kit.effect_name(v.effect))
+			jw_kstr(&jw, "help", v.summary)
 			jw_obj_end(&jw)
 		}
 		jw_arr_end(&jw)
@@ -950,11 +824,11 @@ verb_verbs :: proc(o: ^Opts) -> int {
 			{"kernel", "bootloader", "display-manager", "init", "core"},
 		)
 		jw_obj_end(&jw)
-		outln("%s", jw_text(&jw))
+		jw_emit(&jw)
 		return EXIT_OK
 	}
-	for v in VERBS {
-		outln("%-10s %-12s %s", v.name, v.class, v.help)
+	for v in cmds {
+		outln("%-10s %-12s %s", v.verb, kit.effect_name(v.effect), v.summary)
 	}
 	return EXIT_OK
 }

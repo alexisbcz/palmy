@@ -34,7 +34,9 @@ import "core:fmt"
 import "core:os"
 import "core:slice"
 import "core:strings"
+import "core:sys/posix"
 import "core:time"
+import kit "kit:."
 
 @(private = "file")
 checks := 0
@@ -152,6 +154,10 @@ selftest :: proc() {
 	t0 := time.now()
 	fmt.println("pkg self-test")
 
+	// Every non-read command the kit runs leaves an audit record. The
+	// self-test drives dozens, and none of them belongs in the real log.
+	_ = os.set_env("PALM_AUDIT", fmt.tprintf("%s/audit.jsonl", scratch_root()))
+
 	test_names()
 	test_decl_parse()
 	test_decl_edit()
@@ -167,6 +173,7 @@ selftest :: proc() {
 	test_surface()
 	test_nothing_executes()
 	test_argv_that_runs()
+	test_convention()
 
 	if g_root != "" {
 		_ = os.remove_all(g_root)
@@ -934,13 +941,56 @@ test_upgrade_and_rollback :: proc() {
 // Scope and surface
 // ---------------------------------------------------------------------------
 
+// drive runs pkg exactly as a caller would: argv through the shared parser,
+// with whatever lands on file descriptor 1 read back. Under --json the kit
+// pretty-prints; the document is compacted here so the assertions below can
+// name a field as `"reason":"needs-yes"` whatever the indentation.
 @(private = "file")
 drive :: proc(args: []string) -> (code: int, out: string) {
-	sb := strings.builder_make(context.temp_allocator)
-	g_capture = &sb
+	path := fmt.tprintf("%s/stdout-%d", scratch_root(), os.get_pid())
+	saved := posix.dup(1)
+	fd := posix.open(strings.clone_to_cstring(path, context.temp_allocator), {.WRONLY, .CREAT, .TRUNC}, posix.mode_t{.IRUSR, .IWUSR})
+	posix.dup2(fd, 1)
+	posix.close(fd)
 	code = dispatch(args)
-	g_capture = nil
-	return code, strings.to_string(sb)
+	posix.dup2(saved, 1)
+	posix.close(saved)
+	data, _ := os.read_entire_file_from_path(path, context.temp_allocator)
+	os.remove(path)
+	text := string(data)
+	if strings.has_prefix(strings.trim_space(text), "{") {
+		text = compact(text)
+	}
+	return code, text
+}
+
+// compact drops the whitespace between JSON tokens, leaving strings alone.
+@(private = "file")
+compact :: proc(text: string) -> string {
+	sb := strings.builder_make(context.temp_allocator)
+	in_str, esc := false, false
+	for i in 0 ..< len(text) {
+		ch := text[i]
+		if in_str {
+			strings.write_byte(&sb, ch)
+			if esc {
+				esc = false
+			} else if ch == '\\' {
+				esc = true
+			} else if ch == '"' {
+				in_str = false
+			}
+			continue
+		}
+		switch ch {
+		case ' ', '\n', '\t', '\r':
+			continue
+		case '"':
+			in_str = true
+		}
+		strings.write_byte(&sb, ch)
+	}
+	return strings.to_string(sb)
 }
 
 test_scope :: proc() {
@@ -973,13 +1023,13 @@ test_surface :: proc() {
 	code, text := drive({"verbs", "--json"})
 	eq_i(code, EXIT_OK, "verbs exits 0")
 	check(strings.has_prefix(strings.trim_space(text), "{"), "and emits one JSON object on stdout")
-	for v in VERBS {
-		check(strings.contains(text, fmt.tprintf("\"name\":\"%s\"", v.name)), "verbs lists %s", v.name)
+	for v in surface().commands {
+		check(strings.contains(text, fmt.tprintf("\"name\":\"%s\"", v.verb)), "verbs lists %s", v.verb)
 		// Every verb it advertises is one the dispatcher actually has, and is
 		// in the help a person reads.
-		c, htext := drive({v.name, "--help"})
-		eq_i(c, EXIT_OK, "%s is reachable", v.name)
-		check(strings.contains(htext, v.name), "and %s is in --help", v.name)
+		c, htext := drive({v.verb, "--help"})
+		eq_i(c, EXIT_OK, "%s is reachable", v.verb)
+		check(strings.contains(htext, v.verb), "and %s is in --help", v.verb)
 	}
 	check(strings.contains(text, "\"needs_yes\":4"), "the documented exit codes are in the surface")
 	check(strings.contains(text, "display-manager"), "and the protected classes")
@@ -1255,8 +1305,14 @@ test_nothing_executes :: proc() {
 		{{"install", "ripgrep", "--json"}, EXIT_NEEDS_YES, "needs-yes"},
 		{{"install", "ripgrep", "--refresh", "--yes", "--json"}, EXIT_NEEDS_YES, "partial-upgrade"},
 		{{"install", "only-in-the-aur", "--yes", "--json"}, EXIT_NOT_FOUND, "unknown-package"},
-		{{"remove", "libfoo", "--json"}, EXIT_NEEDS_YES, "has-dependants"},
-		{{"remove", "orphanpkg", "--json"}, EXIT_NEEDS_YES, "needs-yes"},
+		// remove is declared destructive, so without --yes the shared parser
+		// refuses before the planner is reached; --dry-run goes on to the
+		// planner, which names the dependants.
+		{{"remove", "libfoo", "--json"}, EXIT_NEEDS_YES, "kit:needs --yes"},
+		{{"remove", "libfoo", "--dry-run", "--json"}, EXIT_NEEDS_YES, "has-dependants"},
+		{{"remove", "orphanpkg", "--json"}, EXIT_NEEDS_YES, "kit:needs --yes"},
+		{{"remove", "orphanpkg", "--dry-run", "--json"}, EXIT_NEEDS_YES, "needs-yes"},
+		{{"rollback", "7", "--json"}, EXIT_NEEDS_YES, "kit:needs --yes"},
 		{{"remove", "linux", "--yes", "--json"}, EXIT_NEEDS_YES, "protected:kernel"},
 		{{"remove", "limine", "--yes", "--json"}, EXIT_NEEDS_YES, "protected:bootloader"},
 		{{"remove", "sddm", "--yes", "--json"}, EXIT_NEEDS_YES, "protected:display-manager"},
@@ -1271,8 +1327,12 @@ test_nothing_executes :: proc() {
 		code, text := drive(e.args)
 		line := strings.join(e.args, " ", context.temp_allocator)
 		eq_i(code, e.code, "`pkg %s` exit code", line)
+		want := fmt.tprintf("\"reason\":\"%s\"", e.reason)
+		if strings.has_prefix(e.reason, "kit:") {
+			want = fmt.tprintf("\"error\":\"%s\"", e.reason[4:])
+		}
 		check(
-			strings.contains(text, fmt.tprintf("\"reason\":\"%s\"", e.reason)),
+			strings.contains(text, want),
 			"`pkg %s` refuses with reason %q (%s)",
 			line,
 			e.reason,
@@ -1393,4 +1453,164 @@ test_argv_that_runs :: proc() {
 		check(strings.has_prefix(line, "sudo "), "and everything that changed the machine went through sudo: %s", line)
 	}
 	check(len(all) == 8, "eight commands ran in total across the four verbs (%d)", len(all))
+}
+
+// ---------------------------------------------------------------------------
+// The shared convention
+// ---------------------------------------------------------------------------
+
+// pkg's command line is the kit's (apps/kit/cli.odin). These are the
+// assertions `palm --selftest` makes of every converted application, made
+// here too so a regression shows up in pkg's own count -- run against the
+// fake machine, so a read that would ask pacman asks the fixture instead.
+test_convention :: proc() {
+	section("the palm command-line convention")
+
+	s := surface()
+	schema := kit.json_text(kit.cli_schema_json(s), 0, context.temp_allocator)
+	check(strings.contains(schema, "\"noun\":\"pkg\""), "--schema names the noun")
+	eq_i(len(s.commands), 13, "thirteen verbs are declared")
+	EFFECTS :: [?][2]string {
+		{"list", "read"},
+		{"search", "read"},
+		{"info", "read"},
+		{"diff", "read"},
+		{"declare", "mutate"},
+		{"undeclare", "mutate"},
+		{"install", "mutate"},
+		{"remove", "destructive"},
+		{"sync", "idempotent"},
+		{"upgrade", "mutate"},
+		{"snapshots", "read"},
+		{"rollback", "destructive"},
+		{"verbs", "read"},
+	}
+	effect_of :: proc(verb: string) -> string {
+		for e in EFFECTS {
+			if e[0] == verb {
+				return e[1]
+			}
+		}
+		return "?"
+	}
+	for cmd in s.commands {
+		check(len(cmd.out) > 0, "%s declares what it prints", cmd.verb)
+		check(len(cmd.examples) > 0, "%s ships an example", cmd.verb)
+		eq_s(kit.effect_name(cmd.effect), effect_of(cmd.verb), "%s's side-effect class", cmd.verb)
+		for ex in cmd.examples {
+			words := kit.cli_split_example(ex)
+			check(len(words) > 1 && words[0] == "pkg", "the example %q is typed as the binary is named", ex)
+			if len(words) < 2 {
+				continue
+			}
+			_, code := kit.cli_bind(s, words[1:])
+			eq_i(code, EXIT_OK, "the example %q parses", ex)
+			if cmd.effect == .Destructive {
+				check(strings.contains(ex, "--yes") || strings.contains(ex, "--dry-run"), "the destructive example %q says --yes or --dry-run", ex)
+			}
+		}
+	}
+
+	// The spellings pkg took before the convention, each still accepted.
+	for line in ([?][]string {
+		{"list", "--explicit", "--json"},
+		{"search", "ripgrep", "--aur"},
+		{"info", "git", "--json"},
+		{"diff", "--profile", "base,dev", "--file", "/tmp/x.pkgs"},
+		{"declare", "htop", "fd", "--profile", "dev", "--aur", "--dry-run"},
+		{"undeclare", "htop", "--file", "/tmp/x.pkgs"},
+		{"install", "ripgrep", "--refresh", "--aur", "--yes", "--json"},
+		{"remove", "x", "--recursive", "--allow-protected", "kernel", "--allow-protected", "init", "--yes"},
+		{"sync", "--prune", "--yes", "--dry-run", "--allow-protected", "core"},
+		{"upgrade", "--aur", "--dry-run"},
+		{"snapshots", "--json"},
+		{"rollback", "7", "--yes"},
+		{"verbs", "--identity", "personal", "--json"},
+	}) {
+		_, code := kit.cli_bind(s, line)
+		eq_i(code, EXIT_OK, "`pkg %s` still parses", strings.join(line, " ", context.temp_allocator))
+	}
+	c_old, _ := drive({"pkg", "verbs", "--json"})
+	eq_i(c_old, EXIT_OK, "and `pkg pkg verbs`, as palm once passed it, still works")
+
+	f := install_fakes()
+	defer remove_fakes(&f)
+	if !spring_the_trap(&f) {
+		failures += 1
+		return
+	}
+
+	// Every destructive verb refuses without --yes, in the shared parser,
+	// before the planner or any process is reached.
+	for cmd in s.commands {
+		if cmd.effect != .Destructive {
+			continue
+		}
+		words := kit.cli_split_example(cmd.examples[0])
+		without := make([dynamic]string, context.temp_allocator)
+		for w in words[1:] {
+			if w != "--yes" {
+				append(&without, w)
+			}
+		}
+		code, text := drive(without[:])
+		eq_i(code, EXIT_NEEDS_YES, "`pkg %s` without --yes exits 4", cmd.verb)
+		check(strings.contains(text, "\"error\":\"needs --yes\""), "with the documented token (%s)", strings.trim_space(text))
+		eq_i(len(read_lines(f.fired)), 0, "and nothing reached exec")
+		append(&without, "--parse-only")
+		pcode, _ := drive(without[:])
+		eq_i(pcode, EXIT_NEEDS_YES, "and --parse-only applies the same gate")
+	}
+
+	// Every read answers with the shape it declared.
+	for cmd in s.commands {
+		if cmd.effect != .Read {
+			continue
+		}
+		words := kit.cli_split_example(cmd.examples[0])
+		code, text := drive(words[1:])
+		eq_i(code, EXIT_OK, "`%s` exits 0 against the fake machine", cmd.examples[0])
+		problems := kit.cli_validate_output(text, cmd.out, context.temp_allocator)
+		check(len(problems) == 0, "`%s` matches its declared schema%s", cmd.examples[0], len(problems) > 0 ? fmt.tprintf(" (%s)", problems[0]) : "")
+	}
+
+	// A refusal is the documented error object, with pkg's reason beside it.
+	{
+		code, text := drive({"info", "no-such-package", "--json"})
+		eq_i(code, EXIT_NOT_FOUND, "an unknown package is exit 3")
+		problems := kit.cli_validate_output(
+			text,
+			{{name = "error", kind = .String}, {name = "code", kind = .Int}, {name = "command", kind = .String}, {name = "reason", kind = .String}},
+			context.temp_allocator,
+		)
+		check(len(problems) == 0, "as the documented error object%s", len(problems) > 0 ? fmt.tprintf(" (%s)", problems[0]) : "")
+		check(strings.contains(text, "\"error\":\"not found\""), "with the token for exit 3")
+	}
+	{
+		code, _ := drive({"install", "ripgrep", "--dry-run", "--json"})
+		eq_i(code, EXIT_OK, "a dry run without --yes is accepted")
+		eq_i(len(read_lines(f.fired)), 0, "and runs nothing")
+	}
+
+	// --allow-protected may repeat, as it always could: the first of two is
+	// not dropped for the second.
+	{
+		code, text := drive({"remove", "linux", "--yes", "--allow-protected", "kernel", "--allow-protected", "init", "--dry-run", "--json"})
+		eq_i(code, EXIT_OK, "two --allow-protected are both honoured (%s)", strings.trim_space(text))
+		check(strings.contains(text, "\"executed\":false"), "and the dry run executed nothing")
+		eq_i(len(read_lines(f.fired)), 0, "and nothing reached exec")
+	}
+	{
+		code, text := drive({"remove", "x", "--allow-protected", "nonsense", "--yes", "--json"})
+		eq_i(code, EXIT_USAGE, "an unknown protected class is a usage error")
+		check(strings.contains(text, "\"error\":\"usage\""), "with the documented token")
+	}
+
+	// --parse-only validates and runs nothing.
+	{
+		code, _ := drive({"install", "ripgrep", "--yes", "--parse-only"})
+		eq_i(code, EXIT_OK, "--parse-only accepts a valid line")
+		eq_i(len(read_lines(f.fired)), 0, "and does not run it")
+	}
+	check(!os.exists(f.fired), "the sentinel is empty at the end of the convention checks")
 }
