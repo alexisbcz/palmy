@@ -113,6 +113,7 @@ NOUNS := []Noun {
 	{"pkg", "pkg", "packages: list, search, install, sync, rollback", true, ""},
 	{"captions", "captions", "local speech to text, and caption files: show, lint, convert, shift, burn in", true, ""},
 	{"videoedit", "videoedit", "a non-linear video editor over project files, exporting through ffmpeg", true, ""},
+	{"call", "call", "audio and video calls, end-to-end encrypted: echo cancelling, rate adapting", true, ""},
 }
 
 // FORBIDDEN_VERBS are the verbs that must not exist anywhere, and that `palm`
