@@ -21,6 +21,7 @@ package kit
 import "core:fmt"
 import "core:math"
 import "core:strings"
+import "core:time"
 import p "palmy:."
 import sc "shadcn:."
 
@@ -120,13 +121,21 @@ pick_times :: proc(ui: ^p.Ctx, sym: u32) -> int {
 }
 
 @(private = "file")
+PICK_EPOCH := time.tick_now()
+
+@(private = "file")
 pick_keys :: proc(ui: ^p.Ctx, st: ^Pick) {
 	// Text before keys, always: a name and the Return that submits it can
 	// arrive in the same frame, and handling Return first saves a truncated
 	// file name.
 	typed := st.swallow ? "" : p.typed_text(ui)
 	st.swallow = false
-	now := f64(p.elapsed(ui))
+	// Type-ahead's timeout is measured on a real clock in a window. `ui.now`
+	// is clamped per frame and the dialog sleeps between keys, so against it
+	// a pause of several seconds could still read as under the timeout and
+	// the next letter would extend a stale search. Offscreen, the synthetic
+	// frame time keeps the tests deterministic.
+	now := ui.app != nil ? time.duration_seconds(time.tick_since(PICK_EPOCH)) : f64(p.elapsed(ui))
 
 	// --- the overwrite confirmation owns everything while it is up --------
 	if st.cf_open {
@@ -1441,11 +1450,12 @@ pick_field :: proc(
 		p.style(ui).shrink = 0
 	}
 
+	// A blinking caret. `caret_on` wakes the loop once per blink edge on a
+	// real clock; this used to set `animating`, which held the host
+	// application at vsync for as long as a field in the dialog had the
+	// keyboard.
 	if focus {
-		// A blinking caret, which is also what keeps the dialog animating
-		// while a field has the keyboard.
-		ui.animating = true
-		if math.mod_f32(f32(ui.now), 1.06) < 0.62 {
+		if p.caret_on(ui) {
 			caret := p.div(ui, "absolute w-px bg-foreground")
 			cs := p.style(ui, caret)
 			cs.inset[p.LEFT] = p.px(x_cur)
