@@ -146,6 +146,15 @@ Wl_State :: struct {
 	cursor_device:      u32,
 	pointer_serial:     u32,
 	frame_cb:           u32,
+
+	// Keys held on a keyboard that appeared while the window was running,
+	// waiting to be delivered as presses. See "A keyboard that arrives
+	// holding a key" below.
+	kbd_seen_absent:    bool,
+	kbd_fresh:          bool,
+	kbd_bound_at:       time.Time,
+	held:               [16]u32,
+	held_n:             int,
 	sync_cb:            u32,
 	sync_done:          bool,
 
@@ -494,6 +503,14 @@ wl_on_event :: proc(w: ^Window, id: u32, opcode: u16, r: ^Reader) {
 			if caps & 2 != 0 && w.wl.keyboard == 0 {
 				w.wl.keyboard = new_id(c, .Keyboard)
 				request(c, w.wl.seat, WL_SEAT_GET_KEYBOARD, Obj(w.wl.keyboard))
+				// A keyboard that was not there before: see "A keyboard that
+				// arrives holding a key".
+				w.wl.kbd_fresh = w.wl.kbd_seen_absent
+				w.wl.kbd_bound_at = time.now()
+				w.wl.held_n = 0
+			}
+			if caps & 2 == 0 {
+				w.wl.kbd_seen_absent = true
 			}
 
 			// A capability can also go *away*, and dropping that on the floor
@@ -619,23 +636,24 @@ wl_on_event :: proc(w: ^Window, id: u32, opcode: u16, r: ^Reader) {
 		case 1:
 			// enter(serial, surface, keys)
 			w.clip.serial = r_u32(r)
+			r_u32(r)
+			keys := r_array(r)
 			w.input.focused = true
+			wl_take_held(w, keys)
 		case 2:
+			wl_deliver_held(w)
 			w.input.focused = false
 			w.repeat_key = 0
 			w.input.mods = {}
 		case 3:
 			// key(serial, time, key, state)
+			wl_deliver_held(w)
 			w.clip.serial = r_u32(r)
 			r_u32(r)
 			code := r_u32(r)
 			state := r_u32(r)
 			if state == 1 {
-				feed_key(w, code, false)
-				if keymap_repeats(&w.keymap, code) && w.repeat_rate > 0 {
-					w.repeat_key = code
-					w.repeat_at = time.time_add(time.now(), time.Duration(w.repeat_delay) * time.Millisecond)
-				}
+				wl_key_press(w, code)
 			} else {
 				if w.repeat_key == code {
 					w.repeat_key = 0
@@ -650,6 +668,9 @@ wl_on_event :: proc(w: ^Window, id: u32, opcode: u16, r: ^Reader) {
 			group := r_u32(r)
 			keymap_update_mods(&w.keymap, depressed, latched, locked, group)
 			w.input.mods = keymap_mods(&w.keymap)
+			// The modifiers that go with an enter follow it, so held keys
+			// wait for them: Shift+a held across a re-bind is an `A`.
+			wl_deliver_held(w)
 		case 5:
 			w.repeat_rate = int(r_i32(r))
 			w.repeat_delay = int(r_i32(r))
@@ -660,6 +681,82 @@ wl_on_event :: proc(w: ^Window, id: u32, opcode: u16, r: ^Reader) {
 
 	case:
 		// Interfaces we create but never listen to.
+	}
+}
+
+// ---------------------------------------------------------------------------
+// A keyboard that arrives holding a key
+//
+// On a seat with no permanent keyboard -- a headless compositor, or a machine
+// driven by a virtual keyboard (wtype, an on-screen keyboard, remote input) --
+// the keyboard capability comes and goes with the device. When it comes, the
+// client has to ask for a wl_keyboard (above, in the seat's capabilities) and
+// the compositor only starts talking to it once that request has arrived.
+// The device does not wait for that: wtype attaches and presses its first key
+// in the same breath, and a client that is in the middle of painting a frame
+// asks for its keyboard a few milliseconds too late. The press went to nobody.
+//
+// It is not quite gone, though. When the new wl_keyboard is created for a
+// focused window, its enter lists the keys the seat holds down, and the
+// release follows as an ordinary key event. So the press is recoverable: a key
+// held on a keyboard that did not exist when the seat last said "no keyboard"
+// was pressed after that, which is exactly the press that was missed.
+//
+// What it cannot recover is a key pressed *and released* before the request
+// for the keyboard reaches the compositor: then nothing anywhere says it
+// happened. sway queues the capability for the client and only flushes it
+// once its own loop goes idle -- a frame of software rendering, on a headless
+// output -- while wtype's press and release land a few milliseconds apart. In
+// sway's server-side log (WAYLAND_DEBUG=server) that is a get_keyboard
+// arriving 25 ms after the capability was queued and 17 ms after the release.
+// No client can win that, so a seat driven by short-lived virtual keyboards
+// should keep one keyboard attached for its whole life, which is what
+// apps/tools/headless-record.sh does. Measured on headless sway 1.9 in the
+// arm64 VM, one `wtype <letter>` per key 150 ms apart, a busy VM: 79-82 of
+// 100 keys lost before this, 14-18 of 100 after, and 0 of 200 -- with this
+// or without it, even with no gap at all -- once a resident keyboard is held.
+//
+// The keys of an ordinary enter are NOT presses, and must never become them:
+// a window that opens while the Return that launched it is still held, or
+// that gains focus by Alt+Tab, would receive a Return or a Tab it was never
+// meant to. So this applies only to the first enter on a keyboard bound
+// because the capability *appeared* -- the seat must have reported no keyboard
+// before -- and only within KBD_FRESH_MS of binding it. A seat with a real
+// keyboard never loses the capability, so this never runs there.
+// ---------------------------------------------------------------------------
+
+@(private)
+KBD_FRESH_MS :: 1000
+
+@(private)
+wl_take_held :: proc(w: ^Window, keys: []u8) {
+	fresh := w.wl.kbd_fresh
+	w.wl.kbd_fresh = false
+	w.wl.held_n = 0
+	if !fresh || time.duration_milliseconds(time.since(w.wl.kbd_bound_at)) > KBD_FRESH_MS {
+		return
+	}
+	for i := 0; i + 4 <= len(keys) && w.wl.held_n < len(w.wl.held); i += 4 {
+		w.wl.held[w.wl.held_n] = (^u32)(raw_data(keys[i:]))^
+		w.wl.held_n += 1
+	}
+}
+
+@(private)
+wl_deliver_held :: proc(w: ^Window) {
+	n := w.wl.held_n
+	w.wl.held_n = 0
+	for code in w.wl.held[:n] {
+		wl_key_press(w, code)
+	}
+}
+
+@(private)
+wl_key_press :: proc(w: ^Window, code: u32) {
+	feed_key(w, code, false)
+	if keymap_repeats(&w.keymap, code) && w.repeat_rate > 0 {
+		w.repeat_key = code
+		w.repeat_at = time.time_add(time.now(), time.Duration(w.repeat_delay) * time.Millisecond)
 	}
 }
 
