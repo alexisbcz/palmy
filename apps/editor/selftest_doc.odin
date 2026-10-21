@@ -281,6 +281,8 @@ test_cli :: proc() {
 		check(strings.contains(audit, `"verb":"replace"`) && !strings.contains(audit, `"verb":"info"`), "cli: changes are audited, reads are not")
 	}
 
+	test_cli_carets(dir)
+
 	// --- the old command line ---------------------------------------------------------
 	{
 		_, code := run(dir, "--shots", "x", "--parse-only")
@@ -294,4 +296,92 @@ test_cli :: proc() {
 		_, code = run(dir, "lnes")
 		check(code == kit.EXIT_USAGE, "cli: a mistyped verb is a usage error, not a new file in a window")
 	}
+}
+
+CARETS_SAMPLE :: "alpha beta\nalphabet soup\nx\n  beta alpha\nalpha\n"
+
+// test_cli_carets checks `editor carets` against the window doing the same
+// thing with its own gestures, byte for byte on disk.
+@(private = "file")
+test_cli_carets :: proc(dir: string) {
+	f := fmt.tprintf("%s/c.txt", dir)
+	twin := fmt.tprintf("%s/c-twin.txt", dir)
+	reset :: proc(paths: ..string) {
+		for p in paths {
+			_ = os.write_entire_file(p, transmute([]u8)string(CARETS_SAMPLE))
+		}
+	}
+	// The window, typing: one carets_edit per character, as keystrokes are.
+	type_at_carets :: proc(ed: ^Editor, text: string) {
+		for r in text {
+			carets_edit(ed, .Insert, fmt.tprintf("%r", r))
+		}
+	}
+
+	// Every whole-word occurrence: Ctrl Shift L on the first, then typing.
+	reset(f, twin)
+	out, code := run(dir, "carets", "c.txt", "--word", "alpha", "--text", "omega", "--json")
+	check(code == 0 && valid(out, CHANGE_FIELDS) && strings.contains(out, `"count": 3`), "cli: carets --word puts a caret on each whole word")
+	check(slurp(f) == "omega beta\nalphabet soup\nx\n  beta omega\nomega\n", "cli: and replaces each, leaving alphabet alone")
+	{
+		ed := Editor{}
+		doc_open(&ed.buf, twin)
+		ed.cur = {0, 2}
+		caret_add_all(&ed)
+		type_at_carets(&ed, "omega")
+		do_save(&ed, twin)
+		check(slurp(f) == slurp(twin), "cli: carets --word leaves the bytes Ctrl Shift L, typing and Save leave")
+	}
+
+	// A column: a caret per line, at character 3, a short line's at its end.
+	reset(f, twin)
+	out, code = run(dir, "carets", "c.txt", "--lines", "1:5", "--column", "3", "--text", "|", "--json")
+	check(code == 0 && strings.contains(out, `"count": 5`), "cli: carets --lines --column puts one caret per line")
+	check(slurp(f) == "al|pha beta\nal|phabet soup\nx|\n  |beta alpha\nal|pha\n", "cli: and a shorter line gets its caret at its end")
+	{
+		ed := Editor{}
+		doc_open(&ed.buf, twin)
+		ed.cur = {0, 2}
+		ed.anchor = ed.cur
+		ed.goal = 2
+		for _ in 0 ..< 4 {
+			caret_add_vert(&ed, 1)
+		}
+		type_at_carets(&ed, "|")
+		do_save(&ed, twin)
+		check(slurp(f) == slurp(twin), "cli: carets --lines leaves the bytes Ctrl Alt Down four times, typing and Save leave")
+	}
+	reset(f)
+	out, code = run(dir, "carets", "c.txt", "--lines", "1:2", "--column", "3", "--delete", "2", "--json")
+	check(code == 0 && strings.has_prefix(slurp(f), "ala beta\nalabet soup\nx\n"), "cli: carets --delete presses Delete at every caret")
+	reset(f)
+	out, code = run(dir, "carets", "c.txt", "--lines", "1:2", "--column", "3", "--backspace", "2", "--dry-run", "--json")
+	check(code == 0 && slurp(f) == CARETS_SAMPLE && strings.contains(out, `+pha beta`), "cli: carets --backspace under --dry-run prints the diff and writes nothing")
+
+	// Carets that land in one place are one caret, as in the window.
+	reset(f)
+	out, code = run(dir, "carets", "c.txt", "--at", "2:1", "--at", "2:1", "--at", "4:3", "--text", "- ", "--json")
+	check(code == 0 && strings.contains(out, `"count": 2`), "cli: two carets at one place are merged")
+	check(slurp(f) == "alpha beta\n- alphabet soup\nx\n  - beta alpha\nalpha\n", "cli: and the text goes in once there")
+
+	// Refusals.
+	reset(f)
+	_, code = run(dir, "carets", "c.txt", "--at", "1:1", "--word", "alpha", "--text", "x", "--json")
+	check(code == kit.EXIT_USAGE, "cli: carets refuses two ways of placing carets")
+	_, code = run(dir, "carets", "c.txt", "--at", "1:1", "--json")
+	check(code == kit.EXIT_USAGE, "cli: carets refuses no keystroke")
+	_, code = run(dir, "carets", "c.txt", "--at", "1:1", "--column", "2", "--text", "x", "--json")
+	check(code == kit.EXIT_USAGE, "cli: --column without --lines is a usage error")
+	_, code = run(dir, "carets", "c.txt", "--word", "zeta", "--text", "x", "--json")
+	check(code == kit.EXIT_NOT_FOUND, "cli: a --word that is not there is not found")
+	_, code = run(dir, "carets", "c.txt", "--at", "9:1", "--text", "x", "--json")
+	check(code == kit.EXIT_USAGE && slurp(f) == CARETS_SAMPLE, "cli: a caret outside the file is refused and nothing is written")
+
+	// The decision written beside cmd_carets: no auto-close on the command
+	// line. Text given is text inserted, a lone bracket included.
+	_, code = run(dir, "carets", "c.txt", "--at", "1:6", "--text", "(", "--json")
+	check(code == 0 && strings.has_prefix(slurp(f), "alpha( beta\n"), "cli: carets inserts a lone ( as given, never ()")
+	reset(f)
+	_, code = run(dir, "edit", "c.txt", "--from", "1:6", "--text", "[", "--json")
+	check(code == 0 && strings.has_prefix(slurp(f), "alpha[ beta\n"), "cli: and so does edit")
 }

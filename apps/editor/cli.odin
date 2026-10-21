@@ -197,6 +197,29 @@ COMMANDS := []kit.Command {
 		run = cmd_edit,
 	},
 	{
+		verb = "carets",
+		summary = "one edit at several carets at once, through the window's multi-caret code: --at (repeat), --lines with --column, or every --word",
+		effect = .Mutate,
+		args = {{name = "file", kind = .Path, required = true}},
+		flags = {
+			{name = "at", kind = .String, repeat = true, help = "a caret at L:C, 1-based; repeat for more"},
+			{name = "lines", kind = .String, help = "one caret per line in this range (3:9, 7, 2,+3), at --column"},
+			{name = "column", kind = .Int, def = "1", help = "with --lines: the character column; a shorter line gets its caret at its end"},
+			{name = "word", kind = .String, help = "a caret selecting every occurrence of this (whole word when it is one): Add Cursor at Every Match"},
+			{name = "text", kind = .String, help = "type this at every caret, replacing what each selects; \\n is a newline"},
+			{name = "backspace", kind = .Int, def = "0", help = "then press Backspace this many times at every caret"},
+			{name = "delete", kind = .Int, def = "0", help = "then press Delete this many times at every caret"},
+		},
+		out = CHANGE_FIELDS,
+		examples = {
+			"editor carets main.odin --lines 10:14 --text \"// \" --dry-run --json",
+			"editor carets main.odin --lines 10:14 --delete 3 --json",
+			"editor carets main.odin --word old_name --text new_name --json",
+			"editor carets notes.txt --at 3:1 --at 7:1 --text \"- \" --json",
+		},
+		run = cmd_carets,
+	},
+	{
 		verb = "save",
 		summary = "load and write a file back through the editor: normalise line endings and the final newline, or save as",
 		effect = .Idempotent,
@@ -683,6 +706,108 @@ cmd_edit :: proc(c: ^kit.Call) -> int {
 		return kit.cli_fail(c, kit.EXIT_USAGE, "edit needs --from (and maybe --to) or --lines")
 	}
 	return finish(c, &b, before, 1)
+}
+
+// cmd_carets is multiple cursors without a window. The carets are placed the
+// way the window places them — caret_add_all for --word, carets_store for the
+// rest, which merges carets that land in one place — and the keystrokes go
+// through carets_edit, which applies them bottom-up as one undo group. So
+// `editor carets f --word x --text y` and Ctrl Shift L, typing y, Ctrl S in the
+// window leave the same bytes on disk, and the self-test checks that they do.
+//
+// What has no command-line form, deliberately: auto-closing brackets. They
+// are a guess made at a keystroke about what the person will type next —
+// typing `(` inserts `()` on the bet that a `)` is coming, and typing that `)`
+// then steps over the one already there. A command states its whole text up
+// front, so there is nothing left to guess, and inserting a closer the caller
+// did not write would corrupt exactly the input it was given. `--text "("`
+// inserts one `(`, here and in `edit`, and that is the contract. The pairing
+// itself is exercised where it lives, at the keystroke, by the self-test's
+// "auto-close" checks against the window's typing path.
+@(private = "file")
+cmd_carets :: proc(c: ^kit.Call) -> int {
+	ed := Editor{}
+	if code := open_existing(c, &ed.buf); code != kit.EXIT_OK {
+		return code
+	}
+	ed.lang = doc_lang(&ed.buf)
+	before := buf_serialize(&ed.buf, context.temp_allocator)
+
+	ats := kit.cli_all(c, "at")
+	ways := (len(ats) > 0 ? 1 : 0) + (kit.cli_has(c, "lines") ? 1 : 0) + (kit.cli_has(c, "word") ? 1 : 0)
+	if ways != 1 {
+		return kit.cli_fail(c, kit.EXIT_USAGE, "carets needs exactly one of --at, --lines or --word")
+	}
+	if kit.cli_has(c, "column") && !kit.cli_has(c, "lines") {
+		return kit.cli_fail(c, kit.EXIT_USAGE, "--column goes with --lines")
+	}
+	back, del := kit.cli_int(c, "backspace", 0), kit.cli_int(c, "delete", 0)
+	if !kit.cli_has(c, "text") && back <= 0 && del <= 0 {
+		return kit.cli_fail(c, kit.EXIT_USAGE, "carets needs --text, --backspace or --delete")
+	}
+	if back < 0 || del < 0 {
+		return kit.cli_fail(c, kit.EXIT_USAGE, "--backspace and --delete count presses, so they cannot be negative")
+	}
+
+	list := make([dynamic]Caret, 0, 8, context.temp_allocator)
+	switch {
+	case len(ats) > 0:
+		for a in ats {
+			at, ok := parse_pos(&ed.buf, a)
+			if !ok {
+				return kit.cli_failf(c, kit.EXIT_USAGE, "--at %q is not in this file (L:C, 1-based)", a)
+			}
+			append(&list, Caret{cur = at, anchor = at})
+		}
+	case kit.cli_has(c, "lines"):
+		first, last, ok := parse_range(&ed.buf, kit.cli_str(c, "lines"))
+		if !ok {
+			return kit.cli_failf(c, kit.EXIT_USAGE, "%q is not a range of lines in a %d-line file", kit.cli_str(c, "lines"), buf_line_count(&ed.buf))
+		}
+		col := kit.cli_int(c, "column", 1)
+		if col < 1 {
+			return kit.cli_fail(c, kit.EXIT_USAGE, "--column is 1-based")
+		}
+		for li in first - 1 ..< last {
+			at := Pos{li, char_to_col(buf_line(&ed.buf, li), col)}
+			append(&list, Caret{cur = at, anchor = at})
+		}
+	case:
+		word := kit.cli_str(c, "word")
+		if word == "" || strings.index_byte(word, '\n') >= 0 {
+			return kit.cli_fail(c, kit.EXIT_USAGE, "--word is one line of text")
+		}
+		// The window's gesture: select the first occurrence, then Add Cursor
+		// at Every Match, which decides the whole-word rule from it.
+		whole := is_word_run(word)
+		at, found := search_word(&ed.buf, word, {0, 0}, whole)
+		if !found {
+			return kit.cli_failf(c, kit.EXIT_NOT_FOUND, "%q is not in the file", word)
+		}
+		ed.anchor = at
+		ed.cur = {at.line, at.col + len(word)}
+		ed.has_sel = true
+		caret_add_all(&ed)
+	}
+	if len(list) > 0 {
+		if len(list) > MAX_CARETS {
+			return kit.cli_failf(c, kit.EXIT_USAGE, "%d carets is more than the editor's %d", len(list), MAX_CARETS)
+		}
+		carets_store(&ed, list[:])
+	}
+	n := carets_count(&ed)
+
+	if kit.cli_has(c, "text") {
+		text, _ := strings.replace_all(unescape(kit.cli_str(c, "text")), "\r\n", "\n", context.temp_allocator)
+		carets_edit(&ed, .Insert, text)
+	}
+	for _ in 0 ..< back {
+		carets_edit(&ed, .Backspace)
+	}
+	for _ in 0 ..< del {
+		carets_edit(&ed, .Delete)
+	}
+	return finish(c, &ed.buf, before, n)
 }
 
 @(private = "file")
