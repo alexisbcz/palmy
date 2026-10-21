@@ -894,6 +894,8 @@ x_event :: proc(w: ^Window, rec: []u8, avail: int) -> int {
 		if xr32(rec, 8) == x.a_net_wm_state && x.a_net_wm_state != 0 {
 			x.state_dirty = true
 		}
+		// The clipboard's INCR transfers, both ways.
+		x_clip_property(w, rec)
 
 	case X_CLIENT_MESSAGE:
 		if xr32(rec, 8) == x.a_wm_protocols && xr32(rec, 12) == x.a_wm_delete {

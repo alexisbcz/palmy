@@ -1,6 +1,7 @@
 #+build !darwin
 package palmy
 
+import "core:fmt"
 import "core:os"
 import "core:slice"
 import "core:strings"
@@ -28,9 +29,8 @@ import "core:time"
 // with SetSelectionOwner and served by answering SelectionRequest with a
 // property on the requestor and a SelectionNotify; pasting is
 // ConvertSelection into a property on our own window and reading it back.
-// The INCR protocol for transfers larger than one request is not
-// implemented: a selection bigger than the server's maximum request is
-// refused when serving and reported as unreadable when pasting.
+// A selection bigger than one request travels by the ICCCM's INCR protocol,
+// both ways; see "INCR" below.
 //
 // Both: the text is served for as long as this window lives and nobody else
 // takes the selection. There is no daemon to hand it to when the program
@@ -120,6 +120,10 @@ Clip_State :: struct {
 	x_waiting:    bool,
 	x_notified:   bool,
 	x_notify_prop: u32,
+	// INCR, reading: a new chunk is in our property. Writing: transfers in
+	// flight, one per requestor property.
+	x_incr_ready: bool,
+	x_incr_out:   [dynamic]X_Incr_Out,
 
 	// The thread the loop runs on; see the note above.
 	loop_thread:  int,
@@ -363,6 +367,10 @@ clip_destroy :: proc(w: ^Window) {
 		delete(name)
 	}
 	delete(w.clip.atom_names)
+	for t in w.clip.x_incr_out {
+		delete(t.data)
+	}
+	delete(w.clip.x_incr_out)
 	delete(w.late.keys)
 	strings.builder_destroy(&w.late.text)
 }
@@ -1042,7 +1050,7 @@ x_clip_get :: proc(w: ^Window, kind: Clip_Kind, allocator := context.allocator) 
 	}
 	if ptype == w.clip.a_incr || ptype == 0 || format != 8 || len(data) == 0 {
 		delete(data, allocator)
-		return "", false // INCR is not implemented
+		return "", false
 	}
 	return string(data), true
 }
@@ -1082,43 +1090,112 @@ x_clip_convert :: proc(
 	w.clip.x_waiting = true
 	w.clip.x_notified = false
 	defer w.clip.x_waiting = false
-	conn_flush(c)
-	deadline := time.time_add(time.now(), CLIP_TIMEOUT)
-	x.in_sync += 1
-	for !w.clip.x_notified {
-		if c.fatal != "" {
-			x.in_sync -= 1
-			return
-		}
-		x_consume(w)
-		conn_flush(c) // anything a SelectionRequest handler queued
-		if w.clip.x_notified {
-			break
-		}
-		left := time.diff(time.now(), deadline)
-		if left <= 0 {
-			x.in_sync -= 1
-			return
-		}
-		pfd := [1]linux.Poll_Fd{{fd = c.fd, events = {.IN}}}
-		cnt, perr := poll_fds(pfd[:], int(max(1, time.duration_milliseconds(left))))
-		if perr != .NONE && perr != .EINTR {
-			x.in_sync -= 1
-			return
-		}
-		if cnt > 0 && !conn_read(c) {
-			x.in_sync -= 1
-			return
-		}
+	if !x_clip_wait(w, &w.clip.x_notified) {
+		return
 	}
-	x.in_sync -= 1
 	if w.clip.x_notify_prop == 0 {
 		return // the owner could not convert it
 	}
 
-	// GetProperty, deleting it, which tells the owner we are done.
+	// GetProperty, deleting it, which tells the owner we are done -- or,
+	// when the answer is INCR, that we are ready for the first chunk. So the
+	// chunk flag is cleared before asking: its PropertyNotify can arrive
+	// while the reply is still on its way.
+	w.clip.x_incr_ready = false
+	first, fok := x_take_property(w, context.temp_allocator)
+	if !fok {
+		return
+	}
+	if first.type != w.clip.a_incr {
+		data = make([]u8, len(first.data), allocator)
+		copy(data, first.data)
+		return data, first.type, first.format, true
+	}
+
+	// INCR: the value is a lower bound on the size; the owner now writes the
+	// data a chunk at a time, each one announced by a PropertyNotify, and a
+	// zero-length chunk ends it.
+	hint := len(first.data) >= 4 ? int(xr32(first.data, 0)) : 0
+	buf := make([dynamic]u8, 0, clamp(hint, 0, CLIP_MAX), allocator)
+	chunks := 0
+	defer clip_trace("x11: INCR read: %d bytes in %d chunks (announced at least %d)", len(buf), chunks, hint)
+	for {
+		if !x_clip_wait(w, &w.clip.x_incr_ready) {
+			delete(buf)
+			return
+		}
+		w.clip.x_incr_ready = false
+		chunk, cok := x_take_property(w, context.temp_allocator)
+		if !cok {
+			delete(buf)
+			return
+		}
+		if len(chunk.data) == 0 {
+			ptype, format = chunk.type, chunk.format
+			break
+		}
+		if len(buf) + len(chunk.data) > CLIP_MAX {
+			delete(buf)
+			return
+		}
+		append(&buf, ..chunk.data)
+		chunks += 1
+		ptype, format = chunk.type, chunk.format
+	}
+	if format == 0 {
+		format = 8
+	}
+	return buf[:], ptype, format, true
+}
+
+// x_clip_wait dispatches events until `flag` is set, for at most
+// CLIP_TIMEOUT. False when the time ran out or the connection died.
+@(private)
+x_clip_wait :: proc(w: ^Window, flag: ^bool) -> bool {
+	c := &w.conn
+	x := &w.x
+	conn_flush(c)
+	deadline := time.time_add(time.now(), CLIP_TIMEOUT)
+	x.in_sync += 1
+	defer x.in_sync -= 1
+	for !flag^ {
+		if c.fatal != "" {
+			return false
+		}
+		x_consume(w)
+		conn_flush(c) // anything a SelectionRequest handler queued
+		if flag^ {
+			break
+		}
+		left := time.diff(time.now(), deadline)
+		if left <= 0 {
+			return false
+		}
+		pfd := [1]linux.Poll_Fd{{fd = c.fd, events = {.IN}}}
+		cnt, perr := poll_fds(pfd[:], int(max(1, time.duration_milliseconds(left))))
+		if perr != .NONE && perr != .EINTR {
+			return false
+		}
+		if cnt > 0 && !conn_read(c) {
+			return false
+		}
+	}
+	return true
+}
+
+@(private)
+X_Property :: struct {
+	type:   u32,
+	format: int,
+	data:   []u8,
+}
+
+// x_take_property reads our selection property and deletes it.
+@(private)
+x_take_property :: proc(w: ^Window, allocator := context.allocator) -> (p: X_Property, ok: bool) {
+	c := &w.conn
 	g := x_begin(w, X_GET_PROPERTY, 1)
-	xo32(c, x.window)
+	xo32(c, w.x.window)
 	xo32(c, w.clip.a_prop)
 	xo32(c, 0) // AnyPropertyType
 	xo32(c, 0)
@@ -1128,15 +1205,15 @@ x_clip_convert :: proc(
 	if !rok || len(reply) < 32 {
 		return
 	}
-	ptype = xr32(reply, 8)
-	format = int(xr8(reply, 1))
-	n := int(xr32(reply, 16)) * max(format / 8, 1)
+	p.type = xr32(reply, 8)
+	p.format = int(xr8(reply, 1))
+	n := int(xr32(reply, 16)) * max(p.format / 8, 1)
 	if 32 + n > len(reply) {
 		return
 	}
-	data = make([]u8, n, allocator)
-	copy(data, reply[32:32 + n])
-	return data, ptype, format, true
+	p.data = make([]u8, n, allocator)
+	copy(p.data, reply[32:32 + n])
+	return p, true
 }
 
 // x_clip_event handles SelectionClear, SelectionRequest and SelectionNotify.
@@ -1188,13 +1265,14 @@ x_clip_event :: proc(w: ^Window, rec: []u8) {
 				x_change_property(w, requestor, prop, XA_ATOM, 32, slice.to_bytes(atoms[:]))
 				answered = prop
 			case x.a_utf8_string, w.clip.a_mime_utf8, w.clip.a_mime_plain, w.clip.a_text, XA_STRING:
-				// One request carries it, or it is refused: INCR is not
-				// implemented.
+				type := target == w.clip.a_text ? x.a_utf8_string : target
 				if len(s.text) + 64 <= x.max_request {
-					type := target == w.clip.a_text ? x.a_utf8_string : target
 					x_change_property(w, requestor, prop, type, 8, transmute([]u8)s.text)
-					answered = prop
+				} else {
+					// Bigger than one request: INCR.
+					x_incr_start(w, requestor, prop, type, s.text)
 				}
+				answered = prop
 			}
 		}
 		// SelectionNotify, sent to the requestor, with the property or None.
@@ -1215,6 +1293,138 @@ x_clip_event :: proc(w: ^Window, rec: []u8) {
 		append(&c.out, ..ev[:])
 		x_end(w, se)
 		conn_flush(c)
+	}
+}
+
+// ---------------------------------------------------------------------------
+// INCR
+//
+// A property has to be written in one request, and a request is at most the
+// server's maximum (256 KiB on a server without BIG-REQUESTS, which is how
+// palmy talks to it). The ICCCM's answer for anything bigger is INCR:
+//
+//   - The owner answers the request with a property of type INCR whose value
+//     is a lower bound on the size, and starts watching the requestor's
+//     property for deletion.
+//   - The requestor reads that property and deletes it, which says "go".
+//   - Each deletion, the owner writes the next chunk (type: the real type);
+//     each new value, the requestor reads it and deletes it. A zero-length
+//     chunk is the end.
+//
+// Reading is in x_clip_convert. Writing keeps one X_Incr_Out per requestor
+// property and is driven from PropertyNotify; a transfer the requestor
+// abandons is dropped after X_INCR_TIMEOUT.
+// ---------------------------------------------------------------------------
+
+@(private)
+X_Incr_Out :: struct {
+	requestor: u32,
+	prop:      u32,
+	type:      u32,
+	data:      []u8,
+	off:       int,
+	sent_end:  bool,
+	touched:   time.Time,
+}
+
+@(private)
+X_INCR_TIMEOUT :: 10 * time.Second
+
+// The chunk size: comfortably inside one request.
+@(private)
+x_incr_chunk :: proc(w: ^Window) -> int {
+	return clamp(w.x.max_request - 64, 4096, 256 * 1024)
+}
+
+@(private)
+x_select_property_events :: proc(w: ^Window, window: u32, on: bool) {
+	c := &w.conn
+	s := x_begin(w, X_CHANGE_WINDOW_ATTRIBUTES, 0)
+	xo32(c, window)
+	xo32(c, CW_EVENT_MASK)
+	xo32(c, on ? u32(0x400000) : 0) // PropertyChange
+	x_end(w, s)
+}
+
+@(private)
+x_incr_start :: proc(w: ^Window, requestor, prop, type: u32, text: string) {
+	x_incr_expire(w)
+	// One transfer per requestor property: a new request replaces it.
+	for i := len(w.clip.x_incr_out) - 1; i >= 0; i -= 1 {
+		t := w.clip.x_incr_out[i]
+		if t.requestor == requestor && t.prop == prop {
+			delete(t.data)
+			ordered_remove(&w.clip.x_incr_out, i)
+		}
+	}
+	x_select_property_events(w, requestor, true)
+	size := u32(len(text))
+	x_change_property(w, requestor, prop, w.clip.a_incr, 32, (cast([^]u8)&size)[:4])
+	data := make([]u8, len(text))
+	copy(data, text)
+	append(&w.clip.x_incr_out, X_Incr_Out{requestor = requestor, prop = prop, type = type, data = data, touched = time.now()})
+}
+
+// x_clip_property takes a PropertyNotify: a chunk arriving for our own read,
+// or a requestor having taken the last chunk we wrote.
+@(private)
+x_clip_property :: proc(w: ^Window, rec: []u8) {
+	window := xr32(rec, 4)
+	atom := xr32(rec, 8)
+	state := xr8(rec, 16) // 0 NewValue, 1 Deleted
+	if window == w.x.window && atom == w.clip.a_prop && state == 0 {
+		w.clip.x_incr_ready = true
+		return
+	}
+	if state != 1 {
+		return
+	}
+	for i := 0; i < len(w.clip.x_incr_out); i += 1 {
+		t := &w.clip.x_incr_out[i]
+		if t.requestor != window || t.prop != atom {
+			continue
+		}
+		t.touched = time.now()
+		if t.sent_end {
+			// The empty chunk was taken: done.
+			clip_trace("x11: INCR write to %x done: %d bytes", t.requestor, len(t.data))
+			delete(t.data)
+			ordered_remove(&w.clip.x_incr_out, i)
+			still := false
+			for o in w.clip.x_incr_out {
+				still ||= o.requestor == window
+			}
+			if !still {
+				x_select_property_events(w, window, false)
+			}
+		} else {
+			n := min(len(t.data) - t.off, x_incr_chunk(w))
+			x_change_property(w, t.requestor, t.prop, t.type, 8, t.data[t.off:t.off + n])
+			t.off += n
+			t.sent_end = n == 0
+		}
+		conn_flush(&w.conn)
+		return
+	}
+}
+
+// clip_trace writes one line of PALMY_TRACE_CLIP=1 output on stderr.
+@(private)
+clip_trace :: proc(format: string, args: ..any) {
+	if os.get_env("PALMY_TRACE_CLIP", context.temp_allocator) != "" {
+		fmt.eprintfln(format, ..args)
+	}
+}
+
+// x_incr_expire drops transfers whose requestor stopped reading.
+@(private)
+x_incr_expire :: proc(w: ^Window) {
+	for i := len(w.clip.x_incr_out) - 1; i >= 0; i -= 1 {
+		t := w.clip.x_incr_out[i]
+		if time.since(t.touched) > X_INCR_TIMEOUT {
+			delete(t.data)
+			ordered_remove(&w.clip.x_incr_out, i)
+		}
 	}
 }
 
@@ -1261,8 +1471,8 @@ x_clip_event :: proc(w: ^Window, rec: []u8) {
 // X11 a selection has no object, only an owner, so an offer superseded before
 // it was handed out is skipped and counted in the next one's `missed`, and a
 // read that the selection changed under is `.Stale` rather than the new
-// owner's bytes. X11 reads are one property (INCR is not implemented, as for
-// `clipboard_get`), and the type list leaves out the ICCCM meta-targets
+// owner's bytes. X11 reads of more than one request come by INCR, as for
+// `clipboard_get`, and the type list leaves out the ICCCM meta-targets
 // (TARGETS, MULTIPLE, TIMESTAMP, ...), which are not types of the data.
 // ---------------------------------------------------------------------------
 
