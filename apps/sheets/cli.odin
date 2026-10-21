@@ -152,14 +152,14 @@ COMMANDS := []kit.Command {
 		args = {
 			{name = "file", kind = .Path, help = "the book to change", required = true},
 			{name = "name", kind = .String, help = "Rate, or Q2!Rate for a name only Q2 sees", required = true},
-			{name = "target", kind = .String, help = "what it names: Data!B2:B9, or B2:B9 on the scope's sheet", required = true},
+			{name = "target", kind = .String, help = "what it names: Data!B2:B9, Jan:Mar!B2 across sheets, or B2:B9 on the scope's sheet", required = true},
 		},
 		flags = {
 			{name = "scope", kind = .String, help = "the one sheet that sees the name"},
 			{name = "out", kind = .Path, help = "write here instead of over the input"},
 		},
 		out = NAME_FIELDS,
-		examples = {"sheets name-set book.sheet.json Rate Q2!B1 --scope Q2 --json", "sheets name-set book.sheet.json Rate Inputs!B1 --json"},
+		examples = {"sheets name-set book.sheet.json Rate Q2!B1 --scope Q2 --json", "sheets name-set book.sheet.json Rate Inputs!B1 --json", "sheets name-set book.sheet.json Units Jan:Mar!B2 --json"},
 		run = cmd_name_set,
 	},
 	{
@@ -1123,17 +1123,21 @@ cmd_name_set :: proc(c: ^kit.Call) -> int {
 	if !sok {
 		return no_sheet(c, scope)
 	}
-	sheet, rect, abs, tok := parse_ref_target(kit.cli_str(c, "target"))
+	// A 3-D span names two sheets, and both have to exist; `#REF!` is
+	// accepted too, since it is what a name can hold.
+	sheet, sheet2, rect, abs, bad, tok := parse_name_target(kit.cli_str(c, "target"))
 	if !tok {
-		return kit.cli_failf(c, kit.EXIT_USAGE, "%q is not a range like Data!B2:B9", kit.cli_str(c, "target"))
+		return kit.cli_failf(c, kit.EXIT_USAGE, "%q is not a range like Data!B2:B9 or Jan:Mar!B2", kit.cli_str(c, "target"))
 	}
-	if sheet == "" {
+	if sheet == "" && !bad {
 		sheet = scope != "" ? scope : app.book.sheets[0].name
 	}
-	if book_find(app.book, sheet) < 0 {
-		return no_sheet(c, sheet)
+	for want in ([2]string{sheet, sheet2}) {
+		if want != "" && book_find(app.book, want) < 0 {
+			return no_sheet(c, want)
+		}
 	}
-	if !book_set_name(app.book, name, sheet, rect, abs, scope) {
+	if !book_set_name(app.book, name, sheet, rect, abs, scope, sheet2, bad) {
 		return kit.cli_failf(c, kit.EXIT_USAGE, "%q is not a usable name", name)
 	}
 	book_recalc_all(app.book)

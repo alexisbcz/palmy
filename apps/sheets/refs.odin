@@ -501,6 +501,35 @@ parse_ref_target :: proc(text: string) -> (sheet: string, rect: Rect_I, abs: boo
 	return sh, {a.row, a.col, a.row, a.col}, a.abs_col && a.abs_row, true
 }
 
+// parse_name_target reads what a defined name may hold: everything
+// `parse_ref_target` reads, a 3-D span (`Jan:Mar!$B$2`, `'Jan 1:Mar 1'!B2:B9`)
+// whose two ends come back as `sheet` and `sheet2`, and Excel's `#REF!` (or
+// `Sheet1!#REF!`) for a name whose cells were deleted, which comes back as
+// `bad`. A sheet name cannot hold a colon, so the first one in the sheet part
+// is the span's.
+parse_name_target :: proc(text: string) -> (sheet, sheet2: string, rect: Rect_I, abs, bad, ok: bool) {
+	t := strings.trim_space(text)
+	t = strings.trim_space(strings.trim_prefix(t, "="))
+	if strings.equal_fold(t, "#REF!") {
+		return "", "", {}, true, true, true
+	}
+	if len(t) > 6 && strings.equal_fold(t[len(t) - 6:], "!#REF!") {
+		return "", "", {}, true, true, true
+	}
+	sheet, rect, abs, ok = parse_ref_target(t)
+	if !ok {
+		return
+	}
+	if i := strings.index_byte(sheet, ':'); i >= 0 {
+		sheet2 = strings.trim_space(sheet[i + 1:])
+		sheet = strings.trim_space(sheet[:i])
+		if sheet == "" || sheet2 == "" {
+			return "", "", {}, false, false, false
+		}
+	}
+	return
+}
+
 // row_only reads `1` or `$1`: a whole-row endpoint, the mirror image of the
 // `A` in `A:A`.
 row_only :: proc(s: string) -> (Ref, bool) {

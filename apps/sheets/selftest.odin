@@ -287,6 +287,7 @@ selftest :: proc() -> int {
 	t_names(&tc)
 	t_spans(&tc)
 	t_local_names(&tc)
+	t_name_spans(&tc)
 	t_csv_book(&tc)
 	t_charts(&tc)
 	t_chart_ops(&tc)

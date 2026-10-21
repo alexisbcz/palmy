@@ -1835,8 +1835,8 @@ xlsx_read_book_bytes :: proc(bk: ^Book, raw: []u8) -> (ok: bool, sheets, cells: 
 					}
 					scope = bk.sheets[li].name
 				}
-				if sn, rect, abs, gok := parse_ref_target(x_text(wb, d)); gok {
-					book_set_name(bk, nm, sn, rect, abs, scope)
+				if sn, sn2, rect, abs, bad, gok := parse_name_target(x_text(wb, d)); gok {
+					book_set_name(bk, nm, sn, rect, abs, scope, sn2, bad)
 				}
 			}
 		}

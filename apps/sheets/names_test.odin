@@ -158,10 +158,13 @@ t_local_names :: proc(tc: ^TC) {
 		nd, _ = book_get_name(b, "Rate")
 		ok_mark(tc, nd.rect == Rect_I{2, 0, 2, 0}, "and an edit on another sheet leaves a name alone")
 		delete_cols(q2, 2, 1)
-		_, still := book_get_name(b, "Rate", "Q2")
-		ok_mark(tc, !still, "a name whose cells are all deleted goes")
+		// Excel's rule: the name stays, as `=#REF!`, and so does its scope —
+		// Q2 does *not* quietly fall back to the book's Rate.
+		gone, still := book_get_name(b, "Rate", "Q2")
+		ok_mark(tc, still && gone.bad, "a name whose cells are all deleted stays, as =#REF!")
+		ok_mark(tc, name_target(b, gone) == "#REF!", "and its target reads #REF!")
 		book_recalc_all(b)
-		at_num(tc, b.sheets[2], "C1", 0.1) // and Q2 falls back to the book's
+		at_err(tc, b.sheets[2], "C1", .Ref)
 	}
 
 	// --- the native document, undo's snapshot, and .xlsx ---------------------

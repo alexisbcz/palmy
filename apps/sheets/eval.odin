@@ -62,6 +62,14 @@ eval_ast :: proc(sh: ^Sheet, n: ^Ast, at: Addr) -> Res {
 			return rv(verr(.Ref))
 		}
 		if ok {
+			if nd.bad {
+				return rv(verr(.Ref)) // `=#REF!`: what it named was deleted
+			}
+			if nd.sheet2 != "" {
+				// A 3-D name, used where one value or one range is wanted.
+				a, b := book_find(sh.book, nd.sheet), book_find(sh.book, nd.sheet2)
+				return rv(verr(a < 0 || b < 0 ? .Ref : .Value))
+			}
 			ts := book_sheet(sh.book, resolve_sheet(sh.book, nd.sheet, 0))
 			if ts == nil {
 				return rv(verr(.Ref))
@@ -152,6 +160,19 @@ is_span :: proc(n: ^Ast) -> bool {
 	return n != nil && (n.kind == .Ref || n.kind == .Range) && n.sheet2 != ""
 }
 
+// is_span_in is `is_span`, plus a name that resolves, from this sheet, to a
+// 3-D range — which reads exactly like the reference it stands for.
+is_span_in :: proc(sh: ^Sheet, n: ^Ast) -> bool {
+	if is_span(n) {
+		return true
+	}
+	if n == nil || n.kind != .Name {
+		return false
+	}
+	nd, ok, _ := name_lookup(sh.book, n, sh.index)
+	return ok && !nd.bad && nd.sheet2 != ""
+}
+
 // span_bounds resolves a 3-D reference to its first and last sheet index.
 span_bounds :: proc(sh: ^Sheet, n: ^Ast) -> (lo, hi: int, ok: bool) {
 	a := book_find(sh.book, n.sheet)
@@ -186,6 +207,20 @@ span_rect :: proc(ts: ^Sheet, n: ^Ast) -> (Rect_I, bool) {
 // book order and row-major within each, skipping cells that do not exist —
 // the same order and the same rule as a range on one sheet.
 span_values :: proc(sh: ^Sheet, n: ^Ast, out: ^[dynamic]Value) -> Err {
+	if n.kind == .Name {
+		nd, ok, _ := name_lookup(sh.book, n, sh.index)
+		if !ok || nd.bad {
+			return .Ref
+		}
+		a, b := book_find(sh.book, nd.sheet), book_find(sh.book, nd.sheet2)
+		if a < 0 || b < 0 {
+			return .Ref
+		}
+		for si in min(a, b) ..= max(a, b) {
+			rect_values(sh.book.sheets[si], nd.rect, out)
+		}
+		return .None
+	}
 	lo, hi, ok := span_bounds(sh, n)
 	if !ok {
 		return .Ref
@@ -196,20 +231,27 @@ span_values :: proc(sh: ^Sheet, n: ^Ast, out: ^[dynamic]Value) -> Err {
 		if !good {
 			return .Ref
 		}
-		r, any := clamp_rect(ts, rect)
-		if !any {
-			continue
-		}
-		for row in r.r0 ..= r.r1 {
-			for col in r.c0 ..= r.c1 {
-				if cell_at(ts, {row, col}) == nil {
-					continue
-				}
-				append(out, ensure_value(ts, {row, col}))
-			}
-		}
+		rect_values(ts, rect, out)
 	}
 	return .None
+}
+
+// rect_values appends the values of the cells that exist in one rectangle of
+// one sheet, row-major.
+@(private = "file")
+rect_values :: proc(ts: ^Sheet, rect: Rect_I, out: ^[dynamic]Value) {
+	r, any := clamp_rect(ts, rect)
+	if !any {
+		return
+	}
+	for row in r.r0 ..= r.r1 {
+		for col in r.c0 ..= r.c1 {
+			if cell_at(ts, {row, col}) == nil {
+				continue
+			}
+			append(out, ensure_value(ts, {row, col}))
+		}
+	}
 }
 
 // ref_sheet is the sheet a reference points at: another one when it is
@@ -461,7 +503,7 @@ agg_number :: proc(ag: ^Agg, x: f64) {
 
 // agg_walk folds one argument into the accumulator, expanding a range.
 agg_walk :: proc(sh: ^Sheet, n: ^Ast, at: Addr, ag: ^Agg) {
-	if is_span(n) {
+	if is_span_in(sh, n) {
 		vals := make([dynamic]Value, 0, 16)
 		if e := span_values(sh, n, &vals); e != .None {
 			ag.err = e
@@ -936,7 +978,7 @@ agg_function :: proc(sh: ^Sheet, name: string, k: []^Ast, at: Addr) -> Res {
 		clear(&nums)
 		for arg in k {
 			vals := make([dynamic]Value, 0, 16)
-			e := is_span(arg) ? span_values(sh, arg, &vals) : range_values(sh, arg, at, &vals)
+			e := is_span_in(sh, arg) ? span_values(sh, arg, &vals) : range_values(sh, arg, at, &vals)
 			if e != .None {
 				return rv(verr(e))
 			}

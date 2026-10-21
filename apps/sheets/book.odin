@@ -52,10 +52,31 @@ Dep :: struct {
 // first and the book's second, so a sheet-local `Rate` shadows a workbook
 // `Rate` on that sheet and nowhere else — Excel's and LibreOffice's rule.
 // Another sheet's local name is reached by qualifying it, `Q2!Rate`.
+//
+// A name can also be 3-D, `Jan:Mar!$B$2`: `sheet2` is then the far end of the
+// span, which is resolved by position on every read exactly as a 3-D
+// reference typed into a formula is (see eval.odin). Such a name is legal
+// where a 3-D reference is — inside the aggregates — and #VALUE! elsewhere.
+//
+// And a name can be *broken*: `bad` is Excel's `=#REF!`. When every cell a
+// name covered is deleted, or the sheet it pointed at is, the name stays —
+// listed, saved, exported — and every formula that uses it reads #REF!,
+// instead of the name vanishing and those formulas quietly turning into
+// #NAME? (or worse, falling back to a workbook name of the same spelling).
 Name_Def :: struct {
-	sheet: string, // owned; "" means the book's first sheet
-	rect:  Rect_I,
-	abs:   bool, // printed with dollar signs, as Excel writes them
+	sheet:  string, // owned; "" means the book's first sheet
+	sheet2: string, // owned; the far end of a 3-D name, "" otherwise
+	rect:   Rect_I,
+	abs:    bool, // printed with dollar signs, as Excel writes them
+	bad:    bool, // refers to #REF!: what it named is gone
+}
+
+// name_def_release frees what a definition owns.
+name_def_release :: proc(nd: Name_Def, heap: mem.Allocator) {
+	delete(nd.sheet, heap)
+	if nd.sheet2 != "" {
+		delete(nd.sheet2, heap)
+	}
 }
 
 MAX_SHEETS :: 256
@@ -245,21 +266,24 @@ book_rename_sheet :: proc(bk: ^Book, i: int, want: string) -> bool {
 			c.state = .Dirty
 		}
 	}
-	for _, &nd in bk.names {
-		if strings.equal_fold(nd.sheet, old) {
-			delete(nd.sheet, bk.heap)
-			nd.sheet = strings.clone(clean, bk.heap)
-		}
-	}
 	// A local name's *scope* needs nothing — it lives on the sheet — but its
-	// *target* is kept by name, on whichever sheet it was defined.
-	for s in bk.sheets {
-		for _, &nd in s.names {
+	// *target* is kept by name, on whichever sheet it was defined, and a 3-D
+	// name has two of them.
+	rename_targets :: proc(m: ^map[string]Name_Def, heap: mem.Allocator, old, clean: string) {
+		for _, &nd in m {
 			if strings.equal_fold(nd.sheet, old) {
-				delete(nd.sheet, s.heap)
-				nd.sheet = strings.clone(clean, s.heap)
+				delete(nd.sheet, heap)
+				nd.sheet = strings.clone(clean, heap)
+			}
+			if nd.sheet2 != "" && strings.equal_fold(nd.sheet2, old) {
+				delete(nd.sheet2, heap)
+				nd.sheet2 = strings.clone(clean, heap)
 			}
 		}
+	}
+	rename_targets(&bk.names, bk.heap, old, clean)
+	for s in bk.sheets {
+		rename_targets(&s.names, s.heap, old, clean)
 	}
 	bk.graph_dirty = true
 	return true
@@ -273,6 +297,7 @@ book_delete_sheet :: proc(bk: ^Book, i: int) -> bool {
 		return false
 	}
 	book_fix_spans_for_delete(bk, i)
+	book_fix_names_for_delete(bk, i)
 	sh := bk.sheets[i]
 	ordered_remove(&bk.sheets, i)
 	sheet_release(sh)
@@ -360,6 +385,50 @@ book_fix_spans_for_delete :: proc(bk: ^Book, gone: int) -> (rewritten: int) {
 		bk.graph_dirty = true
 	}
 	return
+}
+
+// book_fix_names_for_delete is the same rule for names: a 3-D name that ends
+// on the sheet narrows to the next sheet inward, and a name on that sheet
+// alone becomes `=#REF!` — Excel's answer — rather than going on naming a
+// sheet that no longer exists (and that a later sheet of the same name would
+// silently inherit). A sheet's own local names go with it.
+book_fix_names_for_delete :: proc(bk: ^Book, gone: int) {
+	fix :: proc(bk: ^Book, m: ^map[string]Name_Def, heap: mem.Allocator, gone: int) {
+		for _, &nd in m {
+			if nd.bad {
+				continue
+			}
+			a := resolve_sheet(bk, nd.sheet, 0)
+			if nd.sheet2 == "" {
+				if nd.sheet != "" && a == gone {
+					name_def_release(nd, heap)
+					nd = Name_Def{abs = nd.abs, bad = true}
+				}
+				continue
+			}
+			b := book_find(bk, nd.sheet2)
+			if a < 0 || b < 0 || (a != gone && b != gone) {
+				continue
+			}
+			lo, hi := min(a, b), max(a, b)
+			if lo == gone {
+				lo += 1
+			}
+			if hi == gone {
+				hi -= 1
+			}
+			name_def_release(nd, heap)
+			nd.sheet = strings.clone(bk.sheets[lo].name, heap)
+			nd.sheet2 = lo == hi ? "" : strings.clone(bk.sheets[hi].name, heap)
+		}
+	}
+	fix(bk, &bk.names, bk.heap, gone)
+	for s, si in bk.sheets {
+		if si != gone {
+			fix(bk, &s.names, s.heap, gone)
+		}
+	}
+	bk.graph_dirty = true
 }
 
 @(private = "file")
@@ -450,7 +519,7 @@ looks_like_cell :: proc(s: string) -> bool {
 
 names_clear :: proc(m: ^map[string]Name_Def, heap: mem.Allocator) {
 	for k, nd in m {
-		delete(nd.sheet, heap)
+		name_def_release(nd, heap)
 		delete(k, heap)
 	}
 	clear(m)
@@ -479,6 +548,8 @@ book_set_name :: proc(
 	rect: Rect_I,
 	abs := true,
 	scope := "",
+	sheet2 := "",
+	bad := false,
 ) -> bool {
 	if !name_is_valid(name) {
 		return false
@@ -489,10 +560,17 @@ book_set_name :: proc(
 	}
 	key := strings.to_upper(name, context.temp_allocator)
 	book_drop_name(bk, key, scope)
+	// A span whose two ends are one sheet is just that sheet.
+	far := sheet2
+	if far != "" && strings.equal_fold(far, sheet) {
+		far = ""
+	}
 	m[strings.clone(key, heap)] = Name_Def {
-		sheet = strings.clone(sheet, heap),
-		rect  = rect,
-		abs   = abs,
+		sheet  = strings.clone(bad ? "" : sheet, heap),
+		sheet2 = far != "" && !bad ? strings.clone(far, heap) : "",
+		rect   = bad ? {} : rect,
+		abs    = abs,
+		bad    = bad,
 	}
 	bk.graph_dirty = true
 	return true
@@ -506,7 +584,7 @@ book_drop_name :: proc(bk: ^Book, name: string, scope := "") -> bool {
 	key := strings.to_upper(name, context.temp_allocator)
 	for k, nd in m {
 		if k == key {
-			delete(nd.sheet, heap)
+			name_def_release(nd, heap)
 			kk := k
 			delete_key(m, k)
 			delete(kk, heap)
@@ -625,14 +703,19 @@ name_label :: proc(scope, name: string) -> string {
 
 // name_target renders a named range the way the file format wants it:
 // sheet-qualified and absolute, e.g. `Sheet1!$A$1:$B$4`.
+// A broken name is `#REF!`, as Excel writes it, and a 3-D one carries its
+// span: `Jan:Mar!$B$2`.
 name_target :: proc(bk: ^Book, nd: Name_Def) -> string {
+	if nd.bad {
+		return "#REF!"
+	}
 	sname := nd.sheet
 	if sname == "" && len(bk.sheets) > 0 {
 		sname = bk.sheets[0].name
 	}
 	d := nd.abs ? "$" : ""
 	b := strings.builder_make(context.temp_allocator)
-	strings.write_string(&b, sheet_prefix(sname))
+	strings.write_string(&b, sheet_span_prefix(sname, nd.sheet2))
 	strings.write_string(&b, d)
 	strings.write_string(&b, col_name(nd.rect.c0))
 	strings.write_string(&b, d)

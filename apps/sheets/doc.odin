@@ -49,6 +49,9 @@ Chart_JSON :: struct {
 Name_JSON :: struct {
 	name:  string,
 	sheet: string,
+	// The far end of a 3-D name (`Jan:Mar!B2`); absent for every other one.
+	sheet2: string `json:"sheet2,omitempty"`,
+	// A cell range, or `#REF!` for a name whose cells were deleted.
 	range: string,
 	abs:   bool,
 	// "" for a name the whole book sees; a sheet's name for one only that
@@ -367,7 +370,8 @@ names_to_json :: proc(bk: ^Book) -> []Name_JSON {
 			Name_JSON {
 				name = e.name,
 				sheet = e.def.sheet,
-				range = rect_text(e.def.rect),
+				sheet2 = e.def.sheet2,
+				range = e.def.bad ? "#REF!" : rect_text(e.def.rect),
 				abs = e.def.abs,
 				scope = e.scope,
 			},
@@ -380,8 +384,10 @@ names_to_json :: proc(bk: ^Book) -> []Name_JSON {
 // local name lives on its sheet; one whose sheet is missing is dropped.
 names_from_json :: proc(bk: ^Book, names: []Name_JSON) {
 	for nj in names {
-		if r, good := parse_a1_range(nj.range); good {
-			book_set_name(bk, nj.name, nj.sheet, r, nj.abs, nj.scope)
+		if strings.equal_fold(nj.range, "#REF!") {
+			book_set_name(bk, nj.name, "", {}, nj.abs, nj.scope, bad = true)
+		} else if r, good := parse_a1_range(nj.range); good {
+			book_set_name(bk, nj.name, nj.sheet, r, nj.abs, nj.scope, nj.sheet2)
 		}
 	}
 }

@@ -424,7 +424,7 @@ prompt_title :: proc(k: Prompt_Kind) -> string {
 	case .Sheet_Name:
 		return "Rename this sheet"
 	case .Name_Define:
-		return "Name the selection (Sheet!Name scopes it to one sheet)"
+		return "Name the selection (Sheet!Name scopes it; Name=Jan:Mar!B2 names a range)"
 	case .Name_Define_Local:
 		return "Name the selection, for this sheet only"
 	case .Chart_Size:
@@ -512,6 +512,11 @@ run_prompt :: proc(app: ^App, text: string) {
 			return
 		}
 		if nd, _, ok := book_resolve_name(app.book, arg, app.book.active); ok {
+			if nd.bad {
+				set_status(app, "%s refers to #REF!: its cells were deleted", arg)
+				return
+			}
+			// A 3-D name goes to its first sheet.
 			if i := book_find(app.book, nd.sheet); i >= 0 {
 				use_sheet(app, i)
 			}
@@ -546,9 +551,41 @@ run_prompt :: proc(app: ^App, text: string) {
 		// `Rate` names it for the whole book and `Q2!Rate` for sheet Q2
 		// only — the spelling `sheets name-set` takes too. The local command
 		// scopes a bare name to the sheet you are on.
-		scope, name := name_spec(arg)
+		//
+		// `Name=Target` names something other than the selection, which is
+		// how a 3-D range gets a name from the window: `Units=Jan:Mar!B9`.
+		spec, target := arg, ""
+		if eq := strings.index_byte(arg, '='); eq > 0 {
+			spec, target = strings.trim_space(arg[:eq]), strings.trim_space(arg[eq + 1:])
+		}
+		scope, name := name_spec(spec)
 		if app.prompt == .Name_Define_Local && scope == "" {
 			scope = app.sh.name
+		}
+		if target != "" {
+			sn, sn2, rect, abs, bad, tok := parse_name_target(target)
+			if !tok || bad {
+				set_status(app, "%s is not a range like Data!B2:B9 or Jan:Mar!B2", target)
+				return
+			}
+			if sn == "" {
+				sn = app.sh.name
+			}
+			for want in ([2]string{sn, sn2}) {
+				if want != "" && book_find(app.book, want) < 0 {
+					set_status(app, "There is no sheet called %s", want)
+					return
+				}
+			}
+			undo_push(app)
+			if book_set_name(app.book, name, sn, rect, abs, scope, sn2) {
+				recalc_all(app.sh)
+				nd, _ := book_get_name(app.book, name, scope)
+				set_status(app, "%s names %s", name_label(scope, name), name_target(app.book, nd))
+			} else {
+				set_status(app, "%s is not a usable name", spec)
+			}
+			return
 		}
 		undo_push(app)
 		if book_set_name(app.book, name, app.sh.name, work_rect(app), true, scope) {

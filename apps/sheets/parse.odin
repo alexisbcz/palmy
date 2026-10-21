@@ -1108,9 +1108,16 @@ ast_deps :: proc(n: ^Ast, out: ^[dynamic]Dep, max_row: int, bk: ^Book = nil, own
 		// A named range is a dependency on whatever it names — resolved in
 		// the formula's own scope, so a local name and the workbook name it
 		// shadows are never confused.
-		if nd, ok, _ := name_lookup(bk, n, own); ok {
-			si := resolve_sheet(bk, nd.sheet, 0)
-			append(out, Dep{si, nd.rect})
+		// A broken one depends on nothing; a 3-D one on its rectangle on
+		// every sheet of the span.
+		if nd, ok, _ := name_lookup(bk, n, own); ok && !nd.bad {
+			if nd.sheet2 == "" {
+				append(out, Dep{resolve_sheet(bk, nd.sheet, 0), nd.rect})
+			} else if a, b := book_find(bk, nd.sheet), book_find(bk, nd.sheet2); a >= 0 && b >= 0 {
+				for si in min(a, b) ..= max(a, b) {
+					append(out, Dep{si, nd.rect})
+				}
+			}
 		}
 	case .Num, .Str, .Bool, .Err, .Unary, .Binary, .Percent, .Call:
 	}
