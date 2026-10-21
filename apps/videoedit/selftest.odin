@@ -21,6 +21,7 @@ import "core:math"
 import "core:os"
 import "core:strings"
 import "core:time"
+import kit "kit:."
 import p "palmy:."
 import sc "shadcn:."
 
@@ -63,6 +64,7 @@ selftest :: proc() {
 	test_reprobe()
 	test_interaction()
 	test_export()
+	test_cli()
 
 	ms := time.duration_milliseconds(time.since(t0))
 	fmt.printf("\n%d assertions, %d failures, %.0f ms\n", checks, failures, ms)
@@ -1556,4 +1558,215 @@ test_interaction :: proc() {
 	near(ed.playhead, 1.0, "and moves the playhead there", 0.02)
 	p.release(off)
 	step(ed, off)
+}
+
+// ---------------------------------------------------------------------------
+// The command line
+//
+// The binary is run again as a child, against a scratch directory and a
+// scratch audit log, so this exercises exactly what an agent would: parsing,
+// the exit codes, the JSON, and the project file the window reads. The checks
+// on the file go through `project_load`, the window's own Ctrl-O, so "the CLI
+// and the window agree" is asserted rather than assumed.
+// ---------------------------------------------------------------------------
+
+@(private = "file")
+cli_exe :: proc() -> string {
+	if p, err := os.get_executable_path(context.temp_allocator); err == nil {
+		return p
+	}
+	return os.args[0]
+}
+
+@(private = "file")
+cli_run :: proc(dir: string, args: ..string) -> (out: string, code: int) {
+	line := strings.builder_make(context.temp_allocator)
+	strings.write_string(&line, fmt.tprintf("cd %q && WAYLAND_DISPLAY= DISPLAY= PALM_AUDIT=%q %q", dir, fmt.tprintf("%s/audit.jsonl", dir), cli_exe()))
+	for a in args {
+		strings.write_string(&line, fmt.tprintf(" %q", a))
+	}
+	state, sout, _, err := os.process_exec({command = {"sh", "-c", strings.to_string(line)}}, context.temp_allocator)
+	if err != nil {
+		return "", -1
+	}
+	return string(sout), state.exit_code
+}
+
+@(private = "file")
+cli_clips :: proc(path: string) -> (n: int, titles: int, ok: bool) {
+	pr: Project
+	project_init(&pr)
+	defer project_destroy(&pr)
+	res := project_load(&pr, path)
+	if !res.ok {
+		return 0, 0, false
+	}
+	for t in pr.tracks {
+		for c in t.clips {
+			n += 1
+			if c.media < 0 {
+				titles += 1
+			}
+		}
+	}
+	return n, titles, true
+}
+
+test_cli :: proc() {
+	section("the command line")
+	sf := surface()
+	check(sf.noun == "videoedit", "the surface is named videoedit")
+	for cmd in sf.commands {
+		check(cmd.run != nil, "%s has an implementation", cmd.verb)
+		check(len(cmd.out) > 0, "%s declares what it prints", cmd.verb)
+		check(len(cmd.examples) > 0, "%s ships an example", cmd.verb)
+		check(cmd.effect != .Destructive, "%s does not destroy anything: the media is never touched", cmd.verb)
+	}
+
+	dir := fmt.tprintf("/tmp/videoedit-cli-%d", os.get_pid())
+	os.make_directory_all(dir)
+	defer os.remove_all(dir)
+
+	// Every example parses, in the real parser, in the real binary.
+	for cmd in sf.commands {
+		for ex in cmd.examples {
+			words := kit.cli_split_example(ex, context.temp_allocator)
+			check(len(words) > 0 && words[0] == "videoedit", "the example %q starts with the binary's name", ex)
+			args := make([dynamic]string, context.temp_allocator)
+			for w in words[1:] {
+				append(&args, w)
+			}
+			append(&args, "--parse-only")
+			_, code := cli_run(dir, ..args[:])
+			check(code == 0, "the example %q parses (exit %d)", ex, code)
+		}
+	}
+
+	// Reads that name nothing answer "not found", as a document.
+	{
+		out, code := cli_run(dir, "info", "missing.vep", "--json")
+		check(code == kit.EXIT_NOT_FOUND, "info on a missing project exits 3, got %d", code)
+		check(strings.contains(out, `"error": "not found"`), "with the documented error object")
+		_, pcode := cli_run(dir, "probe", "missing.mp4", "--json")
+		check(pcode == kit.EXIT_NOT_FOUND, "probe on a missing file exits 3, got %d", pcode)
+		_, ucode := cli_run(dir, "frobnicate")
+		check(ucode == kit.EXIT_USAGE, "an unknown verb is a usage error, not a window, got %d", ucode)
+	}
+
+	if !have_tool("ffmpeg") || !have_tool("ffprobe") {
+		fmt.println("  skipped the media half: ffmpeg or ffprobe is not on PATH")
+		return
+	}
+	for spec in ([?][2]string{{"a.mp4", "testsrc2"}, {"b.mp4", "smptebars"}}) {
+		_, ok := run_capture(
+			{
+				"ffmpeg", "-y", "-v", "error",
+				"-f", "lavfi", "-i", fmt.tprintf("%s=size=320x180:rate=30", spec[1]),
+				"-f", "lavfi", "-i", "sine=frequency=440",
+				"-t", "1", "-c:v", "libx264", "-preset", "ultrafast", "-pix_fmt", "yuv420p",
+				"-c:a", "aac", fmt.tprintf("%s/%s", dir, spec[0]),
+			},
+			context.temp_allocator,
+		)
+		check(ok, "generated the synthetic clip %s", spec[0])
+		if !ok {
+			return
+		}
+	}
+	proj := fmt.tprintf("%s/demo.vep", dir)
+
+	{
+		out, code := cli_run(dir, "probe", "a.mp4", "--json")
+		check(code == 0, "probe exits 0, got %d", code)
+		bad := kit.cli_validate_output(out, PROBE_FIELDS, context.temp_allocator)
+		check(len(bad) == 0, "probe matches its declared schema%s", len(bad) > 0 ? bad[0] : "")
+		check(strings.contains(out, `"has_audio": true`), "and found the sound")
+	}
+	{
+		out, code := cli_run(dir, "new", "demo.vep", "a.mp4", "b.mp4", "--layout", "--json")
+		check(code == 0, "new exits 0, got %d", code)
+		bad := kit.cli_validate_output(out, PROJECT_FIELDS, context.temp_allocator)
+		check(len(bad) == 0, "new matches its declared schema%s", len(bad) > 0 ? bad[0] : "")
+		n, _, ok := cli_clips(proj)
+		check(ok, "the window's own project_load reads what new wrote")
+		check(n == 4, "and sees the first-run layout: two clips and their sound, got %d", n)
+		_, again := cli_run(dir, "new", "demo.vep", "--json")
+		check(again == kit.EXIT_FAILED, "new refuses to replace a project without --force, got %d", again)
+	}
+	{
+		out, code := cli_run(dir, "info", "demo.vep", "--json")
+		check(code == 0, "info exits 0, got %d", code)
+		bad := kit.cli_validate_output(out, PROJECT_FIELDS, context.temp_allocator)
+		check(len(bad) == 0, "info matches its declared schema%s", len(bad) > 0 ? bad[0] : "")
+		check(strings.contains(out, `"duration": 2`), "and the timeline is two seconds long")
+	}
+	{
+		before, _ := os.read_entire_file_from_path(proj, context.temp_allocator)
+		_, code := cli_run(dir, "split", "demo.vep", "--at", "0.5", "--dry-run", "--json")
+		after, _ := os.read_entire_file_from_path(proj, context.temp_allocator)
+		check(code == 0, "a dry-run split exits 0")
+		check(string(before) == string(after), "and leaves the file exactly as it was")
+
+		_, scode := cli_run(dir, "split", "demo.vep", "--at", "0.5", "--track", "V1", "--json")
+		check(scode == 0, "split exits 0, got %d", scode)
+		n, _, _ := cli_clips(proj)
+		check(n == 5, "the window sees the split: five clips, got %d", n)
+		_, none := cli_run(dir, "split", "demo.vep", "--at", "30", "--json")
+		check(none == kit.EXIT_NOT_FOUND, "splitting where there is nothing is not found, got %d", none)
+	}
+	{
+		out, code := cli_run(dir, "title", "demo.vep", "Hello, world: 50%", "--at", "0.1", "--length", "0.6", "--json")
+		check(code == 0, "title exits 0, got %d", code)
+		check(strings.contains(out, `"clip": `), "and names the clip it made")
+		n, titles, _ := cli_clips(proj)
+		check(n == 6 && titles == 1, "the window sees one title among six clips, got %d/%d", titles, n)
+	}
+	{
+		// The title is clip 1 now (V2 is the first track); delete it.
+		_, code := cli_run(dir, "delete", "demo.vep", "1", "--json")
+		check(code == 0, "delete exits 0, got %d", code)
+		n, titles, _ := cli_clips(proj)
+		check(n == 5 && titles == 0, "the window sees the title gone, got %d/%d", titles, n)
+		_, missing := cli_run(dir, "delete", "demo.vep", "99", "--json")
+		check(missing == kit.EXIT_NOT_FOUND, "deleting a clip that is not there is not found, got %d", missing)
+	}
+	{
+		_, a := cli_run(dir, "add", "demo.vep", "b.mp4", "--in", "0.2", "--out", "0.8", "--json")
+		check(a == 0, "add exits 0, got %d", a)
+		n, _, _ := cli_clips(proj)
+		check(n == 7, "and places the picture and the sound, got %d clips", n)
+		_, t := cli_run(dir, "trim", "demo.vep", "1", "--out-by", "-0.1", "--json")
+		check(t == 0, "trim exits 0, got %d", t)
+		_, m := cli_run(dir, "move", "demo.vep", "1", "--to", "0.2", "--track", "V2", "--json")
+		check(m == 0, "move exits 0, got %d", m)
+		_, wrong := cli_run(dir, "move", "demo.vep", "1", "--to", "0", "--track", "A1", "--json")
+		check(wrong == kit.EXIT_USAGE, "a picture cannot move onto an audio track, got %d", wrong)
+	}
+	{
+		srt := fmt.tprintf("%s/t.srt", dir)
+		_ = os.write_entire_file(srt, transmute([]u8)string("1\n00:00:00,200 --> 00:00:00,900\nhello\n\n"))
+		_, code := cli_run(dir, "captions", "demo.vep", "t.srt", "--offset", "0.1", "--json")
+		check(code == 0, "captions exits 0, got %d", code)
+		pr: Project
+		project_init(&pr)
+		res := project_load(&pr, proj)
+		check(res.ok && len(pr.captions) == 1, "the window sees one cue")
+		near(pr.caption_offset, 0.1, "with the offset given")
+		project_destroy(&pr)
+	}
+	{
+		out, code := cli_run(dir, "export", "demo.vep", "out.mp4", "--quality", "draft", "--json")
+		check(code == 0, "export exits 0, got %d: %s", code, out)
+		bad := kit.cli_validate_output(out, EXPORT_FIELDS, context.temp_allocator)
+		check(len(bad) == 0, "export matches its declared schema%s", len(bad) > 0 ? bad[0] : "")
+		v := verify_output(fmt.tprintf("%s/out.mp4", dir), context.temp_allocator)
+		check(v.ok, "ffprobe reads the export back")
+		check(v.streams == 2, "with picture and sound, got %d streams", v.streams)
+		check(v.width == 640 && v.height == 360, "at draft size, got %dx%d", v.width, v.height)
+	}
+	{
+		audit, _ := os.read_entire_file_from_path(fmt.tprintf("%s/audit.jsonl", dir), context.temp_allocator)
+		check(strings.contains(string(audit), `"verb":"split"`), "a mutation leaves an audit record")
+		check(!strings.contains(string(audit), `"verb":"info"`), "and a read does not")
+	}
 }

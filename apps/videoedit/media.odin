@@ -291,28 +291,40 @@ importer_main :: proc(t: ^thread.Thread) {
 		sync.unlock(&im.mu)
 
 		// Everything below runs with no lock held.
-		t0 := time.now()
-		res := Import_Result {
-			path = path,
-			name = strings.clone(filepath.base(path)),
-		}
-		res.probe = probe_media(path)
-		if res.probe.ok {
-			if res.probe.has_video {
-				at := min(res.probe.duration * 0.25, 2.0)
-				res.thumb, res.thumb_ok = extract_thumb(path, at, THUMB_W)
-			}
-			if res.probe.has_audio {
-				res.peaks = extract_peaks(path, res.probe.duration)
-			}
-			res.ok = true
-		}
-		res.ms = time.duration_milliseconds(time.since(t0))
+		res := import_media(path)
 
 		sync.lock(&im.mu)
 		append(&im.done, res)
 		sync.unlock(&im.mu)
 	}
+}
+
+// import_media is the whole of importing one file: probe it, then derive the
+// thumbnail and the waveform. The importer thread runs it for the window and
+// the command line (`videoedit new`, `videoedit add`) runs it directly, so a
+// clip imported either way is the same row. `derived = false` skips the
+// thumbnail and the waveform, which only the window draws; the probe — the
+// part a project file and an export depend on — is identical. `path` becomes
+// the result's, as it always did on the importer's queue.
+import_media :: proc(path: string, derived := true) -> Import_Result {
+	t0 := time.now()
+	res := Import_Result {
+		path = path,
+		name = strings.clone(filepath.base(path)),
+	}
+	res.probe = probe_media(path)
+	if res.probe.ok {
+		if derived && res.probe.has_video {
+			at := min(res.probe.duration * 0.25, 2.0)
+			res.thumb, res.thumb_ok = extract_thumb(path, at, THUMB_W)
+		}
+		if derived && res.probe.has_audio {
+			res.peaks = extract_peaks(path, res.probe.duration)
+		}
+		res.ok = true
+	}
+	res.ms = time.duration_milliseconds(time.since(t0))
+	return res
 }
 
 // install_import turns a finished result into a Media entry, or returns -1.

@@ -169,6 +169,24 @@ main :: proc() {
 		}
 	}
 
+	// The command line is the other front end over the same project model:
+	// see cli.odin. Anything that is not a command — no arguments, or a media
+	// file or a project to open — falls through to the window.
+	if code, handled := kit.cli(surface()); handled {
+		os.exit(code)
+	}
+	// takes_path lets a bare word through to the window, which is right for a
+	// file and wrong for a mistyped verb: a window instead of an answer is a
+	// command that never returns to whatever ran it. So the window only takes
+	// words that name something on disk; anything else is a usage error.
+	for a in args {
+		if !strings.has_prefix(a, "-") && !os.exists(a) {
+			fmt.eprintfln("videoedit: %q is neither a command nor a file", a)
+			fmt.eprint(kit.cli_help_text(surface()))
+			os.exit(kit.EXIT_USAGE)
+		}
+	}
+
 	ed := new(Editor)
 	defer free(ed)
 	ed.zoom = 70
@@ -198,12 +216,33 @@ main :: proc() {
 	// Anything named on the command line is imported; otherwise the bundled
 	// test clips are, so the window is never empty.
 	imported := 0
+	project_arg := ""
 	for a in args {
 		if strings.has_prefix(a, "--") {
 			continue
 		}
+		// A project — one `videoedit new` wrote, say — opens as a project,
+		// the way Ctrl-O would, rather than being probed as media.
+		if strings.has_suffix(strings.to_lower(a, context.temp_allocator), ".vep") {
+			project_arg = a
+			continue
+		}
 		importer_push(&ed.im, a)
 		imported += 1
+	}
+	if project_arg != "" {
+		if res := project_load(&ed.pr, project_arg); res.ok {
+			set_str(&ed.buf_project, project_arg)
+			ed.playhead = res.playhead
+			ed.zoom = res.zoom
+			// Thumbnails and waveforms are derived, so rebuild them.
+			for m in ed.pr.media {
+				importer_push(&ed.im, m.path)
+			}
+			imported += 1
+		} else {
+			fmt.eprintfln("videoedit: %s: %s", project_arg, res.err)
+		}
 	}
 	if imported == 0 {
 		for f in discover_media() {
@@ -449,7 +488,13 @@ default_caption_path :: proc() -> string {
 // their audio onto A1, which is a reasonable thing to be looking at when the
 // window opens.
 auto_layout :: proc(ed: ^Editor) {
-	pr := &ed.pr
+	auto_layout_project(&ed.pr)
+	ed.last_edit += 1
+}
+
+// auto_layout_project is the layout itself, with no window: `videoedit new
+// --layout` lays a new project out exactly as the window does on first run.
+auto_layout_project :: proc(pr: ^Project) {
 	if len(pr.media) == 0 {
 		return
 	}
@@ -473,7 +518,6 @@ auto_layout :: proc(ed: ^Editor) {
 			track_sort(&pr.tracks[a])
 		}
 	}
-	ed.last_edit += 1
 }
 
 track_of_kind :: proc(pr: ^Project, kind: Track_Kind, nth: int) -> int {

@@ -167,7 +167,7 @@ toolbar :: proc(ed: ^Editor, ui: ^p.Ctx) {
 	if tool_button(ui, "Dissolve", "x") {
 		if t, i, ok := sel_find(ed); ok {
 			undo_mark(ed, .Dissolve, "toggle the dissolve", ed.sel)
-			toggle_dissolve(ed, t, i)
+			toggle_dissolve(&ed.pr, t, i)
 			edited(ed)
 		}
 	}

@@ -299,7 +299,7 @@ handle_keys :: proc(ed: ^Editor, ui: ^p.Ctx) {
 	if p.shortcut(ui, 'x', {}) {
 		if t, i, ok := sel_find(ed); ok {
 			undo_mark(ed, .Dissolve, "toggle the dissolve", ed.sel)
-			toggle_dissolve(ed, t, i)
+			toggle_dissolve(pr, t, i)
 			edited(ed)
 			c := pr.tracks[t].clips[i]
 			status(
@@ -536,8 +536,9 @@ next_track_of_kind :: proc(pr: ^Project, from: int) -> int {
 // toggle_dissolve turns a cut into a cross-dissolve by *overlapping* the clip
 // with the one before it, which is what makes the fade have something to fade
 // over. Turning it back off pulls the clip back to the cut.
-toggle_dissolve :: proc(ed: ^Editor, track, idx: int) {
-	pr := &ed.pr
+// toggle_dissolve turns a clip's join into a cross-dissolve or back into a
+// cut. It touches only the project, so `videoedit dissolve` calls it too.
+toggle_dissolve :: proc(pr: ^Project, track, idx: int) {
 	t := &pr.tracks[track]
 	c := &t.clips[idx]
 	if c.trans == .Dissolve {
@@ -573,9 +574,32 @@ place_media :: proc(ed: ^Editor, ui: ^p.Ctx, at: f64) {
 	}
 	mi := clamp(ed.bin_sel, 0, len(pr.media) - 1)
 	m := pr.media[mi]
-	dur := math.min(m.duration, 4.0)
-
 	vt := pr.tracks[ed.cur_track].kind == .Video ? ed.cur_track : track_of_kind(pr, .Video, 1)
+	pl := place_clip(pr, mi, vt, at, 0, math.min(m.duration, 4.0))
+	if pl.id >= 0 {
+		ed.sel = pl.id
+		ed.cur_track = pl.track
+	}
+	edited(ed)
+	status(ed, ui, fmt.tprintf("placed %s at %s", m.name, timecode(pl.at, pr.out_fps)))
+}
+
+Placed :: struct {
+	id:       int, // the clip a selection should land on: the video, else the audio
+	track:    int,
+	video_id: int, // -1 when the media has no picture
+	audio_id: int, // -1 when it has no sound
+	at:       f64, // the timeline position it went to
+}
+
+// place_clip is placing one bin item, with no window attached: the video part
+// on track `vt`, the sound on the first audio track at the same position, and
+// `at < 0` meaning "after the last clip on vt". The window's `a`/`n` keys and
+// `videoedit add` both come through here, so a clip placed either way has the
+// same shape on the timeline.
+place_clip :: proc(pr: ^Project, mi, vt: int, at, src_in, src_out: f64) -> Placed {
+	out := Placed{id = -1, track = vt, video_id = -1, audio_id = -1}
+	m := pr.media[mi]
 	at_v := at
 	if at < 0 {
 		at_v = 0
@@ -583,21 +607,20 @@ place_media :: proc(ed: ^Editor, ui: ^p.Ctx, at: f64) {
 			at_v = math.max(at_v, clip_end(c))
 		}
 	}
+	out.at = at_v
 	if m.has_video {
-		id := insert_clip(pr, vt, mi, at_v, 0, dur)
-		ed.sel = id
-		ed.cur_track = vt
+		out.video_id = insert_clip(pr, vt, mi, at_v, src_in, src_out)
+		out.id = out.video_id
 	}
 	if m.has_audio {
 		a := track_of_kind(pr, .Audio, 0)
-		id := insert_clip(pr, a, mi, at_v, 0, dur)
+		out.audio_id = insert_clip(pr, a, mi, at_v, src_in, src_out)
 		if !m.has_video {
-			ed.sel = id
-			ed.cur_track = a
+			out.id = out.audio_id
+			out.track = a
 		}
 	}
-	edited(ed)
-	status(ed, ui, fmt.tprintf("placed %s at %s", m.name, timecode(at_v, pr.out_fps)))
+	return out
 }
 
 start_export :: proc(ed: ^Editor, ui: ^p.Ctx, q: Export_Quality) {
@@ -605,27 +628,32 @@ start_export :: proc(ed: ^Editor, ui: ^p.Ctx, q: Export_Quality) {
 	if q == .Draft && strings.has_suffix(out, ".mp4") {
 		out = fmt.tprintf("%s-draft.mp4", out[:len(out) - 4])
 	}
-	set := Export_Settings {
-		quality  = q,
-		out_path = out,
-	}
-	plan := build_export(&ed.pr, set)
-	if plan.err != "" {
-		status(ed, ui, plan.err)
-		export_plan_destroy(&plan)
-		return
-	}
-	if !exporter_submit(&ed.ex, plan, out) {
-		status(ed, ui, "an export is already running")
-		export_plan_destroy(&plan)
+	w, h, err := export_submit(&ed.pr, &ed.ex, out, q)
+	if err != "" {
+		status(ed, ui, err)
 		return
 	}
 	ed.verified = false
-	status(
-		ed,
-		ui,
-		fmt.tprintf("exporting %dx%d to %s", plan.width, plan.height, base_name(out)),
-	)
+	status(ed, ui, fmt.tprintf("exporting %dx%d to %s", w, h, base_name(out)))
+}
+
+// export_submit builds the ffmpeg plan for the timeline and hands it to the
+// exporter thread. The window's `p`/`P` and `videoedit export` both start an
+// export here; the command line then waits on `exporter_status` where the
+// window draws a progress bar from it.
+export_submit :: proc(pr: ^Project, ex: ^Exporter, out: string, q: Export_Quality) -> (w, h: int, err: string) {
+	plan := build_export(pr, Export_Settings{quality = q, out_path = out})
+	if plan.err != "" {
+		err = strings.clone(plan.err, context.temp_allocator)
+		export_plan_destroy(&plan)
+		return 0, 0, err
+	}
+	w, h = plan.width, plan.height
+	if !exporter_submit(ex, plan, out) {
+		export_plan_destroy(&plan)
+		return 0, 0, "an export is already running"
+	}
+	return w, h, ""
 }
 
 // verify_last reads the finished file back with ffprobe and pulls a frame out

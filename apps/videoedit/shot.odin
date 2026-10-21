@@ -265,7 +265,7 @@ shot :: proc(out_path: string, at: f64) {
 	// screenshot shows the features rather than an empty grid.
 	v := track_of_kind(&ed.pr, .Video, 1)
 	if len(ed.pr.tracks[v].clips) >= 2 {
-		toggle_dissolve(ed, v, 1)
+		toggle_dissolve(&ed.pr, v, 1)
 	}
 	insert_title(&ed.pr, track_of_kind(&ed.pr, .Video, 0), 0.5, 2.5, "VIDEOEDIT")
 	if n, _, ok := load_captions(&ed.pr, buf_str(&ed.buf_caption)); ok {
